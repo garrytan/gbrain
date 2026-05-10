@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'bun';
-import { WRITEBACK_SMOKE_ARGUMENTS } from '../scripts/smoke-test-installed-mcp.ts';
+import {
+  WRITEBACK_SMOKE_ARGUMENTS,
+  assertWritebackSmokeResult,
+} from '../scripts/smoke-test-installed-mcp.ts';
 
 describe('installed MCP smoke script', () => {
   test('passes against the source CLI command', () => {
@@ -25,5 +28,22 @@ describe('installed MCP smoke script', () => {
   test('route_memory_writeback smoke call exercises dry-run apply suppression', () => {
     expect(WRITEBACK_SMOKE_ARGUMENTS.dry_run).toBe(true);
     expect(WRITEBACK_SMOKE_ARGUMENTS.apply).toBe(true);
+  });
+
+  test('route_memory_writeback smoke assertion rejects dry-run-only payloads', () => {
+    expect(() => assertWritebackSmokeResult({ dry_run: true })).toThrow(/decision/);
+  });
+
+  test('route_memory_writeback smoke assertion requires the expected candidate plan', () => {
+    expect(() => assertWritebackSmokeResult({
+      dry_run: true,
+      applied: false,
+      decision: 'create_candidate',
+      intended_operation: 'create_memory_candidate_entry',
+      candidate_input: {
+        proposed_content: WRITEBACK_SMOKE_ARGUMENTS.content,
+        source_refs: WRITEBACK_SMOKE_ARGUMENTS.source_refs,
+      },
+    })).not.toThrow();
   });
 });

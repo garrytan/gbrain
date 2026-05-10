@@ -21,6 +21,7 @@ export async function runDoctor(engine: BrainEngine, args: string[]) {
     inputs.installedAgent = await collectInstalledAgentReadiness({
       command: agentArgs.agentCommand,
       expectedRulesVersion: getExpectedAgentRulesVersion(),
+      expectedRulesContent: getExpectedAgentRulesContent(),
     });
   }
 
@@ -64,15 +65,28 @@ export function getExpectedAgentRulesVersion(): string {
   return getExpectedAgentRulesVersionFromCandidates(getAgentRulesCandidatePaths());
 }
 
+export function getExpectedAgentRulesContent(): string | null {
+  return getExpectedAgentRulesContentFromCandidates(getAgentRulesCandidatePaths());
+}
+
 export function getExpectedAgentRulesVersionFromCandidates(candidatePaths: string[]): string {
-  for (const candidate of candidatePaths) {
-    if (existsSync(candidate)) {
-      const version = readFileSync(candidate, 'utf-8').match(MARKER_VERSION_RE)?.[1];
-      if (version) return version;
-    }
+  const content = getExpectedAgentRulesContentFromCandidates(candidatePaths);
+  if (content) {
+    const version = content.match(MARKER_VERSION_RE)?.[1];
+    if (version) return version;
   }
 
   return EMBEDDED_AGENT_RULES_VERSION;
+}
+
+export function getExpectedAgentRulesContentFromCandidates(candidatePaths: string[]): string | null {
+  for (const candidate of candidatePaths) {
+    if (existsSync(candidate)) {
+      return readFileSync(candidate, 'utf-8');
+    }
+  }
+
+  return null;
 }
 
 export function getAgentRulesCandidatePaths(): string[] {

@@ -53,6 +53,8 @@ try {
   workloads.push(await runLatencyWorkload(engine, 'decision_history'));
   workloads.push(await runResumeProjectionWorkload(engine));
   workloads.push(await runRepeatedWorkSuppressionWorkload(engine));
+  workloads.push(await runDecisionReuseWorkload(engine));
+  workloads.push(await runVerificationWarningsWorkload(engine));
   workloads.push(await runTraceTemplateCompletenessWorkload(engine));
 
   const payload = {
@@ -198,6 +200,46 @@ async function runRepeatedWorkSuppressionWorkload(
   };
 }
 
+async function runDecisionReuseWorkload(
+  engine: BrainEngine,
+): Promise<Phase1CorrectnessWorkloadResult> {
+  let passed = 0;
+
+  for (const fixture of PHASE1_TASK_FIXTURES) {
+    const resume = await buildTaskResumeCard(engine, fixture.thread.id);
+    if (hasExactItems(resume.decision_reuse, fixture.expectedResume.decision_reuse)) {
+      passed += 1;
+    }
+  }
+
+  return {
+    name: 'decision_reuse',
+    status: 'measured',
+    unit: 'percent',
+    success_rate: roundTo((passed / PHASE1_TASK_FIXTURES.length) * 100, 2),
+  };
+}
+
+async function runVerificationWarningsWorkload(
+  engine: BrainEngine,
+): Promise<Phase1CorrectnessWorkloadResult> {
+  let passed = 0;
+
+  for (const fixture of PHASE1_TASK_FIXTURES) {
+    const resume = await buildTaskResumeCard(engine, fixture.thread.id);
+    if (hasExactItems(resume.verification_warnings, fixture.expectedResume.verification_warnings)) {
+      passed += 1;
+    }
+  }
+
+  return {
+    name: 'verification_warnings',
+    status: 'measured',
+    unit: 'percent',
+    success_rate: roundTo((passed / PHASE1_TASK_FIXTURES.length) * 100, 2),
+  };
+}
+
 async function runTraceTemplateCompletenessWorkload(
   engine: BrainEngine,
 ): Promise<Phase1CorrectnessWorkloadResult> {
@@ -317,6 +359,30 @@ function evaluateAcceptance(
     threshold: {
       operator: '===',
       value: PHASE1_ACCEPTANCE_THRESHOLDS.repeated_work_suppression_success_rate,
+      unit: 'percent',
+    },
+  });
+
+  const decisionReuse = getCorrectnessWorkload(workloads, 'decision_reuse');
+  checks.push({
+    name: 'decision_reuse_success_rate',
+    status: decisionReuse.success_rate === PHASE1_ACCEPTANCE_THRESHOLDS.decision_reuse_success_rate ? 'pass' : 'fail',
+    actual: decisionReuse.success_rate,
+    threshold: {
+      operator: '===',
+      value: PHASE1_ACCEPTANCE_THRESHOLDS.decision_reuse_success_rate,
+      unit: 'percent',
+    },
+  });
+
+  const verificationWarnings = getCorrectnessWorkload(workloads, 'verification_warnings');
+  checks.push({
+    name: 'verification_warnings_success_rate',
+    status: verificationWarnings.success_rate === PHASE1_ACCEPTANCE_THRESHOLDS.verification_warnings_success_rate ? 'pass' : 'fail',
+    actual: verificationWarnings.success_rate,
+    threshold: {
+      operator: '===',
+      value: PHASE1_ACCEPTANCE_THRESHOLDS.verification_warnings_success_rate,
       unit: 'percent',
     },
   });

@@ -575,12 +575,13 @@ bun run scripts/bench/phase1-operational-memory.ts --json --baseline /tmp/mbrain
 ```
 
 It reports task-resume latency, attempt and decision history latency, resume
-projection correctness, repeated-work suppression, and retrieval-trace template
-completeness. The first command is a local readiness run; without a comparable
-baseline its JSON output keeps `phase1_status: "pending_baseline"`. Full Phase 1
-acceptance requires a comparable baseline and `phase1_status: "pass"`. Do not
-accept Phase 1 if the benchmark passes only by weakening local/offline behavior,
-provenance, or scope boundaries.
+projection correctness, repeated-work suppression, decision reuse, verification
+warnings, and retrieval-trace template completeness. The first command is a local
+readiness run; without a comparable baseline its JSON output keeps
+`phase1_status: "pending_baseline"`. Full Phase 1 acceptance requires a
+comparable baseline and `phase1_status: "pass"`. Do not accept Phase 1 if the
+benchmark passes only by weakening local/offline behavior, provenance, or scope
+boundaries.
 
 The SQLite E2E suite covers:
 

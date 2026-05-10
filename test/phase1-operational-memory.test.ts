@@ -34,10 +34,12 @@ describe('phase1 operational-memory benchmark', () => {
     expect(names).toEqual([
       'attempt_history',
       'decision_history',
+      'decision_reuse',
       'repeated_work_suppression',
       'resume_projection',
       'task_resume',
       'trace_template_completeness',
+      'verification_warnings',
     ]);
 
     for (const workload of payload.workloads) {
@@ -66,6 +68,18 @@ describe('phase1 operational-memory benchmark', () => {
         expect(typeof workload.success_rate).toBe('number');
         expect(workload.success_rate).toBe(100);
       }
+
+      if (workload.name === 'decision_reuse') {
+        expect(workload.unit).toBe('percent');
+        expect(typeof workload.success_rate).toBe('number');
+        expect(workload.success_rate).toBe(100);
+      }
+
+      if (workload.name === 'verification_warnings') {
+        expect(workload.unit).toBe('percent');
+        expect(typeof workload.success_rate).toBe('number');
+        expect(workload.success_rate).toBe(100);
+      }
     }
 
     expect(payload.acceptance).toHaveProperty('thresholds');
@@ -77,11 +91,13 @@ describe('phase1 operational-memory benchmark', () => {
     expect(checkNames).toEqual([
       'attempt_history_p95_ms',
       'decision_history_p95_ms',
+      'decision_reuse_success_rate',
       'primary_improvement_threshold',
       'repeated_work_suppression_success_rate',
       'resume_projection_success_rate',
       'task_resume_p95_ms',
       'trace_template_completeness_success_rate',
+      'verification_warnings_success_rate',
     ]);
 
     const pendingCheck = payload.acceptance.checks.find((check: any) => check.name === 'primary_improvement_threshold');
@@ -103,6 +119,10 @@ describe('phase1 operational-memory benchmark', () => {
           { name: 'attempt_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
           { name: 'decision_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
           { name: 'resume_projection', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'repeated_work_suppression', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'decision_reuse', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'verification_warnings', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'trace_template_completeness', status: 'measured', unit: 'percent', success_rate: 100 },
         ],
       }, null, 2));
 

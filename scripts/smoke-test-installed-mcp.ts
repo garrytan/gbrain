@@ -54,6 +54,33 @@ function parseMcpText<T = any>(result: any): T {
   return JSON.parse(text) as T;
 }
 
+export function assertWritebackSmokeResult(writeback: any): void {
+  if (writeback?.dry_run !== true) {
+    throw new Error(`route_memory_writeback did not return dry_run true: ${JSON.stringify(writeback)}`);
+  }
+  if (writeback.decision !== 'create_candidate') {
+    throw new Error(`route_memory_writeback decision was not create_candidate: ${JSON.stringify(writeback)}`);
+  }
+  if (writeback.intended_operation !== 'create_memory_candidate_entry') {
+    throw new Error(`route_memory_writeback intended_operation was not create_memory_candidate_entry: ${JSON.stringify(writeback)}`);
+  }
+  if (writeback.applied !== false) {
+    throw new Error(`route_memory_writeback did not suppress apply during dry-run: ${JSON.stringify(writeback)}`);
+  }
+  if (writeback.candidate_input?.proposed_content !== WRITEBACK_SMOKE_ARGUMENTS.content) {
+    throw new Error(`route_memory_writeback candidate content did not match smoke input: ${JSON.stringify(writeback)}`);
+  }
+  if (!hasExactItems(writeback.candidate_input?.source_refs, WRITEBACK_SMOKE_ARGUMENTS.source_refs)) {
+    throw new Error(`route_memory_writeback candidate source_refs did not match smoke input: ${JSON.stringify(writeback)}`);
+  }
+}
+
+function hasExactItems(actual: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(actual)
+    && actual.length === expected.length
+    && expected.every((entry, index) => actual[index] === entry);
+}
+
 export async function main(): Promise<void> {
   const commandText = process.env.MBRAIN_SMOKE_COMMAND || 'mbrain';
   const commandParts = splitAgentCommand(commandText);
@@ -125,9 +152,7 @@ export async function main(): Promise<void> {
       name: 'route_memory_writeback',
       arguments: WRITEBACK_SMOKE_ARGUMENTS,
     }));
-    if (writeback?.dry_run !== true) {
-      throw new Error(`route_memory_writeback did not return dry_run true: ${JSON.stringify(writeback)}`);
-    }
+    assertWritebackSmokeResult(writeback);
     console.log('route_memory_writeback: dry-run ok');
 
     const slug = 'smoke/install-check';

@@ -13,6 +13,11 @@ const rulesBlock = [
   'canonical_write_allowed',
   '<!-- MBRAIN:RULES:END -->',
 ].join('\n');
+const rulesContent = [
+  '<!-- mbrain-agent-rules-version: 0.5.6 -->',
+  'Use route_memory_writeback before durable memory writes.',
+  'canonical_write_allowed',
+].join('\n');
 
 describe('installed-agent readiness service', () => {
   test('parses agent rules version from prompt content', () => {
@@ -80,6 +85,23 @@ describe('installed-agent readiness service', () => {
     });
   });
 
+  test('fails when no supported agent prompt has the managed rules installed', () => {
+    const report = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: null,
+      claudePrompt: null,
+      claudeStopHook: null,
+      expectedRulesVersion: '0.5.6',
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.checks.find((check) => check.name === 'agent_prompt_rules')).toMatchObject({
+      status: 'fail',
+    });
+  });
+
   test('fails when router terms are absent from the managed prompt block', () => {
     const staleRulesBlock = [
       '<!-- MBRAIN:RULES:START -->',
@@ -97,6 +119,31 @@ describe('installed-agent readiness service', () => {
       claudePrompt: rulesBlock,
       claudeStopHook: 'route_memory_writeback with sources',
       expectedRulesVersion: '0.5.6',
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.checks.find((check) => check.name === 'codex_prompt_rules')).toMatchObject({
+      status: 'fail',
+    });
+  });
+
+  test('fails when the managed prompt block has the right version and tokens but not the packaged rules', () => {
+    const tokenOnlyRulesBlock = [
+      '<!-- MBRAIN:RULES:START -->',
+      '<!-- mbrain-agent-rules-version: 0.5.6 -->',
+      'route_memory_writeback canonical_write_allowed',
+      '<!-- MBRAIN:RULES:END -->',
+    ].join('\n');
+
+    const report = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: tokenOnlyRulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources',
+      expectedRulesVersion: '0.5.6',
+      expectedRulesContent: rulesContent,
     });
 
     expect(report.status).toBe('fail');

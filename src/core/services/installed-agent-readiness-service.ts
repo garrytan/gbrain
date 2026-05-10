@@ -21,6 +21,7 @@ export interface InstalledAgentReadinessInput {
   claudePrompt: string | null;
   claudeStopHook: string | null;
   expectedRulesVersion: string;
+  expectedRulesContent?: string | null;
 }
 
 export interface InstalledAgentReadinessReport {
@@ -68,11 +69,26 @@ export function extractManagedRulesBlock(content: string): string | null {
 export function buildInstalledAgentReadinessReport(
   input: InstalledAgentReadinessInput,
 ): InstalledAgentReadinessReport {
+  const codexPromptCheck = buildPromptRulesCheck(
+    'codex_prompt_rules',
+    'Codex prompt',
+    input.codexPrompt,
+    input.expectedRulesVersion,
+    input.expectedRulesContent,
+  );
+  const claudePromptCheck = buildPromptRulesCheck(
+    'claude_prompt_rules',
+    'Claude prompt',
+    input.claudePrompt,
+    input.expectedRulesVersion,
+    input.expectedRulesContent,
+  );
   const checks: InstalledAgentCheck[] = [
     buildCommandVersionCheck(input),
     buildRequiredToolsCheck(input.tools),
-    buildPromptRulesCheck('codex_prompt_rules', 'Codex prompt', input.codexPrompt, input.expectedRulesVersion),
-    buildPromptRulesCheck('claude_prompt_rules', 'Claude prompt', input.claudePrompt, input.expectedRulesVersion),
+    codexPromptCheck,
+    claudePromptCheck,
+    buildPromptCoverageCheck([codexPromptCheck, claudePromptCheck]),
     buildClaudeStopHookCheck(input.claudeStopHook),
   ];
 
@@ -85,11 +101,13 @@ export function buildInstalledAgentReadinessReport(
 export async function collectInstalledAgentReadiness({
   command,
   expectedRulesVersion,
+  expectedRulesContent = null,
   home = process.env.HOME || process.env.USERPROFILE || '',
   runCommand = defaultCommandRunner,
 }: {
   command: string;
   expectedRulesVersion: string;
+  expectedRulesContent?: string | null;
   home?: string;
   runCommand?: InstalledAgentCommandRunner;
 }): Promise<InstalledAgentReadinessReport> {
@@ -104,6 +122,7 @@ export async function collectInstalledAgentReadiness({
     claudePrompt: readOptionalFile(join(home, '.claude', 'CLAUDE.md')),
     claudeStopHook: readOptionalFile(join(home, '.claude', 'scripts', 'hooks', 'stop-mbrain-check.sh')),
     expectedRulesVersion,
+    expectedRulesContent,
   });
 }
 
@@ -199,6 +218,7 @@ function buildPromptRulesCheck(
   label: string,
   content: string | null,
   expectedRulesVersion: string,
+  expectedRulesContent?: string | null,
 ): InstalledAgentCheck {
   if (content === null) {
     return {
@@ -239,10 +259,37 @@ function buildPromptRulesCheck(
     };
   }
 
+  if (
+    expectedRulesContent
+    && normalizeRulesContent(rulesBlock) !== normalizeRulesContentForComparison(expectedRulesContent)
+  ) {
+    return {
+      name,
+      status: 'fail',
+      message: `${label} managed rules block does not match packaged MBrain agent rules`,
+    };
+  }
+
   return {
     name,
     status: 'ok',
     message: `${label} rules version ${version} is installed`,
+  };
+}
+
+function buildPromptCoverageCheck(promptChecks: InstalledAgentCheck[]): InstalledAgentCheck {
+  if (promptChecks.some((check) => check.status === 'ok')) {
+    return {
+      name: 'agent_prompt_rules',
+      status: 'ok',
+      message: 'At least one supported agent prompt has the managed MBrain rules installed',
+    };
+  }
+
+  return {
+    name: 'agent_prompt_rules',
+    status: 'fail',
+    message: 'No supported agent prompt has the managed MBrain rules installed',
   };
 }
 
@@ -278,6 +325,14 @@ function summarizeStatus(checks: InstalledAgentCheck[]): InstalledAgentCheckStat
 
 function readOptionalFile(path: string): string | null {
   return existsSync(path) ? readFileSync(path, 'utf-8') : null;
+}
+
+function normalizeRulesContentForComparison(content: string): string {
+  return normalizeRulesContent(extractManagedRulesBlock(content) ?? content);
+}
+
+function normalizeRulesContent(content: string): string {
+  return content.replace(/\r\n/g, '\n').trim();
 }
 
 function defaultCommandRunner(command: string, args: string[]): InstalledAgentCommandResult {
