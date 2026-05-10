@@ -23,7 +23,8 @@ describe('installed-agent readiness service', () => {
   test('splits agent command strings for the default runner', () => {
     expect(splitAgentCommand('mbrain')).toEqual(['mbrain']);
     expect(splitAgentCommand('bun run src/cli.ts')).toEqual(['bun', 'run', 'src/cli.ts']);
-    expect(splitAgentCommand('  bun   run  src/cli.ts  ')).toEqual(['bun', 'run', 'src/cli.ts']);
+    expect(splitAgentCommand('bun run "scripts/dev cli.ts"')).toEqual(['bun', 'run', 'scripts/dev cli.ts']);
+    expect(splitAgentCommand('  bun   run   src/cli.ts  ')).toEqual(['bun', 'run', 'src/cli.ts']);
   });
 
   test('reports healthy when required tools, prompts, and hook are present', () => {
@@ -76,6 +77,31 @@ describe('installed-agent readiness service', () => {
     expect(report.status).toBe('warn');
     expect(report.checks.find((check) => check.name === 'codex_prompt_rules')).toMatchObject({
       status: 'warn',
+    });
+  });
+
+  test('fails when router terms are absent from the managed prompt block', () => {
+    const staleRulesBlock = [
+      '<!-- MBRAIN:RULES:START -->',
+      '<!-- mbrain-agent-rules-version: 0.5.6 -->',
+      'This managed block is missing required router terms.',
+      '<!-- MBRAIN:RULES:END -->',
+      'Outside the block: route_memory_writeback canonical_write_allowed',
+    ].join('\n');
+
+    const report = buildInstalledAgentReadinessReport({
+      command: 'mbrain',
+      commandVersion: 'mbrain 0.10.3',
+      tools: REQUIRED_AGENT_TOOLS.map((name) => ({ name })),
+      codexPrompt: staleRulesBlock,
+      claudePrompt: rulesBlock,
+      claudeStopHook: 'route_memory_writeback with sources',
+      expectedRulesVersion: '0.5.6',
+    });
+
+    expect(report.status).toBe('fail');
+    expect(report.checks.find((check) => check.name === 'codex_prompt_rules')).toMatchObject({
+      status: 'fail',
     });
   });
 });

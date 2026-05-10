@@ -54,6 +54,17 @@ export function parseAgentRulesVersion(content: string): string | null {
   return content.match(/<!--\s*mbrain-agent-rules-version:\s*([\d.]+)\s*-->/)?.[1] ?? null;
 }
 
+export function extractManagedRulesBlock(content: string): string | null {
+  const startIndex = content.indexOf(RULES_START);
+  if (startIndex === -1) return null;
+
+  const blockStartIndex = startIndex + RULES_START.length;
+  const endIndex = content.indexOf(RULES_END, blockStartIndex);
+  if (endIndex === -1) return null;
+
+  return content.slice(blockStartIndex, endIndex);
+}
+
 export function buildInstalledAgentReadinessReport(
   input: InstalledAgentReadinessInput,
 ): InstalledAgentReadinessReport {
@@ -98,8 +109,12 @@ export async function collectInstalledAgentReadiness({
 
 export function parseToolsJson(stdout: string): InstalledAgentTool[] {
   try {
-    const parsed = JSON.parse(stdout);
-    const tools = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.tools) ? parsed.tools : [];
+    const parsed: unknown = JSON.parse(stdout);
+    const tools: unknown[] = Array.isArray(parsed)
+      ? parsed
+      : isRecord(parsed) && Array.isArray(parsed.tools)
+        ? parsed.tools
+        : [];
     return tools
       .map((tool: unknown) => {
         if (typeof tool === 'string') return { name: tool };
@@ -113,7 +128,34 @@ export function parseToolsJson(stdout: string): InstalledAgentTool[] {
 }
 
 export function splitAgentCommand(command: string): string[] {
-  return command.trim().split(/\s+/).filter(Boolean);
+  const parts: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+
+  for (const char of command.trim()) {
+    if ((char === '"' || char === "'") && quote === null) {
+      quote = char;
+      continue;
+    }
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
+    if (/\s/.test(char) && quote === null) {
+      if (current.length > 0) {
+        parts.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (current.length > 0) {
+    parts.push(current);
+  }
+
+  return parts;
 }
 
 function buildCommandVersionCheck(input: InstalledAgentReadinessInput): InstalledAgentCheck {
@@ -166,11 +208,19 @@ function buildPromptRulesCheck(
     };
   }
 
-  const version = parseAgentRulesVersion(content);
+  const rulesBlock = extractManagedRulesBlock(content);
+  if (rulesBlock === null) {
+    return {
+      name,
+      status: 'fail',
+      message: `${label} missing required rules content: MBRAIN rules block`,
+    };
+  }
+
+  const version = parseAgentRulesVersion(rulesBlock);
   const missingTerms = [
-    ...(!content.includes(RULES_START) || !content.includes(RULES_END) ? ['MBRAIN rules block'] : []),
     ...(version === null ? ['mbrain-agent-rules-version'] : []),
-    ...ROUTER_TERMS.filter((term) => !content.includes(term)),
+    ...ROUTER_TERMS.filter((term) => !rulesBlock.includes(term)),
   ];
 
   if (missingTerms.length > 0) {
