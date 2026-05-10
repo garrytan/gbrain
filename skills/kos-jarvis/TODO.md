@@ -280,21 +280,26 @@ Phase 4-5 段重写为"上游驱动 + 配置"。
 
 **Scope**: 1.5 h 评估。Phase 4-5 实施本身不在本 milestone 范围。
 
-### [ ] (M2-D) `Operation.scope` + `.localOnly` 取代 fork-local `OperationContext.remote`
+### [x] (M2-D) `Operation.scope` + `.localOnly` 取代 fork-local `OperationContext.remote` — RESOLVED 2026-05-10 (premise wrong, never-needed)
 
-**Why**: v0.26.0 把"操作信任分级"做成了 first-class:每个 Op 标
-`scope: 'read' | 'write' | 'admin'` + `localOnly?: boolean`,HTTP 路径
-强制 reject `admin + localOnly`(`sync_brain`, `file_upload`, `file_list`,
-`file_url`)。这是 fork 老 `OperationContext.remote` flag 的上游成熟版。
+**Verdict**: **No code change required.** Fork-local code 从未实现过
+`OperationContext.remote`,`git grep "ctx\.remote\|context\.remote"` 在
+`server/` `workers/` `skills/kos-jarvis/_lib/` 中天然归零(只有
+`brain-db.test.ts:88` 的 `remote: true` 是 v0.25.0 `EvalCandidateInput`
+eval-row schema 字段,不是 OperationContext flag)。
 
-**What**: 看 fork code base 还有哪里依赖 `ctx.remote`,迁移到 `op.scope`
-+ `op.localOnly`。本 fork 不写 src/core/operations.ts,但 `kos-compat-api`
-里可能 hand-roll 了 remote check。
+**Premise correction**: 原 M2-D 假设 "Operation.scope + .localOnly 是
+fork 老 OperationContext.remote 的成熟版" 是错的。读
+`src/core/operations.ts:223-249`(F7b hardening,v0.30.0):
+- `OperationContext.remote: boolean` 仍是 **REQUIRED 字段**(每个 transport 必须显式 set)
+- `Operation.scope` / `Operation.localOnly` 是 **operation-side** 安全声明(描述 op 自己的危险度)
+- `OperationContext.remote` 是 **caller-side** 信任度(描述 caller 是不是远程)
+- 两者**互补**(scope=admin + localOnly + remote=true → HTTP 路径 reject),不是替代关系
 
-**Acceptance**: `git grep "ctx\.remote\|context\.remote"` 在 fork-local
-代码 (server/, workers/, skills/kos-jarvis/_lib/) 中归零。
+Fork 也没有 hand-rolled `kos-compat-api` 的 remote check — 所有信任分级都
+完全 delegate 给 `gbrain` CLI 子进程或下游 op handlers。
 
-**Scope**: 30 min audit + 30 min 改。
+**Action taken**: 单 commit 标记 entry RESOLVED,无 code 改动。
 
 ### [ ] (M3) gemini-embed-shim 退役 — Postgres-backed pilot + production cutover
 
