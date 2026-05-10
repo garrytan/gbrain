@@ -923,6 +923,18 @@ const list_pages: Operation = {
 
 // --- Search ---
 
+/**
+ * Validate the search/query `source` param. Resolves to the canonical
+ * source id (string) when registered + not archived, or `undefined` when
+ * the param is omitted (null/undefined/empty-string all mean "no filter",
+ * matching the rest of the search-op param shape).
+ *
+ * Happy-path: one indexed `SELECT id FROM sources WHERE id = $1` — the
+ * search/query path is hot, so we avoid listSources() (N+1: countPages
+ * per row). The error path takes the slower listSources hit to populate
+ * an actionable "Available: a, b, c" hint, which is fine since the
+ * caller already typed wrong. See #784.
+ */
 async function resolveSourceFilter(
   engine: BrainEngine,
   source: unknown,
@@ -931,9 +943,13 @@ async function resolveSourceFilter(
   if (typeof source !== 'string') {
     throw new OperationError('invalid_source', `'source' must be a string`);
   }
-  const { listSources } = await import('./sources-ops.ts');
-  const known = await listSources(engine, {});
-  if (!known.some(s => s.id === source)) {
+  const rows = await engine.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE id = $1 AND archived IS NOT TRUE LIMIT 1`,
+    [source],
+  );
+  if (rows.length === 0) {
+    const { listSources } = await import('./sources-ops.ts');
+    const known = await listSources(engine, {});
     const available = known.map(s => s.id).join(', ') || '(none registered)';
     throw new OperationError(
       'unknown_source',
