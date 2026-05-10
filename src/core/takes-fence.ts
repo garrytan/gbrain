@@ -125,6 +125,39 @@ function parseFloatCell(raw: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/**
+ * Normalize a weight for storage. Single source of truth used by both engines
+ * at all 4 takes write sites (addTakesBatch + updateTake × postgres + pglite).
+ *
+ * Pipeline:
+ *   1. NaN / Infinity / -Infinity → 0.5 (default), clamped=true.
+ *   2. Out of [0, 1] → clamp to [0, 1], clamped=true.
+ *   3. Round to 0.05 grid (cross-modal eval over 100K takes flagged 0.74,
+ *      0.82-style values as false precision; the engine layer enforces a
+ *      coarser grid that matches actual calibration accuracy).
+ *
+ * 0 and 1 round to themselves exactly (Math.round(20)/20 = 1.0,
+ * Math.round(0)/20 = 0). The clamped flag is the trigger for the engine's
+ * TAKES_WEIGHT_CLAMPED stderr counter; rounding alone does NOT set it.
+ *
+ * `undefined` and `null` inputs return 0.5 with clamped=false (the default
+ * weight when a fence row omits the column).
+ */
+export function normalizeWeightForStorage(
+  raw: number | null | undefined,
+): { weight: number; clamped: boolean } {
+  let w = raw ?? 0.5;
+  let clamped = false;
+  if (!Number.isFinite(w)) {
+    clamped = true;
+    w = 0.5;
+  } else if (w < 0 || w > 1) {
+    clamped = true;
+    w = Math.max(0, Math.min(1, w));
+  }
+  return { weight: Math.round(w * 20) / 20, clamped };
+}
+
 function parseStringCell(raw: string): string | undefined {
   const trimmed = raw.trim();
   return trimmed ? trimmed : undefined;

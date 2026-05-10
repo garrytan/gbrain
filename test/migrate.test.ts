@@ -1206,6 +1206,58 @@ describe('migration v40 — pages_emotional_weight (v0.29)', () => {
   });
 });
 
+describe('migration v46 — takes_weight_round_to_grid (v0.32)', () => {
+  // v0.32 — Takes v2 wave. Backfill the pre-v0.31 weight column to the 0.05
+  // grid that the engine layer (PR #795) enforces on insert. Cross-modal eval
+  // over 100K production takes flagged 0.74, 0.82-style values as false
+  // precision; this migration brings existing data to the grid that all new
+  // writes already match.
+  test('exists with the expected name', () => {
+    const v46 = MIGRATIONS.find(m => m.version === 46);
+    expect(v46).toBeDefined();
+    expect(v46?.name).toBe('takes_weight_round_to_grid');
+  });
+
+  test('uses transaction:false (codex review #2 — non-blocking, idempotent via WHERE)', () => {
+    // The original plan called this "mid-statement resume" — that was wrong.
+    // What transaction:false actually buys is freeing the migration runner
+    // from a long transaction so other gbrain processes can interleave.
+    const v46 = MIGRATIONS.find(m => m.version === 46);
+    expect(v46?.transaction).toBe(false);
+  });
+
+  test('UPDATE rounds weight to 0.05 grid', () => {
+    const v46 = MIGRATIONS.find(m => m.version === 46);
+    const sql = v46!.sql || '';
+    expect(sql).toContain('UPDATE takes');
+    expect(sql).toContain('ROUND(weight::numeric * 20) / 20');
+  });
+
+  test('WHERE uses tolerance comparison (REAL float32 noise vs 0.05 grid)', () => {
+    // Codex #2 idempotency correction + REAL/float32 implementation note:
+    // a naive `weight <> ROUND(...)` form fires every time because mixed
+    // REAL/NUMERIC comparison promotes weight to DOUBLE PRECISION first,
+    // surfacing ~1e-7 representation noise as inequality. The tolerance
+    // form (abs(...) > 0.001) catches genuinely off-grid values (the 0.05
+    // grid is 5e-2, far above 1e-3) while ignoring float32 round-trip noise.
+    const v46 = MIGRATIONS.find(m => m.version === 46);
+    const sql = v46!.sql || '';
+    expect(sql).toContain('WHERE');
+    expect(sql).toContain('abs(weight::numeric');
+    expect(sql).toContain('> 0.001');
+  });
+
+  test('IS NOT NULL guard (insurance against stale schema)', () => {
+    const v46 = MIGRATIONS.find(m => m.version === 46);
+    const sql = v46!.sql || '';
+    expect(sql).toContain('weight IS NOT NULL');
+  });
+
+  test('LATEST_VERSION caught up to 46', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(46);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 // PR #363 regression guards — session timeouts via startup parameters
 // resolveSessionTimeouts — GBRAIN_*_TIMEOUT env overrides

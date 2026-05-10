@@ -36,6 +36,7 @@ import type {
 } from './types.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, takeRowToTake } from './utils.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
+import { normalizeWeightForStorage } from './takes-fence.ts';
 import { GBrainError, PAGE_SORT_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
@@ -1928,10 +1929,9 @@ export class PGLiteEngine implements BrainEngine {
     const kinds     = rowsIn.map(r => r.kind);
     const holders   = rowsIn.map(r => r.holder);
     const weights   = rowsIn.map(r => {
-      let w = r.weight ?? 0.5;
-      if (w < 0 || w > 1) { weightClamped++; w = Math.max(0, Math.min(1, w)); }
-      // Round to 0.05 increments (cross-modal eval: no false precision)
-      return Math.round(w * 20) / 20;
+      const { weight, clamped } = normalizeWeightForStorage(r.weight);
+      if (clamped) weightClamped++;
+      return weight;
     });
     const sinces    = rowsIn.map(r => r.since_date ?? null);
     const untils    = rowsIn.map(r => r.until_date ?? null);
@@ -2095,9 +2095,12 @@ export class PGLiteEngine implements BrainEngine {
     fields: { weight?: number; since_date?: string; source?: string },
   ): Promise<void> {
     let weight = fields.weight;
-    if (weight !== undefined && (weight < 0 || weight > 1)) {
-      process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: updateTake clamped weight ${weight} → [0,1]\n`);
-      weight = Math.max(0, Math.min(1, weight));
+    if (weight !== undefined) {
+      const norm = normalizeWeightForStorage(weight);
+      if (norm.clamped) {
+        process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: updateTake clamped weight ${weight} → ${norm.weight}\n`);
+      }
+      weight = norm.weight;
     }
     const result = await this.db.query(
       `UPDATE takes SET
