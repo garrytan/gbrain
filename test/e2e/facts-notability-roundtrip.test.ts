@@ -5,7 +5,7 @@
  * notability round-trip on PGLite, but no test pins the same on
  * Postgres. The row mappers ARE different code on each engine
  * (postgres-engine.ts:rowToFactPg vs pglite-engine.ts:rowToFact). The
- * v46 migration E2E pins schema parity but not row-mapper parity.
+ * v47 migration E2E pins schema parity but not row-mapper parity.
  *
  * This test inserts facts with each notability tier on real Postgres
  * via PostgresEngine.insertFact, reads them back via the same engine's

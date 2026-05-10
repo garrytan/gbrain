@@ -1,10 +1,10 @@
 /**
- * E2E for migration v46: facts.notability ALTER (B2 ship-blocker fix).
+ * E2E for migration v47: facts.notability ALTER (B2 ship-blocker fix).
  *
  * Pins the idempotency contract under all four states:
- *   1. Fresh install (column already added by v45 inline) → v46 no-ops cleanly.
- *   2. Old brain (no column) → v46 adds column + CHECK constraint.
- *   3. Partial state (column exists, no CHECK) → v46 adds the named CHECK.
+ *   1. Fresh install (column already added by v45 inline) → v47 no-ops cleanly.
+ *   2. Old brain (no column) → v47 adds column + CHECK constraint.
+ *   3. Partial state (column exists, no CHECK) → v47 adds the named CHECK.
  *   4. Re-run after success → still no-op (the bisect contract: every
  *      migration must be re-runnable without harm).
  *
@@ -16,7 +16,7 @@
  *
  * Gated by DATABASE_URL — skips when unset per CLAUDE.md lifecycle.
  *
- * Run: DATABASE_URL=... bun test test/e2e/migration-v46-notability.test.ts
+ * Run: DATABASE_URL=... bun test test/e2e/migration-v47-notability.test.ts
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
@@ -35,12 +35,12 @@ const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
 
 if (skip) {
-  console.log('Skipping migration v46 E2E tests (DATABASE_URL not set)');
+  console.log('Skipping migration v47 E2E tests (DATABASE_URL not set)');
 }
 
-const v46 = MIGRATIONS.find(m => m.version === 46);
-if (!skip && !v46) {
-  throw new Error('Migration v46 not found in MIGRATIONS array. PR1 commit 2 should add it.');
+const v47 = MIGRATIONS.find(m => m.version === 47);
+if (!skip && !v47) {
+  throw new Error('Migration v47 not found in MIGRATIONS array. PR1 commit 2 should add it.');
 }
 
 /**
@@ -68,18 +68,18 @@ async function simulatePartialState(): Promise<void> {
   await conn.unsafe(`ALTER TABLE facts ADD COLUMN IF NOT EXISTS notability TEXT NOT NULL DEFAULT 'medium'`);
 }
 
-async function runV46(): Promise<void> {
+async function runV47(): Promise<void> {
   const engine = getEngine();
-  const m = MIGRATIONS.find(x => x.version === 46);
-  if (!m) throw new Error('Migration v46 not found');
+  const m = MIGRATIONS.find(x => x.version === 47);
+  if (!m) throw new Error('Migration v47 not found');
   const sql = m.sqlFor?.[engine.kind] ?? m.sql;
   if (sql) {
     await engine.transaction(async (tx) => {
-      await tx.runMigration(46, sql);
+      await tx.runMigration(47, sql);
     });
   }
   if (m.handler) await m.handler(engine);
-  await engine.setConfig('version', '46');
+  await engine.setConfig('version', '47');
 }
 
 async function readNotabilityColumnState(): Promise<{
@@ -113,7 +113,7 @@ async function readNamedCheckExists(): Promise<boolean> {
   return rows.length === 1;
 }
 
-describeE2E('migration v46: facts.notability ALTER', () => {
+describeE2E('migration v47: facts.notability ALTER', () => {
   beforeAll(async () => {
     await setupDB();
     // setupDB() runs db.initSchema() (SCHEMA_SQL only, no migrations).
@@ -127,28 +127,28 @@ describeE2E('migration v46: facts.notability ALTER', () => {
 
   test('after fresh install, notability column + named CHECK both exist', async () => {
     // Sanity: setupDB + runMigrationsUpTo(LATEST) lands v45 (which has
-    // notability inline) + v46 (which is a no-op when column exists).
+    // notability inline) + v47 (which is a no-op when column exists).
     const colState = await readNotabilityColumnState();
     expect(colState.exists).toBe(true);
     expect(colState.notNull).toBe(true);
     expect(colState.defaultExpr).toContain('medium');
 
-    // The named CHECK MUST exist after v46 ran.
+    // The named CHECK MUST exist after v47 ran.
     const hasNamedCheck = await readNamedCheckExists();
     expect(hasNamedCheck).toBe(true);
   });
 
-  test('old brain simulation: drop notability, run v46, column + CHECK reappear', async () => {
+  test('old brain simulation: drop notability, run v47, column + CHECK reappear', async () => {
     await simulateOldBrain();
     // Verify the simulation worked.
     const before = await readNotabilityColumnState();
     expect(before.exists).toBe(false);
 
-    // Roll the version back to 45 so v46 is "pending".
-    await setConfigVersion(45);
+    // Roll the version back to 46 so v47 is "pending".
+    await setConfigVersion(46);
 
-    // Run v46.
-    await runV46();
+    // Run v47.
+    await runV47();
 
     // Column + CHECK both present.
     const after = await readNotabilityColumnState();
@@ -160,7 +160,7 @@ describeE2E('migration v46: facts.notability ALTER', () => {
     expect(hasNamedCheck).toBe(true);
   });
 
-  test('partial state: column exists, named CHECK missing → v46 adds CHECK', async () => {
+  test('partial state: column exists, named CHECK missing → v47 adds CHECK', async () => {
     await simulatePartialState();
     // Sanity: column present, named CHECK missing.
     const colState = await readNotabilityColumnState();
@@ -168,20 +168,20 @@ describeE2E('migration v46: facts.notability ALTER', () => {
     const checkBefore = await readNamedCheckExists();
     expect(checkBefore).toBe(false);
 
-    // Re-run v46. It should ADD the CHECK without touching the column.
-    await runV46();
+    // Re-run v47. It should ADD the CHECK without touching the column.
+    await runV47();
 
     const checkAfter = await readNamedCheckExists();
     expect(checkAfter).toBe(true);
   });
 
   test('idempotent re-run on fully-migrated brain → no error, no state change', async () => {
-    // Already fully migrated from the prior test. Run v46 again.
+    // Already fully migrated from the prior test. Run v47 again.
     const before = await readNotabilityColumnState();
     const checkBefore = await readNamedCheckExists();
 
     // Should not throw.
-    await runV46();
+    await runV47();
 
     const after = await readNotabilityColumnState();
     const checkAfter = await readNamedCheckExists();

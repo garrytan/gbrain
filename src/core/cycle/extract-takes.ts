@@ -46,6 +46,23 @@ export interface ExtractTakesResult {
   pagesWithTakes: number;
   takesUpserted: number;
   warnings: string[];
+  /**
+   * v0.32 EXP-4 producer seam (codex review #4). Subset of warnings shaped
+   * for `recordSyncFailures()`: each entry is a `(path, error)` pair the
+   * caller can hand to sync.ts so doctor's `sync_failures` check shows the
+   * breakdown by code (`TAKES_HOLDER_INVALID=N`).
+   *
+   * Currently captures only `TAKES_HOLDER_INVALID` warnings — the other
+   * fence-parse warnings (TAKES_TABLE_MALFORMED etc.) are non-fatal data
+   * quality signals that already surface via `result.warnings` for
+   * progress-line visibility but don't need persistent JSONL records yet.
+   * Extend this list when a new warning class earns sync-failure persistence.
+   *
+   * `path` is the file path on FS-source extraction and the slug on
+   * DB-source extraction (slug is the closest stable identifier when
+   * there's no on-disk file to point at).
+   */
+  failedFiles: Array<{ path: string; error: string }>;
 }
 
 /**
@@ -103,7 +120,7 @@ export async function extractTakesFromFs(
   opts: { repoPath: string; slugs?: string[]; dryRun?: boolean; rebuild?: boolean },
 ): Promise<ExtractTakesResult> {
   const result: ExtractTakesResult = {
-    pagesScanned: 0, pagesWithTakes: 0, takesUpserted: 0, warnings: [],
+    pagesScanned: 0, pagesWithTakes: 0, takesUpserted: 0, warnings: [], failedFiles: [],
   };
   const dryRun = opts.dryRun ?? false;
   const slugFilter = opts.slugs && opts.slugs.length > 0 ? new Set(opts.slugs) : null;
@@ -126,7 +143,12 @@ export async function extractTakesFromFs(
 
     const { takes, warnings } = parseTakesFence(body);
     if (warnings.length) {
-      for (const w of warnings) result.warnings.push(`${slug}: ${w}`);
+      for (const w of warnings) {
+        result.warnings.push(`${slug}: ${w}`);
+        if (w.startsWith('TAKES_HOLDER_INVALID')) {
+          result.failedFiles.push({ path: relPath, error: w });
+        }
+      }
     }
     if (takes.length === 0) continue;
 
@@ -160,7 +182,7 @@ export async function extractTakesFromDb(
   opts: { slugs?: string[]; dryRun?: boolean; rebuild?: boolean } = {},
 ): Promise<ExtractTakesResult> {
   const result: ExtractTakesResult = {
-    pagesScanned: 0, pagesWithTakes: 0, takesUpserted: 0, warnings: [],
+    pagesScanned: 0, pagesWithTakes: 0, takesUpserted: 0, warnings: [], failedFiles: [],
   };
   const dryRun = opts.dryRun ?? false;
   const slugs = opts.slugs && opts.slugs.length > 0
@@ -175,7 +197,15 @@ export async function extractTakesFromDb(
     const body = `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`;
     const { takes, warnings } = parseTakesFence(body);
     if (warnings.length) {
-      for (const w of warnings) result.warnings.push(`${slug}: ${w}`);
+      for (const w of warnings) {
+        result.warnings.push(`${slug}: ${w}`);
+        if (w.startsWith('TAKES_HOLDER_INVALID')) {
+          // DB-source path: no on-disk file path, use slug as the failedFiles
+          // identifier. recordSyncFailures' dedup-by-(path, commit, error)
+          // works the same against slug-shaped paths.
+          result.failedFiles.push({ path: slug, error: w });
+        }
+      }
     }
     if (takes.length === 0) continue;
 

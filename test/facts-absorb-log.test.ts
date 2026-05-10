@@ -84,7 +84,7 @@ describe('writeFactsAbsorbLog — ingest_log row shape', () => {
   test('respects custom sourceId', async () => {
     // Seed a non-default source so the FK on ingest_log.source_id resolves.
     // ingest_log doesn't FK source_id (the table predates the source axis;
-    // v47 just adds the column with default 'default' — no FK constraint).
+    // v50 just adds the column with default 'default' — no FK constraint).
     await writeFactsAbsorbLog(engine, 'meetings/test-2', 'parse_failure', 'malformed JSON', 'team-source');
     const log = await engine.getIngestLog({ limit: 10 });
     const ours = log.find(r => r.source_ref === 'meetings/test-2');

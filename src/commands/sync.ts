@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, writeFileSync, statSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, statSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile } from '../core/import-file.ts';
+import { collectSyncableFiles } from './import.ts';
 import { createInterface } from 'readline';
 import {
   buildSyncManifest,
@@ -74,10 +75,24 @@ function estimateSyncAllCost(sources: Array<{ local_path: string | null; config:
     let sourceTokens = 0;
     let sourceFiles = 0;
     try {
-      walkSyncableFiles(src.local_path, (filePath: string, content: string) => {
-        sourceTokens += estimateTokens(content);
-        sourceFiles++;
-      }, cfg.strategy ?? 'markdown');
+      // v0.31.2: cost preview routed through collectSyncableFiles
+      // (single hardened walker; see import.ts). Previously
+      // walkSyncableFiles used statSync (followed symlinks). New walker
+      // uses lstat + inode-cycle + max-depth so the preview matches
+      // what the real sync will actually walk.
+      const files = collectSyncableFiles(src.local_path, { strategy: cfg.strategy ?? 'markdown' });
+      for (const fullPath of files) {
+        try {
+          const stat = statSync(fullPath);
+          if (stat.size > 5_000_000) continue; // skip large binaries
+          const content = readFileSync(fullPath, 'utf-8');
+          sourceTokens += estimateTokens(content);
+          sourceFiles++;
+        } catch {
+          // Best-effort per file. Skip unreadable files silently;
+          // sync itself tolerates the same.
+        }
+      }
     } catch {
       // Best-effort: a source whose local_path is gone or unreadable just
       // contributes 0. The sync itself would have failed anyway; no point
@@ -89,48 +104,6 @@ function estimateSyncAllCost(sources: Array<{ local_path: string | null; config:
   }
 
   return { totalTokens, totalFiles, activeSources, perSource };
-}
-
-/**
- * Walk a repo's working tree and invoke `cb(path, content)` for each
- * syncable file. Honors the same strategy as `isSyncable` so the preview
- * and the real sync agree on what's in scope.
- */
-function walkSyncableFiles(
-  repoRoot: string,
-  cb: (path: string, content: string) => void,
-  strategy: 'markdown' | 'code' | 'auto',
-): void {
-  const stack: string[] = [repoRoot];
-  while (stack.length > 0) {
-    const dir = stack.pop()!;
-    let entries: import('fs').Dirent[];
-    try {
-      entries = readdirSync(dir, { withFileTypes: true }) as unknown as import('fs').Dirent[];
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const name = typeof entry.name === 'string' ? entry.name : String(entry.name);
-      // Skip hidden dirs, .git, node_modules (same rules isSyncable applies).
-      if (name.startsWith('.') || name === 'node_modules' || name === 'ops') continue;
-      const fullPath = `${dir}/${name}`;
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
-      } else if (entry.isFile()) {
-        const relativePath = fullPath.slice(repoRoot.length + 1);
-        if (!isSyncable(relativePath, { strategy })) continue;
-        try {
-          const stat = statSync(fullPath);
-          if (stat.size > 5_000_000) continue; // skip large binaries
-          const content = readFileSync(fullPath, 'utf-8');
-          cb(fullPath, content);
-        } catch {
-          // Ignore files we can't read; consistent with sync's own tolerance.
-        }
-      }
-    }
-  }
 }
 
 /** Interactive [y/N] prompt. Resolves false on non-y answers or EOF. */
@@ -417,11 +390,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // git-remote.ts so the flag set is consistent across initial clone and
   // ongoing pulls — single source of truth for the defensive flags.
   if (!opts.noPull && !detachedHead) {
+    const _t0 = Date.now();
+    console.error(`[gbrain phase] sync.git_pull start`);
     try {
       const { pullRepo } = await import('../core/git-remote.ts');
       pullRepo(repoPath);
+      console.error(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[gbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 80)})`);
       if (msg.includes('non-fast-forward') || msg.includes('diverged')) {
         console.error(`Warning: git pull failed (remote diverged). Syncing from local state.`);
       } else {
@@ -964,21 +941,24 @@ async function performFullSync(
   // Dry-run: walk the repo, count syncable files, return without writing.
   // Fixes the silent-write-on-dry-run bug where performFullSync called
   // runImport unconditionally regardless of opts.dryRun.
+  //
+  // v0.31.2 (codex C6): use the strategy-aware walker. Pre-fix this
+  // hardcoded `collectMarkdownFiles(repoPath)` and filtered with
+  // default-markdown `isSyncable(rel)`, so `gbrain sync --strategy
+  // code --dry-run` always reported zero files even when ~1500 code
+  // files were waiting.
   if (opts.dryRun) {
-    const { collectMarkdownFiles } = await import('./import.ts');
-    const allFiles = collectMarkdownFiles(repoPath);
-    const syncableRelPaths = allFiles
-      .map(abs => relative(repoPath, abs))
-      .filter(rel => isSyncable(rel));
+    const allFiles = collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown' });
     console.log(
-      `Full-sync dry run: ${syncableRelPaths.length} file(s) would be imported ` +
+      `Full-sync dry run (strategy=${opts.strategy ?? 'markdown'}): ` +
+      `${allFiles.length} file(s) would be imported ` +
       `from ${repoPath} @ ${headCommit.slice(0, 8)}.`,
     );
     return {
       status: 'dry_run',
       fromCommit: null,
       toCommit: headCommit,
-      added: syncableRelPaths.length,
+      added: allFiles.length,
       modified: 0,
       deleted: 0,
       renamed: 0,
@@ -1000,10 +980,21 @@ async function performFullSync(
   const importArgs = [repoPath];
   if (opts.noEmbed) importArgs.push('--no-embed');
   if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
-  // v0.30.x follow-up to PR #707: thread sourceId through runImport's opts
-  // so performFullSync routes pages to the named source (the incremental
-  // sync path in this same file already does this on lines 581/641).
-  const result = await runImport(engine, importArgs, { commit: headCommit, sourceId: opts.sourceId });
+  // v0.31.2: thread strategy through so code-strategy first sync
+  // actually enumerates code files (closes bug 1).
+  // v0.30.x: thread sourceId so performFullSync routes pages to the named
+  // source (incremental path already does this).
+  const _fullImportT0 = Date.now();
+  console.error(`[gbrain phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
+  const result = await runImport(engine, importArgs, {
+    commit: headCommit,
+    strategy: opts.strategy,
+    sourceId: opts.sourceId,
+  });
+  console.error(
+    `[gbrain phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
+    `imported=${result.imported} skipped=${result.skipped} errors=${result.errors}`,
+  );
 
   // Bug 9 — gate the full-sync bookmark on success. runImport already
   // writes its own sync.last_commit conditionally (import.ts), but

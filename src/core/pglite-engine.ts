@@ -36,6 +36,7 @@ import type {
 } from './types.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, takeRowToTake } from './utils.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
+import { normalizeWeightForStorage } from './takes-fence.ts';
 import { GBrainError, PAGE_SORT_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
@@ -326,7 +327,7 @@ export class PGLiteEngine implements BrainEngine {
     // PGLITE_SCHEMA_SQL references effective_date. Use effective_date_exists
     // as the proxy for the five v40 + v41 pages columns.
     const needsPagesRecency = probe.pages_exists && !probe.effective_date_exists;
-    // v0.31.2 (v47): idx_ingest_log_source_type_created in PGLITE_SCHEMA_SQL
+    // v0.31.2 (v50): idx_ingest_log_source_type_created in PGLITE_SCHEMA_SQL
     // references source_id. Old brains have ingest_log without source_id;
     // bootstrap adds the column before SCHEMA_SQL replay creates the index.
     const needsIngestLogSourceId = probe.ingest_log_exists && !probe.ingest_log_source_id_exists;
@@ -454,7 +455,7 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     if (needsIngestLogSourceId) {
-      // v47 (ingest_log_source_id) adds source_id + the
+      // v50 (ingest_log_source_id) adds source_id + the
       // idx_ingest_log_source_type_created composite index.
       // PGLITE_SCHEMA_SQL's CREATE INDEX (source_id, source_type, created_at)
       // crashes without source_id. Bootstrap adds the column with NOT NULL
@@ -2038,9 +2039,9 @@ export class PGLiteEngine implements BrainEngine {
     const kinds     = rowsIn.map(r => r.kind);
     const holders   = rowsIn.map(r => r.holder);
     const weights   = rowsIn.map(r => {
-      const w = r.weight ?? 0.5;
-      if (w < 0 || w > 1) { weightClamped++; return Math.max(0, Math.min(1, w)); }
-      return w;
+      const { weight, clamped } = normalizeWeightForStorage(r.weight);
+      if (clamped) weightClamped++;
+      return weight;
     });
     const sinces    = rowsIn.map(r => r.since_date ?? null);
     const untils    = rowsIn.map(r => r.until_date ?? null);
@@ -2204,9 +2205,12 @@ export class PGLiteEngine implements BrainEngine {
     fields: { weight?: number; since_date?: string; source?: string },
   ): Promise<void> {
     let weight = fields.weight;
-    if (weight !== undefined && (weight < 0 || weight > 1)) {
-      process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: updateTake clamped weight ${weight} → [0,1]\n`);
-      weight = Math.max(0, Math.min(1, weight));
+    if (weight !== undefined) {
+      const norm = normalizeWeightForStorage(weight);
+      if (norm.clamped) {
+        process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: updateTake clamped weight ${weight} → ${norm.weight}\n`);
+      }
+      weight = norm.weight;
     }
     const result = await this.db.query(
       `UPDATE takes SET
@@ -2582,7 +2586,7 @@ export class PGLiteEngine implements BrainEngine {
       `SELECT * FROM ingest_log ORDER BY created_at DESC LIMIT $1`,
       [limit]
     );
-    // Belt-and-suspenders source_id fallback for any pre-v47 row that
+    // Belt-and-suspenders source_id fallback for any pre-v50 row that
     // somehow survived without the backfill.
     return (rows as unknown as IngestLogEntry[]).map(r => ({
       ...r,

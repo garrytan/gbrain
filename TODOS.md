@@ -1,5 +1,51 @@
 # TODOS
 
+## v0.31.2 follow-ups
+
+### Investigate: `gbrain query <common-keyword>` infinite loop
+**Priority:** P1
+**Filed:** 2026-05-08 from v0.31.2 bug report (separate from the sync hang).
+
+**Evidence:** Two `bun /Users/garrytan/.bun/bin/gbrain query the` processes
+(PIDs 39429, 46624) on the user's Mac were pegged at 99% CPU for 7
+straight days before being killed manually. Each used 6+ GB resident
+memory. Originated from the `algiers-v3` worktree. Not walker-related
+(query path doesn't traverse files), so the v0.31.2 fix doesn't address
+it.
+
+**Likely candidates:**
+- Query-expansion regex catastrophic backtracking on common single words
+  (`src/core/search/expansion.ts` calls Haiku then post-processes with
+  regex; a one-token query plus an unhelpful expansion could feed a
+  pathological input back into the search pipeline)
+- Hybrid-search RRF reciprocal-rank-fusion loop iterating over a result
+  set that never shrinks (`src/core/search/hybrid.ts`)
+- `postgres.js` cursor that never closes when the result set is large
+  (the 6GB RES on `query` smells like accumulated rows in JS memory, not
+  WASM allocation)
+
+**To reproduce:** create a brain with at least a few thousand pages, run
+`gbrain query the` and watch CPU + RSS. If it pegs and grows, capture
+`process.report.getReport()` and a stack trace via `kill -SIGUSR2 <pid>`
+before killing.
+
+**Out of scope for v0.31.2** because the user's primary symptom (sync
+hang) was the higher-evidence bug. Pick this up as v0.31.3 once the
+sync fix is verified working in production.
+
+### v0.31.3: PGLite + Postgres E2E for amarillo-shape regression
+**Priority:** P2
+**Filed:** 2026-05-08 from v0.31.2 plan (deferred).
+
+**What:** Plan called for two regression tests pinning the user's exact
+repro topology: `test/sync-walker-amarillo-shape.test.ts` (PGLite,
+fast-loop) and `test/e2e/sync-amarillo-shape.test.ts` (real-Postgres,
+skip-on-no-DB). Unit-level walker + chunker tests landed in v0.31.2
+(`test/sync-walker-symlink.test.ts` + `test/chunker-timeout.test.ts`),
+but the engine-integrated regression for the user's exact 1500-file
+self-symlink topology is still pending. Add when the next sync-related
+PR is in flight.
+
 ## Thin-client mode follow-ups (v0.31.1, Issue #734)
 
 - [ ] **v0.31.x: routed-call timing telemetry.** `GBRAIN_TIMING=1` prints

@@ -13,6 +13,7 @@ import type {
 } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
+import { normalizeWeightForStorage } from './takes-fence.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
@@ -381,7 +382,7 @@ export class PostgresEngine implements BrainEngine {
     // five v40 + v41 pages columns (emotional_weight, effective_date,
     // effective_date_source, import_filename, salience_touched_at).
     const needsPagesRecency = probe.pages_exists && !probe.effective_date_exists;
-    // v0.31.2 (v47): idx_ingest_log_source_type_created in SCHEMA_SQL references
+    // v0.31.2 (v50): idx_ingest_log_source_type_created in SCHEMA_SQL references
     // source_id. Old brains have ingest_log without source_id; bootstrap adds
     // the column before SCHEMA_SQL replay creates the index.
     const needsIngestLogSourceId = probe.ingest_log_exists && !probe.ingest_log_source_id_exists;
@@ -508,7 +509,7 @@ export class PostgresEngine implements BrainEngine {
     }
 
     if (needsIngestLogSourceId) {
-      // v47 (ingest_log_source_id) adds source_id +
+      // v50 (ingest_log_source_id) adds source_id +
       // idx_ingest_log_source_type_created composite index. SCHEMA_SQL's
       // CREATE INDEX (source_id, source_type, created_at) crashes without
       // source_id. Bootstrap adds the column with NOT NULL DEFAULT 'default'
@@ -2165,9 +2166,9 @@ export class PostgresEngine implements BrainEngine {
     const kinds     = rowsIn.map(r => r.kind);
     const holders   = rowsIn.map(r => r.holder);
     const weights   = rowsIn.map(r => {
-      const w = r.weight ?? 0.5;
-      if (w < 0 || w > 1) { weightClamped++; return Math.max(0, Math.min(1, w)); }
-      return w;
+      const { weight, clamped } = normalizeWeightForStorage(r.weight);
+      if (clamped) weightClamped++;
+      return weight;
     });
     const sinces    = rowsIn.map(r => r.since_date ?? null);
     const untils    = rowsIn.map(r => r.until_date ?? null);
@@ -2326,9 +2327,12 @@ export class PostgresEngine implements BrainEngine {
   ): Promise<void> {
     const sql = this.sql;
     let weight = fields.weight;
-    if (weight !== undefined && (weight < 0 || weight > 1)) {
-      process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: updateTake clamped weight ${weight} → [0,1]\n`);
-      weight = Math.max(0, Math.min(1, weight));
+    if (weight !== undefined) {
+      const norm = normalizeWeightForStorage(weight);
+      if (norm.clamped) {
+        process.stderr.write(`[takes] TAKES_WEIGHT_CLAMPED: updateTake clamped weight ${weight} → ${norm.weight}\n`);
+      }
+      weight = norm.weight;
     }
     const result = await sql`
       UPDATE takes SET
@@ -2680,7 +2684,7 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT * FROM ingest_log ORDER BY created_at DESC LIMIT ${limit}
     `;
-    // Belt-and-suspenders source_id fallback for any pre-v47 row.
+    // Belt-and-suspenders source_id fallback for any pre-v50 row.
     return (rows as unknown as IngestLogEntry[]).map(r => ({
       ...r,
       source_id: r.source_id ?? 'default',

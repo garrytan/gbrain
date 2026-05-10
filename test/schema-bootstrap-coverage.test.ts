@@ -103,7 +103,7 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   { kind: 'column', table: 'pages', column: 'effective_date_source' },
   { kind: 'column', table: 'pages', column: 'import_filename' },
   { kind: 'column', table: 'pages', column: 'salience_touched_at' },
-  // v0.31.2 (v47) — forward-referenced by `CREATE INDEX
+  // v0.31.2 (v50) — forward-referenced by `CREATE INDEX
   // idx_ingest_log_source_type_created ON ingest_log (source_id, source_type,
   // created_at DESC)`. Old brains have ingest_log without source_id; bootstrap
   // adds the column before SCHEMA_SQL replay creates the index.

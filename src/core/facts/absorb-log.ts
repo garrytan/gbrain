@@ -4,7 +4,7 @@
  * D5 contract from /plan-ceo-review: every absorbed failure in the facts
  * extraction pipeline writes one row to the existing ingest_log table.
  * Cross-process visible (doctor + admin dashboard read the same query),
- * scoped per source (codex P1 #3 — migration v47 added source_id), grouped
+ * scoped per source (codex P1 #3 — migration v50 added source_id), grouped
  * by stable reason codes so future tooling can categorize failures.
  *
  * Mirrors the eval_capture_failures precedent (CLAUDE.md cites this exact
