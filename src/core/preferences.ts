@@ -18,6 +18,10 @@ function home(): string {
   // workflow that needs to run against a specific $HOME (CI, scripted installs).
   // Prefer the env var; fall back to the cached OS value. Matches the existing
   // `src/commands/upgrade.ts` pattern.
+  //
+  // NOTE: prefsDir() and migrationsDir() route through gbrainPath() (which
+  // honors GBRAIN_HOME), so this fallback is only used by code paths that
+  // want $HOME directly (none in this file as of v0.30.3).
   return process.env.HOME || homedir();
 }
 
@@ -75,6 +79,10 @@ export interface CompletedMigrationEntry {
 
 const VALID_MODES: ReadonlyArray<MinionMode> = ['always', 'pain_triggered', 'off'];
 
+// Route preferences + migration ledger paths through gbrainDir() so they
+// honor GBRAIN_HOME for hermetic test isolation. Pre-v0.30.3 these used
+// `$HOME/.gbrain` directly, which leaked the developer's local migration
+// ledger into E2E tests and CI runs even when GBRAIN_HOME was set.
 function prefsDir(): string { return gbrainDir(); }
 function prefsPath(): string { return join(prefsDir(), 'preferences.json'); }
 function migrationsDir(): string { return join(gbrainDir(), 'migrations'); }

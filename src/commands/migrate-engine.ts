@@ -117,11 +117,13 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
 
   if (targetStats.page_count > 0 && opts.force) {
     console.log('--force: wiping target brain...');
-    // Delete all pages (cascades to chunks, links, tags, etc.)
-    const pages = await targetEngine.listPages({ limit: 100000 });
-    for (const p of pages) {
-      await targetEngine.deletePage(p.slug);
-    }
+    // v0.18.0+ multi-source: deletePage(slug) is now source-scoped (defaults
+    // to 'default'), so per-page iteration would skip non-default-source
+    // rows. migrate-engine --force is a destructive wipe across the entire
+    // brain — all sources, all pages — so we issue a raw DELETE that matches
+    // the original semantic. Cascades through content_chunks / page_links /
+    // tags / timeline_entries / page_versions via existing FKs.
+    await targetEngine.executeRaw('DELETE FROM pages');
   }
 
   // Load or create manifest for resume

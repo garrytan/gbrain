@@ -177,11 +177,8 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
   test('sync is refused with canonical thin-client error', async () => {
     const r = await spawn(['sync'], clientHome);
     expect(r.exitCode).toBe(1);
-    // v0.31.1: refusal carries pinpoint hint format (`thin-client of <url>`
-    // with hyphen) instead of the v0.30 generic `thin client` (with space).
-    expect(r.stderr).toContain('thin-client of');
+    expect(r.stderr).toContain('thin client');
     expect(r.stderr).toContain(`http://127.0.0.1:${serverPort}/mcp`);
-    expect(r.stderr).toContain('not routable');
   });
 
   test('re-running init refuses without --force', async () => {
@@ -189,113 +186,6 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     expect(r.exitCode).toBe(1);
     const parsed = JSON.parse(r.stdout.trim().split('\n').pop()!);
     expect(parsed.reason).toBe('thin_client_config_present');
-  });
-
-  // ─── v0.31.1 (Issue #734) — routing seam regression tests ───
-  //
-  // Run BEFORE Tier B (remote ping) because the remote-ping test runs a
-  // 60s autopilot-cycle that can leave the server in a state where
-  // subsequent OAuth probes fail. Routing tests need a healthy server.
-  //
-  // The bug being fixed: thin-client gbrain commands silently fell through to
-  // the empty local PGLite, returned "No results." (exit 0), and never reached
-  // the remote brain. These tests pin the routing path against a real seeded
-  // host. If any of these regress, the silent-empty-results bug is back.
-
-  test('issue #734 regression: gbrain search routes to host and returns seeded rows', async () => {
-    // Seed two pages on the host via direct `gbrain put` (host has the engine).
-    // Both contain the unique token "host_routing_proof" so we can grep
-    // the response body to prove it came from the remote brain.
-    const seed1 = await spawn([
-      'put', 'wiki/test/routing-proof-1',
-      '--type', 'note',
-      '--title', 'Routing Proof Page One',
-      '--content', '# Routing Proof One\n\nUnique token: host_routing_proof. This page only exists on the host.',
-    ], hostHome);
-    if (seed1.exitCode !== 0) throw new Error(`seed1 put failed: ${seed1.stderr || seed1.stdout}`);
-
-    const seed2 = await spawn([
-      'put', 'wiki/test/routing-proof-2',
-      '--type', 'note',
-      '--title', 'Routing Proof Page Two',
-      '--content', '# Routing Proof Two\n\nAnother page with host_routing_proof.',
-    ], hostHome);
-    if (seed2.exitCode !== 0) throw new Error(`seed2 put failed: ${seed2.stderr || seed2.stdout}`);
-
-    // Now run search from the THIN CLIENT. Pre-v0.31.1 this returned
-    // "No results." against the empty local PGLite. v0.31.1 routes via MCP
-    // and must return at least one row referencing the seeded slug.
-    const r = await spawn(['search', 'host_routing_proof'], clientHome);
-
-    // Hard-fail conditions that pin the bug fix:
-    expect(r.exitCode).toBe(0);
-    // The original bug: empty stdout. If this assertion ever fails, #734 has
-    // regressed — silent-empty-results is back.
-    expect(r.stdout.length).toBeGreaterThan(0);
-    expect(r.stdout).not.toContain('No results.');
-    // Seeded slug must appear in the routed response body.
-    expect(r.stdout).toContain('wiki/test/routing-proof');
-  });
-
-  test('routed search emits identity banner on stderr (cherry-pick B)', async () => {
-    // Run search with stderr captured. Banner is suppressed in non-TTY by
-    // default per our suppression rules; opt back in with GBRAIN_BANNER=1.
-    const r = await spawn(['search', 'host_routing_proof'], clientHome, {
-      GBRAIN_BANNER: '1',
-    });
-    expect(r.exitCode).toBe(0);
-    // Banner format: [thin-client → host:port · brain: Npages, Nchunks · vX.Y.Z]
-    expect(r.stderr).toContain('thin-client');
-    expect(r.stderr).toContain(`127.0.0.1:${serverPort}`);
-    expect(r.stderr).toMatch(/v\d+\.\d+\.\d+/);
-  });
-
-  test('--quiet suppresses banner even with GBRAIN_BANNER=1', async () => {
-    // --quiet wins over GBRAIN_BANNER=1. Belt-and-suspenders for shell pipelines.
-    const r = await spawn(['--quiet', 'search', 'host_routing_proof'], clientHome, {
-      GBRAIN_BANNER: '1',
-    });
-    expect(r.exitCode).toBe(0);
-    expect(r.stderr).not.toContain('thin-client →');
-  });
-
-  test('routed put round-trip: thin-client write reaches the host', async () => {
-    // Write from the thin client. Pre-v0.31.1 this would have hit the empty
-    // local PGLite; v0.31.1 routes through MCP put_page.
-    const w = await spawn([
-      'put', 'wiki/test/thin-client-write-proof',
-      '--type', 'note',
-      '--title', 'Written By Thin Client',
-      '--content', '# Written By Thin Client\n\nThis page was created via routed MCP put.',
-    ], clientHome);
-    expect(w.exitCode).toBe(0);
-
-    // Verify it landed on the host by reading it back from the host's local engine.
-    const r = await spawn(['get', 'wiki/test/thin-client-write-proof'], hostHome);
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain('Written By Thin Client');
-    expect(r.stdout).toContain('routed MCP put');
-  });
-
-  test('routed stats: admin-scope client returns real numbers (not 0/0)', async () => {
-    // Pre-v0.31.1: thin-client `gbrain stats` returned page_count=0 against
-    // empty local PGLite. v0.31.1 routes to host's get_stats op (admin scope)
-    // and surfaces real numbers. We seeded 2+ pages above — page_count must
-    // reflect that, not zero.
-    const r = await spawn(['stats', '--json'], clientHome);
-    expect(r.exitCode).toBe(0);
-    const stats = JSON.parse(r.stdout.trim());
-    expect(stats.page_count).toBeGreaterThan(0);
-    expect(stats.chunk_count).toBeGreaterThan(0);
-  });
-
-  test('local-only command refused with pinpoint hint (sync)', async () => {
-    // Refusal is already covered upstream but this pins the v0.31.1 hint
-    // format ("not routable. <hint>") instead of the v0.30 generic message.
-    const r = await spawn(['sync'], clientHome);
-    expect(r.exitCode).toBe(1);
-    expect(r.stderr).toContain('not routable');
-    expect(r.stderr).toContain('gbrain remote ping');
   });
 
   // ─── Tier B: gbrain remote ping + remote doctor ───

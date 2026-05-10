@@ -15,6 +15,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
 
 let engine: PGLiteEngine;
 let alicePageId: number;
@@ -102,6 +103,103 @@ describe('per-token takes-holder allow-list — takes_search', () => {
     const hits = parseResult(result) as Array<{ holder: string }>;
     // 'Strong technical founder' (garry) should match
     expect(hits.some(h => h.holder === 'garry')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Page-body channel: get_page / get_versions must respect the same allow-list.
+// Take rows are stored in TWO places per the extract-takes contract: the
+// `takes` table (filtered by the SQL `holder = ANY($allowList)` clause) and
+// inline in `pages.compiled_truth` between TAKES_FENCE markers as a markdown
+// table. Without a strip on the page-CRUD path, a `world`-only token reading
+// `get_page <slug>` recovers every non-`world` claim verbatim from the body.
+// ---------------------------------------------------------------------------
+
+describe('per-token takes-holder allow-list — get_page body channel', () => {
+  const SLUG = 'people/bob-example';
+  const FENCE_BODY =
+    '## Takes\n\n' +
+    `${TAKES_FENCE_BEGIN}\n` +
+    '\n| # | claim | kind | who | weight | since | source |\n' +
+    '|---|---|---|---|---|---|---|\n' +
+    '| 1 | CEO of Widget | fact | world | 1.0 | 2017-01 | Crustdata |\n' +
+    '| 2 | Strong technical founder | take | garry | 0.85 | 2026-04-29 | OH |\n' +
+    '| 3 | Seemed burned out in last OH | hunch | brain | 0.4 | 2026-05-01 | private |\n\n' +
+    `${TAKES_FENCE_END}\n` +
+    '\nFooter content stays.\n';
+
+  beforeAll(async () => {
+    await engine.putPage(SLUG, { title: 'Bob', type: 'person', compiled_truth: FENCE_BODY });
+  });
+
+  test('remote token with allow-list strips fence from compiled_truth', async () => {
+    const result = await dispatchToolCall(engine, 'get_page', { slug: SLUG }, {
+      remote: true,
+      takesHoldersAllowList: ['world'],
+    });
+    const page = parseResult(result) as { compiled_truth: string };
+    expect(page.compiled_truth).not.toContain(TAKES_FENCE_BEGIN);
+    expect(page.compiled_truth).not.toContain(TAKES_FENCE_END);
+    expect(page.compiled_truth).not.toContain('Strong technical founder');
+    expect(page.compiled_truth).not.toContain('Seemed burned out');
+    expect(page.compiled_truth).not.toContain('| garry |');
+    expect(page.compiled_truth).not.toContain('| brain |');
+    // Surrounding body kept intact.
+    expect(page.compiled_truth).toContain('Footer content stays.');
+  });
+
+  test('local CLI (no allow-list) preserves the fence — backwards compatibility', async () => {
+    const result = await dispatchToolCall(engine, 'get_page', { slug: SLUG }, {
+      remote: false,
+    });
+    const page = parseResult(result) as { compiled_truth: string };
+    expect(page.compiled_truth).toContain(TAKES_FENCE_BEGIN);
+    expect(page.compiled_truth).toContain('Seemed burned out');
+  });
+
+  test('fuzzy resolution path also strips for remote token', async () => {
+    const result = await dispatchToolCall(engine, 'get_page', { slug: 'people/bob-example', fuzzy: true }, {
+      remote: true,
+      takesHoldersAllowList: ['world', 'garry'],
+    });
+    const page = parseResult(result) as { compiled_truth: string };
+    // Allow-list does not yet re-render filtered rows; whole fence is stripped.
+    // Pinned so future re-rendering work is an additive change, not a silent
+    // semantic flip.
+    expect(page.compiled_truth).not.toContain(TAKES_FENCE_BEGIN);
+    expect(page.compiled_truth).not.toContain('Strong technical founder');
+  });
+});
+
+describe('per-token takes-holder allow-list — get_versions body channel', () => {
+  const SLUG = 'people/carol-example';
+  const FENCE_BODY =
+    `${TAKES_FENCE_BEGIN}\n| # | claim | kind | who |\n|---|---|---|---|\n| 1 | private hunch | hunch | brain |\n${TAKES_FENCE_END}\n`;
+
+  beforeAll(async () => {
+    await engine.putPage(SLUG, { title: 'Carol', type: 'person', compiled_truth: FENCE_BODY });
+    await engine.createVersion(SLUG); // snapshot now has the fence
+  });
+
+  test('remote token with allow-list strips fence from every snapshot', async () => {
+    const result = await dispatchToolCall(engine, 'get_versions', { slug: SLUG }, {
+      remote: true,
+      takesHoldersAllowList: ['world'],
+    });
+    const versions = parseResult(result) as Array<{ compiled_truth: string }>;
+    expect(versions.length).toBeGreaterThan(0);
+    for (const v of versions) {
+      expect(v.compiled_truth).not.toContain(TAKES_FENCE_BEGIN);
+      expect(v.compiled_truth).not.toContain('private hunch');
+    }
+  });
+
+  test('local CLI sees historical takes in snapshots', async () => {
+    const result = await dispatchToolCall(engine, 'get_versions', { slug: SLUG }, {
+      remote: false,
+    });
+    const versions = parseResult(result) as Array<{ compiled_truth: string }>;
+    expect(versions.some(v => v.compiled_truth.includes('private hunch'))).toBe(true);
   });
 });
 

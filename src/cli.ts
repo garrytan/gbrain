@@ -27,6 +27,16 @@ for (const op of operations) {
 
 // CLI-only commands that bypass the operation layer
 const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'remote']);
+// CLI-only commands whose handlers print their own --help text. These are
+// excluded from the generic short-circuit so detailed per-command and
+// per-subcommand usage stays reachable.
+const CLI_ONLY_SELF_HELP = new Set([
+  'upgrade', 'post-upgrade', 'check-update',
+  'embed', 'config',
+  'skillpack', 'skillpack-check',
+  'integrations', 'friction',
+  'frontmatter', 'check-resolvable',
+]);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -62,10 +72,14 @@ async function main() {
   }
 
   // Per-command --help
-  if (subArgs.includes('--help') || subArgs.includes('-h')) {
+  if (hasHelpFlag(subArgs)) {
     const op = cliOps.get(command);
     if (op) {
       printOpHelp(op);
+      return;
+    }
+    if (CLI_ONLY.has(command) && !CLI_ONLY_SELF_HELP.has(command)) {
+      printCliOnlyHelp(command);
       return;
     }
   }
@@ -163,6 +177,16 @@ async function main() {
   } finally {
     await engine.disconnect();
   }
+}
+
+function hasHelpFlag(args: string[]): boolean {
+  return args.includes('--help') || args.includes('-h');
+}
+
+function printCliOnlyHelp(command: string) {
+  console.log(`Usage: gbrain ${command}`);
+  console.log('');
+  console.log(`gbrain ${command} - run gbrain --help for the full command list.`);
 }
 
 /**

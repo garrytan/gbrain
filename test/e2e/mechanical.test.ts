@@ -1208,24 +1208,33 @@ describeE2E('E2E: RLS Verification', () => {
 // ─────────────────────────────────────────────────────────────────
 
 describeE2E('E2E: Doctor Command', () => {
+  // Scope GBRAIN_HOME to a hermetic tmpdir so `gbrain doctor` doesn't read
+  // the developer's local ~/.gbrain/migrations/completed.jsonl. Stale partial
+  // entries from in-flight workspaces (e.g. v0.31.x santiago) would make the
+  // minions_migration check fail and exit 1, masking real DB-health failures.
+  let gbrainHome: string;
+
   beforeAll(async () => {
     await setupDB();
     await importFixtures();
+    // Isolate GBRAIN_HOME to a per-block tempdir so the developer's
+    // ~/.gbrain/migrations/completed.jsonl ledger doesn't leak in. Without
+    // this, doctor reads the dev machine state — partial v0.21/v0.22.4/v0.28.0
+    // migration entries from in-flight workspaces — and surfaces them as the
+    // 'minions_migration' [FAIL] check, exiting with code 1.
+    gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-doctor-e2e-'));
   }, 30_000);
-  afterAll(teardownDB);
+  afterAll(async () => {
+    await teardownDB();
+    if (gbrainHome) rmSync(gbrainHome, { recursive: true, force: true });
+  });
 
   const cliCwd = join(import.meta.dir, '../..');
-  // Isolate GBRAIN_HOME to a per-test tempdir so the developer's
-  // ~/.gbrain/migrations/completed.jsonl ledger doesn't leak in. Without
-  // this, doctor reads Garry's machine state — partial v0.21/v0.22.4/v0.28.0
-  // migration entries from prior dev work — and surfaces them as the
-  // 'minions_migration' [FAIL] check, exiting with code 1.
-  const isolatedHome = mkdtempSync(join(tmpdir(), 'gbrain-doctor-test-'));
   const cliEnv = () => ({
     ...process.env,
     DATABASE_URL: process.env.DATABASE_URL!,
     GBRAIN_DATABASE_URL: process.env.DATABASE_URL!,
-    GBRAIN_HOME: isolatedHome,
+    GBRAIN_HOME: gbrainHome,
   });
 
   test('gbrain doctor exits 0 on healthy DB', () => {

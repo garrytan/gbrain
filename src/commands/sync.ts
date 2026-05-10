@@ -196,6 +196,33 @@ function git(repoPath: string, ...args: string[]): string {
   }).trim();
 }
 
+function isDetachedHead(repoPath: string): boolean {
+  try {
+    git(repoPath, 'symbolic-ref', '--quiet', 'HEAD');
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function unique<T>(items: T[]): T[] {
+  return [...new Set(items)];
+}
+
+function buildDetachedWorkingTreeManifest(repoPath: string): SyncManifest {
+  const manifest = buildSyncManifest(git(repoPath, 'diff', '--name-status', '-M', 'HEAD'));
+  const untracked = git(repoPath, 'ls-files', '--others', '--exclude-standard')
+    .split('\n')
+    .filter(line => line.length > 0);
+
+  return {
+    added: unique([...manifest.added, ...untracked]),
+    modified: unique(manifest.modified),
+    deleted: unique(manifest.deleted),
+    renamed: manifest.renamed,
+  };
+}
+
 // v0.18.0 Step 5: source-scoped sync state helpers. When opts.sourceId
 // is set, read/write the per-source row instead of the global config
 // keys. These wrappers centralize the branch so every read/write site
@@ -375,13 +402,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     throw new Error(`Not a git repository: ${repoPath}. GBrain sync requires a git-initialized repo.`);
   }
 
+  // Detect detached HEAD up front so the working-tree fallback fires for both
+  // the default sync and `--no-pull` callers. Only the actual git pull is
+  // gated on opts.noPull.
+  const detachedHead = isDetachedHead(repoPath);
+  if (detachedHead && !opts.noPull) {
+    console.error(`Detached HEAD on ${repoPath}; skipping git pull. Syncing from local working tree.`);
+  }
+
   // Git pull (unless --no-pull). v0.28.1 codex finding (HIGH): the legacy
   // git() helper at sync.ts:192 spawns git without GIT_SSRF_FLAGS, so
   // every steady-state pull was bypassing the redirect/submodule/protocol
   // hardening that cloneRepo applies. Route through pullRepo from
   // git-remote.ts so the flag set is consistent across initial clone and
   // ongoing pulls — single source of truth for the defensive flags.
-  if (!opts.noPull) {
+  if (!opts.noPull && !detachedHead) {
     try {
       const { pullRepo } = await import('../core/git-remote.ts');
       pullRepo(repoPath);
@@ -440,8 +475,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   const currentVersion = String(CHUNKER_VERSION);
   const versionMismatch = storedVersion !== null && storedVersion !== currentVersion;
   const versionNeverSet = storedVersion === null && opts.sourceId !== undefined;
+  const detachedWorkingTreeManifest = detachedHead ? buildDetachedWorkingTreeManifest(repoPath) : null;
+  const hasDetachedWorkingTreeChanges = detachedWorkingTreeManifest !== null &&
+    (detachedWorkingTreeManifest.added.length > 0 ||
+      detachedWorkingTreeManifest.modified.length > 0 ||
+      detachedWorkingTreeManifest.deleted.length > 0 ||
+      detachedWorkingTreeManifest.renamed.length > 0);
 
-  if (lastCommit === headCommit && !versionMismatch && !versionNeverSet) {
+  if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
@@ -466,6 +507,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // Diff using git diff (net result, not per-commit)
   const diffOutput = git(repoPath, 'diff', '--name-status', '-M', `${lastCommit}..${headCommit}`);
   const manifest = buildSyncManifest(diffOutput);
+  if (detachedWorkingTreeManifest) {
+    manifest.added = unique([...manifest.added, ...detachedWorkingTreeManifest.added]);
+    manifest.modified = unique([...manifest.modified, ...detachedWorkingTreeManifest.modified]);
+    manifest.deleted = unique([...manifest.deleted, ...detachedWorkingTreeManifest.deleted]);
+    manifest.renamed = [...manifest.renamed, ...detachedWorkingTreeManifest.renamed];
+  }
 
   // Filter to syncable files (strategy-aware)
   const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
@@ -483,12 +530,16 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // strategy=markdown) deletes the actual code-slug page, not a ghost
   // markdown-slug that never existed.
   const unsyncableModified = manifest.modified.filter(p => !isSyncable(p, syncOpts));
+  // v0.18.0+ multi-source: scope getPage + deletePage to opts.sourceId so
+  // unsyncable cleanup in source A doesn't accidentally sweep same-slug
+  // pages in sources B/C/D.
+  const pageOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   for (const path of unsyncableModified) {
     const slug = resolveSlugForPath(path);
     try {
-      const existing = await engine.getPage(slug);
+      const existing = await engine.getPage(slug, pageOpts);
       if (existing) {
-        await engine.deletePage(slug);
+        await engine.deletePage(slug, pageOpts);
         console.log(`  Deleted un-syncable page: ${slug}`);
       }
     } catch { /* ignore */ }
@@ -550,11 +601,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // Process deletes first (prevents slug conflicts). SP-5: resolveSlugForPath
   // dispatches to the right slug shape so code file deletes hit the real page.
+  // v0.18.0+ multi-source: scope deletePage so we only delete the source-A
+  // row, not every same-slug row across all sources.
+  const deleteOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   if (filtered.deleted.length > 0) {
     progress.start('sync.deletes', filtered.deleted.length);
     for (const path of filtered.deleted) {
       const slug = resolveSlugForPath(path);
-      await engine.deletePage(slug);
+      await engine.deletePage(slug, deleteOpts);
       pagesAffected.push(slug);
       progress.tick(1, slug);
     }
@@ -567,18 +621,22 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // all resolve to the right slug shape for each side.
   if (filtered.renamed.length > 0) {
     progress.start('sync.renames', filtered.renamed.length);
+    // v0.18.0+ multi-source: scope updateSlug so the rename only touches the
+    // source-A row, not every same-slug row across sources (which would
+    // either sweep them all OR violate (source_id, slug) UNIQUE).
+    const renameOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
     for (const { from, to } of filtered.renamed) {
       const oldSlug = resolveSlugForPath(from);
       const newSlug = resolveSlugForPath(to);
       try {
-        await engine.updateSlug(oldSlug, newSlug);
+        await engine.updateSlug(oldSlug, newSlug, renameOpts);
       } catch {
         // Slug doesn't exist or collision, treat as add
       }
       // Reimport at new path (picks up content changes)
       const filePath = join(repoPath, to);
       if (existsSync(filePath)) {
-        const result = await importFile(engine, filePath, to, { noEmbed });
+        const result = await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId });
         if (result.status === 'imported') chunksCreated += result.chunks;
       }
       pagesAffected.push(newSlug);
@@ -633,7 +691,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         return;
       }
       try {
-        const result = await importFile(eng, filePath, path, { noEmbed });
+        // v0.18.0+ multi-source: thread `opts.sourceId` so per-page tx writes
+        // (putPage / getTags / addTag / removeTag / deleteChunks / upsertChunks
+        // / addLink) target (sourceId, slug). Pre-fix the schema DEFAULT
+        // 'default' was applied even for non-default sources, fabricating
+        // duplicate rows that crashed bare-slug subqueries with Postgres 21000.
+        const result = await importFile(eng, filePath, path, { noEmbed, sourceId: opts.sourceId });
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
@@ -803,12 +866,17 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     summary: `Sync: +${filtered.added.length} ~${filtered.modified.length} -${filtered.deleted.length} R${filtered.renamed.length}, ${chunksCreated} chunks, ${elapsed}ms`,
   });
 
-  // Auto-extract links + timeline (always, extraction is cheap CPU)
+  // Auto-extract links + timeline (always, extraction is cheap CPU).
+  // Thread opts.sourceId so the extract phase reconciles edges + timeline
+  // entries against the right source — pre-fix (Data R1 HIGH 1) this phase
+  // bypassed sourceId entirely and the bare-slug subquery in addTimelineEntry
+  // (Data R1 HIGH 2) crashed with 21000 in multi-source brains.
+  const extractOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   if (!opts.noExtract && pagesAffected.length > 0) {
     try {
       const { extractLinksForSlugs, extractTimelineForSlugs } = await import('./extract.ts');
-      const linksCreated = await extractLinksForSlugs(engine, repoPath, pagesAffected);
-      const timelineCreated = await extractTimelineForSlugs(engine, repoPath, pagesAffected);
+      const linksCreated = await extractLinksForSlugs(engine, repoPath, pagesAffected, extractOpts);
+      const timelineCreated = await extractTimelineForSlugs(engine, repoPath, pagesAffected, extractOpts);
       if (linksCreated > 0 || timelineCreated > 0) {
         console.log(`  Extracted: ${linksCreated} links, ${timelineCreated} timeline entries`);
       }
@@ -824,12 +892,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       const enabled = await isFactsExtractionEnabled(engine);
       if (enabled) {
         const model = await getFactsExtractionModel(engine);
+        const factsSourceId = opts.sourceId ?? 'default';
         let factsInserted = 0;
         for (const slug of pagesAffected) {
           try {
             // Read the page content
             const page = await engine.getPage(slug);
-            if (!page?.body) continue;
+            if (!page?.compiled_truth) continue;
             // Skip non-eligible types: only meetings, conversations, personal pages
             const pageType = page.frontmatter?.type as string | undefined;
             const eligibleTypes = ['meeting', 'conversation', 'transcript', 'personal', 'therapy', 'call'];
@@ -840,7 +909,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             // Skip dream-generated pages
             if (page.frontmatter?.dream_generated) continue;
             const facts = await extractFactsFromTurn({
-              turnText: page.body,
+              turnText: page.compiled_truth,
               sessionId: `sync:${slug}`,
               source: 'sync:import',
               isDreamGenerated: false,
@@ -853,21 +922,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
               const resolvedSlug = f.entity_slug
                 ? await (async () => {
                     try {
-                      const { resolveEntitySlug } = await import('../core/operations.ts');
-                      return await resolveEntitySlug(engine, slug, f.entity_slug!);
+                      const { resolveEntitySlug } = await import('../core/entities/resolve.ts');
+                      return await resolveEntitySlug(engine, factsSourceId, f.entity_slug!);
                     } catch { return f.entity_slug; }
                   })()
                 : null;
               await engine.insertFact({
-                source_id: slug,
-                entity_slug: resolvedSlug ?? undefined,
+                entity_slug: resolvedSlug ?? null,
                 fact: f.fact,
                 kind: f.kind,
                 confidence: f.confidence,
                 notability: f.notability,
                 source: 'sync:import',
                 source_session: `sync:${slug}`,
-              });
+                visibility: 'private',
+              }, { source_id: factsSourceId });
               factsInserted++;
             }
           } catch { /* per-page facts extraction is best-effort */ }
@@ -879,7 +948,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     } catch { /* facts extraction is best-effort */ }
   }
 
-  // Auto-embed (skip for large syncs — embedding calls OpenAI)
+  // Auto-embed (skip for large syncs — embedding calls OpenAI).
+  // TODO(multi-source): runEmbed → src/commands/embed.ts:175 + :418 call
+  // upsertChunks defaulting to source='default'. For non-default-source syncs
+  // the page row lives at (sourceId, slug) so this fails with "Page not found"
+  // OR (when a same-slug 'default' row coexists) updates the wrong source's
+  // chunks. Data R1 MED 2 — deferred to a follow-up PR; threading sourceId
+  // through embed.ts is a larger refactor than this fix's scope. The current
+  // try/catch swallows the failure as best-effort, so the sync result still
+  // reports `embedded: 0` for the right reason.
   let embedded = 0;
   if (!noEmbed && pagesAffected.length > 0 && pagesAffected.length <= 100) {
     try {
@@ -953,7 +1030,10 @@ async function performFullSync(
   const importArgs = [repoPath];
   if (opts.noEmbed) importArgs.push('--no-embed');
   if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
-  const result = await runImport(engine, importArgs, { commit: headCommit });
+  // v0.30.x follow-up to PR #707: thread sourceId through runImport's opts
+  // so performFullSync routes pages to the named source (the incremental
+  // sync path in this same file already does this on lines 581/641).
+  const result = await runImport(engine, importArgs, { commit: headCommit, sourceId: opts.sourceId });
 
   // Bug 9 — gate the full-sync bookmark on success. runImport already
   // writes its own sync.last_commit conditionally (import.ts), but
@@ -1050,6 +1130,22 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
+  }
+
+  // --skip-failed: acknowledge pre-existing unacked failures BEFORE the sync
+  // runs, not only ones the current run produces. Without this, the common
+  // recovery flow — fix the YAML, re-run sync, then run --skip-failed to
+  // clear the log — fails to clear anything: when there are no NEW failures
+  // (because the files are now fixed), the inner ack path in performSync is
+  // never reached, and "Already up to date." leaves the log untouched. Both
+  // doctor and printSyncResult instruct users to run --skip-failed in
+  // exactly this case, so the flag has to handle stale entries up-front.
+  if (skipFailed) {
+    const stale = unacknowledgedSyncFailures();
+    if (stale.length > 0) {
+      const acked = acknowledgeSyncFailures();
+      console.log(`Acknowledged ${acked.count} pre-existing failure(s).`);
+    }
   }
 
   // v0.18.0 Step 5: --source resolves to a sources(id) row. Falls back
