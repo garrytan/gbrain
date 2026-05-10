@@ -2,6 +2,8 @@ import type { BrainEngine } from '../engine.ts';
 import type {
   CodeClaim,
   CodeClaimVerificationResult,
+  TaskAttempt,
+  TaskDecision,
   TaskThread,
   TaskWorkingSet,
 } from '../types.ts';
@@ -23,9 +25,23 @@ export interface TaskResumeCard {
   next_steps: string[];
   failed_attempts: string[];
   active_decisions: string[];
+  repeated_work_warnings: string[];
+  decision_reuse: string[];
+  verification_warnings: string[];
+  retrieval_trace_template: TaskResumeTraceTemplate;
   latest_trace_route: string[];
   code_claim_verification: CodeClaimVerificationResult[];
   stale: boolean;
+}
+
+export interface TaskResumeTraceTemplate {
+  selected_intent: 'task_resume';
+  write_outcome: 'no_durable_write';
+  route: string[];
+  source_refs: string[];
+  derived_consulted: string[];
+  verification: string[];
+  outcome: string;
 }
 
 export async function buildTaskResumeCard(engine: BrainEngine, taskId: string): Promise<TaskResumeCard> {
@@ -44,6 +60,11 @@ export async function buildTaskResumeCard(engine: BrainEngine, taskId: string): 
   const codeClaimVerification = verifyTaskCodeClaims(thread, workingSet, traces);
   const activePaths = workingSet?.active_paths ?? [];
   const activeSymbols = workingSet?.active_symbols ?? [];
+  const failedAttemptSummaries = attempts
+    .filter((attempt) => attempt.outcome === 'failed')
+    .map((attempt) => attempt.summary);
+  const activeDecisionSummaries = decisions.map((decision) => decision.summary);
+  const verificationWarnings = buildVerificationWarnings(workingSet, codeClaimVerification);
 
   return {
     task_id: thread.id,
@@ -56,14 +77,61 @@ export async function buildTaskResumeCard(engine: BrainEngine, taskId: string): 
     blockers: workingSet?.blockers ?? [],
     open_questions: workingSet?.open_questions ?? [],
     next_steps: workingSet?.next_steps ?? [],
-    failed_attempts: attempts
-      .filter((attempt) => attempt.outcome === 'failed')
-      .map((attempt) => attempt.summary),
-    active_decisions: decisions.map((decision) => decision.summary),
+    failed_attempts: failedAttemptSummaries,
+    active_decisions: activeDecisionSummaries,
+    repeated_work_warnings: failedAttemptSummaries.map((summary) => `Do not repeat failed attempt: ${summary}`),
+    decision_reuse: activeDecisionSummaries.map((summary) => `Reuse decision: ${summary}`),
+    verification_warnings: verificationWarnings,
+    retrieval_trace_template: buildResumeTraceTemplate(taskId, workingSet, attempts, decisions, traces, verificationWarnings),
     latest_trace_route: traces[0]?.route ?? [],
     code_claim_verification: codeClaimVerification,
     stale: workingSet?.last_verified_at == null
       || codeClaimVerification.some((result) => result.status === 'stale'),
+  };
+}
+
+function buildVerificationWarnings(
+  workingSet: TaskWorkingSet | null,
+  codeClaimVerification: CodeClaimVerificationResult[],
+): string[] {
+  const warnings: string[] = [];
+  if (workingSet?.last_verified_at == null) {
+    warnings.push('Working set has not been verified in the current workspace.');
+  }
+  const staleCount = codeClaimVerification.filter((result) => result.status === 'stale').length;
+  const unverifiableCount = codeClaimVerification.filter((result) => result.status === 'unverifiable').length;
+  if (staleCount > 0) {
+    warnings.push(`${staleCount} code claim(s) are stale and should not be repeated as current truth.`);
+  }
+  if (unverifiableCount > 0) {
+    warnings.push(`${unverifiableCount} code claim(s) could not be verified in the current workspace.`);
+  }
+  return warnings;
+}
+
+function buildResumeTraceTemplate(
+  taskId: string,
+  workingSet: TaskWorkingSet | null,
+  attempts: TaskAttempt[],
+  decisions: TaskDecision[],
+  traces: Awaited<ReturnType<BrainEngine['listRetrievalTraces']>>,
+  verificationWarnings: string[],
+): TaskResumeTraceTemplate {
+  const failedAttempts = attempts.filter((attempt) => attempt.outcome === 'failed');
+  return {
+    selected_intent: 'task_resume',
+    write_outcome: 'no_durable_write',
+    route: ['task_thread', 'working_set', 'attempt_history', 'decision_history', 'retrieval_trace'],
+    source_refs: dedupeStrings([
+      `task-thread:${taskId}`,
+      ...(workingSet ? [`working-set:${taskId}`] : []),
+      ...failedAttempts.map((attempt) => `task-attempt:${attempt.id}`),
+      ...decisions.map((decision) => `task-decision:${decision.id}`),
+      ...traces.map((trace) => `retrieval_trace:${trace.id}`),
+    ]),
+    derived_consulted: dedupeStrings(traces.flatMap((trace) => trace.derived_consulted ?? [])),
+    verification: ['resume_card_built', ...verificationWarnings],
+    outcome: `resume card assembled for task ${taskId}`,
   };
 }
 
@@ -206,6 +274,10 @@ function dedupeCodeClaims(claims: CodeClaim[]): CodeClaim[] {
     }
   }
   return [...byKey.values()];
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function dedupeCodeClaimVerificationResults(
