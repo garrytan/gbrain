@@ -4,6 +4,8 @@ import {
   extractLinksFromFile,
   extractTimelineFromContent,
   walkMarkdownFiles,
+  buildFsSlugResolverIndex,
+  resolveSlug,
 } from '../src/commands/extract.ts';
 
 describe('extractMarkdownLinks', () => {
@@ -97,6 +99,66 @@ describe('extractLinksFromFile', () => {
     const allSlugs = new Set(['deals/seed', 'companies/brex']);
     const links = await extractLinksFromFile(content, 'deals/seed.md', allSlugs);
     expect(links[0].link_type).toBe('deal_for');
+  });
+});
+
+describe('extractLinksFromFile — slug/title/alias wikilink resolution', () => {
+  it('resolves root-relative Obsidian wikilinks against synced slugified page slugs', async () => {
+    const content = 'See [[resources/templates/README|templates]].';
+    const allSlugs = new Set(['notes/meta/index', 'resources/templates/readme']);
+    const links = await extractLinksFromFile(content, 'notes/meta/index.md', allSlugs);
+    expect(links).toHaveLength(1);
+    expect(links[0].from_slug).toBe('notes/meta/index');
+    expect(links[0].to_slug).toBe('resources/templates/readme');
+  });
+
+  it('resolves title-only wikilinks through a slug resolver index', async () => {
+    const content = 'See [[Agentic AI Operations]].';
+    const allSlugs = new Set(['notes/meta/index', 'notes/meta/domains/agentic-ai-operations']);
+    const slugIndex = new Map<string, Set<string>>([
+      ['agentic-ai-operations', new Set(['notes/meta/domains/agentic-ai-operations'])],
+    ]);
+    const links = await extractLinksFromFile(content, 'notes/meta/index.md', allSlugs, { slugIndex });
+    expect(links).toHaveLength(1);
+    expect(links[0].to_slug).toBe('notes/meta/domains/agentic-ai-operations');
+  });
+
+  it('resolves aliases indexed from frontmatter', async () => {
+    const content = 'Related: [[Two Training Station]].';
+    const allSlugs = new Set(['journals/2026-05-11', 'notes/house-2-training-station-road']);
+    const slugIndex = new Map<string, Set<string>>([
+      ['two-training-station', new Set(['notes/house-2-training-station-road'])],
+    ]);
+    const links = await extractLinksFromFile(content, 'journals/2026-05-11.md', allSlugs, { slugIndex });
+    expect(links).toHaveLength(1);
+    expect(links[0].to_slug).toBe('notes/house-2-training-station-road');
+  });
+
+  it('does not guess when basename/title resolution is ambiguous', () => {
+    const allSlugs = new Set(['resources/research/readme', 'resources/templates/readme']);
+    const slugIndex = new Map<string, Set<string>>([
+      ['readme', new Set(['resources/research/readme', 'resources/templates/readme'])],
+    ]);
+    expect(resolveSlug('notes/meta', 'README.md', allSlugs, slugIndex)).toBeNull();
+  });
+
+  it('skips excluded system wikilink targets', async () => {
+    const content = 'See [[system/templates/Daily Journal Template]].';
+    const allSlugs = new Set(['journals/2026-05-11', 'system/templates/daily-journal-template']);
+    const links = await extractLinksFromFile(content, 'journals/2026-05-11.md', allSlugs);
+    expect(links).toHaveLength(0);
+  });
+
+  it('builds a resolver index from titles and aliases', async () => {
+    const tmp = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const dir = await tmp.mkdtemp(path.join(os.tmpdir(), 'gbrain-extract-'));
+    const file = path.join(dir, 'notes', 'House - 2 Training Station Road.md');
+    await tmp.mkdir(path.dirname(file), { recursive: true });
+    await tmp.writeFile(file, '---\ntitle: House - 2 Training Station Road\naliases: [Two Training Station]\n---\nBody');
+    const slugIndex = buildFsSlugResolverIndex([{ path: file, relPath: 'notes/House - 2 Training Station Road.md' }]);
+    expect(resolveSlug('journals', 'Two Training Station.md', new Set(), slugIndex)).toBe('notes/house-2-training-station-road');
   });
 });
 
