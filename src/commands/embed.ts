@@ -387,8 +387,6 @@ async function embedAllStale(
     else byKey.set(key, [row]);
   }
 
-  // Back-compat: slug-only references use the first row's slug.
-  const bySlug = byKey;
   const keys = Array.from(byKey.keys());
   const totalStaleChunks = staleRows.length;
   result.total_chunks += totalStaleChunks;
@@ -454,14 +452,14 @@ async function embedAllStale(
 
   let nextIdx = 0;
   async function worker() {
-    while (nextIdx < slugs.length) {
+    while (nextIdx < keys.length) {
       const idx = nextIdx++;
-      await embedOneKey(slugs[idx]);
+      await embedOneKey(keys[idx]);
     }
   }
 
-  const numWorkers = Math.min(CONCURRENCY, slugs.length);
+  const numWorkers = Math.min(CONCURRENCY, keys.length);
   await Promise.all(Array.from({ length: numWorkers }, () => worker()));
 
-  console.log(`Embedded ${result.embedded} chunks across ${slugs.length} pages`);
+  console.log(`Embedded ${result.embedded} chunks across ${keys.length} pages`);
 }
