@@ -66,6 +66,30 @@ interface AuthResult {
   tokenName?: string;
   /** v0.28: per-token allow-list for takes.holder. Default ['world'] when permissions row absent. */
   takesHoldersAllowList?: string[];
+  /**
+   * v0.31.4 (mcp-source-isolation fix): per-token primary source. When set,
+   * threaded onto OperationContext.sourceId and used by engines to scope
+   * reads (list_pages, get_page, query, search, searchKeyword) to that
+   * source only. Closes the read-side cross-source leak documented in
+   * shared/wecare/bugs/2026-05-11-mcp-read-isolation-verification-failed.
+   *
+   * Stored as `access_tokens.permissions.source_id` (string).
+   * When undefined, engines fall back to current behavior (no scope filter)
+   * — which is how trusted local CLI callers and Robin's super-reader token
+   * keep working.
+   *
+   * Post-v52 (federated-read): for OAuth tokens this is the WRITE-target
+   * source. The READ scope is in `allowedSources`.
+   */
+  sourceId?: string;
+  /**
+   * v0.32.x (feat/oauth-federated-read): per-token READ scope. Threaded onto
+   * `OperationContext.allowedSources`. Engine read paths prefer this over
+   * `sourceId` for filtering. Sourced from `oauth_clients.federated_read`
+   * (OAuth path) or `access_tokens.permissions.federated_read` (legacy
+   * path). Undefined preserves pre-v52 scalar-sourceId semantics.
+   */
+  allowedSources?: string[];
 }
 
 /** Read up to `cap` bytes off req.body. Returns null if cap exceeded. */
@@ -171,15 +195,35 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         .catch(() => { /* fire-and-forget */ });
       // v0.28: extract per-token takes-holder allow-list. Fail-safe default
       // is ['world'] — a token with no permissions row sees public claims only.
-      const perms = (row as { permissions?: { takes_holders?: unknown } }).permissions;
+      const perms = (row as { permissions?: { takes_holders?: unknown; source_id?: unknown; federated_read?: unknown } }).permissions;
       const allowList = Array.isArray(perms?.takes_holders)
         ? (perms!.takes_holders as unknown[]).filter(h => typeof h === 'string') as string[]
         : ['world'];
+      // v0.31.4 (mcp-source-isolation fix): per-token primary source claim.
+      // When `permissions.source_id` is a non-empty string, the HTTP transport
+      // forwards it as `OperationContext.sourceId` so engines scope reads
+      // (list_pages, get_page, query, search, searchKeyword) to that source.
+      // Tokens without `source_id` retain pre-fix behavior (no scope filter)
+      // — used by Robin's super-reader and any operator-managed admin token.
+      const sourceId = typeof perms?.source_id === 'string' && (perms!.source_id as string).length > 0
+        ? (perms!.source_id as string)
+        : undefined;
+      // v0.32.x (feat/oauth-federated-read): per-token READ scope from
+      // `permissions.federated_read`. When set, the HTTP transport forwards
+      // it as `OperationContext.allowedSources` so engines use
+      // `source_id = ANY($allowedSources)` for filtering. Legacy tokens
+      // without this field retain scalar-sourceId behavior.
+      const fedRead = Array.isArray(perms?.federated_read)
+        ? (perms!.federated_read as unknown[]).filter((s): s is string => typeof s === 'string')
+        : undefined;
+      const allowedSources = fedRead && fedRead.length > 0 ? fedRead : undefined;
       return {
         ok: true,
         tokenId: rowId,
         tokenName: rowName,
         takesHoldersAllowList: allowList,
+        sourceId,
+        allowedSources,
       };
     } catch {
       return { ok: false };
@@ -328,9 +372,13 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         const args: Record<string, unknown> = params?.arguments ?? {};
         // v0.28: thread per-token takes-holder allow-list so takes_list /
         // takes_search / query (when it returns takes) can server-side filter.
+        // v0.31.4 (mcp-source-isolation fix): also forward per-token sourceId
+        // so engines scope reads to the caller's source. See AuthResult docs.
         const result = await dispatchToolCall(engine, toolName, args, {
           remote: true,
           takesHoldersAllowList: auth.takesHoldersAllowList,
+          sourceId: auth.sourceId,
+          allowedSources: auth.allowedSources,
         });
         const status = result.isError ? 'error' : 'success';
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);

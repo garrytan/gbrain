@@ -2548,6 +2548,188 @@ export const MIGRATIONS: Migration[] = [
         ON ingest_log (source_id, source_type, created_at DESC);
     `,
   },
+  {
+    version: 51,
+    name: 'oauth_clients_source_isolation',
+    idempotent: true,
+    // v0.32.x fix/mcp-source-isolation-read-side. Renumbered from v47 to v51
+    // after rebasing onto master which already claimed v47 (facts_notability),
+    // v48 (takes_weight_round_to_grid), v49 (eval_takes_quality_runs), and
+    // v50 (ingest_log_source_id).
+    //
+    // Adds oauth_clients.source_id so MCP HTTP callers can be scoped to a
+    // single brain source at the auth layer. Before this column, every
+    // OAuth client fell back to source_id='default' in serve-http.ts and
+    // engine reads silently ignored opts.sourceId, leaking pages across
+    // sources on list_pages / search / query.
+    //
+    // Semantics:
+    //   source_id IS NULL                -> federated read (super-reader /
+    //                                        admin clients; matches stdio CLI
+    //                                        with no auth)
+    //   source_id = '<id>' (FK sources)  -> reads + writes are scoped to that
+    //                                        source only; engine WHERE-filters
+    //                                        on it; put_page rejects cross-source
+    //
+    // FK uses ON DELETE SET NULL so dropping a source doesn't cascade-kill
+    // OAuth clients (they fall back to federated, fail-open at auth layer).
+    // The auth-layer scope decision then prevents writes via the put_page
+    // operation-level guard already in operations.ts (ctx.remote &&
+    // ctx.sourceId).
+    sql: `
+      ALTER TABLE oauth_clients
+        ADD COLUMN IF NOT EXISTS source_id TEXT;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'oauth_clients_source_id_fkey'
+        ) THEN
+          ALTER TABLE oauth_clients
+            ADD CONSTRAINT oauth_clients_source_id_fkey
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE SET NULL;
+        END IF;
+      END $$;
+
+      CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
+        ON oauth_clients(source_id) WHERE source_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 52,
+    name: 'oauth_clients_federated_read',
+    idempotent: true,
+    // v0.32.x feat/oauth-federated-read. Adds federated_read TEXT[] so MCP
+    // HTTP clients can read from multiple sources without being super-readers.
+    //
+    // Pre-v52 read model:
+    //   source_id IS NULL    -> federated super-reader (reads ALL sources)
+    //   source_id = '<id>'   -> reads + writes scoped to that one source
+    //
+    // The NULL=super-reader leg is a footgun. The v51 FK
+    // (ON DELETE SET NULL) silently super-promotes any client whose source
+    // is dropped. There's also no middle ground — a client either sees one
+    // source or every source. WeCare L3 dept clients legitimately need to
+    // read `dept-<x>` + `wecare` (parent L2 canon) + `shared` (org canon)
+    // but write only to `dept-<x>`.
+    //
+    // Post-v52 read model:
+    //   federated_read TEXT[]      -> set of source ids the client may READ
+    //   source_id      TEXT NOT NULL -> single source the client WRITES to
+    //
+    // The two columns decouple read scope from write target. Engine read
+    // paths use `source_id = ANY($allowedSources)`; engine writes still pin
+    // to `source_id = $sourceId` (the write-target column).
+    //
+    // NULL super-reader retired entirely for OAuth callers. Super-reader
+    // privilege survives only on the CLI path (no auth, GBRAIN_SOURCE-
+    // controlled). The CLI never goes through verifyAccessToken so this
+    // migration cannot affect it.
+    //
+    // Backfill convention:
+    //   * Every non-NULL client gets [source_id, 'shared'] minimum.
+    //   * wecare-dept-* clients additionally get 'wecare' so depts can read
+    //     Augustus's L2 canon. (Matches existing org hierarchy: L3 reads up
+    //     into parent L2, L2 reads into shared.)
+    //   * NULL source_id rows are illegal post-migration — audit-oauth-
+    //     bindings.sh treats any NULL as a P0 drift. Migration aborts loudly
+    //     if it finds one (caller must bind it before re-running).
+    //
+    // Index: GIN on federated_read for ANY()/array membership at scale.
+    sql: `
+      -- 1. Refuse to migrate if any client still has NULL source_id.
+      --    These should have been bound before v52 lands; see skill
+      --    devops/gbrain-oauth-client-binding for the audit procedure.
+      DO $$
+      DECLARE
+        n_nulls INTEGER;
+      BEGIN
+        SELECT COUNT(*) INTO n_nulls
+        FROM oauth_clients
+        WHERE source_id IS NULL AND deleted_at IS NULL;
+
+        IF n_nulls > 0 THEN
+          RAISE EXCEPTION 'v52 abort: % oauth_clients row(s) still have NULL source_id. Bind them (UPDATE oauth_clients SET source_id=...) before re-running this migration. See skill: gbrain-oauth-client-binding.', n_nulls;
+        END IF;
+      END $$;
+
+      -- 2. Add the federated_read column.
+      ALTER TABLE oauth_clients
+        ADD COLUMN IF NOT EXISTS federated_read TEXT[] NOT NULL DEFAULT '{}';
+
+      -- 3. Backfill — only rows whose federated_read is still empty (== never
+      --    touched by a previous run of this migration).
+      --
+      --    Pattern: [source_id, 'shared'] + 'wecare' for dept-* clients.
+      --    de-dup via the OR predicate; final array is unique by construction.
+      UPDATE oauth_clients
+      SET federated_read =
+        ARRAY(
+          SELECT DISTINCT unnest(arr)
+          FROM (
+            SELECT ARRAY[source_id, 'shared']
+              || CASE WHEN client_name LIKE 'wecare-dept-%'
+                      THEN ARRAY['wecare']
+                      ELSE ARRAY[]::TEXT[]
+                 END AS arr
+          ) sub
+        )
+      WHERE federated_read = '{}' AND source_id IS NOT NULL;
+
+      -- 4. Make source_id NOT NULL — write target is now required.
+      --    Step 3 enforced that no live row is NULL, so this is safe.
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_name = 'oauth_clients'
+            AND column_name = 'source_id'
+            AND is_nullable = 'YES'
+        ) THEN
+          ALTER TABLE oauth_clients
+            ALTER COLUMN source_id SET NOT NULL;
+        END IF;
+      END $$;
+
+      -- 5. Drop the ON DELETE SET NULL FK and replace with RESTRICT so a
+      --    source drop can no longer silently corrupt a client.
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'oauth_clients_source_id_fkey'
+        ) THEN
+          ALTER TABLE oauth_clients
+            DROP CONSTRAINT oauth_clients_source_id_fkey;
+        END IF;
+
+        ALTER TABLE oauth_clients
+          ADD CONSTRAINT oauth_clients_source_id_fkey
+          FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE RESTRICT;
+      END $$;
+
+      -- 6. GIN index for ANY()/array containment lookups (5 read paths).
+      CREATE INDEX IF NOT EXISTS idx_oauth_clients_federated_read
+        ON oauth_clients USING GIN (federated_read);
+
+      -- 7. Sanity invariant: a client's own source must be in its read set.
+      --    Implemented as a CHECK constraint so future bad UPDATEs fail
+      --    rather than corrupting silently.
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'oauth_clients_own_source_in_read'
+        ) THEN
+          ALTER TABLE oauth_clients
+            ADD CONSTRAINT oauth_clients_own_source_in_read
+            CHECK (source_id = ANY(federated_read));
+        END IF;
+      END $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

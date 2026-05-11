@@ -549,6 +549,12 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   client_secret_expires_at BIGINT,
   token_ttl               INTEGER,
   deleted_at              TIMESTAMPTZ,
+  -- v0.31.4 / v0.32.x: source-isolation scope for MCP HTTP callers.
+  -- source_id      = the single source this client WRITES into (NOT NULL post-v52).
+  -- federated_read = the set of source ids this client may READ from. Must contain source_id.
+  source_id               TEXT NOT NULL REFERENCES sources(id) ON DELETE RESTRICT,
+  federated_read          TEXT[] NOT NULL DEFAULT '{}',
+  CONSTRAINT oauth_clients_own_source_in_read CHECK (source_id = ANY(federated_read)),
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

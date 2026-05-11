@@ -406,8 +406,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // verifyAccessToken returns client_name in AuthInfo — eliminates the
     // separate per-request lookup at serve-http.ts that was the N+1 hot
     // path (see PR #586 review D14=B).
+    // v0.31.4: pull c.source_id alongside client_name so MCP HTTP requests
+    // can be scoped to the caller's brain source at dispatch time.
+    // source_id IS NULL = federated/super-reader (legacy default behavior).
+    // v0.32.x (feat/oauth-federated-read): also pull c.federated_read — the
+    // read-scope array. Engine read paths use this for `source_id = ANY()`.
     const oauthRows = await this.sql`
-      SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
+      SELECT t.client_id, t.scopes, t.expires_at, t.resource,
+             c.client_name, c.source_id, c.federated_read
       FROM oauth_tokens t
       LEFT JOIN oauth_clients c ON c.client_id = t.client_id
       WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
@@ -422,6 +428,15 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       if (expiresAt === undefined || expiresAt < now) {
         throw new Error('Token expired');
       }
+      // v0.32.x: federated_read is TEXT[] NOT NULL DEFAULT '{}'. On a
+      // freshly-migrated DB it's always populated. On an un-migrated DB
+      // (LEFT JOIN miss or pre-v52 schema) it comes back undefined/null —
+      // we coerce to undefined so engines fall back to scalar sourceId.
+      const fedReadRaw = row.federated_read;
+      const allowedSources =
+        Array.isArray(fedReadRaw) && fedReadRaw.length > 0
+          ? (fedReadRaw as unknown[]).filter((s): s is string => typeof s === 'string')
+          : undefined;
       return {
         token,
         clientId: row.client_id as string,
@@ -429,6 +444,11 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         scopes: (row.scopes as string[]) || [],
         expiresAt,
         resource: row.resource ? new URL(row.resource as string) : undefined,
+        // v0.31.4: source-isolation. Undefined => federated read.
+        sourceId: (row.source_id as string | null) ?? undefined,
+        // v0.32.x: explicit read-scope set (post-v52). Engines prefer this
+        // over sourceId for read filters; writes still go to sourceId.
+        allowedSources,
       } as AuthInfo;
     }
 

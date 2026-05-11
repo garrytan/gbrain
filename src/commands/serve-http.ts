@@ -926,9 +926,25 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // ToolResult and we read isError + _meta to pick the right branch.
       const tokenAllowList = (authInfo as AuthInfo & { takesHoldersAllowList?: string[] }).takesHoldersAllowList
         ?? ['world'];
-      const tokenSourceId = (authInfo as AuthInfo & { sourceId?: string }).sourceId
-        ?? process.env.GBRAIN_SOURCE
-        ?? 'default';
+      // v0.31.4 fix/mcp-source-isolation-read-side:
+      //   authInfo.sourceId is populated from oauth_clients.source_id (migration v47).
+      //
+      //   - SET   → strict source isolation. Engine WHERE-filters reads on
+      //             pages.source_id; put_page rejects cross-source writes.
+      //   - NULL  → federated/super-reader. No WHERE filter, callers see every
+      //             source. This matches Robin's stdio CLI (no token = no scope)
+      //             and gives admin/Robin-class OAuth clients full federated reach.
+      //
+      //   Why NULL = federated (not 'default'):
+      //   Pre-v0.31.4, EVERY OAuth client silently collapsed onto source 'default'
+      //   because authInfo carried no real scope and the engine ignored opts.sourceId.
+      //   That was a bug, not a feature. The fix wires real auth-derived scoping
+      //   when set, and gives unscoped clients the same federated behavior as the
+      //   unauthenticated stdio path — no silent partial-view footgun.
+      //
+      //   `GBRAIN_SOURCE` env var is a deployment-level escape hatch for
+      //   unauthenticated callers only — it never overrides a populated token claim.
+      const tokenSourceId = authInfo.sourceId ?? undefined;
 
       let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {
@@ -936,6 +952,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           remote: true,
           takesHoldersAllowList: tokenAllowList,
           sourceId: tokenSourceId,
+          // v0.32.x (feat/oauth-federated-read): forward the per-client
+          // READ scope from oauth_clients.federated_read so engine read
+          // paths use `source_id = ANY($allowedSources)` for filtering.
+          // Without this, OAuth clients silently fell back to the
+          // single-source filter (sourceId only) — wecare-dept-* tokens
+          // saw their own source but never the federated 'shared' set.
+          allowedSources: (authInfo as AuthInfo & { allowedSources?: string[] }).allowedSources,
           metaHook: getBrainHotMemoryMeta,
           // v0.31 follow-up fix: thread auth so the whoami op (and any
           // future scope-aware handlers) can introspect the caller. The

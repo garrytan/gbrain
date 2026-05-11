@@ -163,6 +163,13 @@ export interface PageFilters {
    * Whitelisted enum — no SQL-injection risk; engines map to literal SQL fragments.
    */
   sort?: 'updated_desc' | 'updated_asc' | 'created_desc' | 'slug';
+  /**
+   * v0.31.4 (mcp-source-isolation read-side fix): scope the listing to a
+   * single source. Unset = federated/cross-source (matches local CLI and
+   * Robin super-reader semantics). Engines apply this as `WHERE p.source_id = ?`.
+   * Wired from `authInfo.sourceId` → `OperationContext.sourceId` → handler.
+   */
+  sourceId?: string;
 }
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */
@@ -300,6 +307,7 @@ export interface Chunk {
  */
 export interface StaleChunkRow {
   slug: string;
+  source_id: string;
   chunk_index: number;
   chunk_text: string;
   chunk_source: 'compiled_truth' | 'timeline';
@@ -413,6 +421,13 @@ export interface SearchOpts {
    * undefined to search all sources.
    */
   sourceId?: string;
+  /**
+   * v0.32.x federated-read: scope search to a SET of sources (e.g. ['augustus',
+   * 'wecare', 'shared']). Takes precedence over `sourceId`. Used by OAuth
+   * tokens whose client has a `federated_read` list (post-v52 schema).
+   * Empty/undefined = fall back to `sourceId` precedence, or fully federated.
+   */
+  allowedSources?: string[];
   /**
    * v0.27.1: target column for vector search. 'embedding' (default) hits
    * the brain's primary text-embedding column. 'embedding_image' targets
@@ -573,9 +588,12 @@ export interface TimelineOpts {
    * (pre-v0.31.8 behavior; preserved by the two-branch query in both engines).
    */
   sourceId?: string;
+  /**
+   * v0.32.x federated-read: scope timeline to a set of sources. Takes
+   * precedence over sourceId. Used by OAuth tokens with federated_read.
+   */
+  allowedSources?: string[];
 }
-
-// Raw data
 export interface RawData {
   source: string;
   data: Record<string, unknown>;
