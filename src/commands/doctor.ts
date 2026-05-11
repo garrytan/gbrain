@@ -1847,7 +1847,11 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
        SELECT 'fallback_with_fm_date' AS kind, COUNT(*)::text AS count
          FROM sample
         WHERE effective_date_source = 'fallback'
-          AND (frontmatter ? 'event_date' OR frontmatter ? 'date' OR frontmatter ? 'published')
+          AND (
+            (frontmatter ? 'event_date' AND NULLIF(frontmatter->>'event_date', '') IS NOT NULL)
+            OR (frontmatter ? 'date' AND NULLIF(frontmatter->>'date', '') IS NOT NULL)
+            OR (frontmatter ? 'published' AND NULLIF(frontmatter->>'published', '') IS NOT NULL)
+          )
        UNION ALL
        SELECT 'future_dated', COUNT(*)::text FROM sample
         WHERE effective_date IS NOT NULL AND effective_date > NOW() + INTERVAL '1 year'
