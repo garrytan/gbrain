@@ -360,15 +360,19 @@ async function embedAllStale(
 
   // Pull only the stale chunks (no embedding column).
   const staleRows = await engine.listStaleChunks();
-  // Group by slug so each slug → array of stale chunks for batched embedding.
-  const bySlug = new Map<string, typeof staleRows>();
+  // v0.31.12: group by composite key (source_id::slug) so same-slug pages
+  // in different sources are embedded independently with correct source_id.
+  const byKey = new Map<string, typeof staleRows>();
   for (const row of staleRows) {
-    const list = bySlug.get(row.slug);
+    const key = `${row.source_id}::${row.slug}`;
+    const list = byKey.get(key);
     if (list) list.push(row);
-    else bySlug.set(row.slug, [row]);
+    else byKey.set(key, [row]);
   }
 
-  const slugs = Array.from(bySlug.keys());
+  // Back-compat: slug-only references use the first row's slug.
+  const bySlug = byKey;
+  const slugs = Array.from(byKey.keys());
   const totalStaleChunks = staleRows.length;
   result.total_chunks += totalStaleChunks;
   // skipped is "chunks we considered and skipped due to having an embedding".
@@ -391,8 +395,14 @@ async function embedAllStale(
   const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
   let processed = 0;
 
-  async function embedOneSlug(slug: string) {
-    const stale = bySlug.get(slug)!;
+  async function embedOneKey(key: string) {
+    const stale = byKey.get(key)!;
+    // v0.31.12: extract source_id + slug from the stale row so getChunks
+    // and upsertChunks target the correct (source_id, slug) row. Pre-fix,
+    // both calls defaulted to source_id='default', silently discarding
+    // embeddings for every non-default source (e.g. media-corpus).
+    const sourceId = stale[0]?.source_id ?? 'default';
+    const slug = stale[0].slug;
     try {
       const embeddings = await embedBatch(stale.map(c => c.chunk_text));
       // CRITICAL: passing ONLY the stale indices to upsertChunks would
@@ -401,7 +411,7 @@ async function embedAllStale(
       // re-fetch existing chunks for this page and merge. Bounded by the
       // stale slug count, not by total slugs — autopilot common case
       // is 0 stale (pre-flight short-circuit, never reaches this path).
-      const existing = await engine.getChunks(slug);
+      const existing = await engine.getChunks(slug, { sourceId });
       const staleIdxToEmbedding = new Map<number, Float32Array>();
       for (let j = 0; j < stale.length; j++) {
         staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
@@ -415,7 +425,7 @@ async function embedAllStale(
         embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
-      await engine.upsertChunks(slug, merged);
+      await engine.upsertChunks(slug, merged, { sourceId });
       result.embedded += stale.length;
     } catch (e: unknown) {
       console.error(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
@@ -429,7 +439,7 @@ async function embedAllStale(
   async function worker() {
     while (nextIdx < slugs.length) {
       const idx = nextIdx++;
-      await embedOneSlug(slugs[idx]);
+      await embedOneKey(slugs[idx]);
     }
   }
 

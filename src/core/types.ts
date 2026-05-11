@@ -305,6 +305,8 @@ export interface StaleChunkRow {
   chunk_source: 'compiled_truth' | 'timeline';
   model: string | null;
   token_count: number | null;
+  /** v0.31.12: source_id so embed --stale can thread it through getChunks/upsertChunks. */
+  source_id: string;
 }
 
 export interface ChunkInput {

@@ -1228,7 +1228,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const rows = await sql`
       SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-             cc.model, cc.token_count
+             cc.model, cc.token_count, p.source_id
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       WHERE cc.embedding IS NULL
