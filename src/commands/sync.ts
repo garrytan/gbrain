@@ -13,6 +13,7 @@ import {
   unacknowledgedSyncFailures,
   acknowledgeSyncFailures,
   formatCodeBreakdown,
+  resolveSyncFailure,
 } from '../core/sync.ts';
 import { estimateTokens, CHUNKER_VERSION } from '../core/chunkers/code.ts';
 import { EMBEDDING_MODEL, estimateEmbeddingCostUsd } from '../core/embedding.ts';
@@ -587,6 +588,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       const slug = resolveSlugForPath(path);
       await engine.deletePage(slug, deleteOpts);
       pagesAffected.push(slug);
+      // Bug 9 follow-up — a deleted file should not stay listed as failed.
+      resolveSyncFailure(path);
       progress.tick(1, slug);
     }
     progress.finish();
@@ -617,6 +620,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         if (result.status === 'imported') chunksCreated += result.chunks;
       }
       pagesAffected.push(newSlug);
+      // Bug 9 follow-up — clear stale JSONL entries under both the old and
+      // new path. A file that previously failed under `from` and is now
+      // successfully present as `to` should not stay listed as failed.
+      resolveSyncFailure(from);
+      resolveSyncFailure(to);
       progress.tick(1, newSlug);
     }
     progress.finish();
@@ -677,8 +685,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
+          // Bug 9 follow-up — reconcile JSONL with reality. A file that
+          // imports successfully should drop out of sync-failures even if it
+          // got there via a previous run.
+          resolveSyncFailure(path);
         } else if (result.status === 'skipped' && (result as any).error) {
           failedFiles.push({ path, error: String((result as any).error) });
+        } else if (result.status === 'skipped') {
+          // Hash-identical content already in DB — same reconciliation.
+          resolveSyncFailure(path);
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);

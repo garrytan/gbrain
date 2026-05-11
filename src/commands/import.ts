@@ -11,6 +11,7 @@ import {
   isCodeFilePath,
   isMarkdownFilePath,
   isImageFilePath as isImageFilePathFromSync,
+  resolveSyncFailure,
   type SyncStrategy,
 } from '../core/sync.ts';
 
@@ -150,12 +151,18 @@ export async function runImport(
         imported++;
         chunksCreated += result.chunks;
         importedSlugs.push(result.slug);
+        // Bug 9 follow-up — a path that imports successfully must drop out
+        // of sync-failures.jsonl, otherwise stale entries accumulate forever.
+        resolveSyncFailure(relativePath);
       } else {
         skipped++;
         if (result.error && result.error !== 'unchanged') {
           console.error(`  Skipped ${relativePath}: ${result.error}`);
           // Bug 9 — non-"unchanged" skips carry a real error reason.
           failures.push({ path: relativePath, error: result.error });
+        } else {
+          // Hash-identical content already in DB also clears stale failures.
+          resolveSyncFailure(relativePath);
         }
       }
     } catch (e: unknown) {

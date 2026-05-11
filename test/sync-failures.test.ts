@@ -474,3 +474,53 @@ describe('formatCodeBreakdown — dual input shape', () => {
     expect(formatCodeBreakdown([])).toBe('');
   });
 });
+
+describe('Bug 9 follow-up — resolveSyncFailure', () => {
+  test('removes all entries matching the path, returns the count', async () => {
+    const { recordSyncFailures, resolveSyncFailure, loadSyncFailures } = await import('../src/core/sync.ts');
+    recordSyncFailures(
+      [
+        { path: 'a.md', error: 'first attempt' },
+        { path: 'b.md', error: 'unrelated' },
+        { path: 'a.md', error: 'second attempt (different commit)' },
+      ],
+      'commit1',
+    );
+    // Second call uses a fresh commit so the second 'a.md' isn't dedup-collapsed.
+    recordSyncFailures([{ path: 'a.md', error: 'third attempt' }], 'commit2');
+
+    const before = loadSyncFailures();
+    const aEntries = before.filter(e => e.path === 'a.md').length;
+    expect(aEntries).toBeGreaterThanOrEqual(2);
+
+    const removed = resolveSyncFailure('a.md');
+    expect(removed).toBe(aEntries);
+
+    const after = loadSyncFailures();
+    expect(after.find(e => e.path === 'a.md')).toBeUndefined();
+    expect(after.find(e => e.path === 'b.md')).toBeDefined();
+  });
+
+  test('returns 0 and is a no-op when path is not in the log', async () => {
+    const { recordSyncFailures, resolveSyncFailure, loadSyncFailures } = await import('../src/core/sync.ts');
+    recordSyncFailures([{ path: 'a.md', error: 'err' }], 'commit1');
+    const before = loadSyncFailures();
+    expect(resolveSyncFailure('not-recorded.md')).toBe(0);
+    const after = loadSyncFailures();
+    expect(after).toEqual(before);
+  });
+
+  test('removes the file when the last entry is resolved', async () => {
+    const { recordSyncFailures, resolveSyncFailure, syncFailuresPath } = await import('../src/core/sync.ts');
+    const { existsSync: _existsSync } = await import('fs');
+    recordSyncFailures([{ path: 'only.md', error: 'err' }], 'commit1');
+    expect(_existsSync(syncFailuresPath())).toBe(true);
+    expect(resolveSyncFailure('only.md')).toBe(1);
+    expect(_existsSync(syncFailuresPath())).toBe(false);
+  });
+
+  test('returns 0 when no JSONL file exists', async () => {
+    const { resolveSyncFailure } = await import('../src/core/sync.ts');
+    expect(resolveSyncFailure('whatever.md')).toBe(0);
+  });
+});
