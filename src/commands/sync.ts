@@ -398,11 +398,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       console.error(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error(`[gbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 80)})`);
+      console.error(`[gbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 300)})`);
       if (msg.includes('non-fast-forward') || msg.includes('diverged')) {
         console.error(`Warning: git pull failed (remote diverged). Syncing from local state.`);
       } else {
-        console.error(`Warning: git pull failed: ${msg.slice(0, 100)}`);
+        console.error(`Warning: git pull failed: ${msg.slice(0, 300)}`);
       }
     }
   }
