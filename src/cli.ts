@@ -14,6 +14,7 @@ import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from './core/mcp-client.ts';
+import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { VERSION } from './version.ts';
 
 // Build CLI name -> operation lookup
@@ -158,7 +159,7 @@ async function main() {
   // Local engine path (unchanged behavior for local installs).
   const engine = await connectEngine();
   try {
-    const ctx = makeContext(engine, params);
+    const ctx = await makeContext(engine, params);
     const rawResult = await op.handler(ctx, params);
     // ENG-2 (renderer parity by data shape): JSON-round-trip the local-engine
     // path's return value so renderers see the same shape they'd see on the
@@ -322,7 +323,7 @@ async function runThinClientRouted(
 // command runs normally. Banner is observability, not load-bearing.
 // ============================================================================
 
-interface BrainIdentity {
+export interface BrainIdentity {
   version: string;
   engine: 'postgres' | 'pglite';
   page_count: number;
@@ -343,7 +344,7 @@ export function _clearIdentityCacheForTest(): void {
   identityCache.clear();
 }
 
-function bannerSuppressed(cliOpts: CliOptions): boolean {
+export function bannerSuppressed(cliOpts: CliOptions): boolean {
   if (cliOpts.quiet) return true;
   if (process.env.GBRAIN_NO_BANNER === '1') return true;
   // Non-TTY default is suppressed (clean pipes); explicit env-flag overrides.
@@ -392,6 +393,9 @@ async function printIdentityBannerBestEffort(
   const cached = identityCache.get(mcpUrl);
   if (cached && Date.now() - cached.cached_at_ms < IDENTITY_TTL_MS) {
     process.stderr.write(formatBanner(mcpUrl, cached.identity) + '\n');
+    // v0.31.11: detect remote-version drift, prompt user to upgrade.
+    // bannerIsSuppressed=false here — the early return above guaranteed it.
+    await maybePromptForUpgrade(cfg, cached.identity, cliOpts, false);
     return;
   }
 
@@ -401,6 +405,8 @@ async function printIdentityBannerBestEffort(
     const id = await fetchIdentity(cfg, signal);
     identityCache.set(mcpUrl, { identity: id, cached_at_ms: Date.now() });
     process.stderr.write(formatBanner(mcpUrl, id) + '\n');
+    // v0.31.11: detect remote-version drift, prompt user to upgrade.
+    await maybePromptForUpgrade(cfg, id, cliOpts, false);
   } catch {
     // Swallow. Banner suppressed; main command continues. The CDX-4
     // hardened callRemoteTool will surface the same error class on the
@@ -480,7 +486,24 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   return params;
 }
 
-function makeContext(engine: BrainEngine, params: Record<string, unknown>): OperationContext {
+async function makeContext(engine: BrainEngine, params: Record<string, unknown>): Promise<OperationContext> {
+  // v0.31.8 (D11): resolve sourceId via the canonical 6-tier chain. Honors
+  // --source / GBRAIN_SOURCE / .gbrain-source / path-match / brain default /
+  // 'default'. Wrapped in try/catch so a doctor / single-source brain that
+  // never set up sources still returns 'default' silently.
+  let sourceId: string | undefined;
+  try {
+    const { resolveSourceId } = await import('./core/source-resolver.ts');
+    // params.source is set when a CLI flag was parsed for the op (rare; most
+    // CLI ops don't take --source). Falls through to env/dotfile/path-match.
+    const explicit = (params.source as string | undefined) ?? null;
+    sourceId = await resolveSourceId(engine, explicit);
+  } catch {
+    // Source resolution failed (e.g. sources table doesn't exist on a fresh
+    // pre-init brain). Leave sourceId unset; engine read methods fall through
+    // to the cross-source view (D16 back-compat path).
+    sourceId = undefined;
+  }
   return {
     engine,
     config: loadConfig() || { engine: 'postgres' },
@@ -490,6 +513,7 @@ function makeContext(engine: BrainEngine, params: Record<string, unknown>): Oper
     // confinement (e.g., cwd-locked file_upload).
     remote: false,
     cliOpts: getCliOptions(),
+    ...(sourceId ? { sourceId } : {}),
   };
 }
 

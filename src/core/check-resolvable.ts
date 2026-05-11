@@ -12,7 +12,7 @@
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
-import { findResolverFile, RESOLVER_FILENAMES_LABEL } from './resolver-filenames.ts';
+import { findResolverFile, findAllResolverFiles, RESOLVER_FILENAMES_LABEL } from './resolver-filenames.ts';
 import { loadOrDeriveManifest } from './skill-manifest.ts';
 import {
   indexResolverTriggers,
@@ -251,10 +251,20 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
   // Load inputs
   // Accept RESOLVER.md or AGENTS.md (W1). Also check one level up: the
   // reference OpenClaw deployment layout places AGENTS.md at the
-  // workspace root, with skills/ below. We try skills dir first
-  // (gbrain-native), then its parent (OpenClaw-native).
-  const resolverPath =
-    findResolverFile(skillsDir) ?? findResolverFile(join(skillsDir, '..'));
+  // workspace root, with skills/ below.
+  //
+  // Merge strategy (D-CX-14): collect entries from ALL resolver files
+  // across both directories (skills dir + parent). This handles the
+  // common OpenClaw layout where a skillpack installs a thin
+  // skills/RESOLVER.md while the real dispatcher lives in ../AGENTS.md.
+  // Entries are deduped by skillPath (first occurrence wins).
+  const allResolverPaths = [
+    ...findAllResolverFiles(skillsDir),
+    ...findAllResolverFiles(join(skillsDir, '..')),
+  ];
+
+  // Primary resolver: first found (for error messages and --fix targets)
+  const resolverPath = allResolverPaths[0] ?? null;
   if (!resolverPath) {
     const suggested = join(skillsDir, 'RESOLVER.md');
     const missingIssue: ResolvableIssue = {
@@ -274,8 +284,22 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
     };
   }
 
-  const resolverContent = readFileSync(resolverPath, 'utf-8');
-  const entries = parseResolverEntries(resolverContent);
+  // Merge entries from all resolver files, dedup by skillPath.
+  // Also build a combined resolverContent for routing-eval (Check 5).
+  const seenSkillPaths = new Set<string>();
+  const entries: ResolverEntry[] = [];
+  const resolverContentParts: string[] = [];
+  for (const rPath of allResolverPaths) {
+    const content = readFileSync(rPath, 'utf-8');
+    resolverContentParts.push(content);
+    for (const entry of parseResolverEntries(content)) {
+      if (!seenSkillPaths.has(entry.skillPath)) {
+        seenSkillPaths.add(entry.skillPath);
+        entries.push(entry);
+      }
+    }
+  }
+  const resolverContent = resolverContentParts.join('\n\n');
   const { skills: manifest } = loadOrDeriveManifest(skillsDir);
 
   // Build lookup sets
@@ -306,7 +330,7 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
           type: 'unreachable',
           severity: 'error',
           skill: skill.name,
-          message: `Skill '${skill.name}' is in manifest but has no trigger row in RESOLVER.md`,
+          message: `Skill '${skill.name}' is in manifest but has no trigger row in ${RESOLVER_FILENAMES_LABEL}`,
           action: `Add a trigger row for 'skills/${skill.path}' in RESOLVER.md under ${section}`,
           fix: {
             type: 'add_trigger',

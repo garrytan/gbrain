@@ -129,6 +129,16 @@ const DEFAULT_CHARS_PER_TOKEN = 4;
 /** Default safety factor when a recipe omits it. */
 const DEFAULT_SAFETY_FACTOR = 0.8;
 
+/**
+ * v0.31.8 (D2 + D10): hard ceiling on Voyage response size, sized as
+ * "unambiguously not a real Voyage response" rather than tight against
+ * typical batches. voyage-3-large × 16K embeddings ≈ 200 MB raw (3072
+ * dims × 4 bytes × 16K), which fits within this cap. Anything larger is
+ * unambiguously not legitimate. Layer 1 (Content-Length pre-check) and
+ * Layer 2 (per-embedding base64 cap) both compare against this constant.
+ */
+const MAX_VOYAGE_RESPONSE_BYTES = 256 * 1024 * 1024;
+
 /** Configure the gateway. Called by cli.ts#connectEngine. Clears cached models. */
 export function configureGateway(config: AIGatewayConfig): void {
   _config = {
@@ -440,6 +450,30 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
   const ct = resp.headers.get('content-type') ?? '';
   if (!ct.toLowerCase().includes('application/json')) return resp;
 
+  // v0.31.8 (D2 + D10): Layer 1 — Content-Length pre-check BEFORE the
+  // body is parsed. The pre-fix code did `await resp.clone().json()`
+  // first, which fully parses arbitrary-size JSON into JS heap before
+  // any size check could fire. A compromised/malicious Voyage endpoint
+  // could OOM the worker on a single response. The 256 MB cap is sized
+  // as "unambiguously not a real Voyage response" — voyage-3-large at
+  // 3072 dims × 4 bytes × 16K embeddings (the plausible upper bound on
+  // realistic load) decodes to ~200 MB raw and fits. Anything bigger
+  // is unambiguously not legitimate.
+  //
+  // When Content-Length is missing (chunked transfer encoding), we
+  // proceed and rely on Layer 2 (per-embedding base64 length check)
+  // for OOM defense.
+  const contentLengthHeader = resp.headers.get('content-length');
+  if (contentLengthHeader) {
+    const len = parseInt(contentLengthHeader, 10);
+    if (Number.isFinite(len) && len > MAX_VOYAGE_RESPONSE_BYTES) {
+      throw new Error(
+        `Voyage response Content-Length=${len} exceeds ${MAX_VOYAGE_RESPONSE_BYTES} bytes — ` +
+        `likely compromised endpoint or misconfiguration`,
+      );
+    }
+  }
+
   // INBOUND: rewrite response so the AI SDK's Zod schema validates.
   // Voyage diverges from OpenAI in two places that break the parser:
   //   - `embedding` is a base64 string (SDK schema expects `number[]`)
@@ -451,6 +485,18 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
     if (Array.isArray(json.data)) {
       for (const item of json.data) {
         if (item && typeof item.embedding === 'string') {
+          // v0.31.8 (D10 Layer 2): per-embedding cap. Catches the rare
+          // case where Layer 1 was skipped (no Content-Length on chunked
+          // encoding) AND a single embedding string is unreasonably large.
+          // Estimate decoded size as 0.75 × base64 length (the canonical
+          // base64 → bytes ratio).
+          const estDecoded = Math.ceil(item.embedding.length * 0.75);
+          if (estDecoded > MAX_VOYAGE_RESPONSE_BYTES) {
+            throw new Error(
+              `Voyage embedding base64 exceeds ${MAX_VOYAGE_RESPONSE_BYTES} bytes ` +
+              `(estimated ${estDecoded} bytes from ${item.embedding.length} base64 chars)`,
+            );
+          }
           // Voyage returns Float32 little-endian base64.
           const bytes = Buffer.from(item.embedding, 'base64');
           const floats = new Float32Array(

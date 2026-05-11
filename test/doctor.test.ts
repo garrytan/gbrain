@@ -203,6 +203,23 @@ describe('doctor command', () => {
     expect(block).toContain('--force-retry 35');
   });
 
+  // v0.31.7 IRON-RULE regression test for #376 + #536.
+  // The graph_coverage WARN message used to suggest stale verbs (`gbrain
+  // link-extract` / `gbrain timeline-extract`) that were removed in v0.16
+  // when extraction was consolidated into `gbrain extract <links|timeline|all>`.
+  // PR #376 (FUSED-ID) flagged the stale hint; PR #536 (mayazbay) replaced it
+  // with the canonical `gbrain extract all`. Pin the user-facing copy so a
+  // future edit can't silently re-regress to a stale verb.
+  test('graph_coverage hint uses canonical `gbrain extract all`, not removed verbs', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync('src/commands/doctor.ts', 'utf8');
+    // Canonical form (post-v0.16 single-verb consolidation).
+    expect(src).toContain('Run: gbrain extract all');
+    // Stale verb names removed in v0.16 must not return.
+    expect(src).not.toContain('gbrain link-extract');
+    expect(src).not.toContain('gbrain timeline-extract');
+  });
+
   // v0.32 — takes_weight_grid pure-helper export.
   // Codex review #7 demanded the check be extracted as a pure function so
   // tests target it directly with stubbed engines instead of running the
@@ -341,5 +358,70 @@ describe('doctor command', () => {
     const result = await takesWeightGridCheck(stubEngine);
     expect(result.status).toBe('warn');
     expect(result.message).toContain('Could not check takes weight grid');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.31.8 D19 — wedge migration force-retry hint.
+//
+// The pre-v0.31.8 minions_migration check emitted a generic
+// `gbrain apply-migrations --yes` hint regardless of how partial the
+// migration was. Operators wedged on v0.29.1 (3 consecutive partials)
+// needed `--force-retry <v>` first because the apply-migrations runner's
+// 3-consecutive-partials guard rejected plain --yes. The v0.31.8 fix
+// extends the existing block in place: detect the wedge condition,
+// emit the force-retry hint when matched, fall back to the plain --yes
+// hint when the partial count is < 3.
+// ─────────────────────────────────────────────────────────────────────────
+describe('v0.31.8 — wedge migration force-retry hint (D19)', () => {
+  test('local doctor source contains wedge detection alongside the existing stuck path', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The existing forward-progress override stays intact. Both branches
+    // must be present and live next to each other; replacing the override
+    // with statusForVersion() would re-open stale wedge alerts (codex OV11).
+    expect(source).toContain('Forward-progress override');
+    expect(source).toContain('partialCount >= 3');
+    // Both branches must coexist. Wedged path builds the command list with
+    // --force-retry; partial path falls back to plain --yes. Order varies
+    // between the local + remote doctor blocks, so just assert presence.
+    expect(source).toContain('WEDGED MIGRATION(s)');
+    expect(source).toContain('MINIONS HALF-INSTALLED');
+    expect(source).toContain('--force-retry');
+    expect(source).toMatch(/MINIONS HALF-INSTALLED[\s\S]{0,400}--yes/);
+  });
+
+  test('wedge detection is local to doctor — no statusForVersion import (D19 anti-regression)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // D19 explicitly chose to extend the existing block in place rather than
+    // import statusForVersion, because statusForVersion is per-version only
+    // and doesn't encode the cross-version forward-progress override. If a
+    // future refactor re-introduces the import this regression guard
+    // catches it.
+    expect(source).not.toMatch(/import\s*\{\s*statusForVersion\s*\}/);
+    expect(source).not.toMatch(/from\s*['"]\.\/apply-migrations\.ts['"]/);
+  });
+
+  test('multiple wedged versions chain force-retry calls with &&', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The local doctor block uses `.join(' && ')` so multiple wedged
+    // versions render as a single copy-pasteable command line. Match BOTH
+    // engine.ts blocks (local doctor + remote doctor) — the regex finds
+    // either occurrence.
+    expect(source).toMatch(/wedged\.map\(v\s*=>\s*`gbrain apply-migrations --force-retry [^`]+`\)\.join\(' && '\)/);
+  });
+
+  test('remote doctor (doctorReportRemote) also emits the force-retry hint (D14)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // Check that the wedge detection is duplicated in the remote doctor
+    // path so thin-client operators see it. Find the doctorReportRemote
+    // function span and verify the wedge-hint code lives inside it.
+    const remoteStart = source.indexOf('export async function doctorReportRemote(');
+    expect(remoteStart).toBeGreaterThan(0);
+    const remoteEnd = source.indexOf('\nexport async function runDoctor(', remoteStart);
+    expect(remoteEnd).toBeGreaterThan(remoteStart);
+    const remoteBlock = source.slice(remoteStart, remoteEnd);
+    expect(remoteBlock).toContain('--force-retry');
+    expect(remoteBlock).toContain('partialCount >= 3');
+    expect(remoteBlock).toMatch(/WEDGED MIGRATION\(s\) on brain host/);
   });
 });

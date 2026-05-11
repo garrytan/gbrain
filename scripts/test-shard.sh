@@ -5,8 +5,15 @@
 #   shard-index: 1-based (1..N)
 #   total-shards: positive integer
 #
-# E2E tests under test/e2e/ are excluded — they need DATABASE_URL and run via
-# bun run test:e2e separately.
+# Excluded from sharding:
+#   - test/e2e/*           — need DATABASE_URL; run via bun run test:e2e
+#   - *.serial.test.ts     — concurrency-unsafe (file-wide mock.module / env
+#                            leaks); run via scripts/run-serial-tests.sh on
+#                            shard 1 only. Including these here lets their
+#                            mock.module() calls leak into the rest of the
+#                            shard's bun process and silently break unrelated
+#                            tests. See test/eval-takes-quality-runner.serial.test.ts
+#                            mocking gateway.ts → voyage-multimodal failures.
 #
 # Stable partitioning: a file's shard is `(hash(path) % N) + 1`. Same file
 # lands in the same shard on every run, regardless of how many other files

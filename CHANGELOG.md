@@ -124,6 +124,266 @@ If you had a `claude-sonnet-4-6-20250929` string sitting in `facts.extraction_mo
 - **Iron rule when adding a new LLM call:** route through `resolveModel()` with a `tier:` argument. Do not hardcode a model string as a fallback. The v0.31.6 chat-default failure mode was exactly this — a hardcoded const fallback bypassed the resolver and shipped a phantom ID. The tier system + `gbrain models doctor` is the structural fix; future drift will be caught by the recipe-shape test in `test/anthropic-model-ids.test.ts`.
 - **The `gbrain models doctor` probe is opt-in.** Do not auto-fire it on every CLI invocation; that would burn tokens for users who just want `gbrain put-page`. Operators run it explicitly when they suspect a config issue or after upgrading.
 
+## [0.31.11] - 2026-05-10
+
+**Thin-client gbrain notices when the remote brain has upgraded and offers to bring you along.**
+
+If you're running `gbrain` against a remote `gbrain serve --http` host (the thin-client install from v0.31.1), each command now compares your local CLI version against the remote brain. When the remote has a newer minor or major release, you get a one-line prompt: `Upgrade local CLI now? [Y/n]`. Press Enter, the upgrade runs, the binary advances, your command re-prompts you to retype. Patch drift stays silent. Sticky decline per remote+version so you don't get re-asked every command after saying no. `gbrain remote doctor` surfaces the same drift as a warn-level check for quiet operators and CI.
+
+### What you can now do
+
+**Stop running stale binaries against a fresh brain.** Before this release, a thin-client install at v0.31.4 talking to a v0.32.0 brain would silently use the older protocol surface until the user noticed something was broken. The drift was invisible. Now the banner that already prints `[thin-client → host · brain: ... · v0.32.0]` follows up with an interactive upgrade prompt when local lags remote.
+
+**Decline once, stay declined.** If you press `n`, the prompt remembers your answer for that exact remote+version combination in `~/.gbrain/upgrade-prompt-state.json`. Subsequent commands are silent. When the remote bumps again, you get fresh prompts because the version key changed. Independent answers per remote brain (`work` vs `home`) via mcp_url-scoped state.
+
+**See drift in `gbrain remote doctor` even in non-TTY contexts.** The new `thin_client_upgrade_drift` check fires `warn` when minor/major drift is detected, with a fix hint pointing at `gbrain upgrade`. If a prior in-process upgrade attempt failed (state file shows `last_response: failed` for the same remote version), the hint pivots to the manual install URL so you don't loop on a broken binary.
+
+**Concurrent OpenClaw subagents don't fight over the TTY.** One advisory lockfile (`~/.gbrain/upgrade-prompt.lock`) gates the prompt. If two subagents both detect drift at the same instant, one prompts and the rest silently no-op. Stale-lock reclaim after 60s handles the case where a prompting process died mid-question.
+
+**Ctrl-C escapes the prompt cleanly.** A prompt-scoped SIGINT handler installs around the read and removes after, so pressing Ctrl-C exits 130 (the standard `network/aborted` code) instead of being swallowed by the outer dispatcher's AbortController-only handler.
+
+### Numbers that matter
+
+| Failure mode | Before v0.31.11 | After v0.31.11 |
+|---|---|---|
+| Local v0.31.4, remote v0.32.0 (minor drift) | No signal; user runs stale CLI until something breaks | Banner + interactive prompt; one Enter to upgrade |
+| User declines, runs `gbrain query` again | Re-prompted on every command | Sticky decline per (mcp_url, remote_version) |
+| `gbrain upgrade` runs but doesn't advance the binary (catch-and-print path) | Silent loop on broken binary | State=failed, exit 1, doctor hint pivots to manual install URL |
+| Two OpenClaw subagents both detect drift | Interleaved prompts on same TTY, both read each other's keystrokes | One prompts, others no-op via advisory lockfile |
+| Quiet/non-TTY/CI run with drift | No signal | `gbrain remote doctor` warns with fix hint |
+| Ctrl-C during the prompt | Swallowed (outer SIGINT handler installed already) | Exits 130 cleanly |
+| Stdin EOF mid-prompt (terminal closes, /dev/null piped past TTY check) | Hangs forever on `stdin.once('data')` | Resolves to null after 5min timeout; orchestrator treats as silent decline, no state write |
+
+### What this means for your workflow
+
+If you've been running `gbrain init --mcp-only` thin-client installs across a few machines, this closes the last "why is my brain confused?" failure mode: the answer was always "your local CLI is six releases behind the brain." Now the CLI tells you. The prompt fires at most once per command per (remote, version) and stays out of the way for quiet/non-TTY runs. CI sees the drift in `gbrain remote doctor`.
+
+## To take advantage of v0.31.11
+
+`gbrain upgrade` should land this automatically. If you're already on v0.31.11 the first time a remote brain you talk to bumps past you, you'll see the prompt. Nothing to configure.
+
+1. **Verify the doctor check is wired:**
+   ```bash
+   gbrain remote doctor --json | jq '.checks[] | select(.name == "thin_client_upgrade_drift")'
+   ```
+   You should see either `status: "ok"` (local equals remote) or `status: "warn"` (drift detected, fix hint included).
+
+2. **State file lives at `~/.gbrain/upgrade-prompt-state.json`.** It's keyed by mcp_url so multiple remote brains have isolated decline history. Delete the file to reset all answers.
+
+3. **Lockfile lives at `~/.gbrain/upgrade-prompt.lock`.** If a prompt died without cleaning up, the next invocation reclaims after 60s of stale mtime.
+
+4. **If any step fails or the prompt fires when it shouldn't,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with the output of `gbrain remote doctor --json` and the contents of `~/.gbrain/upgrade-prompt-state.json` if it exists.
+
+### Itemized changes
+
+#### Added
+- `src/core/thin-client-upgrade-prompt.ts` — `maybePromptForUpgrade` orchestrator with full DI seams for tests. Lockfile gating (`acquirePromptLock` with stale-reclaim >60s mtime), atomic state-file IO via tmp+rename, per-entry shape validator that drops malformed entries while preserving valid siblings. Pure `decideAction` returns `prompt` or `noop` based on TTY gates, banner-suppressed, sticky decline, sticky yes, prior-failed re-prompt, and the D8 patch-drift-silent rule. `verifyUpgradeAdvanced` (D5) re-reads `gbrain --version` from a fresh subprocess to detect catch-and-print upgrade paths that return 0 without advancing the binary. Prompt-scoped SIGINT handler exits 130 cleanly.
+- `src/core/cli-util.ts` — `promptLineStderr(prompt, {timeoutMs})` sibling to `promptLine`. Resolves to `string` on stdin data, `null` on stdin EOF or after the 5-minute default timeout. Never rejects. Listener cleanup is idempotent via a `settled` guard.
+- `src/core/doctor-remote.ts` — `runUpgradeDriftCheck(config)` new check `thin_client_upgrade_drift`. Returns ok+inconclusive on network error (informational; the earlier `mcp_smoke` check covers the genuinely-unreachable case). Returns ok on local≥remote OR patch drift. Returns warn on minor/major drift with a fix hint that pivots to the manual install URL if a prior `gbrain upgrade` is recorded as `failed` for the same remote version.
+- `src/cli.ts` — exported `bannerSuppressed` + `BrainIdentity`; wired `maybePromptForUpgrade` into both banner code paths (cache hit and cache miss). Banner-suppressed early return guarantees `bannerIsSuppressed=false` at the call site.
+
+#### Changed
+- `PromptReader` type now returns `Promise<string | null>` to accommodate EOF/timeout. Orchestrator handles null as silent decline with no state write (a transient stdin closure must not poison the per-version sticky-decline gate).
+
+#### Tests
+- 63 new tests across `test/thin-client-upgrade-prompt.test.ts` (50 cases: safeCompare, driftLevel, state-file IO including atomic-write and corrupt-JSON fallthrough, every decision-matrix row, lockfile acquire/EEXIST/stale-reclaim, orchestrator yes/no/advanced/not-advanced/threw/null-from-EOF, SIGINT install/remove lifecycle including cleanup-on-throw, malformed-entry filtering preserves valid siblings, empty-key dropped) and `test/doctor-remote.test.ts` (5 new cases for `runUpgradeDriftCheck`: unreachable host returns ok+inconclusive, major drift no prior state shows auto-upgrade hint, major drift with prior_failed shows manual install hint, prior_failed for older version does NOT pivot stale, local equals remote returns ok). 100% pass.
+- Test fixture in `test/doctor-remote.test.ts` extended to dispatch JSON-RPC `tools/call` by tool name via per-test `mcpToolResults` map.
+
+#### For contributors
+- The `_setVerifierForTest`, `_setPromptReaderForTest`, `_setUpgradeRunnerForTest` injection seams in `thin-client-upgrade-prompt.ts` follow the same pattern as `_clearIdentityCacheForTest` in `src/cli.ts` so tests can drive the orchestrator end-to-end without spawning subprocesses or touching the user's PATH.
+
+## [0.31.10] - 2026-05-10
+
+**Setup hands you a real bootstrap, not an empty brain. New `cold-start` skill sequences day-1 imports across markdown, contacts, calendar, email, conversations, X, archives, and meeting transcripts. New `ask-user` choice-gate pattern. Phase J in `setup` auto-launches cold-start when verification passes.**
+
+The setup skill has always ended with a working brain that's empty, leaving every new user asking "now what?" v0.31.10 closes that gap. After `gbrain doctor` confirms a healthy install, the agent now offers to populate the brain through a priority-ranked sequence of data sources, gated on user consent at every phase. Each phase delegates to existing recipes (`email-to-brain.md`, `calendar-to-brain.md`, `x-to-brain.md`) and skills (`meeting-ingestion`); cold-start is orchestration, not reimplementation. Resume state at `~/.gbrain/cold-start-state.json` matches the existing `update-state.json` convention.
+
+### What you can now do
+
+**Bootstrap a brain from scratch in one session.** The new `cold-start` skill sequences eight phases ranked by information density times ease: existing markdown / Obsidian (Tier 1) → Google Contacts → Google Calendar (90-day lookback) → Gmail (smart sample) → conversation exports (ChatGPT / Claude) → X / Twitter archive → file archives (Dropbox / Drive / local) → meeting transcripts (Circleback / Otter / Fireflies). Each phase is independently valuable; stop after any phase and resume from `~/.gbrain/cold-start-state.json` later. Trigger with "cold start", "fill my brain", or "what should I import first".
+
+**Setup auto-launches cold-start (Phase J).** After `gbrain doctor` passes, the setup skill no longer ends with "next steps: read the docs." It asks "Ready to populate your brain?" and transitions directly into cold-start. Decline once and it is deferred to `~/.gbrain/cold-start-state.json` with a `deferred` flag. Invoke later with the same trigger phrase.
+
+**Choice-gate pattern is now a documented convention.** `skills/ask-user/SKILL.md` codifies the "present 2-4 options, stop, wait" pattern that cold-start uses at every phase boundary. Platform-agnostic across Telegram inline buttons, Discord, CLI numbered options, and agent-native clarify tools.
+
+### How it works under the hood
+
+Cold-start is an orchestration skill, not a CLI command. The phase ordering ranks by information density times ease: existing markdown delivers the most pages per minute (already structured, no API), file archives deliver the fewest. Each phase delegates to a recipe (for direct OAuth setups) or to ClawVisor (for credential-vaulted setups). The skill never holds raw OAuth tokens; that posture is encoded at Phase 0. State persists across agent-loop crashes via `~/.gbrain/cold-start-state.json`; the resume protocol picks up at the first phase where `completed: false`.
+
+### Known limitations (will be addressed in follow-ups)
+
+**ClawVisor is currently required for the API-backed phases (Contacts, Calendar, Gmail).** The recipes (`recipes/email-to-brain.md`, `recipes/calendar-to-brain.md`) document a dual A / B pattern with direct-OAuth as Option B. Cold-start's Phase 0 will be relaxed to mirror that pattern in v0.32. If you do not want to use ClawVisor today, skip Phases 2-4 and run Phases 1, 5-8 for offline-only sources.
+
+**Phase-level resume granularity.** A mid-phase failure (e.g., contact 487 of 600) restarts the phase from contact 1. Idempotent slug writes prevent duplicates, but the round-trip cost is real. Per-item resume lands with the `gbrain cold-start` CLI counterpart in v0.32.
+
+### To take advantage of v0.31.10
+
+```bash
+gbrain upgrade
+```
+
+Then ask the agent to "fill my brain" or "cold start" to launch the new orchestration. If you have already run setup, run it again to get the new Phase J handoff, or invoke cold-start directly with the trigger phrase. State files live at `~/.gbrain/cold-start-state.json` and survive restarts.
+
+If you do not want ClawVisor today, run Phases 1 (markdown) and 5-8 (conversations, X, archives, transcripts) directly. Phases 2-4 (Contacts / Calendar / Gmail) will become opt-in to direct OAuth in v0.32.
+
+### For contributors
+
+Cold-start originated as PR #802. The branch shipped three commits including one that flipped ClawVisor from "recommended" to "required for API access." Codex outside-voice review of the v0.31.10 ship plan flagged that as vendor-coupling that prematurely cements ClawVisor as the public contract. The known-limitation above is the bridge: v0.31.10 ships the contributor's posture, v0.32 restores the dual-recipe pattern. Privacy scrub on the merging PR replaced "Hermes Agent" references in the new `ask-user` skill (which conflated the public NousResearch agent with private deployment names) with the canonical "OpenClaw agents" phrasing per CLAUDE.md doctrine.
+
+The version slot is deliberate. v0.31.4 through v0.31.9 are reserved for in-flight work; v0.31.10 was chosen so this user-facing skillpack expansion lands clearly above the patch-train.
+
+## [0.31.8] - 2026-05-10
+
+**Multi-source brains stop misrouting writes, and `gbrain doctor` finally tells you when it does.**
+
+Two-pass eng + codex review on the v0.31.1.1-fixwave follow-ups caught 8 issues a single pass would have shipped with. The biggest: every CLI/MCP-driven write op (put_page, add_tag, add_link, add_timeline_entry, revert_version, put_raw_data) was silently ignoring `ctx.sourceId` on multi-source brains, landing rows at `(default, slug)` regardless of caller intent. Read ops on the same brains returned arbitrary rows when the same slug existed across sources. Plus voyage embedding responses hit `JSON.parse` before any size cap, and operators wedged on v0.29.1 got the wrong recovery hint.
+
+### What you can now do
+
+**`gbrain link`, `gbrain tag`, `gbrain timeline-add` and every other CLI write op respect your active source.** Set `GBRAIN_SOURCE=jarvis-memory` (or use a `.gbrain-source` dotfile, or pass `--source` to `gbrain call`) and the op lands on the right row. Without a source signal, behavior is identical to pre-v0.31.8 — strictly additive. Closes the silent multi-source misroute that was the headline P2 from the parent fix-wave's adversarial review.
+
+**`gbrain doctor` warns when a multi-source brain has misrouted pages.** The new `multi_source_drift` check walks each non-default source's `local_path`, finds slugs that exist at `(default, slug)` but NOT at `(X, slug)`, and surfaces them with verification steps. Two possible causes are flagged honestly: pre-v0.30.3 putPage misroute, OR a source X that never finished its initial sync. The warning suggests `gbrain sources status` and `gbrain sync --source X --full` rather than a destructive auto-fix. Skipped on single-source brains. Propagates to `doctorReportRemote` so thin-client operators see the same check.
+
+**`gbrain doctor` gives operators wedged on v0.29.1 (or any future migration) the hint that actually unsticks them.** Pre-v0.31.8 the message said `Run: gbrain apply-migrations --yes` regardless of how partial the migration was. The apply-migrations runner refuses to advance past 3 consecutive partials, so the hint was wrong. Now the doctor detects the wedge condition in place — without breaking the existing forward-progress override that suppresses stale alerts on installs that moved past — and emits `Run: gbrain apply-migrations --force-retry <v>` chained with `&&` for multiple wedges. Same shape in both local and remote-doctor paths.
+
+**Voyage embedding responses can't OOM the worker.** A 256 MB Content-Length pre-check fires BEFORE `resp.clone().json()`, gating the JSON.parse vector that pre-fix would have allocated arbitrary heap on a malicious or compromised endpoint. A per-embedding base64 cap stays as defense-in-depth for chunked-encoding responses with no Content-Length header. Sized as "unambiguously not legit" — voyage-3-large × 16K embeddings (~200 MB raw) fits within the cap, anything larger is unambiguous misuse.
+
+### Numbers that matter
+
+Two passes of eng + codex review caught **2 + 6 = 8** additional issues beyond what a single review would have shipped with. False-positive count across the entire two-pass flow: **2** (lane B agent's OAuth claim, original P2-4 cwd attack premise — both verified and rejected). 22 AskUserQuestion decisions, 0 unresolved. The `multi_source_drift` check uses a single batched SQL query with a VALUES clause — sub-second on a 10K-file source instead of the 20K-round-trip N+1 the original plan would have written.
+
+### What this means for operators
+
+If you run a multi-source brain, run `gbrain doctor` after upgrading. Any `multi_source_drift` warnings are evidence of pre-v0.30.3 silent corruption that the parent fix-wave couldn't backfill. Use `gbrain sources status` to verify, then `gbrain sync --source <id> --full` to populate the right rows.
+
+### To take advantage of v0.31.8
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Set `GBRAIN_SOURCE=<id>` in your shell** (or write it to `.gbrain-source` in your brain repo root, or pass `--source <id>` to `gbrain call`) if you want CLI ops to operate on a non-default source. Without this, ops continue to default to `'default'` exactly like pre-v0.31.8.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+4. **If `gbrain doctor` reports `multi_source_drift` warnings,** verify with `gbrain sources status` then either re-sync the affected source (`gbrain sync --source <id> --full`) or `gbrain delete <slug>` if the default-source row is the misroute. A `gbrain sources rehome` cleanup command is tracked for v0.32.0.
+5. **If any step fails or the numbers look wrong,** please file an issue: https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+### Itemized changes
+
+#### Multi-source threading (codex OV-1, OV-2, OV-3, OV-9, OV-10 fixed)
+
+- **`src/core/engine.ts`:** read-surface signatures gain `opts?: { sourceId?: string }`. Affected methods: `getLinks`, `getBacklinks`, `getTimeline`, `getRawData`, `getVersions`, `getAllSlugs`, `revertToVersion`, `putRawData`. Plus `TimelineOpts.sourceId` in `src/core/types.ts`.
+- **`src/core/pglite-engine.ts` + `src/core/postgres-engine.ts`:** every read method uses a **two-branch query**. Without `opts.sourceId`, NO source filter applies (preserves pre-v0.31.8 cross-source semantics for back-link validators and any caller that hasn't threaded sourceId yet). With `opts.sourceId`, scoped to that source — the new path used by reconcileLinks and ctx.sourceId-aware op handlers. The flat-default-to-`'default'` shape from the original plan would have silently regressed every multi-source brain's getLinks/getBacklinks callers.
+- **`src/core/operations.ts`:** thread `const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};` through 16+ op handlers including the read surface (`get_page`, `get_tags`, `get_links`, `get_backlinks`, `get_timeline`, `get_versions`, `get_raw_data`, `get_chunks`) plus `runAutoLink`/`reconcileLinks` source-aware reads.
+- **`src/cli.ts`:** `makeContext` is async, calls `resolveSourceId()` from `src/core/source-resolver.ts:58` (the canonical 6-tier chain: `--source` flag → `GBRAIN_SOURCE` env → `.gbrain-source` dotfile → path-match → brain default → `'default'`).
+- **`src/commands/call.ts`:** `runCall` accepts `--source <id>` flag.
+- **`src/mcp/server.ts`:** `handleToolCall` accepts `opts.sourceId`.
+
+#### Doctor checks
+
+- **`src/core/multi-source-drift.ts` (new):** `findMisroutedPages` walks each non-default source's `local_path` for `.md` AND `.mdx` files (matches `src/core/sync.ts`), wraps the walk in try/catch so unreadable directories don't crash doctor, and runs ONE batched SQL query with VALUES clause to check existence at default vs intended source. Bounded by 10K files OR 5s timeout.
+- **`src/commands/doctor.ts`:** new `multi_source_drift` check (local + remote), `minions_migration` extended in place with 3-consecutive-partials wedge detection emitting `gbrain apply-migrations --force-retry` hints. Forward-progress override at the existing block stays byte-identical so installs that moved past an old v0.11 partial don't light up with stale alerts.
+
+#### Voyage adapter
+
+- **`src/core/ai/gateway.ts`:** `MAX_VOYAGE_RESPONSE_BYTES = 256 * 1024 * 1024`. Layer 1 Content-Length pre-check fires BEFORE `resp.clone().json()`. Layer 2 per-embedding base64 cap as defense-in-depth.
+
+#### Tests
+
+- **`test/source-id-tx-regression.test.ts`:** 8 new op-handler-layer cases extending the v0.18.0+ engine-layer coverage. Covers `add_tag`/`get_tags`/`add_link`/`get_links`/`delete_page`/`put_raw_data` routing under `ctx.sourceId='X'` vs unset, plus D16's two-branch back-compat invariant.
+- **`test/multi-source-drift.test.ts` (new):** 7 PGLite cases covering single-source skip, no-misroutes ok, 2-misroutes warn, healthy same-slug-across-sources is NOT a false positive (the codex OV4 redesign case), FS walk truncation, unreadable local_path, and `.mdx` walking.
+- **`test/doctor.test.ts`:** 4 wedge-hint regression cases including the D19 anti-regression guard that no `import { statusForVersion }` from apply-migrations.ts exists. The prior plan would have introduced this import; keeping it out means doctor stays decoupled from per-version semantics that don't encode the cross-version forward-progress override.
+- **`test/voyage-response-cap.test.ts` (new):** 5 structural source-pin cases including the critical D10 invariant: "Content-Length pre-check appears BEFORE `const json: any = await resp.clone().json()`."
+
+### For contributors
+
+Two passes of `/plan-eng-review` + outside-voice codex review caught issues a single pass would have shipped with — D16 (read-surface back-compat regression in the original D12 plan), D17 (N+1 risk in the original D8 batch-query wording), D19 (statusForVersion replacement would have regressed the existing forward-progress override), D20 (more read-side op handlers than D16 alone covered), D21 (`putRawData` engine signature was bare and would have broken compilation), D22 (`gbrain call` had no `--source` flag in its grammar so D11's test cases were unreachable). Documented decisions D1–D22 in the plan file at `~/.claude/plans/system-instruction-you-are-working-polished-lerdorf.md`.
+
+The deferred `gbrain sources rehome <X>` command stays tracked as a v0.32.0 follow-up alongside `embed.ts` source-aware threading and `reconcile-links.ts` `--source` flag exposure. The new `@garrytan/gbrain` scoped-name npm publishing TODO captures the structural fix for the npm-name-squatter problem that `classifyBunInstall` warns about.
+
+## [0.31.7] - 2026-05-09
+
+**`gbrain doctor` stops crying wolf, period — and finds itself on every deployment shape. Five community PRs land one cohesive narrative: every false-positive class on disk today, plus the install-path footgun that bit every hosted-CLI user who ever ran `gbrain doctor` from `~`.**
+
+When the doctor cries wolf, agents and humans learn to ignore it, which then masks the real problems. The previous wave (v0.31.1.1-fixwave) sharpened real signal with `sync_failures` code classification. This wave fixes the inverse: every false-positive class on disk today gets honest. Five PRs, four contributors, one theme.
+
+### The numbers that matter
+
+Verified against a live OpenClaw deployment with 224 skills, `skills/RESOLVER.md` (41 entries from skillpack), and `../AGENTS.md` (206 entries); plus a markdown-only journal brain (2533 pages, 0 entity pages); plus the v0.25.1 wave skills' routing-eval suite; plus a hosted-CLI install:
+
+| | Before | After |
+|---|---|---|
+| OpenClaw reachable skills | 37/224 | **200/224** |
+| v0.25.1 skill routing accuracy | 36 ambiguous matches | **0** |
+| Markdown-only brain `graph_coverage` | warn forever | **OK** |
+| Stale `gbrain link-extract` hint (since v0.16) | suggested in WARN | **`gbrain extract all`** |
+| Hosted-CLI doctor from `~` | "Could not find skills directory" | **finds bundled `skills/`** |
+| Health score on healthy OpenClaw + journal brains | 40/100 | **100/100** |
+
+The remaining unreachable skills, low-coverage warnings, and any future doctor warns are real gaps: new skills without trigger rows, brains with actual coverage shortfalls, fixes you actually want to see.
+
+### What you can now do
+
+**`gbrain doctor` is honest about resolver health on OpenClaw deployments.** OpenClaw workspaces typically have a thin `skills/RESOLVER.md` (~40 entries from the skillpack) and a fat `AGENTS.md` at the workspace root (200+ entries, the real dispatcher). The previous first-match-wins policy only saw `RESOLVER.md`, so the doctor reported 187 skills as "unreachable" when they were fully routed in `AGENTS.md`. Now `check-resolvable` collects entries from every resolver file across both the skills directory and its parent, deduped by `skillPath`. New helper `findAllResolverFiles()` returns every match instead of the first. ([#798](https://github.com/garrytan/gbrain/pull/798))
+
+**Routing accuracy on the v0.25.1 wave skills lifts from "36 ambiguous warnings" to zero.** Each skill's `triggers:` frontmatter declares 4-5 entries, but only the first ever made it into the matching RESOLVER.md row, so the structural matcher couldn't find a specific phrase for realistic user intents. RESOLVER.md is now synced with the full frontmatter triggers across book-mirror, article-enrichment, strategic-reading, concept-synthesis, perplexity-research, archive-crawler, academic-verify, brain-pdf, voice-note-ingest, and media-ingest. Plus targeted `ambiguous_with` fixture annotations where chains like `enrich → article-enrichment` are designed to co-fire. Contributed by [@psperera](https://github.com/psperera). ([#788](https://github.com/garrytan/gbrain/pull/788))
+
+**Markdown-only brains pass `graph_coverage` instead of warning at 0% forever.** The check measures `link_coverage` and `timeline_coverage` over entity pages. For wikis, journals, and notes brains (Karpathy's original LLM Wiki use case), entity count is 0, so coverage is structurally undefined. The doctor now detects this and reports `ok: no entity pages — graph_coverage not applicable`. Verified on a 2533-page production wiki with 6086 wikilinks, 1964 timeline entries, zero entity pages. Contributed by [@mayazbay](https://github.com/mayazbay). ([#536](https://github.com/garrytan/gbrain/pull/536), closes #530)
+
+**The `graph_coverage` hint stops suggesting commands that haven't existed since v0.16.** The hint pointed at `gbrain link-extract && gbrain timeline-extract` (consolidated into `gbrain extract <links|timeline|all>` 30 releases ago). Now says `gbrain extract all`. Header comment in `src/core/link-extraction.ts` updated to match. Pinned by an IRON-RULE regression test that bans the stale verb names from the source string. Originally raised by [@FUSED-ID](https://github.com/FUSED-ID). ([#376](https://github.com/garrytan/gbrain/pull/376), folded into the wave's clean shape)
+
+**`gbrain doctor` works from anywhere.** On `bun install -g github:garrytan/gbrain && cd ~ && gbrain doctor`, the doctor used to warn "Could not find skills directory" and dock the health score forever — every hosted-CLI user took a permanent `-5`. The bundled `skills/` lives under `node_modules/gbrain/`; the cwd-only walk never looked there. Now there's a tier-0 `$GBRAIN_SKILLS_DIR` operator override (Docker mounts, CI, monorepo subdirs) plus a read-only install-path fallback that walks up from the gbrain module's own location. Doctor / check-resolvable / routing-eval get the install-path fallback; write-path callers (skillpack install, skillify scaffold) deliberately do NOT — the architectural split prevents `gbrain skillpack install` from `~` silently retargeting the bundled gbrain repo's skills/ instead of the user's actual workspace. Originally raised by [@TheAndersMadsen](https://github.com/TheAndersMadsen) ([#128](https://github.com/garrytan/gbrain/pull/128)); adapted into the existing 5-tier resolver after eng + outside-voice review.
+
+### To take advantage of v0.31.7
+
+```bash
+gbrain upgrade
+gbrain doctor
+```
+
+After upgrade, anything that was `[WARN] graph_coverage` or `[WARN] resolver_health` on a healthy brain should now be `[OK]`. Real warnings remain real. The `[WARN]` lines you see are the ones worth acting on — file an issue at https://github.com/garrytan/gbrain/issues with `gbrain doctor --json` output if anything looks off.
+
+### Itemized changes
+
+#### Resolver merge across multiple files
+- `src/core/resolver-filenames.ts`: add `findAllResolverFiles(dir)` returning every recognized resolver file in `dir`. `findResolverFile()` unchanged (backward-compatible).
+- `src/core/check-resolvable.ts`: replace single-file lookup with multi-file merge across skills dir + parent. Entries deduped by `skillPath`. Combined `resolverContent` passed to routing-eval. Error message switches from hardcoded "RESOLVER.md" to `RESOLVER_FILENAMES_LABEL`.
+- `test/resolver-merge.test.ts`: 8 new cases covering `findAllResolverFiles` behavior and the merge path in `checkResolvable`.
+
+#### RESOLVER.md trigger sync (v0.25.1 wave)
+- `skills/RESOLVER.md`: 9 hand-curated rows expanded to include the full frontmatter triggers per skill. media-ingest's prose row converted to quoted triggers so the matcher actually sees them; `"PDF book"` and `"ingest it into my brain"` carried over from HEAD's richer frontmatter.
+- `skills/article-enrichment/routing-eval.jsonl`: `ambiguous_with: ["enrich"]` added to all 5 fixtures (acknowledges the resolver doc's framing that skills chain).
+
+#### graph_coverage zero-entity short-circuit + verb fix
+- `src/commands/doctor.ts`: detect entity-page count via SQL; mark check `ok` when 0 entity pages. Hint updated to `gbrain extract all`.
+- `src/core/link-extraction.ts`: header comment updated to reference the consolidated `extract.ts`.
+- `test/doctor.test.ts`: IRON-RULE regression assertion bans `gbrain link-extract` / `gbrain timeline-extract` from the source string.
+
+#### Install-path resolver (read-path-only)
+- `src/core/repo-root.ts`: tier-0 `$GBRAIN_SKILLS_DIR` explicit override on shared `autoDetectSkillsDir`. New exported `autoDetectSkillsDirReadOnly` wraps it with install-path fallback gated by `isGbrainRepoRoot`. Two new `SkillsDirSource` variants: `'env_explicit'`, `'install_path'`. New `AUTO_DETECT_HINT_READ_ONLY` constant.
+- Read-path callers switched to `autoDetectSkillsDirReadOnly`: `src/commands/doctor.ts`, `src/commands/check-resolvable.ts`, `src/commands/routing-eval.ts`.
+- Write-path callers stay on `autoDetectSkillsDir`: `src/commands/skillpack.ts`, `src/commands/skillify.ts`, `src/core/skillpack/post-install-advisory.ts`. The split prevents silent workspace retargeting on `gbrain skillpack install` from `~`.
+- `test/repo-root.test.ts`: 8 new cases covering tier-0 valid/invalid/precedence, install-path walk, no-drift on primary success, AUTO_DETECT_HINT updates, and the D5 regression guard that pins the read-path/write-path split (asserts the shared resolver MUST NEVER return `'install_path'` source).
+
+### For contributors
+
+- New `SkillsDirSource` variants `'env_explicit'` and `'install_path'` — downstream consumers using the type union should add cases (TypeScript exhaustiveness will flag missing handlers).
+- The architectural split between `autoDetectSkillsDir` (read+write-safe) and `autoDetectSkillsDirReadOnly` (read-only with install-path fallback) is the canonical pattern for any future "fall back further when nothing else worked" addition. New consumers default to the safer (write-safe) variant; opt into the read-only variant with intent.
+- `gbrain doctor --fix` and `gbrain check-resolvable --fix` refuse to write when the skills dir resolved via the install-path fallback (caught by codex during the ship review — without this gate, running `--fix` from a cwd with no skills dir would have silently rewritten the bundled install tree). Set `$GBRAIN_SKILLS_DIR`, `$OPENCLAW_WORKSPACE`, or pass `--skills-dir <path>` to enable `--fix`.
+- `gbrain routing-eval` now uses the same multi-file resolver merge as `check-resolvable`, so on OpenClaw layouts (`skills/RESOLVER.md` + `../AGENTS.md`) all three commands see the same trigger index. Previously `routing-eval` read only the first resolver file it found.
+- Contributors: [@mayazbay](https://github.com/mayazbay), [@psperera](https://github.com/psperera), [@FUSED-ID](https://github.com/FUSED-ID), [@TheAndersMadsen](https://github.com/TheAndersMadsen). Outside-voice plan review (codex) caught the read-path/write-path split risk on the original plan; a second codex pass during /ship caught the `--fix` write-path leak before merge.
+
+[#798](https://github.com/garrytan/gbrain/pull/798) [#788](https://github.com/garrytan/gbrain/pull/788) [#536](https://github.com/garrytan/gbrain/pull/536) [#376](https://github.com/garrytan/gbrain/pull/376) [#128](https://github.com/garrytan/gbrain/pull/128)
+
 ## [0.31.4.1] - 2026-05-10
 
 **Takes v2: lessons from a 100K-take production extraction folded back into the runtime, and `gbrain auth` works on Postgres again.**

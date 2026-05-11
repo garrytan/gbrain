@@ -464,3 +464,171 @@ describe('deletePage + updateSlug source-scoping (Data R2 CRITICAL + HIGH fix)',
     expect(rows[0].slug).toBe(REN_TO_2);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.31.8 — op-handler-layer threading (D7 + D11 + D16 + D20 + D21 + D22)
+//
+// The pre-v0.31.8 op handlers in src/core/operations.ts called engine methods
+// bare-slug, ignoring ctx.sourceId. Result: a remote MCP token whose
+// ctx.sourceId='X' calling put_page / add_tag / get_links / etc. silently
+// landed on source 'default'. This block drives the actual op handlers
+// (operations.ts) — not just the engine surface — through a mock
+// OperationContext carrying sourceId='X' and asserts only the X-source row
+// is mutated/read.
+// ─────────────────────────────────────────────────────────────────────────
+
+import { operations } from '../src/core/operations.ts';
+import type { OperationContext } from '../src/core/operations.ts';
+
+function makeCtx(eng: PGLiteEngine, overrides: Partial<OperationContext> = {}): OperationContext {
+  return {
+    engine: eng as unknown as OperationContext['engine'],
+    config: { engine: 'pglite' } as never,
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    dryRun: false,
+    remote: false,
+    ...overrides,
+  };
+}
+
+function getOp(name: string) {
+  const op = operations.find(o => o.name === name);
+  if (!op) throw new Error(`op not registered: ${name}`);
+  return op;
+}
+
+describe('v0.31.8 op-handler ctx.sourceId threading', () => {
+  // Two-source fixture seeded fresh for this block. Use unique slugs so the
+  // earlier engine-layer suite's leftover state doesn't pollute assertions.
+  const TAG_SLUG = 'topics/op-tag-target';
+
+  beforeAll(async () => {
+    // Page exists at BOTH sources (the v0.18.0 supported state).
+    await engine.putPage(TAG_SLUG, {
+      type: 'concept', title: 'Default tag target', compiled_truth: '.',
+    });
+    await engine.putPage(TAG_SLUG, {
+      type: 'concept', title: 'Testsrc tag target', compiled_truth: '.',
+    }, { sourceId: 'testsrc' });
+  });
+
+  test('add_tag handler with ctx.sourceId=testsrc tags only the testsrc row', async () => {
+    const op = getOp('add_tag');
+    await op.handler(makeCtx(engine, { sourceId: 'testsrc' }), { slug: TAG_SLUG, tag: 'op-handler-test-1' });
+
+    const rows = await engine.executeRaw<{ source_id: string }>(
+      `SELECT p.source_id FROM tags t JOIN pages p ON p.id = t.page_id
+       WHERE p.slug = $1 AND t.tag = $2`,
+      [TAG_SLUG, 'op-handler-test-1'],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].source_id).toBe('testsrc');
+  });
+
+  test('add_tag handler without ctx.sourceId tags the default row (back-compat)', async () => {
+    const op = getOp('add_tag');
+    await op.handler(makeCtx(engine), { slug: TAG_SLUG, tag: 'op-handler-test-2' });
+
+    const rows = await engine.executeRaw<{ source_id: string }>(
+      `SELECT p.source_id FROM tags t JOIN pages p ON p.id = t.page_id
+       WHERE p.slug = $1 AND t.tag = $2`,
+      [TAG_SLUG, 'op-handler-test-2'],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].source_id).toBe('default');
+  });
+
+  test('get_tags handler with ctx.sourceId=testsrc returns only testsrc tags', async () => {
+    // Both rows should now have one tag each from the two tests above.
+    const op = getOp('get_tags');
+    const tags = await op.handler(makeCtx(engine, { sourceId: 'testsrc' }), { slug: TAG_SLUG }) as string[];
+    expect(tags).toContain('op-handler-test-1');
+    expect(tags).not.toContain('op-handler-test-2');
+  });
+
+  test('get_tags handler without ctx.sourceId returns default-source tags (back-compat)', async () => {
+    const op = getOp('get_tags');
+    const tags = await op.handler(makeCtx(engine), { slug: TAG_SLUG }) as string[];
+    // getTags is a v0.18.0-era source-aware method: it already defaults to
+    // source='default' when opts is omitted (see engine.ts addTag/removeTag/
+    // getTags comment). It does NOT use the D16 two-branch pattern — the
+    // pre-v0.31.8 behavior for tags on multi-source brains was always
+    // "scoped to default unless told otherwise." So with ctx.sourceId unset,
+    // only the default-source tag surfaces. (D16 two-branch applies to
+    // getLinks/getBacklinks/getTimeline/getRawData/getVersions/getAllSlugs/
+    // revertToVersion — the methods that pre-D12 had no source filter at all.)
+    expect(tags).toContain('op-handler-test-2');
+    expect(tags).not.toContain('op-handler-test-1');
+  });
+
+  test('add_link handler with ctx.sourceId scopes both endpoints', async () => {
+    // Seed a target page at both sources so addLink's INTERSECT pre-check passes.
+    const TARGET = 'topics/op-link-target';
+    await engine.putPage(TARGET, { type: 'concept', title: 'Default target', compiled_truth: '.' });
+    await engine.putPage(TARGET, { type: 'concept', title: 'Testsrc target', compiled_truth: '.' }, { sourceId: 'testsrc' });
+
+    const op = getOp('add_link');
+    await op.handler(makeCtx(engine, { sourceId: 'testsrc' }), {
+      from: TAG_SLUG, to: TARGET, link_type: 'mentions', context: 'op-test',
+    });
+
+    const rows = await engine.executeRaw<{ from_source: string; to_source: string }>(
+      `SELECT f.source_id AS from_source, t.source_id AS to_source
+       FROM links l JOIN pages f ON f.id = l.from_page_id
+                    JOIN pages t ON t.id = l.to_page_id
+       WHERE f.slug = $1 AND t.slug = $2 AND l.link_type = 'mentions'`,
+      [TAG_SLUG, TARGET],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].from_source).toBe('testsrc');
+    expect(rows[0].to_source).toBe('testsrc');
+  });
+
+  test('get_links handler scopes to ctx.sourceId; back-compat cross-source view preserved (D16)', async () => {
+    const op = getOp('get_links');
+    const scoped = await op.handler(makeCtx(engine, { sourceId: 'testsrc' }), { slug: TAG_SLUG }) as Array<{ to_slug: string }>;
+    const cross  = await op.handler(makeCtx(engine), { slug: TAG_SLUG }) as Array<{ to_slug: string }>;
+    // testsrc has the link from add_link test above. default has none.
+    expect(scoped.length).toBeGreaterThanOrEqual(1);
+    // Cross-source view sees at least the same edges (and would see default's
+    // if we'd seeded any). Under the two-branch back-compat path, this is the
+    // pre-v0.31.8 semantic — no source filter on the engine join.
+    expect(cross.length).toBeGreaterThanOrEqual(scoped.length);
+  });
+
+  test('delete_page handler scopes to ctx.sourceId (soft-delete only the testsrc row)', async () => {
+    // Use a fresh slug so we don't impact other tests in this describe block.
+    const DEL_SLUG = 'topics/op-delete-target';
+    await engine.putPage(DEL_SLUG, { type: 'concept', title: 'Default', compiled_truth: '.' });
+    await engine.putPage(DEL_SLUG, { type: 'concept', title: 'Testsrc', compiled_truth: '.' }, { sourceId: 'testsrc' });
+
+    const op = getOp('delete_page');
+    await op.handler(makeCtx(engine, { sourceId: 'testsrc' }), { slug: DEL_SLUG });
+
+    const rows = await engine.executeRaw<{ source_id: string; deleted_at: string | null }>(
+      `SELECT source_id, deleted_at FROM pages WHERE slug = $1 ORDER BY source_id`,
+      [DEL_SLUG],
+    );
+    expect(rows.length).toBe(2);
+    const def = rows.find(r => r.source_id === 'default')!;
+    const tst = rows.find(r => r.source_id === 'testsrc')!;
+    expect(def.deleted_at).toBeNull();         // default row untouched
+    expect(tst.deleted_at).not.toBeNull();      // testsrc row soft-deleted
+  });
+
+  test('put_raw_data handler threads ctx.sourceId (D21)', async () => {
+    const op = getOp('put_raw_data');
+    await op.handler(makeCtx(engine, { sourceId: 'testsrc' }), {
+      slug: TAG_SLUG, source: 'unit-test', data: { variant: 'testsrc' },
+    });
+
+    // Read via the engine to assert which source row got the raw_data.
+    const rd = await engine.getRawData(TAG_SLUG, 'unit-test', { sourceId: 'testsrc' });
+    expect(rd.length).toBe(1);
+    expect((rd[0].data as { variant: string }).variant).toBe('testsrc');
+
+    // Default-source raw_data should be untouched.
+    const defRd = await engine.getRawData(TAG_SLUG, 'unit-test', { sourceId: 'default' });
+    expect(defRd.length).toBe(0);
+  });
+});

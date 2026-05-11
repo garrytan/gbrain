@@ -656,7 +656,19 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as Record<string, unknown>[]).map(rowToPage);
   }
 
-  async getAllSlugs(): Promise<Set<string>> {
+  async getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>> {
+    // v0.31.8 (D12): when opts.sourceId is set, return only that source's
+    // slugs (used by reconcileLinks so wikilink resolution doesn't span
+    // unrelated sources). Without opts, returns the union across sources
+    // (pre-v0.31.8 behavior — preserved for callers that still expect the
+    // brain-wide slug index, e.g. extract.ts's link resolver).
+    if (opts?.sourceId) {
+      const { rows } = await this.db.query(
+        'SELECT slug FROM pages WHERE source_id = $1',
+        [opts.sourceId]
+      );
+      return new Set((rows as { slug: string }[]).map(r => r.slug));
+    }
     const { rows } = await this.db.query('SELECT slug FROM pages');
     return new Set((rows as { slug: string }[]).map(r => r.slug));
   }
@@ -1233,7 +1245,26 @@ export class PGLiteEngine implements BrainEngine {
     }
   }
 
-  async getLinks(slug: string): Promise<Link[]> {
+  async getLinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
+    // v0.31.8 (D16): two-branch query. Without opts.sourceId, no source filter
+    // (preserves pre-v0.31.8 cross-source semantics for back-link validators
+    // and read-side op handlers that haven't threaded sourceId yet). With
+    // opts.sourceId, scope to that source — used by reconcileLinks and any
+    // ctx.sourceId-aware read op (D20).
+    if (opts?.sourceId) {
+      const { rows } = await this.db.query(
+        `SELECT f.slug as from_slug, t.slug as to_slug,
+                l.link_type, l.context, l.link_source,
+                o.slug as origin_slug, l.origin_field
+         FROM links l
+         JOIN pages f ON f.id = l.from_page_id
+         JOIN pages t ON t.id = l.to_page_id
+         LEFT JOIN pages o ON o.id = l.origin_page_id
+         WHERE f.slug = $1 AND f.source_id = $2`,
+        [slug, opts.sourceId]
+      );
+      return rows as unknown as Link[];
+    }
     const { rows } = await this.db.query(
       `SELECT f.slug as from_slug, t.slug as to_slug,
               l.link_type, l.context, l.link_source,
@@ -1248,7 +1279,22 @@ export class PGLiteEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
-  async getBacklinks(slug: string): Promise<Link[]> {
+  async getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
+    // v0.31.8 (D16): two-branch query. See getLinks() comment.
+    if (opts?.sourceId) {
+      const { rows } = await this.db.query(
+        `SELECT f.slug as from_slug, t.slug as to_slug,
+                l.link_type, l.context, l.link_source,
+                o.slug as origin_slug, l.origin_field
+         FROM links l
+         JOIN pages f ON f.id = l.from_page_id
+         JOIN pages t ON t.id = l.to_page_id
+         LEFT JOIN pages o ON o.id = l.origin_page_id
+         WHERE t.slug = $1 AND t.source_id = $2`,
+        [slug, opts.sourceId]
+      );
+      return rows as unknown as Link[];
+    }
     const { rows } = await this.db.query(
       `SELECT f.slug as from_slug, t.slug as to_slug,
               l.link_type, l.context, l.link_source,
@@ -1616,40 +1662,59 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {
+    // v0.31.8 (D16): build WHERE clause dynamically so opts.sourceId composes
+    // cleanly with the existing after/before filters. Without sourceId, no
+    // source filter applies (preserves pre-v0.31.8 cross-source semantics).
     const limit = opts?.limit || 100;
-
-    let result;
-    if (opts?.after && opts?.before) {
-      result = await this.db.query(
-        `SELECT te.* FROM timeline_entries te
-         JOIN pages p ON p.id = te.page_id
-         WHERE p.slug = $1 AND te.date >= $2::date AND te.date <= $3::date
-         ORDER BY te.date DESC LIMIT $4`,
-        [slug, opts.after, opts.before, limit]
-      );
-    } else if (opts?.after) {
-      result = await this.db.query(
-        `SELECT te.* FROM timeline_entries te
-         JOIN pages p ON p.id = te.page_id
-         WHERE p.slug = $1 AND te.date >= $2::date
-         ORDER BY te.date DESC LIMIT $3`,
-        [slug, opts.after, limit]
-      );
-    } else {
-      result = await this.db.query(
-        `SELECT te.* FROM timeline_entries te
-         JOIN pages p ON p.id = te.page_id
-         WHERE p.slug = $1
-         ORDER BY te.date DESC LIMIT $2`,
-        [slug, limit]
-      );
+    const where: string[] = ['p.slug = $1'];
+    const params: unknown[] = [slug];
+    if (opts?.after) {
+      params.push(opts.after);
+      where.push(`te.date >= $${params.length}::date`);
     }
-
+    if (opts?.before) {
+      params.push(opts.before);
+      where.push(`te.date <= $${params.length}::date`);
+    }
+    if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      where.push(`p.source_id = $${params.length}`);
+    }
+    params.push(limit);
+    const result = await this.db.query(
+      `SELECT te.* FROM timeline_entries te
+       JOIN pages p ON p.id = te.page_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY te.date DESC LIMIT $${params.length}`,
+      params
+    );
     return result.rows as unknown as TimelineEntry[];
   }
 
   // Raw data
-  async putRawData(slug: string, source: string, data: object): Promise<void> {
+  async putRawData(
+    slug: string,
+    source: string,
+    data: object,
+    opts?: { sourceId?: string },
+  ): Promise<void> {
+    // v0.31.8 (D21): two-branch INSERT-SELECT. Without opts.sourceId, the
+    // page-id lookup matches every same-slug page (pre-v0.31.8 behavior; can
+    // still trip Postgres 21000 on multi-source brains — caller's choice).
+    // With opts.sourceId, the lookup is source-scoped so the right row
+    // gets the raw_data attached.
+    if (opts?.sourceId) {
+      await this.db.query(
+        `INSERT INTO raw_data (page_id, source, data)
+         SELECT id, $2, $3::jsonb
+         FROM pages WHERE slug = $1 AND source_id = $4
+         ON CONFLICT (page_id, source) DO UPDATE SET
+           data = EXCLUDED.data,
+           fetched_at = now()`,
+        [slug, source, JSON.stringify(data), opts.sourceId]
+      );
+      return;
+    }
     await this.db.query(
       `INSERT INTO raw_data (page_id, source, data)
        SELECT id, $2, $3::jsonb
@@ -1661,23 +1726,29 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
-  async getRawData(slug: string, source?: string): Promise<RawData[]> {
-    let result;
+  async getRawData(
+    slug: string,
+    source?: string,
+    opts?: { sourceId?: string },
+  ): Promise<RawData[]> {
+    // v0.31.8 (D21): build WHERE clause dynamically. Without opts.sourceId,
+    // no source filter (preserves pre-v0.31.8 cross-source read).
+    const where: string[] = ['p.slug = $1'];
+    const params: unknown[] = [slug];
     if (source) {
-      result = await this.db.query(
-        `SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
-         JOIN pages p ON p.id = rd.page_id
-         WHERE p.slug = $1 AND rd.source = $2`,
-        [slug, source]
-      );
-    } else {
-      result = await this.db.query(
-        `SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
-         JOIN pages p ON p.id = rd.page_id
-         WHERE p.slug = $1`,
-        [slug]
-      );
+      params.push(source);
+      where.push(`rd.source = $${params.length}`);
     }
+    if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      where.push(`p.source_id = $${params.length}`);
+    }
+    const result = await this.db.query(
+      `SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
+       JOIN pages p ON p.id = rd.page_id
+       WHERE ${where.join(' AND ')}`,
+      params
+    );
     return result.rows as unknown as RawData[];
   }
 
@@ -2423,7 +2494,19 @@ export class PGLiteEngine implements BrainEngine {
     return rows[0] as unknown as PageVersion;
   }
 
-  async getVersions(slug: string): Promise<PageVersion[]> {
+  async getVersions(slug: string, opts?: { sourceId?: string }): Promise<PageVersion[]> {
+    // v0.31.8 (D16): two-branch. Without opts.sourceId, joins return versions
+    // for every same-slug page (preserves pre-v0.31.8 cross-source view).
+    if (opts?.sourceId) {
+      const { rows } = await this.db.query(
+        `SELECT pv.* FROM page_versions pv
+         JOIN pages p ON p.id = pv.page_id
+         WHERE p.slug = $1 AND p.source_id = $2
+         ORDER BY pv.snapshot_at DESC`,
+        [slug, opts.sourceId]
+      );
+      return rows as unknown as PageVersion[];
+    }
     const { rows } = await this.db.query(
       `SELECT pv.* FROM page_versions pv
        JOIN pages p ON p.id = pv.page_id
@@ -2434,7 +2517,27 @@ export class PGLiteEngine implements BrainEngine {
     return rows as unknown as PageVersion[];
   }
 
-  async revertToVersion(slug: string, versionId: number): Promise<void> {
+  async revertToVersion(
+    slug: string,
+    versionId: number,
+    opts?: { sourceId?: string },
+  ): Promise<void> {
+    // v0.31.8 (D12): when opts.sourceId is set, scope BOTH the page lookup
+    // and the version row reference. Without it, multi-source brains can
+    // revert the wrong same-slug page (the one Postgres returns first).
+    if (opts?.sourceId) {
+      await this.db.query(
+        `UPDATE pages SET
+          compiled_truth = pv.compiled_truth,
+          frontmatter = pv.frontmatter,
+          updated_at = now()
+        FROM page_versions pv
+        WHERE pages.slug = $1 AND pages.source_id = $3
+              AND pv.id = $2 AND pv.page_id = pages.id`,
+        [slug, versionId, opts.sourceId]
+      );
+      return;
+    }
     await this.db.query(
       `UPDATE pages SET
         compiled_truth = pv.compiled_truth,

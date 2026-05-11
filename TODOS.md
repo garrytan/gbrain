@@ -1705,3 +1705,35 @@ doesn't gate on scopes. Adding per-tool scope enforcement would let
 **Effort estimate:** M (human: ~1 day / CC: ~30 min for the schema-aware gate).
 **Priority:** P3.
 **Depends on:** Nothing.
+
+---
+
+### `@garrytan/gbrain` scoped-name npm publishing
+**What:** Publish gbrain to npm under the scoped name `@garrytan/gbrain`
+instead of the bare `gbrain` name. Provides structural defense against the
+unrelated `gbrain@1.x` squatter package on npm.
+
+**Why:** `classifyBunInstall()` at `src/commands/upgrade.ts:395` does a
+best-effort fingerprint check on `repository.url` + `src/cli.ts` marker, with
+the comment explicitly accepting that signals are spoofable by a determined
+squatter. Scoped publishing is the structural answer that closes the loop:
+`bun add -g @garrytan/gbrain` cannot collide with any non-`@garrytan` package.
+
+**Pros:** closes the squatter vector; consistent with how high-trust npm
+packages are published; allows removing `classifyBunInstall`'s spoofable
+signals later.
+
+**Cons:** multi-week effort; needs reverse-compatible upgrade path for users
+on the bare-name install (`bun add -g gbrain` → recovery message pointing
+at the new scoped name); npm publishing flow changes; CI publish step needs
+scope-aware tagging.
+
+**Context:** tracked at `src/commands/upgrade.ts:392-394` since v0.29; reaffirmed
+during v0.31.8 codex outside-voice review. Issue #658 has the surface-level
+history.
+
+**Effort estimate:** L (human: ~1 week / CC: ~half a day for the publishing
+flow + recovery messaging).
+**Priority:** P2.
+**Depends on:** decision on whether to deprecate the bare name or dual-publish
+during a transition window.
