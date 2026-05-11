@@ -1097,6 +1097,11 @@ const query: Operation = {
       since: typeof p.since === 'string' ? p.since : undefined,
       until: typeof p.until === 'string' ? p.until : undefined,
       onMeta: (m) => { capturedMeta = m; },
+      // v0.31.4 (mcp-source-isolation read-side fix): thread token-scoped
+      // sourceId so vector/keyword/hybrid search honors caller isolation.
+      // hybridSearch already accepts + threads this to engine.searchVector
+      // and engine.searchKeyword; the op handler just wasn't passing it.
+      sourceId: ctx.sourceId,
     });
     const latency_ms = Date.now() - startedAt;
 
