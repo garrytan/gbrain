@@ -81,6 +81,8 @@ Three knobs:
 
 Write to `~/bin/gbrain-autocommit.sh`. (Create `~/bin/` if missing.) Replace `<STAGE_PATH>` with the user's chosen subdirectory.
 
+**Critical:** use `git -C "$BRAIN"` rather than `cd "$BRAIN" && git`. macOS launchd sandboxes child processes such that `git`'s `getcwd()` returns `EPERM` on iCloud Drive paths (`~/Library/Mobile Documents/...`) even when Full Disk Access has been granted to the shell. The fatal error reads `fatal: Unable to read current working directory: Operation not permitted` and the script silently fails to commit. Passing the path explicitly to git as an argument avoids the cwd-read syscall entirely.
+
 ```bash
 #!/bin/zsh
 # gbrain vault auto-commit worker — bridges external file-drop pipelines
@@ -88,6 +90,11 @@ Write to `~/bin/gbrain-autocommit.sh`. (Create `~/bin/` if missing.) Replace `<S
 #
 # IMPORTANT: source ~/.zshrc BEFORE `set -u` — oh-my-zsh boilerplate
 # references unbound variables that would abort the script.
+#
+# Uses `git -C <path>` rather than `cd <path>` because macOS launchd
+# sandboxes child processes such that getcwd() on iCloud Drive paths
+# returns EPERM — even with Full Disk Access granted. Passing the path
+# explicitly to git avoids the cwd-read syscall entirely.
 set -eo pipefail
 source "$HOME/.zshrc" 2>/dev/null || true
 export PATH="$HOME/.bun/bin:$PATH"
@@ -102,17 +109,23 @@ if [[ -z "$BRAIN" || ! -d "$BRAIN/.git" ]]; then
   exit 1
 fi
 
-cd "$BRAIN"
-git add "$STAGE_PATH" 2>/dev/null || true
+# Stage. Use git -C to avoid cd-into-iCloud sandbox issues under launchd.
+git -C "$BRAIN" add "$STAGE_PATH" 2>/dev/null || true
 
-# Bail cleanly if nothing was staged.
-if git diff --cached --quiet; then
+# Bail cleanly if nothing was staged. Write a heartbeat line so the cron
+# is observable even when there is no work to do. Trim the log if it
+# grows past 1MB so heartbeats don't bloat disk.
+if git -C "$BRAIN" diff --cached --quiet; then
+  echo "$(date -Iseconds) tick — no changes in $STAGE_PATH" >> "$LOG"
+  if [[ $(wc -c < "$LOG") -gt 1048576 ]]; then
+    tail -1000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+  fi
   exit 0
 fi
 
-COUNT=$(git diff --cached --name-only | wc -l | tr -d ' ')
+COUNT=$(git -C "$BRAIN" diff --cached --name-only | wc -l | tr -d ' ')
 echo "=== $(date -Iseconds) committing $COUNT file(s) in $STAGE_PATH ===" >> "$LOG"
-git commit -m "auto: $STAGE_PATH ($COUNT file(s))" >> "$LOG" 2>&1
+git -C "$BRAIN" commit -m "auto: $STAGE_PATH ($COUNT file(s))" >> "$LOG" 2>&1
 echo "=== $(date -Iseconds) running gbrain sync ===" >> "$LOG"
 gbrain sync --no-pull >> "$LOG" 2>&1
 echo "=== $(date -Iseconds) sync done ===" >> "$LOG"
@@ -190,6 +203,8 @@ Should still report `healthy` / 100.
 - **Synthesize-on-arrival.** This recipe ingests + embeds new files but does not fire `dream.synthesize` on them. Synthesis runs on the nightly 02:00 dream cycle. If you want a transcript synthesized into reflections within minutes of arrival rather than overnight, add `gbrain dream --input "$BRAIN/v2md/Notes/<new-file>" --json >> "$LOG" 2>&1` to the worker — but be aware each synth call costs ~$0.30 in Sonnet tokens.
 
 ## Troubleshooting
+
+**`fatal: Unable to read current working directory: Operation not permitted` in `~/.gbrain/logs/autocommit.launchd.err`.** macOS launchd sandbox blocks `getcwd()` on iCloud Drive paths even when Full Disk Access is granted. The worker script in this recipe already avoids this with `git -C "$BRAIN"`, so you should never hit this — but if you've forked the script and replaced `git -C` with `cd && git`, this is the symptom. Switch back to `git -C`.
 
 **"git pull failed" in logs.** Your dream wrapper does `git pull` but this worker doesn't, and shouldn't. The worker uses `--no-pull` on sync deliberately. Ignore.
 
