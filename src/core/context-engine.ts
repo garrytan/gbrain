@@ -146,6 +146,25 @@ interface FlightData {
   }>;
 }
 
+interface CalendarEvent {
+  id?: string;
+  summary?: string;
+  start?: string;
+  end?: string;
+  description?: string;
+  attendees?: string[];
+}
+
+interface CalendarCache {
+  lastUpdated?: string;
+  events?: CalendarEvent[];
+}
+
+interface TaskFile {
+  raw: string;
+  todayItems: string[];
+}
+
 interface LiveContext {
   now: string;
   timezone: string;
@@ -159,6 +178,10 @@ interface LiveContext {
   garryAwake: boolean;
   isQuietHours: boolean;
   activeTravel: string | null;
+  currentEvent: CalendarEvent | null;
+  nextEvents: CalendarEvent[];
+  todayTasks: string[];
+  calendarStale: boolean;
 }
 
 // ── Context Generation (deterministic, <5ms) ────────────────────────────
@@ -210,10 +233,90 @@ function resolveLocation(workspaceDir: string): { city: string; tz: string; sour
   return { city: DEFAULT_HOME, tz: DEFAULT_TZ, source: 'default' };
 }
 
+/** Parse a calendar event time string into a Date. Handles ISO and date-only formats. */
+function parseEventTime(timeStr: string | undefined): Date | null {
+  if (!timeStr) return null;
+  const d = new Date(timeStr);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** Get events happening now or in the next N hours from the calendar cache. */
+function resolveActivity(
+  workspaceDir: string,
+  nowMs: number,
+): { currentEvent: CalendarEvent | null; nextEvents: CalendarEvent[]; calendarStale: boolean } {
+  const cache = loadJsonFile<CalendarCache>(join(workspaceDir, 'memory', 'calendar-cache.json'));
+  if (!cache?.events?.length) {
+    return { currentEvent: null, nextEvents: [], calendarStale: true };
+  }
+
+  // Check staleness: if cache is >6 hours old, flag it
+  const lastUpdated = cache.lastUpdated ? new Date(cache.lastUpdated).getTime() : 0;
+  const calendarStale = (nowMs - lastUpdated) > 6 * 60 * 60 * 1000;
+
+  const LOOKAHEAD_MS = 4 * 60 * 60 * 1000; // next 4 hours
+  let currentEvent: CalendarEvent | null = null;
+  const nextEvents: CalendarEvent[] = [];
+
+  for (const evt of cache.events) {
+    // Skip all-day events (date-only, no 'T' in start)
+    if (evt.start && !evt.start.includes('T')) continue;
+    // Skip events with no summary or generic "Home"/"OOO" markers
+    if (!evt.summary) continue;
+    const lower = evt.summary.toLowerCase();
+    if (lower === 'home' || lower === 'ooo' || lower.startsWith('out of office')) continue;
+
+    const startMs = parseEventTime(evt.start)?.getTime();
+    const endMs = parseEventTime(evt.end)?.getTime();
+    if (!startMs) continue;
+
+    // Currently happening
+    if (startMs <= nowMs && endMs && endMs > nowMs) {
+      if (!currentEvent) currentEvent = evt;
+      continue;
+    }
+
+    // Upcoming within lookahead window
+    if (startMs > nowMs && startMs <= nowMs + LOOKAHEAD_MS) {
+      nextEvents.push(evt);
+    }
+  }
+
+  // Sort next events by start time, limit to 3
+  nextEvents.sort((a, b) => {
+    const aMs = parseEventTime(a.start)?.getTime() ?? 0;
+    const bMs = parseEventTime(b.start)?.getTime() ?? 0;
+    return aMs - bMs;
+  });
+
+  return { currentEvent, nextEvents: nextEvents.slice(0, 3), calendarStale };
+}
+
+/** Extract open tasks from ops/tasks.md "## Today" section. */
+function resolveTodayTasks(workspaceDir: string): string[] {
+  try {
+    const raw = readFileSync(join(workspaceDir, 'ops', 'tasks.md'), 'utf8');
+    const todayMatch = raw.match(/## Today[\s\S]*?(?=\n## |$)/);
+    if (!todayMatch) return [];
+
+    const lines = todayMatch[0].split('\n');
+    const open: string[] = [];
+    for (const line of lines) {
+      // Match unchecked task lines: - [ ] **task name** ...
+      const m = line.match(/^\s*-\s*\[ \]\s*\*\*(.+?)\*\*/);
+      if (m) open.push(m[1].trim());
+    }
+    return open.slice(0, 5); // cap at 5 to keep prompt lean
+  } catch {
+    return [];
+  }
+}
+
 function generateLiveContext(workspaceDir: string): LiveContext {
   const location = resolveLocation(workspaceDir);
   const time = getTimeInTz(location.tz);
   const hb = loadJsonFile<HeartbeatState>(join(workspaceDir, 'memory', 'heartbeat-state.json'));
+  const nowMs = Date.now();
 
   const garryAwake = hb?.garryAwake ?? true;
   const isQuietHours = !garryAwake && (time.hour >= 23 || time.hour < 8);
@@ -235,6 +338,12 @@ function generateLiveContext(workspaceDir: string): LiveContext {
     ? `${activeFlight.flightNumber}: ${activeFlight.origin}→${activeFlight.destination}`
     : null;
 
+  // Calendar activity
+  const { currentEvent, nextEvents, calendarStale } = resolveActivity(workspaceDir, nowMs);
+
+  // Open tasks
+  const todayTasks = resolveTodayTasks(workspaceDir);
+
   return {
     now: time.iso,
     timezone: location.tz,
@@ -244,7 +353,26 @@ function generateLiveContext(workspaceDir: string): LiveContext {
     garryAwake,
     isQuietHours,
     activeTravel,
+    currentEvent,
+    nextEvents,
+    todayTasks,
+    calendarStale,
   };
+}
+
+function formatEventShort(evt: CalendarEvent, tz: string): string {
+  const name = evt.summary ?? 'Untitled';
+  let time = '';
+  if (evt.start?.includes('T')) {
+    try {
+      const d = new Date(evt.start);
+      time = d.toLocaleTimeString('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true });
+    } catch { /* fall through */ }
+  }
+  const attendeeStr = evt.attendees?.length
+    ? ` (with ${evt.attendees.slice(0, 3).join(', ')}${evt.attendees.length > 3 ? ` +${evt.attendees.length - 3}` : ''})`
+    : '';
+  return time ? `${time} — ${name}${attendeeStr}` : `${name}${attendeeStr}`;
 }
 
 function formatContextBlock(ctx: LiveContext): string {
@@ -265,8 +393,30 @@ function formatContextBlock(ctx: LiveContext): string {
     lines.push(`- **Garry awake:** no (quiet hours ${ctx.isQuietHours ? 'active' : 'paused'})`);
   }
 
+  // Current activity
+  if (ctx.currentEvent) {
+    lines.push(`- **Right now:** ${formatEventShort(ctx.currentEvent, ctx.timezone)}`);
+  }
+
+  // Upcoming events
+  if (ctx.nextEvents.length > 0) {
+    lines.push(`- **Coming up:**`);
+    for (const evt of ctx.nextEvents) {
+      lines.push(`  - ${formatEventShort(evt, ctx.timezone)}`);
+    }
+  }
+
+  // Open tasks (if any)
+  if (ctx.todayTasks.length > 0) {
+    lines.push(`- **Open tasks:** ${ctx.todayTasks.join(' · ')}`);
+  }
+
+  if (ctx.calendarStale) {
+    lines.push(`- ⚠️ Calendar cache >6h old — verify events via ClawVisor if time-sensitive`);
+  }
+
   lines.push('');
-  lines.push('> This block is computed on every turn. Trust it over compaction summaries for time/location.');
+  lines.push('> This block is computed on every turn. Trust it over compaction summaries for time/location/activity.');
 
   return lines.join('\n');
 }
