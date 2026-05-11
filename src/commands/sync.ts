@@ -15,6 +15,7 @@ import {
   unacknowledgedSyncFailures,
   acknowledgeSyncFailures,
   formatCodeBreakdown,
+  resolveSyncFailure,
 } from '../core/sync.ts';
 import { estimateTokens, CHUNKER_VERSION } from '../core/chunkers/code.ts';
 import {
@@ -1433,6 +1434,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           // slugs (paths in filtered.deleted but with no DB row) so
           // downstream extract/embed don't waste lookups.
           pagesAffected.push(...deleted);
+          for (const path of batch) {
+            resolveSyncFailure(path);
+          }
         } catch (err) {
           // D7 decompose: a transient blip on this batch shouldn't lose all
           // 500 deletes. Fall back to per-slug deletePage for THIS batch
@@ -1442,6 +1446,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             try {
               await engine.deletePage(slugs[j], deleteScopedOpts);
               pagesAffected.push(slugs[j]);
+              resolveSyncFailure(batch[j]);
             } catch (perSlugErr) {
               failedFiles.push({
                 path: batch[j],
@@ -1467,6 +1472,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         try {
           await engine.deletePage(slug, deleteOpts);
           pagesAffected.push(slug);
+          resolveSyncFailure(path);
         } catch (err) {
           failedFiles.push({
             path,
@@ -1548,6 +1554,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         if (result.status === 'imported') chunksCreated += result.chunks;
       }
       pagesAffected.push(newSlug);
+      // Bug 9 follow-up — clear stale JSONL entries under both the old and
+      // new path. A file that previously failed under `from` and is now
+      // successfully present as `to` should not stay listed as failed.
+      resolveSyncFailure(from);
+      resolveSyncFailure(to);
       progress.tick(1, newSlug);
     }
     progress.finish();
@@ -1626,8 +1637,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           // persist. partial() reports this so cron operators see how
           // much actually landed before --timeout fired.
           filesImported++;
+          // Bug 9 follow-up — reconcile JSONL with reality. A file that
+          // imports successfully should drop out of sync-failures even if it
+          // got there via a previous run.
+          resolveSyncFailure(path);
         } else if (result.status === 'skipped' && (result as any).error) {
           failedFiles.push({ path, error: String((result as any).error) });
+        } else if (result.status === 'skipped') {
+          // Hash-identical content already in DB — same reconciliation.
+          resolveSyncFailure(path);
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
