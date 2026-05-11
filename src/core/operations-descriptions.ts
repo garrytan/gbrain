@@ -34,6 +34,15 @@ export const FIND_ANOMALIES_DESCRIPTION =
   "patterns the user wouldn't have searched for. Cohort kinds: tag, type. " +
   "Year cohort is deferred to a later release.";
 
+export const FIND_EXPERTS_DESCRIPTION =
+  "Answers 'who in my brain knows about <topic>'. Returns ranked person/company " +
+  "pages by expertise depth (sub-linear match score), relationship recency " +
+  "(exp decay with 6-month half-life), and salience. Use this for questions " +
+  "like 'who should I talk to about X', 'who knows about Y', 'find me someone " +
+  "who's worked on Z', or any expertise-routing intent. Filters at SQL to " +
+  "person + company pages — does NOT return notes or articles. Pair with " +
+  "--explain (CLI) to surface the per-result factor breakdown.";
+
 export const GET_RECENT_TRANSCRIPTS_DESCRIPTION =
   "Returns one-line summaries of recent raw conversation transcripts (NOT polished " +
   "reflections). Use this FIRST for questions about 'what's going on with me', " +
