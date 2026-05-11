@@ -2,6 +2,58 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.32.4] - 2026-05-10
+
+**`gbrain embed` now finishes the job on multi-source brains. Non-default sources stop silently dropping out.**
+
+If you run gbrain with more than one source (say a `media-corpus` alongside `default`), embed was leaving thousands of chunks unembedded. The CLI reported success, your search results were quietly missing the same pages every time, and three consecutive `embed --stale` passes wouldn't move the number. This release threads `source_id` through every page → chunk handoff so embed actually covers the brain you have, not just the half it could see.
+
+### The numbers that matter
+
+On the brain that surfaced this:
+
+```
+Pages on non-default source        →  5,042
+Chunks left unembedded pre-fix     →  ~22,000
+Chunks recovered on first re-run   →  97 across 35 pages (after 3 prior --stale runs that recovered 0)
+```
+
+Same brain, same command, same data. The CLI was reading `source_id='default'` on every chunk lookup because the page type didn't carry the field forward. Composite-key grouping on `(source_id, slug)` was the fix.
+
+### What changed
+
+- **`embed --stale`, `embed --all`, and per-slug embed** all thread `source_id` from `listPages()` through `getChunks()` / `upsertChunks()`. The bug class where the engine defaulted to the `default` source on chunk reads is closed across all three paths.
+- **`gbrain embed --source <id>`** is a new flag for scoping embed to one source explicitly. Useful for re-embedding just `media-corpus` after a model swap.
+- **`Page` type carries `source_id`** so any future code iterating `listPages()` results can fan out correctly without rediscovering this footgun.
+- **`PageFilters.sourceId`** lets callers scope `listPages()` to one source at the SQL layer instead of filtering client-side.
+- **`migrate-engine`** had the same pattern: `getChunksWithEmbeddings()` now accepts `{ sourceId }` so engine-to-engine migration carries multi-source chunks intact.
+
+### To take advantage of v0.32.4
+
+`gbrain upgrade` should do this automatically. To recover any chunks that were silently skipped on prior runs:
+
+1. Re-run the embed sweep:
+   ```bash
+   gbrain embed --stale
+   ```
+2. Or scope to one source if you know which one was affected:
+   ```bash
+   gbrain embed --source media-corpus --stale
+   ```
+3. Verify with `gbrain doctor` — embed coverage should jump on multi-source brains.
+
+Single-source (`default`-only) brains see no behavior change. The fix is a no-op on the brain shape that ships from `gbrain init`.
+
+### Itemized changes
+
+- `src/core/types.ts` — `Page.source_id?: string`; `PageFilters.sourceId?: string`; `StaleChunkRow.source_id`.
+- `src/core/engine.ts` — `BrainEngine.getChunksWithEmbeddings(slug, opts?: { sourceId? })`.
+- `src/core/postgres-engine.ts` + `src/core/pglite-engine.ts` — `listPages()` wires `sourceId` into the WHERE clause; `listStaleChunks()` selects `p.source_id`; `getChunksWithEmbeddings()` honors the optional scope.
+- `src/commands/embed.ts` — all three code paths (`embedPage`, `embedAll`, `embedAllStale`) accept and thread `sourceId`. CLI gains `--source <id>`. `embedAllStale` groups by composite `(source_id::slug)` so two pages with the same slug on different sources don't collide.
+- `src/commands/migrate-engine.ts` — threads `page.source_id` through `getChunksWithEmbeddings` + `upsertChunks` so PGLite ↔ Postgres migration preserves multi-source chunk ownership.
+
+Supersedes #845 (which fixed `embed --stale` only) with the comprehensive cross-path fix.
+
 ## [0.32.0] - 2026-05-10
 
 **5 new embedding providers + the discoverability fix that closes the 17-PR dupe cluster.**
