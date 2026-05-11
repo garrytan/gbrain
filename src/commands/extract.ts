@@ -17,7 +17,7 @@
  */
 
 import { readFileSync, readdirSync, lstatSync, existsSync } from 'fs';
-import { join, relative, dirname } from 'path';
+import { join, relative, dirname, basename } from 'path';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from '../core/engine.ts';
 import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
@@ -53,6 +53,8 @@ export interface ExtractedTimelineEntry {
   summary: string;
   detail?: string;
 }
+
+export type FsSlugResolverIndex = Map<string, Set<string>>;
 
 interface ExtractResult {
   links_created: number;
@@ -121,6 +123,41 @@ export function extractMarkdownLinks(content: string): { name: string; relTarget
   return results;
 }
 
+function normalizeResolverKey(value: string): string {
+  const trimmed = value.trim().replace(/^['"]|['"]$/g, '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (!trimmed) return '';
+  const noMd = trimmed.replace(/\.mdx?$/i, '');
+  return pathToSlug(`${noMd}.md`);
+}
+
+function addResolverKey(index: FsSlugResolverIndex, key: string, slug: string): void {
+  const normalized = normalizeResolverKey(key);
+  if (!normalized) return;
+  if (!index.has(normalized)) index.set(normalized, new Set());
+  index.get(normalized)!.add(slug);
+}
+
+function frontmatterStringList(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === 'string');
+  return [];
+}
+
+function uniqueResolved(index: FsSlugResolverIndex | undefined, key: string): string | null {
+  const candidates = index?.get(key);
+  if (!candidates || candidates.size !== 1) return null;
+  return Array.from(candidates)[0];
+}
+
+function isNonPageRelTarget(relTarget: string): boolean {
+  const target = relTarget.replace(/\\/g, '/').replace(/\.mdx?$/i, '');
+  return /\.(base|css|png|jpe?g|gif|webp|pdf|svg|wav|mp3|m4a|mp4|mov)$/i.test(relTarget)
+    || target === '...'
+    || target === 'wikilinks'
+    || target === 'AGENTS'
+    || target.startsWith('system/');
+}
+
 /**
  * Resolve a wikilink target to a canonical slug, given the directory of the
  * containing page and the set of all known slugs in the brain.
@@ -133,18 +170,29 @@ export function extractMarkdownLinks(content: string): { name: string; relTarget
  *
  * Returns null when no matching slug is found (dangling link).
  */
-export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<string>): string | null {
+export function resolveSlug(
+  fileDir: string,
+  relTarget: string,
+  allSlugs: Set<string>,
+  slugIndex?: FsSlugResolverIndex,
+): string | null {
+  if (isNonPageRelTarget(relTarget)) return null;
   const targetNoExt = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
 
-  const s1 = join(fileDir, targetNoExt);
+  const s1 = pathToSlug(join(fileDir, `${targetNoExt}.md`));
   if (allSlugs.has(s1)) return s1;
 
   const parts = fileDir.split('/').filter(Boolean);
   for (let strip = 1; strip <= parts.length; strip++) {
     const ancestor = parts.slice(0, parts.length - strip).join('/');
-    const candidate = ancestor ? join(ancestor, targetNoExt) : targetNoExt;
+    const candidate = pathToSlug(`${ancestor ? join(ancestor, targetNoExt) : targetNoExt}.md`);
     if (allSlugs.has(candidate)) return candidate;
   }
+
+  const rootKey = normalizeResolverKey(relTarget);
+  if (allSlugs.has(rootKey)) return rootKey;
+  const viaIndex = uniqueResolved(slugIndex, rootKey) || uniqueResolved(slugIndex, basename(rootKey));
+  if (viaIndex) return viaIndex;
 
   return null;
 }
@@ -184,6 +232,21 @@ function parseFrontmatterFromContent(content: string, relPath: string): Record<s
   }
 }
 
+export function buildFsSlugResolverIndex(files: { path: string; relPath: string }[]): FsSlugResolverIndex {
+  const index: FsSlugResolverIndex = new Map();
+  for (const file of files) {
+    const slug = pathToSlug(file.relPath);
+    addResolverKey(index, slug, slug);
+    addResolverKey(index, basename(slug), slug);
+    try {
+      const fm = parseFrontmatterFromContent(readFileSync(file.path, 'utf-8'), file.relPath);
+      for (const title of frontmatterStringList(fm.title)) addResolverKey(index, title, slug);
+      for (const alias of frontmatterStringList(fm.aliases)) addResolverKey(index, alias, slug);
+    } catch { /* skip unreadable */ }
+  }
+  return index;
+}
+
 /**
  * Full link extraction from a single markdown file (FS-source path).
  *
@@ -195,7 +258,7 @@ function parseFrontmatterFromContent(content: string, relPath: string): Record<s
  */
 export async function extractLinksFromFile(
   content: string, relPath: string, allSlugs: Set<string>,
-  opts?: { includeFrontmatter?: boolean },
+  opts?: { includeFrontmatter?: boolean; slugIndex?: FsSlugResolverIndex },
 ): Promise<ExtractedLink[]> {
   const links: ExtractedLink[] = [];
   const slug = pathToSlug(relPath);
@@ -203,7 +266,7 @@ export async function extractLinksFromFile(
   const fm = parseFrontmatterFromContent(content, relPath);
 
   for (const { name, relTarget } of extractMarkdownLinks(content)) {
-    const resolved = resolveSlug(fileDir, relTarget, allSlugs);
+    const resolved = resolveSlug(fileDir, relTarget, allSlugs, opts?.slugIndex);
     if (resolved !== null) {
       links.push({
         from_slug: slug, to_slug: resolved,
@@ -581,6 +644,7 @@ async function extractLinksFromDir(
 ): Promise<{ created: number; pages: number }> {
   const files = walkMarkdownFiles(brainDir);
   const allSlugs = new Set(files.map(f => pathToSlug(f.relPath)));
+  const slugIndex = buildFsSlugResolverIndex(files);
 
   // Progress stream on stderr (separate from the action-events --json writes
   // to stdout, which tests grep for). Rate-gated; respects global --quiet /
@@ -613,7 +677,7 @@ async function extractLinksFromDir(
   for (let i = 0; i < files.length; i++) {
     try {
       const content = readFileSync(files[i].path, 'utf-8');
-      const links = await extractLinksFromFile(content, files[i].relPath, allSlugs);
+      const links = await extractLinksFromFile(content, files[i].relPath, allSlugs, { slugIndex });
       for (const link of links) {
         if (dryRunSeen) {
           const key = `${link.from_slug}::${link.to_slug}::${link.link_type}`;
@@ -707,6 +771,7 @@ export async function extractLinksForSlugs(
 ): Promise<number> {
   const allFiles = walkMarkdownFiles(repoPath);
   const allSlugs = new Set(allFiles.map(f => pathToSlug(f.relPath)));
+  const slugIndex = buildFsSlugResolverIndex(allFiles);
   // v0.18.0+ multi-source: post-sync extract reconciles same-source edges.
   // Markdown→markdown links within one repo always live in the caller's
   // sourceId. Cross-source extraction (rare) would need a per-repo source
@@ -720,7 +785,7 @@ export async function extractLinksForSlugs(
     if (!existsSync(filePath)) continue;
     try {
       const content = readFileSync(filePath, 'utf-8');
-      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs)) {
+      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs, { slugIndex })) {
         try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, undefined, undefined, undefined, linkOpts); created++; } catch { /* skip */ }
       }
     } catch { /* skip */ }
