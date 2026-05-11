@@ -118,6 +118,128 @@ Reworked from / inspired by:
 
 Codex outside-voice review during plan-eng-review drove the scope reduction (D11=C) from 8 recipes + OAuth subsystem to 5 recipes + docs.
 
+## [0.31.12] - 2026-05-10
+
+**The chat default no longer 404s, and every Claude call gbrain makes is now one config key away from your preferred model.**
+
+gbrain v0.31.6 shipped `claude-sonnet-4-6-20250929` as the chat default. That model ID does not exist on the Anthropic API. It 404'd on every call. Worse, the failure mode wasn't loud: `isAvailable("chat")` returned false in every code path that loaded the recipe's model list, and `extractFactsFromTurn` silently returned `[]`. The headline v0.31.6 feature, real-time fact extraction during sync, was a no-op on the happy path for most users.
+
+This release fixes the model ID, adds a tier-based routing surface so power users can swap defaults in one config key, and ships `gbrain models doctor` as the structural probe against this exact bug class. Credit to `garrytan-agents` for the initial fix submitted as PR #830; the recipe diff and the structural test file are pulled verbatim. This release adds a reverse alias for stale user configs, the four-tier routing surface, the `gbrain models` CLI, three layers of subagent enforcement, and a real regression test for the silent-no-op bug class.
+
+### What you can now do
+
+**Use any model for everything with one config key.** `gbrain config set models.default opus` routes every internal call (chat, expansion, synthesis, classification) through Opus 4.7. Switch to `models.default openai:gpt-5.5` and gbrain will route every call to GPT-5.5, except for the subagent loop, which falls back to `claude-sonnet-4-6` automatically because the loop is Anthropic-only by construction.
+
+**Tier-level control when you want finer than "use opus for everything."** Four tiers: `utility` (haiku-class, fast classification + expansion + verdict), `reasoning` (sonnet-class, default chat + synthesis), `deep` (opus-class, expensive reasoning), `subagent` (Anthropic-only multi-turn tool loop). Override each independently via `gbrain config set models.tier.<tier> <model>`. Per-task keys like `models.dream.synthesize` still beat tier overrides because they are more specific.
+
+**`gbrain models` shows the live routing.** Read mode prints the four tier defaults, the resolved value for each, every per-task override, the alias map, and a source-of-truth column showing exactly where each model came from (`default`, `config: models.tier.reasoning`, `env: GBRAIN_MODEL`). `--json` for machine-readable output.
+
+**`gbrain models doctor` probes each configured model with a 1-token call** and reports reachability with the provider's error message. This is the structural fix for the bug class that produced this release: an invalid model ID surfaces at config time, not at the next agent-run that silently degrades.
+
+**Subagent jobs reject non-Anthropic models at submit time.** The minion queue's `add()` method now refuses `subagent` jobs with `data.model` pointing at a non-Anthropic provider. Three layers of enforcement: submit-time guard, tier-resolution fallback in `resolveModel`, and a `subagent_provider` check in `gbrain doctor`. You cannot accidentally route the Anthropic Messages API tool-loop to OpenAI and watch it fail at runtime.
+
+**Opus 4.7 pricing is correct** (`$5/$25 per MTok`, was `$15/$75` left over from Opus 4). The budget meter and cross-modal-eval estimator both read from `src/core/anthropic-pricing.ts` as the single source of truth now, not two duplicated maps.
+
+### Numbers that matter
+
+| Surface | Before (v0.31.6) | After (v0.31.12) |
+|---|---|---|
+| Chat default model ID | `claude-sonnet-4-6-20250929` (404s) | `claude-sonnet-4-6` (valid) |
+| `isAvailable("chat")` on default install | false (silently) | true |
+| `extractFactsFromTurn` on default install | returns `[]` silently | actually extracts facts |
+| Config keys to swap models everywhere | n/a (hardcoded per call) | 1 (`models.default`) |
+| Provider-mismatch enforcement layers for subagent | 0 | 3 (submit/runtime/doctor) |
+| Reachability check at config time | n/a | `gbrain models doctor` |
+| Sources of truth for Anthropic pricing | 2 (duplicated, diverged) | 1 (`ANTHROPIC_PRICING`) |
+
+### What this means for you
+
+If you upgraded to v0.31.6 hoping for real-time facts extraction during sync and noticed nothing got extracted, this is the fix. Run `gbrain upgrade && gbrain doctor` and the chat-default check returns to green. The new `subagent_provider` check surfaces any non-Anthropic config drift.
+
+If you are a power user, the boring path stays boring: `gbrain config set models.default opus` and you're done. The advanced path is `gbrain models` to see what's live, `gbrain models doctor` to probe reachability before a long agent run, and `models.tier.*` keys for tier-specific overrides. The skill at `skills/conventions/model-routing.md` documents the full precedence chain and override recipes.
+
+If you had a `claude-sonnet-4-6-20250929` string sitting in `facts.extraction_model` or `models.dream.synthesize` from v0.31.6, you do not need to update it. A reverse alias rewrites that broken ID back to the canonical `claude-sonnet-4-6` automatically. If you want to clean it up: `gbrain config set facts.extraction_model anthropic:claude-sonnet-4-6`.
+
+## To take advantage of v0.31.12
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about the chat default:
+
+1. **Verify the routing is healthy:**
+   ```bash
+   gbrain doctor
+   gbrain models
+   ```
+   The `subagent_provider` check should be `ok`. `gbrain models` should show `tier.reasoning` resolving to `claude-sonnet-4-6` (or your override).
+
+2. **Optional: probe reachability of every configured model.** ~1 token per model, runs in under 5 seconds. Catches the next 404 before it ships.
+   ```bash
+   gbrain models doctor
+   ```
+
+3. **Power-user override (any one of these):**
+   ```bash
+   # Use opus for everything
+   gbrain config set models.default opus
+
+   # Use sonnet for the default workhorse but opus for deep reasoning
+   gbrain config set models.tier.deep opus
+
+   # Use a custom alias as the global default
+   gbrain config set models.aliases.frontier anthropic:claude-opus-4-7
+   gbrain config set models.default frontier
+   ```
+
+4. **If `gbrain doctor` still flags anything,** please file an issue: https://github.com/garrytan/gbrain/issues — include the output of `gbrain doctor` and `gbrain models --json`.
+
+### Itemized changes
+
+#### Bug fix sweep + reverse alias
+
+- `src/core/ai/gateway.ts`: `DEFAULT_CHAT_MODEL` corrected to `anthropic:claude-sonnet-4-6` (was the v0.31.6 phantom `-20250929`).
+- `src/core/ai/recipes/anthropic.ts`: chat and expansion `models:` lists drop the phantom date suffix. The wrong-direction alias (`claude-sonnet-4-6 → claude-sonnet-4-6-20250929`) is removed; a reverse alias (`claude-sonnet-4-6-20250929 → claude-sonnet-4-6`) keeps stale user configs working.
+- `src/core/facts/extract.ts`: routes through `resolveModel({tier: 'reasoning'})` instead of hardcoding the broken default.
+- `test/anthropic-model-ids.test.ts`: 6 structural test cases pinning the recipe shape (verbatim cherry-pick of PR #830, plus the reverse-alias rescue case).
+
+#### Tier system + recipe-models merge
+
+- `src/core/model-config.ts`: new `ModelTier` type, new `TIER_DEFAULTS` constant, new `tier?` field on `ResolveModelOpts`. Tier resolution is step 5 in the resolution chain (after `models.default`, before env var). Tier defaults win over caller fallback when no override is set.
+- `src/core/ai/model-resolver.ts`: `assertTouchpoint()` gains an optional 4th arg `extendedModels` so per-gateway-instance recipe extension can permit user-supplied model strings without breaking the source-code-typo failure path. Replaces the earlier plan to soften the validator wholesale, which Codex flagged as too broad.
+- `src/core/ai/gateway.ts`: new `reconfigureGatewayWithEngine(engine)` async function called from `cli.ts` after `engine.connect()` to re-resolve expansion + chat defaults through `resolveModel()`. Configured models register into a per-instance extended-models set so the gateway routes them without recipe modification.
+- Every existing `resolveModel()` call site gains a `tier:` argument: think → deep, cycle/synthesize → reasoning (+ utility for verdict), cycle/patterns → reasoning, cycle/drift → reasoning, cycle/auto-think → deep, facts/extract → reasoning.
+
+#### Subagent runtime enforcement (3 layers)
+
+- Layer 1 (`src/core/minions/queue.ts`): `MinionQueue.add()` rejects `subagent` jobs with a non-Anthropic `data.model` before the job enters the queue.
+- Layer 2 (`src/core/minions/handlers/subagent.ts`): handler routes through `resolveModel({tier: 'subagent'})`. If config resolves to a non-Anthropic provider, the resolver warns and falls back to `TIER_DEFAULTS.subagent` (`claude-sonnet-4-6`).
+- Layer 3 (`src/commands/doctor.ts`): new `subagent_provider` check warns when `models.tier.subagent` or `models.default` resolves to a non-Anthropic provider, with a paste-ready fix command.
+
+#### `gbrain models` CLI + probe
+
+- `src/commands/models.ts`: read mode prints routing table + source attribution. `doctor` subcommand fires a 1-token `gateway.chat()` probe to each configured chat/expansion model and classifies failures into `{model_not_found, auth, rate_limit, network, unknown}`. `--skip=<provider>` narrows the probe matrix.
+- Wired into the cli.ts dispatch table and `CLI_ONLY` set.
+
+#### Pricing dedupe
+
+- `src/core/anthropic-pricing.ts`: Opus 4.7 corrected from `$15/$75` to `$5/$25` per Anthropic's published pricing (the old number was from Opus 4 generation). Opus 4.6 also corrected.
+- `src/core/cross-modal-eval/runner.ts`: pricing map now reads from `ANTHROPIC_PRICING` for Anthropic models instead of duplicating the values. Single source of truth.
+
+#### Tests
+
+- `test/facts-extract-silent-no-op.test.ts` (NEW, 5 cases): the regression test for the bug class. Wires gateway with the v0.31.6 broken model ID and asserts the reverse alias rescues `isAvailable("chat")`. Also asserts the smoking-gun: when chat is available, `extractFactsFromTurn` actually calls the chat transport (does not silently return `[]`).
+- `test/model-config.serial.test.ts`: 9 new cases covering tier precedence, `models.default` beats tier, `tier.subagent` falls back to Anthropic when default is non-Anthropic, alias-chain conflict (Codex F6 regression guard).
+- `test/agent-cli.test.ts`: 3 new cases for the queue submit-time subagent guard (Layer 1).
+- `test/ai/gateway-chat.test.ts`: existing alias-resolution tests rewritten to reflect the new direction (4.6+ dateless is canonical, reverse alias rescues stale strings).
+- `test/anthropic-model-ids.test.ts` (NEW, 6 cases): recipe-shape guardrails, verbatim cherry-pick of PR #830 plus reverse-alias case.
+
+#### Skills + docs
+
+- `skills/conventions/model-routing.md`: rewritten to cover both the new tier system AND the existing subagent spawn routing in one canonical doc. Power-user recipes, three-layer subagent enforcement explanation, override priority chain.
+
+### For contributors
+
+- **Iron rule when adding a new LLM call:** route through `resolveModel()` with a `tier:` argument. Do not hardcode a model string as a fallback. The v0.31.6 chat-default failure mode was exactly this — a hardcoded const fallback bypassed the resolver and shipped a phantom ID. The tier system + `gbrain models doctor` is the structural fix; future drift will be caught by the recipe-shape test in `test/anthropic-model-ids.test.ts`.
+- **The `gbrain models doctor` probe is opt-in.** Do not auto-fire it on every CLI invocation; that would burn tokens for users who just want `gbrain put-page`. Operators run it explicitly when they suspect a config issue or after upgrading.
+
 ## [0.31.11] - 2026-05-10
 
 **Thin-client gbrain notices when the remote brain has upgraded and offers to bring you along.**
@@ -377,6 +499,7 @@ After upgrade, anything that was `[WARN] graph_coverage` or `[WARN] resolver_hea
 - Contributors: [@mayazbay](https://github.com/mayazbay), [@psperera](https://github.com/psperera), [@FUSED-ID](https://github.com/FUSED-ID), [@TheAndersMadsen](https://github.com/TheAndersMadsen). Outside-voice plan review (codex) caught the read-path/write-path split risk on the original plan; a second codex pass during /ship caught the `--fix` write-path leak before merge.
 
 [#798](https://github.com/garrytan/gbrain/pull/798) [#788](https://github.com/garrytan/gbrain/pull/788) [#536](https://github.com/garrytan/gbrain/pull/536) [#376](https://github.com/garrytan/gbrain/pull/376) [#128](https://github.com/garrytan/gbrain/pull/128)
+
 ## [0.31.4.1] - 2026-05-10
 
 **Takes v2: lessons from a 100K-take production extraction folded back into the runtime, and `gbrain auth` works on Postgres again.**

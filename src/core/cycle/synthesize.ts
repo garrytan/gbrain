@@ -533,11 +533,13 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
   const model = await resolveModel(engine, {
     configKey: 'models.dream.synthesize',
     deprecatedConfigKey: 'dream.synthesize.model',
+    tier: 'reasoning',
     fallback: 'sonnet',
   });
   const verdictModel = await resolveModel(engine, {
     configKey: 'models.dream.synthesize_verdict',
     deprecatedConfigKey: 'dream.synthesize.verdict_model',
+    tier: 'utility',
     fallback: 'haiku',
   });
   const cooldownHoursStr = await engine.getConfig('dream.synthesize.cooldown_hours');

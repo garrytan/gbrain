@@ -35,7 +35,9 @@ import type {
   Recipe,
   TouchpointKind,
 } from './types.ts';
-import { resolveRecipe, assertTouchpoint } from './model-resolver.ts';
+import { resolveRecipe, assertTouchpoint, parseModelId } from './model-resolver.ts';
+import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
+import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 
@@ -43,10 +45,53 @@ const MAX_CHARS = 8000;
 const DEFAULT_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
 const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
-const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6-20250929';
+const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
+
+/**
+ * v0.31.12 recipe-models merge: per-gateway-instance set of model ids the
+ * user opted into via config. Keyed by provider id (`anthropic`, `openai`,
+ * etc.). Passed into `assertTouchpoint` so native-recipe allowlist checks
+ * skip these models — provider 404s surface at HTTP call time instead of
+ * config-build time.
+ *
+ * Replaces the earlier plan to soften `assertTouchpoint` from throw to
+ * warn (Codex F4/F5 — too broad, removed fail-fast for chat/expand/embed
+ * across all callers). This narrower approach preserves fail-fast for
+ * source-code typos while allowing config-time model selection of any id.
+ */
+const _extendedModels: Map<string, Set<string>> = new Map();
+
+/**
+ * v0.31.12 — register a model id under its provider so `assertTouchpoint`
+ * (called via the gateway's chat/embed/expand entry points) permits it
+ * even when it isn't in the recipe's declared `models:` array.
+ *
+ * Idempotent + safe to call before/after configureGateway. Exported only
+ * for the `gbrain models doctor` probe path (where the operator may want
+ * to probe any user-supplied id without re-running configure).
+ */
+function registerExtendedModel(modelStr: string): void {
+  if (!modelStr) return;
+  try {
+    const { providerId, modelId } = parseModelId(modelStr);
+    let set = _extendedModels.get(providerId);
+    if (!set) {
+      set = new Set();
+      _extendedModels.set(providerId, set);
+    }
+    set.add(modelId);
+  } catch {
+    // Malformed model strings will fail at parseModelId — ignore here;
+    // the actual chat/embed call will surface the error.
+  }
+}
+
+function getExtendedModelsForProvider(providerId: string): ReadonlySet<string> | undefined {
+  return _extendedModels.get(providerId);
+}
 
 /**
  * The function the gateway calls to actually run a batch through the AI SDK.
@@ -218,7 +263,84 @@ export function configureGateway(config: AIGatewayConfig): void {
   };
   _modelCache.clear();
   _shrinkState.clear();
+  _extendedModels.clear();
+  // Register configured models so assertTouchpoint allows them even when
+  // they aren't in the recipe's declared models: array (v0.31.12).
+  for (const m of [
+    _config.embedding_model,
+    _config.embedding_multimodal_model,
+    _config.expansion_model,
+    _config.chat_model,
+    ...(_config.chat_fallback_chain ?? []),
+  ]) {
+    if (m) registerExtendedModel(m);
+  }
   warnRecipesMissingBatchTokens();
+}
+
+/**
+ * v0.31.12 — async re-stamp seam.
+ *
+ * After `engine.connect()` succeeds, callers (today: `src/cli.ts`)
+ * invoke this to re-resolve the gateway's expansion / chat / embedding
+ * defaults through `resolveModel()` (which can read `models.tier.*` /
+ * `models.default` / per-task config keys from the engine). The pre-connect
+ * `configureGateway` path used hardcoded TIER_DEFAULTS as fallbacks;
+ * this re-stamp picks up any user overrides that live in the DB-backed
+ * config plane.
+ *
+ * Sync `configureGateway` stays for pre-connect callers (rare bootstrap
+ * paths like `gbrain --version` that never touch a brain). Per Codex F3
+ * in the v0.31.12 plan review: spelling out the sync→async boundary instead
+ * of hand-waving "config-build time."
+ *
+ * Idempotent. Safe to call multiple times. Returns the resolved gateway
+ * config for callers who want to inspect what landed.
+ */
+export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise<AIGatewayConfig> {
+  const cfg = requireConfig();
+  // Resolve expansion (utility tier) and chat (reasoning tier). Embedding is
+  // intentionally NOT re-resolved here — switching embedding models invalidates
+  // the vector index. Out of scope per v0.31.12 plan ("Embedding tier knob").
+  const newExpansion = await resolveModel(engine, {
+    configKey: 'models.expansion',
+    tier: 'utility',
+    fallback: cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL,
+  });
+  const newChat = await resolveModel(engine, {
+    configKey: 'models.chat',
+    tier: 'reasoning',
+    fallback: cfg.chat_model ?? DEFAULT_CHAT_MODEL,
+  });
+
+  // Resolved values are bare model ids (e.g. `claude-sonnet-4-6`) — prepend
+  // the existing provider prefix from cfg so the gateway keeps routing to
+  // the right recipe. If the resolved string already contains a `:`, it
+  // came from a `provider:model` override and we use it as-is.
+  const expansionFull = newExpansion.includes(':') ? newExpansion : prefixWithProviderFrom(cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL, newExpansion);
+  const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
+
+  _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
+  _modelCache.clear();
+  _shrinkState.clear();
+  _extendedModels.clear();
+  for (const m of [
+    _config.embedding_model,
+    _config.embedding_multimodal_model,
+    _config.expansion_model,
+    _config.chat_model,
+    ...(_config.chat_fallback_chain ?? []),
+  ]) {
+    if (m) registerExtendedModel(m);
+  }
+  return _config;
+}
+
+/** Carry over the provider prefix from `original` when `bare` lacks one. */
+function prefixWithProviderFrom(original: string, bare: string): string {
+  const colon = original.indexOf(':');
+  if (colon === -1) return bare;
+  return `${original.slice(0, colon)}:${bare}`;
 }
 
 /**
@@ -269,6 +391,7 @@ export function resetGateway(): void {
   _embedTransport = embedMany;
   _chatTransport = null;
   _warnedRecipes.clear();
+  _extendedModels.clear();
 }
 
 /**
@@ -531,7 +654,7 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
 
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'embedding', parsed.modelId);
+  assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
   const cfg = requireConfig();
 
   const cacheKey = `emb:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
@@ -986,7 +1109,7 @@ void MULTIMODAL_MAX_IMAGE_BYTES;
 
 async function resolveExpansionProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'expansion', parsed.modelId);
+  assertTouchpoint(recipe, 'expansion', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
   const cfg = requireConfig();
 
   const cacheKey = `exp:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;
@@ -1189,7 +1312,7 @@ export interface ChatOpts {
 
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
-  assertTouchpoint(recipe, 'chat', parsed.modelId);
+  assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
   const cfg = requireConfig();
 
   const cacheKey = `chat:${recipe.id}:${parsed.modelId}:${cfg.base_urls?.[recipe.id] ?? ''}`;

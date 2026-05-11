@@ -750,6 +750,16 @@ ADMIN
   gbrain doctor --fix [--dry-run]       Auto-fix DRY violations (delegate inlined rules to conventions)
   gbrain doctor --locks                 List idle-in-tx backends (57014 diagnostic, Postgres only)
   gbrain stats                          Brain statistics
+  gbrain models                         Show live model routing (tier defaults,
+                                        per-task overrides, alias map, source-of-truth).
+                                        v0.31.12: tier system + recipe-models merge.
+                                        Power-user override:
+                                          gbrain config set models.default opus
+                                          gbrain config set models.tier.deep opus
+  gbrain models doctor                  1-token reachability probe for each configured
+                                        chat/expansion model. Catches `model_not_found`
+                                        before the next agent run silently degrades.
+                                        [--skip=<provider>] [--json]
   gbrain serve                          MCP server (stdio)
   gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard
                                         [--token-ttl 3600] [--enable-dcr]

@@ -145,6 +145,7 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
   const model = await resolveModel(engine, {
     configKey: 'models.dream.patterns',
     deprecatedConfigKey: 'dream.patterns.model',
+    tier: 'reasoning',
     fallback: 'sonnet',
   });
   return {

@@ -24,6 +24,7 @@
 import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
 import type { ChatResult } from '../ai/gateway.ts';
 import { INJECTION_PATTERNS } from '../think/sanitize.ts';
+import { resolveModel } from '../model-config.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
 
 /**
@@ -50,9 +51,17 @@ export async function isFactsExtractionEnabled(engine: BrainEngine): Promise<boo
  * Configurable via `gbrain config set facts.extraction_model <model>`.
  */
 export async function getFactsExtractionModel(engine?: BrainEngine): Promise<string> {
-  if (!engine) return 'anthropic:claude-sonnet-4-6-20250929';
-  const configured = await engine.getConfig('facts.extraction_model');
-  return configured || 'anthropic:claude-sonnet-4-6-20250929';
+  // v0.31.12: route through resolveModel so models.default + models.tier.reasoning
+  // overrides reach facts extraction. Per-config-key facts.extraction_model still
+  // wins via configKey, preserving the prior behavior for existing users.
+  const resolved = await resolveModel(engine ?? null, {
+    configKey: 'facts.extraction_model',
+    tier: 'reasoning',
+    fallback: 'anthropic:claude-sonnet-4-6',
+  });
+  // resolveModel returns bare model ids when resolving via tier defaults; ensure
+  // the result keeps a provider prefix so gateway.chat() can route it.
+  return resolved.includes(':') ? resolved : `anthropic:${resolved}`;
 }
 
 export const ALL_EXTRACT_KINDS: readonly FactKind[] = [
