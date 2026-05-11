@@ -27,6 +27,8 @@ export interface EmbedOpts {
    * in the DB where `gbrain jobs get` can read it.
    */
   onProgress?: (done: number, total: number, embedded: number) => void;
+  /** Suppress human stdout summaries when called by structured-output commands. */
+  quiet?: boolean;
 }
 
 /**
@@ -73,7 +75,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   if (opts.slugs && opts.slugs.length > 0) {
     for (const s of opts.slugs) {
       try {
-        await embedPage(engine, s, !!opts.dryRun, result);
+        await embedPage(engine, s, !!opts.dryRun, result, !!opts.quiet);
       } catch (e: unknown) {
         console.error(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
       }
@@ -81,11 +83,11 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     return result;
   }
   if (opts.all || opts.stale) {
-    await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress);
+    await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, !!opts.quiet);
     return result;
   }
   if (opts.slug) {
-    await embedPage(engine, opts.slug, !!opts.dryRun, result);
+    await embedPage(engine, opts.slug, !!opts.dryRun, result, !!opts.quiet);
     return result;
   }
   throw new Error('No embed target specified. Pass { slug }, { slugs }, { all }, or { stale }.');
@@ -140,6 +142,7 @@ async function embedPage(
   slug: string,
   dryRun: boolean,
   result: EmbedResult,
+  quiet: boolean,
 ) {
   const page = await engine.getPage(slug);
   if (!page) {
@@ -183,7 +186,7 @@ async function embedPage(
   result.skipped += chunks.length - toEmbed.length;
 
   if (toEmbed.length === 0) {
-    console.log(`${slug}: all ${chunks.length} chunks already embedded`);
+    if (!quiet) console.log(`${slug}: all ${chunks.length} chunks already embedded`);
     result.pages_processed++;
     return;
   }
@@ -210,7 +213,7 @@ async function embedPage(
   await engine.upsertChunks(slug, updated);
   result.embedded += toEmbed.length;
   result.pages_processed++;
-  console.log(`${slug}: embedded ${toEmbed.length} chunks`);
+  if (!quiet) console.log(`${slug}: embedded ${toEmbed.length} chunks`);
 }
 
 async function embedAll(
@@ -219,6 +222,7 @@ async function embedAll(
   dryRun: boolean,
   result: EmbedResult,
   onProgress?: (done: number, total: number, embedded: number) => void,
+  quiet: boolean = false,
 ) {
   // ─────────────────────────────────────────────────────────────
   // Stale-only fast path: avoid the listPages + per-page getChunks
@@ -234,7 +238,7 @@ async function embedAll(
   // chunks that already have embeddings.
   // ─────────────────────────────────────────────────────────────
   if (staleOnly) {
-    return await embedAllStale(engine, dryRun, result, onProgress);
+    return await embedAllStale(engine, dryRun, result, onProgress, quiet);
   }
 
   const pages = await engine.listPages({ limit: 100000 });
@@ -316,9 +320,9 @@ async function embedAll(
 
   // Stdout summary preserved for scripts/tests that grep for counts.
   if (dryRun) {
-    console.log(`[dry-run] Would embed ${result.would_embed} chunks across ${pages.length} pages`);
+    if (!quiet) console.log(`[dry-run] Would embed ${result.would_embed} chunks across ${pages.length} pages`);
   } else {
-    console.log(`Embedded ${result.embedded} chunks across ${pages.length} pages`);
+    if (!quiet) console.log(`Embedded ${result.embedded} chunks across ${pages.length} pages`);
   }
 }
 
@@ -345,15 +349,16 @@ async function embedAllStale(
   dryRun: boolean,
   result: EmbedResult,
   onProgress?: (done: number, total: number, embedded: number) => void,
+  quiet: boolean = false,
 ) {
   // Pre-flight: 0 stale chunks → nothing to do, no further DB reads.
   // Cheapest possible exit on the autopilot common case.
   const staleCount = await engine.countStaleChunks();
   if (staleCount === 0) {
     if (dryRun) {
-      console.log('[dry-run] Would embed 0 chunks (0 stale found)');
+      if (!quiet) console.log('[dry-run] Would embed 0 chunks (0 stale found)');
     } else {
-      console.log('Embedded 0 chunks (0 stale found)');
+      if (!quiet) console.log('Embedded 0 chunks (0 stale found)');
     }
     return;
   }
@@ -384,7 +389,7 @@ async function embedAllStale(
       // expect at least one start/finish pair).
       onProgress(slugs.length, slugs.length, 0);
     }
-    console.log(`[dry-run] Would embed ${totalStaleChunks} chunks across ${slugs.length} pages`);
+    if (!quiet) console.log(`[dry-run] Would embed ${totalStaleChunks} chunks across ${slugs.length} pages`);
     return;
   }
 
@@ -436,5 +441,5 @@ async function embedAllStale(
   const numWorkers = Math.min(CONCURRENCY, slugs.length);
   await Promise.all(Array.from({ length: numWorkers }, () => worker()));
 
-  console.log(`Embedded ${result.embedded} chunks across ${slugs.length} pages`);
+  if (!quiet) console.log(`Embedded ${result.embedded} chunks across ${slugs.length} pages`);
 }

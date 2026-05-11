@@ -179,6 +179,29 @@ describe('runDream — output format', () => {
     expect(parsed).toHaveProperty('totals');
   });
 
+  test('--dry-run --json emits only JSON even when embed has stale chunks', async () => {
+    await engine.putPage('concepts/testing', {
+      type: 'concept',
+      title: 'Testing',
+      compiled_truth: 'Testing keeps JSON contracts honest.',
+      timeline: '',
+    });
+    await engine.upsertChunks('concepts/testing', [
+      { chunk_index: 0, chunk_text: 'Testing keeps JSON contracts honest.', chunk_source: 'compiled_truth' },
+    ]);
+
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(String(msg)); });
+    await runDream(engine, ['--dir', repo, '--phase', 'embed', '--dry-run', '--json']);
+    logSpy.mockRestore();
+
+    const output = lines.join('\n');
+    expect(output.trimStart().startsWith('{')).toBe(true);
+    const parsed = JSON.parse(output);
+    expect(parsed.schema_version).toBe('1');
+    expect(parsed.phases[0].phase).toBe('embed');
+  });
+
   test('human output for clean status mentions "Brain is healthy"', async () => {
     const lines: string[] = [];
     const logSpy = spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(String(msg)); });
