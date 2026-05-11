@@ -37,6 +37,7 @@ import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { discoverTranscripts, type DiscoveredTranscript } from './transcript-discovery.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
+import { collectChildPutPageSlugs } from './tool-provenance.ts';
 
 // Slug regex from validatePageSlug — kept in sync.
 // Used for the orchestrator-written summary index slug.
@@ -467,24 +468,6 @@ function sanitizeForSlug(s: string): string {
 }
 
 // ── Slug collection from child put_page calls (codex #2) ────────────
-
-async function collectChildPutPageSlugs(
-  engine: BrainEngine,
-  childIds: number[],
-): Promise<string[]> {
-  if (childIds.length === 0) return [];
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT DISTINCT input->>'slug' AS slug
-       FROM subagent_tool_executions
-      WHERE job_id = ANY($1::int[])
-        AND tool_name = 'brain_put_page'
-        AND status = 'complete'
-        AND input ? 'slug'
-      ORDER BY 1`,
-    [childIds],
-  );
-  return rows.map(r => r.slug).filter((s): s is string => typeof s === 'string' && s.length > 0);
-}
 
 // ── Reverse-write DB rows → markdown files ───────────────────────────
 
