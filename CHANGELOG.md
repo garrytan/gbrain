@@ -2,6 +2,89 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.32.5] - 2026-05-11
+
+**Time, place, and what you're doing — reinjected on every turn, no matter how hard the session got compacted.**
+**A new OpenClaw context engine that kills the "time warp" bug class with zero LLM calls and <5ms overhead.**
+
+When a long session compacts, the LLM loses track of what time it is, where Garry is, and what he's working on. The headline incident: Wintermute responded to a Sunday-night photo as if it were Monday morning, and reported Pacific Time while Garry was in Toronto. Both are downstream of the same architectural gap — compaction discards live state, and there was no mechanism to put it back.
+
+v0.32.5 ships `gbrain-context`, an OpenClaw plugin that owns the `systemPromptAddition` slot on every `assemble()` call. It reads `memory/heartbeat-state.json`, `memory/upcoming-flights.json`, `memory/calendar-cache.json`, and `ops/tasks.md` from the agent workspace, and injects a structured block: current local time + day-of-week (computed from the location's timezone, not hardcoded US/Pacific), current city + country, home time when traveling, active flight + route when in transit, the meeting Garry is in right now, the next three calendar events within a 4-hour window, and unchecked tasks under "Today." Compaction can be as aggressive as it wants — the next turn rebuilds the block from disk in under 5ms.
+
+### What this gives you
+
+```
+On every assemble() call, the agent now sees:
+
+Mon May 11, 2026, 11:34 AM ET
+Current location: Toronto, ON, Canada
+Home time: Mon 8:34 AM PT
+Active travel: UA1234 SFO → YYZ
+
+Right now: 1:1 with @alice-example (until 12:00 PM)
+Coming up:
+  • 12:30 PM — Lunch with @charlie-example
+  • 2:00 PM — Office hours block
+Open tasks:
+  • Review v0.32.0 ship notes
+  • Reply to YYZ→SFO rebook email
+```
+
+Deterministic, structured, refreshed every turn. No LLM call. No token spend beyond the injected text.
+
+### Architecture
+
+| Concern | Where it lives | Notes |
+|---|---|---|
+| Engine implementation | `src/core/context-engine.ts` | SDK-free; dynamic `import('openclaw/plugin-sdk/core')` with try/catch fallback so tests run standalone |
+| Plugin entry point | `src/openclaw-context-engine.ts` | Registers via `definePluginEntry` + `api.registerContextEngine()` |
+| Compaction ownership | `ownsCompaction: false` | Delegates compaction to the legacy runtime; this engine only owns `systemPromptAddition` |
+| Airport → timezone | 30+ airports built in | Resolves the active-flight timezone automatically when the heartbeat doesn't carry one |
+| Fallbacks | US/Pacific + "San Francisco" | Used when no heartbeat or flight data is present |
+| Stale-cache warning | Triggers when `calendar-cache.json` is >6h old | Skips all-day events and generic markers (`Home`, `OOO`, `Out of Office`) |
+| Lean prompt | Caps at 3 upcoming events + 5 tasks | Keeps the injected block bounded under load |
+| Tests | `test/context-engine.test.ts` (15 pass) | Engine info, system-prompt injection, US/Pacific fallback, message pass-through, ingest no-op, quiet hours, day-of-week, missing-file resilience, token estimation, calendar+task injection paths |
+
+### What this means for you
+
+Enable it in `openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "slots": {
+      "contextEngine": "gbrain-context"
+    }
+  }
+}
+```
+
+Then keep `memory/heartbeat-state.json` warm via the existing heartbeat cron (no schema changes required). Compaction will keep happening; the agent will keep waking up knowing what time it is, where you are, and what you're in the middle of.
+
+### To take advantage of v0.32.5
+
+`gbrain upgrade` should do this automatically. If you're on OpenClaw and want the context engine wired in:
+
+1. **Update your `openclaw.json`** to set `plugins.slots.contextEngine` to `"gbrain-context"` (snippet above).
+2. **Confirm the heartbeat is producing data:** `cat memory/heartbeat-state.json` should show `garryAwake` + `currentLocation`. If not, the engine falls back to US/Pacific + San Francisco safely.
+3. **Verify the engine loads** by checking the first system-prompt block in your next session — you should see the day-of-week + local time at the top.
+4. **No schema migration, no breaking changes.** Existing gbrain installs (CLI, MCP, HTTP) are unaffected — this is OpenClaw plugin surface only.
+
+If anything misbehaves, file an issue at https://github.com/garrytan/gbrain/issues with the contents of `memory/heartbeat-state.json` (redacted) and the system-prompt addition you see.
+
+### Itemized changes
+
+- `src/core/context-engine.ts` (new) — pure engine. Loads heartbeat + flights + calendar + tasks from the workspace; builds the structured `systemPromptAddition`; owns no compaction. SDK-free so it runs in `bun test` standalone.
+- `src/openclaw-context-engine.ts` (new) — plugin entry. Discovered via `package.json`'s `openclaw.extensions`. Registers `gbrain-context` against the OpenClaw context-engine contract.
+- `test/context-engine.test.ts` (new, 15 cases) — engine info, Toronto timezone injection, US/Pacific fallback, messages pass-through (reference-equal), ingest no-op, quiet-hours detection, day-of-week, missing-workspace-files graceful handling, token estimation from message content, calendar `Right now`/`Coming up` rendering, stale-cache warning, all-day-event skip, generic-marker skip (`Home`/`OOO`), open-tasks injection from `ops/tasks.md`, upcoming-events cap.
+- `openclaw.plugin.json` — declares `contracts.contextEngines: ["gbrain-context"]` so the OpenClaw plugin registry knows this package provides the contract.
+- `package.json` — declares `openclaw.extensions: ["./src/openclaw-context-engine.ts"]` so the OpenClaw plugin loader discovers the entry.
+- Typecheck cleanup before merge: `@ts-ignore` on the two dynamic-runtime `openclaw/plugin-sdk` imports (resolved by the OpenClaw host at runtime, not declared as a build-time dep — same pattern the core engine already used), inline `PluginApi` + `PluginCtx` type shapes in the plugin entry so `tsc --noEmit` stays green, and the test file's `from 'vitest'` import switched to `from 'bun:test'` to match the rest of the suite.
+
+### Contributors
+
+- Original PR [#873](https://github.com/garrytan/gbrain/pull/873) by @garrytan-agents. Two commits (deterministic injection + activity injection) preserved authorship-intact in this ship.
+
 ## [0.32.0] - 2026-05-10
 
 **5 new embedding providers + the discoverability fix that closes the 17-PR dupe cluster.**

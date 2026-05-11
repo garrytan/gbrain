@@ -20,16 +20,26 @@
  * and independently testable.
  */
 
+// @ts-ignore — openclaw/plugin-sdk is resolved at runtime by the OpenClaw host; not a build-time dep.
 import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 import { createGBrainContextEngine, ENGINE_ID } from './core/context-engine.ts';
+
+interface PluginApi {
+  registerContextEngine(id: string, factory: (ctx: PluginCtx) => unknown): void;
+}
+
+interface PluginCtx {
+  workspaceDir: string;
+  [key: string]: unknown;
+}
 
 export default definePluginEntry({
   id: 'gbrain-context-engine',
   name: 'GBrain Context Engine',
   description: 'Deterministic temporal/spatial context injection on every turn',
 
-  register(api) {
-    api.registerContextEngine(ENGINE_ID, (ctx) =>
+  register(api: PluginApi) {
+    api.registerContextEngine(ENGINE_ID, (ctx: PluginCtx) =>
       createGBrainContextEngine({
         workspaceDir: ctx.workspaceDir,
       }),

@@ -76,6 +76,7 @@ let _delegateCompactionToRuntime: ((params: any) => Promise<CompactResult>) | un
 let _buildMemorySystemPromptAddition: ((params: any) => string | undefined) | undefined;
 
 try {
+  // @ts-ignore — openclaw/plugin-sdk is resolved at runtime by the OpenClaw host; not a build-time dep.
   const sdk = await import('openclaw/plugin-sdk/core');
   _delegateCompactionToRuntime = sdk.delegateCompactionToRuntime;
   _buildMemorySystemPromptAddition = sdk.buildMemorySystemPromptAddition;
