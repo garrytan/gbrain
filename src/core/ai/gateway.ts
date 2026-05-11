@@ -487,25 +487,25 @@ export function isAvailable(touchpoint: TouchpointKind): boolean {
         ? getChatModel()
         : null;
     if (!modelStr) return false;
-    const { recipe } = resolveRecipe(modelStr);
+    const { parsed, recipe } = resolveRecipe(modelStr);
 
     // Recipe must actually support the requested touchpoint.
     // Anthropic declares only expansion + chat (no embedding model); requesting
     // embedding from an anthropic-configured brain is unavailable regardless of auth.
     const touchpointConfig = recipe.touchpoints[touchpoint as 'embedding' | 'expansion' | 'chat'];
     if (!touchpointConfig) return false;
-    // Openai-compat recipes with empty models list require a user-provided
-    // model. Either the recipe explicitly opts in via
-    // EmbeddingTouchpoint.user_provided_models (D8=A), or the legacy
-    // `recipe.id === 'litellm'` heuristic (back-compat for pre-v0.32 builds
-    // where the field hadn't been declared yet).
-    const isUserProvided =
+    // BYO-backend recipes intentionally declare an empty model list. When the
+    // user already supplied `provider:model`, availability should depend on
+    // auth/readiness rather than the static list containing the model id.
+    const acceptsUserProvidedModel =
       touchpoint === 'embedding' &&
-      (touchpointConfig as any).user_provided_models === true;
+      'user_provided_models' in touchpointConfig &&
+      touchpointConfig.user_provided_models === true &&
+      parsed.modelId.length > 0;
     if (
       Array.isArray(touchpointConfig.models) &&
       touchpointConfig.models.length === 0 &&
-      (recipe.id === 'litellm' || isUserProvided)
+      !acceptsUserProvidedModel
     ) return false;
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
