@@ -219,6 +219,18 @@ export interface AuthInfo {
   clientName?: string;
   scopes: string[];
   expiresAt?: number;
+  /**
+   * v0.31.4 fix/mcp-source-isolation-read-side: scope this caller's reads
+   * and writes to a single brain source. NULL/undefined = federated read
+   * (legacy super-reader behavior); a non-null value = strict source isolation
+   * — engines filter `pages.source_id` and writes to other sources are rejected
+   * at the operation layer.
+   *
+   * Populated by `OAuthProvider.verifyAccessToken` from `oauth_clients.source_id`.
+   * For legacy bearer tokens (access_tokens table) it falls back to
+   * `permissions.source_id`.
+   */
+  sourceId?: string;
 }
 
 export interface OperationContext {
@@ -908,6 +920,10 @@ const list_pages: Operation = {
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
+      // v0.31.4 (mcp-source-isolation fix): scope listing to the caller's
+      // source when the dispatch context carries one. Tokens without a
+      // sourceId (Robin super-reader, local CLI) keep federated listing.
+      sourceId: ctx.sourceId,
     });
     return pages.map(pg => ({
       slug: pg.slug,
@@ -937,6 +953,10 @@ const search: Operation = {
     const raw = await ctx.engine.searchKeyword(queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
+      // v0.31.4: thread token-scoped sourceId for read isolation. Engine
+      // applies the WHERE clause when set; undefined = federated/super-reader.
+      // See fix/mcp-source-isolation-read-side.
+      sourceId: ctx.sourceId,
     });
     const results = dedupResults(raw);
     const latency_ms = Date.now() - startedAt;
@@ -1046,6 +1066,9 @@ const query: Operation = {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
+        // v0.31.4: thread token-scoped sourceId for read isolation.
+        // See fix/mcp-source-isolation-read-side.
+        sourceId: ctx.sourceId,
       });
       return results;
     }

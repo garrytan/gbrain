@@ -787,6 +787,15 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    // v0.31.4: source-isolation filter for token-scoped reads. When
+    // opts.sourceId is set and not '__all__', restrict to that source_id.
+    // Otherwise (federated/super-reader) no filter applied. Fix:
+    // fix/mcp-source-isolation-read-side.
+    let sourceClause = '';
+    if (opts?.sourceId && opts.sourceId !== '__all__') {
+      params.push(opts.sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
     // v0.27.0: date filtering support
     let afterDateClause = '';
     if (opts?.afterDate) {
@@ -826,6 +835,7 @@ export class PostgresEngine implements BrainEngine {
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${languageClause}
           ${symbolKindClause}
+          ${sourceClause}
           ${afterDateClause}
           ${beforeDateClause}
           ${hardExcludeClause}
@@ -913,6 +923,15 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    // v0.31.4: source-isolation filter for token-scoped reads. When
+    // opts.sourceId is set and not '__all__', restrict to that source_id.
+    // Otherwise (federated/super-reader) no filter applied. Fix:
+    // fix/mcp-source-isolation-read-side.
+    let sourceClause = '';
+    if (opts?.sourceId && opts.sourceId !== '__all__') {
+      params.push(opts.sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
     // v0.27.0: date filtering support
     let afterDateClause = '';
     if (opts?.afterDate) {
@@ -947,6 +966,7 @@ export class PostgresEngine implements BrainEngine {
         ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
         ${languageClause}
         ${symbolKindClause}
+        ${sourceClause}
         ${afterDateClause}
         ${beforeDateClause}
         ${hardExcludeClause}
@@ -1014,6 +1034,15 @@ export class PostgresEngine implements BrainEngine {
       params.push(symbolKind);
       symbolKindClause = `AND cc.symbol_type = $${params.length}`;
     }
+    // v0.31.4: source-isolation filter for token-scoped reads. When
+    // opts.sourceId is set and not '__all__', restrict to that source_id.
+    // Otherwise (federated/super-reader) no filter applied. Fix:
+    // fix/mcp-source-isolation-read-side.
+    let sourceClause = '';
+    if (opts?.sourceId && opts.sourceId !== '__all__') {
+      params.push(opts.sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
     // v0.27.0: date filtering support
     let afterDateClause = '';
     if (opts?.afterDate) {
@@ -1057,6 +1086,7 @@ export class PostgresEngine implements BrainEngine {
           ${excludeSlugsClause}
           ${languageClause}
           ${symbolKindClause}
+          ${sourceClause}
           ${afterDateClause}
           ${beforeDateClause}
           ${hardExcludeClause}

@@ -232,6 +232,13 @@ export async function hybridSearch(
     // PR #618 callers compiling while the new names are the public surface.
     afterDate: opts?.since ?? opts?.afterDate,
     beforeDate: opts?.until ?? opts?.beforeDate,
+    // v0.31.4 (fix/mcp-source-isolation-read-side): thread sourceId so
+    // engine.searchKeyword AND engine.searchVector both apply the
+    // pages.source_id WHERE filter. Without this, the op-layer hands
+    // sourceId to hybridSearch but it gets dropped before reaching the
+    // engine — Tier 3 (`query` tool) returns cross-source rows even
+    // when the auth-mapped sourceId is set.
+    sourceId: opts?.sourceId,
   };
   // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never

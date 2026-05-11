@@ -549,6 +549,8 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   client_secret_expires_at BIGINT,
   token_ttl               INTEGER,
   deleted_at              TIMESTAMPTZ,
+  -- v0.31.4: source-isolation scope for MCP HTTP callers. NULL = federated/super-reader.
+  source_id               TEXT REFERENCES sources(id) ON DELETE SET NULL,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
