@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.33.0] - 2026-05-10
+## [0.33.1.0] - 2026-05-10
 
 **Ask gbrain who in your network knows about a topic, and get a ranked answer with the reasoning shown.**
 
@@ -43,7 +43,7 @@ If you've been muscle-memorying the search bar to find "who in my network knows 
 
 The release is eval-gated by design (per /office-hours, /plan-ceo-review, and Codex outside-voice). If the naive ranking passes your real-brain eval, you didn't need the cathedral substrate after all. If it fails, v0.34 builds it — measured, not speculated.
 
-## To take advantage of v0.33
+## To take advantage of v0.33.1
 
 `gbrain upgrade` should do this automatically. Then run the eval gate against your real brain:
 
