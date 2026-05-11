@@ -952,6 +952,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           remote: true,
           takesHoldersAllowList: tokenAllowList,
           sourceId: tokenSourceId,
+          // v0.32.x (feat/oauth-federated-read): forward the per-client
+          // READ scope from oauth_clients.federated_read so engine read
+          // paths use `source_id = ANY($allowedSources)` for filtering.
+          // Without this, OAuth clients silently fell back to the
+          // single-source filter (sourceId only) — wecare-dept-* tokens
+          // saw their own source but never the federated 'shared' set.
+          allowedSources: (authInfo as AuthInfo & { allowedSources?: string[] }).allowedSources,
           metaHook: getBrainHotMemoryMeta,
           // v0.31 follow-up fix: thread auth so the whoami op (and any
           // future scope-aware handlers) can introspect the caller. The
