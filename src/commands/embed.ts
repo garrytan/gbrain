@@ -15,6 +15,12 @@ export interface EmbedOpts {
   /** Embed a single page. */
   slug?: string;
   /**
+   * v0.31.12: scope to a specific source. When set, only pages from this
+   * source are embedded. When omitted, all sources are processed (but
+   * source_id is still threaded correctly per-page via Page.source_id).
+   */
+  sourceId?: string;
+  /**
    * Dry run: enumerate what WOULD be embedded (stale chunk counts)
    * without calling the embedding model or writing to the engine.
    * Safe to call with no API key. Used by runCycle's dryRun propagation.
@@ -73,7 +79,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   if (opts.slugs && opts.slugs.length > 0) {
     for (const s of opts.slugs) {
       try {
-        await embedPage(engine, s, !!opts.dryRun, result);
+        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId);
       } catch (e: unknown) {
         console.error(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
       }
@@ -81,11 +87,11 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     return result;
   }
   if (opts.all || opts.stale) {
-    await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress);
+    await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId);
     return result;
   }
   if (opts.slug) {
-    await embedPage(engine, opts.slug, !!opts.dryRun, result);
+    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId);
     return result;
   }
   throw new Error('No embed target specified. Pass { slug }, { slugs }, { all }, or { stale }.');
@@ -96,19 +102,22 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
   const all = args.includes('--all');
   const stale = args.includes('--stale');
   const dryRun = args.includes('--dry-run');
+  // v0.31.12: --source <id> scopes to a single source.
+  const sourceIdx = args.indexOf('--source');
+  const sourceId = sourceIdx >= 0 ? args[sourceIdx + 1] : undefined;
 
   let opts: EmbedOpts;
   if (slugsIdx >= 0) {
-    opts = { slugs: args.slice(slugsIdx + 1).filter(a => !a.startsWith('--')), dryRun };
+    opts = { slugs: args.slice(slugsIdx + 1).filter(a => !a.startsWith('--')), dryRun, sourceId };
   } else if (all || stale) {
-    opts = { all, stale, dryRun };
+    opts = { all, stale, dryRun, sourceId };
   } else {
     const slug = args.find(a => !a.startsWith('--'));
     if (!slug) {
       console.error('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run]');
       process.exit(1);
     }
-    opts = { slug, dryRun };
+    opts = { slug, dryRun, sourceId };
   }
 
   // CLI path: wire a reporter so --progress-json / --quiet / TTY rendering
@@ -140,8 +149,10 @@ async function embedPage(
   slug: string,
   dryRun: boolean,
   result: EmbedResult,
+  sourceId?: string,
 ) {
-  const page = await engine.getPage(slug);
+  const opts = sourceId ? { sourceId } : undefined;
+  const page = await engine.getPage(slug, opts);
   if (!page) {
     throw new Error(`Page not found: ${slug}`);
   }
@@ -149,7 +160,7 @@ async function embedPage(
   // Get existing chunks or create new ones.
   // In dryRun, we still chunk the text locally to count what WOULD be
   // embedded — but we never write chunks or call the embedding model.
-  let chunks = await engine.getChunks(slug);
+  let chunks = await engine.getChunks(slug, opts);
   if (chunks.length === 0) {
     const inputs: ChunkInput[] = [];
     if (page.compiled_truth.trim()) {
@@ -172,8 +183,8 @@ async function embedPage(
     }
 
     if (inputs.length > 0) {
-      await engine.upsertChunks(slug, inputs);
-      chunks = await engine.getChunks(slug);
+      await engine.upsertChunks(slug, inputs, opts);
+      chunks = await engine.getChunks(slug, opts);
     }
   }
 
@@ -207,7 +218,7 @@ async function embedPage(
     token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
   }));
 
-  await engine.upsertChunks(slug, updated);
+  await engine.upsertChunks(slug, updated, opts);
   result.embedded += toEmbed.length;
   result.pages_processed++;
   console.log(`${slug}: embedded ${toEmbed.length} chunks`);
@@ -219,6 +230,7 @@ async function embedAll(
   dryRun: boolean,
   result: EmbedResult,
   onProgress?: (done: number, total: number, embedded: number) => void,
+  sourceId?: string,
 ) {
   // ─────────────────────────────────────────────────────────────
   // Stale-only fast path: avoid the listPages + per-page getChunks
@@ -237,7 +249,8 @@ async function embedAll(
     return await embedAllStale(engine, dryRun, result, onProgress);
   }
 
-  const pages = await engine.listPages({ limit: 100000 });
+  // v0.31.12: when sourceId is set, scope listPages to that source.
+  const pages = await engine.listPages({ limit: 100000, ...(sourceId && { sourceId }) });
   let processed = 0;
 
   // Concurrency limit for parallel page embedding.
@@ -251,7 +264,11 @@ async function embedAll(
   const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
 
   async function embedOnePage(page: typeof pages[number]) {
-    const chunks = await engine.getChunks(page.slug);
+    // v0.31.12: thread source_id from the page row so getChunks/upsertChunks
+    // target the correct (source_id, slug) row, not the 'default' source.
+    const pageSourceId = page.source_id;
+    const pageOpts = pageSourceId ? { sourceId: pageSourceId } : undefined;
+    const chunks = await engine.getChunks(page.slug, pageOpts);
     const toEmbed = chunks; // staleOnly path handled above via embedAllStale
 
     result.total_chunks += chunks.length;
@@ -287,7 +304,7 @@ async function embedAll(
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
-      await engine.upsertChunks(page.slug, updated);
+      await engine.upsertChunks(page.slug, updated, pageOpts);
       result.embedded += toEmbed.length;
     } catch (e: unknown) {
       console.error(`\n  Error embedding ${page.slug}: ${e instanceof Error ? e.message : e}`);
@@ -372,7 +389,7 @@ async function embedAllStale(
 
   // Back-compat: slug-only references use the first row's slug.
   const bySlug = byKey;
-  const slugs = Array.from(byKey.keys());
+  const keys = Array.from(byKey.keys());
   const totalStaleChunks = staleRows.length;
   result.total_chunks += totalStaleChunks;
   // skipped is "chunks we considered and skipped due to having an embedding".
@@ -382,13 +399,13 @@ async function embedAllStale(
 
   if (dryRun) {
     result.would_embed += totalStaleChunks;
-    result.pages_processed += slugs.length;
+    result.pages_processed += keys.length;
     if (onProgress) {
       // Emit a single tick to satisfy the contract (CLI progress reporters
       // expect at least one start/finish pair).
-      onProgress(slugs.length, slugs.length, 0);
+      onProgress(keys.length, keys.length, 0);
     }
-    console.log(`[dry-run] Would embed ${totalStaleChunks} chunks across ${slugs.length} pages`);
+    console.log(`[dry-run] Would embed ${totalStaleChunks} chunks across ${keys.length} pages`);
     return;
   }
 
@@ -432,7 +449,7 @@ async function embedAllStale(
     }
     processed++;
     result.pages_processed++;
-    onProgress?.(processed, slugs.length, result.embedded);
+    onProgress?.(processed, keys.length, result.embedded);
   }
 
   let nextIdx = 0;

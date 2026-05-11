@@ -77,6 +77,9 @@ export function rowToPage(row: Record<string, unknown>): Page {
     ...(effectiveDateSource !== undefined && { effective_date_source: effectiveDateSource }),
     ...(importFilename !== undefined && { import_filename: importFilename }),
     ...(salienceTouchedAt !== undefined && { salience_touched_at: salienceTouchedAt }),
+    // v0.31.12: propagate source_id so downstream callers (embed, reconcile-links)
+    // can thread it through getChunks / upsertChunks without defaulting to 'default'.
+    ...(row.source_id != null && { source_id: row.source_id as string }),
   };
 }
 

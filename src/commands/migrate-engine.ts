@@ -163,8 +163,11 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       content_hash: page.content_hash,
     });
 
-    // Copy chunks with embeddings
-    const chunks = await sourceEngine.getChunksWithEmbeddings(page.slug);
+    // Copy chunks with embeddings.
+    // v0.31.12: thread source_id so non-default-source pages don't silently
+    // lose chunks during migration.
+    const migrateOpts = page.source_id ? { sourceId: page.source_id } : undefined;
+    const chunks = await sourceEngine.getChunksWithEmbeddings(page.slug, migrateOpts);
     if (chunks.length > 0) {
       await targetEngine.upsertChunks(page.slug, chunks.map(c => ({
         chunk_index: c.chunk_index,
@@ -173,7 +176,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
         embedding: c.embedding || undefined,
         model: c.model,
         token_count: c.token_count || undefined,
-      })));
+      })), migrateOpts);
     }
 
     // Copy tags

@@ -634,6 +634,11 @@ export class PGLiteEngine implements BrainEngine {
       params.push(escaped);
       where.push(`p.slug LIKE $${params.length} ESCAPE '\\'`);
     }
+    // v0.31.12: scope to a single source when requested.
+    if (filters?.sourceId) {
+      params.push(filters.sourceId);
+      where.push(`p.source_id = $${params.length}`);
+    }
     // v0.26.5: hide soft-deleted by default; opt in via filters.includeDeleted.
     if (filters?.includeDeleted !== true) {
       where.push('p.deleted_at IS NULL');
@@ -2732,14 +2737,23 @@ export class PGLiteEngine implements BrainEngine {
     await this.db.exec(sql);
   }
 
-  async getChunksWithEmbeddings(slug: string): Promise<Chunk[]> {
-    const { rows } = await this.db.query(
-      `SELECT cc.* FROM content_chunks cc
-       JOIN pages p ON p.id = cc.page_id
-       WHERE p.slug = $1
-       ORDER BY cc.chunk_index`,
-      [slug]
-    );
+  async getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]> {
+    const sourceId = opts?.sourceId;
+    const { rows } = sourceId
+      ? await this.db.query(
+          `SELECT cc.* FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+           WHERE p.slug = $1 AND p.source_id = $2
+           ORDER BY cc.chunk_index`,
+          [slug, sourceId]
+        )
+      : await this.db.query(
+          `SELECT cc.* FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+           WHERE p.slug = $1
+           ORDER BY cc.chunk_index`,
+          [slug]
+        );
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r, true));
   }
 

@@ -680,6 +680,10 @@ export class PostgresEngine implements BrainEngine {
     const slugCondition = slugPrefix
       ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sql``;
+    // v0.31.12: scope to a single source when requested.
+    const sourceCondition = filters?.sourceId
+      ? sql`AND p.source_id = ${filters.sourceId}`
+      : sql``;
     // v0.26.5: hide soft-deleted by default; opt in via filters.includeDeleted.
     const deletedCondition = filters?.includeDeleted === true
       ? sql``
@@ -693,7 +697,7 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT p.* FROM pages p
       ${tagJoin}
-      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${deletedCondition}
+      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition}
       ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
     `;
 
@@ -2849,14 +2853,22 @@ export class PostgresEngine implements BrainEngine {
     await conn.unsafe(sqlStr);
   }
 
-  async getChunksWithEmbeddings(slug: string): Promise<Chunk[]> {
+  async getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]> {
     const conn = this.sql;
-    const rows = await conn`
-      SELECT cc.* FROM content_chunks cc
-      JOIN pages p ON p.id = cc.page_id
-      WHERE p.slug = ${slug}
-      ORDER BY cc.chunk_index
-    `;
+    const sourceId = opts?.sourceId;
+    const rows = sourceId
+      ? await conn`
+          SELECT cc.* FROM content_chunks cc
+          JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
+          ORDER BY cc.chunk_index
+        `
+      : await conn`
+          SELECT cc.* FROM content_chunks cc
+          JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug = ${slug}
+          ORDER BY cc.chunk_index
+        `;
     return rows.map((r) => rowToChunk(r as Record<string, unknown>, true));
   }
 
