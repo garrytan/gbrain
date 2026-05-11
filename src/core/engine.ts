@@ -485,7 +485,11 @@ export interface BrainEngine {
    * `filters.includeDeleted: true` to surface them.
    */
   listPages(filters?: PageFilters): Promise<Page[]>;
-  resolveSlugs(partial: string): Promise<string[]>;
+  /**
+   * v0.31.4: optional `sourceId` scopes both exact and fuzzy matching to a
+   * single source. Unset = federated (matches local CLI + Robin super-reader).
+   */
+  resolveSlugs(partial: string, opts?: { sourceId?: string }): Promise<string[]>;
   /**
    * Returns the slug of every page in the brain. Used by batch commands as a
    * mutation-immune iteration source (alternative to listPages OFFSET pagination,
@@ -615,18 +619,25 @@ export interface BrainEngine {
     dirPrefix?: string,
     minSimilarity?: number,
   ): Promise<{ slug: string; similarity: number } | null>;
-  traverseGraph(slug: string, depth?: number): Promise<GraphNode[]>;
+  /**
+   * v0.31.4 (P0/leak-2026-05-11): `opts.sourceId` constrains visited nodes to a
+   * single source. When omitted (federated/super-reader), all sources visible.
+   * MCP-bound callers MUST pass `{ sourceId: ctx.sourceId }` so cross-source
+   * pages can't be discovered via graph metadata even when get_page denies them.
+   */
+  traverseGraph(slug: string, depth?: number, opts?: { sourceId?: string }): Promise<GraphNode[]>;
   /**
    * Edge-based graph traversal with optional type and direction filters.
    * Returns a list of edges (GraphPath[]) instead of nodes. Supports:
    * - linkType: per-edge filter, only follows matching edges (per-edge semantics)
    * - direction: 'in' (follow to->from), 'out' (follow from->to), 'both'
    * - depth: max depth from root (default 5)
+   * - sourceId: v0.31.4, see traverseGraph note above
    * Uses cycle prevention (visited array in recursive CTE).
    */
   traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' },
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string },
   ): Promise<GraphPath[]>;
   /**
    * For a list of slugs, return how many inbound links each has.

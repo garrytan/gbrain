@@ -717,18 +717,23 @@ export class PostgresEngine implements BrainEngine {
     return new Set(rows.map((r) => r.slug as string));
   }
 
-  async resolveSlugs(partial: string): Promise<string[]> {
+  async resolveSlugs(partial: string, opts?: { sourceId?: string }): Promise<string[]> {
     const sql = this.sql;
+    // v0.31.4 (mcp-source-isolation read-side fix): scope to caller's source
+    // when present. NULL = federated (Robin super-reader / local CLI).
+    const sourceCondition = opts?.sourceId
+      ? sql`AND source_id = ${opts.sourceId}`
+      : sql``;
 
     // Try exact match first
-    const exact = await sql`SELECT slug FROM pages WHERE slug = ${partial}`;
+    const exact = await sql`SELECT slug FROM pages WHERE slug = ${partial} ${sourceCondition}`;
     if (exact.length > 0) return [exact[0].slug];
 
     // Fuzzy match via pg_trgm
     const fuzzy = await sql`
       SELECT slug, similarity(title, ${partial}) AS sim
       FROM pages
-      WHERE title % ${partial} OR slug ILIKE ${'%' + partial + '%'}
+      WHERE (title % ${partial} OR slug ILIKE ${'%' + partial + '%'}) ${sourceCondition}
       ORDER BY sim DESC
       LIMIT 5
     `;
@@ -1505,20 +1510,24 @@ export class PostgresEngine implements BrainEngine {
     return { slug: row.slug, similarity: row.sim };
   }
 
-  async traverseGraph(slug: string, depth: number = 5): Promise<GraphNode[]> {
+  async traverseGraph(slug: string, depth: number = 5, opts?: { sourceId?: string }): Promise<GraphNode[]> {
     const sql = this.sql;
+    const sourceId = opts?.sourceId ?? null;
+    const scoped = sourceId !== null;
     // Cycle prevention: visited array tracks page IDs already in the path.
+    // v0.31.4 P0 source-isolation: when sourceId is set, both the seed page and every
+    // visited neighbor must match. Federated callers (sourceId=null) see all sources.
     const rows = await sql`
       WITH RECURSIVE graph AS (
         SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
-        FROM pages p WHERE p.slug = ${slug}
+        FROM pages p WHERE p.slug = ${slug} AND (${!scoped} OR p.source_id = ${sourceId ?? ''})
 
         UNION ALL
 
         SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1, g.visited || p2.id
         FROM graph g
         JOIN links l ON l.from_page_id = g.id
-        JOIN pages p2 ON p2.id = l.to_page_id
+        JOIN pages p2 ON p2.id = l.to_page_id AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
         WHERE g.depth < ${depth}
           AND NOT (p2.id = ANY(g.visited))
       )
@@ -1533,7 +1542,7 @@ export class PostgresEngine implements BrainEngine {
           -- different layer. See plan Bug 6/10.
           (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
-           JOIN pages p3 ON p3.id = l2.to_page_id
+           JOIN pages p3 ON p3.id = l2.to_page_id AND (${!scoped} OR p3.source_id = ${sourceId ?? ''})
            WHERE l2.from_page_id = g.id),
           '[]'::jsonb
         ) as links
@@ -1552,25 +1561,29 @@ export class PostgresEngine implements BrainEngine {
 
   async traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' },
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string },
   ): Promise<GraphPath[]> {
     const sql = this.sql;
     const depth = opts?.depth ?? 5;
     const direction = opts?.direction ?? 'out';
     const linkType = opts?.linkType ?? null;
     const linkTypeMatches = linkType !== null;
+    // v0.31.4 P0 source-isolation: seed + every visited neighbor must match
+    // when sourceId is set. Federated callers (sourceId=null) see all sources.
+    const sourceId = opts?.sourceId ?? null;
+    const scoped = sourceId !== null;
 
     let rows;
     if (direction === 'out') {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug}
+          FROM pages p WHERE p.slug = ${slug} AND (${!scoped} OR p.source_id = ${sourceId ?? ''})
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON l.from_page_id = w.id
-          JOIN pages p2 ON p2.id = l.to_page_id
+          JOIN pages p2 ON p2.id = l.to_page_id AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
@@ -1579,7 +1592,7 @@ export class PostgresEngine implements BrainEngine {
                l.link_type, l.context, w.depth + 1 as depth
         FROM walk w
         JOIN links l ON l.from_page_id = w.id
-        JOIN pages p2 ON p2.id = l.to_page_id
+        JOIN pages p2 ON p2.id = l.to_page_id AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
         WHERE w.depth < ${depth}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
         ORDER BY depth, from_slug, to_slug
@@ -1588,12 +1601,12 @@ export class PostgresEngine implements BrainEngine {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug}
+          FROM pages p WHERE p.slug = ${slug} AND (${!scoped} OR p.source_id = ${sourceId ?? ''})
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON l.to_page_id = w.id
-          JOIN pages p2 ON p2.id = l.from_page_id
+          JOIN pages p2 ON p2.id = l.from_page_id AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
@@ -1602,7 +1615,7 @@ export class PostgresEngine implements BrainEngine {
                l.link_type, l.context, w.depth + 1 as depth
         FROM walk w
         JOIN links l ON l.to_page_id = w.id
-        JOIN pages p2 ON p2.id = l.from_page_id
+        JOIN pages p2 ON p2.id = l.from_page_id AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
         WHERE w.depth < ${depth}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
         ORDER BY depth, from_slug, to_slug
@@ -1611,12 +1624,12 @@ export class PostgresEngine implements BrainEngine {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug}
+          FROM pages p WHERE p.slug = ${slug} AND (${!scoped} OR p.source_id = ${sourceId ?? ''})
           UNION ALL
           SELECT p2.id, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
-          JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END
+          JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
@@ -1625,10 +1638,12 @@ export class PostgresEngine implements BrainEngine {
                l.link_type, l.context, w.depth + 1 as depth
         FROM walk w
         JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
-        JOIN pages pf ON pf.id = l.from_page_id
-        JOIN pages pt ON pt.id = l.to_page_id
+        JOIN pages pf ON pf.id = l.from_page_id AND (${!scoped} OR pf.source_id = ${sourceId ?? ''})
+        JOIN pages pt ON pt.id = l.to_page_id AND (${!scoped} OR pt.source_id = ${sourceId ?? ''})
         WHERE w.depth < ${depth}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+          AND (${!scoped} OR pf.source_id = ${sourceId ?? ''})
+          AND (${!scoped} OR pt.source_id = ${sourceId ?? ''})
         ORDER BY depth, from_slug, to_slug
       `;
     }

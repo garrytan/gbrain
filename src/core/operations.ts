@@ -1463,9 +1463,9 @@ const traverse_graph: Operation = {
     // Backward compat: when neither link_type nor direction is provided, return
     // the legacy GraphNode[] shape. Once either is set, switch to GraphPath[].
     if (linkType === undefined && direction === undefined) {
-      return ctx.engine.traverseGraph(slug, depth);
+      return ctx.engine.traverseGraph(slug, depth, { sourceId: ctx.sourceId });
     }
-    return ctx.engine.traversePaths(slug, { depth, linkType, direction });
+    return ctx.engine.traversePaths(slug, { depth, linkType, direction, sourceId: ctx.sourceId });
   },
   scope: 'read',
   cliHints: { name: 'graph', positional: ['slug'] },
