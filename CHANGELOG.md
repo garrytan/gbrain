@@ -2,6 +2,45 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.32.4] - 2026-05-11
+
+**`gbrain doctor` now catches the silent failure mode where sync hasn't run in days.**
+**One new check, two thresholds: warn at 24h, fail at 72h — plus a best-effort filesystem-vs-DB drift detector.**
+
+Brain search becoming stale because `gbrain sync` quietly stopped running is one of the most common "agent is missing recent pages" failure modes. The cron job dies, the watcher unloads, the autopilot daemon wedges — and the user finds out a week later when an agent can't find a meeting they had three days ago. v0.32.4 adds a `sync_freshness` check to both the local `gbrain doctor` and the remote-MCP `doctorReportRemote` so the staleness surfaces the next time anyone runs doctor.
+
+The check queries `sources.last_sync_at` for every source with a `local_path` (the federated sources that actually sync from disk). Sources synced less than 24h ago are fine. Between 24h and 72h, the check warns. Past 72h — or never synced at all — it fails. The fix is named in the message: `gbrain sync --source <id>`.
+
+There's also a best-effort drift detector. For each source whose `local_path` is reachable on disk, the check counts `.md` files (depth-capped at 10, skips dot-dirs) and compares against `SELECT COUNT(*) FROM pages WHERE source_id = $id`. If the DB has more than 10% fewer pages than the filesystem, the check surfaces a drift warning. The drift detector is best-effort: filesystem unreachable, depth too deep, or any read error falls through silently instead of failing the check. The point is catching gross mismatches like "DB has 12K pages but disk has 30K", not pixel-perfect accounting.
+
+### What this means for operators
+
+Your next `gbrain doctor` either says `[OK] sync_freshness: All N federated source(s) synced recently` (you're fine) or names the stale source by id with a copy-pasteable fix command. Doctor goes from "everything is fine!" (while the agent silently misses three days of meetings) to "your gstack source last synced 4d ago — brain search is stale!" The check runs in both the local doctor and the remote-MCP doctor, so thin-client deployments inherit the same surfacing without extra plumbing.
+
+### To take advantage of v0.32.4
+
+`gbrain upgrade` ships the binary. No migration, no config, no manual action:
+
+1. **Run doctor:**
+   ```bash
+   gbrain doctor
+   ```
+   Look for the new `sync_freshness` row. If it warns or fails, run `gbrain sync --source <id>` per the message.
+
+2. **Thin-client users**: `gbrain remote doctor` includes the same check end-to-end through MCP.
+
+3. **No breaking changes.** The existing doctor surface is unchanged; this is one additive row.
+
+### Itemized changes
+
+#### Added
+- `sync_freshness` check in both `runDoctor` (local) and `doctorReportRemote` (thin-client) at `src/commands/doctor.ts:checkSyncFreshness`. Warn at 24h, fail at 72h. Names the source by id and prints the exact `gbrain sync --source <id>` command.
+- Best-effort filesystem-vs-DB page drift detector inside the same check. Depth-capped at 10, skips dot-dirs, falls through on any read error. Surfaces as a warn-level drift line when the DB is >10% behind the disk.
+
+#### Known follow-ups (deferred from /ship review)
+- No unit tests for `checkSyncFreshness`. Doctor checks in `test/doctor.test.ts` historically get regression coverage (graph_coverage short-circuit, RLS event trigger). File as a follow-up; the next /ship that touches doctor.ts should add coverage.
+- The inline `walkDir` duplicates `src/core/disk-walk.ts:walkBrainRepo`. The canonical helper has a single recursive `readdirSync` + dot-dir + node_modules + non-.md skip. Future PR should route through the canonical helper instead of re-implementing the walk inline.
+
 ## [0.32.0] - 2026-05-10
 
 **5 new embedding providers + the discoverability fix that closes the 17-PR dupe cluster.**
