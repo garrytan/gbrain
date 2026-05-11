@@ -6,6 +6,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
 
@@ -164,6 +165,24 @@ describe('PGLiteEngine: Pages', () => {
     const page = await engine.putPage('Test/UPPER', testPage);
     expect(page.slug).toBe('test/upper');
   });
+
+  test('importFromContent normalizes mixed-case slugs before all tx writes', async () => {
+    const result = await importFromContent(
+      engine,
+      'TestNamespace/Page-Name',
+      '---\ntype: note\ntitle: Mixed Case\n---\n\nbody text',
+      { noEmbed: true },
+    );
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('testnamespace/page-name');
+
+    const page = await engine.getPage('testnamespace/page-name');
+    expect(page).not.toBeNull();
+    expect(page!.title).toBe('Mixed Case');
+
+    const chunks = await engine.getChunks('testnamespace/page-name');
+    expect(chunks.length).toBeGreaterThan(0);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -233,6 +252,17 @@ describe('PGLiteEngine: Chunks', () => {
     expect(chunks.length).toBe(2);
     expect(chunks[0].chunk_text).toBe('Chunk zero');
     expect(chunks[1].chunk_text).toBe('Chunk one');
+  });
+
+  test('upsertChunks normalizes mixed-case slugs like putPage', async () => {
+    await engine.putPage('Test/ChunkCase', testPage);
+    await engine.upsertChunks('Test/ChunkCase', [
+      { chunk_index: 0, chunk_text: 'Mixed-case chunk', chunk_source: 'compiled_truth' },
+    ]);
+
+    const chunks = await engine.getChunks('test/chunkcase');
+    expect(chunks.length).toBe(1);
+    expect(chunks[0].chunk_text).toBe('Mixed-case chunk');
   });
 
   test('upsertChunks removes orphan chunks', async () => {
