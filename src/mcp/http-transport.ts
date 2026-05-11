@@ -77,8 +77,19 @@ interface AuthResult {
    * When undefined, engines fall back to current behavior (no scope filter)
    * — which is how trusted local CLI callers and Robin's super-reader token
    * keep working.
+   *
+   * Post-v52 (federated-read): for OAuth tokens this is the WRITE-target
+   * source. The READ scope is in `allowedSources`.
    */
   sourceId?: string;
+  /**
+   * v0.32.x (feat/oauth-federated-read): per-token READ scope. Threaded onto
+   * `OperationContext.allowedSources`. Engine read paths prefer this over
+   * `sourceId` for filtering. Sourced from `oauth_clients.federated_read`
+   * (OAuth path) or `access_tokens.permissions.federated_read` (legacy
+   * path). Undefined preserves pre-v52 scalar-sourceId semantics.
+   */
+  allowedSources?: string[];
 }
 
 /** Read up to `cap` bytes off req.body. Returns null if cap exceeded. */
@@ -184,7 +195,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         .catch(() => { /* fire-and-forget */ });
       // v0.28: extract per-token takes-holder allow-list. Fail-safe default
       // is ['world'] — a token with no permissions row sees public claims only.
-      const perms = (row as { permissions?: { takes_holders?: unknown; source_id?: unknown } }).permissions;
+      const perms = (row as { permissions?: { takes_holders?: unknown; source_id?: unknown; federated_read?: unknown } }).permissions;
       const allowList = Array.isArray(perms?.takes_holders)
         ? (perms!.takes_holders as unknown[]).filter(h => typeof h === 'string') as string[]
         : ['world'];
@@ -197,12 +208,22 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       const sourceId = typeof perms?.source_id === 'string' && (perms!.source_id as string).length > 0
         ? (perms!.source_id as string)
         : undefined;
+      // v0.32.x (feat/oauth-federated-read): per-token READ scope from
+      // `permissions.federated_read`. When set, the HTTP transport forwards
+      // it as `OperationContext.allowedSources` so engines use
+      // `source_id = ANY($allowedSources)` for filtering. Legacy tokens
+      // without this field retain scalar-sourceId behavior.
+      const fedRead = Array.isArray(perms?.federated_read)
+        ? (perms!.federated_read as unknown[]).filter((s): s is string => typeof s === 'string')
+        : undefined;
+      const allowedSources = fedRead && fedRead.length > 0 ? fedRead : undefined;
       return {
         ok: true,
         tokenId: rowId,
         tokenName: rowName,
         takesHoldersAllowList: allowList,
         sourceId,
+        allowedSources,
       };
     } catch {
       return { ok: false };
@@ -357,6 +378,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           remote: true,
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId,
+          allowedSources: auth.allowedSources,
         });
         const status = result.isError ? 'error' : 'success';
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);

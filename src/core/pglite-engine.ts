@@ -488,13 +488,18 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Pages CRUD
-  async getPage(slug: string, opts?: { sourceId?: string; includeDeleted?: boolean }): Promise<Page | null> {
+  async getPage(slug: string, opts?: { sourceId?: string; allowedSources?: string[]; includeDeleted?: boolean }): Promise<Page | null> {
     // v0.26.5: hide soft-deleted by default; opt-in via opts.includeDeleted.
+    // v0.32.x federated-read: allowedSources (post-v52) wins over scalar sourceId;
+    // both unset = federated (super-reader / local CLI).
     const includeDeleted = opts?.includeDeleted === true;
     const sourceId = opts?.sourceId;
     const where: string[] = ['slug = $1'];
     const params: unknown[] = [slug];
-    if (sourceId) {
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      params.push(opts.allowedSources);
+      where.push(`source_id = ANY($${params.length}::text[])`);
+    } else if (sourceId) {
       params.push(sourceId);
       where.push(`source_id = $${params.length}`);
     }
@@ -638,9 +643,16 @@ export class PGLiteEngine implements BrainEngine {
     if (filters?.includeDeleted !== true) {
       where.push('p.deleted_at IS NULL');
     }
-    // v0.31.4 (mcp-source-isolation read-side fix): scope listing to caller's
-    // source when the dispatch context carries one. See operations.ts list_pages.
-    if (filters?.sourceId) {
+    // v0.31.4 (mcp-source-isolation read-side fix) + v0.32.x (federated-read):
+    // allowedSources (post-v52) wins over scalar sourceId; both unset =
+    // federated. PageFilters doesn't carry allowedSources in its declared
+    // type yet, so cast the filters bag to read the optional field without
+    // modifying types.ts. See operations.ts list_pages.
+    const scopeFilters = filters as { sourceId?: string; allowedSources?: string[] } | undefined;
+    if (scopeFilters?.allowedSources && scopeFilters.allowedSources.length > 0) {
+      params.push(scopeFilters.allowedSources);
+      where.push(`p.source_id = ANY($${params.length}::text[])`);
+    } else if (filters?.sourceId) {
       params.push(filters.sourceId);
       where.push(`p.source_id = $${params.length}`);
     }
@@ -662,12 +674,18 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as Record<string, unknown>[]).map(rowToPage);
   }
 
-  async getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>> {
-    // v0.31.8 (D12): when opts.sourceId is set, return only that source's
-    // slugs (used by reconcileLinks so wikilink resolution doesn't span
-    // unrelated sources). Without opts, returns the union across sources
-    // (pre-v0.31.8 behavior — preserved for callers that still expect the
-    // brain-wide slug index, e.g. extract.ts's link resolver).
+  async getAllSlugs(opts?: { sourceId?: string; allowedSources?: string[] }): Promise<Set<string>> {
+    // v0.31.8 (D12) + v0.32.x (federated-read): allowedSources (post-v52)
+    // wins over scalar sourceId. Without opts, returns the union across
+    // sources (pre-v0.31.8 behavior — preserved for callers that still
+    // expect the brain-wide slug index, e.g. extract.ts's link resolver).
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const { rows } = await this.db.query(
+        'SELECT slug FROM pages WHERE source_id = ANY($1::text[])',
+        [opts.allowedSources]
+      );
+      return new Set((rows as { slug: string }[]).map(r => r.slug));
+    }
     if (opts?.sourceId) {
       const { rows } = await this.db.query(
         'SELECT slug FROM pages WHERE source_id = $1',
@@ -679,36 +697,55 @@ export class PGLiteEngine implements BrainEngine {
     return new Set((rows as { slug: string }[]).map(r => r.slug));
   }
 
-  async resolveSlugs(partial: string, opts?: { sourceId?: string }): Promise<string[]> {
-    // v0.31.4 (mcp-source-isolation read-side fix): scope to caller's source
-    // when present. NULL = federated (Robin super-reader / local CLI).
-    const scoped = opts?.sourceId !== undefined;
+  async resolveSlugs(partial: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<string[]> {
+    // v0.31.4 (mcp-source-isolation read-side fix) + v0.32.x (federated-read):
+    // allowedSources (post-v52) wins; falls back to scalar sourceId; both
+    // unset = federated (Robin super-reader / local CLI).
+    const allowed = opts?.allowedSources && opts.allowedSources.length > 0 ? opts.allowedSources : null;
+    const scoped = allowed !== null || opts?.sourceId !== undefined;
 
     // Try exact match first
-    const exact = scoped
-      ? await this.db.query('SELECT slug FROM pages WHERE slug = $1 AND source_id = $2', [partial, opts!.sourceId])
-      : await this.db.query('SELECT slug FROM pages WHERE slug = $1', [partial]);
+    let exact;
+    if (allowed) {
+      exact = await this.db.query('SELECT slug FROM pages WHERE slug = $1 AND source_id = ANY($2::text[])', [partial, allowed]);
+    } else if (opts?.sourceId !== undefined) {
+      exact = await this.db.query('SELECT slug FROM pages WHERE slug = $1 AND source_id = $2', [partial, opts.sourceId]);
+    } else {
+      exact = await this.db.query('SELECT slug FROM pages WHERE slug = $1', [partial]);
+    }
     if (exact.rows.length > 0) return [(exact.rows[0] as { slug: string }).slug];
 
     // Fuzzy match via pg_trgm
-    const { rows } = scoped
-      ? await this.db.query(
-          `SELECT slug, similarity(title, $1) AS sim
-           FROM pages
-           WHERE (title % $1 OR slug ILIKE $2) AND source_id = $3
-           ORDER BY sim DESC
-           LIMIT 5`,
-          [partial, '%' + partial + '%', opts!.sourceId]
-        )
-      : await this.db.query(
-          `SELECT slug, similarity(title, $1) AS sim
-           FROM pages
-           WHERE title % $1 OR slug ILIKE $2
-           ORDER BY sim DESC
-           LIMIT 5`,
-          [partial, '%' + partial + '%']
-        );
-    return (rows as { slug: string }[]).map(r => r.slug);
+    let result;
+    if (allowed) {
+      result = await this.db.query(
+        `SELECT slug, similarity(title, $1) AS sim
+         FROM pages
+         WHERE (title % $1 OR slug ILIKE $2) AND source_id = ANY($3::text[])
+         ORDER BY sim DESC
+         LIMIT 5`,
+        [partial, '%' + partial + '%', allowed]
+      );
+    } else if (scoped) {
+      result = await this.db.query(
+        `SELECT slug, similarity(title, $1) AS sim
+         FROM pages
+         WHERE (title % $1 OR slug ILIKE $2) AND source_id = $3
+         ORDER BY sim DESC
+         LIMIT 5`,
+        [partial, '%' + partial + '%', opts!.sourceId]
+      );
+    } else {
+      result = await this.db.query(
+        `SELECT slug, similarity(title, $1) AS sim
+         FROM pages
+         WHERE title % $1 OR slug ILIKE $2
+         ORDER BY sim DESC
+         LIMIT 5`,
+        [partial, '%' + partial + '%']
+      );
+    }
+    return (result.rows as { slug: string }[]).map(r => r.slug);
   }
 
   // Search
@@ -767,6 +804,17 @@ export class PGLiteEngine implements BrainEngine {
       extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
 
+    // v0.32.x federated-read: allowedSources (post-v52) preferred over scalar
+    // sourceId. Falls back to scalar sourceId when not '__all__'.
+    let sourceClause = '';
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      params.push(opts.allowedSources);
+      sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId && opts.sourceId !== '__all__') {
+      params.push(opts.sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
+
     // v0.26.5: visibility filter (soft-deleted + archived-source).
     const visibilityClause = buildVisibilityClause('p', 's');
 
@@ -782,7 +830,7 @@ export class PGLiteEngine implements BrainEngine {
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
-         WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+         WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause} ${sourceClause}
            -- v0.27.1: hide image rows from default text-keyword search so
            -- OCR text doesn't drown text-page hits. Image-similarity queries
            -- run a separate vector path on embedding_image.
@@ -855,6 +903,17 @@ export class PGLiteEngine implements BrainEngine {
     // v0.26.5: visibility filter for the chunk-grain anchor primitive.
     const visibilityClause = buildVisibilityClause('p', 's');
 
+    // v0.32.x federated-read: allowedSources (post-v52) preferred over scalar
+    // sourceId. Falls back to scalar sourceId when not '__all__'.
+    let sourceClause = '';
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      params.push(opts.allowedSources);
+      sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId && opts.sourceId !== '__all__') {
+      params.push(opts.sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
+
     const { rows } = await this.db.query(
       `SELECT
          p.slug, p.id as page_id, p.title, p.type, p.source_id,
@@ -866,7 +925,7 @@ export class PGLiteEngine implements BrainEngine {
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
        JOIN sources s ON s.id = p.source_id
-       WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+       WHERE cc.search_vector @@ websearch_to_tsquery('english', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause} ${sourceClause}
        ORDER BY score DESC
        LIMIT $2 OFFSET $3`,
       params
@@ -927,6 +986,16 @@ export class PGLiteEngine implements BrainEngine {
     // same candidate count it always did. See postgres-engine.ts for rationale.
     const visibilityClause = buildVisibilityClause('p', 's');
 
+    // v0.32.x federated-read: allowedSources (post-v52) preferred over scalar.
+    let sourceClause = '';
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      params.push(opts.allowedSources);
+      sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId && opts.sourceId !== '__all__') {
+      params.push(opts.sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
+
     // v0.27.1: column routing. Default 'embedding' targets the brain's
     // primary text-embedding column; 'embedding_image' targets the
     // multimodal column populated by importImageFile. Image-similarity
@@ -946,7 +1015,7 @@ export class PGLiteEngine implements BrainEngine {
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
-         WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+         WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause} ${sourceClause}
          ORDER BY cc.${col} <=> $1::vector
          LIMIT $2
        )
@@ -1096,7 +1165,18 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
-  async getChunks(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]> {
+  async getChunks(slug: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<Chunk[]> {
+    // v0.32.x federated-read: allowedSources wins over scalar sourceId.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const { rows } = await this.db.query(
+        `SELECT cc.* FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         WHERE p.slug = $1 AND p.source_id = ANY($2::text[])
+         ORDER BY cc.chunk_index`,
+        [slug, opts.allowedSources]
+      );
+      return (rows as Record<string, unknown>[]).map(r => rowToChunk(r));
+    }
     const sourceId = opts?.sourceId ?? 'default';
     const { rows } = await this.db.query(
       `SELECT cc.* FROM content_chunks cc
@@ -1266,12 +1346,30 @@ export class PGLiteEngine implements BrainEngine {
     }
   }
 
-  async getLinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
+  async getLinks(slug: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<Link[]> {
     // v0.31.8 (D16): two-branch query. Without opts.sourceId, no source filter
     // (preserves pre-v0.31.8 cross-source semantics for back-link validators
     // and read-side op handlers that haven't threaded sourceId yet). With
     // opts.sourceId, scope to that source — used by reconcileLinks and any
     // ctx.sourceId-aware read op (D20).
+    // v0.32.x federated-read: allowedSources wins over scalar sourceId and
+    // scopes BOTH endpoints to the allowed set.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const { rows } = await this.db.query(
+        `SELECT f.slug as from_slug, t.slug as to_slug,
+                l.link_type, l.context, l.link_source,
+                o.slug as origin_slug, l.origin_field
+         FROM links l
+         JOIN pages f ON f.id = l.from_page_id
+         JOIN pages t ON t.id = l.to_page_id
+         LEFT JOIN pages o ON o.id = l.origin_page_id
+         WHERE f.slug = $1
+           AND f.source_id = ANY($2::text[])
+           AND t.source_id = ANY($2::text[])`,
+        [slug, opts.allowedSources]
+      );
+      return rows as unknown as Link[];
+    }
     if (opts?.sourceId) {
       const { rows } = await this.db.query(
         `SELECT f.slug as from_slug, t.slug as to_slug,
@@ -1300,8 +1398,25 @@ export class PGLiteEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
-  async getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
+  async getBacklinks(slug: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<Link[]> {
     // v0.31.8 (D16): two-branch query. See getLinks() comment.
+    // v0.32.x federated-read: allowedSources wins and scopes both endpoints.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const { rows } = await this.db.query(
+        `SELECT f.slug as from_slug, t.slug as to_slug,
+                l.link_type, l.context, l.link_source,
+                o.slug as origin_slug, l.origin_field
+         FROM links l
+         JOIN pages f ON f.id = l.from_page_id
+         JOIN pages t ON t.id = l.to_page_id
+         LEFT JOIN pages o ON o.id = l.origin_page_id
+         WHERE t.slug = $1
+           AND t.source_id = ANY($2::text[])
+           AND f.source_id = ANY($2::text[])`,
+        [slug, opts.allowedSources]
+      );
+      return rows as unknown as Link[];
+    }
     if (opts?.sourceId) {
       const { rows } = await this.db.query(
         `SELECT f.slug as from_slug, t.slug as to_slug,
@@ -1355,14 +1470,25 @@ export class PGLiteEngine implements BrainEngine {
     return { slug: row.slug, similarity: row.sim };
   }
 
-  async traverseGraph(slug: string, depth: number = 5, opts?: { sourceId?: string }): Promise<GraphNode[]> {
+  async traverseGraph(slug: string, depth: number = 5, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<GraphNode[]> {
     // Cycle prevention: visited array tracks page IDs already in the path.
     // Prevents exponential blowup on cyclic subgraphs (e.g., A->B->A).
-    const sourceId = opts?.sourceId ?? null;
-    const scoped = sourceId !== null;
+    // v0.32.x federated-read: allowedSources wins over scalar sourceId.
     const params: unknown[] = [slug, depth];
-    const sourceIdx = scoped ? params.push(sourceId) : 0;
-    const source_idWhere = (alias: string) => scoped ? `AND ${alias}.source_id = $${sourceIdx}` : '';
+    const useAllowed = !!(opts?.allowedSources && opts.allowedSources.length > 0);
+    const useScalar = !useAllowed && opts?.sourceId !== undefined && opts?.sourceId !== null;
+    let allowedIdx = 0;
+    let scalarIdx = 0;
+    if (useAllowed) {
+      allowedIdx = params.push(opts!.allowedSources);
+    } else if (useScalar) {
+      scalarIdx = params.push(opts!.sourceId);
+    }
+    const source_idWhere = (alias: string) => {
+      if (useAllowed) return `AND ${alias}.source_id = ANY($${allowedIdx}::text[])`;
+      if (useScalar) return `AND ${alias}.source_id = $${scalarIdx}`;
+      return '';
+    };
     const { rows } = await this.db.query(
       `WITH RECURSIVE graph AS (
         SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
@@ -1406,13 +1532,11 @@ export class PGLiteEngine implements BrainEngine {
 
   async traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string },
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; allowedSources?: string[] },
   ): Promise<GraphPath[]> {
     const depth = opts?.depth ?? 5;
     const direction = opts?.direction ?? 'out';
     const linkType = opts?.linkType ?? null;
-    const sourceId = opts?.sourceId ?? null;
-    const scoped = sourceId !== null;
 
     const params: unknown[] = [slug, depth];
     let nextParam = 3;
@@ -1423,8 +1547,21 @@ export class PGLiteEngine implements BrainEngine {
       params.push(linkType);
     }
 
-    const sourceIdx = scoped ? params.push(sourceId) : 0;
-    const source_idWhere = (alias: string) => scoped ? `AND ${alias}.source_id = $${sourceIdx}` : '';
+    // v0.32.x federated-read: allowedSources wins over scalar sourceId.
+    const useAllowed = !!(opts?.allowedSources && opts.allowedSources.length > 0);
+    const useScalar = !useAllowed && opts?.sourceId !== undefined && opts?.sourceId !== null;
+    let allowedIdx = 0;
+    let scalarIdx = 0;
+    if (useAllowed) {
+      allowedIdx = params.push(opts!.allowedSources);
+    } else if (useScalar) {
+      scalarIdx = params.push(opts!.sourceId);
+    }
+    const source_idWhere = (alias: string) => {
+      if (useAllowed) return `AND ${alias}.source_id = ANY($${allowedIdx}::text[])`;
+      if (useScalar) return `AND ${alias}.source_id = $${scalarIdx}`;
+      return '';
+    };
 
     let sql: string;
     if (direction === 'out') {
@@ -1637,7 +1774,18 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
-  async getTags(slug: string, opts?: { sourceId?: string }): Promise<string[]> {
+  async getTags(slug: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<string[]> {
+    // v0.32.x federated-read: allowedSources (post-v52) preferred over scalar.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const { rows } = await this.db.query(
+        `SELECT t.tag FROM tags t
+         JOIN pages p ON p.id = t.page_id
+         WHERE p.slug = $1 AND p.source_id = ANY($2::text[])
+         ORDER BY t.tag`,
+        [slug, opts.allowedSources]
+      );
+      return (rows as { tag: string }[]).map(r => r.tag);
+    }
     const sourceId = opts?.sourceId ?? 'default';
     // Source-qualify the page-id subquery; slugs are only unique per source.
     const { rows } = await this.db.query(
@@ -1713,7 +1861,10 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.before);
       where.push(`te.date <= $${params.length}::date`);
     }
-    if (opts?.sourceId) {
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      params.push(opts.allowedSources);
+      where.push(`p.source_id = ANY($${params.length}::text[])`);
+    } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       where.push(`p.source_id = $${params.length}`);
     }
@@ -1766,9 +1917,10 @@ export class PGLiteEngine implements BrainEngine {
   async getRawData(
     slug: string,
     source?: string,
-    opts?: { sourceId?: string },
+    opts?: { sourceId?: string; allowedSources?: string[] },
   ): Promise<RawData[]> {
-    // v0.31.8 (D21): build WHERE clause dynamically. Without opts.sourceId,
+    // v0.32.x federated-read: allowedSources (post-v52) preferred over scalar.
+    // v0.31.8 (D21): build WHERE clause dynamically. Without either,
     // no source filter (preserves pre-v0.31.8 cross-source read).
     const where: string[] = ['p.slug = $1'];
     const params: unknown[] = [slug];
@@ -1776,7 +1928,10 @@ export class PGLiteEngine implements BrainEngine {
       params.push(source);
       where.push(`rd.source = $${params.length}`);
     }
-    if (opts?.sourceId) {
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      params.push(opts.allowedSources);
+      where.push(`p.source_id = ANY($${params.length}::text[])`);
+    } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       where.push(`p.source_id = $${params.length}`);
     }
@@ -2531,9 +2686,20 @@ export class PGLiteEngine implements BrainEngine {
     return rows[0] as unknown as PageVersion;
   }
 
-  async getVersions(slug: string, opts?: { sourceId?: string }): Promise<PageVersion[]> {
-    // v0.31.8 (D16): two-branch. Without opts.sourceId, joins return versions
+  async getVersions(slug: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<PageVersion[]> {
+    // v0.32.x federated-read: allowedSources (post-v52) preferred over scalar.
+    // v0.31.8 (D16): two-branch. Without either, joins return versions
     // for every same-slug page (preserves pre-v0.31.8 cross-source view).
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const { rows } = await this.db.query(
+        `SELECT pv.* FROM page_versions pv
+         JOIN pages p ON p.id = pv.page_id
+         WHERE p.slug = $1 AND p.source_id = ANY($2::text[])
+         ORDER BY pv.snapshot_at DESC`,
+        [slug, opts.allowedSources]
+      );
+      return rows as unknown as PageVersion[];
+    }
     if (opts?.sourceId) {
       const { rows } = await this.db.query(
         `SELECT pv.* FROM page_versions pv

@@ -46,8 +46,20 @@ export interface DispatchOpts {
    * matching `sourceId`. CLI dispatch resolves this from --source flag /
    * GBRAIN_SOURCE / .gbrain-source / 'default'; HTTP MCP transport
    * resolves it from the per-token allow-list (eE3).
+   *
+   * Post-v52 (federated-read, pages-side): for HTTP-MCP callers this is the
+   * WRITE-target source; reads consult `allowedSources` below.
    */
   sourceId?: string;
+  /**
+   * v0.32.x feat/oauth-federated-read: per-caller READ scope. Threaded onto
+   * `OperationContext.allowedSources`. HTTP transport sets this from
+   * `AuthInfo.allowedSources` (OAuth) or `AuthResult.allowedSources` (legacy
+   * access_tokens). CLI dispatch leaves it unset — local CLI is implicit
+   * super-reader. When unset, engines fall back to scalar `sourceId`
+   * (legacy single-source semantics).
+   */
+  allowedSources?: string[];
   /**
    * v0.31 (eD3): hook called by the dispatcher AFTER op.handler succeeds
    * to compute `_meta.brain_hot_memory` for the response. Wrapped in its
@@ -205,6 +217,7 @@ export function buildOperationContext(
     remote: opts.remote ?? true,
     takesHoldersAllowList: opts.takesHoldersAllowList,
     sourceId: opts.sourceId,
+    allowedSources: opts.allowedSources,
     auth: opts.auth,
   };
 }

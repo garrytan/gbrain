@@ -421,6 +421,13 @@ export interface SearchOpts {
    */
   sourceId?: string;
   /**
+   * v0.32.x federated-read: scope search to a SET of sources (e.g. ['augustus',
+   * 'wecare', 'shared']). Takes precedence over `sourceId`. Used by OAuth
+   * tokens whose client has a `federated_read` list (post-v52 schema).
+   * Empty/undefined = fall back to `sourceId` precedence, or fully federated.
+   */
+  allowedSources?: string[];
+  /**
    * v0.27.1: target column for vector search. 'embedding' (default) hits
    * the brain's primary text-embedding column. 'embedding_image' targets
    * the multimodal column populated by importImageFile. The two columns
@@ -580,9 +587,12 @@ export interface TimelineOpts {
    * (pre-v0.31.8 behavior; preserved by the two-branch query in both engines).
    */
   sourceId?: string;
+  /**
+   * v0.32.x federated-read: scope timeline to a set of sources. Takes
+   * precedence over sourceId. Used by OAuth tokens with federated_read.
+   */
+  allowedSources?: string[];
 }
-
-// Raw data
 export interface RawData {
   source: string;
   data: Record<string, unknown>;

@@ -190,6 +190,33 @@ export function validateFilename(name: string): void {
   }
 }
 
+/**
+ * v0.32.x feat/oauth-federated-read: build the source-scope opts bag for
+ * READ-side engine calls. Resolution order:
+ *
+ *   1. `ctx.allowedSources` set & non-empty  →  `{ allowedSources }`
+ *      (engine uses `WHERE source_id = ANY($1::text[])`)
+ *   2. `ctx.sourceId` set                    →  `{ sourceId }`
+ *      (engine uses `WHERE source_id = $1` — legacy single-source path)
+ *   3. neither set                           →  `{}`
+ *      (engine applies no source filter — super-reader: local CLI,
+ *      legacy admin tokens, Robin's privileged token)
+ *
+ * This helper exists so the same read filter shape (engine-side: prefer
+ * ANY over scalar over no-filter) is computed in exactly one place. Write
+ * ops MUST NOT use this — they pin to `ctx.sourceId` directly so federated
+ * read never silently expands write authority across sources.
+ */
+export function readScopeOpts(ctx: OperationContext): { allowedSources?: string[]; sourceId?: string } {
+  if (ctx.allowedSources && ctx.allowedSources.length > 0) {
+    return { allowedSources: ctx.allowedSources };
+  }
+  if (ctx.sourceId) {
+    return { sourceId: ctx.sourceId };
+  }
+  return {};
+}
+
 export interface ParamDef {
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
   required?: boolean;
@@ -229,8 +256,26 @@ export interface AuthInfo {
    * Populated by `OAuthProvider.verifyAccessToken` from `oauth_clients.source_id`.
    * For legacy bearer tokens (access_tokens table) it falls back to
    * `permissions.source_id`.
+   *
+   * Post-v52 (federated-read): this is the WRITE-target source (1:1 with
+   * `oauth_clients.source_id`). `allowedSources` below is the READ set.
    */
   sourceId?: string;
+  /**
+   * v0.32.x feat/oauth-federated-read: the set of source ids this client is
+   * allowed to READ from. Populated by `OAuthProvider.verifyAccessToken`
+   * from `oauth_clients.federated_read`. Always non-empty for v52+ clients
+   * (CHECK constraint enforces `source_id = ANY(federated_read)`).
+   *
+   * When set, engine read paths use `source_id = ANY($allowedSources::text[])`
+   * for filtering. When unset (legacy/CLI callers / pre-v52 clients that
+   * haven't been migrated), engines fall back to scalar `sourceId` filter
+   * or no filter (super-reader) per pre-v52 semantics.
+   *
+   * Writes still scope to scalar `sourceId` — federated_read does NOT grant
+   * write privilege across sources.
+   */
+  allowedSources?: string[];
 }
 
 export interface OperationContext {
@@ -344,8 +389,25 @@ export interface OperationContext {
    *
    * Pre-v0.31 callers (pages/links/etc.) keep working without change —
    * sourceId here is purely additive context for the new ops.
+   *
+   * Post-v52 (federated-read, pages-side): for HTTP-MCP callers this is the
+   * WRITE-target source (used by put_page / delete_page / restore_page).
+   * The READ scope is in `allowedSources` below.
    */
   sourceId?: string;
+  /**
+   * v0.32.x feat/oauth-federated-read: the set of source ids the current
+   * caller may READ from. Threaded by HTTP transport from
+   * `AuthInfo.allowedSources`. Engine read paths (getPage, listPages,
+   * getAllSlugs, resolveSlugs, traverseGraph, query/search) prefer this
+   * over `sourceId` when set:
+   *   - `allowedSources` set & non-empty → `WHERE source_id = ANY($1::text[])`
+   *   - `allowedSources` unset & `sourceId` set → `WHERE source_id = $1` (legacy)
+   *   - both unset → no filter (super-reader / CLI default)
+   *
+   * Writes never consult this field; they pin to `sourceId`.
+   */
+  allowedSources?: string[];
 }
 
 export interface Operation {
@@ -388,12 +450,10 @@ const get_page: Operation = {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
-    // v0.31.8 (D20): thread ctx.sourceId through read-side ops. Only pass
-    // sourceId when it's set on ctx — when unset (local CLI default chain
-    // resolves to no source), the engine two-branch query falls through to
-    // the cross-source view, preserving pre-v0.31.8 behavior. MCP callers
-    // (stdio + HTTP) populate ctx.sourceId via the transport layer.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // v0.31.8 (D20) + v0.32.x (federated-read): thread the caller's read
+    // scope through. readScopeOpts prefers ctx.allowedSources (post-v52
+    // OAuth set) over scalar ctx.sourceId (legacy) over no-filter (CLI).
+    const sourceOpts = readScopeOpts(ctx);
 
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
     let resolved_slug: string | undefined;
@@ -920,10 +980,10 @@ const list_pages: Operation = {
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
-      // v0.31.4 (mcp-source-isolation fix): scope listing to the caller's
-      // source when the dispatch context carries one. Tokens without a
-      // sourceId (Robin super-reader, local CLI) keep federated listing.
-      sourceId: ctx.sourceId,
+      // v0.31.4 + v0.32.x (federated-read): scope listing to the caller's
+      // read set. allowedSources (post-v52) takes precedence; falls back to
+      // scalar sourceId (legacy); unset = super-reader.
+      ...readScopeOpts(ctx),
     });
     return pages.map(pg => ({
       slug: pg.slug,
@@ -953,10 +1013,9 @@ const search: Operation = {
     const raw = await ctx.engine.searchKeyword(queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
-      // v0.31.4: thread token-scoped sourceId for read isolation. Engine
-      // applies the WHERE clause when set; undefined = federated/super-reader.
-      // See fix/mcp-source-isolation-read-side.
-      sourceId: ctx.sourceId,
+      // v0.31.4 + v0.32.x (federated-read): allowedSources (post-v52) wins
+      // over scalar sourceId; both unset = federated/super-reader.
+      ...readScopeOpts(ctx),
     });
     const results = dedupResults(raw);
     const latency_ms = Date.now() - startedAt;
@@ -1066,9 +1125,8 @@ const query: Operation = {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
-        // v0.31.4: thread token-scoped sourceId for read isolation.
-        // See fix/mcp-source-isolation-read-side.
-        sourceId: ctx.sourceId,
+        // v0.31.4 + v0.32.x (federated-read): read scope from ctx.
+        ...readScopeOpts(ctx),
       });
       return results;
     }
@@ -1097,11 +1155,9 @@ const query: Operation = {
       since: typeof p.since === 'string' ? p.since : undefined,
       until: typeof p.until === 'string' ? p.until : undefined,
       onMeta: (m) => { capturedMeta = m; },
-      // v0.31.4 (mcp-source-isolation read-side fix): thread token-scoped
-      // sourceId so vector/keyword/hybrid search honors caller isolation.
-      // hybridSearch already accepts + threads this to engine.searchVector
-      // and engine.searchKeyword; the op handler just wasn't passing it.
-      sourceId: ctx.sourceId,
+      // v0.31.4 + v0.32.x (federated-read): hybridSearch threads this on
+      // to searchVector + searchKeyword. allowedSources (post-v52) preferred.
+      ...readScopeOpts(ctx),
     });
     const latency_ms = Date.now() - startedAt;
 
@@ -1343,8 +1399,8 @@ const get_tags: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20): thread ctx.sourceId for read-side ops on multi-source brains.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // v0.31.8 (D20) + v0.32.x (federated-read): read scope from ctx.
+    const sourceOpts = readScopeOpts(ctx);
     return ctx.engine.getTags(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -1410,9 +1466,8 @@ const get_links: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D16): thread ctx.sourceId. When unset, engine falls through
-    // to cross-source view (back-compat).
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // v0.31.8 (D16) + v0.32.x (federated-read): read scope from ctx.
+    const sourceOpts = readScopeOpts(ctx);
     return ctx.engine.getLinks(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -1425,7 +1480,8 @@ const get_backlinks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // v0.32.x federated-read: read scope from ctx.
+    const sourceOpts = readScopeOpts(ctx);
     return ctx.engine.getBacklinks(p.slug as string, sourceOpts);
   },
   scope: 'read',
@@ -1462,10 +1518,13 @@ const traverse_graph: Operation = {
     const direction = p.direction as 'in' | 'out' | 'both' | undefined;
     // Backward compat: when neither link_type nor direction is provided, return
     // the legacy GraphNode[] shape. Once either is set, switch to GraphPath[].
+    // v0.32.x (federated-read): thread caller's read scope. allowedSources
+    // (post-v52) wins; falls back to scalar sourceId (legacy); unset = super-reader.
+    const scope = readScopeOpts(ctx);
     if (linkType === undefined && direction === undefined) {
-      return ctx.engine.traverseGraph(slug, depth, { sourceId: ctx.sourceId });
+      return ctx.engine.traverseGraph(slug, depth, scope);
     }
-    return ctx.engine.traversePaths(slug, { depth, linkType, direction, sourceId: ctx.sourceId });
+    return ctx.engine.traversePaths(slug, { depth, linkType, direction, ...scope });
   },
   scope: 'read',
   cliHints: { name: 'graph', positional: ['slug'] },
@@ -1523,9 +1582,9 @@ const get_timeline: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20): thread ctx.sourceId.
-    const sourceId = ctx.sourceId;
-    return ctx.engine.getTimeline(p.slug as string, sourceId ? { sourceId } : undefined);
+    // v0.31.8 (D20) + v0.32.x (federated-read): thread caller's read scope.
+    const scope = readScopeOpts(ctx);
+    return ctx.engine.getTimeline(p.slug as string, Object.keys(scope).length ? scope : undefined);
   },
   scope: 'read',
   cliHints: { name: 'timeline', positional: ['slug'] },
@@ -1622,8 +1681,8 @@ const get_versions: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // v0.31.8 (D20) + v0.32.x (federated-read): thread caller's read scope.
+    const sourceOpts = readScopeOpts(ctx);
     const versions = await ctx.engine.getVersions(p.slug as string, sourceOpts);
     // Same takes-allow-list privacy boundary as get_page. Snapshots persist
     // historical compiled_truth verbatim, including the takes fence, so
@@ -1715,8 +1774,8 @@ const get_raw_data: Operation = {
     source: { type: 'string', description: 'Filter by source' },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20 + D21): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // v0.31.8 (D20 + D21) + v0.32.x (federated-read): thread caller's read scope.
+    const sourceOpts = readScopeOpts(ctx);
     return ctx.engine.getRawData(p.slug as string, p.source as string | undefined, sourceOpts);
   },
   scope: 'read',
@@ -1743,8 +1802,8 @@ const get_chunks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D20): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // v0.31.8 (D20) + v0.32.x (federated-read): thread caller's read scope.
+    const sourceOpts = readScopeOpts(ctx);
     return ctx.engine.getChunks(p.slug as string, sourceOpts);
   },
   scope: 'read',

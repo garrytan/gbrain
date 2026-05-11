@@ -69,6 +69,37 @@ export function getPostgresSchema(dims: number = 1536, model: string = 'text-emb
 // See TODOS.md item: "err.code-based connection-error matching" for the
 // follow-up that will reintroduce a typed retry mechanism.
 
+/**
+ * v0.32.x federated-read helper. Compose the source-scope WHERE fragment
+ * from a read opts object. Precedence:
+ *
+ *   1. opts.allowedSources (non-empty) → `AND <alias>.source_id = ANY($n)`
+ *      Post-v52 OAuth callers set this when their client has federated_read.
+ *      A single-element array is intentional: even the "own source only"
+ *      case flows through ANY() for uniformity.
+ *   2. opts.sourceId (truthy) → `AND <alias>.source_id = $n` (legacy scalar).
+ *   3. neither set → empty fragment (super-reader / local CLI).
+ *
+ * Writes MUST NOT use this — they pin to opts.sourceId only. Federated
+ * writes would silently expand caller authority beyond what was granted.
+ */
+function sourceFilter(
+  sql: ReturnType<typeof postgres>,
+  opts: { sourceId?: string; allowedSources?: string[] } | undefined,
+  alias: string = '',
+): ReturnType<ReturnType<typeof postgres>> {
+  const prefix = alias ? `${alias}.` : '';
+  // sql.unsafe is OK for the alias prefix because we only emit it when the
+  // caller passed a static string literal (verified at call sites).
+  if (opts?.allowedSources && opts.allowedSources.length > 0) {
+    return sql`AND ${sql.unsafe(prefix + 'source_id')} = ANY(${opts.allowedSources})`;
+  }
+  if (opts?.sourceId) {
+    return sql`AND ${sql.unsafe(prefix + 'source_id')} = ${opts.sourceId}`;
+  }
+  return sql``;
+}
+
 export class PostgresEngine implements BrainEngine {
   readonly kind = 'postgres' as const;
   private _sql: ReturnType<typeof postgres> | null = null;
@@ -550,13 +581,12 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Pages CRUD
-  async getPage(slug: string, opts?: { sourceId?: string; includeDeleted?: boolean }): Promise<Page | null> {
+  async getPage(slug: string, opts?: { sourceId?: string; allowedSources?: string[]; includeDeleted?: boolean }): Promise<Page | null> {
     const sql = this.sql;
     const includeDeleted = opts?.includeDeleted === true;
-    const sourceId = opts?.sourceId;
-    // v0.26.5: default hides soft-deleted rows. Compose with optional sourceId
-    // filter via fragment chaining (postgres.js supports sql`` composition).
-    const sourceCondition = sourceId ? sql`AND source_id = ${sourceId}` : sql``;
+    // v0.26.5: default hides soft-deleted rows. v0.32.x: federated-read
+    // helper unifies allowedSources/sourceId/none into one fragment.
+    const sourceCondition = sourceFilter(sql, opts);
     const deletedCondition = includeDeleted ? sql`` : sql`AND deleted_at IS NULL`;
     const rows = await sql`
       SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at
@@ -684,12 +714,9 @@ export class PostgresEngine implements BrainEngine {
     const deletedCondition = filters?.includeDeleted === true
       ? sql``
       : sql`AND p.deleted_at IS NULL`;
-    // v0.31.4 (mcp-source-isolation read-side fix): scope listing when the
-    // caller carries an auth-derived sourceId. Unset = federated (matches
-    // local CLI + Robin super-reader semantics). See operations.ts list_pages.
-    const sourceCondition = filters?.sourceId
-      ? sql`AND p.source_id = ${filters.sourceId}`
-      : sql``;
+    // v0.31.4 + v0.32.x (federated-read): allowedSources (post-v52) wins
+    // over scalar sourceId; both unset = federated. See operations.ts list_pages.
+    const sourceCondition = sourceFilter(sql, filters as { sourceId?: string; allowedSources?: string[] } | undefined, 'p');
 
     // v0.29: ORDER BY threading via PAGE_SORT_SQL whitelist (no SQL injection).
     // postgres.js sql.unsafe lets us splice the literal fragment safely.
@@ -706,9 +733,13 @@ export class PostgresEngine implements BrainEngine {
     return rows.map(rowToPage);
   }
 
-  async getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>> {
+  async getAllSlugs(opts?: { sourceId?: string; allowedSources?: string[] }): Promise<Set<string>> {
     const sql = this.sql;
-    // v0.31.8 (D12): two-branch. See pglite-engine.ts:getAllSlugs for context.
+    // v0.31.8 (D12) + v0.32.x (federated-read): unified source-scope filter.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const rows = await sql`SELECT slug FROM pages WHERE source_id = ANY(${opts.allowedSources})`;
+      return new Set(rows.map((r) => r.slug as string));
+    }
     if (opts?.sourceId) {
       const rows = await sql`SELECT slug FROM pages WHERE source_id = ${opts.sourceId}`;
       return new Set(rows.map((r) => r.slug as string));
@@ -717,13 +748,10 @@ export class PostgresEngine implements BrainEngine {
     return new Set(rows.map((r) => r.slug as string));
   }
 
-  async resolveSlugs(partial: string, opts?: { sourceId?: string }): Promise<string[]> {
+  async resolveSlugs(partial: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<string[]> {
     const sql = this.sql;
-    // v0.31.4 (mcp-source-isolation read-side fix): scope to caller's source
-    // when present. NULL = federated (Robin super-reader / local CLI).
-    const sourceCondition = opts?.sourceId
-      ? sql`AND source_id = ${opts.sourceId}`
-      : sql``;
+    // v0.31.4 + v0.32.x (federated-read): unified source-scope filter.
+    const sourceCondition = sourceFilter(sql, opts);
 
     // Try exact match first
     const exact = await sql`SELECT slug FROM pages WHERE slug = ${partial} ${sourceCondition}`;
@@ -803,7 +831,12 @@ export class PostgresEngine implements BrainEngine {
     // Otherwise (federated/super-reader) no filter applied. Fix:
     // fix/mcp-source-isolation-read-side.
     let sourceClause = '';
-    if (opts?.sourceId && opts.sourceId !== '__all__') {
+    // v0.32.x federated-read: allowedSources (post-v52) preferred — pushes
+    // the array as one param and emits ANY(); falls back to scalar sourceId.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      params.push(opts.allowedSources);
+      sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId && opts.sourceId !== '__all__') {
       params.push(opts.sourceId);
       sourceClause = `AND p.source_id = $${params.length}`;
     }
@@ -939,7 +972,12 @@ export class PostgresEngine implements BrainEngine {
     // Otherwise (federated/super-reader) no filter applied. Fix:
     // fix/mcp-source-isolation-read-side.
     let sourceClause = '';
-    if (opts?.sourceId && opts.sourceId !== '__all__') {
+    // v0.32.x federated-read: allowedSources (post-v52) preferred — pushes
+    // the array as one param and emits ANY(); falls back to scalar sourceId.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      params.push(opts.allowedSources);
+      sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId && opts.sourceId !== '__all__') {
       params.push(opts.sourceId);
       sourceClause = `AND p.source_id = $${params.length}`;
     }
@@ -1050,7 +1088,12 @@ export class PostgresEngine implements BrainEngine {
     // Otherwise (federated/super-reader) no filter applied. Fix:
     // fix/mcp-source-isolation-read-side.
     let sourceClause = '';
-    if (opts?.sourceId && opts.sourceId !== '__all__') {
+    // v0.32.x federated-read: allowedSources (post-v52) preferred — pushes
+    // the array as one param and emits ANY(); falls back to scalar sourceId.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      params.push(opts.allowedSources);
+      sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId && opts.sourceId !== '__all__') {
       params.push(opts.sourceId);
       sourceClause = `AND p.source_id = $${params.length}`;
     }
@@ -1243,7 +1286,7 @@ export class PostgresEngine implements BrainEngine {
     );
   }
 
-  async getChunks(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]> {
+  async getChunks(slug: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<Chunk[]> {
     const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
     const rows = await sql`
@@ -1420,11 +1463,26 @@ export class PostgresEngine implements BrainEngine {
     }
   }
 
-  async getLinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
+  async getLinks(slug: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<Link[]> {
     const sql = this.sql;
-    // v0.31.8 (D16): two-branch query. Without opts.sourceId, no source filter
-    // (preserves pre-v0.31.8 cross-source semantics). With opts.sourceId,
-    // scope the from-page lookup. See pglite-engine.ts:getLinks for context.
+    // v0.31.8 (D16) + v0.32.x federated-read: three-branch. allowedSources
+    // (post-v52) scopes both endpoints to that set; sourceId scopes both
+    // to that one source; neither = federated cross-source view.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const rows = await sql`
+        SELECT f.slug as from_slug, t.slug as to_slug,
+               l.link_type, l.context, l.link_source,
+               o.slug as origin_slug, l.origin_field
+        FROM links l
+        JOIN pages f ON f.id = l.from_page_id
+        JOIN pages t ON t.id = l.to_page_id
+        LEFT JOIN pages o ON o.id = l.origin_page_id
+        WHERE f.slug = ${slug}
+          AND f.source_id = ANY(${opts.allowedSources})
+          AND t.source_id = ANY(${opts.allowedSources})
+      `;
+      return rows as unknown as Link[];
+    }
     if (opts?.sourceId) {
       const rows = await sql`
         SELECT f.slug as from_slug, t.slug as to_slug,
@@ -1451,9 +1509,24 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
-  async getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
+  async getBacklinks(slug: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<Link[]> {
     const sql = this.sql;
-    // v0.31.8 (D16): two-branch query, mirrors getLinks above.
+    // v0.31.8 (D16) + v0.32.x federated-read: three-branch on read scope.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const rows = await sql`
+        SELECT f.slug as from_slug, t.slug as to_slug,
+               l.link_type, l.context, l.link_source,
+               o.slug as origin_slug, l.origin_field
+        FROM links l
+        JOIN pages f ON f.id = l.from_page_id
+        JOIN pages t ON t.id = l.to_page_id
+        LEFT JOIN pages o ON o.id = l.origin_page_id
+        WHERE t.slug = ${slug}
+          AND t.source_id = ANY(${opts.allowedSources})
+          AND f.source_id = ANY(${opts.allowedSources})
+      `;
+      return rows as unknown as Link[];
+    }
     if (opts?.sourceId) {
       const rows = await sql`
         SELECT f.slug as from_slug, t.slug as to_slug,
@@ -1510,24 +1583,33 @@ export class PostgresEngine implements BrainEngine {
     return { slug: row.slug, similarity: row.sim };
   }
 
-  async traverseGraph(slug: string, depth: number = 5, opts?: { sourceId?: string }): Promise<GraphNode[]> {
+  async traverseGraph(slug: string, depth: number = 5, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<GraphNode[]> {
     const sql = this.sql;
+    // v0.32.x federated-read: allowedSources (post-v52) preferred over scalar.
+    const allowedSources = opts?.allowedSources && opts.allowedSources.length > 0
+      ? opts.allowedSources
+      : null;
     const sourceId = opts?.sourceId ?? null;
-    const scoped = sourceId !== null;
+    const scoped = allowedSources !== null || sourceId !== null;
+    const sourceMatchSql = (alias: string) => {
+      if (!scoped) return sql`TRUE`;
+      if (allowedSources) return sql`${sql.unsafe(alias + '.source_id')} = ANY(${allowedSources})`;
+      return sql`${sql.unsafe(alias + '.source_id')} = ${sourceId ?? ''}`;
+    };
     // Cycle prevention: visited array tracks page IDs already in the path.
-    // v0.31.4 P0 source-isolation: when sourceId is set, both the seed page and every
-    // visited neighbor must match. Federated callers (sourceId=null) see all sources.
+    // v0.31.4 P0 source-isolation: when scoped, both the seed page and every
+    // visited neighbor must match. Federated callers (no scope) see all sources.
     const rows = await sql`
       WITH RECURSIVE graph AS (
         SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
-        FROM pages p WHERE p.slug = ${slug} AND (${!scoped} OR p.source_id = ${sourceId ?? ''})
+        FROM pages p WHERE p.slug = ${slug} AND ${sourceMatchSql('p')}
 
         UNION ALL
 
         SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1, g.visited || p2.id
         FROM graph g
         JOIN links l ON l.from_page_id = g.id
-        JOIN pages p2 ON p2.id = l.to_page_id AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
+        JOIN pages p2 ON p2.id = l.to_page_id AND ${sourceMatchSql('p2')}
         WHERE g.depth < ${depth}
           AND NOT (p2.id = ANY(g.visited))
       )
@@ -1542,7 +1624,7 @@ export class PostgresEngine implements BrainEngine {
           -- different layer. See plan Bug 6/10.
           (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
-           JOIN pages p3 ON p3.id = l2.to_page_id AND (${!scoped} OR p3.source_id = ${sourceId ?? ''})
+           JOIN pages p3 ON p3.id = l2.to_page_id AND ${sourceMatchSql('p3')}
            WHERE l2.from_page_id = g.id),
           '[]'::jsonb
         ) as links
@@ -1561,7 +1643,7 @@ export class PostgresEngine implements BrainEngine {
 
   async traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string },
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; allowedSources?: string[] },
   ): Promise<GraphPath[]> {
     const sql = this.sql;
     const depth = opts?.depth ?? 5;
@@ -1569,21 +1651,31 @@ export class PostgresEngine implements BrainEngine {
     const linkType = opts?.linkType ?? null;
     const linkTypeMatches = linkType !== null;
     // v0.31.4 P0 source-isolation: seed + every visited neighbor must match
-    // when sourceId is set. Federated callers (sourceId=null) see all sources.
+    // v0.32.x federated-read: allowedSources (post-v52) preferred; scoped
+    // means "any non-null restriction is active". When allowedSources is set,
+    // sourceId is overridden — all per-alias matches use ANY(allowedSources).
+    const allowedSources = opts?.allowedSources && opts.allowedSources.length > 0
+      ? opts.allowedSources
+      : null;
     const sourceId = opts?.sourceId ?? null;
-    const scoped = sourceId !== null;
+    const scoped = allowedSources !== null || sourceId !== null;
+    const sourceMatchSql = (alias: string) => {
+      if (!scoped) return sql`TRUE`;
+      if (allowedSources) return sql`${sql.unsafe(alias + '.source_id')} = ANY(${allowedSources})`;
+      return sql`${sql.unsafe(alias + '.source_id')} = ${sourceId ?? ''}`;
+    };
 
     let rows;
     if (direction === 'out') {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug} AND (${!scoped} OR p.source_id = ${sourceId ?? ''})
+          FROM pages p WHERE p.slug = ${slug} AND ${sourceMatchSql('p')}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON l.from_page_id = w.id
-          JOIN pages p2 ON p2.id = l.to_page_id AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
+          JOIN pages p2 ON p2.id = l.to_page_id AND ${sourceMatchSql('p2')}
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
@@ -1592,7 +1684,7 @@ export class PostgresEngine implements BrainEngine {
                l.link_type, l.context, w.depth + 1 as depth
         FROM walk w
         JOIN links l ON l.from_page_id = w.id
-        JOIN pages p2 ON p2.id = l.to_page_id AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
+        JOIN pages p2 ON p2.id = l.to_page_id AND ${sourceMatchSql('p2')}
         WHERE w.depth < ${depth}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
         ORDER BY depth, from_slug, to_slug
@@ -1601,12 +1693,12 @@ export class PostgresEngine implements BrainEngine {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug} AND (${!scoped} OR p.source_id = ${sourceId ?? ''})
+          FROM pages p WHERE p.slug = ${slug} AND ${sourceMatchSql('p')}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON l.to_page_id = w.id
-          JOIN pages p2 ON p2.id = l.from_page_id AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
+          JOIN pages p2 ON p2.id = l.from_page_id AND ${sourceMatchSql('p2')}
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
@@ -1615,7 +1707,7 @@ export class PostgresEngine implements BrainEngine {
                l.link_type, l.context, w.depth + 1 as depth
         FROM walk w
         JOIN links l ON l.to_page_id = w.id
-        JOIN pages p2 ON p2.id = l.from_page_id AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
+        JOIN pages p2 ON p2.id = l.from_page_id AND ${sourceMatchSql('p2')}
         WHERE w.depth < ${depth}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
         ORDER BY depth, from_slug, to_slug
@@ -1624,12 +1716,12 @@ export class PostgresEngine implements BrainEngine {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug} AND (${!scoped} OR p.source_id = ${sourceId ?? ''})
+          FROM pages p WHERE p.slug = ${slug} AND ${sourceMatchSql('p')}
           UNION ALL
           SELECT p2.id, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
-          JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END AND (${!scoped} OR p2.source_id = ${sourceId ?? ''})
+          JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END AND ${sourceMatchSql('p2')}
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
@@ -1638,12 +1730,12 @@ export class PostgresEngine implements BrainEngine {
                l.link_type, l.context, w.depth + 1 as depth
         FROM walk w
         JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
-        JOIN pages pf ON pf.id = l.from_page_id AND (${!scoped} OR pf.source_id = ${sourceId ?? ''})
-        JOIN pages pt ON pt.id = l.to_page_id AND (${!scoped} OR pt.source_id = ${sourceId ?? ''})
+        JOIN pages pf ON pf.id = l.from_page_id AND ${sourceMatchSql('pf')}
+        JOIN pages pt ON pt.id = l.to_page_id AND ${sourceMatchSql('pt')}
         WHERE w.depth < ${depth}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
-          AND (${!scoped} OR pf.source_id = ${sourceId ?? ''})
-          AND (${!scoped} OR pt.source_id = ${sourceId ?? ''})
+          AND ${sourceMatchSql('pf')}
+          AND ${sourceMatchSql('pt')}
         ORDER BY depth, from_slug, to_slug
       `;
     }
@@ -1788,8 +1880,18 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
-  async getTags(slug: string, opts?: { sourceId?: string }): Promise<string[]> {
+  async getTags(slug: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<string[]> {
     const sql = this.sql;
+    // v0.32.x federated-read: allowedSources (post-v52) preferred over scalar.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const rows = await sql`
+        SELECT t.tag FROM tags t
+        JOIN pages p ON p.id = t.page_id
+        WHERE p.slug = ${slug} AND p.source_id = ANY(${opts.allowedSources})
+        ORDER BY t.tag
+      `;
+      return rows.map((r) => r.tag as string);
+    }
     const sourceId = opts?.sourceId ?? 'default';
     const rows = await sql`
       SELECT tag FROM tags
@@ -1850,13 +1952,38 @@ export class PostgresEngine implements BrainEngine {
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {
     const sql = this.sql;
     const limit = opts?.limit || 100;
+    // v0.32.x federated-read: allowedSources (post-v52) wins over scalar sourceId.
     // v0.31.8 (D16): branch on every combination of (after, before, sourceId).
     // 8 cases is too many — use an explicit branch on sourceId, then nested
     // branches on after/before. Mirrors pglite-engine but stays in postgres.js
     // template-literal idiom (which doesn't compose fragment WHERE chains
     // cleanly).
-    const sourceId = opts?.sourceId;
     let rows;
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const allowed = opts.allowedSources;
+      if (opts?.after && opts?.before) {
+        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
+          WHERE p.slug = ${slug} AND p.source_id = ANY(${allowed})
+            AND te.date >= ${opts.after}::date AND te.date <= ${opts.before}::date
+          ORDER BY te.date DESC LIMIT ${limit}`;
+      } else if (opts?.after) {
+        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
+          WHERE p.slug = ${slug} AND p.source_id = ANY(${allowed})
+            AND te.date >= ${opts.after}::date
+          ORDER BY te.date DESC LIMIT ${limit}`;
+      } else if (opts?.before) {
+        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
+          WHERE p.slug = ${slug} AND p.source_id = ANY(${allowed})
+            AND te.date <= ${opts.before}::date
+          ORDER BY te.date DESC LIMIT ${limit}`;
+      } else {
+        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
+          WHERE p.slug = ${slug} AND p.source_id = ANY(${allowed})
+          ORDER BY te.date DESC LIMIT ${limit}`;
+      }
+      return rows as unknown as TimelineEntry[];
+    }
+    const sourceId = opts?.sourceId;
     if (sourceId) {
       if (opts?.after && opts?.before) {
         rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
@@ -1939,14 +2066,28 @@ export class PostgresEngine implements BrainEngine {
   async getRawData(
     slug: string,
     source?: string,
-    opts?: { sourceId?: string },
+    opts?: { sourceId?: string; allowedSources?: string[] },
   ): Promise<RawData[]> {
     const sql = this.sql;
+    // v0.32.x federated-read: allowedSources (post-v52) wins over scalar sourceId.
     // v0.31.8 (D21): four-branch shape on (source provided, sourceId provided).
     // Postgres.js template-literal style doesn't compose fragments cleanly so
     // we enumerate.
-    const sourceId = opts?.sourceId;
     let rows;
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const allowed = opts.allowedSources;
+      if (source) {
+        rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
+          JOIN pages p ON p.id = rd.page_id
+          WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ANY(${allowed})`;
+      } else {
+        rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
+          JOIN pages p ON p.id = rd.page_id
+          WHERE p.slug = ${slug} AND p.source_id = ANY(${allowed})`;
+      }
+      return rows as unknown as RawData[];
+    }
+    const sourceId = opts?.sourceId;
     if (source && sourceId) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
         JOIN pages p ON p.id = rd.page_id
@@ -2660,9 +2801,19 @@ export class PostgresEngine implements BrainEngine {
     return rows[0] as unknown as PageVersion;
   }
 
-  async getVersions(slug: string, opts?: { sourceId?: string }): Promise<PageVersion[]> {
+  async getVersions(slug: string, opts?: { sourceId?: string; allowedSources?: string[] }): Promise<PageVersion[]> {
     const sql = this.sql;
+    // v0.32.x federated-read: allowedSources (post-v52) preferred over scalar.
     // v0.31.8 (D16): two-branch.
+    if (opts?.allowedSources && opts.allowedSources.length > 0) {
+      const rows = await sql`
+        SELECT pv.* FROM page_versions pv
+        JOIN pages p ON p.id = pv.page_id
+        WHERE p.slug = ${slug} AND p.source_id = ANY(${opts.allowedSources})
+        ORDER BY pv.snapshot_at DESC
+      `;
+      return rows as unknown as PageVersion[];
+    }
     if (opts?.sourceId) {
       const rows = await sql`
         SELECT pv.* FROM page_versions pv
