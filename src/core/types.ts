@@ -307,6 +307,7 @@ export interface Chunk {
  */
 export interface StaleChunkRow {
   slug: string;
+  source_id: string;
   chunk_index: number;
   chunk_text: string;
   chunk_source: 'compiled_truth' | 'timeline';

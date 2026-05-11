@@ -1311,7 +1311,7 @@ export class PostgresEngine implements BrainEngine {
   async listStaleChunks(): Promise<StaleChunkRow[]> {
     const sql = this.sql;
     const rows = await sql`
-      SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+      SELECT p.slug, p.source_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
              cc.model, cc.token_count
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
