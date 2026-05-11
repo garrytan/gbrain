@@ -163,6 +163,13 @@ export interface PageFilters {
    * Whitelisted enum — no SQL-injection risk; engines map to literal SQL fragments.
    */
   sort?: 'updated_desc' | 'updated_asc' | 'created_desc' | 'slug';
+  /**
+   * v0.31.4 (mcp-source-isolation read-side fix): scope the listing to a
+   * single source. Unset = federated/cross-source (matches local CLI and
+   * Robin super-reader semantics). Engines apply this as `WHERE p.source_id = ?`.
+   * Wired from `authInfo.sourceId` → `OperationContext.sourceId` → handler.
+   */
+  sourceId?: string;
 }
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */

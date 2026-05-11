@@ -219,6 +219,18 @@ export interface AuthInfo {
   clientName?: string;
   scopes: string[];
   expiresAt?: number;
+  /**
+   * v0.31.4 fix/mcp-source-isolation-read-side: scope this caller's reads
+   * and writes to a single brain source. NULL/undefined = federated read
+   * (legacy super-reader behavior); a non-null value = strict source isolation
+   * — engines filter `pages.source_id` and writes to other sources are rejected
+   * at the operation layer.
+   *
+   * Populated by `OAuthProvider.verifyAccessToken` from `oauth_clients.source_id`.
+   * For legacy bearer tokens (access_tokens table) it falls back to
+   * `permissions.source_id`.
+   */
+  sourceId?: string;
 }
 
 export interface OperationContext {
@@ -908,6 +920,10 @@ const list_pages: Operation = {
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
+      // v0.31.4 (mcp-source-isolation fix): scope listing to the caller's
+      // source when the dispatch context carries one. Tokens without a
+      // sourceId (Robin super-reader, local CLI) keep federated listing.
+      sourceId: ctx.sourceId,
     });
     return pages.map(pg => ({
       slug: pg.slug,
@@ -937,6 +953,10 @@ const search: Operation = {
     const raw = await ctx.engine.searchKeyword(queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
+      // v0.31.4: thread token-scoped sourceId for read isolation. Engine
+      // applies the WHERE clause when set; undefined = federated/super-reader.
+      // See fix/mcp-source-isolation-read-side.
+      sourceId: ctx.sourceId,
     });
     const results = dedupResults(raw);
     const latency_ms = Date.now() - startedAt;
@@ -1046,6 +1066,9 @@ const query: Operation = {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
+        // v0.31.4: thread token-scoped sourceId for read isolation.
+        // See fix/mcp-source-isolation-read-side.
+        sourceId: ctx.sourceId,
       });
       return results;
     }
@@ -1074,6 +1097,11 @@ const query: Operation = {
       since: typeof p.since === 'string' ? p.since : undefined,
       until: typeof p.until === 'string' ? p.until : undefined,
       onMeta: (m) => { capturedMeta = m; },
+      // v0.31.4 (mcp-source-isolation read-side fix): thread token-scoped
+      // sourceId so vector/keyword/hybrid search honors caller isolation.
+      // hybridSearch already accepts + threads this to engine.searchVector
+      // and engine.searchKeyword; the op handler just wasn't passing it.
+      sourceId: ctx.sourceId,
     });
     const latency_ms = Date.now() - startedAt;
 
@@ -1435,9 +1463,9 @@ const traverse_graph: Operation = {
     // Backward compat: when neither link_type nor direction is provided, return
     // the legacy GraphNode[] shape. Once either is set, switch to GraphPath[].
     if (linkType === undefined && direction === undefined) {
-      return ctx.engine.traverseGraph(slug, depth);
+      return ctx.engine.traverseGraph(slug, depth, { sourceId: ctx.sourceId });
     }
-    return ctx.engine.traversePaths(slug, { depth, linkType, direction });
+    return ctx.engine.traversePaths(slug, { depth, linkType, direction, sourceId: ctx.sourceId });
   },
   scope: 'read',
   cliHints: { name: 'graph', positional: ['slug'] },

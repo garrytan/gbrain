@@ -66,6 +66,19 @@ interface AuthResult {
   tokenName?: string;
   /** v0.28: per-token allow-list for takes.holder. Default ['world'] when permissions row absent. */
   takesHoldersAllowList?: string[];
+  /**
+   * v0.31.4 (mcp-source-isolation fix): per-token primary source. When set,
+   * threaded onto OperationContext.sourceId and used by engines to scope
+   * reads (list_pages, get_page, query, search, searchKeyword) to that
+   * source only. Closes the read-side cross-source leak documented in
+   * shared/wecare/bugs/2026-05-11-mcp-read-isolation-verification-failed.
+   *
+   * Stored as `access_tokens.permissions.source_id` (string).
+   * When undefined, engines fall back to current behavior (no scope filter)
+   * — which is how trusted local CLI callers and Robin's super-reader token
+   * keep working.
+   */
+  sourceId?: string;
 }
 
 /** Read up to `cap` bytes off req.body. Returns null if cap exceeded. */
@@ -171,15 +184,25 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         .catch(() => { /* fire-and-forget */ });
       // v0.28: extract per-token takes-holder allow-list. Fail-safe default
       // is ['world'] — a token with no permissions row sees public claims only.
-      const perms = (row as { permissions?: { takes_holders?: unknown } }).permissions;
+      const perms = (row as { permissions?: { takes_holders?: unknown; source_id?: unknown } }).permissions;
       const allowList = Array.isArray(perms?.takes_holders)
         ? (perms!.takes_holders as unknown[]).filter(h => typeof h === 'string') as string[]
         : ['world'];
+      // v0.31.4 (mcp-source-isolation fix): per-token primary source claim.
+      // When `permissions.source_id` is a non-empty string, the HTTP transport
+      // forwards it as `OperationContext.sourceId` so engines scope reads
+      // (list_pages, get_page, query, search, searchKeyword) to that source.
+      // Tokens without `source_id` retain pre-fix behavior (no scope filter)
+      // — used by Robin's super-reader and any operator-managed admin token.
+      const sourceId = typeof perms?.source_id === 'string' && (perms!.source_id as string).length > 0
+        ? (perms!.source_id as string)
+        : undefined;
       return {
         ok: true,
         tokenId: rowId,
         tokenName: rowName,
         takesHoldersAllowList: allowList,
+        sourceId,
       };
     } catch {
       return { ok: false };
@@ -328,9 +351,12 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         const args: Record<string, unknown> = params?.arguments ?? {};
         // v0.28: thread per-token takes-holder allow-list so takes_list /
         // takes_search / query (when it returns takes) can server-side filter.
+        // v0.31.4 (mcp-source-isolation fix): also forward per-token sourceId
+        // so engines scope reads to the caller's source. See AuthResult docs.
         const result = await dispatchToolCall(engine, toolName, args, {
           remote: true,
           takesHoldersAllowList: auth.takesHoldersAllowList,
+          sourceId: auth.sourceId,
         });
         const status = result.isError ? 'error' : 'success';
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);

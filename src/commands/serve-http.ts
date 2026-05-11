@@ -926,9 +926,25 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // ToolResult and we read isError + _meta to pick the right branch.
       const tokenAllowList = (authInfo as AuthInfo & { takesHoldersAllowList?: string[] }).takesHoldersAllowList
         ?? ['world'];
-      const tokenSourceId = (authInfo as AuthInfo & { sourceId?: string }).sourceId
-        ?? process.env.GBRAIN_SOURCE
-        ?? 'default';
+      // v0.31.4 fix/mcp-source-isolation-read-side:
+      //   authInfo.sourceId is populated from oauth_clients.source_id (migration v47).
+      //
+      //   - SET   → strict source isolation. Engine WHERE-filters reads on
+      //             pages.source_id; put_page rejects cross-source writes.
+      //   - NULL  → federated/super-reader. No WHERE filter, callers see every
+      //             source. This matches Robin's stdio CLI (no token = no scope)
+      //             and gives admin/Robin-class OAuth clients full federated reach.
+      //
+      //   Why NULL = federated (not 'default'):
+      //   Pre-v0.31.4, EVERY OAuth client silently collapsed onto source 'default'
+      //   because authInfo carried no real scope and the engine ignored opts.sourceId.
+      //   That was a bug, not a feature. The fix wires real auth-derived scoping
+      //   when set, and gives unscoped clients the same federated behavior as the
+      //   unauthenticated stdio path — no silent partial-view footgun.
+      //
+      //   `GBRAIN_SOURCE` env var is a deployment-level escape hatch for
+      //   unauthenticated callers only — it never overrides a populated token claim.
+      const tokenSourceId = authInfo.sourceId ?? undefined;
 
       let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {

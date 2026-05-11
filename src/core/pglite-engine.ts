@@ -638,6 +638,12 @@ export class PGLiteEngine implements BrainEngine {
     if (filters?.includeDeleted !== true) {
       where.push('p.deleted_at IS NULL');
     }
+    // v0.31.4 (mcp-source-isolation read-side fix): scope listing to caller's
+    // source when the dispatch context carries one. See operations.ts list_pages.
+    if (filters?.sourceId) {
+      params.push(filters.sourceId);
+      where.push(`p.source_id = $${params.length}`);
+    }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     params.push(limit, offset);
@@ -673,20 +679,35 @@ export class PGLiteEngine implements BrainEngine {
     return new Set((rows as { slug: string }[]).map(r => r.slug));
   }
 
-  async resolveSlugs(partial: string): Promise<string[]> {
+  async resolveSlugs(partial: string, opts?: { sourceId?: string }): Promise<string[]> {
+    // v0.31.4 (mcp-source-isolation read-side fix): scope to caller's source
+    // when present. NULL = federated (Robin super-reader / local CLI).
+    const scoped = opts?.sourceId !== undefined;
+
     // Try exact match first
-    const exact = await this.db.query('SELECT slug FROM pages WHERE slug = $1', [partial]);
+    const exact = scoped
+      ? await this.db.query('SELECT slug FROM pages WHERE slug = $1 AND source_id = $2', [partial, opts!.sourceId])
+      : await this.db.query('SELECT slug FROM pages WHERE slug = $1', [partial]);
     if (exact.rows.length > 0) return [(exact.rows[0] as { slug: string }).slug];
 
     // Fuzzy match via pg_trgm
-    const { rows } = await this.db.query(
-      `SELECT slug, similarity(title, $1) AS sim
-       FROM pages
-       WHERE title % $1 OR slug ILIKE $2
-       ORDER BY sim DESC
-       LIMIT 5`,
-      [partial, '%' + partial + '%']
-    );
+    const { rows } = scoped
+      ? await this.db.query(
+          `SELECT slug, similarity(title, $1) AS sim
+           FROM pages
+           WHERE (title % $1 OR slug ILIKE $2) AND source_id = $3
+           ORDER BY sim DESC
+           LIMIT 5`,
+          [partial, '%' + partial + '%', opts!.sourceId]
+        )
+      : await this.db.query(
+          `SELECT slug, similarity(title, $1) AS sim
+           FROM pages
+           WHERE title % $1 OR slug ILIKE $2
+           ORDER BY sim DESC
+           LIMIT 5`,
+          [partial, '%' + partial + '%']
+        );
     return (rows as { slug: string }[]).map(r => r.slug);
   }
 
@@ -1334,20 +1355,25 @@ export class PGLiteEngine implements BrainEngine {
     return { slug: row.slug, similarity: row.sim };
   }
 
-  async traverseGraph(slug: string, depth: number = 5): Promise<GraphNode[]> {
+  async traverseGraph(slug: string, depth: number = 5, opts?: { sourceId?: string }): Promise<GraphNode[]> {
     // Cycle prevention: visited array tracks page IDs already in the path.
     // Prevents exponential blowup on cyclic subgraphs (e.g., A->B->A).
+    const sourceId = opts?.sourceId ?? null;
+    const scoped = sourceId !== null;
+    const params: unknown[] = [slug, depth];
+    const sourceIdx = scoped ? params.push(sourceId) : 0;
+    const source_idWhere = (alias: string) => scoped ? `AND ${alias}.source_id = $${sourceIdx}` : '';
     const { rows } = await this.db.query(
       `WITH RECURSIVE graph AS (
         SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
-        FROM pages p WHERE p.slug = $1
+        FROM pages p WHERE p.slug = $1 ${source_idWhere('p')}
 
         UNION ALL
 
         SELECT p2.id, p2.slug, p2.title, p2.type, g.depth + 1, g.visited || p2.id
         FROM graph g
         JOIN links l ON l.from_page_id = g.id
-        JOIN pages p2 ON p2.id = l.to_page_id
+        JOIN pages p2 ON p2.id = l.to_page_id ${source_idWhere('p2')}
         WHERE g.depth < $2
           AND NOT (p2.id = ANY(g.visited))
       )
@@ -1360,13 +1386,13 @@ export class PGLiteEngine implements BrainEngine {
           -- plan Bug 6/10.
           (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
-           JOIN pages p3 ON p3.id = l2.to_page_id
+           JOIN pages p3 ON p3.id = l2.to_page_id ${source_idWhere('p3')}
            WHERE l2.from_page_id = g.id),
           '[]'::jsonb
         ) as links
       FROM graph g
       ORDER BY g.depth, g.slug`,
-      [slug, depth]
+      params
     );
 
     return (rows as Record<string, unknown>[]).map(r => ({
@@ -1380,26 +1406,37 @@ export class PGLiteEngine implements BrainEngine {
 
   async traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' },
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string },
   ): Promise<GraphPath[]> {
     const depth = opts?.depth ?? 5;
     const direction = opts?.direction ?? 'out';
     const linkType = opts?.linkType ?? null;
-    const linkTypeWhere = linkType !== null ? 'AND l.link_type = $3' : '';
+    const sourceId = opts?.sourceId ?? null;
+    const scoped = sourceId !== null;
+
     const params: unknown[] = [slug, depth];
-    if (linkType !== null) params.push(linkType);
+    let nextParam = 3;
+
+    let linkTypeWhere = '';
+    if (linkType !== null) {
+      linkTypeWhere = `AND l.link_type = $${nextParam++}`;
+      params.push(linkType);
+    }
+
+    const sourceIdx = scoped ? params.push(sourceId) : 0;
+    const source_idWhere = (alias: string) => scoped ? `AND ${alias}.source_id = $${sourceIdx}` : '';
 
     let sql: string;
     if (direction === 'out') {
       sql = `
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int AS depth, ARRAY[p.id] AS visited
-          FROM pages p WHERE p.slug = $1
+          FROM pages p WHERE p.slug = $1 ${source_idWhere('p')}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON l.from_page_id = w.id
-          JOIN pages p2 ON p2.id = l.to_page_id
+          JOIN pages p2 ON p2.id = l.to_page_id ${source_idWhere('p2')}
           WHERE w.depth < $2
             AND NOT (p2.id = ANY(w.visited))
             ${linkTypeWhere}
@@ -1408,7 +1445,7 @@ export class PGLiteEngine implements BrainEngine {
                l.link_type, l.context, w.depth + 1 AS depth
         FROM walk w
         JOIN links l ON l.from_page_id = w.id
-        JOIN pages p2 ON p2.id = l.to_page_id
+        JOIN pages p2 ON p2.id = l.to_page_id ${source_idWhere('p2')}
         WHERE w.depth < $2
           ${linkTypeWhere}
         ORDER BY depth, from_slug, to_slug
@@ -1417,12 +1454,12 @@ export class PGLiteEngine implements BrainEngine {
       sql = `
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int AS depth, ARRAY[p.id] AS visited
-          FROM pages p WHERE p.slug = $1
+          FROM pages p WHERE p.slug = $1 ${source_idWhere('p')}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON l.to_page_id = w.id
-          JOIN pages p2 ON p2.id = l.from_page_id
+          JOIN pages p2 ON p2.id = l.from_page_id ${source_idWhere('p2')}
           WHERE w.depth < $2
             AND NOT (p2.id = ANY(w.visited))
             ${linkTypeWhere}
@@ -1431,7 +1468,7 @@ export class PGLiteEngine implements BrainEngine {
                l.link_type, l.context, w.depth + 1 AS depth
         FROM walk w
         JOIN links l ON l.to_page_id = w.id
-        JOIN pages p2 ON p2.id = l.from_page_id
+        JOIN pages p2 ON p2.id = l.from_page_id ${source_idWhere('p2')}
         WHERE w.depth < $2
           ${linkTypeWhere}
         ORDER BY depth, from_slug, to_slug
@@ -1442,12 +1479,12 @@ export class PGLiteEngine implements BrainEngine {
       sql = `
         WITH RECURSIVE walk AS (
           SELECT p.id, 0::int AS depth, ARRAY[p.id] AS visited
-          FROM pages p WHERE p.slug = $1
+          FROM pages p WHERE p.slug = $1 ${source_idWhere('p')}
           UNION ALL
           SELECT p2.id, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
-          JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END
+          JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END ${source_idWhere('p2')}
           WHERE w.depth < $2
             AND NOT (p2.id = ANY(w.visited))
             ${linkTypeWhere}
@@ -1456,8 +1493,8 @@ export class PGLiteEngine implements BrainEngine {
                l.link_type, l.context, w.depth + 1 AS depth
         FROM walk w
         JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
-        JOIN pages pf ON pf.id = l.from_page_id
-        JOIN pages pt ON pt.id = l.to_page_id
+        JOIN pages pf ON pf.id = l.from_page_id ${source_idWhere('pf')}
+        JOIN pages pt ON pt.id = l.to_page_id ${source_idWhere('pt')}
         WHERE w.depth < $2
           ${linkTypeWhere}
         ORDER BY depth, from_slug, to_slug

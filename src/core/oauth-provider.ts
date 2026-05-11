@@ -406,8 +406,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // verifyAccessToken returns client_name in AuthInfo — eliminates the
     // separate per-request lookup at serve-http.ts that was the N+1 hot
     // path (see PR #586 review D14=B).
+    // v0.31.4: pull c.source_id alongside client_name so MCP HTTP requests
+    // can be scoped to the caller's brain source at dispatch time.
+    // source_id IS NULL = federated/super-reader (legacy default behavior).
     const oauthRows = await this.sql`
-      SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
+      SELECT t.client_id, t.scopes, t.expires_at, t.resource,
+             c.client_name, c.source_id
       FROM oauth_tokens t
       LEFT JOIN oauth_clients c ON c.client_id = t.client_id
       WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
@@ -429,6 +433,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         scopes: (row.scopes as string[]) || [],
         expiresAt,
         resource: row.resource ? new URL(row.resource as string) : undefined,
+        // v0.31.4: source-isolation. Undefined => federated read.
+        sourceId: (row.source_id as string | null) ?? undefined,
       } as AuthInfo;
     }
 

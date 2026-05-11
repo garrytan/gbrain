@@ -2548,6 +2548,54 @@ export const MIGRATIONS: Migration[] = [
         ON ingest_log (source_id, source_type, created_at DESC);
     `,
   },
+  {
+    version: 51,
+    name: 'oauth_clients_source_isolation',
+    idempotent: true,
+    // v0.32.x fix/mcp-source-isolation-read-side. Renumbered from v47 to v51
+    // after rebasing onto master which already claimed v47 (facts_notability),
+    // v48 (takes_weight_round_to_grid), v49 (eval_takes_quality_runs), and
+    // v50 (ingest_log_source_id).
+    //
+    // Adds oauth_clients.source_id so MCP HTTP callers can be scoped to a
+    // single brain source at the auth layer. Before this column, every
+    // OAuth client fell back to source_id='default' in serve-http.ts and
+    // engine reads silently ignored opts.sourceId, leaking pages across
+    // sources on list_pages / search / query.
+    //
+    // Semantics:
+    //   source_id IS NULL                -> federated read (super-reader /
+    //                                        admin clients; matches stdio CLI
+    //                                        with no auth)
+    //   source_id = '<id>' (FK sources)  -> reads + writes are scoped to that
+    //                                        source only; engine WHERE-filters
+    //                                        on it; put_page rejects cross-source
+    //
+    // FK uses ON DELETE SET NULL so dropping a source doesn't cascade-kill
+    // OAuth clients (they fall back to federated, fail-open at auth layer).
+    // The auth-layer scope decision then prevents writes via the put_page
+    // operation-level guard already in operations.ts (ctx.remote &&
+    // ctx.sourceId).
+    sql: `
+      ALTER TABLE oauth_clients
+        ADD COLUMN IF NOT EXISTS source_id TEXT;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'oauth_clients_source_id_fkey'
+        ) THEN
+          ALTER TABLE oauth_clients
+            ADD CONSTRAINT oauth_clients_source_id_fkey
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE SET NULL;
+        END IF;
+      END $$;
+
+      CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
+        ON oauth_clients(source_id) WHERE source_id IS NOT NULL;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
