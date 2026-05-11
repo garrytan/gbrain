@@ -62,8 +62,12 @@ export async function startMcpServer(engine: BrainEngine) {
       .catch(() => {})
       .finally(() => process.exit(code));
   };
-  process.stdin.on('end', () => shutdown('stdin end'));
-  process.stdin.on('close', () => shutdown('stdin close'));
+  // Skip stdin handlers when MCP_STDIO=1 (OpenClaw gateway spawns us with
+  // piped stdin that stays open for the session lifetime).
+  if (process.env.MCP_STDIO !== '1') {
+    process.stdin.on('end', () => shutdown('stdin end'));
+    process.stdin.on('close', () => shutdown('stdin close'));
+  }
   // @ts-ignore — SDK exposes onclose on transport
   transport.onclose = () => shutdown('transport close');
   process.on('SIGTERM', () => shutdown('SIGTERM'));
