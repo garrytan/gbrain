@@ -1,0 +1,130 @@
+{
+  "schema_version": 2,
+  "id": "repo:https-github-com-garrytan-gbrain:workflow:change-memory-kage-fix-git-submodule-flag-placement",
+  "title": "Change memory: kage-fix-git-submodule-flag-placement",
+  "summary": "Repo-local context for 4 changed repo paths on kage-fix-git-submodule-flag-placement.",
+  "body": "Repo-local change memory generated from the current git diff.\n\nGoal: preserve the durable context another agent should receive when it works in this repo later.\n\nWhat changed:\n- .agent_memory/packets/repo_map-gbrain-repo-overview-126ab3ab.json\n- .agent_memory/packets/repo_map-gbrain-repo-structure-812e3a49.json\n- AGENTS.md\n- CLAUDE.md\n\nDiff summary:\n```text\nAGENTS.md | 89 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n CLAUDE.md | 89 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n 2 files changed, 178 insertions(+)\n.agent_memory/packets/repo_map-gbrain-repo-overview-126ab3ab.json | untracked\n.agent_memory/packets/repo_map-gbrain-repo-structure-812e3a49.json | untracked\n```\n\nHow to verify:\n- npm run build\n- npm run build:admin\n- npm run build:all\n- npm run build:llms\n- npm run build:pglite-snapshot\n- npm run build:schema\n- npm run check:admin-build\n- npm run check:admin-scope-drift\n\nImprove this packet when more context is known:\n- The actual feature, fix, or refactor rationale.\n- Why the change was made, including relevant bugs, issues, decisions, and code explanations.\n- The package, API, command, or architectural pattern future agents should understand, verify, or reuse.\n- Any gotchas, follow-up risks, or branch-specific assumptions.\n\nPromote beyond this repo only after explicit org/global review.",
+  "type": "workflow",
+  "scope": "repo",
+  "visibility": "team",
+  "sensitivity": "internal",
+  "status": "approved",
+  "confidence": 0.62,
+  "tags": [
+    "change-memory",
+    "diff-proposal",
+    "repo-local",
+    "branch:kage-fix-git-submodule-flag-placement"
+  ],
+  "paths": [
+    ".agent_memory/packets/repo_map-gbrain-repo-overview-126ab3ab.json",
+    ".agent_memory/packets/repo_map-gbrain-repo-structure-812e3a49.json",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "stack": [
+    "@ai-sdk/anthropic@^3.0.71",
+    "@ai-sdk/google@^3.0.64",
+    "@ai-sdk/openai@^3.0.53",
+    "@ai-sdk/openai-compatible@^2.0.41",
+    "@anthropic-ai/sdk@^0.30.0",
+    "@aws-sdk/client-s3@^3.1028.0",
+    "@dqbd/tiktoken@^1.0.22",
+    "@electric-sql/pglite@0.4.3",
+    "@jsquash/avif@^2.1.1",
+    "@jsquash/png@^3.1.1",
+    "@modelcontextprotocol/sdk@1.29.0",
+    "@types/bun@latest",
+    "@types/cookie-parser@^1.4.7",
+    "@types/cors@^2.8.19",
+    "@types/express@^5.0.6",
+    "ai@^6.0.168",
+    "bun-types@^1.3.13",
+    "cookie-parser@^1.4.7",
+    "cors@^2.8.5",
+    "eventsource-parser@^3.0.8"
+  ],
+  "source_refs": [
+    {
+      "kind": "git_diff",
+      "branch": "kage-fix-git-submodule-flag-placement",
+      "head": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+      "merge_base": "726746231125b572a4ecd4f53aa3816d9debe66f",
+      "changed_files": [
+        ".agent_memory/packets/repo_map-gbrain-repo-overview-126ab3ab.json",
+        ".agent_memory/packets/repo_map-gbrain-repo-structure-812e3a49.json",
+        "AGENTS.md",
+        "CLAUDE.md"
+      ],
+      "summary_path": ".agent_memory/review/branch-summary-kage-fix-git-submodule-flag-placement.json"
+    }
+  ],
+  "context": {
+    "fact": "Current branch kage-fix-git-submodule-flag-placement changes 4 repo paths.",
+    "why": "Branch change memory gives future agents durable context from the git diff when they continue, review, or verify this work.",
+    "trigger": "Recall when asking what changed on this branch, preparing a PR review, or resuming this work.",
+    "action": "Use the changed file list and diff summary as orientation, then inspect the actual diff and source files before making further edits.",
+    "verification": "Generated from git diff and refreshed by kage pr summarize or kage propose --from-diff.",
+    "risk_if_forgotten": "Future agents may repeat orientation work, miss branch-specific assumptions, or ignore files touched by this change.",
+    "stale_when": "The branch diff changes substantially, the branch is merged, or a newer change-memory packet supersedes it."
+  },
+  "freshness": {
+    "last_verified_at": "2026-05-10T18:08:04.044Z",
+    "ttl_days": 180,
+    "verification": "git_diff"
+  },
+  "edges": [
+    {
+      "relation": "changes_path",
+      "to": "path:.agent_memory/packets/repo_map-gbrain-repo-overview-126ab3ab.json",
+      "evidence": "git_diff"
+    },
+    {
+      "relation": "changes_path",
+      "to": "path:.agent_memory/packets/repo_map-gbrain-repo-structure-812e3a49.json",
+      "evidence": "git_diff"
+    },
+    {
+      "relation": "changes_path",
+      "to": "path:AGENTS.md",
+      "evidence": "git_diff"
+    },
+    {
+      "relation": "changes_path",
+      "to": "path:CLAUDE.md",
+      "evidence": "git_diff"
+    }
+  ],
+  "quality": {
+    "score": 100,
+    "reasons": [
+      "high-value memory type",
+      "has source evidence",
+      "grounded to repo paths",
+      "tagged",
+      "concise but substantive",
+      "actionable rationale or verification"
+    ],
+    "risks": [],
+    "duplicate_candidates": [],
+    "estimated_tokens_saved": 339,
+    "admission": {
+      "admit": true,
+      "class": "candidate",
+      "score": 70,
+      "reasons": [
+        "durable memory type",
+        "has provenance",
+        "repo scoped or path grounded",
+        "has durable trigger, rationale, issue context, or explanation",
+        "substantive enough to reuse"
+      ],
+      "risks": []
+    },
+    "candidate_kind": "change_memory",
+    "review_boundary": "git_or_pr",
+    "promotion_requires_review": true
+  },
+  "created_at": "2026-05-10T18:08:04.044Z",
+  "updated_at": "2026-05-10T18:08:24.414Z"
+}

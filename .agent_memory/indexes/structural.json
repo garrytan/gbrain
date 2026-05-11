@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "provider": "kage-structural",
+  "files": ".agent_memory/structural/files.json",
+  "symbols": ".agent_memory/structural/symbols.json",
+  "imports": ".agent_memory/structural/imports.json",
+  "edges": ".agent_memory/structural/edges.json",
+  "report": ".agent_memory/structural/report.md",
+  "manifest": ".agent_memory/structural/manifest.json",
+  "file_count": 756,
+  "symbol_count": 27572,
+  "import_count": 2899,
+  "edge_count": 30471,
+  "cache_hits": 756,
+  "cache_misses": 0,
+  "worker_count": 8
+}

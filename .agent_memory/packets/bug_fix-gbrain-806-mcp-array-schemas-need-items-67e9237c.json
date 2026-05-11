@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218",
+  "title": "gbrain #806: MCP array schemas need items",
+  "summary": "For gbrain issue 806 / PR 819, MCP facing operation params with type array must declare an items schema because strict OpenAI compatible tool validators reject arrays without items. extract facts.entity hints is an array",
+  "body": "For gbrain issue #806 / PR #819, MCP-facing operation params with type array must declare an items schema because strict OpenAI-compatible tool validators reject arrays without items. extract_facts.entity_hints is an array of canonical entity slug strings, so define items: { type: 'string' }. Keep a regression in test/mcp-tool-defs.test.ts that every generated MCP array property has items.\nEvidence: Issue https://github.com/garrytan/gbrain/issues/806 and PR https://github.com/garrytan/gbrain/pull/819. Changed src/core/operations.ts and test/mcp-tool-defs.test.ts. The new test first failed on extract_facts.entity_hints, then passed after adding items.\nVerified by: bun test test/mcp-tool-defs.test.ts, bun run typecheck, git diff --check",
+  "type": "bug_fix",
+  "scope": "repo",
+  "visibility": "team",
+  "sensitivity": "internal",
+  "status": "approved",
+  "confidence": 0.7,
+  "tags": [
+    "session-learning",
+    "gbrain",
+    "issue-806",
+    "pr-819",
+    "mcp",
+    "schema",
+    "openai-tools",
+    "bug-fix"
+  ],
+  "paths": [
+    "src/core/operations.ts",
+    "src/mcp/tool-defs.ts",
+    "test/mcp-tool-defs.test.ts"
+  ],
+  "stack": [],
+  "source_refs": [
+    {
+      "kind": "explicit_capture",
+      "captured_at": "2026-05-10T19:42:44.218Z"
+    }
+  ],
+  "context": {
+    "fact": "For gbrain issue #806 / PR #819, MCP-facing operation params with type array must declare an items schema because strict OpenAI-compatible tool validators reject arrays without items. extract_facts.entity_hints is an array of canonical entity slug strings, so define items: { type: 'string' }. Keep a regression in test/mcp-tool-defs.test.ts that every generated MCP array property has items.\nEvidence: Issue https://github.com/garrytan/gbrain/issues/806 and PR https://github.com/garrytan/gbrain/pull/819. Changed src/core/operations.ts and test/mcp-tool-defs.test.ts. The new test first failed on extract_facts.entity_hints, then passed after adding items.\nVerified by: bun test test/mcp-tool-defs.test.ts, bun run typecheck, git diff --check",
+    "verification": "Issue https://github.com/garrytan/gbrain/issues/806 and PR https://github.com/garrytan/gbrain/pull/819. Changed src/core/operations.ts and test/mcp-tool-defs.test.ts. The new test first failed on extract_facts.entity_hints, then passed after adding items."
+  },
+  "freshness": {
+    "ttl_days": 365,
+    "last_verified_at": "2026-05-10T19:42:44.218Z",
+    "verification": "repo_local_agent_capture"
+  },
+  "edges": [],
+  "quality": {
+    "reviewer": "repo-local-agent",
+    "votes_up": 0,
+    "votes_down": 0,
+    "uses_30d": 0,
+    "reports_stale": 0,
+    "review_boundary": "git_or_pr",
+    "promotion_requires_review": true,
+    "score": 100,
+    "reasons": [
+      "high-value memory type",
+      "has source evidence",
+      "grounded to repo paths",
+      "tagged",
+      "concise but substantive",
+      "actionable rationale or verification"
+    ],
+    "risks": [],
+    "duplicate_candidates": [],
+    "estimated_tokens_saved": 186
+  },
+  "created_at": "2026-05-10T19:42:44.218Z",
+  "updated_at": "2026-05-10T19:42:52.729Z"
+}

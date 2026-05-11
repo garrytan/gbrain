@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "project_dir": ".",
+  "branch": "kage-fix-git-submodule-flag-placement",
+  "head": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+  "merge_base": "726746231125b572a4ecd4f53aa3816d9debe66f",
+  "changed_files": [
+    ".agent_memory/packets/repo_map-gbrain-repo-overview-126ab3ab.json",
+    ".agent_memory/packets/repo_map-gbrain-repo-structure-812e3a49.json",
+    ".agent_memory/packets/workflow-change-memory-kage-fix-git-submodule-flag-placement-37c5ac87.json",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "pending_packet_ids": [],
+  "generated_at": "2026-05-10T18:08:36.541Z"
+}

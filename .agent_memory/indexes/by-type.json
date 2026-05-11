@@ -1,0 +1,20 @@
+{
+  "bug_fix": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-394-dream-json-dry-runs-must-not-mix-human-stdout-1778444345049",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-486-check-update-npm-fallback-1778443988461",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-709-astro-files-need-code-sync-coverage-1778443492657",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509"
+  ],
+  "repo_map": [
+    "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-overview-auto-overview",
+    "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-structure-auto-structure"
+  ],
+  "workflow": [
+    "repo:https-github-com-garrytan-gbrain:workflow:change-memory-kage-fix-git-submodule-flag-placement"
+  ]
+}

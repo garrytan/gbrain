@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "mode": "structural-references",
+  "graph": ".agent_memory/code_graph/graph.json",
+  "files": ".agent_memory/structural/files.json",
+  "symbols": ".agent_memory/structural/symbols.json",
+  "imports": ".agent_memory/structural/imports.json",
+  "file_count": 756,
+  "symbol_count": 27572,
+  "import_count": 2899,
+  "call_count": 47136,
+  "route_count": 20,
+  "test_count": 5364
+}

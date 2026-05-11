@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "compact": true,
+  "project_dir": ".",
+  "repo_key": "https-github-com-garrytan-gbrain",
+  "generated_from_updated_at": "2026-05-10T20:31:53.234Z",
+  "repo_state": {
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "head": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "merge_base": "726746231125b572a4ecd4f53aa3816d9debe66f",
+    "tree": "0c4b5d6a61fabee80a130d579b89d1e393eefa55",
+    "input_hash": "8b3c0c0d65dc5decf7568a5e07a2f17100d4714cb8eb64d3ab7d0be3d4542662"
+  },
+  "refs": {
+    "episodes": "episodes.json",
+    "entities": "entities.json",
+    "edges": "edges.json"
+  }
+}

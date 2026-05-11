@@ -1,0 +1,3571 @@
+[
+  {
+    "id": "command:bun-install",
+    "type": "command",
+    "name": "bun install",
+    "summary": "Command extracted from memory packet evidence.",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:bun-run-typecheck",
+    "type": "command",
+    "name": "bun run typecheck",
+    "summary": "Command extracted from memory packet evidence.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:0e8aae11ac907259",
+      "episode:2755648d4bff73e8",
+      "episode:67e9237c4d2b3028",
+      "episode:930b28bf2689aecf",
+      "episode:a580c8af36a56c9d",
+      "episode:a5dc03db5e860445",
+      "episode:d5da094873b4be7d",
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:bun-test",
+    "type": "command",
+    "name": "bun test",
+    "summary": "Command extracted from memory packet evidence.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:0e8aae11ac907259",
+      "episode:2755648d4bff73e8",
+      "episode:67e9237c4d2b3028",
+      "episode:930b28bf2689aecf",
+      "episode:a4b5e9486a3f074b",
+      "episode:a580c8af36a56c9d",
+      "episode:a5dc03db5e860445",
+      "episode:d5da094873b4be7d",
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:fixed-in-pr-827-for-issue-394-tests-test-dream-test-ts-typecheck-git-diff-check-",
+    "type": "command",
+    "name": "Fixed in PR #827 for issue #394; tests: test/dream.test.ts, typecheck, git diff --check. E2E dream suite skips without DATABASE_URL",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:fixed-in-pr-828-for-issue-430-changed-src-core-import-file-ts-src-core-pglite-en",
+    "type": "command",
+    "name": "Fixed in PR #828 for issue #430. Changed src/core/import-file.ts, src/core/pglite-engine.ts, src/core/postgres-engine.ts, and test/pglite-engine.test.ts. Regression covers mixed-case import and mixed-case direct upsertChunks",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:fixed-in-pr-829-for-issue-380-changed-src-cli-ts-and-test-cli-test-ts-regression",
+    "type": "command",
+    "name": "Fixed in PR #829 for issue #380. Changed src/cli.ts and test/cli.test.ts. Regression covers put --help showing --file, unknown shared-op flags failing before DB connection, and an end-to-end isolated PGLite init + put --file + get round trip",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:generated-from-files-present-in-the-repository",
+    "type": "command",
+    "name": "Generated from files present in the repository",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T17:57:33.549Z",
+    "last_seen_at": "2026-05-10T17:57:33.549Z",
+    "evidence": [
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:generated-from-git-diff-and-refreshed-by-kage-pr-summarize-or-kage-propose-from-",
+    "type": "command",
+    "name": "Generated from git diff and refreshed by kage pr summarize or kage propose --from-diff",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:generated-from-package-json-and-readme-md-when-present",
+    "type": "command",
+    "name": "Generated from package.json and README.md when present",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T17:57:33.539Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:issue-https-github-com-garrytan-gbrain-issues-485-and-pr-https-github-com-garryt",
+    "type": "command",
+    "name": "Issue https://github.com/garrytan/gbrain/issues/485 and PR https://github.com/garrytan/gbrain/pull/825. Added parser tests in test/backlinks.test.ts. Tests passed: bun test test/backlinks.test.ts, 14 pass 0 fail; bun run typecheck and git diff --check passed",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:issue-https-github-com-garrytan-gbrain-issues-486-and-pr-https-github-com-garryt",
+    "type": "command",
+    "name": "Issue https://github.com/garrytan/gbrain/issues/486 and PR https://github.com/garrytan/gbrain/pull/826. Added fake-fetch fallback regression in test/check-update.test.ts. Tests passed: bun test test/check-update.test.ts, 21 pass 0 fail; bun run typecheck and git diff --check passed",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:issue-https-github-com-garrytan-gbrain-issues-693-and-pr-https-github-com-garryt",
+    "type": "command",
+    "name": "Issue https://github.com/garrytan/gbrain/issues/693 and PR https://github.com/garrytan/gbrain/pull/824. Added unit regression in test/doctor.test.ts. Tests passed: bun test test/doctor.test.ts, 23 pass 0 fail; bun test test/e2e/doctor-progress.test.ts skipped locally because no DB configured; bun run typecheck and git diff --check passed",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:issue-https-github-com-garrytan-gbrain-issues-709-and-pr-https-github-com-garryt",
+    "type": "command",
+    "name": "Issue https://github.com/garrytan/gbrain/issues/709 and PR https://github.com/garrytan/gbrain/pull/823. Tests passed: bun test test/sync-strategy.test.ts test/sync-walker-symlink.test.ts test/chunkers/code.test.ts test/link-extraction-code-refs.test.ts test/sync-classifier-widening.test.ts, 68 pass 0 fail. Typecheck and git diff --check passed",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:issue-https-github-com-garrytan-gbrain-issues-806-and-pr-https-github-com-garryt",
+    "type": "command",
+    "name": "Issue https://github.com/garrytan/gbrain/issues/806 and PR https://github.com/garrytan/gbrain/pull/819. Changed src/core/operations.ts and test/mcp-tool-defs.test.ts. The new test first failed on extract_facts.entity_hints, then passed after adding items",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:issue-https-github-com-garrytan-gbrain-issues-813-and-pr-https-github-com-garryt",
+    "type": "command",
+    "name": "Issue https://github.com/garrytan/gbrain/issues/813 and PR https://github.com/garrytan/gbrain/pull/818. Changed src/core/git-remote.ts and test/git-remote.test.ts. Local targeted test passed: bun test test/git-remote.test.ts, 37 pass 0 fail",
+    "summary": "Verification command from structured memory context.",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-build",
+    "type": "command",
+    "name": "npm run build",
+    "summary": "Command extracted from memory packet evidence.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d",
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-build-admin",
+    "type": "command",
+    "name": "npm run build:admin",
+    "summary": "Command extracted from memory packet evidence.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d",
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-build-all",
+    "type": "command",
+    "name": "npm run build:all",
+    "summary": "Command extracted from memory packet evidence.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d",
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-build-llms",
+    "type": "command",
+    "name": "npm run build:llms",
+    "summary": "Command extracted from memory packet evidence.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d",
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-build-pglite-snapshot",
+    "type": "command",
+    "name": "npm run build:pglite-snapshot",
+    "summary": "Command extracted from memory packet evidence.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d",
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-build-schema",
+    "type": "command",
+    "name": "npm run build:schema",
+    "summary": "Command extracted from memory packet evidence.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d",
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-check-admin-build",
+    "type": "command",
+    "name": "npm run check:admin-build",
+    "summary": "Command extracted from memory packet evidence.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d",
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-check-admin-scope-drift",
+    "type": "command",
+    "name": "npm run check:admin-scope-drift",
+    "summary": "Command extracted from memory packet evidence.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d",
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-check-all",
+    "type": "command",
+    "name": "npm run check:all",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-check-cli-exec",
+    "type": "command",
+    "name": "npm run check:cli-exec",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-check-exports-count",
+    "type": "command",
+    "name": "npm run check:exports-count",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-check-jsonb",
+    "type": "command",
+    "name": "npm run check:jsonb",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-check-newlines",
+    "type": "command",
+    "name": "npm run check:newlines",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-check-privacy",
+    "type": "command",
+    "name": "npm run check:privacy",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-check-progress",
+    "type": "command",
+    "name": "npm run check:progress",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-check-test-isolation",
+    "type": "command",
+    "name": "npm run check:test-isolation",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-check-wasm",
+    "type": "command",
+    "name": "npm run check:wasm",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-ci-local",
+    "type": "command",
+    "name": "npm run ci:local",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-ci-local-diff",
+    "type": "command",
+    "name": "npm run ci:local:diff",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-ci-select-e2e",
+    "type": "command",
+    "name": "npm run ci:select-e2e",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-dev",
+    "type": "command",
+    "name": "npm run dev",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-postinstall",
+    "type": "command",
+    "name": "npm run postinstall",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-prepublish-clawhub",
+    "type": "command",
+    "name": "npm run prepublish:clawhub",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-publish-clawhub",
+    "type": "command",
+    "name": "npm run publish:clawhub",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-test",
+    "type": "command",
+    "name": "npm run test",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-test-e2e",
+    "type": "command",
+    "name": "npm run test:e2e",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-test-full",
+    "type": "command",
+    "name": "npm run test:full",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-test-profile",
+    "type": "command",
+    "name": "npm run test:profile",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-test-serial",
+    "type": "command",
+    "name": "npm run test:serial",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-test-slow",
+    "type": "command",
+    "name": "npm run test:slow",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-typecheck",
+    "type": "command",
+    "name": "npm run typecheck",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "command:npm-run-verify",
+    "type": "command",
+    "name": "npm run verify",
+    "summary": "Command extracted from package.json scripts.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:repo-manifest-package-json"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "memory_type:bug-fix",
+    "type": "memory_type",
+    "name": "bug_fix",
+    "summary": "Kage memory type bug_fix.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:0e8aae11ac907259",
+      "episode:2755648d4bff73e8",
+      "episode:67e9237c4d2b3028",
+      "episode:930b28bf2689aecf",
+      "episode:a4b5e9486a3f074b",
+      "episode:a580c8af36a56c9d",
+      "episode:a5dc03db5e860445",
+      "episode:d5da094873b4be7d",
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "memory_type:repo-map",
+    "type": "memory_type",
+    "name": "repo_map",
+    "summary": "Kage memory type repo_map.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T17:57:33.549Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "memory_type:workflow",
+    "type": "memory_type",
+    "name": "workflow",
+    "summary": "Kage memory type workflow.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-bug-fix-gbrain-380-put-file-should-be-real",
+    "type": "memory",
+    "name": "gbrain #380: put --file should be real and unknown op flags should fail early",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844"
+    ],
+    "summary": "For gbrain issue 380 / PR 829, gbrain put now supports file <path by reading markdown content into the existing put page content param before connecting to the DB. Shared operation CLI parsing now rejects unknown flags b",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:f147f079fa6ce203"
+    ]
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-bug-fix-gbrain-394-dream-json-dry-runs-mus",
+    "type": "memory",
+    "name": "gbrain #394: dream JSON dry runs must not mix human stdout",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-394-dream-json-dry-runs-must-not-mix-human-stdout-1778444345049"
+    ],
+    "summary": "When gbrain dream runs the embed phase with json, call runEmbedCore with quiet:true so stdout remains one JSON document even for dry run stale chunks. Keep standalone gbrain embed human summaries unchanged. Regression: t",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ]
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-bug-fix-gbrain-430-mixed-case-slugs-must-b",
+    "type": "memory",
+    "name": "gbrain #430: mixed-case slugs must be canonicalized before import writes",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458"
+    ],
+    "summary": "For gbrain issue 430 / PR 828, importFromContent must validateSlug the slug before existing page lookup and all transaction writes. Otherwise putPage writes the lowercase slug but later tx calls like upsertChunks can que",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-bug-fix-gbrain-485-check-backlinks-positio",
+    "type": "memory",
+    "name": "gbrain #485: check-backlinks positional dir parsing",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720"
+    ],
+    "summary": "For gbrain issue 485 / PR 825, check backlinks supports documented positional dir for both check and fix. The CLI previously only honored dir and otherwise scanned '.', so running from a parent directory could walk unrel",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ]
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-bug-fix-gbrain-486-check-update-npm-fallba",
+    "type": "memory",
+    "name": "gbrain #486: check-update npm fallback",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-486-check-update-npm-fallback-1778443988461"
+    ],
+    "summary": "For gbrain issue 486 / PR 826, check update should not depend only on GitHub releases because npm/bun installs may have package versions even when GitHub releases has no latest release. fetchLatestRelease now tries GitHu",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ]
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-bug-fix-gbrain-693-doctor-json-should-supp",
+    "type": "memory",
+    "name": "gbrain #693: doctor --json should suppress implicit progress",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431"
+    ],
+    "summary": "For gbrain issue 693 / PR 824, plain gbrain doctor json must keep machine readable mode quiet on stderr; only explicit progress json doctor json should emit structured JSONL progress. The fix centralizes doctor progress",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ]
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-bug-fix-gbrain-709-astro-files-need-code-s",
+    "type": "memory",
+    "name": "gbrain #709: Astro files need code sync coverage",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-709-astro-files-need-code-sync-coverage-1778443492657"
+    ],
+    "summary": "For gbrain issue 709 / PR 823, Astro single file components are code inputs. Add .astro to src/core/sync.ts CODE EXTENSIONS, map detectCodeLanguage .astro to html in src/core/chunkers/code.ts, and keep code reference ext",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-bug-fix-gbrain-806-mcp-array-schemas-need-",
+    "type": "memory",
+    "name": "gbrain #806: MCP array schemas need items",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218"
+    ],
+    "summary": "For gbrain issue 806 / PR 819, MCP facing operation params with type array must declare an items schema because strict OpenAI compatible tool validators reject arrays without items. extract facts.entity hints is an array",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-bug-fix-gbrain-813-git-submodule-flag-plac",
+    "type": "memory",
+    "name": "gbrain #813: git submodule flag placement",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509"
+    ],
+    "summary": "For gbrain issue 813 / PR 818, git accepts no recurse submodules as a clone/pull subcommand option, not as a top level git option. Keep SSRF c config flags before clone/pull, but place subcommand flags after the clone or",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ]
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-repo-map-gbrain-repo-overview-auto-overvie",
+    "type": "memory",
+    "name": "gbrain repo overview",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-overview-auto-overview"
+    ],
+    "summary": "Package name: gbrain. Available npm scripts: dev , build , build:all , build:admin , build:schema , build:llms , build:pglite snapshot , test , test:full , verify , check:admin scope drift , check:cli exec , check:all , ",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T17:57:33.539Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6"
+    ]
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-repo-map-gbrain-repo-structure-auto-struct",
+    "type": "memory",
+    "name": "gbrain repo structure",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-structure-auto-structure"
+    ],
+    "summary": "Detected repo structure: package.json, tsconfig.json, README.md, CLAUDE.md, AGENTS.md, .github/workflows, src. CI workflows: .github/workflows/e2e.yml, .github/workflows/release.yml, .github/workflows/test.yml. Test file",
+    "first_seen_at": "2026-05-10T17:57:33.549Z",
+    "last_seen_at": "2026-05-10T17:57:33.549Z",
+    "evidence": [
+      "episode:812e3a49a6f9cbd1"
+    ]
+  },
+  {
+    "id": "memory:repo-https-github-com-garrytan-gbrain-workflow-change-memory-kage-fix-git-submod",
+    "type": "memory",
+    "name": "Change memory: kage-fix-git-submodule-flag-placement",
+    "aliases": [
+      "repo:https-github-com-garrytan-gbrain:workflow:change-memory-kage-fix-git-submodule-flag-placement"
+    ],
+    "summary": "Repo-local context for 4 changed repo paths on kage-fix-git-submodule-flag-placement.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ]
+  },
+  {
+    "id": "package:ai",
+    "type": "package",
+    "name": "ai",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:ai-sdk-anthropic",
+    "type": "package",
+    "name": "@ai-sdk/anthropic",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:ai-sdk-google",
+    "type": "package",
+    "name": "@ai-sdk/google",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:ai-sdk-openai",
+    "type": "package",
+    "name": "@ai-sdk/openai",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:ai-sdk-openai-compatible",
+    "type": "package",
+    "name": "@ai-sdk/openai-compatible",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:anthropic-ai-sdk",
+    "type": "package",
+    "name": "@anthropic-ai/sdk",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:aws-sdk-client-s3",
+    "type": "package",
+    "name": "@aws-sdk/client-s3",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:bun-types",
+    "type": "package",
+    "name": "bun-types",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:cookie-parser",
+    "type": "package",
+    "name": "cookie-parser",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:cors",
+    "type": "package",
+    "name": "cors",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:dqbd-tiktoken",
+    "type": "package",
+    "name": "@dqbd/tiktoken",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:electric-sql-pglite",
+    "type": "package",
+    "name": "@electric-sql/pglite",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:eventsource-parser",
+    "type": "package",
+    "name": "eventsource-parser",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:exifr",
+    "type": "package",
+    "name": "exifr",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T17:57:33.539Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:express",
+    "type": "package",
+    "name": "express",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T17:57:33.539Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:express-rate-limit",
+    "type": "package",
+    "name": "express-rate-limit",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T17:57:33.539Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:gray-matter",
+    "type": "package",
+    "name": "gray-matter",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T17:57:33.539Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:heic-decode",
+    "type": "package",
+    "name": "heic-decode",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T17:57:33.539Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:jsquash-avif",
+    "type": "package",
+    "name": "@jsquash/avif",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:jsquash-png",
+    "type": "package",
+    "name": "@jsquash/png",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:modelcontextprotocol-sdk",
+    "type": "package",
+    "name": "@modelcontextprotocol/sdk",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:types-bun",
+    "type": "package",
+    "name": "@types/bun",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:types-cookie-parser",
+    "type": "package",
+    "name": "@types/cookie-parser",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:types-cors",
+    "type": "package",
+    "name": "@types/cors",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "package:types-express",
+    "type": "package",
+    "name": "@types/express",
+    "summary": "Package or framework detected in repo memory.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:agent-memory-packets-repo-map-gbrain-repo-overview-126ab3ab-json",
+    "type": "path",
+    "name": ".agent_memory/packets/repo_map-gbrain-repo-overview-126ab3ab.json",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:agent-memory-packets-repo-map-gbrain-repo-structure-812e3a49-json",
+    "type": "path",
+    "name": ".agent_memory/packets/repo_map-gbrain-repo-structure-812e3a49.json",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:agents-md",
+    "type": "path",
+    "name": "AGENTS.md",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T17:57:33.549Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d",
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:claude-md",
+    "type": "path",
+    "name": "CLAUDE.md",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T17:57:33.549Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d",
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:github-workflows",
+    "type": "path",
+    "name": ".github/workflows",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T17:57:33.549Z",
+    "last_seen_at": "2026-05-10T17:57:33.549Z",
+    "evidence": [
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:package-json",
+    "type": "path",
+    "name": "package.json",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T17:57:33.549Z",
+    "last_seen_at": "2026-05-10T17:57:33.549Z",
+    "evidence": [
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:readme-md",
+    "type": "path",
+    "name": "README.md",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T17:57:33.549Z",
+    "last_seen_at": "2026-05-10T17:57:33.549Z",
+    "evidence": [
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:root",
+    "type": "path",
+    "name": "root",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T17:57:33.539Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src",
+    "type": "path",
+    "name": "src",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T17:57:33.549Z",
+    "last_seen_at": "2026-05-10T17:57:33.549Z",
+    "evidence": [
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-cli-ts",
+    "type": "path",
+    "name": "src/cli.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:0e8aae11ac907259",
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-commands-backlinks-ts",
+    "type": "path",
+    "name": "src/commands/backlinks.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-commands-check-update-ts",
+    "type": "path",
+    "name": "src/commands/check-update.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-commands-doctor-ts",
+    "type": "path",
+    "name": "src/commands/doctor.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-commands-embed-ts",
+    "type": "path",
+    "name": "src/commands/embed.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-commands-sync-ts",
+    "type": "path",
+    "name": "src/commands/sync.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-core-chunkers-code-ts",
+    "type": "path",
+    "name": "src/core/chunkers/code.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-core-cli-options-ts",
+    "type": "path",
+    "name": "src/core/cli-options.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-core-cycle-ts",
+    "type": "path",
+    "name": "src/core/cycle.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-core-git-remote-ts",
+    "type": "path",
+    "name": "src/core/git-remote.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-core-import-file-ts",
+    "type": "path",
+    "name": "src/core/import-file.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:2755648d4bff73e8",
+      "episode:930b28bf2689aecf"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-core-link-extraction-ts",
+    "type": "path",
+    "name": "src/core/link-extraction.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-core-operations-ts",
+    "type": "path",
+    "name": "src/core/operations.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-core-pglite-engine-ts",
+    "type": "path",
+    "name": "src/core/pglite-engine.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-core-postgres-engine-ts",
+    "type": "path",
+    "name": "src/core/postgres-engine.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-core-sync-ts",
+    "type": "path",
+    "name": "src/core/sync.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:src-mcp-tool-defs-ts",
+    "type": "path",
+    "name": "src/mcp/tool-defs.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-backlinks-test-ts",
+    "type": "path",
+    "name": "test/backlinks.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-check-update-test-ts",
+    "type": "path",
+    "name": "test/check-update.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-chunkers-code-test-ts",
+    "type": "path",
+    "name": "test/chunkers/code.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-cli-test-ts",
+    "type": "path",
+    "name": "test/cli.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-doctor-test-ts",
+    "type": "path",
+    "name": "test/doctor.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-dream-test-ts",
+    "type": "path",
+    "name": "test/dream.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-e2e-doctor-progress-test-ts",
+    "type": "path",
+    "name": "test/e2e/doctor-progress.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-git-remote-test-ts",
+    "type": "path",
+    "name": "test/git-remote.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-link-extraction-code-refs-test-ts",
+    "type": "path",
+    "name": "test/link-extraction-code-refs.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-mcp-tool-defs-test-ts",
+    "type": "path",
+    "name": "test/mcp-tool-defs.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-pglite-engine-test-ts",
+    "type": "path",
+    "name": "test/pglite-engine.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-sync-classifier-widening-test-ts",
+    "type": "path",
+    "name": "test/sync-classifier-widening.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-sync-strategy-test-ts",
+    "type": "path",
+    "name": "test/sync-strategy.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:test-sync-walker-symlink-test-ts",
+    "type": "path",
+    "name": "test/sync-walker-symlink.test.ts",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "path:tsconfig-json",
+    "type": "path",
+    "name": "tsconfig.json",
+    "summary": "Repository path referenced by memory packets.",
+    "first_seen_at": "2026-05-10T17:57:33.549Z",
+    "last_seen_at": "2026-05-10T17:57:33.549Z",
+    "evidence": [
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "repo:https-github-com-garrytan-gbrain",
+    "type": "repo",
+    "name": "https-github-com-garrytan-gbrain",
+    "summary": "Repository memory graph for gbrain.",
+    "first_seen_at": "2026-05-10T20:31:53.234Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "aliases": [],
+    "evidence": []
+  },
+  {
+    "id": "symbol:symbol-src-cli-ts-constant-engine-1189",
+    "type": "symbol",
+    "name": "engine",
+    "aliases": [
+      "symbol:src-cli-ts:constant:engine:1189"
+    ],
+    "summary": "constant in src/cli.ts:1189",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:f147f079fa6ce203"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-cli-ts-constant-engine-158",
+    "type": "symbol",
+    "name": "engine",
+    "aliases": [
+      "symbol:src-cli-ts:constant:engine:158"
+    ],
+    "summary": "constant in src/cli.ts:158",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:f147f079fa6ce203"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-cli-ts-constant-engine-921",
+    "type": "symbol",
+    "name": "engine",
+    "aliases": [
+      "symbol:src-cli-ts:constant:engine:921"
+    ],
+    "summary": "constant in src/cli.ts:921",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:f147f079fa6ce203"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-cli-ts-constant-positional-1257",
+    "type": "symbol",
+    "name": "positional",
+    "aliases": [
+      "symbol:src-cli-ts:constant:positional:1257"
+    ],
+    "summary": "constant in src/cli.ts:1257",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-cli-ts-constant-positional-136",
+    "type": "symbol",
+    "name": "positional",
+    "aliases": [
+      "symbol:src-cli-ts:constant:positional:136"
+    ],
+    "summary": "constant in src/cli.ts:136",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-cli-ts-constant-positional-447",
+    "type": "symbol",
+    "name": "positional",
+    "aliases": [
+      "symbol:src-cli-ts:constant:positional:447"
+    ],
+    "summary": "constant in src/cli.ts:447",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-backlinks-ts-function-walk-76",
+    "type": "symbol",
+    "name": "walk",
+    "aliases": [
+      "symbol:src-commands-backlinks-ts:function:walk:76"
+    ],
+    "summary": "function in src/commands/backlinks.ts:76",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-check-update-ts-constant-release-130",
+    "type": "symbol",
+    "name": "release",
+    "aliases": [
+      "symbol:src-commands-check-update-ts:constant:release:130"
+    ],
+    "summary": "constant in src/commands/check-update.ts:130",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-check-update-ts-function-fetchlatestrelease-43",
+    "type": "symbol",
+    "name": "fetchLatestRelease",
+    "aliases": [
+      "symbol:src-commands-check-update-ts:function:fetchlatestrelease:43"
+    ],
+    "summary": "function in src/commands/check-update.ts:43",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-doctor-ts-constant-check-320",
+    "type": "symbol",
+    "name": "check",
+    "aliases": [
+      "symbol:src-commands-doctor-ts:constant:check:320"
+    ],
+    "summary": "constant in src/commands/doctor.ts:320",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-doctor-ts-constant-issues-889",
+    "type": "symbol",
+    "name": "issues",
+    "aliases": [
+      "symbol:src-commands-doctor-ts:constant:issues:889"
+    ],
+    "summary": "constant in src/commands/doctor.ts:889",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-doctor-ts-constant-jsonoutput-266",
+    "type": "symbol",
+    "name": "jsonOutput",
+    "aliases": [
+      "symbol:src-commands-doctor-ts:constant:jsonoutput:266"
+    ],
+    "summary": "constant in src/commands/doctor.ts:266",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-doctor-ts-constant-progress-290",
+    "type": "symbol",
+    "name": "progress",
+    "aliases": [
+      "symbol:src-commands-doctor-ts:constant:progress:290"
+    ],
+    "summary": "constant in src/commands/doctor.ts:290",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-embed-ts-constant-chunks-152",
+    "type": "symbol",
+    "name": "chunks",
+    "aliases": [
+      "symbol:src-commands-embed-ts:constant:chunks:152"
+    ],
+    "summary": "constant in src/commands/embed.ts:152",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-embed-ts-constant-chunks-254",
+    "type": "symbol",
+    "name": "chunks",
+    "aliases": [
+      "symbol:src-commands-embed-ts:constant:chunks:254"
+    ],
+    "summary": "constant in src/commands/embed.ts:254",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-embed-ts-constant-stale-395",
+    "type": "symbol",
+    "name": "stale",
+    "aliases": [
+      "symbol:src-commands-embed-ts:constant:stale:395"
+    ],
+    "summary": "constant in src/commands/embed.ts:395",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-embed-ts-constant-stale-97",
+    "type": "symbol",
+    "name": "stale",
+    "aliases": [
+      "symbol:src-commands-embed-ts:constant:stale:97"
+    ],
+    "summary": "constant in src/commands/embed.ts:97",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-commands-embed-ts-function-runembedcore-63",
+    "type": "symbol",
+    "name": "runEmbedCore",
+    "aliases": [
+      "symbol:src-commands-embed-ts:function:runembedcore:63"
+    ],
+    "summary": "function in src/commands/embed.ts:63",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-chunkers-code-ts-function-detectcodelanguage-410",
+    "type": "symbol",
+    "name": "detectCodeLanguage",
+    "aliases": [
+      "symbol:src-core-chunkers-code-ts:function:detectcodelanguage:410"
+    ],
+    "summary": "function in src/core/chunkers/code.ts:410",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-cli-options-ts-constant-unit-123",
+    "type": "symbol",
+    "name": "unit",
+    "aliases": [
+      "symbol:src-core-cli-options-ts:constant:unit:123"
+    ],
+    "summary": "constant in src/core/cli-options.ts:123",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-cli-options-ts-function-clioptstoprogressoptions-146",
+    "type": "symbol",
+    "name": "cliOptsToProgressOptions",
+    "aliases": [
+      "symbol:src-core-cli-options-ts:function:clioptstoprogressoptions:146"
+    ],
+    "summary": "function in src/core/cli-options.ts:146",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-cycle-ts-constant-fixed-453",
+    "type": "symbol",
+    "name": "fixed",
+    "aliases": [
+      "symbol:src-core-cycle-ts:constant:fixed:453"
+    ],
+    "summary": "constant in src/core/cycle.ts:453",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-import-file-ts-constant-existing-242",
+    "type": "symbol",
+    "name": "existing",
+    "aliases": [
+      "symbol:src-core-import-file-ts:constant:existing:242"
+    ],
+    "summary": "constant in src/core/import-file.ts:242",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-import-file-ts-constant-existing-478",
+    "type": "symbol",
+    "name": "existing",
+    "aliases": [
+      "symbol:src-core-import-file-ts:constant:existing:478"
+    ],
+    "summary": "constant in src/core/import-file.ts:478",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-import-file-ts-constant-existing-936",
+    "type": "symbol",
+    "name": "existing",
+    "aliases": [
+      "symbol:src-core-import-file-ts:constant:existing:936"
+    ],
+    "summary": "constant in src/core/import-file.ts:936",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-import-file-ts-constant-slug-461",
+    "type": "symbol",
+    "name": "slug",
+    "aliases": [
+      "symbol:src-core-import-file-ts:constant:slug:461"
+    ],
+    "summary": "constant in src/core/import-file.ts:461",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-import-file-ts-constant-slug-928",
+    "type": "symbol",
+    "name": "slug",
+    "aliases": [
+      "symbol:src-core-import-file-ts:constant:slug:928"
+    ],
+    "summary": "constant in src/core/import-file.ts:928",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-import-file-ts-function-importfromcontent-185",
+    "type": "symbol",
+    "name": "importFromContent",
+    "aliases": [
+      "symbol:src-core-import-file-ts:function:importfromcontent:185"
+    ],
+    "summary": "function in src/core/import-file.ts:185",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-link-extraction-ts-constant-refs-208",
+    "type": "symbol",
+    "name": "refs",
+    "aliases": [
+      "symbol:src-core-link-extraction-ts:constant:refs:208"
+    ],
+    "summary": "constant in src/core/link-extraction.ts:208",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-link-extraction-ts-constant-refs-232",
+    "type": "symbol",
+    "name": "refs",
+    "aliases": [
+      "symbol:src-core-link-extraction-ts:constant:refs:232"
+    ],
+    "summary": "constant in src/core/link-extraction.ts:232",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-extract-facts-2389",
+    "type": "symbol",
+    "name": "extract_facts",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:extract-facts:2389"
+    ],
+    "summary": "constant in src/core/operations.ts:2389",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-facts-2418",
+    "type": "symbol",
+    "name": "facts",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:facts:2418"
+    ],
+    "summary": "constant in src/core/operations.ts:2418",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-facts-558",
+    "type": "symbol",
+    "name": "facts",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:facts:558"
+    ],
+    "summary": "constant in src/core/operations.ts:558",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-operations-2630",
+    "type": "symbol",
+    "name": "operations",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:operations:2630"
+    ],
+    "summary": "constant in src/core/operations.ts:2630",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-slug-1402",
+    "type": "symbol",
+    "name": "slug",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:slug:1402"
+    ],
+    "summary": "constant in src/core/operations.ts:1402",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-slug-1738",
+    "type": "symbol",
+    "name": "slug",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:slug:1738"
+    ],
+    "summary": "constant in src/core/operations.ts:1738",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-slug-2432",
+    "type": "symbol",
+    "name": "slug",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:slug:2432"
+    ],
+    "summary": "constant in src/core/operations.ts:2432",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-slug-2525",
+    "type": "symbol",
+    "name": "slug",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:slug:2525"
+    ],
+    "summary": "constant in src/core/operations.ts:2525",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-slug-375",
+    "type": "symbol",
+    "name": "slug",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:slug:375"
+    ],
+    "summary": "constant in src/core/operations.ts:375",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-slug-425",
+    "type": "symbol",
+    "name": "slug",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:slug:425"
+    ],
+    "summary": "constant in src/core/operations.ts:425",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-slug-805",
+    "type": "symbol",
+    "name": "slug",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:slug:805"
+    ],
+    "summary": "constant in src/core/operations.ts:805",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-slug-835",
+    "type": "symbol",
+    "name": "slug",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:slug:835"
+    ],
+    "summary": "constant in src/core/operations.ts:835",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-operations-ts-constant-strict-1770",
+    "type": "symbol",
+    "name": "strict",
+    "aliases": [
+      "symbol:src-core-operations-ts:constant:strict:1770"
+    ],
+    "summary": "constant in src/core/operations.ts:1770",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-constant-existing-2222",
+    "type": "symbol",
+    "name": "existing",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:constant:existing:2222"
+    ],
+    "summary": "constant in src/core/pglite-engine.ts:2222",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-constant-existing-2258",
+    "type": "symbol",
+    "name": "existing",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:constant:existing:2258"
+    ],
+    "summary": "constant in src/core/pglite-engine.ts:2258",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-constant-original-170",
+    "type": "symbol",
+    "name": "original",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:constant:original:170"
+    ],
+    "summary": "constant in src/core/pglite-engine.ts:170",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-constant-page-1512",
+    "type": "symbol",
+    "name": "page",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:constant:page:1512"
+    ],
+    "summary": "constant in src/core/pglite-engine.ts:1512",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-constant-slugs-1452",
+    "type": "symbol",
+    "name": "slugs",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:constant:slugs:1452"
+    ],
+    "summary": "constant in src/core/pglite-engine.ts:1452",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-constant-slugs-1471",
+    "type": "symbol",
+    "name": "slugs",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:constant:slugs:1471"
+    ],
+    "summary": "constant in src/core/pglite-engine.ts:1471",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-constant-slugs-1578",
+    "type": "symbol",
+    "name": "slugs",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:constant:slugs:1578"
+    ],
+    "summary": "constant in src/core/pglite-engine.ts:1578",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-constant-slugs-2897",
+    "type": "symbol",
+    "name": "slugs",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:constant:slugs:2897"
+    ],
+    "summary": "constant in src/core/pglite-engine.ts:2897",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-constant-slugs-585",
+    "type": "symbol",
+    "name": "slugs",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:constant:slugs:585"
+    ],
+    "summary": "constant in src/core/pglite-engine.ts:585",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-method-putpage-492",
+    "type": "symbol",
+    "name": "putPage",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:method:putpage:492"
+    ],
+    "summary": "method in src/core/pglite-engine.ts:492",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-method-transaction-461",
+    "type": "symbol",
+    "name": "transaction",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:method:transaction:461"
+    ],
+    "summary": "method in src/core/pglite-engine.ts:461",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-pglite-engine-ts-method-upsertchunks-935",
+    "type": "symbol",
+    "name": "upsertChunks",
+    "aliases": [
+      "symbol:src-core-pglite-engine-ts:method:upsertchunks:935"
+    ],
+    "summary": "method in src/core/pglite-engine.ts:935",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-postgres-engine-ts-constant-slugs-1593",
+    "type": "symbol",
+    "name": "slugs",
+    "aliases": [
+      "symbol:src-core-postgres-engine-ts:constant:slugs:1593"
+    ],
+    "summary": "constant in src/core/postgres-engine.ts:1593",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-postgres-engine-ts-constant-slugs-1616",
+    "type": "symbol",
+    "name": "slugs",
+    "aliases": [
+      "symbol:src-core-postgres-engine-ts:constant:slugs:1616"
+    ],
+    "summary": "constant in src/core/postgres-engine.ts:1616",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-postgres-engine-ts-constant-slugs-636",
+    "type": "symbol",
+    "name": "slugs",
+    "aliases": [
+      "symbol:src-core-postgres-engine-ts:constant:slugs:636"
+    ],
+    "summary": "constant in src/core/postgres-engine.ts:636",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-postgres-engine-ts-method-putpage-549",
+    "type": "symbol",
+    "name": "putPage",
+    "aliases": [
+      "symbol:src-core-postgres-engine-ts:method:putpage:549"
+    ],
+    "summary": "method in src/core/postgres-engine.ts:549",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-postgres-engine-ts-method-transaction-501",
+    "type": "symbol",
+    "name": "transaction",
+    "aliases": [
+      "symbol:src-core-postgres-engine-ts:method:transaction:501"
+    ],
+    "summary": "method in src/core/postgres-engine.ts:501",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-postgres-engine-ts-method-upsertchunks-1074",
+    "type": "symbol",
+    "name": "upsertChunks",
+    "aliases": [
+      "symbol:src-core-postgres-engine-ts:method:upsertchunks:1074"
+    ],
+    "summary": "method in src/core/postgres-engine.ts:1074",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-sync-ts-constant-code-extensions-46",
+    "type": "symbol",
+    "name": "CODE_EXTENSIONS",
+    "aliases": [
+      "symbol:src-core-sync-ts:constant:code-extensions:46"
+    ],
+    "summary": "constant in src/core/sync.ts:46",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-src-core-sync-ts-constant-strategy-214",
+    "type": "symbol",
+    "name": "strategy",
+    "aliases": [
+      "symbol:src-core-sync-ts:constant:strategy:214"
+    ],
+    "summary": "constant in src/core/sync.ts:214",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-doctor-test-ts-constant-check-37",
+    "type": "symbol",
+    "name": "check",
+    "aliases": [
+      "symbol:test-doctor-test-ts:constant:check:37"
+    ],
+    "summary": "constant in test/doctor.test.ts:37",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-e2e-doctor-progress-test-ts-constant-skip-20",
+    "type": "symbol",
+    "name": "skip",
+    "aliases": [
+      "symbol:test-e2e-doctor-progress-test-ts:constant:skip:20"
+    ],
+    "summary": "constant in test/e2e/doctor-progress.test.ts:20",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-git-remote-test-ts-constant-argv-237",
+    "type": "symbol",
+    "name": "argv",
+    "aliases": [
+      "symbol:test-git-remote-test-ts:constant:argv:237"
+    ],
+    "summary": "constant in test/git-remote.test.ts:237",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-git-remote-test-ts-constant-argv-256",
+    "type": "symbol",
+    "name": "argv",
+    "aliases": [
+      "symbol:test-git-remote-test-ts:constant:argv:256"
+    ],
+    "summary": "constant in test/git-remote.test.ts:256",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-git-remote-test-ts-constant-argv-266",
+    "type": "symbol",
+    "name": "argv",
+    "aliases": [
+      "symbol:test-git-remote-test-ts:constant:argv:266"
+    ],
+    "summary": "constant in test/git-remote.test.ts:266",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-git-remote-test-ts-constant-argv-316",
+    "type": "symbol",
+    "name": "argv",
+    "aliases": [
+      "symbol:test-git-remote-test-ts:constant:argv:316"
+    ],
+    "summary": "constant in test/git-remote.test.ts:316",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-link-extraction-code-refs-test-ts-constant-refs-116",
+    "type": "symbol",
+    "name": "refs",
+    "aliases": [
+      "symbol:test-link-extraction-code-refs-test-ts:constant:refs:116"
+    ],
+    "summary": "constant in test/link-extraction-code-refs.test.ts:116",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-link-extraction-code-refs-test-ts-constant-refs-13",
+    "type": "symbol",
+    "name": "refs",
+    "aliases": [
+      "symbol:test-link-extraction-code-refs-test-ts:constant:refs:13"
+    ],
+    "summary": "constant in test/link-extraction-code-refs.test.ts:13",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-link-extraction-code-refs-test-ts-constant-refs-20",
+    "type": "symbol",
+    "name": "refs",
+    "aliases": [
+      "symbol:test-link-extraction-code-refs-test-ts:constant:refs:20"
+    ],
+    "summary": "constant in test/link-extraction-code-refs.test.ts:20",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-link-extraction-code-refs-test-ts-constant-refs-33",
+    "type": "symbol",
+    "name": "refs",
+    "aliases": [
+      "symbol:test-link-extraction-code-refs-test-ts:constant:refs:33"
+    ],
+    "summary": "constant in test/link-extraction-code-refs.test.ts:33",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-link-extraction-code-refs-test-ts-constant-refs-50",
+    "type": "symbol",
+    "name": "refs",
+    "aliases": [
+      "symbol:test-link-extraction-code-refs-test-ts:constant:refs:50"
+    ],
+    "summary": "constant in test/link-extraction-code-refs.test.ts:50",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-link-extraction-code-refs-test-ts-constant-refs-69",
+    "type": "symbol",
+    "name": "refs",
+    "aliases": [
+      "symbol:test-link-extraction-code-refs-test-ts:constant:refs:69"
+    ],
+    "summary": "constant in test/link-extraction-code-refs.test.ts:69",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-link-extraction-code-refs-test-ts-constant-refs-77",
+    "type": "symbol",
+    "name": "refs",
+    "aliases": [
+      "symbol:test-link-extraction-code-refs-test-ts:constant:refs:77"
+    ],
+    "summary": "constant in test/link-extraction-code-refs.test.ts:77",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-link-extraction-code-refs-test-ts-constant-refs-99",
+    "type": "symbol",
+    "name": "refs",
+    "aliases": [
+      "symbol:test-link-extraction-code-refs-test-ts:constant:refs:99"
+    ],
+    "summary": "constant in test/link-extraction-code-refs.test.ts:99",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ]
+  },
+  {
+    "id": "symbol:symbol-test-mcp-tool-defs-test-ts-constant-defs-51",
+    "type": "symbol",
+    "name": "defs",
+    "aliases": [
+      "symbol:test-mcp-tool-defs-test-ts:constant:defs:51"
+    ],
+    "summary": "constant in test/mcp-tool-defs.test.ts:51",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "tag:agent-dx",
+    "type": "tag",
+    "name": "agent-dx",
+    "summary": "Topic tag agent-dx.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:args",
+    "type": "tag",
+    "name": "args",
+    "summary": "Topic tag args.",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:astro",
+    "type": "tag",
+    "name": "astro",
+    "summary": "Topic tag astro.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:branch-kage-fix-git-submodule-flag-placement",
+    "type": "tag",
+    "name": "branch:kage-fix-git-submodule-flag-placement",
+    "summary": "Topic tag branch:kage-fix-git-submodule-flag-placement.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:bug-fix",
+    "type": "tag",
+    "name": "bug-fix",
+    "summary": "Topic tag bug-fix.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:0e8aae11ac907259",
+      "episode:2755648d4bff73e8",
+      "episode:67e9237c4d2b3028",
+      "episode:930b28bf2689aecf",
+      "episode:a4b5e9486a3f074b",
+      "episode:a580c8af36a56c9d",
+      "episode:a5dc03db5e860445",
+      "episode:d5da094873b4be7d",
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:change-memory",
+    "type": "tag",
+    "name": "change-memory",
+    "summary": "Topic tag change-memory.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:check-backlinks",
+    "type": "tag",
+    "name": "check-backlinks",
+    "summary": "Topic tag check-backlinks.",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:check-update",
+    "type": "tag",
+    "name": "check-update",
+    "summary": "Topic tag check-update.",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:chunks",
+    "type": "tag",
+    "name": "chunks",
+    "summary": "Topic tag chunks.",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:cli",
+    "type": "tag",
+    "name": "cli",
+    "summary": "Topic tag cli.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:0e8aae11ac907259",
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:code-graph",
+    "type": "tag",
+    "name": "code-graph",
+    "summary": "Topic tag code-graph.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:data-integrity",
+    "type": "tag",
+    "name": "data-integrity",
+    "summary": "Topic tag data-integrity.",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:diff-proposal",
+    "type": "tag",
+    "name": "diff-proposal",
+    "summary": "Topic tag diff-proposal.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:doctor",
+    "type": "tag",
+    "name": "doctor",
+    "summary": "Topic tag doctor.",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:dream",
+    "type": "tag",
+    "name": "dream",
+    "summary": "Topic tag dream.",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:dry-run",
+    "type": "tag",
+    "name": "dry-run",
+    "summary": "Topic tag dry-run.",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:file-input",
+    "type": "tag",
+    "name": "file-input",
+    "summary": "Topic tag file-input.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:gbrain",
+    "type": "tag",
+    "name": "gbrain",
+    "summary": "Topic tag gbrain.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:0e8aae11ac907259",
+      "episode:2755648d4bff73e8",
+      "episode:67e9237c4d2b3028",
+      "episode:930b28bf2689aecf",
+      "episode:a4b5e9486a3f074b",
+      "episode:a580c8af36a56c9d",
+      "episode:a5dc03db5e860445",
+      "episode:d5da094873b4be7d",
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:git",
+    "type": "tag",
+    "name": "git",
+    "summary": "Topic tag git.",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:github-releases",
+    "type": "tag",
+    "name": "github-releases",
+    "summary": "Topic tag github-releases.",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:import",
+    "type": "tag",
+    "name": "import",
+    "summary": "Topic tag import.",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:index",
+    "type": "tag",
+    "name": "index",
+    "summary": "Topic tag index.",
+    "first_seen_at": "2026-05-10T17:57:33.549Z",
+    "last_seen_at": "2026-05-10T17:57:33.549Z",
+    "evidence": [
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:issue-380",
+    "type": "tag",
+    "name": "issue-380",
+    "summary": "Topic tag issue-380.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:issue-430",
+    "type": "tag",
+    "name": "issue-430",
+    "summary": "Topic tag issue-430.",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:issue-485",
+    "type": "tag",
+    "name": "issue-485",
+    "summary": "Topic tag issue-485.",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:issue-486",
+    "type": "tag",
+    "name": "issue-486",
+    "summary": "Topic tag issue-486.",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:issue-693",
+    "type": "tag",
+    "name": "issue-693",
+    "summary": "Topic tag issue-693.",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:issue-709",
+    "type": "tag",
+    "name": "issue-709",
+    "summary": "Topic tag issue-709.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:issue-806",
+    "type": "tag",
+    "name": "issue-806",
+    "summary": "Topic tag issue-806.",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:issue-813",
+    "type": "tag",
+    "name": "issue-813",
+    "summary": "Topic tag issue-813.",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:json",
+    "type": "tag",
+    "name": "json",
+    "summary": "Topic tag json.",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d",
+      "episode:d5da094873b4be7d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:mcp",
+    "type": "tag",
+    "name": "mcp",
+    "summary": "Topic tag mcp.",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:npm",
+    "type": "tag",
+    "name": "npm",
+    "summary": "Topic tag npm.",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:openai-tools",
+    "type": "tag",
+    "name": "openai-tools",
+    "summary": "Topic tag openai-tools.",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:overview",
+    "type": "tag",
+    "name": "overview",
+    "summary": "Topic tag overview.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T17:57:33.539Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:pr-818",
+    "type": "tag",
+    "name": "pr-818",
+    "summary": "Topic tag pr-818.",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:pr-819",
+    "type": "tag",
+    "name": "pr-819",
+    "summary": "Topic tag pr-819.",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:pr-823",
+    "type": "tag",
+    "name": "pr-823",
+    "summary": "Topic tag pr-823.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:pr-824",
+    "type": "tag",
+    "name": "pr-824",
+    "summary": "Topic tag pr-824.",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:pr-825",
+    "type": "tag",
+    "name": "pr-825",
+    "summary": "Topic tag pr-825.",
+    "first_seen_at": "2026-05-10T20:10:36.720Z",
+    "last_seen_at": "2026-05-10T20:10:49.552Z",
+    "evidence": [
+      "episode:0e8aae11ac907259"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:pr-826",
+    "type": "tag",
+    "name": "pr-826",
+    "summary": "Topic tag pr-826.",
+    "first_seen_at": "2026-05-10T20:13:08.461Z",
+    "last_seen_at": "2026-05-10T20:13:19.540Z",
+    "evidence": [
+      "episode:a5dc03db5e860445"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:progress",
+    "type": "tag",
+    "name": "progress",
+    "summary": "Topic tag progress.",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:put-page",
+    "type": "tag",
+    "name": "put-page",
+    "summary": "Topic tag put-page.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:930b28bf2689aecf",
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:repo",
+    "type": "tag",
+    "name": "repo",
+    "summary": "Topic tag repo.",
+    "first_seen_at": "2026-05-10T17:57:33.539Z",
+    "last_seen_at": "2026-05-10T17:57:33.549Z",
+    "evidence": [
+      "episode:126ab3ab709d2ce6",
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:repo-local",
+    "type": "tag",
+    "name": "repo-local",
+    "summary": "Topic tag repo-local.",
+    "first_seen_at": "2026-05-10T18:08:04.044Z",
+    "last_seen_at": "2026-05-10T18:08:24.414Z",
+    "evidence": [
+      "episode:37c5ac879f324b0d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:schema",
+    "type": "tag",
+    "name": "schema",
+    "summary": "Topic tag schema.",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:session-learning",
+    "type": "tag",
+    "name": "session-learning",
+    "summary": "Topic tag session-learning.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:0e8aae11ac907259",
+      "episode:2755648d4bff73e8",
+      "episode:67e9237c4d2b3028",
+      "episode:930b28bf2689aecf",
+      "episode:a4b5e9486a3f074b",
+      "episode:a580c8af36a56c9d",
+      "episode:a5dc03db5e860445",
+      "episode:d5da094873b4be7d",
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:slug",
+    "type": "tag",
+    "name": "slug",
+    "summary": "Topic tag slug.",
+    "first_seen_at": "2026-05-10T20:23:01.017Z",
+    "last_seen_at": "2026-05-10T20:23:14.323Z",
+    "evidence": [
+      "episode:930b28bf2689aecf"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:ssrf",
+    "type": "tag",
+    "name": "ssrf",
+    "summary": "Topic tag ssrf.",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:stderr",
+    "type": "tag",
+    "name": "stderr",
+    "summary": "Topic tag stderr.",
+    "first_seen_at": "2026-05-10T20:08:06.431Z",
+    "last_seen_at": "2026-05-10T20:08:16.661Z",
+    "evidence": [
+      "episode:a580c8af36a56c9d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:stdout",
+    "type": "tag",
+    "name": "stdout",
+    "summary": "Topic tag stdout.",
+    "first_seen_at": "2026-05-10T20:19:05.049Z",
+    "last_seen_at": "2026-05-10T20:19:11.377Z",
+    "evidence": [
+      "episode:d5da094873b4be7d"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:structure",
+    "type": "tag",
+    "name": "structure",
+    "summary": "Topic tag structure.",
+    "first_seen_at": "2026-05-10T17:57:33.549Z",
+    "last_seen_at": "2026-05-10T17:57:33.549Z",
+    "evidence": [
+      "episode:812e3a49a6f9cbd1"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:submodules",
+    "type": "tag",
+    "name": "submodules",
+    "summary": "Topic tag submodules.",
+    "first_seen_at": "2026-05-10T19:42:32.509Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:a4b5e9486a3f074b"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:sync",
+    "type": "tag",
+    "name": "sync",
+    "summary": "Topic tag sync.",
+    "first_seen_at": "2026-05-10T20:04:52.657Z",
+    "last_seen_at": "2026-05-10T20:05:07.349Z",
+    "evidence": [
+      "episode:2755648d4bff73e8"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "tag:unknown-flags",
+    "type": "tag",
+    "name": "unknown-flags",
+    "summary": "Topic tag unknown-flags.",
+    "first_seen_at": "2026-05-10T20:31:44.604Z",
+    "last_seen_at": "2026-05-10T20:31:53.234Z",
+    "evidence": [
+      "episode:f147f079fa6ce203"
+    ],
+    "aliases": []
+  },
+  {
+    "id": "test:symbol-test-e2e-mcp-test-ts-test-mcp-server-module-can-be-imported-61",
+    "type": "test",
+    "name": "MCP server module can be imported",
+    "aliases": [
+      "symbol:test-e2e-mcp-test-ts:test:mcp-server-module-can-be-imported:61"
+    ],
+    "summary": "Test in test/e2e/mcp.test.ts:61 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "test:symbol-test-e2e-mcp-test-ts-test-operations-generate-valid-mcp-tool-definitions-",
+    "type": "test",
+    "name": "operations generate valid MCP tool definitions",
+    "aliases": [
+      "symbol:test-e2e-mcp-test-ts:test:operations-generate-valid-mcp-tool-definitions:17"
+    ],
+    "summary": "Test in test/e2e/mcp.test.ts:17 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "test:symbol-test-mcp-tool-defs-test-ts-test-accepts-an-arbitrary-operation-subset-for",
+    "type": "test",
+    "name": "accepts an arbitrary Operation subset (for subagent tool registry)",
+    "aliases": [
+      "symbol:test-mcp-tool-defs-test-ts:test:accepts-an-arbitrary-operation-subset-for-subagent-tool-registry:49"
+    ],
+    "summary": "Test in test/mcp-tool-defs.test.ts:49 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "test:symbol-test-mcp-tool-defs-test-ts-test-empty-input-returns-empty-array-56",
+    "type": "test",
+    "name": "empty input returns empty array",
+    "aliases": [
+      "symbol:test-mcp-tool-defs-test-ts:test:empty-input-returns-empty-array:56"
+    ],
+    "summary": "Test in test/mcp-tool-defs.test.ts:56 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "test:symbol-test-mcp-tool-defs-test-ts-test-every-def-has-object-inputschema-with-pro",
+    "type": "test",
+    "name": "every def has object inputSchema with properties + required array",
+    "aliases": [
+      "symbol:test-mcp-tool-defs-test-ts:test:every-def-has-object-inputschema-with-properties-required-array:60"
+    ],
+    "summary": "Test in test/mcp-tool-defs.test.ts:60 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "test:symbol-test-mcp-tool-defs-test-ts-test-output-equals-pre-extraction-inline-mappi",
+    "type": "test",
+    "name": "output equals pre-extraction inline mapping byte-for-byte",
+    "aliases": [
+      "symbol:test-mcp-tool-defs-test-ts:test:output-equals-pre-extraction-inline-mapping-byte-for-byte:39"
+    ],
+    "summary": "Test in test/mcp-tool-defs.test.ts:39 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "test:symbol-test-mcp-tool-defs-test-ts-test-preserves-operation-count-45",
+    "type": "test",
+    "name": "preserves operation count",
+    "aliases": [
+      "symbol:test-mcp-tool-defs-test-ts:test:preserves-operation-count:45"
+    ],
+    "summary": "Test in test/mcp-tool-defs.test.ts:45 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "test:symbol-test-parity-test-ts-test-every-operation-has-a-unique-name-6",
+    "type": "test",
+    "name": "every operation has a unique name",
+    "aliases": [
+      "symbol:test-parity-test-ts:test:every-operation-has-a-unique-name:6"
+    ],
+    "summary": "Test in test/parity.test.ts:6 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "test:symbol-test-parity-test-ts-test-every-operation-has-required-fields-11",
+    "type": "test",
+    "name": "every operation has required fields",
+    "aliases": [
+      "symbol:test-parity-test-ts:test:every-operation-has-required-fields:11"
+    ],
+    "summary": "Test in test/parity.test.ts:11 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "test:symbol-test-parity-test-ts-test-every-required-param-has-a-type-27",
+    "type": "test",
+    "name": "every required param has a type",
+    "aliases": [
+      "symbol:test-parity-test-ts:test:every-required-param-has-a-type:27"
+    ],
+    "summary": "Test in test/parity.test.ts:27 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "test:symbol-test-parity-test-ts-test-mutating-operations-have-dry-run-support-35",
+    "type": "test",
+    "name": "mutating operations have dry_run support",
+    "aliases": [
+      "symbol:test-parity-test-ts:test:mutating-operations-have-dry-run-support:35"
+    ],
+    "summary": "Test in test/parity.test.ts:35 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  },
+  {
+    "id": "test:symbol-test-parity-test-ts-test-operationsbyname-matches-operations-array-20",
+    "type": "test",
+    "name": "operationsByName matches operations array",
+    "aliases": [
+      "symbol:test-parity-test-ts:test:operationsbyname-matches-operations-array:20"
+    ],
+    "summary": "Test in test/parity.test.ts:20 covers operations",
+    "first_seen_at": "2026-05-10T19:42:44.218Z",
+    "last_seen_at": "2026-05-10T19:42:52.729Z",
+    "evidence": [
+      "episode:67e9237c4d2b3028"
+    ]
+  }
+]

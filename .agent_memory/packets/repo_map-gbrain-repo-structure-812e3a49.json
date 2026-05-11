@@ -1,0 +1,82 @@
+{
+  "schema_version": 2,
+  "id": "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-structure-auto-structure",
+  "title": "gbrain repo structure",
+  "summary": "Detected repo structure: package.json, tsconfig.json, README.md, CLAUDE.md, AGENTS.md, .github/workflows, src. CI workflows: .github/workflows/e2e.yml, .github/workflows/release.yml, .github/workflows/test.yml. Test file",
+  "body": "Detected repo structure: package.json, tsconfig.json, README.md, CLAUDE.md, AGENTS.md, .github/workflows, src.\nCI workflows: .github/workflows/e2e.yml, .github/workflows/release.yml, .github/workflows/test.yml.\nTest files: test/agent-cli.test.ts, test/agent-runner.test.ts, test/ai/adaptive-embed-batch.test.ts, test/ai/config-no-env-mutation.test.ts, test/ai/gateway-chat.test.ts, test/ai/gateway.test.ts, test/ai/schema-templating.test.ts, test/ai/silent-drop-regression.test.ts, test/anomalies.test.ts, test/apply-migrations.test.ts, test/archive-crawler-config.test.ts, test/auto-think-phase.test.ts, test/autopilot-install.test.ts, test/autopilot-resolve-cli.test.ts, test/backfill-base.test.ts, test/backfill-concurrency-clamp.serial.test.ts, test/backlinks.test.ts, test/backoff.test.ts, test/book-mirror.test.ts, test/bootstrap.test.ts, test/brain-allowlist.test.ts, test/brain-registry.serial.test.ts, test/brain-resolver.test.ts, test/brain-score-breakdown.test.ts, test/brain-writer.test.ts.\nThis packet is generated and should be treated as a navigation aid, not deep semantic understanding.",
+  "type": "repo_map",
+  "scope": "repo",
+  "visibility": "team",
+  "sensitivity": "internal",
+  "status": "approved",
+  "confidence": 0.65,
+  "tags": [
+    "repo",
+    "structure",
+    "index"
+  ],
+  "paths": [
+    "package.json",
+    "tsconfig.json",
+    "README.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".github/workflows",
+    "src"
+  ],
+  "stack": [],
+  "source_refs": [
+    {
+      "kind": "file",
+      "path": "package.json"
+    },
+    {
+      "kind": "file",
+      "path": "tsconfig.json"
+    },
+    {
+      "kind": "file",
+      "path": "README.md"
+    },
+    {
+      "kind": "file",
+      "path": "CLAUDE.md"
+    },
+    {
+      "kind": "file",
+      "path": "AGENTS.md"
+    },
+    {
+      "kind": "file",
+      "path": ".github/workflows"
+    },
+    {
+      "kind": "file",
+      "path": "src"
+    }
+  ],
+  "context": {
+    "fact": "Generated repo structure summarizes top-level files, workflows, and test files as a navigation aid.",
+    "why": "Agents need a quick map of repo entry points before choosing which files, workflows, or tests to inspect.",
+    "trigger": "Recall when orienting to this repo's layout, CI workflows, or test locations.",
+    "action": "Use this as a starting map and verify details against the current filesystem or code graph before editing.",
+    "verification": "Generated from files present in the repository.",
+    "risk_if_forgotten": "Agents may miss important entry points such as AGENTS.md, workflows, or MCP tests during initial orientation.",
+    "stale_when": "Top-level repo structure, workflow files, or test files change."
+  },
+  "freshness": {
+    "ttl_days": 30,
+    "last_verified_at": "2026-05-10",
+    "verification": "source_seen"
+  },
+  "edges": [],
+  "quality": {
+    "reviewer": "kage-indexer",
+    "votes_up": 0,
+    "votes_down": 0,
+    "uses_30d": 0,
+    "reports_stale": 0
+  },
+  "created_at": "2026-05-10T17:57:33.549Z",
+  "updated_at": "2026-05-10T17:57:33.549Z"
+}

@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509",
+  "title": "gbrain #813: git submodule flag placement",
+  "summary": "For gbrain issue 813 / PR 818, git accepts no recurse submodules as a clone/pull subcommand option, not as a top level git option. Keep SSRF c config flags before clone/pull, but place subcommand flags after the clone or",
+  "body": "For gbrain issue #813 / PR #818, git accepts --no-recurse-submodules as a clone/pull subcommand option, not as a top-level git option. Keep SSRF -c config flags before clone/pull, but place subcommand flags after the clone or pull verb. Regression tests belong in test/git-remote.test.ts against the fake-git argv shape.\nEvidence: Issue https://github.com/garrytan/gbrain/issues/813 and PR https://github.com/garrytan/gbrain/pull/818. Changed src/core/git-remote.ts and test/git-remote.test.ts. Local targeted test passed: bun test test/git-remote.test.ts, 37 pass 0 fail.\nVerified by: git CLI flag checks plus bun test test/git-remote.test.ts",
+  "type": "bug_fix",
+  "scope": "repo",
+  "visibility": "team",
+  "sensitivity": "internal",
+  "status": "approved",
+  "confidence": 0.7,
+  "tags": [
+    "session-learning",
+    "gbrain",
+    "issue-813",
+    "pr-818",
+    "git",
+    "ssrf",
+    "submodules",
+    "bug-fix"
+  ],
+  "paths": [
+    "src/core/git-remote.ts",
+    "test/git-remote.test.ts",
+    "src/commands/sync.ts"
+  ],
+  "stack": [],
+  "source_refs": [
+    {
+      "kind": "explicit_capture",
+      "captured_at": "2026-05-10T19:42:32.509Z"
+    }
+  ],
+  "context": {
+    "fact": "For gbrain issue #813 / PR #818, git accepts --no-recurse-submodules as a clone/pull subcommand option, not as a top-level git option. Keep SSRF -c config flags before clone/pull, but place subcommand flags after the clone or pull verb. Regression tests belong in test/git-remote.test.ts against the fake-git argv shape.\nEvidence: Issue https://github.com/garrytan/gbrain/issues/813 and PR https://github.com/garrytan/gbrain/pull/818. Changed src/core/git-remote.ts and test/git-remote.test.ts. Local targeted test passed: bun test test/git-remote.test.ts, 37 pass 0 fail.\nVerified by: git CLI flag checks plus bun test test/git-remote.test.ts",
+    "verification": "Issue https://github.com/garrytan/gbrain/issues/813 and PR https://github.com/garrytan/gbrain/pull/818. Changed src/core/git-remote.ts and test/git-remote.test.ts. Local targeted test passed: bun test test/git-remote.test.ts, 37 pass 0 fail."
+  },
+  "freshness": {
+    "ttl_days": 365,
+    "last_verified_at": "2026-05-10T19:42:32.509Z",
+    "verification": "repo_local_agent_capture"
+  },
+  "edges": [],
+  "quality": {
+    "reviewer": "repo-local-agent",
+    "votes_up": 0,
+    "votes_down": 0,
+    "uses_30d": 0,
+    "reports_stale": 0,
+    "review_boundary": "git_or_pr",
+    "promotion_requires_review": true,
+    "score": 100,
+    "reasons": [
+      "high-value memory type",
+      "has source evidence",
+      "grounded to repo paths",
+      "tagged",
+      "concise but substantive",
+      "actionable rationale or verification"
+    ],
+    "risks": [],
+    "duplicate_candidates": [],
+    "estimated_tokens_saved": 161
+  },
+  "created_at": "2026-05-10T19:42:32.509Z",
+  "updated_at": "2026-05-10T19:42:52.729Z"
+}

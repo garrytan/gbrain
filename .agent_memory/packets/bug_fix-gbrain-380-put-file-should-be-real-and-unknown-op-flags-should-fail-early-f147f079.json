@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844",
+  "title": "gbrain #380: put --file should be real and unknown op flags should fail early",
+  "summary": "For gbrain issue 380 / PR 829, gbrain put now supports file <path by reading markdown content into the existing put page content param before connecting to the DB. Shared operation CLI parsing now rejects unknown flags b",
+  "body": "For gbrain issue #380 / PR #829, gbrain put now supports --file <path> by reading markdown content into the existing put_page content param before connecting to the DB. Shared operation CLI parsing now rejects unknown flags before engine connection, preventing intuitive-but-wrong flags from silently falling through and causing empty or misleading writes.\nEvidence: Fixed in PR #829 for issue #380. Changed src/cli.ts and test/cli.test.ts. Regression covers put --help showing --file, unknown shared-op flags failing before DB connection, and an end-to-end isolated PGLite init + put --file + get round trip.\nVerified by: bun test test/cli.test.ts; bun run typecheck; git diff --check",
+  "type": "bug_fix",
+  "scope": "repo",
+  "visibility": "team",
+  "sensitivity": "internal",
+  "status": "approved",
+  "confidence": 0.7,
+  "tags": [
+    "session-learning",
+    "gbrain",
+    "issue-380",
+    "cli",
+    "put-page",
+    "file-input",
+    "unknown-flags",
+    "agent-dx",
+    "bug-fix"
+  ],
+  "paths": [
+    "src/cli.ts",
+    "test/cli.test.ts"
+  ],
+  "stack": [],
+  "source_refs": [
+    {
+      "kind": "explicit_capture",
+      "captured_at": "2026-05-10T20:31:44.604Z"
+    }
+  ],
+  "context": {
+    "fact": "For gbrain issue #380 / PR #829, gbrain put now supports --file <path> by reading markdown content into the existing put_page content param before connecting to the DB. Shared operation CLI parsing now rejects unknown flags before engine connection, preventing intuitive-but-wrong flags from silently falling through and causing empty or misleading writes.\nEvidence: Fixed in PR #829 for issue #380. Changed src/cli.ts and test/cli.test.ts. Regression covers put --help showing --file, unknown shared-op flags failing before DB connection, and an end-to-end isolated PGLite init + put --file + get round trip.\nVerified by: bun test test/cli.test.ts; bun run typecheck; git diff --check",
+    "verification": "Fixed in PR #829 for issue #380. Changed src/cli.ts and test/cli.test.ts. Regression covers put --help showing --file, unknown shared-op flags failing before DB connection, and an end-to-end isolated PGLite init + put --file + get round trip."
+  },
+  "freshness": {
+    "ttl_days": 365,
+    "last_verified_at": "2026-05-10T20:31:44.604Z",
+    "verification": "repo_local_agent_capture"
+  },
+  "edges": [],
+  "quality": {
+    "reviewer": "repo-local-agent",
+    "votes_up": 0,
+    "votes_down": 0,
+    "uses_30d": 0,
+    "reports_stale": 0,
+    "review_boundary": "git_or_pr",
+    "promotion_requires_review": true,
+    "score": 100,
+    "reasons": [
+      "high-value memory type",
+      "has source evidence",
+      "grounded to repo paths",
+      "tagged",
+      "concise but substantive",
+      "actionable rationale or verification"
+    ],
+    "risks": [],
+    "duplicate_candidates": [],
+    "estimated_tokens_saved": 188
+  },
+  "created_at": "2026-05-10T20:31:44.604Z",
+  "updated_at": "2026-05-10T20:31:53.234Z"
+}

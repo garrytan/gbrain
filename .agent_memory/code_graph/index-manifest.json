@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "project_dir": ".",
+  "repo_key": "https-github-com-garrytan-gbrain",
+  "generated_at": "2026-05-10T20:31:53.652Z",
+  "mode": "structural",
+  "limits": {
+    "max_extract_file_bytes": 524288,
+    "max_calls": 50000,
+    "max_calls_per_file": 250
+  },
+  "coverage": {
+    "indexable_files": 756,
+    "indexed_files": 756,
+    "deferred_files": 0,
+    "ignored_files": 308,
+    "coverage_percent": 100,
+    "complete": true
+  },
+  "cache": {
+    "hits": 756,
+    "misses": 0
+  },
+  "deferred_files": [],
+  "ignored_summary": {
+    "generated_vendor_or_cache": 3,
+    "unsupported_file_type": 305
+  },
+  "fingerprint": "9f970d2a206ad0e43d1867a9eceaef1de195c168682cacace548fa1bd30f7fb3"
+}

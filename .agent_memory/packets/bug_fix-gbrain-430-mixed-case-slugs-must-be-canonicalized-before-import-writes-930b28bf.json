@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458",
+  "title": "gbrain #430: mixed-case slugs must be canonicalized before import writes",
+  "summary": "For gbrain issue 430 / PR 828, importFromContent must validateSlug the slug before existing page lookup and all transaction writes. Otherwise putPage writes the lowercase slug but later tx calls like upsertChunks can que",
+  "body": "For gbrain issue #430 / PR #828, importFromContent must validateSlug the slug before existing-page lookup and all transaction writes. Otherwise putPage writes the lowercase slug but later tx calls like upsertChunks can query the original mixed-case slug. Also normalize direct upsertChunks in both PGLite and Postgres engines so it matches putPage behavior.\nEvidence: Fixed in PR #828 for issue #430. Changed src/core/import-file.ts, src/core/pglite-engine.ts, src/core/postgres-engine.ts, and test/pglite-engine.test.ts. Regression covers mixed-case import and mixed-case direct upsertChunks.\nVerified by: bun test test/pglite-engine.test.ts; bun run typecheck; git diff --check",
+  "type": "bug_fix",
+  "scope": "repo",
+  "visibility": "team",
+  "sensitivity": "internal",
+  "status": "approved",
+  "confidence": 0.7,
+  "tags": [
+    "session-learning",
+    "gbrain",
+    "issue-430",
+    "put-page",
+    "slug",
+    "import",
+    "chunks",
+    "data-integrity",
+    "bug-fix"
+  ],
+  "paths": [
+    "src/core/import-file.ts",
+    "src/core/pglite-engine.ts",
+    "src/core/postgres-engine.ts",
+    "test/pglite-engine.test.ts"
+  ],
+  "stack": [],
+  "source_refs": [
+    {
+      "kind": "explicit_capture",
+      "captured_at": "2026-05-10T20:23:01.017Z"
+    }
+  ],
+  "context": {
+    "fact": "For gbrain issue #430 / PR #828, importFromContent must validateSlug the slug before existing-page lookup and all transaction writes. Otherwise putPage writes the lowercase slug but later tx calls like upsertChunks can query the original mixed-case slug. Also normalize direct upsertChunks in both PGLite and Postgres engines so it matches putPage behavior.\nEvidence: Fixed in PR #828 for issue #430. Changed src/core/import-file.ts, src/core/pglite-engine.ts, src/core/postgres-engine.ts, and test/pglite-engine.test.ts. Regression covers mixed-case import and mixed-case direct upsertChunks.\nVerified by: bun test test/pglite-engine.test.ts; bun run typecheck; git diff --check",
+    "verification": "Fixed in PR #828 for issue #430. Changed src/core/import-file.ts, src/core/pglite-engine.ts, src/core/postgres-engine.ts, and test/pglite-engine.test.ts. Regression covers mixed-case import and mixed-case direct upsertChunks."
+  },
+  "freshness": {
+    "ttl_days": 365,
+    "last_verified_at": "2026-05-10T20:23:01.017Z",
+    "verification": "repo_local_agent_capture"
+  },
+  "edges": [],
+  "quality": {
+    "reviewer": "repo-local-agent",
+    "votes_up": 0,
+    "votes_down": 0,
+    "uses_30d": 0,
+    "reports_stale": 0,
+    "review_boundary": "git_or_pr",
+    "promotion_requires_review": true,
+    "score": 100,
+    "reasons": [
+      "high-value memory type",
+      "has source evidence",
+      "grounded to repo paths",
+      "tagged",
+      "concise but substantive",
+      "actionable rationale or verification"
+    ],
+    "risks": [],
+    "duplicate_candidates": [],
+    "estimated_tokens_saved": 186
+  },
+  "created_at": "2026-05-10T20:23:01.017Z",
+  "updated_at": "2026-05-10T20:23:14.323Z"
+}

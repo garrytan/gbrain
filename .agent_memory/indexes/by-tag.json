@@ -1,0 +1,195 @@
+{
+  "session-learning": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-394-dream-json-dry-runs-must-not-mix-human-stdout-1778444345049",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-486-check-update-npm-fallback-1778443988461",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-709-astro-files-need-code-sync-coverage-1778443492657",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509"
+  ],
+  "gbrain": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-394-dream-json-dry-runs-must-not-mix-human-stdout-1778444345049",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-486-check-update-npm-fallback-1778443988461",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-709-astro-files-need-code-sync-coverage-1778443492657",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509"
+  ],
+  "issue-380": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844"
+  ],
+  "cli": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720"
+  ],
+  "put-page": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458"
+  ],
+  "file-input": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844"
+  ],
+  "unknown-flags": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844"
+  ],
+  "agent-dx": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844"
+  ],
+  "bug-fix": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-394-dream-json-dry-runs-must-not-mix-human-stdout-1778444345049",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-486-check-update-npm-fallback-1778443988461",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-709-astro-files-need-code-sync-coverage-1778443492657",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509"
+  ],
+  "dream": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-394-dream-json-dry-runs-must-not-mix-human-stdout-1778444345049"
+  ],
+  "json": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-394-dream-json-dry-runs-must-not-mix-human-stdout-1778444345049",
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431"
+  ],
+  "dry-run": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-394-dream-json-dry-runs-must-not-mix-human-stdout-1778444345049"
+  ],
+  "stdout": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-394-dream-json-dry-runs-must-not-mix-human-stdout-1778444345049"
+  ],
+  "issue-430": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458"
+  ],
+  "slug": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458"
+  ],
+  "import": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458"
+  ],
+  "chunks": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458"
+  ],
+  "data-integrity": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458"
+  ],
+  "issue-485": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720"
+  ],
+  "pr-825": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720"
+  ],
+  "check-backlinks": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720"
+  ],
+  "args": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720"
+  ],
+  "issue-486": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-486-check-update-npm-fallback-1778443988461"
+  ],
+  "pr-826": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-486-check-update-npm-fallback-1778443988461"
+  ],
+  "check-update": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-486-check-update-npm-fallback-1778443988461"
+  ],
+  "npm": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-486-check-update-npm-fallback-1778443988461"
+  ],
+  "github-releases": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-486-check-update-npm-fallback-1778443988461"
+  ],
+  "issue-693": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431"
+  ],
+  "pr-824": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431"
+  ],
+  "doctor": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431"
+  ],
+  "progress": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431"
+  ],
+  "stderr": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431"
+  ],
+  "issue-709": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-709-astro-files-need-code-sync-coverage-1778443492657"
+  ],
+  "pr-823": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-709-astro-files-need-code-sync-coverage-1778443492657"
+  ],
+  "astro": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-709-astro-files-need-code-sync-coverage-1778443492657"
+  ],
+  "sync": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-709-astro-files-need-code-sync-coverage-1778443492657"
+  ],
+  "code-graph": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-709-astro-files-need-code-sync-coverage-1778443492657"
+  ],
+  "issue-806": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218"
+  ],
+  "pr-819": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218"
+  ],
+  "mcp": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218"
+  ],
+  "schema": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218"
+  ],
+  "openai-tools": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218"
+  ],
+  "issue-813": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509"
+  ],
+  "pr-818": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509"
+  ],
+  "git": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509"
+  ],
+  "ssrf": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509"
+  ],
+  "submodules": [
+    "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509"
+  ],
+  "repo": [
+    "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-overview-auto-overview",
+    "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-structure-auto-structure"
+  ],
+  "overview": [
+    "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-overview-auto-overview"
+  ],
+  "structure": [
+    "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-structure-auto-structure"
+  ],
+  "index": [
+    "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-structure-auto-structure"
+  ],
+  "change-memory": [
+    "repo:https-github-com-garrytan-gbrain:workflow:change-memory-kage-fix-git-submodule-flag-placement"
+  ],
+  "diff-proposal": [
+    "repo:https-github-com-garrytan-gbrain:workflow:change-memory-kage-fix-git-submodule-flag-placement"
+  ],
+  "repo-local": [
+    "repo:https-github-com-garrytan-gbrain:workflow:change-memory-kage-fix-git-submodule-flag-placement"
+  ],
+  "branch:kage-fix-git-submodule-flag-placement": [
+    "repo:https-github-com-garrytan-gbrain:workflow:change-memory-kage-fix-git-submodule-flag-placement"
+  ]
+}

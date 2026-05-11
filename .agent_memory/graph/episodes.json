@@ -1,0 +1,233 @@
+[
+  {
+    "id": "episode:0e8aae11ac907259",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720",
+    "source_refs": [
+      {
+        "kind": "explicit_capture",
+        "captured_at": "2026-05-10T20:10:36.720Z"
+      }
+    ],
+    "observed_at": "2026-05-10T20:10:49.552Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "For gbrain issue 485 / PR 825, check backlinks supports documented positional dir for both check and fix. The CLI previously only honored dir and otherwise scanned '.', so running from a parent directory could walk unrel"
+  },
+  {
+    "id": "episode:126ab3ab709d2ce6",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-overview-auto-overview",
+    "source_refs": [
+      {
+        "kind": "file",
+        "path": "package.json"
+      },
+      {
+        "kind": "file",
+        "path": "README.md"
+      }
+    ],
+    "observed_at": "2026-05-10T17:57:33.539Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "Package name: gbrain. Available npm scripts: dev , build , build:all , build:admin , build:schema , build:llms , build:pglite snapshot , test , test:full , verify , check:admin scope drift , check:cli exec , check:all , "
+  },
+  {
+    "id": "episode:2755648d4bff73e8",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-709-astro-files-need-code-sync-coverage-1778443492657",
+    "source_refs": [
+      {
+        "kind": "explicit_capture",
+        "captured_at": "2026-05-10T20:04:52.657Z"
+      }
+    ],
+    "observed_at": "2026-05-10T20:05:07.349Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "For gbrain issue 709 / PR 823, Astro single file components are code inputs. Add .astro to src/core/sync.ts CODE EXTENSIONS, map detectCodeLanguage .astro to html in src/core/chunkers/code.ts, and keep code reference ext"
+  },
+  {
+    "id": "episode:37c5ac879f324b0d",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:workflow:change-memory-kage-fix-git-submodule-flag-placement",
+    "source_refs": [
+      {
+        "kind": "git_diff",
+        "branch": "kage-fix-git-submodule-flag-placement",
+        "head": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+        "merge_base": "726746231125b572a4ecd4f53aa3816d9debe66f",
+        "changed_files": [
+          ".agent_memory/packets/repo_map-gbrain-repo-overview-126ab3ab.json",
+          ".agent_memory/packets/repo_map-gbrain-repo-structure-812e3a49.json",
+          "AGENTS.md",
+          "CLAUDE.md"
+        ],
+        "summary_path": ".agent_memory/review/branch-summary-kage-fix-git-submodule-flag-placement.json"
+      }
+    ],
+    "observed_at": "2026-05-10T18:08:24.414Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "Repo-local context for 4 changed repo paths on kage-fix-git-submodule-flag-placement."
+  },
+  {
+    "id": "episode:67e9237c4d2b3028",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-806-mcp-array-schemas-need-items-1778442164218",
+    "source_refs": [
+      {
+        "kind": "explicit_capture",
+        "captured_at": "2026-05-10T19:42:44.218Z"
+      }
+    ],
+    "observed_at": "2026-05-10T19:42:52.729Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "For gbrain issue 806 / PR 819, MCP facing operation params with type array must declare an items schema because strict OpenAI compatible tool validators reject arrays without items. extract facts.entity hints is an array"
+  },
+  {
+    "id": "episode:812e3a49a6f9cbd1",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:repo_map:gbrain-repo-structure-auto-structure",
+    "source_refs": [
+      {
+        "kind": "file",
+        "path": "package.json"
+      },
+      {
+        "kind": "file",
+        "path": "tsconfig.json"
+      },
+      {
+        "kind": "file",
+        "path": "README.md"
+      },
+      {
+        "kind": "file",
+        "path": "CLAUDE.md"
+      },
+      {
+        "kind": "file",
+        "path": "AGENTS.md"
+      },
+      {
+        "kind": "file",
+        "path": ".github/workflows"
+      },
+      {
+        "kind": "file",
+        "path": "src"
+      }
+    ],
+    "observed_at": "2026-05-10T17:57:33.549Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "Detected repo structure: package.json, tsconfig.json, README.md, CLAUDE.md, AGENTS.md, .github/workflows, src. CI workflows: .github/workflows/e2e.yml, .github/workflows/release.yml, .github/workflows/test.yml. Test file"
+  },
+  {
+    "id": "episode:930b28bf2689aecf",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-430-mixed-case-slugs-must-be-canonicalized-before-import-writes-177844458",
+    "source_refs": [
+      {
+        "kind": "explicit_capture",
+        "captured_at": "2026-05-10T20:23:01.017Z"
+      }
+    ],
+    "observed_at": "2026-05-10T20:23:14.323Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "For gbrain issue 430 / PR 828, importFromContent must validateSlug the slug before existing page lookup and all transaction writes. Otherwise putPage writes the lowercase slug but later tx calls like upsertChunks can que"
+  },
+  {
+    "id": "episode:a4b5e9486a3f074b",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-813-git-submodule-flag-placement-1778442152509",
+    "source_refs": [
+      {
+        "kind": "explicit_capture",
+        "captured_at": "2026-05-10T19:42:32.509Z"
+      }
+    ],
+    "observed_at": "2026-05-10T19:42:52.729Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "For gbrain issue 813 / PR 818, git accepts no recurse submodules as a clone/pull subcommand option, not as a top level git option. Keep SSRF c config flags before clone/pull, but place subcommand flags after the clone or"
+  },
+  {
+    "id": "episode:a580c8af36a56c9d",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-693-doctor-json-should-suppress-implicit-progress-1778443686431",
+    "source_refs": [
+      {
+        "kind": "explicit_capture",
+        "captured_at": "2026-05-10T20:08:06.431Z"
+      }
+    ],
+    "observed_at": "2026-05-10T20:08:16.661Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "For gbrain issue 693 / PR 824, plain gbrain doctor json must keep machine readable mode quiet on stderr; only explicit progress json doctor json should emit structured JSONL progress. The fix centralizes doctor progress"
+  },
+  {
+    "id": "episode:a5dc03db5e860445",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-486-check-update-npm-fallback-1778443988461",
+    "source_refs": [
+      {
+        "kind": "explicit_capture",
+        "captured_at": "2026-05-10T20:13:08.461Z"
+      }
+    ],
+    "observed_at": "2026-05-10T20:13:19.540Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "For gbrain issue 486 / PR 826, check update should not depend only on GitHub releases because npm/bun installs may have package versions even when GitHub releases has no latest release. fetchLatestRelease now tries GitHu"
+  },
+  {
+    "id": "episode:d5da094873b4be7d",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-394-dream-json-dry-runs-must-not-mix-human-stdout-1778444345049",
+    "source_refs": [
+      {
+        "kind": "explicit_capture",
+        "captured_at": "2026-05-10T20:19:05.049Z"
+      }
+    ],
+    "observed_at": "2026-05-10T20:19:11.377Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "When gbrain dream runs the embed phase with json, call runEmbedCore with quiet:true so stdout remains one JSON document even for dry run stale chunks. Keep standalone gbrain embed human summaries unchanged. Regression: t"
+  },
+  {
+    "id": "episode:f147f079fa6ce203",
+    "kind": "memory_packet",
+    "packet_id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-380-put-file-should-be-real-and-unknown-op-flags-should-fail-early-177844",
+    "source_refs": [
+      {
+        "kind": "explicit_capture",
+        "captured_at": "2026-05-10T20:31:44.604Z"
+      }
+    ],
+    "observed_at": "2026-05-10T20:31:53.234Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "For gbrain issue 380 / PR 829, gbrain put now supports file <path by reading markdown content into the existing put page content param before connecting to the DB. Shared operation CLI parsing now rejects unknown flags b"
+  },
+  {
+    "id": "episode:repo-manifest-package-json",
+    "kind": "repo_manifest",
+    "source_refs": [
+      {
+        "kind": "file",
+        "path": "package.json"
+      }
+    ],
+    "observed_at": "2026-05-10T20:31:53.234Z",
+    "branch": "kage-fix-git-submodule-flag-placement",
+    "commit": "151dc29b1f164adbfa448e1efc8595aa577dafac",
+    "summary": "NPM scripts extracted from package.json."
+  }
+]

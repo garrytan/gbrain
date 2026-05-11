@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "id": "repo:https-github-com-garrytan-gbrain:bug_fix:gbrain-485-check-backlinks-positional-dir-parsing-1778443836720",
+  "title": "gbrain #485: check-backlinks positional dir parsing",
+  "summary": "For gbrain issue 485 / PR 825, check backlinks supports documented positional dir for both check and fix. The CLI previously only honored dir and otherwise scanned '.', so running from a parent directory could walk unrel",
+  "body": "For gbrain issue #485 / PR #825, check-backlinks supports documented positional [dir] for both check and fix. The CLI previously only honored --dir and otherwise scanned '.', so running from a parent directory could walk unrelated siblings. Keep parsing in parseBacklinksArgs: --dir wins over positional, --dry-run is not treated as a path, and default remains '.'.\nEvidence: Issue https://github.com/garrytan/gbrain/issues/485 and PR https://github.com/garrytan/gbrain/pull/825. Added parser tests in test/backlinks.test.ts. Tests passed: bun test test/backlinks.test.ts, 14 pass 0 fail; bun run typecheck and git diff --check passed.\nVerified by: test/backlinks.test.ts, bun run typecheck, git diff --check",
+  "type": "bug_fix",
+  "scope": "repo",
+  "visibility": "team",
+  "sensitivity": "internal",
+  "status": "approved",
+  "confidence": 0.7,
+  "tags": [
+    "session-learning",
+    "gbrain",
+    "issue-485",
+    "pr-825",
+    "check-backlinks",
+    "cli",
+    "args",
+    "bug-fix"
+  ],
+  "paths": [
+    "src/commands/backlinks.ts",
+    "test/backlinks.test.ts",
+    "src/cli.ts"
+  ],
+  "stack": [],
+  "source_refs": [
+    {
+      "kind": "explicit_capture",
+      "captured_at": "2026-05-10T20:10:36.720Z"
+    }
+  ],
+  "context": {
+    "fact": "For gbrain issue #485 / PR #825, check-backlinks supports documented positional [dir] for both check and fix. The CLI previously only honored --dir and otherwise scanned '.', so running from a parent directory could walk unrelated siblings. Keep parsing in parseBacklinksArgs: --dir wins over positional, --dry-run is not treated as a path, and default remains '.'.\nEvidence: Issue https://github.com/garrytan/gbrain/issues/485 and PR https://github.com/garrytan/gbrain/pull/825. Added parser tests in test/backlinks.test.ts. Tests passed: bun test test/backlinks.test.ts, 14 pass 0 fail; bun run typecheck and git diff --check passed.\nVerified by: test/backlinks.test.ts, bun run typecheck, git diff --check",
+    "verification": "Issue https://github.com/garrytan/gbrain/issues/485 and PR https://github.com/garrytan/gbrain/pull/825. Added parser tests in test/backlinks.test.ts. Tests passed: bun test test/backlinks.test.ts, 14 pass 0 fail; bun run typecheck and git diff --check passed."
+  },
+  "freshness": {
+    "ttl_days": 365,
+    "last_verified_at": "2026-05-10T20:10:36.720Z",
+    "verification": "repo_local_agent_capture"
+  },
+  "edges": [],
+  "quality": {
+    "reviewer": "repo-local-agent",
+    "votes_up": 0,
+    "votes_down": 0,
+    "uses_30d": 0,
+    "reports_stale": 0,
+    "review_boundary": "git_or_pr",
+    "promotion_requires_review": true,
+    "score": 100,
+    "reasons": [
+      "high-value memory type",
+      "has source evidence",
+      "grounded to repo paths",
+      "tagged",
+      "concise but substantive",
+      "actionable rationale or verification"
+    ],
+    "risks": [],
+    "duplicate_candidates": [],
+    "estimated_tokens_saved": 177
+  },
+  "created_at": "2026-05-10T20:10:36.720Z",
+  "updated_at": "2026-05-10T20:10:49.552Z"
+}

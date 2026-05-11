@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "entities": ".agent_memory/graph/entities.json",
+  "edges": ".agent_memory/graph/edges.json",
+  "episodes": ".agent_memory/graph/episodes.json",
+  "entity_count": 274,
+  "edge_count": 352,
+  "episode_count": 13
+}

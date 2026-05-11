@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "project_dir": ".",
+  "repo_key": "https-github-com-garrytan-gbrain",
+  "generated_at": "2026-05-10T19:25:43.804Z",
+  "code_graph": {
+    "files": 756,
+    "symbols": 27572,
+    "imports": 2899,
+    "calls": 47136,
+    "routes": 20,
+    "tests": 5364,
+    "packages_and_scripts": 65,
+    "languages": {
+      "json": 4,
+      "markdown": 1,
+      "typescript": 751
+    },
+    "parsers": {
+      "metadata": 5,
+      "typescript-ast": 751
+    },
+    "source_symbols_by_parser": {
+      "typescript-ast": 27572
+    },
+    "indexer_coverage_percent": 100,
+    "index_status": "complete",
+    "indexable_files": 756,
+    "indexed_files": 756,
+    "deferred_files": 0,
+    "ignored_files": 308,
+    "cache_hits": 756,
+    "cache_misses": 0
+  },
+  "structural_index": {
+    "files": 756,
+    "symbols": 27572,
+    "edges": 30471,
+    "metadata_only_files": 0,
+    "ignored_files": 308,
+    "languages": {
+      "json": 4,
+      "markdown": 1,
+      "typescript": 751
+    },
+    "worker_count": 8,
+    "cache_hits": 756,
+    "cache_misses": 0
+  },
+  "memory_graph": {
+    "approved_packets": 3,
+    "pending_packets": 0,
+    "episodes": 4,
+    "entities": 84,
+    "edges": 110,
+    "evidence_backed_edges": 110,
+    "evidence_coverage_percent": 100,
+    "average_quality_score": 90,
+    "duplicate_candidate_pairs": 0
+  },
+  "savings": {
+    "estimated_indexed_source_tokens": 1796180,
+    "estimated_memory_tokens": 1260,
+    "estimated_recall_context_tokens": 1800,
+    "estimated_tokens_saved_per_recall": 1794380
+  },
+  "harness": {
+    "policy_installed": true,
+    "validation_ok": true,
+    "warnings": 0,
+    "errors": 0,
+    "readiness_score": 100
+  },
+  "pain": {
+    "setup_runbook_coverage_percent": 0,
+    "bug_fix_coverage_percent": 0,
+    "decision_coverage_percent": 0,
+    "code_flow_coverage_percent": 100,
+    "recall_hit_rate_percent": 100,
+    "estimated_rediscovery_avoided": 5,
+    "estimated_tokens_saved": 1794380,
+    "time_to_first_use_seconds": 30
+  },
+  "quality": {
+    "totals": {
+      "approved": 3,
+      "pending": 0,
+      "high_signal": 3,
+      "needs_review": 0,
+      "duplicate": 0,
+      "stale": 0,
+      "too_generic": 0
+    },
+    "memory_type_coverage": {
+      "repo_map": 2,
+      "workflow": 1
+    },
+    "useful_memory_ratio_percent": 100,
+    "duplicate_burden": 0,
+    "stale_wrong_feedback_rate_percent": 0,
+    "evidence_coverage_percent": 100,
+    "path_grounding_coverage_percent": 100,
+    "approved_to_pending_ratio": 3
+  }
+}

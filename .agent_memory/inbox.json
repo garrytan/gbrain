@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "project_dir": ".",
+  "generated_at": "2026-05-10T19:25:43.807Z",
+  "ok": true,
+  "counts": {
+    "approved": 3,
+    "pending": 0,
+    "stale": 0,
+    "duplicates": 0,
+    "missing_context": 0,
+    "validation_errors": 0,
+    "validation_warnings": 0
+  },
+  "items": [],
+  "recommendations": []
+}
