@@ -207,4 +207,37 @@ describe('chat touchpoint — chat() smoke + stop-reason mapping (Codex D8)', ()
     const mod = await import('../../src/core/ai/gateway.ts');
     expect(mod).toBeDefined();
   });
+
+  test('tool-result ChatBlocks are converted to AI SDK output envelopes', async () => {
+    const mod = await import('../../src/core/ai/gateway.ts');
+    const messages = (mod as any).__testing.toAiSdkMessages([
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'tc_1',
+            toolName: 'brain_search',
+            output: [{ slug: 'wiki/example' }],
+          },
+          {
+            type: 'tool-result',
+            toolCallId: 'tc_2',
+            toolName: 'broken',
+            output: 'tool failed',
+            isError: true,
+          },
+        ],
+      },
+    ]);
+
+    expect(messages[0]!.content[0]!.output).toEqual({
+      type: 'json',
+      value: [{ slug: 'wiki/example' }],
+    });
+    expect(messages[0]!.content[1]!.output).toEqual({
+      type: 'error-text',
+      value: 'tool failed',
+    });
+  });
 });

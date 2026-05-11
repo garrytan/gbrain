@@ -21,7 +21,7 @@
  *     rotation (via configureGateway()) invalidates stale entries.
  */
 
-import { embed as aiEmbed, embedMany, generateObject, generateText } from 'ai';
+import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -844,6 +844,7 @@ export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export type ChatBlock =
   | { type: 'text'; text: string }
+  | { type: 'reasoning'; text: string }
   | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
   | { type: 'tool-result'; toolCallId: string; toolName: string; output: unknown; isError?: boolean };
 
@@ -896,6 +897,12 @@ export interface ChatOpts {
    */
   cacheSystem?: boolean;
 }
+
+type AiSdkToolResultOutput =
+  | { type: 'text'; value: string }
+  | { type: 'json'; value: unknown }
+  | { type: 'error-text'; value: string }
+  | { type: 'error-json'; value: unknown };
 
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
@@ -988,7 +995,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const tools = (opts.tools ?? []).reduce((acc, t) => {
     acc[t.name] = {
       description: t.description,
-      inputSchema: { jsonSchema: t.inputSchema } as any,
+      inputSchema: jsonSchema(t.inputSchema as any),
     };
     return acc;
   }, {} as Record<string, any>);
@@ -1002,7 +1009,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const result = await generateText({
       model,
       system: opts.system,
-      messages: opts.messages as any,
+      messages: toAiSdkMessages(opts.messages) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? 4096,
       abortSignal: opts.abortSignal,
@@ -1016,6 +1023,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     if (Array.isArray(rawContent) && rawContent.length > 0) {
       for (const part of rawContent) {
         if (part.type === 'text') blocks.push({ type: 'text', text: part.text });
+        else if (part.type === 'reasoning') blocks.push({ type: 'reasoning', text: part.text ?? '' });
         else if (part.type === 'tool-call') {
           blocks.push({
             type: 'tool-call',
@@ -1062,6 +1070,45 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
   }
 }
+
+function toAiSdkMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map(message => {
+    if (!Array.isArray(message.content)) return message;
+    return {
+      ...message,
+      content: message.content.map(block => {
+        if (block.type !== 'tool-result') return block;
+        return {
+          ...block,
+          output: toAiSdkToolResultOutput(block.output, block.isError),
+        };
+      }),
+    };
+  });
+}
+
+function toAiSdkToolResultOutput(output: unknown, isError?: boolean): AiSdkToolResultOutput {
+  if (isError) {
+    if (typeof output === 'string') return { type: 'error-text', value: output };
+    return { type: 'error-json', value: toJsonValue(output) };
+  }
+  if (typeof output === 'string') return { type: 'text', value: output };
+  return { type: 'json', value: toJsonValue(output) };
+}
+
+function toJsonValue(value: unknown): unknown {
+  if (value === undefined) return null;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return String(value);
+  }
+}
+
+export const __testing = {
+  toAiSdkMessages,
+  toAiSdkToolResultOutput,
+};
 
 // ---- Future touchpoint stubs ----
 
