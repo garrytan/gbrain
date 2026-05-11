@@ -29,6 +29,15 @@ export interface EmbedBatchOptions {
    * tick a reporter; Minion handlers can call job.updateProgress here.
    */
   onBatchComplete?: (done: number, total: number) => void;
+  /**
+   * v0.22.15 — cooperative abort. Checked between sub-batches (every
+   * BATCH_SIZE texts, ~1–2s of OpenAI wall-clock). When aborted, throws
+   * `signal.reason`. The autopilot cycle plumbs its per-job AbortSignal
+   * through `runPhaseEmbed` → `runEmbedCore` → `embedBatch` so a wall-clock
+   * timeout actually stops the embed run and lets the cycle's finally
+   * block release `gbrain_cycle_locks`.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -45,10 +54,12 @@ export async function embedBatch(
   if (!texts || texts.length === 0) return [];
   // Fast path: small batch, no progress callback — single gateway call.
   if (texts.length <= BATCH_SIZE && !options.onBatchComplete) {
+    options.signal?.throwIfAborted();
     return gatewayEmbed(texts);
   }
   const results: Float32Array[] = [];
   for (let i = 0; i < texts.length; i += BATCH_SIZE) {
+    options.signal?.throwIfAborted();
     const slice = texts.slice(i, i + BATCH_SIZE);
     const out = await gatewayEmbed(slice);
     results.push(...out);

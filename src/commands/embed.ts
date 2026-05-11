@@ -27,6 +27,14 @@ export interface EmbedOpts {
    * in the DB where `gbrain jobs get` can read it.
    */
   onProgress?: (done: number, total: number, embedded: number) => void;
+  /**
+   * v0.22.15 — cooperative abort. Checked between slugs (per-slug loop)
+   * and between sub-batches inside `embedBatch`. When aborted, throws
+   * `signal.reason`. Plumbed in by `runPhaseEmbed` so a job wall-clock
+   * timeout actually stops embed work instead of holding the cycle lock
+   * past the lock TTL.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -72,20 +80,26 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
 
   if (opts.slugs && opts.slugs.length > 0) {
     for (const s of opts.slugs) {
+      // Check between slugs so a wall-clock abort lands within one slug's
+      // embed work (~2s in the worst case from embedBatch's between-batch
+      // check).
+      opts.signal?.throwIfAborted();
       try {
-        await embedPage(engine, s, !!opts.dryRun, result);
+        await embedPage(engine, s, !!opts.dryRun, result, opts.signal);
       } catch (e: unknown) {
+        // Re-throw abort so the cycle phase fails fast and releases the lock.
+        if (opts.signal?.aborted) throw e;
         console.error(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
       }
     }
     return result;
   }
   if (opts.all || opts.stale) {
-    await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress);
+    await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.signal);
     return result;
   }
   if (opts.slug) {
-    await embedPage(engine, opts.slug, !!opts.dryRun, result);
+    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.signal);
     return result;
   }
   throw new Error('No embed target specified. Pass { slug }, { slugs }, { all }, or { stale }.');
@@ -140,6 +154,7 @@ async function embedPage(
   slug: string,
   dryRun: boolean,
   result: EmbedResult,
+  signal?: AbortSignal,
 ) {
   const page = await engine.getPage(slug);
   if (!page) {
@@ -194,7 +209,7 @@ async function embedPage(
     return;
   }
 
-  const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
+  const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text), { signal });
   const embeddingMap = new Map<number, Float32Array>();
   for (let j = 0; j < toEmbed.length; j++) {
     embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
@@ -219,6 +234,7 @@ async function embedAll(
   dryRun: boolean,
   result: EmbedResult,
   onProgress?: (done: number, total: number, embedded: number) => void,
+  signal?: AbortSignal,
 ) {
   // ─────────────────────────────────────────────────────────────
   // Stale-only fast path: avoid the listPages + per-page getChunks
@@ -234,7 +250,7 @@ async function embedAll(
   // chunks that already have embeddings.
   // ─────────────────────────────────────────────────────────────
   if (staleOnly) {
-    return await embedAllStale(engine, dryRun, result, onProgress);
+    return await embedAllStale(engine, dryRun, result, onProgress, signal);
   }
 
   const pages = await engine.listPages({ limit: 100000 });
@@ -273,7 +289,7 @@ async function embedAll(
     }
 
     try {
-      const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
+      const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text), { signal });
       // Build a map of new embeddings by chunk_index
       const embeddingMap = new Map<number, Float32Array>();
       for (let j = 0; j < toEmbed.length; j++) {
@@ -290,6 +306,8 @@ async function embedAll(
       await engine.upsertChunks(page.slug, updated);
       result.embedded += toEmbed.length;
     } catch (e: unknown) {
+      // Re-throw abort so the worker pool unwinds and the cycle releases its lock.
+      if (signal?.aborted) throw e;
       console.error(`\n  Error embedding ${page.slug}: ${e instanceof Error ? e.message : e}`);
     }
 
@@ -306,6 +324,10 @@ async function embedAll(
   let nextIdx = 0;
   async function worker() {
     while (nextIdx < pages.length) {
+      // Between-slug abort check. embedBatch checks between sub-batches
+      // inside one slug; this check stops the queue between slugs so a
+      // worker doesn't pick up the next page after the timeout fires.
+      signal?.throwIfAborted();
       const idx = nextIdx++;
       await embedOnePage(pages[idx]);
     }
@@ -345,6 +367,7 @@ async function embedAllStale(
   dryRun: boolean,
   result: EmbedResult,
   onProgress?: (done: number, total: number, embedded: number) => void,
+  signal?: AbortSignal,
 ) {
   // Pre-flight: 0 stale chunks → nothing to do, no further DB reads.
   // Cheapest possible exit on the autopilot common case.
@@ -394,7 +417,7 @@ async function embedAllStale(
   async function embedOneSlug(slug: string) {
     const stale = bySlug.get(slug)!;
     try {
-      const embeddings = await embedBatch(stale.map(c => c.chunk_text));
+      const embeddings = await embedBatch(stale.map(c => c.chunk_text), { signal });
       // CRITICAL: passing ONLY the stale indices to upsertChunks would
       // delete every non-stale chunk on the same page (the != ALL filter
       // wipes any chunk_index NOT in the input). To preserve them, we
@@ -418,6 +441,7 @@ async function embedAllStale(
       await engine.upsertChunks(slug, merged);
       result.embedded += stale.length;
     } catch (e: unknown) {
+      if (signal?.aborted) throw e;
       console.error(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
     }
     processed++;
@@ -428,6 +452,7 @@ async function embedAllStale(
   let nextIdx = 0;
   async function worker() {
     while (nextIdx < slugs.length) {
+      signal?.throwIfAborted();
       const idx = nextIdx++;
       await embedOneSlug(slugs[idx]);
     }

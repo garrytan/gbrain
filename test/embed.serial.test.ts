@@ -400,3 +400,58 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
     expect(result.embedded).toBe(2);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// v0.22.15 — cooperative abort coverage.
+//
+// The autopilot cycle plumbs its per-job AbortSignal through
+// runPhaseEmbed → runEmbedCore → embedBatch. When the worker's
+// wall-clock timeout fires, the signal aborts and embed work must stop
+// fast enough that the cycle's finally block can release
+// gbrain_cycle_locks before the lock TTL elapses.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('runEmbedCore cooperative abort (v0.22.15)', () => {
+  test('--stale path stops between slugs once signal fires', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const slugs = Array.from({ length: 20 }, (_, i) => `page-${i}`);
+    const staleRows = slugs.map(s => ({
+      slug: s,
+      chunk_index: 0,
+      chunk_text: `text for ${s}`,
+      chunk_source: 'compiled_truth',
+      token_count: 1,
+    }));
+
+    const controller = new AbortController();
+    let upsertedSlugs = 0;
+
+    const engine = mockEngine({
+      countStaleChunks: async () => staleRows.length,
+      listStaleChunks: async () => staleRows,
+      getChunks: async (slug: string) => [{ chunk_index: 0, chunk_text: slug, chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 }],
+      upsertChunks: async () => {
+        upsertedSlugs++;
+        // Fire abort partway through; subsequent worker iterations
+        // must throwIfAborted() and unwind.
+        if (upsertedSlugs === 3) controller.abort(new Error('test-abort'));
+      },
+    });
+
+    process.env.GBRAIN_EMBED_CONCURRENCY = '2';
+
+    await expect(
+      runEmbedCore(engine, { stale: true, signal: controller.signal }),
+    ).rejects.toThrow('test-abort');
+
+    // Abort kicks in well before all 20 slugs run. Allow a small
+    // overshoot for the 2 in-flight workers to finish their current
+    // slug, but the bulk of the work must NOT have run.
+    expect(upsertedSlugs).toBeLessThan(slugs.length);
+    expect(upsertedSlugs).toBeLessThanOrEqual(6);
+  });
+
+  // embedBatch internals are tested in test/embedding-abort.serial.test.ts
+  // (this file mocks embedBatch wholesale, so we can't reach its
+  // sub-batch boundary from here).
+});
