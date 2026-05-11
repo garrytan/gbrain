@@ -396,23 +396,61 @@ async function checkSubagentProvider(engine: BrainEngine): Promise<Check> {
   }
 }
 
+// Module-scoped flag so the NaN-fallback warning fires once per process.
+let _syncFreshnessEnvWarned = false;
+
+function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
+  const raw = process.env[varName];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    if (!_syncFreshnessEnvWarned) {
+      _syncFreshnessEnvWarned = true;
+      console.warn(
+        `[gbrain doctor] Ignoring invalid ${varName}=${raw}; using default ${fallback}h.`,
+      );
+    }
+    return fallback;
+  }
+  return n;
+}
+
 /**
- * Sync freshness check — verify that sources with local_path have been synced recently.
- * 
- * This check prevents situations where gbrain sync hasn't run in days/weeks,
- * causing brain search to miss recently written pages. The check examines sources.last_sync_at
- * for each federated source and warns/fails based on staleness thresholds.
+ * Sync freshness check (v0.32.4) — verify that sources with local_path have
+ * been synced recently. Detects the silent failure mode where `gbrain sync`
+ * stopped running and brain search now misses recent pages.
+ *
+ * Pure staleness check. Reads `sources.last_sync_at` only — no filesystem
+ * access. Filesystem-vs-DB drift detection is intentionally out of scope:
+ *   - doctorReportRemote runs in the HTTP MCP server (src/commands/serve-http.ts);
+ *     walking arbitrary DB-supplied paths from a remote-callable endpoint
+ *     crosses a trust boundary (OAuth write scope could mutate local_path).
+ *   - Drift detection belongs in `multi_source_drift` which already has
+ *     GBRAIN_DRIFT_LIMIT + GBRAIN_DRIFT_TIMEOUT_MS guards.
+ *
+ * Thresholds (env-overridable, default = 24h warn / 72h fail):
+ *   - GBRAIN_SYNC_FRESHNESS_WARN_HOURS
+ *   - GBRAIN_SYNC_FRESHNESS_FAIL_HOURS
+ * Invalid values (NaN, ≤0) fall back to defaults with a once-per-process warn.
+ *
+ * Edge cases handled:
+ *   - last_sync_at IS NULL → fail "never synced"
+ *   - last_sync_at > now() (clock skew / corrupted timestamp) → warn
+ *   - mixed sources → highest-severity drives the overall status
+ *   - executeRaw throws → outer-catch warn so doctor keeps running
+ *
+ * Failure messages embed `source.id` so the fix command
+ * `gbrain sync --source <id>` matches what the user copy-pastes.
  */
-async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
+export async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
   try {
-    // Query all sources with local_path (federated sources that sync from disk)
     const sources = await engine.executeRaw<{
       id: string;
       name: string;
       local_path: string | null;
       last_sync_at: Date | null;
     }>(
-      `SELECT id, name, local_path, last_sync_at FROM sources WHERE local_path IS NOT NULL`
+      `SELECT id, name, local_path, last_sync_at FROM sources WHERE local_path IS NOT NULL`,
     );
 
     if (sources.length === 0) {
@@ -423,104 +461,71 @@ async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
       };
     }
 
+    const warnHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_WARN_HOURS', 24);
+    const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
+    const warnMs = warnHours * 60 * 60 * 1000;
+    const failMs = failHours * 60 * 60 * 1000;
+
     const now = Date.now();
     const issues: string[] = [];
     let hasWarnings = false;
     let hasFailures = false;
 
-    // Also check for page count drift if we can access the filesystem
-    const driftWarnings: string[] = [];
-
     for (const source of sources) {
-      const name = source.name || source.id;
+      // Embed source.id in user-visible messages so `gbrain sync --source <id>`
+      // matches what the user copy-pastes. Show display name in parens when set.
+      const display = source.name && source.name !== source.id
+        ? `'${source.id}' (${source.name})`
+        : `'${source.id}'`;
 
       if (!source.last_sync_at) {
-        issues.push(`Source '${name}' has never been synced`);
+        issues.push(`Source ${display} has never been synced`);
         hasFailures = true;
         continue;
       }
 
       const lastSync = new Date(source.last_sync_at).getTime();
       const ageMs = now - lastSync;
+
+      if (ageMs < 0) {
+        issues.push(
+          `Source ${display} has future last_sync_at — clock skew or corrupted timestamp`,
+        );
+        hasWarnings = true;
+        continue;
+      }
+
       const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
       const ageDays = Math.floor(ageHours / 24);
 
-      if (ageMs > 72 * 60 * 60 * 1000) { // > 72 hours
-        issues.push(`Source '${name}' last synced ${ageDays}d ago — brain search is stale!`);
+      if (ageMs > failMs) {
+        issues.push(`Source ${display} last synced ${ageDays}d ago — brain search is stale!`);
         hasFailures = true;
-      } else if (ageMs > 24 * 60 * 60 * 1000) { // > 24 hours
-        issues.push(`Source '${name}' last synced ${ageHours}h ago`);
+      } else if (ageMs > warnMs) {
+        issues.push(`Source ${display} last synced ${ageHours}h ago`);
         hasWarnings = true;
       }
-
-      // Check page count drift (best effort)
-      if (source.local_path) {
-        try {
-          const { existsSync, readdirSync, lstatSync } = await import('fs');
-          const { join } = await import('path');
-          
-          if (existsSync(source.local_path)) {
-            // Count markdown files recursively (rough estimate)
-            let fileCount = 0;
-            const walkDir = (dir: string, depth = 0) => {
-              if (depth > 10) return; // Prevent runaway recursion
-              try {
-                const entries = readdirSync(dir, { withFileTypes: true });
-                for (const entry of entries) {
-                  if (entry.isDirectory() && !entry.name.startsWith('.')) {
-                    walkDir(join(dir, entry.name), depth + 1);
-                  } else if (entry.isFile() && entry.name.endsWith('.md')) {
-                    fileCount++;
-                  }
-                }
-              } catch {
-                // Skip unreadable directories
-              }
-            };
-            walkDir(source.local_path);
-
-            // Get DB page count for this source
-            const pageCountRows = await engine.executeRaw<{ count: number }>(
-              `SELECT COUNT(*)::int AS count FROM pages WHERE source_id = $1`,
-              [source.id]
-            );
-            const dbPageCount = pageCountRows[0]?.count || 0;
-
-            // If DB has >10% fewer pages than disk, warn about drift
-            if (fileCount > 0 && dbPageCount < fileCount * 0.9) {
-              const driftPct = Math.round((1 - dbPageCount / fileCount) * 100);
-              driftWarnings.push(`Source '${name}' has ${dbPageCount} pages in DB but ~${fileCount} .md files on disk (${driftPct}% drift)`);
-            }
-          }
-        } catch {
-          // Filesystem access failed, skip drift check
-        }
-      }
     }
-
-    // Build result message
-    let message: string;
-    let status: 'ok' | 'warn' | 'fail';
 
     if (hasFailures) {
-      status = 'fail';
-      const failureList = issues.join('; ');
-      message = `${failureList}. Run \`gbrain sync --source <id>\` for each stale source`;
-    } else if (hasWarnings || driftWarnings.length > 0) {
-      status = 'warn';
-      const allIssues = [...issues, ...driftWarnings];
-      message = `${allIssues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh`;
-    } else {
-      status = 'ok';
-      message = `All ${sources.length} federated source(s) synced recently`;
+      return {
+        name: 'sync_freshness',
+        status: 'fail',
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source`,
+      };
     }
-
+    if (hasWarnings) {
+      return {
+        name: 'sync_freshness',
+        status: 'warn',
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh`,
+      };
+    }
     return {
       name: 'sync_freshness',
-      status,
-      message,
+      status: 'ok',
+      message: `All ${sources.length} federated source(s) synced recently`,
     };
-
   } catch (e) {
     return {
       name: 'sync_freshness',
