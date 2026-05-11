@@ -344,6 +344,9 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // surfacing layer.)
   checks.push(await checkSubagentProvider(engine));
 
+  // 6. Sync freshness check
+  checks.push(await checkSyncFreshness(engine));
+
   return computeDoctorReport(checks);
 }
 
@@ -389,6 +392,140 @@ async function checkSubagentProvider(engine: BrainEngine): Promise<Check> {
       name: 'subagent_provider',
       status: 'warn',
       message: `Could not check subagent provider: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * Sync freshness check — verify that sources with local_path have been synced recently.
+ * 
+ * This check prevents situations where gbrain sync hasn't run in days/weeks,
+ * causing brain search to miss recently written pages. The check examines sources.last_sync_at
+ * for each federated source and warns/fails based on staleness thresholds.
+ */
+async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
+  try {
+    // Query all sources with local_path (federated sources that sync from disk)
+    const sources = await engine.executeRaw<{
+      id: string;
+      name: string;
+      local_path: string | null;
+      last_sync_at: Date | null;
+    }>(
+      `SELECT id, name, local_path, last_sync_at FROM sources WHERE local_path IS NOT NULL`
+    );
+
+    if (sources.length === 0) {
+      return {
+        name: 'sync_freshness',
+        status: 'ok',
+        message: 'No federated sources to sync',
+      };
+    }
+
+    const now = Date.now();
+    const issues: string[] = [];
+    let hasWarnings = false;
+    let hasFailures = false;
+
+    // Also check for page count drift if we can access the filesystem
+    const driftWarnings: string[] = [];
+
+    for (const source of sources) {
+      const name = source.name || source.id;
+
+      if (!source.last_sync_at) {
+        issues.push(`Source '${name}' has never been synced`);
+        hasFailures = true;
+        continue;
+      }
+
+      const lastSync = new Date(source.last_sync_at).getTime();
+      const ageMs = now - lastSync;
+      const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
+      const ageDays = Math.floor(ageHours / 24);
+
+      if (ageMs > 72 * 60 * 60 * 1000) { // > 72 hours
+        issues.push(`Source '${name}' last synced ${ageDays}d ago — brain search is stale!`);
+        hasFailures = true;
+      } else if (ageMs > 24 * 60 * 60 * 1000) { // > 24 hours
+        issues.push(`Source '${name}' last synced ${ageHours}h ago`);
+        hasWarnings = true;
+      }
+
+      // Check page count drift (best effort)
+      if (source.local_path) {
+        try {
+          const { existsSync, readdirSync, lstatSync } = await import('fs');
+          const { join } = await import('path');
+          
+          if (existsSync(source.local_path)) {
+            // Count markdown files recursively (rough estimate)
+            let fileCount = 0;
+            const walkDir = (dir: string, depth = 0) => {
+              if (depth > 10) return; // Prevent runaway recursion
+              try {
+                const entries = readdirSync(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                  if (entry.isDirectory() && !entry.name.startsWith('.')) {
+                    walkDir(join(dir, entry.name), depth + 1);
+                  } else if (entry.isFile() && entry.name.endsWith('.md')) {
+                    fileCount++;
+                  }
+                }
+              } catch {
+                // Skip unreadable directories
+              }
+            };
+            walkDir(source.local_path);
+
+            // Get DB page count for this source
+            const pageCountRows = await engine.executeRaw<{ count: number }>(
+              `SELECT COUNT(*)::int AS count FROM pages WHERE source_id = $1`,
+              [source.id]
+            );
+            const dbPageCount = pageCountRows[0]?.count || 0;
+
+            // If DB has >10% fewer pages than disk, warn about drift
+            if (fileCount > 0 && dbPageCount < fileCount * 0.9) {
+              const driftPct = Math.round((1 - dbPageCount / fileCount) * 100);
+              driftWarnings.push(`Source '${name}' has ${dbPageCount} pages in DB but ~${fileCount} .md files on disk (${driftPct}% drift)`);
+            }
+          }
+        } catch {
+          // Filesystem access failed, skip drift check
+        }
+      }
+    }
+
+    // Build result message
+    let message: string;
+    let status: 'ok' | 'warn' | 'fail';
+
+    if (hasFailures) {
+      status = 'fail';
+      const failureList = issues.join('; ');
+      message = `${failureList}. Run \`gbrain sync --source <id>\` for each stale source`;
+    } else if (hasWarnings || driftWarnings.length > 0) {
+      status = 'warn';
+      const allIssues = [...issues, ...driftWarnings];
+      message = `${allIssues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh`;
+    } else {
+      status = 'ok';
+      message = `All ${sources.length} federated source(s) synced recently`;
+    }
+
+    return {
+      name: 'sync_freshness',
+      status,
+      message,
+    };
+
+  } catch (e) {
+    return {
+      name: 'sync_freshness',
+      status: 'warn',
+      message: `Could not check sync freshness: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
 }
@@ -2006,6 +2143,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         });
       }
     } catch { /* config table missing on a very old brain — skip */ }
+  }
+
+  // Sync freshness check (v0.32 — Check that sources are synced recently)
+  if (engine !== null) {
+    progress.heartbeat('sync_freshness');
+    checks.push(await checkSyncFreshness(engine));
   }
 
   progress.finish();
