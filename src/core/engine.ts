@@ -171,6 +171,12 @@ export interface BrainEngine {
   addTag(slug: string, tag: string): Promise<void>;
   removeTag(slug: string, tag: string): Promise<void>;
   getTags(slug: string): Promise<string[]>;
+  /**
+   * Batch fetch tags for a list of slugs. Returns a map of slug → tag[].
+   * Slugs with no tags are absent from the map. Single query, not N+1.
+   * Used by the tag-boost step in hybrid search.
+   */
+  getTagsForSlugs(slugs: string[]): Promise<Map<string, string[]>>;
 
   // Timeline
   /**

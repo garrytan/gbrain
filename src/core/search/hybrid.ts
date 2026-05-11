@@ -15,6 +15,28 @@ import type { SearchResult, SearchOpts } from '../types.ts';
 import { embed } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
 import { autoDetectDetail } from './intent.ts';
+import { readFileSync } from 'fs';
+import { homedir } from 'os';
+
+// ---------------------------------------------------------------------------
+// Tag-weight config (loaded once per process from ~/.gbrain/tag-weights.json)
+// ---------------------------------------------------------------------------
+interface TagWeightConfig {
+  weights: Record<string, number>;
+  relations: Record<string, Record<string, number>>;
+}
+
+let _tagConfig: TagWeightConfig | null = null;
+function getTagConfig(): TagWeightConfig {
+  if (_tagConfig) return _tagConfig;
+  try {
+    const raw = readFileSync(`${homedir()}/.gbrain/tag-weights.json`, 'utf-8');
+    _tagConfig = JSON.parse(raw) as TagWeightConfig;
+  } catch {
+    _tagConfig = { weights: {}, relations: {} };
+  }
+  return _tagConfig;
+}
 
 const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
@@ -54,6 +76,54 @@ export function applyFrontmatterBoost(results: SearchResult[], boosts: Map<strin
     const multiplier = boosts.get(r.slug);
     if (multiplier != null) {
       r.score *= multiplier;
+    }
+  }
+}
+
+/**
+ * Apply tag-based boost using weights and tag-relationship bonuses.
+ *
+ * For each result:
+ *   base    = max(weight[tag]) across the page's tags (or 1.0 if untagged)
+ *   bonus   = Σ relation[t1][t2] for each ordered pair (t1, t2) in the page's tags
+ *   multiplier = base × (1 + bonus)
+ *
+ * Bridge pages (tagged with two related high-value tags) are rewarded
+ * multiplicatively — e.g. 業務知識(1.4) + 說服力 relation(0.15) → 1.4 × 1.15 = 1.61×.
+ *
+ * Config loaded from ~/.gbrain/tag-weights.json (cached per process).
+ * Pass `config` to override the default config (useful in unit tests).
+ */
+export function applyTagBoost(
+  results: SearchResult[],
+  tagsMap: Map<string, string[]>,
+  config?: TagWeightConfig,
+): void {
+  const { weights, relations } = config ?? getTagConfig();
+  if (Object.keys(weights).length === 0) return;
+
+  for (const r of results) {
+    const tags = tagsMap.get(r.slug);
+    if (!tags || tags.length === 0) continue;
+
+    // Base: highest weight tag wins
+    const base = Math.max(...tags.map(t => weights[t] ?? 1.0));
+
+    // Relation bonus: sum over all tag pairs
+    let bonus = 0;
+    for (let i = 0; i < tags.length; i++) {
+      const relMap = relations[tags[i]];
+      if (!relMap) continue;
+      for (let j = 0; j < tags.length; j++) {
+        if (i === j) continue;
+        bonus += relMap[tags[j]] ?? 0;
+      }
+    }
+
+    r.score *= base * (1 + bonus);
+
+    if (DEBUG) {
+      console.error(`[search-debug] ${r.slug} tag-boost base=${base.toFixed(2)} bonus=${bonus.toFixed(3)} tags=[${tags.join(',')}]`);
     }
   }
 }
@@ -98,10 +168,14 @@ export async function hybridSearch(
     if (keywordResults.length > 0) {
       try {
         const slugs = Array.from(new Set(keywordResults.map(r => r.slug)));
-        const counts = await engine.getBacklinkCounts(slugs);
+        const [counts, fmBoosts, tagsMap] = await Promise.all([
+          engine.getBacklinkCounts(slugs),
+          engine.getFrontmatterBoosts(slugs),
+          engine.getTagsForSlugs(slugs),
+        ]);
         applyBacklinkBoost(keywordResults, counts);
-        const fmBoosts = await engine.getFrontmatterBoosts(slugs);
         applyFrontmatterBoost(keywordResults, fmBoosts);
+        applyTagBoost(keywordResults, tagsMap);
         keywordResults.sort((a, b) => b.score - a.score);
       } catch {
         // Boost failure is non-fatal: keep unboosted ranking.
@@ -156,12 +230,14 @@ export async function hybridSearch(
   if (fused.length > 0) {
     try {
       const slugs = Array.from(new Set(fused.map(r => r.slug)));
-      const [counts, fmBoosts] = await Promise.all([
+      const [counts, fmBoosts, tagsMap] = await Promise.all([
         engine.getBacklinkCounts(slugs),
         engine.getFrontmatterBoosts(slugs),
+        engine.getTagsForSlugs(slugs),
       ]);
       applyBacklinkBoost(fused, counts);
       applyFrontmatterBoost(fused, fmBoosts);
+      applyTagBoost(fused, tagsMap);
       fused.sort((a, b) => b.score - a.score);
     } catch {
       // Boost failure is non-fatal: keep blended cosine ranking.

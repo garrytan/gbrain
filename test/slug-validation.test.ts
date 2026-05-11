@@ -44,8 +44,9 @@ describe('slugifySegment', () => {
     expect(slugifySegment('Apple Notes')).toBe('apple-notes');
   });
 
-  test('returns empty for all-special-chars input', () => {
-    expect(slugifySegment('!!!')).toBe('');
+  test('all-special-chars falls back to page-{hash}', () => {
+    // slugifySegment generates a deterministic hash slug so pages are never silently dropped
+    expect(slugifySegment('!!!')).toMatch(/^page-[0-9a-f]{8}$/);
   });
 
   test('handles curly quotes and ellipsis', () => {
@@ -79,8 +80,9 @@ describe('slugifyPath', () => {
     expect(slugifyPath('./notes/file.md')).toBe('notes/file');
   });
 
-  test('filters empty segments from all-special-chars dirs', () => {
-    expect(slugifyPath('!!!/file.md')).toBe('file');
+  test('all-special-chars dir gets hash segment, file is preserved', () => {
+    // slugifySegment('!!!') → page-{hash}, so the path becomes page-{hash}/file
+    expect(slugifyPath('!!!/file.md')).toMatch(/^page-[0-9a-f]{8}\/file$/);
   });
 
   test('preserves dots in filenames', () => {
