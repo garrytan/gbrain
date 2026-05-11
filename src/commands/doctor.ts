@@ -846,16 +846,29 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
 
   // 4. pgvector extension
   progress.heartbeat('pgvector');
-  try {
-    const sql = db.getConnection();
-    const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
-    if (ext.length > 0) {
-      checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
-    } else {
-      checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
+  if (engine.kind === 'pglite') {
+    // PGLite bundles pgvector at build time via @electric-sql/pglite's
+    // `vector` extension import (see pglite-engine.ts:connect); there is
+    // no `pg_extension` catalog to probe. The 1536-dim vector columns
+    // already exercise the extension on every embed/search call, so the
+    // separate doctor probe is redundant — skip it loudly.
+    checks.push({
+      name: 'pgvector',
+      status: 'ok',
+      message: 'Skipped (PGLite — pgvector loaded as a WASM extension at engine boot)',
+    });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
+      if (ext.length > 0) {
+        checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
+      } else {
+        checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
+      }
+    } catch {
+      checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
     }
-  } catch {
-    checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
   }
 
   // 4b. PgBouncer / prepared-statement compatibility.
@@ -1305,7 +1318,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // repair target, per #254/Codex review).
   progress.heartbeat('jsonb_integrity');
   try {
-    const sql = db.getConnection();
+    // Use engine.executeRaw rather than db.getConnection() so this check
+    // runs on BOTH engines. The v0.12.0 double-encode bug was specific to
+    // postgres.js's `${JSON.stringify(x)}::jsonb` interpolation — PGLite
+    // never had that bug class — but the scan is cheap (5 count(*) queries)
+    // and a positive "all clean" signal on PGLite is more useful than a
+    // confusing "Could not check" warn.
     const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
       { table: 'pages',         col: 'frontmatter',    expected: 'object' },
       { table: 'raw_data',      col: 'data',           expected: 'object' },
@@ -1317,10 +1335,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     const breakdown: string[] = [];
     for (const { table, col } of targets) {
       progress.heartbeat(`jsonb_integrity.${table}.${col}`);
-      const rows = await sql.unsafe(
+      // Identifiers are hard-coded in the targets table above — never
+      // user-supplied — so direct interpolation is safe here.
+      const rows = await engine.executeRaw<{ n: number }>(
         `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
       );
-      const n = Number((rows as any)[0]?.n ?? 0);
+      const n = Number(rows[0]?.n ?? 0);
       if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
     }
     if (totalBad === 0) {
@@ -1332,8 +1352,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
       });
     }
-  } catch {
-    checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
+  } catch (e) {
+    checks.push({
+      name: 'jsonb_integrity',
+      status: 'warn',
+      message: `Could not check JSONB integrity (${e instanceof Error ? e.message : String(e)})`,
+    });
   }
 
   // 10b. Takes weight grid integrity (v0.32 — EXP-2).
