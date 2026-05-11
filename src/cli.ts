@@ -1483,6 +1483,7 @@ ADMIN
     --token-ttl N                    Access token TTL in seconds (default: 3600)
     --enable-dcr                     Enable Dynamic Client Registration
     --public-url URL                 Public issuer URL (required behind proxy/tunnel)
+    --bind HOST                      Bind address (default 0.0.0.0; pass 127.0.0.1 for loopback-only)
   call <tool> '<json>'               Raw tool invocation
   version                            Version info
   --tools-json                       Tool discovery (JSON)

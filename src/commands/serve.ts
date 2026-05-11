@@ -90,8 +90,16 @@ export async function runServe(
     // when set so the posture change is visible in stderr.
     const logFullParams = args.includes('--log-full-params');
 
+    // --bind <host>: address app.listen() binds to. Defaults to '0.0.0.0' (all
+    // interfaces) to preserve historical behavior. Pass '127.0.0.1' (or '::1')
+    // for a loopback-only deployment where the brain is consumed by on-host
+    // agents and must not be reachable from the network. Reverse-proxy users
+    // keep the default and front the server with TLS + auth at the proxy.
+    const bindIdx = args.indexOf('--bind');
+    const bind = bindIdx >= 0 ? args[bindIdx + 1] : undefined;
+
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams });
+    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams, bind });
     return;
   }
 
