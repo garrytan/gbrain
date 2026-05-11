@@ -139,10 +139,13 @@ export interface Recipe {
     chat?: ChatTouchpoint;
   };
   /**
-   * Optional alias map for friendlier `provider:model` strings (Codex F-OV-5).
-   * Resolved at parse time so users can write `anthropic:claude-sonnet-4-6`
-   * instead of `anthropic:claude-sonnet-4-6-20250929`. Keys are aliases,
-   * values are canonical (declared) model ids.
+   * Optional alias map for friendlier `provider:model` strings.
+   * Resolved at parse time. For pre-4.6 models, undated forms alias to dated
+   * pinned snapshots (e.g. `claude-haiku-4-5` → `claude-haiku-4-5-20251001`).
+   * For Claude 4.6+, model IDs are dateless and self-pinned — no forward alias
+   * needed. Reverse-direction entries can rewrite stale/broken IDs back to
+   * canonical (e.g. `claude-sonnet-4-6-20250929` → `claude-sonnet-4-6`) for
+   * back-compat with users who have stale config strings.
    */
   aliases?: Record<string, string>;
   /** One-line description of setup (shown in wizard + env subcommand). */

@@ -22,6 +22,7 @@ import type { AggregateResult, SlotResult } from './aggregate.ts';
 import { parseModelJSON } from './json-repair.ts';
 import { receiptName, sha8 } from './receipt-name.ts';
 import { writeReceipt } from './receipt-write.ts';
+import { ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
 
 export const RECEIPT_SCHEMA_VERSION = 1;
 
@@ -320,13 +321,23 @@ export interface CostEstimate {
 export function estimateCost(slots: SlotConfig[], cycles: number, maxTokens: number): CostEstimate {
   // Per-call cost = (input_tokens × input_price + output_tokens × output_price) / 1e6.
   // Without knowing prompt size, estimate input ~5k tokens (a SKILL.md + scoring rubric).
+  //
+  // Anthropic prices read from ANTHROPIC_PRICING (single source of truth — fixes
+  // the drift trap Codex flagged in v0.31.12 plan review: this map and
+  // anthropic-pricing.ts duplicated Anthropic prices, with stale values diverging).
+  // Non-Anthropic models still live inline until OPENAI_PRICING / GOOGLE_PRICING
+  // tables exist.
   const ESTIMATED_INPUT_TOKENS = 5000;
+  const anthropicPrice = (modelId: string): { in: number; out: number } | undefined => {
+    const p = ANTHROPIC_PRICING[modelId];
+    return p ? { in: p.input, out: p.output } : undefined;
+  };
   const PRICING: Record<string, { in: number; out: number } | undefined> = {
     'openai:gpt-4o': { in: 2.5, out: 10.0 },
     'openai:gpt-4o-mini': { in: 0.15, out: 0.6 },
-    'anthropic:claude-opus-4-7': { in: 15.0, out: 75.0 },
-    'anthropic:claude-sonnet-4-6-20250929': { in: 3.0, out: 15.0 },
-    'anthropic:claude-haiku-4-5-20251001': { in: 0.25, out: 1.25 },
+    'anthropic:claude-opus-4-7': anthropicPrice('claude-opus-4-7'),
+    'anthropic:claude-sonnet-4-6': anthropicPrice('claude-sonnet-4-6'),
+    'anthropic:claude-haiku-4-5-20251001': anthropicPrice('claude-haiku-4-5-20251001'),
     'google:gemini-1.5-pro': { in: 1.25, out: 5.0 },
     'google:gemini-2.0-flash': { in: 0.1, out: 0.4 },
     'together:meta-llama/Llama-3.3-70B-Instruct-Turbo': { in: 0.88, out: 0.88 },
