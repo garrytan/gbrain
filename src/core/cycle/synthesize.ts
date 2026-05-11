@@ -32,7 +32,9 @@ import { join, dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
+import { MinionWorker } from '../minions/worker.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
+import { makeSubagentHandler, type MessagesClient } from '../minions/handlers/subagent.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { discoverTranscripts, type DiscoveredTranscript } from './transcript-discovery.ts';
 import { serializeMarkdown } from '../markdown.ts';
@@ -231,6 +233,14 @@ export interface SynthesizePhaseOpts {
    * the synthesize loop. Caller must opt in explicitly.
    */
   bypassDreamGuard?: boolean;
+  /**
+   * v0.30 — Test seam for the inline subagent worker. When set AND the
+   * engine is PGLite, the inline worker constructs its `subagent` handler
+   * with this Anthropic Messages client instead of `new Anthropic()`.
+   * Production callers leave this undefined; the SDK default kicks in and
+   * reads `ANTHROPIC_API_KEY` from env.
+   */
+  subagentClient?: MessagesClient;
 }
 
 export async function runPhaseSynthesize(
@@ -421,26 +431,83 @@ export async function runPhaseSynthesize(
       }
     }
 
+    // v0.30 — PGLite has no minion-worker daemon (gbrain jobs work only
+    // runs against Postgres). Before v0.30, the synthesize phase submitted
+    // subagent children, then polled `waitForCompletion` until 35min ran
+    // out — the children were never claimed because nothing was registered
+    // to run them. Result: 70min of wasted poll per nightly cycle, zero
+    // synth pages written, and the cooldown never advancing.
+    //
+    // The fix: spin up an inline MinionWorker bound to this engine for the
+    // duration of the wait loop. It registers the `subagent` handler in
+    // this process, claims our just-submitted children, and runs them
+    // through the same code path Postgres deployments use. `stop()` in
+    // the finally ensures the worker drains when synthesize exits.
+    let inlineWorker: MinionWorker | null = null;
+    let inlineWorkerStarted: Promise<void> | null = null;
+    if (engine.kind === 'pglite' && childIds.length > 0) {
+      inlineWorker = new MinionWorker(engine, {
+        // One handler per child, capped — synthesize typically fans out
+        // 1-3 transcripts per cycle. Higher concurrency just sits idle.
+        concurrency: Math.min(childIds.length, 4),
+        // PGLite is in-process; poll fast so the first claim lands ~immediately
+        // instead of waiting up to 5s.
+        pollInterval: 500,
+        // No external worker rescues jobs that this in-process worker fails
+        // to claim. Don't artificially shorten the time budget.
+        stallWarnAfterMs: 10 * 60_000,
+        stallExitAfterMs: 35 * 60_000,
+      });
+      inlineWorker.register(
+        'subagent',
+        makeSubagentHandler({ engine, client: opts.subagentClient }),
+      );
+      // start() blocks until stopped — run in background. The catch
+      // logs but doesn't kill synthesize: the wait loop will still hit
+      // its own 35min ceiling if the worker crashes.
+      inlineWorkerStarted = inlineWorker.start();
+      inlineWorkerStarted.catch((err: unknown) => {
+        console.error(
+          '[synthesize] inline subagent worker crashed:',
+          err instanceof Error ? err.message : String(err),
+        );
+      });
+    }
+
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
     const childOutcomes: Array<{ jobId: number; status: string }> = [];
-    for (const jobId of childIds) {
-      try {
-        const job = await waitForCompletion(queue, jobId, {
-          timeoutMs: 35 * 60 * 1000,
-          pollMs: 5 * 1000,
-        });
-        childOutcomes.push({ jobId, status: job.status });
-      } catch (e) {
-        if (e instanceof TimeoutError) {
-          childOutcomes.push({ jobId, status: 'timeout' });
-        } else {
-          throw e;
+    try {
+      for (const jobId of childIds) {
+        try {
+          const job = await waitForCompletion(queue, jobId, {
+            timeoutMs: 35 * 60 * 1000,
+            pollMs: 5 * 1000,
+          });
+          childOutcomes.push({ jobId, status: job.status });
+        } catch (e) {
+          if (e instanceof TimeoutError) {
+            childOutcomes.push({ jobId, status: 'timeout' });
+          } else {
+            throw e;
+          }
+        }
+        // After each child terminal, give the cycle lock + worker job lock a chance.
+        if (opts.yieldDuringPhase) {
+          try { await opts.yieldDuringPhase(); } catch { /* best-effort */ }
         }
       }
-      // After each child terminal, give the cycle lock + worker job lock a chance.
-      if (opts.yieldDuringPhase) {
-        try { await opts.yieldDuringPhase(); } catch { /* best-effort */ }
+    } finally {
+      if (inlineWorker) {
+        inlineWorker.stop();
+        // Let the start() loop notice running=false and resolve. Cap at 5s
+        // so a wedged tick can't block the cycle.
+        if (inlineWorkerStarted) {
+          await Promise.race([
+            inlineWorkerStarted,
+            new Promise<void>((r) => setTimeout(r, 5000)),
+          ]).catch(() => { /* already logged in the catch above */ });
+        }
       }
     }
 
