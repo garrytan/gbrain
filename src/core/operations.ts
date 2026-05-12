@@ -945,6 +945,42 @@ const list_pages: Operation = {
 
 // --- Search ---
 
+/**
+ * v0.32 (#784): validate the search/query `source` param. Resolves to
+ * the canonical source id (string) when registered + not archived, or
+ * `undefined` when the param is omitted (null/undefined/empty-string all
+ * mean "no filter", matching the rest of the search-op param shape).
+ *
+ * Happy-path: one indexed `SELECT id FROM sources WHERE id = $1` — the
+ * search/query path is hot, so we avoid listSources() (N+1: countPages
+ * per row). The error path takes the slower listSources hit to populate
+ * an actionable "Available: a, b, c" hint, which is fine since the
+ * caller already typed wrong. See #784.
+ */
+async function resolveSourceFilter(
+  engine: BrainEngine,
+  source: unknown,
+): Promise<string | undefined> {
+  if (source === undefined || source === null || source === '') return undefined;
+  if (typeof source !== 'string') {
+    throw new OperationError('invalid_source', `'source' must be a string`);
+  }
+  const rows = await engine.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE id = $1 AND archived IS NOT TRUE LIMIT 1`,
+    [source],
+  );
+  if (rows.length === 0) {
+    const { listSources } = await import('./sources-ops.ts');
+    const known = await listSources(engine, {});
+    const available = known.map(s => s.id).join(', ') || '(none registered)';
+    throw new OperationError(
+      'unknown_source',
+      `unknown source '${source}'. Available: ${available}`,
+    );
+  }
+  return source;
+}
+
 const search: Operation = {
   name: 'search',
   description: SEARCH_DESCRIPTION,
@@ -952,13 +988,16 @@ const search: Operation = {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
+    source: { type: 'string', description: 'Filter to a single registered source id (see `gbrain sources list`). Throws unknown_source if the id is not registered.' },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
     const queryText = p.query as string;
+    const sourceId = await resolveSourceFilter(ctx.engine, p.source);
     const raw = await ctx.engine.searchKeyword(queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
+      sourceId,
     });
     const results = dedupResults(raw);
     const latency_ms = Date.now() - startedAt;
@@ -1047,6 +1086,7 @@ const query: Operation = {
       description:
         "v0.29.1 — filter to effective_date <= this. Same format as `since`. Replaces deprecated `beforeDate`. YYYY-MM-DD lands at end-of-day.",
     },
+    source: { type: 'string', description: 'Filter to a single registered source id (see `gbrain sources list`). Throws unknown_source if the id is not registered.' },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
@@ -1055,6 +1095,7 @@ const query: Operation = {
     const queryText = p.query as string | undefined;
     const imageData = p.image as string | undefined;
     const imageMime = (p.image_mime as string) || 'image/jpeg';
+    const sourceId = await resolveSourceFilter(ctx.engine, p.source);
 
     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
     // text-only); embeds the image via embedMultimodal and runs a direct
@@ -1068,6 +1109,7 @@ const query: Operation = {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
+        sourceId,
       });
       return results;
     }
@@ -1095,6 +1137,7 @@ const query: Operation = {
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
       since: typeof p.since === 'string' ? p.since : undefined,
       until: typeof p.until === 'string' ? p.until : undefined,
+      sourceId,
       onMeta: (m) => { capturedMeta = m; },
     });
     const latency_ms = Date.now() - startedAt;
@@ -2456,7 +2499,7 @@ const extract_facts: Operation = {
   params: {
     turn_text: { type: 'string', required: true, description: 'The user message or page body to extract facts from. Sanitized via INJECTION_PATTERNS before the LLM call.' },
     session_id: { type: 'string', description: 'Opaque session id (e.g. topic-id from MCP _meta.session_id, or CLI --session). Stored on each fact for the recall --session filter. Not an auth surface.' },
-    entity_hints: { type: 'array', description: 'Existing canonical entity slugs the agent has already resolved. Helps the extractor pick the right slug.' },
+    entity_hints: { type: 'array', items: { type: 'string' }, description: 'Existing canonical entity slugs the agent has already resolved. Helps the extractor pick the right slug.' },
     is_dream_generated: { type: 'boolean', description: 'When true, extraction is skipped (anti-loop). Caller flips this on for pages with dream_generated:true frontmatter.' },
     visibility: { type: 'string', description: 'Default visibility for extracted facts. private (default) | world.' },
   },

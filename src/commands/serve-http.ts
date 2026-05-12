@@ -164,6 +164,58 @@ interface ServeHttpOptions {
   logFullParams?: boolean;
 }
 
+// Project gbrain SearchResult[] / Page onto ChatGPT's spec shapes:
+//   search -> { results: [{ id, title, text, url }] }
+//   fetch  -> { id, title, text, url, metadata? }
+// `url` is synthesised from issuer + /page/<slug>; gbrain doesn't serve it.
+function toChatgptShape(
+  tool: 'search' | 'fetch',
+  result: unknown,
+  pageBaseUrl: URL,
+): { ok: true; data: Record<string, unknown> } | { ok: false; error: Record<string, unknown> } {
+  if (tool === 'search') {
+    const rows = Array.isArray(result) ? result : [];
+    const seen = new Set<string>();
+    const results: Array<{ id: string; title: string; url: string; text?: string }> = [];
+    for (const r of rows as Array<Record<string, unknown>>) {
+      const id = typeof r.slug === 'string' ? r.slug : '';
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      results.push({
+        id,
+        title: typeof r.title === 'string' && r.title ? r.title : id,
+        url: new URL(`/page/${encodeURIComponent(id)}`, pageBaseUrl).toString(),
+        text: typeof r.chunk_text === 'string' ? r.chunk_text : '',
+      });
+    }
+    return { ok: true, data: { results } };
+  }
+  // get_page error envelope -> MCP isError; never project as a fetch result.
+  if (!result || typeof result !== 'object' || (result as Record<string, unknown>).error) {
+    return { ok: false, error: (result as Record<string, unknown>) ?? { error: 'page_not_found' } };
+  }
+  const p = result as Record<string, unknown>;
+  const slug = typeof p.slug === 'string' ? p.slug : '';
+  const compiledTruth = typeof p.compiled_truth === 'string' ? p.compiled_truth : '';
+  const timeline = typeof p.timeline === 'string' ? p.timeline : '';
+  const text = [compiledTruth, timeline].filter(Boolean).join('\n\n---\n\n');
+  return {
+    ok: true,
+    data: {
+      id: slug,
+      title: typeof p.title === 'string' && p.title ? p.title : slug,
+      text,
+      url: new URL(`/page/${encodeURIComponent(slug)}`, pageBaseUrl).toString(),
+      metadata: {
+        type: p.type,
+        page_id: p.id,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+      },
+    },
+  };
+}
+
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
   const config = loadConfig() || { engine: 'pglite' as const };
@@ -219,6 +271,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const app = express();
   app.set('trust proxy', 'loopback'); // Caddy/Tailscale reverse proxy on localhost
 
+  // Collapse leading `//`. Issuer URL has a trailing slash (URL canonical
+  // form), so naive `issuer + "/register"` concat gives `//register` -> 404.
+  app.use((req, _res, next) => {
+    if (req.url.startsWith('//')) req.url = req.url.replace(/^\/+/, '/');
+    next();
+  });
+
   // ---------------------------------------------------------------------------
   // Cookie parsing — required for /admin auth (express 5 has no built-in)
   // ---------------------------------------------------------------------------
@@ -256,6 +315,18 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     standardHeaders: true,
     legacyHeaders: false,
     message: 'Too many magic-link attempts. Wait a minute before trying again.',
+  });
+
+  // /token pre-hash. SDK clientAuth.js:45 strict-compares stored secret to
+  // request body. DB holds sha256 hex; clients hold plaintext from DCR. Hash
+  // the body so the SDK sees hash-vs-hash. Skip client_credentials — gbrain's
+  // own handler below hashes itself; pre-hashing would double-hash.
+  app.post('/token', express.urlencoded({ extended: false }), (req, _res, next) => {
+    if (req.body?.grant_type === 'client_credentials') return next();
+    if (req.body && typeof req.body.client_secret === 'string' && req.body.client_secret.length > 0) {
+      req.body.client_secret = createHash('sha256').update(req.body.client_secret).digest('hex');
+    }
+    next();
   });
 
   app.post('/token', ccRateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
@@ -301,9 +372,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     path: '/admin',
   });
 
+  // PRM `resource` must match the URL clients enter (working ChatGPT
+  // examples: Auth0, Ory Hydra both publish `/mcp`, not the issuer root).
+  const resourceServerUrl = new URL('/mcp', issuerUrl);
+
   const authRouterOptions: any = {
     provider: oauthProvider,
     issuerUrl,
+    resourceServerUrl,
     // v0.28: scopesSupported sourced from ALLOWED_SCOPES_LIST so MCP clients
     // (Claude Desktop, ChatGPT, Perplexity) can discover sources_admin and
     // users_admin via /.well-known/oauth-authorization-server. The legacy
@@ -319,23 +395,66 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   const authRouter = mcpAuthRouter(authRouterOptions);
 
-  // Patch the SDK's OAuth metadata to include client_credentials grant type.
-  // The SDK hardcodes ['authorization_code', 'refresh_token'] — we intercept
-  // the response and add client_credentials before it reaches the client.
+  // ChatGPT probes 9 well-known variants (root / path-aware / path-suffix
+  // for AS metadata, OIDC config, and PRM). Any 404 surfaces as a misleading
+  // "DCR endpoint 404". Rewrite anything matching to the SDK's canonical
+  // path so the same metadata body answers every variant.
+  const WELLKNOWN_RE =
+    /^(?:\/mcp)?\/\.well-known\/(oauth-protected-resource|oauth-authorization-server|openid-configuration)(?:\/[^?]*)?$/;
+  app.use((req, _res, next) => {
+    if (req.method !== 'GET') return next();
+    const m = req.path.match(WELLKNOWN_RE);
+    if (m) {
+      req.url = m[1] === 'oauth-protected-resource'
+        ? '/.well-known/oauth-protected-resource/mcp'
+        : '/.well-known/oauth-authorization-server';
+    }
+    next();
+  });
+
+  // Patch AS metadata: (a) add client_credentials to grant_types_supported
+  // (SDK hardcodes auth_code+refresh); (b) UA-gate OIDC stub fields for
+  // ChatGPT only — non-ChatGPT clients keep clean OAuth 2.1 metadata.
   app.use((req, res, next) => {
     if (req.path === '/.well-known/oauth-authorization-server' && req.method === 'GET') {
+      const ua = String(req.headers['user-agent'] || '');
+      const isChatgptMcp = /aiohttp|openai-mcp/i.test(ua);
       const origJson = res.json.bind(res);
       (res as any).json = (body: any) => {
-        if (body?.grant_types_supported && !body.grant_types_supported.includes('client_credentials')) {
-          body.grant_types_supported.push('client_credentials');
+        // SDK metadata is a shared singleton; clone before mutating or
+        // ChatGPT's OIDC fields leak into every other client's response.
+        const out: any = body && typeof body === 'object' ? { ...body } : body;
+        if (Array.isArray(body?.grant_types_supported)) {
+          out.grant_types_supported = [...body.grant_types_supported];
+          if (!out.grant_types_supported.includes('client_credentials')) {
+            out.grant_types_supported.push('client_credentials');
+          }
         }
-        return origJson(body);
+        if (isChatgptMcp && out) {
+          if (!out.subject_types_supported) out.subject_types_supported = ['public'];
+          if (!out.id_token_signing_alg_values_supported) out.id_token_signing_alg_values_supported = ['RS256'];
+          if (!out.userinfo_endpoint) out.userinfo_endpoint = new URL('/userinfo', issuerUrl).toString();
+          if (!out.jwks_uri) out.jwks_uri = new URL('/.well-known/jwks.json', issuerUrl).toString();
+        }
+        return origJson(out);
       };
     }
     next();
   });
 
   app.use(authRouter);
+
+  // OIDC stubs back the userinfo_endpoint + jwks_uri pointers ChatGPT's
+  // discovery requires. gbrain doesn't issue ID tokens; soft 200 keeps
+  // ChatGPT's post-authorize validation from reading 401 as auth failure.
+  app.get('/userinfo', (req, res) => {
+    const auth = req.headers.authorization || '';
+    const sub = auth.startsWith('Bearer ') ? auth.slice(7, 23) : 'anonymous';
+    res.json({ sub });
+  });
+  app.get('/.well-known/jwks.json', (_req, res) => {
+    res.json({ keys: [] });
+  });
 
   // ---------------------------------------------------------------------------
   // Health check — liveness only. Full engine stats live at
@@ -767,7 +886,34 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const mcpOperations = operations.filter(op => !op.localOnly);
 
-  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
+  // RFC 9728: 401 WWW-Authenticate carries the path-aware PRM URL.
+  const resourceMetadataUrl = new URL('/.well-known/oauth-protected-resource/mcp', issuerUrl).toString();
+
+  // GET /mcp opens an idle SSE stream (heartbeat-only). Spec allows 405,
+  // but ChatGPT's openai-mcp/1.0.0 treats anything non-200 as fatal.
+  // Bearer-gated so unauth'd probes still get 401 with resource_metadata.
+  app.get('/mcp', requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), (_req: Request, res: Response) => {
+    res.status(200);
+    res.set('Content-Type', 'text/event-stream');
+    res.set('Cache-Control', 'no-cache, no-transform');
+    res.set('Connection', 'keep-alive');
+    res.set('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    res.write(': mcp-stream-open\n\n');
+    const heartbeat = setInterval(() => {
+      try { res.write(': heartbeat\n\n'); } catch { clearInterval(heartbeat); }
+    }, 15_000);
+    _req.on('close', () => {
+      clearInterval(heartbeat);
+      try { res.end(); } catch { /* already closed */ }
+    });
+  });
+  app.delete('/mcp', (_req: Request, res: Response) => {
+    res.set('Allow', 'POST, OPTIONS');
+    res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method Not Allowed: session termination not supported' }, id: null });
+  });
+
+  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
 
@@ -776,6 +922,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     // SELECT). No per-request DB roundtrip needed. Falls back to clientId
     // for legacy tokens or when the JOIN row's client_name is NULL.
     const agentName = authInfo.clientName ?? authInfo.clientId;
+
+    // ChatGPT Connector mode only surfaces tools named exactly `search` /
+    // `fetch`; expose a two-tool shim onto gbrain's search + get_page.
+    const chatgptCompat = typeof agentName === 'string' && agentName.startsWith('ChatGPT');
 
     // Create a fresh MCP server per request (stateless)
     const server = new Server(
@@ -806,6 +956,30 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         status: 'success',
         timestamp: new Date().toISOString(),
       });
+      if (chatgptCompat) {
+        return {
+          tools: [
+            {
+              name: 'search',
+              description: 'Search the brain knowledge base. Returns up to 20 matching pages ranked by relevance, each with id (slug), title, and a snippet.',
+              inputSchema: {
+                type: 'object' as const,
+                properties: { query: { type: 'string', description: 'Free-text search query' } },
+                required: ['query'],
+              },
+            },
+            {
+              name: 'fetch',
+              description: 'Fetch the full content of a brain page by id (slug). Returns title, full text, and metadata.',
+              inputSchema: {
+                type: 'object' as const,
+                properties: { id: { type: 'string', description: 'Page slug returned from search' } },
+                required: ['id'],
+              },
+            },
+          ],
+        };
+      }
       return {
         tools: mcpOperations.map(op => ({
           name: op.name,
@@ -818,6 +992,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
                 description: v.description,
                 ...(v.enum ? { enum: v.enum } : {}),
                 ...(v.default !== undefined ? { default: v.default } : {}),
+                ...(v.items ? { items: { type: v.items.type } } : {}),
               }]),
             ),
             required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k),
@@ -827,7 +1002,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     });
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: params } = request.params;
+      let { name, arguments: params } = request.params;
+
+      // ChatGPT shim: fetch -> get_page (id == slug). Track original name
+      // so the post-dispatch projection picks the right output shape.
+      const chatgptTool: 'search' | 'fetch' | null =
+        chatgptCompat && (name === 'search' || name === 'fetch') ? name : null;
+      if (chatgptTool === 'fetch') {
+        name = 'get_page';
+        params = { slug: (params as { id?: string })?.id };
+      }
+
       const op = mcpOperations.find(o => o.name === name);
       if (!op) {
         // v0.28.10: persist unknown-op attempts. Operators investigating
@@ -1029,6 +1214,23 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         status: 'success',
         timestamp: new Date().toISOString(),
       });
+
+      if (chatgptTool && toolResult.content[0]?.type === 'text') {
+        try {
+          const parsed = JSON.parse(toolResult.content[0].text);
+          const projected = toChatgptShape(chatgptTool, parsed, issuerUrl);
+          if (projected.ok) {
+            return {
+              content: [{ type: 'text', text: JSON.stringify(projected.data) }],
+              structuredContent: projected.data,
+            };
+          }
+          return {
+            content: [{ type: 'text', text: JSON.stringify(projected.error) }],
+            isError: true,
+          };
+        } catch { /* fall through to default */ }
+      }
       return toolResult;
     });
 

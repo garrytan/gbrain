@@ -139,14 +139,18 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     `;
     if (rows.length === 0) return undefined;
     const r = rows[0];
+    // SDK clientAuth.js:45 demands secret whenever client.client_secret is
+    // truthy, regardless of token_endpoint_auth_method. Hide the stored hash
+    // for `none` clients so the PKCE-only path passes.
+    const authMethod = r.token_endpoint_auth_method as string | undefined;
     return {
       client_id: r.client_id as string,
-      client_secret: r.client_secret_hash as string | undefined,
+      client_secret: authMethod === 'none' ? undefined : (r.client_secret_hash as string | undefined),
       client_name: r.client_name as string,
       redirect_uris: (r.redirect_uris as string[]) || [],
       grant_types: (r.grant_types as string[]) || ['client_credentials'],
       scope: r.scope as string | undefined,
-      token_endpoint_auth_method: r.token_endpoint_auth_method as string | undefined,
+      token_endpoint_auth_method: authMethod,
       client_id_issued_at: coerceTimestamp(r.client_id_issued_at),
       client_secret_expires_at: coerceTimestamp(r.client_secret_expires_at),
     };
