@@ -17,6 +17,12 @@ export const openai: Recipe = {
       dims_options: [256, 512, 768, 1024, 1536, 3072],
       cost_per_1m_tokens_usd: 0.13,
       price_last_verified: '2026-04-20',
+      // OpenAI per-request hard cap is 300K tokens. Free/Tier-1 TPM is 1M.
+      // Cap batches conservatively at 100K to handle token-dense content
+      // (Discord/Slack markdown+JSON tokenizes at ~chars/2.7, not the chars/4
+      // estimate the batcher uses). 100K estimated = ~150K real tokens worst-case,
+      // safely under both the 300K per-request and 1M TPM ceilings.
+      max_batch_tokens: 100_000,
     },
     expansion: {
       models: ['gpt-5.2', 'gpt-4o-mini'],
