@@ -2598,12 +2598,123 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 52,
+    name: 'eval_contradictions_cache',
+    // v0.32.6 — P2 persistent judge cache for the contradiction probe.
+    //
+    // Composite primary key includes prompt_version + truncation_policy
+    // (Codex outside-voice fix). Without these, a prompt edit would silently
+    // serve stale verdicts to consumers. The cache key is the FULL
+    // configuration that produced the verdict; bumping any component
+    // invalidates prior entries cleanly.
+    //
+    // TTL via expires_at — readers can WHERE expires_at > now() to ignore
+    // stale rows; an explicit DELETE WHERE expires_at <= now() sweep runs
+    // periodically (lives in cache.ts orchestration, not here).
+    //
+    // verdict JSONB carries the full JudgeVerdict shape (contradicts,
+    // severity, axis, confidence, resolution_kind) so a cache hit is a
+    // complete answer without needing a second column.
+    //
+    // Idempotent across PGLite and Postgres; engine-agnostic DDL.
+    sql: `
+      CREATE TABLE IF NOT EXISTS eval_contradictions_cache (
+        chunk_a_hash       TEXT         NOT NULL,
+        chunk_b_hash       TEXT         NOT NULL,
+        model_id           TEXT         NOT NULL,
+        prompt_version     TEXT         NOT NULL,
+        truncation_policy  TEXT         NOT NULL,
+        verdict            JSONB        NOT NULL,
+        created_at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        expires_at         TIMESTAMPTZ  NOT NULL,
+        PRIMARY KEY (chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy)
+      );
+      CREATE INDEX IF NOT EXISTS eval_contradictions_cache_expires_idx
+        ON eval_contradictions_cache (expires_at);
+    `,
+  },
+  {
+    version: 53,
+    name: 'eval_contradictions_runs',
+    // v0.32.6 — M5 time-series tracking for the contradiction probe.
+    //
+    // One row per `gbrain eval suspected-contradictions` run. The headline
+    // numbers (queries_evaluated, with_contradiction, total_flagged) plus
+    // Wilson 95% CI bounds enable `gbrain eval suspected-contradictions
+    // trend [--days N]` to plot brain consistency over time.
+    //
+    // report_json carries the full ProbeReport for replay/inspection.
+    // source_tier_breakdown is also surfaced as a top-level JSONB column
+    // so trend queries can group by tier without parsing the full report.
+    //
+    // No FK to other tables: this is an append-only metrics log, not a
+    // relational record. Trend reads filter on ran_at.
+    //
+    // Idempotent across PGLite and Postgres.
+    sql: `
+      CREATE TABLE IF NOT EXISTS eval_contradictions_runs (
+        run_id                       TEXT         PRIMARY KEY,
+        ran_at                       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        schema_version               INTEGER      NOT NULL DEFAULT 1,
+        judge_model                  TEXT         NOT NULL,
+        prompt_version               TEXT         NOT NULL,
+        queries_evaluated            INTEGER      NOT NULL,
+        queries_with_contradiction   INTEGER      NOT NULL,
+        total_contradictions_flagged INTEGER      NOT NULL,
+        wilson_ci_lower              REAL         NOT NULL,
+        wilson_ci_upper              REAL         NOT NULL,
+        judge_errors_total           INTEGER      NOT NULL,
+        cost_usd_total               REAL         NOT NULL,
+        duration_ms                  INTEGER      NOT NULL,
+        source_tier_breakdown        JSONB        NOT NULL,
+        report_json                  JSONB        NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS eval_contradictions_runs_ran_at_idx
+        ON eval_contradictions_runs (ran_at DESC);
+    `,
+  },
+  {
+    version: 54,
+    name: 'cjk_wave_pages_chunker_version_and_source_path',
+    // v0.32.7 CJK fix wave. Two new columns on `pages` so the post-upgrade
+    // reindex sweep can find markdown pages built by the old chunker AND so
+    // sync's delete/rename code can resolve frontmatter-fallback slugs by
+    // path (CJK files where path → slug is non-derivable).
+    //
+    //   chunker_version: bumped to 2 in this release. New imports populate
+    //     it; existing rows inherit DEFAULT 1. `gbrain reindex --markdown`
+    //     walks `WHERE chunker_version < 2 AND page_kind = 'markdown'`
+    //     and re-imports each, bumping the column.
+    //
+    //   source_path: import-time repo-relative path. Lets sync's delete/
+    //     rename resolve fallback slugs (`小米.md` w/ frontmatter slug →
+    //     non-path-derivable). NULL for pre-migration rows; populated on
+    //     next import / reindex.
+    //
+    // Both columns engine-agnostic. Partial indexes scope to the rows
+    // we actually query (markdown-only chunker_version; non-NULL source_path).
+    idempotent: true,
+    sql: `
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS chunker_version SMALLINT NOT NULL DEFAULT 1;
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS source_path TEXT;
+
+      CREATE INDEX IF NOT EXISTS pages_chunker_version_idx
+        ON pages (chunker_version) WHERE page_kind = 'markdown';
+
+      CREATE INDEX IF NOT EXISTS pages_source_path_idx
+        ON pages (source_path) WHERE source_path IS NOT NULL;
+    `,
+  },
+  {
+    version: 55,
     name: 'query_cache_search_lite',
-    // v0.32.x (search-lite) — semantic query cache. Cache search results
-    // keyed by query embedding similarity so a near-duplicate query reuses
-    // the previous result set instead of re-running keyword + vector + RRF
-    // + dedup. Cache lookup: `embedding <=> $1 < 0.08` (cosine distance,
-    // similarity >= 0.92) using HNSW.
+    // v0.32.x (search-lite, originally claimed v52 in PR #897; renumbered
+    // to v55 on merge with master to sit after eval_contradictions_cache (v52),
+    // eval_contradictions_runs (v53), cjk_wave (v54)).
+    //
+    // Semantic query cache. Cache search results keyed by query embedding
+    // similarity so a near-duplicate query reuses the previous result set
+    // instead of re-running keyword + vector + RRF + dedup. Cache lookup:
+    // `embedding <=> $1 < 0.08` (cosine distance, similarity >= 0.92) using HNSW.
     //
     // Schema:
     //   id            — SHA-256(query_text + source_id) for diagnostics.
@@ -2624,12 +2735,6 @@ export const MIGRATIONS: Migration[] = [
     // table from v45 for consistency), otherwise VECTOR. Embedding dim is
     // resolved from `config.embedding_dimensions` at migration time so
     // non-OpenAI brains work — same approach as v45.
-    //
-    // Idempotent under all states (matches v40/v45 shape):
-    //   - Fresh install: CREATE TABLE IF NOT EXISTS no-ops on second run.
-    //   - Old brain (no table): created with the resolved embedding dim.
-    //   - Partial state (table exists, missing index): index creation is
-    //     IF NOT EXISTS.
     sql: '',
     handler: async (engine: BrainEngine) => {
       // Step 1: resolve embedding dim from config table (same pattern as v45).
@@ -2697,7 +2802,7 @@ export const MIGRATIONS: Migration[] = [
           WHERE embedding IS NOT NULL;
       `;
 
-      await engine.runMigration(52, ddl);
+      await engine.runMigration(55, ddl);
     },
   },
 ];

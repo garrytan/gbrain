@@ -95,6 +95,18 @@ export interface Page {
    * surface in `get_recent_salience`.
    */
   salience_touched_at?: Date | null;
+  /**
+   * v0.31.12: source that owns this page. Populated by rowToPage from the
+   * `source_id` column so callers like `embed` can thread it through
+   * getChunks / upsertChunks without defaulting to 'default'.
+   *
+   * v0.32.8: required. The DB column is `NOT NULL DEFAULT 'default'`, so
+   * `rowToPage` always returns it from the engine. Callers can now thread
+   * `page.source_id` directly without `!` non-null assertions.
+   *
+   * Test fixtures building synthetic Page rows must include this field.
+   */
+  source_id: string;
 }
 
 export type EffectiveDateSource =
@@ -132,6 +144,21 @@ export interface PageInput {
   effective_date_source?: EffectiveDateSource | null;
   /** v0.29.1: basename without extension captured at import. */
   import_filename?: string | null;
+  /**
+   * v0.32.7 CJK wave: bumped to MARKDOWN_CHUNKER_VERSION (2) on import so the
+   * post-upgrade `gbrain reindex --markdown` sweep can find pre-bump pages
+   * via `WHERE chunker_version < 2`. Defaults to 1 at the schema level when
+   * omitted (existing rows pre-migration inherit 1; new imports overwrite
+   * with the current version).
+   */
+  chunker_version?: number | null;
+  /**
+   * v0.32.7 CJK wave: repo-relative import path. Lets sync's delete/rename
+   * paths resolve a frontmatter-fallback slug back to its filesystem source
+   * (CJK + emoji + exotic-script files whose path doesn't derive a slug).
+   * NULL on legacy / non-file callers (MCP `put_page`, fixture seeds).
+   */
+  source_path?: string | null;
 }
 
 export interface PageFilters {
@@ -163,6 +190,12 @@ export interface PageFilters {
    * Whitelisted enum — no SQL-injection risk; engines map to literal SQL fragments.
    */
   sort?: 'updated_desc' | 'updated_asc' | 'created_desc' | 'slug';
+  /**
+   * v0.31.12: filter to a specific source. When omitted, listPages returns
+   * pages from all sources (pre-existing semantics). Use to scope embed/extract
+   * operations to a single source.
+   */
+  sourceId?: string;
 }
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */
@@ -305,6 +338,8 @@ export interface StaleChunkRow {
   chunk_source: 'compiled_truth' | 'timeline';
   model: string | null;
   token_count: number | null;
+  /** v0.31.12: source_id so embed --stale can thread it through getChunks/upsertChunks. */
+  source_id: string;
 }
 
 export interface ChunkInput {

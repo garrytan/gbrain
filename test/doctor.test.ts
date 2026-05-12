@@ -425,3 +425,156 @@ describe('v0.31.8 — wedge migration force-retry hint (D19)', () => {
     expect(remoteBlock).toMatch(/WEDGED MIGRATION\(s\) on brain host/);
   });
 });
+
+// ============================================================================
+// v0.32.4 — sync_freshness check
+// ============================================================================
+// Pure staleness probe: reads sources.last_sync_at, no filesystem access.
+// Drift detection was stripped in v0.32.4 — the doctorReportRemote path runs
+// in the HTTP MCP server and walking DB-supplied local_path values from there
+// crosses a trust boundary. Drift belongs in multi_source_drift's existing
+// guard infrastructure (GBRAIN_DRIFT_LIMIT / GBRAIN_DRIFT_TIMEOUT_MS).
+// ============================================================================
+
+describe('v0.32.4 — sync_freshness check', () => {
+  // Stub engine: only checkSyncFreshness's executeRaw matters. Per-case rows
+  // shape is `{id, name, local_path, last_sync_at}`.
+  function makeStubEngine(rows: any[]): any {
+    return { executeRaw: async () => rows };
+  }
+
+  function agoMs(ms: number): Date {
+    return new Date(Date.now() - ms);
+  }
+
+  test('empty sources → ok with no-federated-sources message', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([]));
+    expect(result.name).toBe('sync_freshness');
+    expect(result.status).toBe('ok');
+    expect(result.message).toBe('No federated sources to sync');
+  });
+
+  test('last_sync_at IS NULL → fail with "never been synced"', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: null },
+    ]));
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain('never been synced');
+    expect(result.message).toContain(`'wiki'`); // source.id embedded
+    expect(result.message).toContain('gbrain sync --source <id>');
+  });
+
+  test('last_sync_at > 72h ago → fail with day-rounded "Nd ago"', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(4 * 24 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('fail');
+    expect(result.message).toMatch(/4d ago/);
+    expect(result.message).toContain('brain search is stale');
+  });
+
+  test('exact 72h boundary → warn (>72h strict; 72h source NOT yet fail)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    // Exactly 72h. Strict `>` on fail threshold means 72h-stale is still in
+    // the warn window. (Tested boundary semantics.)
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(72 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('72h ago');
+  });
+
+  test('24h < last_sync_at < 72h → warn with hour-rounded "Nh ago"', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(30 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/30h ago/);
+  });
+
+  test('exact 24h boundary → ok (>24h strict)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    // Exactly 24h. Strict `>` on warn threshold means 24h-stale is still ok.
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(24 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('synced recently');
+  });
+
+  test('last_sync_at <= 24h → ok with "synced recently"', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(2 * 60 * 60 * 1000) },
+      { id: 'gstack', name: '', local_path: '/tmp/gstack', last_sync_at: agoMs(60 * 1000) },
+    ]));
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('2 federated source(s)');
+  });
+
+  test('future last_sync_at → warn (clock skew / corrupted timestamp)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    // 10 min in the future. Negative ageMs must NOT fall through as ok.
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: new Date(Date.now() + 10 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/future last_sync_at/);
+    expect(result.message).toMatch(/clock skew|corrupted timestamp/);
+  });
+
+  test('mixed sources (one fail + one warn) → fail with both issues listed', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(5 * 24 * 60 * 60 * 1000) },
+      { id: 'gstack', name: '', local_path: '/tmp/gstack', last_sync_at: agoMs(30 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain(`'wiki'`);
+    expect(result.message).toContain(`'gstack'`);
+    expect(result.message).toMatch(/5d ago/);
+    expect(result.message).toMatch(/30h ago/);
+  });
+
+  test('executeRaw throws → outer-catch returns warn (doctor keeps running)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const engine: any = {
+      executeRaw: async () => { throw new Error('connection refused'); },
+    };
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('Could not check sync freshness');
+    expect(result.message).toContain('connection refused');
+  });
+
+  test('env-var override: GBRAIN_SYNC_FRESHNESS_FAIL_HOURS=6 → 7h-stale fails', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const prev = process.env.GBRAIN_SYNC_FRESHNESS_FAIL_HOURS;
+    process.env.GBRAIN_SYNC_FRESHNESS_FAIL_HOURS = '6';
+    try {
+      const result = await checkSyncFreshness(makeStubEngine([
+        { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(7 * 60 * 60 * 1000) },
+      ]));
+      expect(result.status).toBe('fail');
+      expect(result.message).toContain('brain search is stale');
+    } finally {
+      if (prev === undefined) delete process.env.GBRAIN_SYNC_FRESHNESS_FAIL_HOURS;
+      else process.env.GBRAIN_SYNC_FRESHNESS_FAIL_HOURS = prev;
+    }
+  });
+
+  test('source.id embedded in messages even when source.name is set', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki-id', name: 'My Wiki', local_path: '/tmp/wiki', last_sync_at: null },
+    ]));
+    expect(result.status).toBe('fail');
+    // User copy-pastes `gbrain sync --source wiki-id` (NOT "My Wiki"). Message
+    // must include the id so the CLI command actually works.
+    expect(result.message).toContain(`'wiki-id'`);
+  });
+});

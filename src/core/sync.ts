@@ -11,6 +11,8 @@
  *   pathToSlug()  →  convert file paths to page slugs
  */
 
+import { CJK_SLUG_CHARS } from './cjk.ts';
+
 export interface SyncManifest {
   added: string[];
   modified: string[];
@@ -246,17 +248,23 @@ export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
  * Pattern is the inner character class only (no anchors); callers wrap it
  * in `^...$` or compose it with prefixes like `(?:people|companies)/...`.
  */
-export const SLUG_SEGMENT_PATTERN = /[a-z0-9._-]+/;
+export const SLUG_SEGMENT_PATTERN = new RegExp(`[a-z0-9._\\-${CJK_SLUG_CHARS}]+`);
 
 /**
  * Slugify a single path segment: lowercase, strip special chars, spaces → hyphens.
+ * CJK ranges (Han / Hiragana / Katakana / Hangul Syllables) are preserved (v0.32.7).
+ * NFC re-normalize after the NFD-strip-accents pass so Hangul Jamo recomposes back
+ * into precomposed syllables that fall inside the whitelist.
  */
+const SLUGIFY_KEEP_RE = new RegExp(`[^a-z0-9.\\s_\\-${CJK_SLUG_CHARS}]`, 'g');
+
 export function slugifySegment(segment: string): string {
   return segment
     .normalize('NFD')                     // Decompose accented chars
     .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
+    .normalize('NFC')                     // Recompose Hangul Jamo back to Syllables (v0.32.7)
     .toLowerCase()
-    .replace(/[^a-z0-9.\s_-]/g, '')      // Keep alphanumeric, dots, spaces, underscores, hyphens
+    .replace(SLUGIFY_KEEP_RE, '')         // Keep alnum, dots, spaces, _-, and CJK (v0.32.7)
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
     .replace(/-+/g, '-')                 // Collapse multiple hyphens
     .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens

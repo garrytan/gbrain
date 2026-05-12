@@ -641,6 +641,13 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   // hint pointing at the routable MCP tools; per-subcommand splits are
   // a v0.31.x follow-up TODO.
   'takes', 'sources',
+  // v0.32 thin-client routing audit (Codex round 2 findings #2, #4):
+  // - `pages` purge-deleted is admin+localOnly (operations.ts:856-864)
+  // - `files` list / file_url MCP ops are localOnly (operations.ts:1769-1879)
+  // - `eval` export/prune/replay have no MCP equivalents
+  // - `code-def`/`code-refs`/`code-callers`/`code-callees` have NO MCP ops
+  //   in operations.ts:2630-2671; cannot be "fixed by routing" yet
+  'pages', 'files', 'eval', 'code-def', 'code-refs', 'code-callers', 'code-callees',
 ]);
 
 /**
@@ -668,6 +675,14 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   storage: 'storage operates on the local repo on disk. Run on the host.',
   takes: 'takes mutate subcommands edit local .md files; routing the read subcommands lands in v0.31.x. For now: use `takes_list` and `takes_search` MCP tools from your agent, or run on the host.',
   sources: 'sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.',
+  // v0.32 audit additions
+  pages: '`pages purge-deleted` is admin+localOnly (hard-deletes from the local DB). Run on the host.',
+  files: '`files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `gbrain files` on the host machine.',
+  eval: '`eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.',
+  'code-def': '`code-def` needs symbol-aware lookup that has no MCP op yet. Run on the host or use `search` from your agent with a symbol-shaped query.',
+  'code-refs': '`code-refs` has no MCP op yet. Run on the host.',
+  'code-callers': '`code-callers` has no MCP op yet. Run on the host.',
+  'code-callees': '`code-callees` has no MCP op yet. Run on the host.',
 };
 
 /**
@@ -1063,6 +1078,12 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'orphans': {
         const { runOrphans } = await import('./commands/orphans.ts');
         await runOrphans(engine, args);
+        break;
+      }
+      // v0.32.7 CJK wave — post-upgrade markdown re-chunk sweep.
+      case 'reindex': {
+        const { runReindex } = await import('./commands/reindex.ts');
+        await runReindex(engine, args);
         break;
       }
       // v0.29 — Salience + Anomaly Detection
