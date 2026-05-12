@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "gbrain-codex": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "./scripts/launch-gbrain-serve.mjs"
+      ],
+      "cwd": "."
+    }
+  }
+}

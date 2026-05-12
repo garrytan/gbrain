@@ -1,0 +1,18 @@
+{
+  "name": "gbrain-codex",
+  "version": "0.33.0",
+  "description": "Codex Desktop local plugin adapter for GBrain.",
+  "type": "module",
+  "private": true,
+  "files": [
+    ".codex-plugin/plugin.json",
+    ".mcp.json",
+    "README.md",
+    "assets",
+    "scripts"
+  ],
+  "scripts": {
+    "rehearsal": "node ./scripts/rehearsal.mjs"
+  },
+  "license": "MIT"
+}

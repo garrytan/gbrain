@@ -1954,6 +1954,23 @@ GBrain exposes 30+ MCP tools via stdio:
 
 Add to `~/.claude/server.json` (Claude Code), Settings > MCP Servers (Cursor), or your client's MCP config.
 
+### Codex Desktop plugin
+
+GBrain also ships a thin local Codex Desktop plugin package at
+[`plugins/gbrain-codex`](plugins/gbrain-codex/). It launches the canonical
+`gbrain serve` stdio MCP server; it does not embed a second runtime.
+
+```bash
+bun install
+bun link
+node scripts/install-codex-plugin.mjs
+```
+
+Then restart Codex Desktop. The installer creates `~/plugins/gbrain-codex`,
+links the repo skill tree, and updates `~/.agents/plugins/marketplace.json`.
+Run `node plugins/gbrain-codex/scripts/rehearsal.mjs` from the repo root for a
+local smoke test.
+
 ### Remote MCP with OAuth 2.1 (ChatGPT, Claude Desktop, Cowork, Perplexity)
 
 `gbrain serve --http` starts a production-grade OAuth 2.1 server with an embedded admin dashboard. Zero external infrastructure. Every major AI client connects, every request is scoped, every action is logged.
