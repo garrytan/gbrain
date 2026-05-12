@@ -439,6 +439,12 @@ async function initPGLite(opts: {
     };
     saveConfig(config);
 
+    // v0.32.3 search-lite install-time mode picker. Runs AFTER initSchema so
+    // DB config writes are valid. Idempotent: skipped on re-init if already set.
+    // Non-TTY auto-selects; --json emits a structured event.
+    const { runModePicker } = await import('./init-mode-picker.ts');
+    await runModePicker(engine, { jsonOutput: opts.jsonOutput });
+
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
@@ -573,6 +579,11 @@ async function initPostgres(opts: {
     };
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
+
+    // v0.32.3 search-lite install-time mode picker. Same shape as the
+    // PGLite path above — runs AFTER initSchema, idempotent on re-init.
+    const { runModePicker: runPostgresModePicker } = await import('./init-mode-picker.ts');
+    await runPostgresModePicker(engine, { jsonOutput: opts.jsonOutput });
 
     const stats = await engine.getStats();
 

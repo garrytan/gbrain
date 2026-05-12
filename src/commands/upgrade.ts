@@ -257,6 +257,35 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         await engine.initSchema();
         console.log('  Schema up to date.');
 
+        // v0.32.3 search-lite mode banner. One-shot: fires at most once per
+        // install (state persisted via `search.mode_upgrade_notice_shown`).
+        // Reframes from "behavior is regressing" to "named modes available"
+        // per [CDX-1+2+3]: the production query op still defaults expand=true
+        // and limit=20 — Garry's behavior is NOT regressing.
+        try {
+          const shown = await engine.getConfig('search.mode_upgrade_notice_shown');
+          const existingMode = await engine.getConfig('search.mode');
+          if (shown !== 'true' && !existingMode) {
+            console.log('');
+            console.log('[gbrain] v0.32.3 added named search modes (conservative / balanced / tokenmax).');
+            console.log('[gbrain] Your current behavior is unchanged — the `query` op still defaults');
+            console.log('[gbrain] expand=true and limit=20, same as v0.31.x.');
+            console.log('[gbrain]');
+            console.log('[gbrain] To make this explicit and unlock the new tuning tools:');
+            console.log('[gbrain]   gbrain search modes              # see what is running, get a recommendation');
+            console.log('[gbrain]   gbrain config set search.mode <conservative|balanced|tokenmax>');
+            console.log('[gbrain]');
+            console.log('[gbrain] tokenmax bumps limit to 50 (current default is 20). To preserve your');
+            console.log('[gbrain] exact current shape:');
+            console.log('[gbrain]   gbrain config set search.mode tokenmax');
+            console.log('[gbrain]   gbrain config set search.searchLimit 20');
+            console.log('');
+            await engine.setConfig('search.mode_upgrade_notice_shown', 'true');
+          }
+        } catch {
+          // Banner is cosmetic; never block the upgrade.
+        }
+
         // v0.32.7 CJK wave: chunker-version bump → re-embed sweep.
         // Idempotent — `runReindex` short-circuits when no pages are pending.
         try {
