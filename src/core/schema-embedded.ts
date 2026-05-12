@@ -818,7 +818,7 @@ CREATE TABLE IF NOT EXISTS eval_takes_quality_runs (
 CREATE INDEX IF NOT EXISTS eval_takes_quality_runs_trend_idx
   ON eval_takes_quality_runs (rubric_version, created_at DESC);
 
--- eval_contradictions_cache (v0.33.0): persistent judge verdicts for the
+-- eval_contradictions_cache (v0.32.6): persistent judge verdicts for the
 -- contradiction probe. Composite primary key includes prompt_version +
 -- truncation_policy so any prompt edit cleanly invalidates prior verdicts
 -- (Codex outside-voice fix). TTL via expires_at; cache.ts sweeps periodically.
@@ -836,7 +836,7 @@ CREATE TABLE IF NOT EXISTS eval_contradictions_cache (
 CREATE INDEX IF NOT EXISTS eval_contradictions_cache_expires_idx
   ON eval_contradictions_cache (expires_at);
 
--- eval_contradictions_runs (v0.33.0): time-series tracking for the probe.
+-- eval_contradictions_runs (v0.32.6): time-series tracking for the probe.
 -- One row per run; source for the \`trend\` sub-subcommand and the doctor
 -- \`contradictions\` check. report_json carries the full ProbeReport for replay.
 CREATE TABLE IF NOT EXISTS eval_contradictions_runs (
@@ -912,7 +912,7 @@ BEGIN
     ALTER TABLE eval_candidates ENABLE ROW LEVEL SECURITY;
     ALTER TABLE eval_capture_failures ENABLE ROW LEVEL SECURITY;
     ALTER TABLE eval_takes_quality_runs ENABLE ROW LEVEL SECURITY;
-    -- v0.33.0 contradiction probe tables
+    -- v0.32.6 contradiction probe tables
     ALTER TABLE eval_contradictions_cache ENABLE ROW LEVEL SECURITY;
     ALTER TABLE eval_contradictions_runs ENABLE ROW LEVEL SECURITY;
     -- v0.26 OAuth 2.1 tables

@@ -1,5 +1,5 @@
 /**
- * E2E — Postgres-specific contradiction-probe behavior (v0.33.0, T1).
+ * E2E — Postgres-specific contradiction-probe behavior (v0.32.6, T1).
  *
  * PGLite covers the contract; this file exercises Postgres-only surfaces
  * that PGLite can't:

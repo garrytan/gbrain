@@ -292,7 +292,7 @@ p50 25.9ms / p99 30.3ms warm reset+import+search on Apple Silicon (per the
 500ms speed gate. 500 questions = ~13s of overhead plus your retrieval and
 LLM latency.
 
-## Measuring brain consistency over time (v0.33.0)
+## Measuring brain consistency over time (v0.32.6)
 
 `gbrain eval suspected-contradictions` is a complementary measurement
 instrument: it samples retrieval results for unmarked semantic
@@ -326,5 +326,5 @@ commands per high-severity finding.
 ### See also
 
 - `docs/contradictions.md` — architecture, severity rubric, action criteria.
-- CHANGELOG `## [0.33.0]` — full release notes including the bigger-swing
+- CHANGELOG `## [0.32.6]` — full release notes including the bigger-swing
   decision criteria gated on Wilson CI lower-bound.

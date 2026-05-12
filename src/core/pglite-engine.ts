@@ -1913,6 +1913,65 @@ export class PGLiteEngine implements BrainEngine {
     return (result.affectedRows ?? 0) > 0;
   }
 
+  async insertFacts(
+    rows: Array<NewFact & { row_num: number; source_markdown_slug: string }>,
+    ctx: { source_id: string },
+  ): Promise<{ inserted: number; ids: number[] }> {
+    if (rows.length === 0) return { inserted: 0, ids: [] };
+
+    // Single transaction so the v51 partial UNIQUE index can roll back the
+    // whole batch on constraint violation. Per-row INSERTs (not multi-row
+    // VALUES) keep the embedding-vs-no-embedding branching readable; batch
+    // sizes are small (5-30 rows per page in practice) so the loop overhead
+    // is negligible vs the embedding compute cost.
+    const ids = await this.db.transaction(async (tx) => {
+      const out: number[] = [];
+      for (const input of rows) {
+        const validFrom = input.valid_from ?? new Date();
+        const validUntil = input.valid_until ?? null;
+        const kind = input.kind ?? 'fact';
+        const visibility = input.visibility ?? 'private';
+        const notability = input.notability ?? 'medium';
+        const confidence = input.confidence ?? 1.0;
+        const entitySlug = input.entity_slug ?? null;
+        const context = input.context ?? null;
+        const sourceSession = input.source_session ?? null;
+        const embedding = input.embedding ?? null;
+        const embeddedAt = embedding ? new Date() : null;
+        const embedStr = embedding ? toPgVectorLiteral(embedding) : null;
+
+        const ins = await tx.query<{ id: number }>(
+          `INSERT INTO facts (
+             source_id, entity_slug, fact, kind, visibility, notability, context,
+             valid_from, valid_until, source, source_session, confidence,
+             embedding, embedded_at,
+             row_num, source_markdown_slug
+           ) VALUES (
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+             ${embedStr === null ? 'NULL' : `$13::vector`},
+             ${embedStr === null ? '$13' : '$14'},
+             ${embedStr === null ? '$14' : '$15'},
+             ${embedStr === null ? '$15' : '$16'}
+           ) RETURNING id`,
+          embedStr === null
+            ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embeddedAt, input.row_num, input.source_markdown_slug]
+            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, input.row_num, input.source_markdown_slug],
+        );
+        out.push(ins.rows[0].id);
+      }
+      return out;
+    });
+    return { inserted: ids.length, ids };
+  }
+
+  async deleteFactsForPage(slug: string, source_id: string): Promise<{ deleted: number }> {
+    const result = await this.db.query(
+      `DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug = $2`,
+      [source_id, slug],
+    );
+    return { deleted: result.affectedRows ?? 0 };
+  }
+
   async listFactsByEntity(
     source_id: string,
     entitySlug: string,
@@ -2146,7 +2205,7 @@ export class PGLiteEngine implements BrainEngine {
     return result.rows.length;
   }
 
-  /** v0.33.0 P1 — batched per-page active-takes fetch for the contradiction probe. */
+  /** v0.32.6 P1 — batched per-page active-takes fetch for the contradiction probe. */
   async listActiveTakesForPages(
     pageIds: number[],
     opts: { takesHoldersAllowList?: string[] } = {},
@@ -2172,7 +2231,7 @@ export class PGLiteEngine implements BrainEngine {
     return out;
   }
 
-  /** v0.33.0 M5 — persist a probe run row. Idempotent on run_id. */
+  /** v0.32.6 M5 — persist a probe run row. Idempotent on run_id. */
   async writeContradictionsRun(row: {
     run_id: string;
     judge_model: string;
@@ -2214,7 +2273,7 @@ export class PGLiteEngine implements BrainEngine {
     return (result.affectedRows ?? 0) > 0;
   }
 
-  /** v0.33.0 M5 — read probe runs from the last N days. */
+  /** v0.32.6 M5 — read probe runs from the last N days. */
   async loadContradictionsTrend(days: number): Promise<Array<{
     run_id: string;
     ran_at: string;
@@ -2259,7 +2318,7 @@ export class PGLiteEngine implements BrainEngine {
     }));
   }
 
-  /** v0.33.0 P2 — cache lookup; returns verdict JSON or null. */
+  /** v0.32.6 P2 — cache lookup; returns verdict JSON or null. */
   async getContradictionCacheEntry(key: {
     chunk_a_hash: string;
     chunk_b_hash: string;
@@ -2282,7 +2341,7 @@ export class PGLiteEngine implements BrainEngine {
     return (rows[0] as Record<string, unknown>).verdict as Record<string, unknown>;
   }
 
-  /** v0.33.0 P2 — cache upsert with TTL refresh on conflict. */
+  /** v0.32.6 P2 — cache upsert with TTL refresh on conflict. */
   async putContradictionCacheEntry(opts: {
     chunk_a_hash: string;
     chunk_b_hash: string;
@@ -2312,7 +2371,7 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
-  /** v0.33.0 P2 — periodic sweep of expired cache rows. */
+  /** v0.32.6 P2 — periodic sweep of expired cache rows. */
   async sweepContradictionCache(): Promise<number> {
     const result = await this.db.query(
       `DELETE FROM eval_contradictions_cache WHERE expires_at <= now()`

@@ -268,7 +268,7 @@ export async function runPhaseSynthesize(
       );
     }
 
-    // v0.33.0 M2: pre-fetch prior contradictions from the most recent probe
+    // v0.32.6 M2: pre-fetch prior contradictions from the most recent probe
     // run (if any). Surfaced as an informational block to the synthesize
     // subagent so it knows which slugs it should reconcile if it writes to
     // them. Best-effort — a probe that's never run is a normal early state.
@@ -711,7 +711,7 @@ Two reasons max, one phrase each.`;
  * `USE THIS in slugs` rule for the happy path.
  */
 /**
- * v0.33.0 M2 — Load prior probe findings into an informational block.
+ * v0.32.6 M2 — Load prior probe findings into an informational block.
  * Returns '' if no probe runs exist or the engine doesn't know how (pre-v33
  * brain that hasn't applied migrations). Best-effort and silent on failure.
  */

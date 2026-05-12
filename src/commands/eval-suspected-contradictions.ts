@@ -1,5 +1,5 @@
 /**
- * `gbrain eval suspected-contradictions` — v0.33.0 contradiction probe CLI.
+ * `gbrain eval suspected-contradictions` — v0.32.6 contradiction probe CLI.
  *
  * Three sub-subcommands:
  *   - run (default): execute one probe pass; --queries-file / --query /

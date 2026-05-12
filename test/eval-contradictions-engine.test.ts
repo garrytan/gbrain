@@ -1,5 +1,5 @@
 /**
- * Engine method tests for v0.33.0 contradiction probe surfaces.
+ * Engine method tests for v0.32.6 contradiction probe surfaces.
  *
  * Five new methods land on `BrainEngine`:
  *   - listActiveTakesForPages (P1, batched per-page active-take fetch)

@@ -65,11 +65,11 @@ export const SEARCH_DESCRIPTION =
   "without needing a search term.";
 
 // ──────────────────────────────────────────────────────────────────────────────
-// v0.33.0 — contradiction probe MCP surface (M3)
+// v0.32.6 — contradiction probe MCP surface (M3)
 // ──────────────────────────────────────────────────────────────────────────────
 
 export const FIND_CONTRADICTIONS_DESCRIPTION =
-  "v0.33.0 — return suspected-contradiction findings from the most recent " +
+  "v0.32.6 — return suspected-contradiction findings from the most recent " +
   "`gbrain eval suspected-contradictions` probe run, optionally filtered by slug " +
   "and/or severity. Use this when the user asks 'what's inconsistent in my " +
   "brain', 'show me contradictions about Acme', 'high-severity issues only', or " +

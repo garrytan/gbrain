@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * scripts/build-contradictions-fixture.ts (v0.33.0, T2)
+ * scripts/build-contradictions-fixture.ts (v0.32.6, T2)
  *
  * Build a privacy-redacted gold fixture for the contradiction probe judge
  * by running the probe against the user's REAL brain and hand-labeling
@@ -268,7 +268,7 @@ async function main(): Promise<void> {
     // Pre-commit safety: every text field must pass isCleanForCommit.
     const out: string[] = [];
     let flagged = 0;
-    out.push(`# Gold fixture for contradiction probe judge (v0.33.0)`);
+    out.push(`# Gold fixture for contradiction probe judge (v0.32.6)`);
     out.push(`# schema_version: 1`);
     out.push(`# Generated: ${new Date().toISOString()}`);
     out.push(`# Audit (in-memory redactions applied):`);

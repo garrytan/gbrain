@@ -502,7 +502,7 @@ CREATE INDEX IF NOT EXISTS eval_takes_quality_runs_trend_idx
   ON eval_takes_quality_runs (rubric_version, created_at DESC);
 
 -- ============================================================
--- eval_contradictions_cache (v0.33.0): persistent judge verdicts for the
+-- eval_contradictions_cache (v0.32.6): persistent judge verdicts for the
 -- contradiction probe. Composite key includes prompt_version + truncation_
 -- policy so prompt edits cleanly invalidate prior verdicts (Codex fix).
 -- TTL via expires_at; sweep runs periodically from cache.ts.
@@ -522,7 +522,7 @@ CREATE INDEX IF NOT EXISTS eval_contradictions_cache_expires_idx
   ON eval_contradictions_cache (expires_at);
 
 -- ============================================================
--- eval_contradictions_runs (v0.33.0): time-series tracking for the probe.
+-- eval_contradictions_runs (v0.32.6): time-series tracking for the probe.
 -- One row per 'gbrain eval suspected-contradictions' run; source for the
 -- 'trend' sub-subcommand and the doctor 'contradictions' check.
 -- ============================================================

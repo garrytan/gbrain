@@ -1,5 +1,5 @@
 /**
- * Integration tests for the three v0.33.0 wire-ups: M1 doctor, M3 MCP op,
+ * Integration tests for the three v0.32.6 wire-ups: M1 doctor, M3 MCP op,
  * M2 synthesize prompt injection.
  *
  * Hermetic against PGLite. Doctor + MCP exercised end-to-end; synthesize

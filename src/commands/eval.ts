@@ -46,7 +46,7 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     process.exit(await runEvalCrossModal(args.slice(1)));
   }
   if (sub === 'suspected-contradictions') {
-    // v0.33.0 — contradiction probe. Engine connected (calls hybridSearch +
+    // v0.32.6 — contradiction probe. Engine connected (calls hybridSearch +
     // the eval_contradictions_cache + _runs tables). Matches the `replay`
     // dispatch pattern.
     const { runEvalSuspectedContradictions } = await import('./eval-suspected-contradictions.ts');

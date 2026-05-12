@@ -1,7 +1,7 @@
 /**
  * eval-contradictions/cost-tracker — A2 + P3 cumulative cost accounting.
  *
- * Per the v0.33.0 plan: --budget-usd is a soft ceiling enforced two ways:
+ * Per the v0.32.6 plan: --budget-usd is a soft ceiling enforced two ways:
  *   1. Pre-flight estimate. Refuses to start (exit 1) without --yes if the
  *      conservative upper bound exceeds the cap.
  *   2. Mid-run cumulative tracker. After every judge call, if the running

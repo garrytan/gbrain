@@ -1,4 +1,4 @@
-# gbrain eval suspected-contradictions (v0.33.0)
+# gbrain eval suspected-contradictions (v0.32.6)
 
 The contradiction probe samples retrieval results, asks an LLM judge whether
 any pair contradicts on a factual claim relevant to the user's query, and
@@ -122,7 +122,7 @@ inspect findings without re-running the probe.
 ## Cost model
 
 Default judge is `claude-haiku-4-5` at ~$1/Mtok in, $5/Mtok out. With
-the v0.33.0 truncation at 1500 chars per pair, ~500 input + 80 output
+the v0.32.6 truncation at 1500 chars per pair, ~500 input + 80 output
 tokens per judge call. Budget cap defaults to $5 in TTY / $1 non-TTY.
 
 - ~$0.0006 per judge call
@@ -145,6 +145,6 @@ pay near-zero on re-runs (until you bump PROMPT_VERSION).
 ## See also
 
 - Plan: `~/.claude/plans/system-instruction-you-are-working-hashed-dewdrop.md`
-- CHANGELOG: `## [0.33.0]` entry covers the whole release.
+- CHANGELOG: `## [0.32.6]` entry covers the whole release.
 - Cost discipline: `docs/eval-bench.md` for the recommended nightly cadence
   + trend-tracking workflow.
