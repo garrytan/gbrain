@@ -799,6 +799,45 @@ async function extractLinksFromDB(
 
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
+  // Cross-PR-#397 reconcile (v0.32.7+ multi-source aware): dry-run should
+  // report net-new rows, not raw candidate count. On the second extract run,
+  // every candidate already lives in `links` and "would create N" is
+  // misleading by exactly N. Cache per (fromSourceId, fromSlug) — Link rows
+  // are scoped to the from-page, so cardinality stays low. Inline SQL
+  // because engine.getLinks() does not return f.source_id / t.source_id;
+  // adding those columns to the Link interface would ripple to 6 callers
+  // outside extract.ts, so the inline query keeps the blast radius zero.
+  const existingLinksByFromSrc = dryRun ? new Map<string, Set<string>>() : null;
+  async function existingLinkKeysForFrom(fromSlug: string, fromSourceId: string): Promise<Set<string>> {
+    if (!existingLinksByFromSrc) return new Set();
+    const cacheKey = `${fromSourceId}::${fromSlug}`;
+    const cached = existingLinksByFromSrc.get(cacheKey);
+    if (cached) return cached;
+    const rows = await engine.executeRaw<{
+      from_slug: string;
+      to_slug: string;
+      link_type: string;
+      link_source: string | null;
+      from_source_id: string;
+      to_source_id: string;
+    }>(
+      `SELECT f.slug AS from_slug, t.slug AS to_slug,
+              l.link_type, l.link_source,
+              f.source_id AS from_source_id, t.source_id AS to_source_id
+       FROM links l
+       JOIN pages f ON f.id = l.from_page_id
+       JOIN pages t ON t.id = l.to_page_id
+       WHERE f.slug = $1 AND f.source_id = $2`,
+      [fromSlug, fromSourceId],
+    );
+    const keys = new Set<string>();
+    for (const r of rows) {
+      // Key shape MUST match the candidate dryRunSeen key (line ~872) byte for byte.
+      keys.add(`${r.from_source_id}::${r.from_slug}::${r.to_source_id}::${r.to_slug}::${r.link_type}::${r.link_source ?? 'markdown'}`);
+    }
+    existingLinksByFromSrc.set(cacheKey, keys);
+    return keys;
+  }
 
   const batch: LinkBatchInput[] = [];
   async function flush() {
@@ -872,6 +911,11 @@ async function extractLinksFromDB(
         const key = `${fromSourceId}::${fromSlug}::${toSourceId}::${c.targetSlug}::${c.linkType}::${c.linkSource ?? 'markdown'}`;
         if (dryRunSeen.has(key)) continue;
         dryRunSeen.add(key);
+        // PR-#397 reconcile: also skip candidates that already exist in `links`.
+        // ON CONFLICT in addLinksBatch would no-op these on a real run, so
+        // dry-run should report 0 not N. Cache is per (fromSourceId, fromSlug).
+        const existingForFrom = await existingLinkKeysForFrom(fromSlug, fromSourceId);
+        if (existingForFrom.has(key)) continue;
         if (jsonMode) {
           process.stdout.write(JSON.stringify({
             action: 'add_link', from: fromSlug, from_source_id: fromSourceId,
@@ -946,6 +990,31 @@ async function extractTimelineFromDB(
 
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
+  // PR-#397 reconcile: cache existing timeline rows per (sourceId, slug) so
+  // dry-run reports net-new entries, not raw candidates. Inline SQL because
+  // engine.getTimeline() returns TimelineEntry without source_id, and adding
+  // source_id to TimelineEntry would ripple beyond extract.ts.
+  const existingTimelineBySrcSlug = dryRun ? new Map<string, Set<string>>() : null;
+  async function existingTimelineKeysForSlug(slug: string, sourceId: string): Promise<Set<string>> {
+    if (!existingTimelineBySrcSlug) return new Set();
+    const cacheKey = `${sourceId}::${slug}`;
+    const cached = existingTimelineBySrcSlug.get(cacheKey);
+    if (cached) return cached;
+    const rows = await engine.executeRaw<{ date: string; summary: string; source_id: string }>(
+      `SELECT te.date::text AS date, te.summary, p.source_id
+       FROM timeline_entries te
+       JOIN pages p ON p.id = te.page_id
+       WHERE p.slug = $1 AND p.source_id = $2`,
+      [slug, sourceId],
+    );
+    const keys = new Set<string>();
+    for (const r of rows) {
+      // Key shape MUST match the candidate dryRunSeen key (line ~982) byte for byte.
+      keys.add(`${r.source_id}::${slug}::${r.date}::${r.summary}`);
+    }
+    existingTimelineBySrcSlug.set(cacheKey, keys);
+    return keys;
+  }
 
   const batch: TimelineBatchInput[] = [];
   async function flush() {
@@ -982,6 +1051,10 @@ async function extractTimelineFromDB(
         const key = `${source_id}::${slug}::${entry.date}::${entry.summary}`;
         if (dryRunSeen.has(key)) continue;
         dryRunSeen.add(key);
+        // PR-#397 reconcile: also skip candidates already in timeline_entries.
+        // ON CONFLICT in addTimelineEntriesBatch would no-op these on real run.
+        const existingForSlug = await existingTimelineKeysForSlug(slug, source_id);
+        if (existingForSlug.has(key)) continue;
         if (jsonMode) {
           process.stdout.write(JSON.stringify({
             action: 'add_timeline', slug, source_id, date: entry.date,
