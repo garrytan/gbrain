@@ -1803,3 +1803,134 @@ flow + recovery messaging).
 **Priority:** P2.
 **Depends on:** decision on whether to deprecate the bare name or dual-publish
 during a transition window.
+
+
+## v0.32.6 follow-ups from PR #880 (gbrain-context post-Codex recalibration)
+
+These items were demoted from the PR #880 scope because they depend on
+infrastructure (clock-injection seam, public-API design) that's not in this PR.
+Filed for a future fix wave.
+
+### Clock-injection seam in `src/core/context-engine.ts`
+
+**Status:** Prerequisite for re-promoting perf-budget + snapshot tests.
+
+**What:** Inject a `now: () => Date` into the engine factory so all `new Date()`
+call sites (lines 207, 371, and Date.now() at 354) read through one source.
+~10 lines.
+
+**Why:** The plan proposed two test infrastructure items (perf budget at p99 <
+50ms, full-block snapshot for format-drift) that both depend on a stable clock.
+Without injection, snapshot tests flake on the time field and perf tests
+double-call `Date` non-deterministically.
+
+**Effort:** S (CC: ~30 min).
+
+### Perf-budget assertion (T-NEW2)
+
+**Depends on:** clock-injection seam above.
+
+**What:** New test asserting `assemble()` p99 stays under 50ms over 50 warm
+runs. The headline claim of the engine is "<5ms per turn"; right now nothing
+ratchets that in.
+
+**Codex F2 note for the implementation:** Use `Math.floor(50 × 0.95)` (index
+47) for p95 or the actual sorted-percentile method, NOT `Math.floor(50 ×
+0.99)` which returns index 49 = the MAX sample and fails on one scheduler
+pause.
+
+### Full-block snapshot test (T-NEW3)
+
+**Depends on:** clock-injection seam above.
+
+**What:** `expect(result.systemPromptAddition).toMatchSnapshot()` with a
+deterministic clock + fixture workspace. Pins the wire format so a reorder of
+fields or rename of `**Location:**` to `**Where:**` is caught.
+
+### `exports` map entry for `./context-engine` (C-NEW2)
+
+**Codex F8 note:** Adding `"./context-engine": "./src/core/context-engine.ts"`
+creates premature public-API obligations around types, lazy SDK loading, `.ts`
+imports, and engine-version semantics. Plugin loading via
+`openclaw.extensions` doesn't need it. Revisit when external consumers
+(gbrain-evals harness, etc) actually need direct engine import.
+
+### `.ts`-extension import resolution coupling (A3)
+
+**What:** `src/openclaw-context-engine.ts:25` imports
+`./core/context-engine.ts` with explicit `.ts` extension. Bun handles natively;
+standard `tsc` emit + Node ESM require `.js`. If OpenClaw ever transpiles
+before loading, this breaks.
+
+**Defer until:** OpenClaw integration fails on this path.
+
+### Typed `openclaw/plugin-sdk` ambient module shim (A5)
+
+**What:** Replace `@ts-ignore` at the lazy SDK import in
+`src/core/context-engine.ts` with `types/openclaw-shim.d.ts` declaring
+ambient module signatures. ~30 lines. Lets typecheck catch typos and
+signature changes in the SDK that `@ts-ignore` silences.
+
+### `loadJsonFile` parse-error warning (C-prior C5)
+
+**What:** Add `console.warn` on JSON parse failure so the heartbeat cron's
+mistakes surface in stderr instead of silently degrading to defaults.
+
+### Fractional-hour timezone offset (C-prior C3)
+
+**What:** `getTimeInTz` rounds offsets at lines 217-224 (integer
+`localH - utcH` math). India (UTC+5:30), Nepal (UTC+5:45), Newfoundland
+(UTC-3:30), Chatham Islands (UTC+12:45) all round to the wrong whole hour
+in the emitted ISO. `dayOfWeek` and `hour` are correct via `Intl`; only the
+embedded offset string is wrong. Fix: use `Intl.DateTimeFormat` with
+`timeZoneName: 'longOffset'`.
+
+### DST-boundary test (deferred)
+
+**What:** Lock in `getTimeInTz` behavior across spring-forward / fall-back
+transitions. Edge case but real if Garry travels during a transition window.
+
+### Multibyte sanitizer test (deferred)
+
+**What:** `sanitizeForPrompt(s, 100)` clamps at 100 chars via `.slice(0, 100)`
+which operates on UTF-16 code units. A surrogate pair could be split mid-pair.
+Very low likelihood (real attendees are <50 chars) but the test surface is
+empty.
+
+### Dynamic airport-tz lookup (Codex parenthetical)
+
+**What:** `AIRPORT_TZ` as a 30-entry static map is the wrong long-term
+primitive. Either pull from a small tz library (e.g., `@vvo/tzdb`) keyed on
+IATA code, or require the heartbeat producer to supply
+`flights.destinationTimezone` in the JSON shape directly.
+
+### Workspace contract documentation (DOC1)
+
+**What:** New `docs/openclaw-context-engine.md` explaining which workspace
+files the engine reads, their schemas, who's expected to write them, and the
+atomic-rename concurrency contract. The interface is implicit in the test
+fixtures today.
+
+### CLAUDE.md "Key files" annotations (DOC2)
+
+**What:** Add one-line entries under CLAUDE.md's "Key files" section for
+`src/core/context-engine.ts` and `src/openclaw-context-engine.ts`. Per
+project convention for new architectural files.
+
+### Repo-wide privacy scrub
+
+**Status:** Out of scope for PR #880 (which scrubbed `test/context-engine.test.ts`
+and added the new CI guard). The guard surfaced 4 additional pre-existing
+references in other test files plus ~24 references in non-test files
+(CHANGELOG entries, docs, skill READMEs). Each entry needs case-by-case
+judgment.
+
+**What:** Dedicated pass across:
+- Non-allowlisted pre-existing test-file matches (extract.test.ts,
+  serve-stdio-lifecycle.test.ts — currently allowlisted as pre-existing
+  but warrant a real scrub).
+- 24 doc/skill/CHANGELOG matches (most are historical and may not be
+  retroactively rewriteable, but should be triaged).
+
+**Depends on:** human judgment on which historical CHANGELOG entries to
+leave intact vs scrub.

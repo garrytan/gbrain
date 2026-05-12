@@ -91,9 +91,20 @@ A `/plan-eng-review` pass on PR #880 surfaced 5 findings worth fixing before mer
 - **C1: `isQuietHours` split into 3 explicit signals** — the original name was misleading (returned `false` when the user was awake at 2 AM, even though the wall clock said quiet hours). Split into `userAwake`, `wallClockQuietHours`, and a composite `quietHoursActive` so consumers can decide their own policy. The on-disk `heartbeat.garryAwake` JSON field is unchanged — only the internal `LiveContext` type and the format-block consumer renamed.
 - **T1: regression test coverage for the active-flight path** — pre-fix, `resolveLocation`'s flight branch (the headline path for the Toronto incident) had ZERO direct test coverage. Two new cases lock in the known-airport happy path AND the unknown-airport failure mode so A4 can't silently regress.
 
+### Codex outside-voice recalibration (folded into v0.32.5 before merge)
+
+A `/codex` outside-voice consult on the second fix wave's plan caught three findings the two prior `/plan-eng-review` passes both missed. All three were folded into v0.32.5 before merge.
+
+- **L0-A — A4 was COSMETIC, not real.** Pre-fix, `resolveLocation` returned `tz: US/Pacific` for any unknown destination airport with only a `source: 'flight:XX:tz-unknown:XYZ'` sticker. The engine still computed `Time`, `Day`, and `quietHoursActive` from US/Pacific regardless, so a flight to BOM injected "Mon 3:00 PM PT" with a footnote nobody reads. **Same silent-wrong-output failure class A4 was supposed to close.** Post-fix: when the airport is unknown, the engine emits an explicit `Timezone: unknown` warning instead of a concrete (and wrong) local time. The LLM sees the gap, not a guess. Pinned by `L0-A: active flight to an UNKNOWN airport emits NO concrete local time`.
+- **L0-B — Top-level `await import` is a hard module-load constraint.** Any OpenClaw deployment in a non-TLA runtime (older Node, CJS bridges, certain transpilers) was failing BEFORE the plugin registered. The try/catch inside the dynamic import couldn't help — module load itself can't be caught by the consumer. Post-fix: SDK resolution moved to an `ensureSdkLoaded()` async helper called from `assemble()` and `compact()` on first invocation. Module loads cleanly in every runtime; the fallback path actually catches. Pinned by `L0-B: SDK load is lazy`.
+- **Privacy guard redesigned.** The proposed corporate-email regex (`@openai|google|stripe...`) would have caught legitimate billing/auth test fixtures. Redesigned per Codex: exact-string `BANNED_NAMES` + `BANNED_EMAILS` lists + structural-reference allowlist. The actual rule (no real-person names) is enforced without false-positive collateral.
+- **Plugin shape now actually tested.** New `test/e2e/openclaw-context-engine-plugin.test.ts` exercises the plugin discovery + registration path that OpenClaw will walk at runtime. Pre-fix, the 20 unit tests proved the ENGINE works; nothing proved the PLUGIN loads. Folded in alongside a `compact()` fallback test and an `e2e-test-map.ts` entry so `ci:local:diff` narrows correctly for engine changes.
+- **Deferred to v0.32.6 (TODOS.md)**: perf budget assertion (needs a clock-injection seam Codex correctly noted is missing), full-block snapshot test (same dependency), `exports` map entry (premature public-API obligations), and ~10 other lower-signal items.
+
 ### Contributors
 
 - Original PR [#873](https://github.com/garrytan/gbrain/pull/873) by @garrytan-agents. Two commits (deterministic injection + activity injection) preserved authorship-intact in this ship.
+- Codex (gpt-5-codex) outside-voice consult drove the L0 recalibration that closed the headline A4 cosmetic-fix gap and converted top-level await to lazy SDK resolution.
 
 ## [0.32.0] - 2026-05-10
 

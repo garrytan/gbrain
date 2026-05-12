@@ -128,6 +128,11 @@ ALLOW_LIST=(
   # CHANGELOG.md, and CLAUDE.md (meta-rule enforcement requires
   # mentioning what the rule forbids).
   'test/recency-decay.test.ts'
+  # v0.32.5: the sibling check-test-real-names.sh enforces the same
+  # privacy rule for test fixtures and lists the banned names literally
+  # (Wintermute, Hermes, etc) inside its BANNED_NAMES + ALLOWLIST arrays.
+  # Same meta-rule-enforcement exception as scripts/check-privacy.sh itself.
+  'scripts/check-test-real-names.sh'
 )
 
 is_allowed() {
