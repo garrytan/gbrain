@@ -48,9 +48,20 @@ the full doc map, use `llms.txt` at the same URL root.
 ```bash
 git clone https://github.com/garrytan/gbrain.git && cd gbrain && bun install && bun link
 gbrain init                     # local brain, ready in 2 seconds
+                                # picks a search mode (conservative / balanced / tokenmax)
 gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
+gbrain search modes             # see the active search mode + per-knob attribution
+gbrain search stats             # cache hit rate + intent mix after some real usage
 ```
+
+**v0.32.3 — named search modes.** `gbrain init` asks once which mode fits
+your workload: `conservative` (4K token budget, no LLM expansion — cheapest),
+`balanced` (12K budget, no expansion — Sonnet-tier sweet spot), or `tokenmax`
+(no budget, expansion ON — for frontier models). Auto-suggests based on your
+configured `models.tier.subagent`. Non-TTY installs auto-pick `balanced` and
+print a hint pointing at `gbrain config set search.mode <m>`. Methodology +
+eval results live at [docs/eval/SEARCH_MODE_METHODOLOGY.md](docs/eval/SEARCH_MODE_METHODOLOGY.md).
 
 **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
 postinstall hook on global installs, so schema migrations never run and the CLI
