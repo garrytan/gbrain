@@ -112,13 +112,49 @@ async function expectProjectionContract(engine: BrainEngine, slug: string): Prom
   expect(fetched!.timeline).toBe(full.timeline);
 }
 
+async function expectLineSpanProjectionContract(engine: BrainEngine, slug: string): Promise<void> {
+  const full = await engine.putPage(slug, {
+    type: 'concept',
+    title: 'Line Span Projection Page',
+    compiled_truth: [
+      'Line one.',
+      'Line two🙂.',
+      'Line three.',
+    ].join('\n'),
+    timeline: [
+      '- **2026-05-11** | Timeline one.',
+      '- **2026-05-12** | Timeline two.',
+    ].join('\n'),
+    frontmatter: { source: 'line-span-projection-test' },
+    content_hash: `hash-${slug}`,
+  });
+
+  const compiledSpan = await engine.getPageLineSpanProjection(slug, {
+    line_start: 2,
+    line_end: 3,
+  });
+  expect(compiledSpan).not.toBeNull();
+  expect(compiledSpan!.title).toBe('Line Span Projection Page');
+  expect(compiledSpan!.frontmatter).toEqual({ source: 'line-span-projection-test' });
+  expect(compiledSpan!.content_hash).toBe(full.content_hash);
+  expect(compiledSpan!.text).toBe('Line two🙂.\nLine three.');
+
+  const timelineSpan = await engine.getPageLineSpanProjection(slug, {
+    line_start: 7,
+    line_end: 8,
+  });
+  expect(timelineSpan!.text).toBe('- **2026-05-11** | Timeline one.\n- **2026-05-12** | Timeline two.');
+}
+
 describe('page projection engine API', () => {
   test('SQLite returns metadata and Unicode-scalar text windows without full page bodies', async () => {
     await expectProjectionContract(sqlite, 'concepts/projection-sqlite');
+    await expectLineSpanProjectionContract(sqlite, 'concepts/line-span-projection-sqlite');
   });
 
   test('PGLite returns metadata and Unicode-scalar text windows without full page bodies', async () => {
     await expectProjectionContract(pglite, 'concepts/projection-pglite');
+    await expectLineSpanProjectionContract(pglite, 'concepts/line-span-projection-pglite');
   });
 
   test('rejects invalid projection window bounds', async () => {
@@ -139,6 +175,16 @@ describe('page projection engine API', () => {
     await expect(sqlite.getPageProjection('concepts/projection-invalid-bounds', {
       windows: { compiled_truth: { char_start: 0, char_limit: 0.5 } },
     })).rejects.toThrow('char_limit must be an integer');
+
+    await expect(sqlite.getPageLineSpanProjection('concepts/projection-invalid-bounds', {
+      line_start: 0,
+      line_end: 1,
+    })).rejects.toThrow('line_start must be a positive finite number');
+
+    await expect(sqlite.getPageLineSpanProjection('concepts/projection-invalid-bounds', {
+      line_start: 3,
+      line_end: 2,
+    })).rejects.toThrow('line_start must be <= line_end');
   });
 
   const databaseUrl = process.env.DATABASE_URL;
@@ -168,6 +214,7 @@ describe('page projection engine API', () => {
       });
       await engine.initSchema();
       await expectProjectionContract(engine, 'concepts/projection-postgres');
+      await expectLineSpanProjectionContract(engine, 'concepts/line-span-projection-postgres');
     } finally {
       await engine.disconnect().catch(() => undefined);
       await admin.unsafe(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => undefined);

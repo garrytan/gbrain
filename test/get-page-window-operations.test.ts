@@ -49,15 +49,151 @@ test('get_page can return a bounded content window with continuation selectors',
     expect(result.content_window.compiled_truth.has_more).toBe(true);
     expect(result.content_window.compiled_truth.continuation_selector.kind).toBe('compiled_truth');
     expect(result.content_window.compiled_truth.continuation_selector.char_start).toBe(50);
+    expect(result.content_window.compiled_truth.continuation_selector.content_hash).toBe(result.content_hash);
     expect(result.content_window.timeline.has_more).toBe(true);
     expect(result.content_window.timeline.continuation_selector.kind).toBe('timeline_range');
     expect(result.content_window.timeline.continuation_selector.char_start).toBe(50);
+    expect(result.content_window.timeline.continuation_selector.content_hash).toBe(result.content_hash);
 
     const continuationRead = await readContext(engine, {
       selectors: [result.content_window.timeline.continuation_selector],
       token_budget: 100,
     });
     expect(continuationRead.canonical_reads[0]?.text).toBe('B'.repeat(70));
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('get_page windows use Unicode scalar offsets for non-ASCII content', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-get-page-unicode-window-'));
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'concepts/unicode-page', [
+      '---',
+      'type: concept',
+      'title: Unicode Page',
+      '---',
+      '🙂ABCDE',
+      '',
+      '---',
+      '',
+      '🚀FGHIJ',
+    ].join('\n'));
+
+    const result = await getPageOperation().handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      slug: 'concepts/unicode-page',
+      content_char_limit: 2,
+    }) as any;
+
+    expect(result.compiled_truth).toBe('🙂A');
+    expect(result.timeline).toBe('🚀F');
+    expect(result.content_window.compiled_truth.returned_chars).toBe(2);
+    expect(result.content_window.compiled_truth.continuation_selector.char_start).toBe(2);
+
+    const continuationRead = await readContext(engine, {
+      selectors: [result.content_window.compiled_truth.continuation_selector],
+      token_budget: 1,
+    });
+    expect(continuationRead.canonical_reads[0]?.text).toBe('BCDE');
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('get_page rejects stale content_hash continuations after page mutation', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-get-page-stale-window-'));
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'concepts/stale-page', [
+      '---',
+      'type: concept',
+      'title: Stale Page',
+      '---',
+      'Alpha Bravo Charlie',
+    ].join('\n'));
+    const firstPage = await engine.getPage('concepts/stale-page');
+    if (!firstPage?.content_hash) throw new Error('fixture page hash missing');
+
+    await importFromContent(engine, 'concepts/stale-page', [
+      '---',
+      'type: concept',
+      'title: Stale Page',
+      '---',
+      'Updated content should not be spliced.',
+    ].join('\n'));
+
+    const result = await getPageOperation().handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      slug: 'concepts/stale-page',
+      content_hash: firstPage.content_hash,
+      content_char_limit: 8,
+      compiled_truth_char_start: 8,
+    }) as any;
+
+    expect(result.error).toBe('stale_continuation');
+    expect(result.slug).toBe('concepts/stale-page');
+    expect(result.expected_content_hash).toBe(firstPage.content_hash);
+    expect(result.actual_content_hash).not.toBe(firstPage.content_hash);
+    expect(result.compiled_truth).toBeUndefined();
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('get_page reports stale content_hash when a page was deleted', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-get-page-stale-deleted-'));
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'concepts/deleted-page', [
+      '---',
+      'type: concept',
+      'title: Deleted Page',
+      '---',
+      'Deleted content.',
+    ].join('\n'));
+    const page = await engine.getPage('concepts/deleted-page');
+    if (!page?.content_hash) throw new Error('fixture page hash missing');
+    await engine.deletePage('concepts/deleted-page');
+
+    const result = await getPageOperation().handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      slug: 'concepts/deleted-page',
+      content_hash: page.content_hash,
+      content_char_limit: 8,
+    }) as any;
+
+    expect(result.status).toBe('stale');
+    expect(result.error).toBe('stale_selector');
+    expect(result.actual_content_hash).toBeNull();
   } finally {
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });

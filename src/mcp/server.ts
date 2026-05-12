@@ -5,6 +5,11 @@ import { operations as defaultOperations, OperationError, MCP_INSTRUCTIONS } fro
 import type { Operation, OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
+import {
+  byteLength as utf8ByteLength,
+  scalarLength,
+  truncateUtf8ByScalars,
+} from '../core/text-offsets.ts';
 import { VERSION } from '../version.ts';
 import { operationToMcpTool } from './tool-schema.ts';
 import {
@@ -310,7 +315,10 @@ function buildGuardedGetPageResult(
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const compiledTruth = truncatePageField(page.compiled_truth, perFieldBytes);
     const timeline = truncatePageField(page.timeline, perFieldBytes);
-    const continuations = buildGetPageContinuations(page.slug, compiledTruth, timeline);
+    const continuations = buildGetPageContinuations(page.slug, page.content_hash, compiledTruth, timeline, {
+      compiled_truth: getContentWindowMetadata(page.content_window, 'compiled_truth'),
+      timeline: getContentWindowMetadata(page.content_window, 'timeline'),
+    });
     const pageWithoutContentWindow = { ...page };
     delete pageWithoutContentWindow.content_window;
     const guarded = {
@@ -342,13 +350,18 @@ type TruncatedPageField = {
   has_more: boolean;
 };
 
+type GuardedPageWindowMetadata = {
+  char_start: number;
+  total_chars: number;
+};
+
 function truncatePageField(value: unknown, maxBytes: number): TruncatedPageField | null {
   if (typeof value !== 'string') return null;
   if (byteLength(value) <= maxBytes) {
     return {
       text: value,
-      original_chars: value.length,
-      returned_chars: value.length,
+      original_chars: scalarLength(value),
+      returned_chars: scalarLength(value),
       has_more: false,
     };
   }
@@ -357,51 +370,89 @@ function truncatePageField(value: unknown, maxBytes: number): TruncatedPageField
   const prefix = truncateUtf8(value, Math.max(0, maxBytes - markerBytes));
   return {
     text: `${prefix}${TRUNCATION_MARKER}`,
-    original_chars: value.length,
-    returned_chars: prefix.length,
+    original_chars: scalarLength(value),
+    returned_chars: scalarLength(prefix),
     has_more: true,
   };
 }
 
 function buildGetPageContinuations(
   slug: unknown,
+  contentHash: unknown,
   compiledTruth: TruncatedPageField | null,
   timeline: TruncatedPageField | null,
+  windows: {
+    compiled_truth?: GuardedPageWindowMetadata;
+    timeline?: GuardedPageWindowMetadata;
+  } = {},
 ): Record<string, unknown> {
   if (typeof slug !== 'string' || slug.length === 0) return {};
   const continuations: Record<string, unknown> = {};
 
-  if (compiledTruth?.has_more) {
+  const compiledContinuation = continuationWindow(compiledTruth, windows.compiled_truth);
+  if (compiledContinuation) {
     continuations.compiled_truth = {
       tool: 'read_context',
       arguments: {
         selectors: [{
           kind: 'compiled_truth',
           slug,
-          char_start: compiledTruth.returned_chars,
+          char_start: compiledContinuation.next_char_start,
+          ...(typeof contentHash === 'string' && contentHash.length > 0 ? { content_hash: contentHash } : {}),
         }],
         token_budget: 900,
       },
-      remaining_chars: compiledTruth.original_chars - compiledTruth.returned_chars,
+      remaining_chars: compiledContinuation.remaining_chars,
     };
   }
 
-  if (timeline?.has_more) {
+  const timelineContinuation = continuationWindow(timeline, windows.timeline);
+  if (timelineContinuation) {
     continuations.timeline = {
       tool: 'read_context',
       arguments: {
         selectors: [{
           kind: 'timeline_range',
           slug,
-          char_start: timeline.returned_chars,
+          char_start: timelineContinuation.next_char_start,
+          ...(typeof contentHash === 'string' && contentHash.length > 0 ? { content_hash: contentHash } : {}),
         }],
         token_budget: 900,
       },
-      remaining_chars: timeline.original_chars - timeline.returned_chars,
+      remaining_chars: timelineContinuation.remaining_chars,
     };
   }
 
   return continuations;
+}
+
+function getContentWindowMetadata(value: unknown, field: 'compiled_truth' | 'timeline'): GuardedPageWindowMetadata | undefined {
+  if (!isRecord(value)) return undefined;
+  const fieldWindow = value[field];
+  if (!isRecord(fieldWindow)) return undefined;
+  const charStart = fieldWindow.char_start;
+  const totalChars = fieldWindow.total_chars;
+  if (typeof charStart !== 'number' || !Number.isFinite(charStart) || charStart < 0) return undefined;
+  if (typeof totalChars !== 'number' || !Number.isFinite(totalChars) || totalChars < 0) return undefined;
+  return {
+    char_start: Math.floor(charStart),
+    total_chars: Math.floor(totalChars),
+  };
+}
+
+function continuationWindow(
+  field: TruncatedPageField | null,
+  window: GuardedPageWindowMetadata | undefined,
+): { next_char_start: number; remaining_chars: number } | undefined {
+  if (!field) return undefined;
+  const charStart = window?.char_start ?? 0;
+  const totalChars = window?.total_chars ?? field.original_chars;
+  const nextCharStart = charStart + field.returned_chars;
+  if (nextCharStart >= totalChars) return undefined;
+  return {
+    next_char_start: nextCharStart,
+    remaining_chars: totalChars - nextCharStart,
+  };
 }
 
 function attachMcpTruncationMetadata(
@@ -489,20 +540,7 @@ function truncateJsonStrings(value: unknown, maxStringBytes: number): unknown {
 }
 
 function truncateUtf8(text: string, maxBytes: number): string {
-  if (maxBytes <= 0) return '';
-  if (byteLength(text) <= maxBytes) return text;
-
-  let low = 0;
-  let high = text.length;
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    if (byteLength(text.slice(0, mid)) <= maxBytes) {
-      low = mid;
-    } else {
-      high = mid - 1;
-    }
-  }
-  return text.slice(0, low);
+  return truncateUtf8ByScalars(text, maxBytes);
 }
 
 function mcpTruncationHint(toolName: string): string {
@@ -523,7 +561,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function byteLength(text: string): number {
-  return Buffer.byteLength(text, 'utf-8');
+  return utf8ByteLength(text);
 }
 
 export async function startMcpServer(engine: BrainEngine | Promise<BrainEngine>) {

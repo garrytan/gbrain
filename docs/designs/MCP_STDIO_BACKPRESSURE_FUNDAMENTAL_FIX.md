@@ -413,10 +413,16 @@ Implementation status:
   one engine query, with SQLite/Postgres/PGLite implementations and
   Unicode-scalar window contract tests. Existing full `getPage` reads remain
   compatible.
-- Steps 4-8 remain future work. The repository still does not prove
-  snapshot-bound continuations, `get_page`/`read_context` projection wiring,
-  durable derived jobs, derived freshness semantics, or dual-channel Telegram
-  heartbeat behavior.
+- Step 4 is implemented in this PR slice: bounded `get_page` and
+  `read_context` page-derived reads propagate page `content_hash` through
+  continuation selectors, reject stale or deleted snapshots with structured
+  stale warnings/results, use Unicode-scalar offsets, and route
+  `compiled_truth`, `timeline_range`, default `page`, and `line_span` reads
+  through projection/window APIs. MCP fallback continuations also preserve
+  snapshot hashes and window offsets.
+- Steps 5-8 remain future work. The repository still does not prove durable
+  derived jobs, derived freshness semantics, or dual-channel Telegram heartbeat
+  behavior.
 
 ## Resolved Decisions And Remaining Open Questions
 

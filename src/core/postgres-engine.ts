@@ -7,13 +7,15 @@ import {
 } from './memory-inbox-status.ts';
 import { runMigrations } from './migrate.ts';
 import {
+  normalizePageLineSpanProjectionOptions,
   normalizePageProjectionWindows,
   PAGE_WINDOW_FIELDS,
+  rowToPageLineSpanProjection,
   rowToPageProjection,
 } from './page-projection.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type {
-  Page, PageInput, PageFilters, PageProjection, PageProjectionOptions, PageType,
+  Page, PageInput, PageFilters, PageLineSpanProjection, PageLineSpanProjectionOptions, PageProjection, PageProjectionOptions, PageType,
   NoteManifestEntry,
   NoteManifestEntryInput,
   NoteManifestFilters,
@@ -360,6 +362,54 @@ export class PostgresEngine implements BrainEngine {
     );
     if (rows.length === 0) return null;
     return rowToPageProjection(rows[0], windows);
+  }
+
+  async getPageLineSpanProjection(
+    slug: string,
+    options: PageLineSpanProjectionOptions,
+  ): Promise<PageLineSpanProjection | null> {
+    const range = normalizePageLineSpanProjectionOptions(options);
+    const rows = await this.sql.unsafe(
+      `WITH page AS (
+         SELECT
+           id,
+           slug,
+           type,
+           title,
+           frontmatter,
+           content_hash,
+           created_at,
+           updated_at,
+           CASE
+             WHEN char_length(trim(timeline)) > 0
+               THEN compiled_truth || E'\\n\\n---\\n\\n' || timeline
+             ELSE compiled_truth
+           END AS body
+         FROM pages
+         WHERE slug = $1
+       ),
+       selected AS (
+         SELECT string_agg(line, E'\\n' ORDER BY ordinality) AS line_span_text
+         FROM page
+         CROSS JOIN LATERAL regexp_split_to_table(page.body, E'\\n') WITH ORDINALITY AS split(line, ordinality)
+         WHERE ordinality BETWEEN $2 AND $3
+       )
+       SELECT
+         page.id,
+         page.slug,
+         page.type,
+         page.title,
+         page.frontmatter,
+         page.content_hash,
+         page.created_at,
+         page.updated_at,
+         COALESCE(selected.line_span_text, '') AS line_span_text
+       FROM page
+       CROSS JOIN selected`,
+      [validateSlug(slug), range.line_start, range.line_end],
+    );
+    if (rows.length === 0) return null;
+    return rowToPageLineSpanProjection(rows[0] as Record<string, unknown>, range);
   }
 
   async getPageForUpdate(slug: string): Promise<Page | null> {

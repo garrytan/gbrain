@@ -1,15 +1,23 @@
 import type {
+  PageLineSpanProjection,
+  PageLineSpanProjectionOptions,
   PageProjection,
   PageProjectionOptions,
   PageTextWindow,
   PageType,
   PageWindowField,
 } from './types.ts';
+import { scalarLength } from './text-offsets.ts';
 
 export type NormalizedPageProjectionWindows = Partial<Record<PageWindowField, {
   char_start: number;
   char_limit: number;
 }>>;
+
+export type NormalizedPageLineSpanProjectionOptions = {
+  line_start: number;
+  line_end: number;
+};
 
 export const PAGE_WINDOW_FIELDS = ['compiled_truth', 'timeline'] as const satisfies readonly PageWindowField[];
 
@@ -55,6 +63,36 @@ export function rowToPageProjection(
   };
 }
 
+export function normalizePageLineSpanProjectionOptions(
+  options: PageLineSpanProjectionOptions,
+): NormalizedPageLineSpanProjectionOptions {
+  const lineStart = normalizePositiveInteger(options.line_start, 'line_start');
+  const lineEnd = normalizePositiveInteger(options.line_end, 'line_end');
+  if (lineStart > lineEnd) {
+    throw new RangeError('line_start must be <= line_end');
+  }
+  return { line_start: lineStart, line_end: lineEnd };
+}
+
+export function rowToPageLineSpanProjection(
+  row: Record<string, unknown>,
+  options: NormalizedPageLineSpanProjectionOptions,
+): PageLineSpanProjection {
+  return {
+    id: Number(row.id),
+    slug: String(row.slug),
+    type: row.type as PageType,
+    title: String(row.title),
+    frontmatter: parseJsonObject(row.frontmatter),
+    content_hash: row.content_hash ? String(row.content_hash) : undefined,
+    created_at: new Date(String(row.created_at)),
+    updated_at: new Date(String(row.updated_at)),
+    text: String(row.line_span_text ?? ''),
+    line_start: options.line_start,
+    line_end: options.line_end,
+  };
+}
+
 function normalizeCharStart(value: number): number {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError('char_start must be a non-negative finite number');
@@ -75,8 +113,18 @@ function normalizeCharLimit(value: number): number {
   return Math.floor(value);
 }
 
+function normalizePositiveInteger(value: number, name: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new RangeError(`${name} must be a positive finite number`);
+  }
+  if (!Number.isInteger(value)) {
+    throw new RangeError(`${name} must be an integer`);
+  }
+  return Math.floor(value);
+}
+
 function buildPageTextWindow(text: string, charStart: number, totalChars: number): PageTextWindow {
-  const returnedChars = Array.from(text).length;
+  const returnedChars = scalarLength(text);
   const nextCharStart = charStart + returnedChars;
   const hasMore = nextCharStart < totalChars;
   return {

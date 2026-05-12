@@ -95,6 +95,25 @@ export interface PageProjectionOptions {
   windows?: Partial<Record<PageWindowField, PageTextWindowRequest>>;
 }
 
+export interface PageLineSpanProjectionOptions {
+  line_start: number;
+  line_end: number;
+}
+
+export interface PageLineSpanProjection {
+  id: number;
+  slug: string;
+  type: PageType;
+  title: string;
+  frontmatter: Record<string, unknown>;
+  content_hash?: string;
+  created_at: Date;
+  updated_at: Date;
+  text: string;
+  line_start: number;
+  line_end: number;
+}
+
 export interface PageFilters {
   type?: PageType;
   tag?: string;
@@ -1930,6 +1949,19 @@ export interface ContextConflict {
   source_refs: string[];
 }
 
+export type RetrievalSelectorWarningCode = 'stale_selector' | 'stale_continuation';
+
+export interface RetrievalSelectorWarning {
+  code: RetrievalSelectorWarningCode;
+  severity: 'warning';
+  selector_id: string;
+  selector: RetrievalSelector;
+  slug?: string;
+  expected_content_hash: string;
+  current_content_hash: string | null;
+  message: string;
+}
+
 export interface ReadContextInput {
   query?: string;
   selectors?: RetrievalSelector[];
@@ -1949,6 +1981,7 @@ export interface ReadContextResult {
   evidence_claims: ContextEvidenceClaim[];
   conflicts: ContextConflict[];
   warnings: string[];
+  selector_warnings?: RetrievalSelectorWarning[];
   unread_required: RetrievalSelector[];
   continuations: RetrievalSelector[];
   scope_gate?: ScopeGateDecisionResult;

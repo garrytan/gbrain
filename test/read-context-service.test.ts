@@ -21,6 +21,18 @@ async function withEngine<T>(label: string, fn: (engine: SQLiteEngine) => Promis
   }
 }
 
+function failOnFullPageRead(engine: SQLiteEngine): void {
+  engine.getPage = async () => {
+    throw new Error('getPage should not be called for bounded read_context projection paths');
+  };
+}
+
+function failOnTimelineTableRead(engine: SQLiteEngine): void {
+  engine.getTimeline = async () => {
+    throw new Error('getTimeline should not be called for timeline_range page projection reads');
+  };
+}
+
 describe('read context service', () => {
   test('reads compiled truth as answer-grounding canonical evidence', async () => {
     await withEngine('compiled', async (engine) => {
@@ -90,6 +102,45 @@ describe('read context service', () => {
     });
   });
 
+  test('accepts page content_hash for section selectors', async () => {
+    await withEngine('section-page-hash', async (engine) => {
+      await importFromContent(engine, 'systems/section-page-hash', [
+        '---',
+        'type: system',
+        'title: Section Page Hash',
+        '---',
+        '# Overview',
+        'Top-level overview.',
+        '',
+        '## Runtime',
+        'Runtime section is bound to the page snapshot.',
+      ].join('\n'), { path: 'systems/section-page-hash.md' });
+
+      const page = await engine.getPage('systems/section-page-hash');
+      const sections = await engine.listNoteSectionEntries({
+        scope_id: 'workspace:default',
+        page_slug: 'systems/section-page-hash',
+        limit: 10,
+      });
+      const runtime = sections.find((section) => section.heading_text === 'Runtime');
+      if (!page?.content_hash || !runtime) throw new Error('section page hash fixture missing');
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'section',
+          slug: 'systems/section-page-hash',
+          section_id: runtime.section_id,
+          content_hash: page.content_hash,
+        }],
+        token_budget: 200,
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toContain('Runtime section is bound');
+      expect(result.canonical_reads[0]!.selector.content_hash).toBe(page.content_hash);
+    });
+  });
+
   test('returns continuation selectors when a canonical read exceeds budget', async () => {
     await withEngine('budget', async (engine) => {
       await importFromContent(engine, 'concepts/large-context', [
@@ -110,8 +161,242 @@ describe('read context service', () => {
       expect(result.canonical_reads[0]!.has_more).toBe(true);
       expect(result.continuations).toHaveLength(1);
       expect(result.continuations[0]!.kind).toBe('compiled_truth');
+      expect(result.continuations[0]!.content_hash).toBe(result.canonical_reads[0]!.selector.content_hash);
       expect(result.answer_ready.ready).toBe(false);
       expect(result.answer_ready.unsupported_reasons).toContain('continuation_required');
+    });
+  });
+
+  test('rejects stale compiled truth continuation selectors after page mutation', async () => {
+    await withEngine('stale-continuation', async (engine) => {
+      await importFromContent(engine, 'concepts/stale-context', [
+        '---',
+        'type: concept',
+        'title: Stale Context',
+        '---',
+        'Alpha Bravo Charlie Delta Echo Foxtrot',
+      ].join('\n'), { path: 'concepts/stale-context.md' });
+
+      const firstRead = await readContext(engine, {
+        selectors: [{ kind: 'compiled_truth', slug: 'concepts/stale-context' }],
+        token_budget: 2,
+      });
+      const continuation = firstRead.continuations[0]!;
+      expect(continuation.content_hash).toBeDefined();
+
+      await importFromContent(engine, 'concepts/stale-context', [
+        '---',
+        'type: concept',
+        'title: Stale Context',
+        '---',
+        'Updated content should not be mixed into the old continuation.',
+      ].join('\n'), { path: 'concepts/stale-context.md' });
+
+      const staleRead = await readContext(engine, {
+        selectors: [continuation],
+        token_budget: 20,
+      });
+
+      expect(staleRead.canonical_reads).toEqual([]);
+      expect(staleRead.unread_required).toHaveLength(1);
+      expect(staleRead.unread_required[0]!.freshness).toBe('stale');
+      expect(staleRead.warnings.some((warning) => warning.includes('stale_continuation'))).toBe(true);
+      expect(staleRead.answer_ready.ready).toBe(false);
+      expect(staleRead.answer_ready.unsupported_reasons).toContain('stale_continuation');
+    });
+  });
+
+  test('uses Unicode scalar offsets for compiled truth continuations', async () => {
+    await withEngine('unicode-continuation', async (engine) => {
+      await importFromContent(engine, 'concepts/unicode-context', [
+        '---',
+        'type: concept',
+        'title: Unicode Context',
+        '---',
+        '🙂ABCDE',
+      ].join('\n'), { path: 'concepts/unicode-context.md' });
+
+      const result = await readContext(engine, {
+        selectors: [{ kind: 'compiled_truth', slug: 'concepts/unicode-context' }],
+        token_budget: 1,
+      });
+
+      expect(result.canonical_reads[0]!.text).toBe('🙂ABC');
+      expect(result.continuations[0]!.char_start).toBe(4);
+
+      const continuationRead = await readContext(engine, {
+        selectors: [result.continuations[0]!],
+        token_budget: 10,
+      });
+      expect(continuationRead.canonical_reads[0]!.text).toBe('DE');
+    });
+  });
+
+  test('reads page with included timeline without materializing the full page', async () => {
+    await withEngine('page-include-timeline-projection', async (engine) => {
+      await importFromContent(engine, 'concepts/page-projection-context', [
+        '---',
+        'type: concept',
+        'title: Page Projection Context',
+        '---',
+        'Compiled page evidence.',
+        '',
+        '---',
+        '',
+        '- **2026-05-12** | Timeline page evidence.',
+      ].join('\n'), { path: 'concepts/page-projection-context.md' });
+      failOnFullPageRead(engine);
+
+      const result = await readContext(engine, {
+        selectors: [{ kind: 'page', slug: 'concepts/page-projection-context' }],
+        include_timeline: 'include',
+        token_budget: 30,
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toContain('Compiled page evidence.');
+      expect(result.canonical_reads[0]!.text).toContain('Timeline page evidence.');
+      expect(result.canonical_reads[0]!.selector.content_hash).toBeDefined();
+    });
+  });
+
+  test('page include_timeline emits a timeline continuation when budget cannot include timeline text', async () => {
+    await withEngine('page-include-timeline-continuation', async (engine) => {
+      await importFromContent(engine, 'concepts/page-timeline-continuation', [
+        '---',
+        'type: concept',
+        'title: Page Timeline Continuation',
+        '---',
+        'ABCD',
+        '',
+        '---',
+        '',
+        'Timeline evidence that does not fit the first page read.',
+      ].join('\n'), { path: 'concepts/page-timeline-continuation.md' });
+
+      const result = await readContext(engine, {
+        selectors: [{ kind: 'page', slug: 'concepts/page-timeline-continuation' }],
+        include_timeline: 'include',
+        token_budget: 1,
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toBe('ABCD');
+      expect(result.continuations).toHaveLength(1);
+      expect(result.continuations[0]!.kind).toBe('timeline_range');
+      expect(result.continuations[0]!.char_start).toBe(0);
+      expect(result.continuations[0]!.content_hash).toBe(result.canonical_reads[0]!.selector.content_hash);
+      expect(result.answer_ready.ready).toBe(false);
+      expect(result.answer_ready.unsupported_reasons).toContain('continuation_required');
+    });
+  });
+
+  test('page include_timeline does not mix snapshots across field windows', async () => {
+    await withEngine('page-include-timeline-single-snapshot', async (engine) => {
+      await importFromContent(engine, 'concepts/page-snapshot-context', [
+        '---',
+        'type: concept',
+        'title: Page Snapshot Context',
+        '---',
+        'Compiled snapshot evidence.',
+        '',
+        '---',
+        '',
+        'Old timeline evidence.',
+      ].join('\n'), { path: 'concepts/page-snapshot-context.md' });
+
+      const originalGetPageProjection = engine.getPageProjection.bind(engine);
+      let projectionCalls = 0;
+      engine.getPageProjection = async (slug, options) => {
+        const projection = await originalGetPageProjection(slug, options);
+        projectionCalls += 1;
+        if (projectionCalls === 1 && options?.windows?.compiled_truth && !options.windows.timeline) {
+          await importFromContent(engine, 'concepts/page-snapshot-context', [
+            '---',
+            'type: concept',
+            'title: Page Snapshot Context',
+            '---',
+            'Compiled snapshot evidence.',
+            '',
+            '---',
+            '',
+            'Updated timeline evidence from a different snapshot.',
+          ].join('\n'), { path: 'concepts/page-snapshot-context.md' });
+        }
+        return projection;
+      };
+
+      const result = await readContext(engine, {
+        selectors: [{ kind: 'page', slug: 'concepts/page-snapshot-context' }],
+        include_timeline: 'include',
+        token_budget: 20,
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toContain('Compiled snapshot evidence.');
+      expect(result.canonical_reads[0]!.text).toContain('Old timeline evidence.');
+      expect(result.canonical_reads[0]!.text).not.toContain('Updated timeline evidence');
+    });
+  });
+
+  test('reads line spans without materializing the full page', async () => {
+    await withEngine('line-span-projection', async (engine) => {
+      await importFromContent(engine, 'concepts/line-span-context', [
+        '---',
+        'type: concept',
+        'title: Line Span Context',
+        '---',
+        'Line one.',
+        'Line two.',
+        'Line three.',
+      ].join('\n'), { path: 'concepts/line-span-context.md' });
+      failOnFullPageRead(engine);
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'line_span',
+          slug: 'concepts/line-span-context',
+          line_start: 2,
+          line_end: 3,
+        }],
+        token_budget: 20,
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toBe('Line two.\nLine three.');
+      expect(result.canonical_reads[0]!.selector.content_hash).toBeDefined();
+    });
+  });
+
+  test('caps projected char_end windows by token budget', async () => {
+    await withEngine('projection-char-end-cap', async (engine) => {
+      await importFromContent(engine, 'concepts/projection-cap-context', [
+        '---',
+        'type: concept',
+        'title: Projection Cap Context',
+        '---',
+        'Alpha '.repeat(100),
+      ].join('\n'), { path: 'concepts/projection-cap-context.md' });
+
+      const originalGetPageProjection = engine.getPageProjection.bind(engine);
+      let requestedCharLimit: number | undefined;
+      engine.getPageProjection = async (slug, options) => {
+        requestedCharLimit = options?.windows?.compiled_truth?.char_limit;
+        return originalGetPageProjection(slug, options);
+      };
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'compiled_truth',
+          slug: 'concepts/projection-cap-context',
+          char_start: 0,
+          char_end: 10_000,
+        }],
+        token_budget: 1,
+      });
+
+      expect(result.canonical_reads[0]!.text.length).toBeLessThanOrEqual(4);
+      expect(requestedCharLimit).toBeLessThanOrEqual(4);
     });
   });
 
@@ -223,6 +508,7 @@ describe('read context service', () => {
       expect(firstRead.continuations).toHaveLength(1);
       expect(firstRead.continuations[0]!.kind).toBe('section');
       expect(firstRead.continuations[0]!.char_start).toBe(firstRead.canonical_reads[0]!.text.length);
+      expect(firstRead.continuations[0]!.content_hash).toBe(firstRead.canonical_reads[0]!.selector.content_hash);
       expect(firstRead.continuations[0]!.selector_id).toContain('@chars:');
 
       const continuationRead = await readContext(engine, {
@@ -239,6 +525,210 @@ describe('read context service', () => {
       );
       expect(continuationRead.canonical_reads[0]!.text).toContain('SEGMENT');
       expect(continuationRead.canonical_reads[0]!.text).not.toContain('LONG_LINE_START');
+    });
+  });
+
+  test('rejects stale section continuation selectors after section text changes', async () => {
+    await withEngine('section-stale-continuation', async (engine) => {
+      const sectionContent = [
+        'LONG_LINE_START',
+        'SEGMENT_ALPHA',
+        'SEGMENT_BRAVO',
+        'SEGMENT_CHARLIE',
+        'LONG_LINE_END',
+      ].join(' ');
+      await importFromContent(engine, 'concepts/section-stale-context', [
+        '---',
+        'type: concept',
+        'title: Section Stale Context',
+        '---',
+        '# Compiled Truth',
+        'Intro.',
+        '',
+        '## Evidence',
+        sectionContent,
+      ].join('\n'), { path: 'concepts/section-stale-context.md' });
+
+      const sections = await engine.listNoteSectionEntries({
+        scope_id: 'workspace:default',
+        page_slug: 'concepts/section-stale-context',
+        limit: 10,
+      });
+      const evidence = sections.find((section) => section.heading_text === 'Evidence');
+      if (!evidence) throw new Error('evidence section fixture missing');
+
+      const firstRead = await readContext(engine, {
+        selectors: [{ kind: 'section', section_id: evidence.section_id }],
+        token_budget: 2,
+      });
+      const continuation = firstRead.continuations[0]!;
+      expect(continuation.content_hash).toBeDefined();
+
+      await importFromContent(engine, 'concepts/section-stale-context', [
+        '---',
+        'type: concept',
+        'title: Section Stale Context',
+        '---',
+        '# Compiled Truth',
+        'Intro.',
+        '',
+        '## Evidence',
+        'Updated evidence should not be mixed into the old continuation.',
+      ].join('\n'), { path: 'concepts/section-stale-context.md' });
+
+      const staleRead = await readContext(engine, {
+        selectors: [continuation],
+        token_budget: 20,
+      });
+
+      expect(staleRead.canonical_reads).toEqual([]);
+      expect(staleRead.unread_required[0]!.freshness).toBe('stale');
+      expect(staleRead.answer_ready.unsupported_reasons).toContain('stale_continuation');
+    });
+  });
+
+  test('reports stale section selectors when the section target disappears after mutation', async () => {
+    await withEngine('section-stale-missing', async (engine) => {
+      await importFromContent(engine, 'concepts/section-missing-context', [
+        '---',
+        'type: concept',
+        'title: Section Missing Context',
+        '---',
+        '# Compiled Truth',
+        'Intro.',
+        '',
+        '## Evidence',
+        'Evidence that will be removed.',
+      ].join('\n'), { path: 'concepts/section-missing-context.md' });
+
+      const sections = await engine.listNoteSectionEntries({
+        scope_id: 'workspace:default',
+        page_slug: 'concepts/section-missing-context',
+        limit: 10,
+      });
+      const evidence = sections.find((section) => section.heading_text === 'Evidence');
+      if (!evidence) throw new Error('evidence section fixture missing');
+      const page = await engine.getPage('concepts/section-missing-context');
+      if (!page?.content_hash) throw new Error('fixture page hash missing');
+
+      await importFromContent(engine, 'concepts/section-missing-context', [
+        '---',
+        'type: concept',
+        'title: Section Missing Context',
+        '---',
+        '# Compiled Truth',
+        'Intro changed and the evidence heading disappeared.',
+      ].join('\n'), { path: 'concepts/section-missing-context.md' });
+
+      const staleRead = await readContext(engine, {
+        selectors: [{
+          kind: 'section',
+          slug: 'concepts/section-missing-context',
+          section_id: evidence.section_id,
+          content_hash: page.content_hash,
+        }],
+        token_budget: 20,
+      });
+
+      expect(staleRead.canonical_reads).toEqual([]);
+      expect(staleRead.selector_warnings?.[0]?.code).toBe('stale_selector');
+      expect(staleRead.answer_ready.unsupported_reasons).toContain('stale_selector');
+    });
+  });
+
+  test('reports stale source_ref selectors when the source marker disappears after mutation', async () => {
+    await withEngine('source-ref-stale-missing', async (engine) => {
+      await importFromContent(engine, 'concepts/source-ref-stale-context', [
+        '---',
+        'type: concept',
+        'title: Source Ref Stale Context',
+        '---',
+        '# Compiled Truth',
+        'Claim with a source. [Source: Review, 2026-05-12]',
+      ].join('\n'), { path: 'concepts/source-ref-stale-context.md' });
+      const page = await engine.getPage('concepts/source-ref-stale-context');
+      if (!page?.content_hash) throw new Error('fixture page hash missing');
+
+      await importFromContent(engine, 'concepts/source-ref-stale-context', [
+        '---',
+        'type: concept',
+        'title: Source Ref Stale Context',
+        '---',
+        '# Compiled Truth',
+        'Claim changed and the source marker disappeared.',
+      ].join('\n'), { path: 'concepts/source-ref-stale-context.md' });
+
+      const staleRead = await readContext(engine, {
+        selectors: [{
+          kind: 'source_ref',
+          slug: 'concepts/source-ref-stale-context',
+          source_ref: 'Review, 2026-05-12',
+          content_hash: page.content_hash,
+        }],
+        token_budget: 20,
+      });
+
+      expect(staleRead.canonical_reads).toEqual([]);
+      expect(staleRead.selector_warnings?.[0]?.code).toBe('stale_selector');
+      expect(staleRead.answer_ready.unsupported_reasons).toContain('stale_selector');
+    });
+  });
+
+  test('accepts page content_hash for source_ref selectors', async () => {
+    await withEngine('source-ref-page-hash', async (engine) => {
+      await importFromContent(engine, 'concepts/source-ref-page-hash', [
+        '---',
+        'type: concept',
+        'title: Source Ref Page Hash',
+        '---',
+        '# Compiled Truth',
+        'Claim bound to page snapshot. [Source: Stable Review, 2026-05-12]',
+      ].join('\n'), { path: 'concepts/source-ref-page-hash.md' });
+      const page = await engine.getPage('concepts/source-ref-page-hash');
+      if (!page?.content_hash) throw new Error('source ref page hash fixture missing');
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'source_ref',
+          slug: 'concepts/source-ref-page-hash',
+          source_ref: 'Stable Review, 2026-05-12',
+          content_hash: page.content_hash,
+        }],
+        token_budget: 200,
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toContain('Claim bound to page snapshot.');
+      expect(result.canonical_reads[0]!.selector.content_hash).toBe(page.content_hash);
+    });
+  });
+
+  test('reports stale compiled truth selectors when the page was deleted', async () => {
+    await withEngine('compiled-stale-deleted', async (engine) => {
+      await importFromContent(engine, 'concepts/deleted-context', [
+        '---',
+        'type: concept',
+        'title: Deleted Context',
+        '---',
+        'Deleted canonical evidence.',
+      ].join('\n'), { path: 'concepts/deleted-context.md' });
+      const page = await engine.getPage('concepts/deleted-context');
+      if (!page?.content_hash) throw new Error('fixture page hash missing');
+      await engine.deletePage('concepts/deleted-context');
+
+      const staleRead = await readContext(engine, {
+        selectors: [{
+          kind: 'compiled_truth',
+          slug: 'concepts/deleted-context',
+          content_hash: page.content_hash,
+        }],
+        token_budget: 20,
+      });
+
+      expect(staleRead.canonical_reads).toEqual([]);
+      expect(staleRead.selector_warnings?.[0]?.code).toBe('stale_selector');
+      expect(staleRead.selector_warnings?.[0]?.current_content_hash).toBeNull();
+      expect(staleRead.answer_ready.unsupported_reasons).toContain('stale_selector');
     });
   });
 
@@ -457,8 +947,8 @@ describe('read context service', () => {
     });
   });
 
-  test('timeline_range includes more than five entries before budget clipping', async () => {
-    await withEngine('timeline-six', async (engine) => {
+  test('timeline_range reads page timeline through projection without consulting timeline entries', async () => {
+    await withEngine('timeline-projection', async (engine) => {
       await importFromContent(engine, 'concepts/timeline-context', [
         '---',
         'type: concept',
@@ -466,23 +956,17 @@ describe('read context service', () => {
         '---',
         '# Compiled Truth',
         'Timeline fixture.',
+        '',
+        '---',
+        '',
+        '- **2026-05-06** | newest entry [Source: timeline source newest]',
+        '- **2026-05-05** | second entry [Source: timeline source second]',
+        '- **2026-05-04** | third entry [Source: timeline source third]',
+        '- **2026-05-03** | fourth entry [Source: timeline source fourth]',
+        '- **2026-05-02** | fifth entry [Source: timeline source fifth]',
+        '- **2026-05-01** | oldest entry [Source: timeline source oldest]',
       ].join('\n'), { path: 'concepts/timeline-context.md' });
-
-      for (const entry of [
-        ['2026-05-06', 'newest'],
-        ['2026-05-05', 'second'],
-        ['2026-05-04', 'third'],
-        ['2026-05-03', 'fourth'],
-        ['2026-05-02', 'fifth'],
-        ['2026-05-01', 'oldest'],
-      ] as const) {
-        await engine.addTimelineEntry('concepts/timeline-context', {
-          date: entry[0],
-          source: `timeline source ${entry[1]}`,
-          summary: `${entry[1]} entry`,
-          detail: `${entry[1]} detail`,
-        });
-      }
+      failOnTimelineTableRead(engine);
 
       const result = await readContext(engine, {
         selectors: [{ kind: 'timeline_range', slug: 'concepts/timeline-context' }],
@@ -492,8 +976,36 @@ describe('read context service', () => {
       expect(result.canonical_reads).toHaveLength(1);
       expect(result.canonical_reads[0]!.text).toContain('newest entry');
       expect(result.canonical_reads[0]!.text).toContain('oldest entry');
-      expect(result.canonical_reads[0]!.text).toContain('[Source: timeline source oldest]');
+      expect(result.canonical_reads[0]!.source_refs).toContain('timeline source oldest');
       expect(result.canonical_reads[0]!.has_more).toBe(false);
+    });
+  });
+
+  test('timeline_range falls back to structured timeline entries when page timeline is empty', async () => {
+    await withEngine('timeline-entry-fallback', async (engine) => {
+      await importFromContent(engine, 'concepts/timeline-entry-fallback', [
+        '---',
+        'type: concept',
+        'title: Timeline Entry Fallback',
+        '---',
+        '# Compiled Truth',
+        'Timeline entry fallback fixture.',
+      ].join('\n'), { path: 'concepts/timeline-entry-fallback.md' });
+      await engine.addTimelineEntry('concepts/timeline-entry-fallback', {
+        date: '2026-05-12',
+        source: 'timeline entry source',
+        summary: 'Structured timeline evidence.',
+        detail: 'Structured detail.',
+      });
+
+      const result = await readContext(engine, {
+        selectors: [{ kind: 'timeline_range', slug: 'concepts/timeline-entry-fallback' }],
+        token_budget: 200,
+      });
+
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.text).toContain('Structured timeline evidence.');
+      expect(result.canonical_reads[0]!.source_refs).toEqual(['timeline entry source']);
     });
   });
 

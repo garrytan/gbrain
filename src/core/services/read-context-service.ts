@@ -4,14 +4,17 @@ import type {
   ContextAnswerReady,
   ContextEvidenceClaim,
   MemoryArtifactAuthority,
+  PageTextWindow,
   ReadContextInput,
   ReadContextResult,
   RetrievalRouteIntent,
   RetrievalSelector,
+  RetrievalSelectorWarning,
   RetrievalTrace,
   ScopeGateDecisionResult,
   ScopeGateScope,
 } from '../types.ts';
+import { scalarLength, sliceScalars } from '../text-offsets.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 import { normalizeRetrievalSelector, retrievalSelectorId } from './retrieval-selector-service.ts';
 import { retrieveContext } from './retrieve-context-service.ts';
@@ -34,6 +37,12 @@ type ReadSelectorOptions = {
 class ScopeBlockedReadError extends Error {
   constructor(readonly scopeGate: ScopeGateDecisionResult) {
     super(`scope gate blocked canonical read: ${scopeGate.policy}`);
+  }
+}
+
+class StaleSelectorReadError extends Error {
+  constructor(readonly warning: RetrievalSelectorWarning) {
+    super(warning.message);
   }
 }
 
@@ -62,6 +71,7 @@ export async function readContext(
   const reads: CanonicalContextRead[] = [];
   const unreadRequired: RetrievalSelector[] = [];
   const continuations: RetrievalSelector[] = [];
+  const selectorWarnings: RetrievalSelectorWarning[] = [];
   let remainingBudget = input.token_budget ?? DEFAULT_TOKEN_BUDGET;
 
   for (const selector of normalizedSelectors.slice(maxSelectors)) {
@@ -89,6 +99,12 @@ export async function readContext(
       if (error instanceof ScopeBlockedReadError) {
         return maybePersistReadTrace(engine, blockedByScopeGate(error.scopeGate, [selector]), input);
       }
+      if (error instanceof StaleSelectorReadError) {
+        selectorWarnings.push(error.warning);
+        unreadRequired.push(error.warning.selector);
+        warnings.push(`${error.warning.code}: ${error.warning.message}`);
+        continue;
+      }
       throw error;
     }
 
@@ -104,11 +120,12 @@ export async function readContext(
   }
 
   return maybePersistReadTrace(engine, {
-    answer_ready: buildAnswerReady(reads, unreadRequired, warnings),
+    answer_ready: buildAnswerReady(reads, unreadRequired, warnings, selectorWarnings),
     canonical_reads: reads,
     evidence_claims: reads.map(buildEvidenceClaim),
     conflicts: [],
     warnings,
+    ...(selectorWarnings.length > 0 ? { selector_warnings: selectorWarnings } : {}),
     unread_required: unreadRequired,
     continuations,
     scope_gate: scopeGate,
@@ -155,25 +172,12 @@ async function readPage(
   includePageTimeline: boolean,
 ): Promise<CanonicalContextRead | null> {
   if (!selector.slug) return null;
-  const page = await engine.getPage(selector.slug);
-  if (!page) return null;
-
   const shouldIncludeTimeline = includePageTimeline && options.include_timeline === 'include';
-  const compiledTruth = page.compiled_truth.trim();
-  const timeline = page.timeline.trim();
-  const text = shouldIncludeTimeline && timeline
-    ? `${compiledTruth}\n\n---\n\n${timeline}`
-    : compiledTruth;
+  if (!shouldIncludeTimeline) {
+    return readProjectedPageField(engine, selector, options, 'compiled_truth');
+  }
 
-  return buildRead({
-    selector,
-    title: page.title,
-    text,
-    authority: 'canonical_compiled_truth',
-    source_refs: options.include_source_refs ? extractSourceRefs(text) : [],
-    include_source_refs: options.include_source_refs,
-    token_budget: options.token_budget,
-  });
+  return readProjectedPageWithTimeline(engine, selector, options);
 }
 
 async function readSection(
@@ -184,7 +188,12 @@ async function readSection(
   if (!selector.section_id) return null;
   const scopeId = selector.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID;
   const section = await engine.getNoteSectionEntry(scopeId, selector.section_id);
-  if (!section) return null;
+  if (!section) {
+    await assertStaleIfCurrentPageHashChanged(engine, selector);
+    return null;
+  }
+  const projection = await currentPageProjectionOrStale(engine, selector, section.page_slug);
+  if (!projection) return null;
 
   return buildRead({
     selector: normalizeRetrievalSelector({
@@ -194,7 +203,7 @@ async function readSection(
       line_start: section.line_start,
       line_end: section.line_end,
       source_refs: section.source_refs,
-      content_hash: section.content_hash,
+      content_hash: projection.content_hash,
     }),
     title: section.heading_text,
     text: section.section_text,
@@ -211,22 +220,22 @@ async function readLineSpan(
   options: Pick<ReadSelectorOptions, 'token_budget' | 'include_source_refs'>,
 ): Promise<CanonicalContextRead | null> {
   if (!selector.slug || selector.line_start === undefined || selector.line_end === undefined) return null;
-  const page = await engine.getPage(selector.slug);
-  if (!page) return null;
+  const span = await engine.getPageLineSpanProjection(selector.slug, {
+    line_start: selector.line_start,
+    line_end: selector.line_end,
+  });
+  if (!span) {
+    assertCurrentContentHash(selector, undefined, selector.slug);
+    return null;
+  }
+  assertCurrentContentHash(selector, span.content_hash, span.slug);
 
-  const fullText = page.timeline.trim()
-    ? `${page.compiled_truth}\n\n---\n\n${page.timeline}`
-    : page.compiled_truth;
-  const text = fullText
-    .split('\n')
-    .slice(selector.line_start - 1, selector.line_end)
-    .join('\n')
-    .trim();
+  const text = span.text.trim();
   if (!text) return null;
 
   return buildRead({
-    selector,
-    title: page.title,
+    selector: selectorWithCurrentContentHash(selector, span.content_hash),
+    title: span.title,
     text,
     authority: 'source_or_timeline_evidence',
     source_refs: options.include_source_refs ? extractSourceRefs(text) : [],
@@ -241,38 +250,20 @@ async function readTimelineRange(
   options: Pick<ReadSelectorOptions, 'token_budget' | 'include_source_refs'>,
 ): Promise<CanonicalContextRead | null> {
   if (!selector.slug) return null;
-  const hasCharWindow = selector.char_start !== undefined || selector.char_end !== undefined;
-  if (hasCharWindow) {
-    const page = await engine.getPage(selector.slug);
-    if (page?.timeline.trim()) {
-      const timeline = page.timeline.trim();
-      return buildRead({
-        selector,
-        title: `Timeline: ${selector.slug}`,
-        text: timeline,
-        authority: 'source_or_timeline_evidence',
-        source_refs: options.include_source_refs ? extractSourceRefs(timeline) : [],
-        include_source_refs: options.include_source_refs,
-        token_budget: options.token_budget,
-      });
-    }
+  const projectedRead = await readProjectedPageField(engine, selector, options, 'timeline');
+  if (projectedRead || selector.char_start !== undefined || selector.char_end !== undefined) {
+    return projectedRead;
   }
 
+  const initialProjection = await currentPageProjectionOrStale(engine, selector, selector.slug);
+  if (!initialProjection) return null;
   const entries = await engine.getTimeline(selector.slug);
-  if (entries.length === 0) {
-    const page = await engine.getPage(selector.slug);
-    if (!page?.timeline.trim()) return null;
-    const timeline = page.timeline.trim();
-    return buildRead({
-      selector,
-      title: `Timeline: ${selector.slug}`,
-      text: timeline,
-      authority: 'source_or_timeline_evidence',
-      source_refs: options.include_source_refs ? extractSourceRefs(timeline) : [],
-      include_source_refs: options.include_source_refs,
-      token_budget: options.token_budget,
-    });
-  }
+  if (entries.length === 0) return null;
+  const finalProjection = await currentPageProjectionOrStale(engine, {
+    ...selector,
+    content_hash: initialProjection.content_hash,
+  }, selector.slug);
+  if (!finalProjection) return null;
 
   const text = entries
     .map((entry) => {
@@ -282,7 +273,7 @@ async function readTimelineRange(
     .join('\n');
 
   return buildRead({
-    selector,
+    selector: selectorWithCurrentContentHash(selector, initialProjection.content_hash),
     title: `Timeline: ${selector.slug}`,
     text,
     authority: 'source_or_timeline_evidence',
@@ -355,7 +346,10 @@ async function readSourceRef(
     if (selector.section_id && entry.section_id !== selector.section_id) return false;
     return true;
   });
-  if (matches.length !== 1) return null;
+  if (matches.length !== 1) {
+    await assertStaleIfCurrentPageHashChanged(engine, selector);
+    return null;
+  }
   const section = matches[0]!;
   const resolvedSelector = normalizeRetrievalSelector({
     kind: 'section',
@@ -380,7 +374,127 @@ async function readSourceRef(
     section_id: section.section_id,
     char_start: selector.char_start,
     char_end: selector.char_end,
+    content_hash: selector.content_hash,
   }, options);
+}
+
+async function readProjectedPageField(
+  engine: BrainEngine,
+  selector: RetrievalSelector,
+  options: Pick<ReadSelectorOptions, 'token_budget' | 'include_source_refs'>,
+  field: 'compiled_truth' | 'timeline',
+): Promise<CanonicalContextRead | null> {
+  if (!selector.slug) return null;
+  const charStart = selector.char_start ?? 0;
+  const charLimit = projectionCharLimit(selector, options.token_budget);
+  const projection = await engine.getPageProjection(selector.slug, {
+    windows: {
+      [field]: { char_start: charStart, char_limit: charLimit },
+    },
+  });
+  if (!projection) {
+    assertCurrentContentHash(selector, undefined, selector.slug);
+    return null;
+  }
+  assertCurrentContentHash(selector, projection.content_hash, projection.slug);
+
+  const window = projection.content_windows[field];
+  if (!window || window.returned_chars === 0) return null;
+
+  return buildWindowRead({
+    selector: selectorWithCurrentContentHash(selector, projection.content_hash),
+    title: field === 'timeline' ? `Timeline: ${projection.slug}` : projection.title,
+    window,
+    authority: field === 'timeline' ? 'source_or_timeline_evidence' : 'canonical_compiled_truth',
+    source_refs: options.include_source_refs ? extractSourceRefs(window.text) : [],
+    include_source_refs: options.include_source_refs,
+    token_budget: options.token_budget,
+  });
+}
+
+async function readProjectedPageWithTimeline(
+  engine: BrainEngine,
+  selector: RetrievalSelector,
+  options: Pick<ReadSelectorOptions, 'token_budget' | 'include_source_refs'>,
+): Promise<CanonicalContextRead | null> {
+  if (!selector.slug) return null;
+  if (selector.char_start !== undefined || selector.char_end !== undefined) {
+    return readProjectedPageField(engine, selector, options, 'compiled_truth');
+  }
+
+  const charBudget = Math.max(1, options.token_budget * CHARS_PER_TOKEN_ESTIMATE);
+  const projection = await engine.getPageProjection(selector.slug, {
+    windows: {
+      compiled_truth: { char_start: 0, char_limit: charBudget },
+      timeline: { char_start: 0, char_limit: charBudget },
+    },
+  });
+  if (!projection) {
+    assertCurrentContentHash(selector, undefined, selector.slug);
+    return null;
+  }
+  assertCurrentContentHash(selector, projection.content_hash, projection.slug);
+
+  const compiledWindow = projection.content_windows.compiled_truth;
+  if (!compiledWindow) return null;
+  const normalizedSelector = normalizeRetrievalSelector(
+    selectorWithCurrentContentHash(selector, projection.content_hash),
+  );
+  const sourceRefs: string[] = [];
+  let text = compiledWindow.text.trim();
+  if (options.include_source_refs && text) sourceRefs.push(...extractSourceRefs(text));
+
+  let continuation = compiledWindow.has_more
+    ? pageFieldContinuationSelector(normalizedSelector, 'compiled_truth', compiledWindow.next_char_start)
+    : undefined;
+
+  if (!continuation) {
+    const separator = text ? '\n\n---\n\n' : '';
+    const remainingChars = charBudget - scalarLength(text) - scalarLength(separator);
+    const timelineWindow = projection.content_windows.timeline;
+    if (timelineWindow && timelineWindow.total_chars > 0) {
+      if (remainingChars <= 0) {
+        continuation = pageFieldContinuationSelector(normalizedSelector, 'timeline_range', 0);
+      } else {
+        const timelineText = sliceScalars(timelineWindow.text, 0, remainingChars).trim();
+        const returnedTimelineChars = scalarLength(timelineText);
+        if (timelineText) {
+          text = `${text}${separator}${timelineText}`;
+          if (options.include_source_refs) sourceRefs.push(...extractSourceRefs(timelineText));
+        }
+        if (returnedTimelineChars < timelineWindow.total_chars) {
+          continuation = pageFieldContinuationSelector(normalizedSelector, 'timeline_range', returnedTimelineChars);
+        }
+      }
+    }
+  }
+
+  if (!text) return null;
+  return {
+    selector: normalizedSelector,
+    authority: 'canonical_compiled_truth',
+    title: projection.title,
+    text,
+    source_refs: options.include_source_refs ? [...new Set(sourceRefs)] : [],
+    token_estimate: estimateTokens(text),
+    has_more: continuation !== undefined,
+    continuation_selector: continuation,
+  };
+}
+
+function pageFieldContinuationSelector(
+  selector: RetrievalSelector,
+  kind: 'compiled_truth' | 'timeline_range',
+  nextCharStart: number | null,
+): RetrievalSelector | undefined {
+  if (nextCharStart === null) return undefined;
+  return normalizeRetrievalSelector({
+    kind,
+    slug: selector.slug,
+    scope_id: selector.scope_id,
+    char_start: nextCharStart,
+    content_hash: selector.content_hash,
+  });
 }
 
 async function readTaskWorkingSet(
@@ -534,7 +648,7 @@ function buildRead(input: {
   if (selectedText === null) return null;
   const clipped = clipToBudget(selectedText, input.token_budget);
   if (!clipped.text) return null;
-  const hasMore = clipped.consumed_chars < selectedText.length;
+  const hasMore = clipped.consumed_chars < scalarLength(selectedText);
   const continuation = hasMore
     ? buildContinuationSelector(selector, clipped.consumed_chars)
     : undefined;
@@ -556,11 +670,49 @@ function buildRead(input: {
   };
 }
 
+function buildWindowRead(input: {
+  selector: RetrievalSelector;
+  title: string;
+  window: PageTextWindow;
+  authority: MemoryArtifactAuthority;
+  source_refs: string[];
+  include_source_refs: boolean;
+  token_budget: number;
+}): CanonicalContextRead | null {
+  const selector = normalizeRetrievalSelector(input.selector);
+  const clipped = clipToBudget(input.window.text, input.token_budget);
+  if (!clipped.text.trim()) return null;
+
+  const absoluteCharStart = input.window.char_start + clipped.consumed_chars;
+  const effectiveCharEnd = Math.min(selector.char_end ?? input.window.total_chars, input.window.total_chars);
+  const hasMore = absoluteCharStart < effectiveCharEnd;
+  const continuation = hasMore
+    ? buildContinuationSelector(selector, clipped.consumed_chars)
+    : undefined;
+  const sourceRefs = !input.include_source_refs
+    ? []
+    : textHasSourceMarkers(input.window.text)
+      ? extractSourceRefs(clipped.text)
+      : input.source_refs;
+
+  return {
+    selector,
+    authority: input.authority,
+    title: input.title,
+    text: clipped.text,
+    source_refs: [...new Set(sourceRefs)],
+    token_estimate: estimateTokens(clipped.text),
+    has_more: hasMore,
+    continuation_selector: continuation,
+  };
+}
+
 function applyCharRange(text: string, selector: RetrievalSelector): string | null {
   const charStart = selector.char_start ?? 0;
-  const charEnd = Math.min(selector.char_end ?? text.length, text.length);
-  if (charStart >= text.length || charEnd <= charStart) return null;
-  return text.slice(charStart, charEnd);
+  const textLength = scalarLength(text);
+  const charEnd = Math.min(selector.char_end ?? textLength, textLength);
+  if (charStart >= textLength || charEnd <= charStart) return null;
+  return sliceScalars(text, charStart, charEnd);
 }
 
 function buildContinuationSelector(selector: RetrievalSelector, consumedChars: number): RetrievalSelector | undefined {
@@ -579,19 +731,22 @@ function buildAnswerReady(
   reads: CanonicalContextRead[],
   unreadRequired: RetrievalSelector[],
   warnings: string[],
+  selectorWarnings: RetrievalSelectorWarning[] = [],
 ): ContextAnswerReady {
   if (reads.length === 0) {
     return {
       ready: false,
       answer_ground: [],
-      unsupported_reasons: unreadRequired.length > 0 ? ['no_canonical_selector_read'] : ['no_selectors_requested'],
+      unsupported_reasons: unreadRequired.length > 0
+        ? ['no_canonical_selector_read', ...selectorWarningCodes(selectorWarnings)]
+        : ['no_selectors_requested'],
       citation_policy: 'Do not answer from chunks or derived orientation alone.',
     };
   }
   const hasContinuation = reads.some((read) => read.has_more);
   if (unreadRequired.length > 0 || hasContinuation) {
     const unsupportedReasons = [
-      ...(unreadRequired.length > 0 ? ['required_selectors_unread', ...warnings] : []),
+      ...(unreadRequired.length > 0 ? ['required_selectors_unread', ...selectorWarningCodes(selectorWarnings), ...warnings] : []),
       ...(hasContinuation ? ['continuation_required'] : []),
     ];
     return {
@@ -607,6 +762,10 @@ function buildAnswerReady(
     unsupported_reasons: [],
     citation_policy: 'Cite canonical_reads by selector_id and propagate source_refs when present.',
   };
+}
+
+function selectorWarningCodes(selectorWarnings: RetrievalSelectorWarning[]): string[] {
+  return [...new Set(selectorWarnings.map((warning) => warning.code))];
 }
 
 function buildEvidenceClaim(read: CanonicalContextRead): ContextEvidenceClaim {
@@ -630,13 +789,87 @@ function buildEvidenceClaim(read: CanonicalContextRead): ContextEvidenceClaim {
 }
 
 function estimateTokens(text: string): number {
-  return Math.max(1, Math.ceil(text.length / CHARS_PER_TOKEN_ESTIMATE));
+  return Math.max(1, Math.ceil(scalarLength(text) / CHARS_PER_TOKEN_ESTIMATE));
 }
 
 function clipToBudget(text: string, tokenBudget: number): { text: string; consumed_chars: number } {
   const maxChars = Math.max(1, tokenBudget * CHARS_PER_TOKEN_ESTIMATE);
-  if (text.length <= maxChars) return { text, consumed_chars: text.length };
-  return { text: text.slice(0, maxChars), consumed_chars: maxChars };
+  const textLength = scalarLength(text);
+  if (textLength <= maxChars) return { text, consumed_chars: textLength };
+  return { text: sliceScalars(text, 0, maxChars), consumed_chars: maxChars };
+}
+
+function projectionCharLimit(selector: RetrievalSelector, tokenBudget: number): number {
+  const charStart = selector.char_start ?? 0;
+  const budgetLimit = Math.max(1, tokenBudget * CHARS_PER_TOKEN_ESTIMATE);
+  if (selector.char_end !== undefined) {
+    return Math.max(1, Math.min(selector.char_end - charStart, budgetLimit));
+  }
+  return budgetLimit;
+}
+
+function selectorWithCurrentContentHash(selector: RetrievalSelector, contentHash: string | undefined): RetrievalSelector {
+  return contentHash ? { ...selector, content_hash: contentHash } : selector;
+}
+
+function assertCurrentContentHash(
+  selector: RetrievalSelector,
+  currentContentHash: string | undefined,
+  slug?: string,
+): void {
+  if (!selector.content_hash || selector.content_hash === currentContentHash) return;
+  const staleSelector = normalizeRetrievalSelector({
+    ...selector,
+    freshness: 'stale',
+  });
+  const code = selector.char_start !== undefined || selector.char_end !== undefined
+    ? 'stale_continuation'
+    : 'stale_selector';
+  throw new StaleSelectorReadError({
+    code,
+    severity: 'warning',
+    selector_id: staleSelector.selector_id!,
+    selector: staleSelector,
+    slug,
+    expected_content_hash: selector.content_hash,
+    current_content_hash: currentContentHash ?? null,
+    message: `Selector ${staleSelector.selector_id} expected content_hash ${selector.content_hash}, but current content_hash is ${currentContentHash ?? 'null'}. Start a fresh read from the current page snapshot.`,
+  });
+}
+
+async function assertStaleIfCurrentPageHashChanged(
+  engine: BrainEngine,
+  selector: RetrievalSelector,
+): Promise<void> {
+  const slug = selectorPageSlug(selector);
+  if (!selector.content_hash || !slug) return;
+  const projection = await engine.getPageProjection(slug);
+  if (!projection) {
+    assertCurrentContentHash(selector, undefined, slug);
+    return;
+  }
+  assertCurrentContentHash(selector, projection.content_hash, projection.slug);
+}
+
+async function currentPageProjectionOrStale(
+  engine: BrainEngine,
+  selector: RetrievalSelector,
+  slug: string,
+) {
+  const projection = await engine.getPageProjection(slug);
+  if (!projection) {
+    assertCurrentContentHash(selector, undefined, slug);
+    return null;
+  }
+  assertCurrentContentHash(selector, projection.content_hash, projection.slug);
+  return projection;
+}
+
+function selectorPageSlug(selector: RetrievalSelector): string | undefined {
+  if (selector.slug) return selector.slug;
+  const sectionIdSlug = selector.section_id?.split('#')[0]?.trim();
+  if (sectionIdSlug) return sectionIdSlug;
+  return undefined;
 }
 
 function extractSourceRefs(text: string): string[] {

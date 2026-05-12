@@ -1,5 +1,5 @@
 import type {
-  Page, PageInput, PageFilters, PageProjection, PageProjectionOptions,
+  Page, PageInput, PageFilters, PageLineSpanProjection, PageLineSpanProjectionOptions, PageProjection, PageProjectionOptions,
   NoteManifestEntry,
   NoteManifestEntryInput,
   NoteManifestFilters,
@@ -88,6 +88,7 @@ export interface BrainEngine {
   // Pages CRUD
   getPage(slug: string): Promise<Page | null>;
   getPageProjection(slug: string, options?: PageProjectionOptions): Promise<PageProjection | null>;
+  getPageLineSpanProjection(slug: string, options: PageLineSpanProjectionOptions): Promise<PageLineSpanProjection | null>;
   getPageForUpdate(slug: string): Promise<Page | null>;
   putPage(slug: string, page: PageInput): Promise<Page>;
   deletePage(slug: string): Promise<void>;

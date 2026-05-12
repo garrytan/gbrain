@@ -135,6 +135,7 @@ describe('MCP response guard', () => {
       slug: 'brain/large-page',
       title: 'Large Page',
       type: 'note',
+      content_hash: 'hash-large-page',
       compiled_truth: 'A'.repeat(5_000),
       timeline: 'B'.repeat(5_000),
       content_window: {
@@ -161,8 +162,59 @@ describe('MCP response guard', () => {
     expect(parsed._mbrain_mcp_response.hint).toContain('read_context');
     expect(parsed._mbrain_mcp_response.continuations.compiled_truth.tool).toBe('read_context');
     expect(parsed._mbrain_mcp_response.continuations.compiled_truth.arguments.selectors[0].kind).toBe('compiled_truth');
+    expect(parsed._mbrain_mcp_response.continuations.compiled_truth.arguments.selectors[0].content_hash).toBe('hash-large-page');
     expect(parsed._mbrain_mcp_response.continuations.timeline.tool).toBe('read_context');
     expect(parsed._mbrain_mcp_response.continuations.timeline.arguments.selectors[0].kind).toBe('timeline_range');
+    expect(parsed._mbrain_mcp_response.continuations.timeline.arguments.selectors[0].content_hash).toBe('hash-large-page');
+  });
+
+  test('uses Unicode scalar offsets in fallback get_page continuations', () => {
+    const text = formatMcpToolResult('get_page', {
+      slug: 'brain/unicode-large-page',
+      title: 'Unicode Large Page',
+      type: 'note',
+      content_hash: 'hash-unicode-large-page',
+      compiled_truth: '🙂'.repeat(200),
+      timeline: '🚀'.repeat(200),
+    }, { maxResultTextBytes: 1_500 });
+
+    const parsed = JSON.parse(text);
+    const selector = parsed._mbrain_mcp_response.continuations.compiled_truth.arguments.selectors[0];
+    const marker = '\n\n[truncated by mbrain MCP response guard]';
+    expect(selector.char_start).toBe(Array.from(parsed.compiled_truth.replace(marker, '')).length);
+    expect(selector.content_hash).toBe('hash-unicode-large-page');
+  });
+
+  test('fallback get_page continuations advance from existing window offsets', () => {
+    const text = formatMcpToolResult('get_page', {
+      slug: 'brain/windowed-large-page',
+      title: 'Windowed Large Page',
+      type: 'note',
+      content_hash: 'hash-windowed-large-page',
+      compiled_truth: '🙂'.repeat(200),
+      timeline: '🚀'.repeat(200),
+      content_window: {
+        compiled_truth: {
+          char_start: 40,
+          returned_chars: 200,
+          total_chars: 400,
+        },
+        timeline: {
+          char_start: 80,
+          returned_chars: 200,
+          total_chars: 500,
+        },
+      },
+    }, { maxResultTextBytes: 1_500 });
+
+    const parsed = JSON.parse(text);
+    const marker = '\n\n[truncated by mbrain MCP response guard]';
+    const compiledReturned = Array.from(parsed.compiled_truth.replace(marker, '')).length;
+    const timelineReturned = Array.from(parsed.timeline.replace(marker, '')).length;
+    expect(parsed._mbrain_mcp_response.continuations.compiled_truth.arguments.selectors[0].char_start).toBe(40 + compiledReturned);
+    expect(parsed._mbrain_mcp_response.continuations.compiled_truth.remaining_chars).toBe(400 - 40 - compiledReturned);
+    expect(parsed._mbrain_mcp_response.continuations.timeline.arguments.selectors[0].char_start).toBe(80 + timelineReturned);
+    expect(parsed._mbrain_mcp_response.continuations.timeline.remaining_chars).toBe(500 - 80 - timelineReturned);
   });
 
   test('falls back to a bounded envelope for generic oversized results', () => {

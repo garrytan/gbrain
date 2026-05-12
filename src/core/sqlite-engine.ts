@@ -12,8 +12,10 @@ import {
 import { LATEST_VERSION } from './migrate.ts';
 import { ensurePageChunks } from './page-chunks.ts';
 import {
+  normalizePageLineSpanProjectionOptions,
   normalizePageProjectionWindows,
   PAGE_WINDOW_FIELDS,
+  rowToPageLineSpanProjection,
   rowToPageProjection,
 } from './page-projection.ts';
 import { buildPageCentroid } from './services/page-embedding.ts';
@@ -21,7 +23,7 @@ import { selectLocalVectorChunkIds, selectLocalVectorPageIds } from './search/ve
 import { searchLocalVectors } from './search/vector-local.ts';
 import { slugifyPath } from './sync.ts';
 import type {
-  Page, PageInput, PageFilters, PageProjection, PageProjectionOptions, PageType,
+  Page, PageInput, PageFilters, PageLineSpanProjection, PageLineSpanProjectionOptions, PageProjection, PageProjectionOptions, PageType,
   NoteManifestEntry,
   NoteManifestEntryInput,
   NoteManifestFilters,
@@ -701,6 +703,77 @@ export class SQLiteEngine implements BrainEngine {
       WHERE slug = ?
     `).get(...sqliteBindings(params)) as Record<string, unknown> | null;
     return row ? rowToPageProjection(row, windows) : null;
+  }
+
+  async getPageLineSpanProjection(
+    slug: string,
+    options: PageLineSpanProjectionOptions,
+  ): Promise<PageLineSpanProjection | null> {
+    const normalizedSlug = validateSlug(slug);
+    const range = normalizePageLineSpanProjectionOptions(options);
+    const row = this.database.query(`
+      WITH RECURSIVE page AS (
+        SELECT
+          id,
+          slug,
+          type,
+          title,
+          frontmatter,
+          content_hash,
+          created_at,
+          updated_at,
+          CASE
+            WHEN length(trim(timeline)) > 0
+              THEN compiled_truth || char(10) || char(10) || '---' || char(10) || char(10) || timeline
+            ELSE compiled_truth
+          END AS body
+        FROM pages
+        WHERE slug = ?
+      ),
+      lines(n, line, rest) AS (
+        SELECT
+          1,
+          CASE WHEN instr(body, char(10)) = 0 THEN body ELSE substr(body, 1, instr(body, char(10)) - 1) END,
+          CASE WHEN instr(body, char(10)) = 0 THEN '' ELSE substr(body, instr(body, char(10)) + 1) END
+        FROM page
+        UNION ALL
+        SELECT
+          n + 1,
+          CASE WHEN instr(rest, char(10)) = 0 THEN rest ELSE substr(rest, 1, instr(rest, char(10)) - 1) END,
+          CASE WHEN instr(rest, char(10)) = 0 THEN '' ELSE substr(rest, instr(rest, char(10)) + 1) END
+        FROM lines
+        WHERE rest <> '' AND n < ?
+      ),
+      selected AS (
+        SELECT group_concat(line, char(10)) AS line_span_text
+        FROM (
+          SELECT n, line
+          FROM lines
+          WHERE n BETWEEN ? AND ?
+          ORDER BY n
+        )
+      )
+      SELECT
+        page.id,
+        page.slug,
+        page.type,
+        page.title,
+        page.frontmatter,
+        page.content_hash,
+        page.created_at,
+        page.updated_at,
+        COALESCE(selected.line_span_text, '') AS line_span_text
+      FROM page
+      CROSS JOIN selected
+    `).get(
+      ...sqliteBindings([
+        normalizedSlug,
+        range.line_end,
+        range.line_start,
+        range.line_end,
+      ]),
+    ) as Record<string, unknown> | null;
+    return row ? rowToPageLineSpanProjection(row, range) : null;
   }
 
   async getPageForUpdate(slug: string): Promise<Page | null> {
