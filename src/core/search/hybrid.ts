@@ -16,6 +16,16 @@ import { embed } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
 import { autoDetectDetail, classifyQuery } from './query-intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
+import { enforceTokenBudget } from './token-budget.ts';
+import {
+  weightsForIntent,
+  effectiveRrfK,
+  applyExactMatchBoost,
+} from './intent-weights.ts';
+import {
+  SemanticQueryCache,
+  loadCacheConfig,
+} from './query-cache.ts';
 
 const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
@@ -217,6 +227,16 @@ export async function hybridSearch(
   const offset = opts?.offset || 0;
   const innerLimit = Math.min(limit * 2, MAX_SEARCH_LIMIT);
 
+  // v0.32.x search-lite: classify intent once up front. Drives BOTH the
+  // legacy auto-detail / salience / recency suggestions AND the new
+  // weight-adjustment path. Intent weighting is on by default and can
+  // be disabled via `opts.intentWeighting = false`.
+  const suggestions = classifyQuery(query);
+  const intentWeightingOn = opts?.intentWeighting !== false;
+  const intentWeights = intentWeightingOn
+    ? weightsForIntent(suggestions.intent)
+    : weightsForIntent('general');
+
   // Auto-detect detail level from query intent when caller doesn't specify
   const detail = opts?.detail ?? autoDetectDetail(query);
   const detailResolved: 'low' | 'medium' | 'high' | null = detail ?? null;
@@ -260,7 +280,11 @@ export async function hybridSearch(
   // v0.29.1: resolve salience/recency from caller (back-compat aliases for
   // PR #618's `recencyBoost` numeric scale) or fall back to the heuristic.
   // The wrapper fires from ALL THREE return paths (codex pass-1 #2 + pass-2 #4).
-  const suggestions = classifyQuery(query);
+  //
+  // v0.32.x search-lite: when caller hasn't set recency and the intent
+  // classifier suggests one, prefer that (suggestedRecency on temporal /
+  // event intents). The legacy heuristic still wins when intent weighting
+  // is off.
   // Back-compat: recencyBoost: 1|2 → 'on'|'strong'; 0 → 'off'.
   const legacyRecency: 'off' | 'on' | 'strong' | undefined =
     opts?.recencyBoost === 2 ? 'strong' :
@@ -268,7 +292,20 @@ export async function hybridSearch(
     opts?.recencyBoost === 0 ? 'off' :
     undefined;
   const salienceMode: 'off' | 'on' | 'strong' = opts?.salience ?? suggestions.suggestedSalience;
-  const recencyMode: 'off' | 'on' | 'strong' = opts?.recency ?? legacyRecency ?? suggestions.suggestedRecency;
+  // Intent-weighting recency suggestion is a NUDGE — it only fires when
+  // the caller left recency unspecified AND the legacy heuristic also
+  // didn't fire. The classifier's own suggestedRecency (from v0.29.1)
+  // still wins when it's set; the new intent suggestion is a fallback.
+  const intentRecency =
+    intentWeightingOn && intentWeights.suggestedRecency != null
+      ? intentWeights.suggestedRecency
+      : null;
+  const recencyMode: 'off' | 'on' | 'strong' =
+    opts?.recency
+    ?? legacyRecency
+    ?? (suggestions.suggestedRecency !== 'off'
+        ? suggestions.suggestedRecency
+        : (intentRecency ?? suggestions.suggestedRecency));
   const postFusionOpts = {
     applyBacklinks: true,
     salience: salienceMode,
@@ -282,7 +319,12 @@ export async function hybridSearch(
       await runPostFusionStages(engine, keywordResults, postFusionOpts);
       keywordResults.sort((a, b) => b.score - a.score);
     }
-    emitMeta({ vector_enabled: false, detail_resolved: detailResolved, expansion_applied: false });
+    emitMeta({
+      vector_enabled: false,
+      detail_resolved: detailResolved,
+      expansion_applied: false,
+      intent: suggestions.intent,
+    });
     return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
@@ -323,14 +365,30 @@ export async function hybridSearch(
       await runPostFusionStages(engine, keywordResults, postFusionOpts);
       keywordResults.sort((a, b) => b.score - a.score);
     }
-    emitMeta({ vector_enabled: false, detail_resolved: detailResolved, expansion_applied: expansionApplied });
+    emitMeta({
+      vector_enabled: false,
+      detail_resolved: detailResolved,
+      expansion_applied: expansionApplied,
+      intent: suggestions.intent,
+    });
     return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
   // Merge all result lists via RRF (includes normalization + boost)
   // Skip boost for detail=high (temporal/event queries want natural ranking)
-  const allLists = [...vectorLists, keywordResults];
-  let fused = rrfFusion(allLists, opts?.rrfK ?? RRF_K, detail !== 'high');
+  //
+  // v0.32.x search-lite: when intent weighting is on, run RRF with
+  // per-list effective k values — entity/event intents nudge keyword
+  // contributions up by lowering their k. The base rrfK still controls
+  // the overall RRF shape; intent weights tilt within that shape.
+  const baseRrfK = opts?.rrfK ?? RRF_K;
+  const keywordK = effectiveRrfK(baseRrfK, intentWeights.keywordWeight);
+  const vectorK = effectiveRrfK(baseRrfK, intentWeights.vectorWeight);
+  const allLists: Array<{ list: SearchResult[]; k: number }> = [
+    ...vectorLists.map(list => ({ list, k: vectorK })),
+    { list: keywordResults, k: keywordK },
+  ];
+  let fused = rrfFusionWeighted(allLists, detail !== 'high');
 
   // Cosine re-scoring before dedup so semantically better chunks survive
   if (queryEmbedding) {
@@ -343,6 +401,11 @@ export async function hybridSearch(
   // both, or neither fires depending on resolved modes.
   if (fused.length > 0) {
     await runPostFusionStages(engine, fused, postFusionOpts);
+    // v0.32.x search-lite: intent exact-match boost (entity/event intents).
+    // No-op when boost factor is 1.0 (general intent or weighting disabled).
+    if (intentWeights.exactMatchBoost !== 1.0) {
+      applyExactMatchBoost(fused, query, intentWeights);
+    }
     fused.sort((a, b) => b.score - a.score);
   }
 
@@ -405,8 +468,212 @@ export async function hybridSearch(
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
-  emitMeta({ vector_enabled: true, detail_resolved: detailResolved, expansion_applied: expansionApplied });
+  emitMeta({
+    vector_enabled: true,
+    detail_resolved: detailResolved,
+    expansion_applied: expansionApplied,
+    intent: suggestions.intent,
+  });
   return deduped.slice(offset, offset + limit);
+}
+
+// ----------------------------------------------------------------------
+// v0.32.x (search-lite) — cached + budgeted public wrapper
+// ----------------------------------------------------------------------
+
+/**
+ * Public wrapper around hybridSearch that adds the v0.32.x search-lite
+ * features: semantic query cache + token budget enforcement. Both are
+ * additive and backward-compatible; callers that don't opt in see the
+ * same behavior as plain hybridSearch.
+ *
+ * Pipeline:
+ *   1. Cache lookup (if enabled + we can produce a query embedding).
+ *   2. On miss: run hybridSearch normally.
+ *   3. Apply token budget (no-op when budget is undefined).
+ *   4. On miss + successful search: write back to cache (best-effort).
+ *
+ * The cache uses the same embedding the search pipeline would compute,
+ * so an extra embed() call only happens when hybridSearch would have
+ * skipped vector search entirely (no embedding provider configured). In
+ * that case the cache is also skipped — there's no embedding to key on.
+ */
+export async function hybridSearchCached(
+  engine: BrainEngine,
+  query: string,
+  opts?: HybridSearchOpts,
+): Promise<SearchResult[]> {
+  // Cache decision: opts.useCache (explicit) wins over global config; global
+  // config wins over the built-in default (enabled = true).
+  const cacheCfg = await loadCacheConfig(engine);
+  const cacheEnabled = opts?.useCache ?? cacheCfg.enabled ?? true;
+  const cache = new SemanticQueryCache(engine, { ...cacheCfg, enabled: cacheEnabled });
+
+  // Skip cache entirely when the request asks for two-pass walks or has
+  // a non-default embedding column — those interact with structural state
+  // that the cache can't safely express.
+  const skipCache =
+    !cache.isEnabled() ||
+    (opts?.walkDepth ?? 0) > 0 ||
+    Boolean(opts?.nearSymbol) ||
+    (opts?.embeddingColumn && opts.embeddingColumn !== 'embedding');
+
+  let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
+  let cacheSimilarity: number | undefined;
+  let cacheAge: number | undefined;
+
+  // We need a query embedding to consult the cache. We try to embed once
+  // here so the same embedding can be threaded back into the search call
+  // if it misses — but the embedding helper isn't cheap, so we only
+  // attempt it when the cache is enabled AND the gateway has an embedding
+  // provider configured.
+  let queryEmbedding: Float32Array | null = null;
+  if (!skipCache) {
+    try {
+      const { isAvailable } = await import('../ai/gateway.ts');
+      if (isAvailable('embedding')) {
+        queryEmbedding = await embed(query);
+      } else {
+        cacheStatus = 'disabled';
+      }
+    } catch {
+      cacheStatus = 'disabled';
+      queryEmbedding = null;
+    }
+  }
+
+  if (!skipCache && queryEmbedding && cacheStatus !== 'disabled') {
+    const hit = await cache.lookup(queryEmbedding, { sourceId: opts?.sourceId });
+    if (hit.hit && hit.results) {
+      cacheStatus = 'hit';
+      cacheSimilarity = hit.similarity;
+      cacheAge = hit.ageSeconds;
+
+      const limit = opts?.limit || 20;
+      const offset = opts?.offset || 0;
+      const sliced = hit.results.slice(offset, offset + limit);
+
+      // Budget enforcement — same pipeline tail as fresh path.
+      const { results: budgeted, meta: budgetMeta } = enforceTokenBudget(sliced, opts?.tokenBudget);
+
+      // Emit meta describing the cache path.
+      const cachedMeta: HybridSearchMeta = {
+        vector_enabled: hit.meta?.vector_enabled ?? true,
+        detail_resolved: hit.meta?.detail_resolved ?? null,
+        expansion_applied: hit.meta?.expansion_applied ?? false,
+        intent: hit.meta?.intent,
+        cache: {
+          status: 'hit',
+          similarity: cacheSimilarity,
+          age_seconds: cacheAge,
+        },
+        ...(opts?.tokenBudget && opts.tokenBudget > 0
+          ? { token_budget: budgetMeta }
+          : {}),
+      };
+      try {
+        opts?.onMeta?.(cachedMeta);
+      } catch {
+        // swallow — telemetry is best-effort
+      }
+      return budgeted;
+    }
+  }
+
+  // Cache miss (or disabled): run the normal search. We capture meta so
+  // we can write back to the cache + emit the merged meta to the caller.
+  // The closure-write pattern trips TS's narrowing (it infers `never`), so
+  // we use a single-element box to keep the type stable.
+  const innerMetaBox: { current: HybridSearchMeta | null } = { current: null };
+  const userOnMeta = opts?.onMeta;
+  const results = await hybridSearch(engine, query, {
+    ...opts,
+    onMeta: (m) => {
+      innerMetaBox.current = m;
+      // Do NOT call userOnMeta here — we'll emit a merged meta below
+      // that also carries cache + budget info.
+    },
+  });
+  const innerMeta = innerMetaBox.current;
+
+  // Token budget pass (no-op when not set).
+  const { results: budgeted, meta: budgetMeta } = enforceTokenBudget(results, opts?.tokenBudget);
+
+  // Compose the final meta and emit.
+  const finalMeta: HybridSearchMeta = {
+    vector_enabled: innerMeta?.vector_enabled ?? false,
+    detail_resolved: innerMeta?.detail_resolved ?? null,
+    expansion_applied: innerMeta?.expansion_applied ?? false,
+    intent: innerMeta?.intent,
+    cache: { status: cacheStatus },
+    ...(opts?.tokenBudget && opts.tokenBudget > 0
+      ? { token_budget: budgetMeta }
+      : {}),
+  };
+  try {
+    userOnMeta?.(finalMeta);
+  } catch {
+    // swallow
+  }
+
+  // Best-effort writeback (skip when search returned empty so we don't
+  // cache zero-result queries forever — they often indicate a typo).
+  if (
+    cacheStatus === 'miss' &&
+    queryEmbedding &&
+    results.length > 0 &&
+    (innerMeta?.vector_enabled ?? false)
+  ) {
+    void cache
+      .store(query, queryEmbedding, results, finalMeta, { sourceId: opts?.sourceId })
+      .catch(() => { /* swallow */ });
+  }
+
+  return budgeted;
+}
+
+/**
+ * v0.32.x search-lite — weighted RRF. Each list contributes with its own
+ * effective k value, which lets intent weighting bias keyword vs vector
+ * lists without re-weighting individual scores. Wraps rrfFusion internally
+ * by computing weighted contributions in a single pass.
+ */
+export function rrfFusionWeighted(
+  lists: Array<{ list: SearchResult[]; k: number }>,
+  applyBoost = true,
+): SearchResult[] {
+  const scores = new Map<string, { result: SearchResult; score: number }>();
+
+  for (const { list, k } of lists) {
+    for (let rank = 0; rank < list.length; rank++) {
+      const r = list[rank];
+      const key = `${r.slug}:${r.chunk_id ?? r.chunk_text.slice(0, 50)}`;
+      const existing = scores.get(key);
+      const rrfScore = 1 / (k + rank);
+
+      if (existing) {
+        existing.score += rrfScore;
+      } else {
+        scores.set(key, { result: r, score: rrfScore });
+      }
+    }
+  }
+
+  const entries = Array.from(scores.values());
+  if (entries.length === 0) return [];
+
+  const maxScore = Math.max(...entries.map(e => e.score));
+  if (maxScore > 0) {
+    for (const e of entries) {
+      e.score = e.score / maxScore;
+      const boost = applyBoost && e.result.chunk_source === 'compiled_truth' ? COMPILED_TRUTH_BOOST : 1.0;
+      e.score *= boost;
+    }
+  }
+
+  return entries
+    .sort((a, b) => b.score - a.score)
+    .map(({ result, score }) => ({ ...result, score }));
 }
 
 /**

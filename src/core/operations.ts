@@ -10,7 +10,7 @@ import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
-import { hybridSearch } from './search/hybrid.ts';
+import { hybridSearch, hybridSearchCached } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
@@ -1080,7 +1080,10 @@ const query: Operation = {
     // stays SearchResult[] (Cathedral II callers depend on that); meta
     // arrives via callback so eval capture can record what actually ran.
     let capturedMeta: HybridSearchMeta | null = null;
-    const results = await hybridSearch(ctx.engine, queryText, {
+    // v0.32.x search-lite: route the query op through hybridSearchCached so
+    // semantic cache + token budget + intent weighting fire automatically.
+    // Plain hybridSearch remains the bare API for callers that opt out.
+    const results = await hybridSearchCached(ctx.engine, queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
       expansion: expand,
@@ -1095,6 +1098,10 @@ const query: Operation = {
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
       since: typeof p.since === 'string' ? p.since : undefined,
       until: typeof p.until === 'string' ? p.until : undefined,
+      // v0.32.x search-lite: token budget + cache opt-outs.
+      tokenBudget: typeof p.token_budget === 'number' ? (p.token_budget as number) : undefined,
+      useCache: typeof p.use_cache === 'boolean' ? (p.use_cache as boolean) : undefined,
+      intentWeighting: typeof p.intent_weighting === 'boolean' ? (p.intent_weighting as boolean) : undefined,
       onMeta: (m) => { capturedMeta = m; },
     });
     const latency_ms = Date.now() - startedAt;
