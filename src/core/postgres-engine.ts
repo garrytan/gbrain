@@ -559,7 +559,7 @@ export class PostgresEngine implements BrainEngine {
     const sourceCondition = sourceId ? sql`AND source_id = ${sourceId}` : sql``;
     const deletedCondition = includeDeleted ? sql`` : sql`AND deleted_at IS NULL`;
     const rows = await sql`
-      SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at
+      SELECT id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at
       FROM pages
       WHERE slug = ${slug} ${sourceCondition} ${deletedCondition}
       LIMIT 1
@@ -591,9 +591,12 @@ export class PostgresEngine implements BrainEngine {
     const effectiveDate = page.effective_date ?? null;
     const effectiveDateSource = page.effective_date_source ?? null;
     const importFilename = page.import_filename ?? null;
+    // v0.32.7 CJK wave: chunker_version + source_path columns.
+    const chunkerVersion = page.chunker_version ?? null;
+    const sourcePath = page.source_path ?? null;
     const rows = await sql`
-      INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename)
-      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename})
+      INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path)
+      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, COALESCE(${chunkerVersion}::smallint, 1), ${sourcePath})
       ON CONFLICT (source_id, slug) DO UPDATE SET
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
@@ -605,8 +608,10 @@ export class PostgresEngine implements BrainEngine {
         updated_at = now(),
         effective_date        = COALESCE(EXCLUDED.effective_date,        pages.effective_date),
         effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source),
-        import_filename       = COALESCE(EXCLUDED.import_filename,       pages.import_filename)
-      RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename
+        import_filename       = COALESCE(EXCLUDED.import_filename,       pages.import_filename),
+        chunker_version       = COALESCE(EXCLUDED.chunker_version,       pages.chunker_version),
+        source_path           = COALESCE(EXCLUDED.source_path,           pages.source_path)
+      RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename
     `;
     return rowToPage(rows[0]);
   }
@@ -680,6 +685,10 @@ export class PostgresEngine implements BrainEngine {
     const slugCondition = slugPrefix
       ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sql``;
+    // v0.31.12: scope to a single source when requested.
+    const sourceCondition = filters?.sourceId
+      ? sql`AND p.source_id = ${filters.sourceId}`
+      : sql``;
     // v0.26.5: hide soft-deleted by default; opt in via filters.includeDeleted.
     const deletedCondition = filters?.includeDeleted === true
       ? sql``
@@ -693,7 +702,7 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT p.* FROM pages p
       ${tagJoin}
-      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${deletedCondition}
+      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition}
       ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
     `;
 
@@ -709,6 +718,20 @@ export class PostgresEngine implements BrainEngine {
     }
     const rows = await sql`SELECT slug FROM pages`;
     return new Set(rows.map((r) => r.slug as string));
+  }
+
+  async listAllPageRefs(): Promise<Array<{ slug: string; source_id: string }>> {
+    // v0.32.8: cross-source page enumeration. ORDER BY (source_id, slug) for
+    // deterministic iteration (F11) — same-slug-different-source pages stay
+    // grouped predictably. WHERE deleted_at IS NULL matches default getPage
+    // visibility semantics (v0.26.5).
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT slug, source_id FROM pages
+      WHERE deleted_at IS NULL
+      ORDER BY source_id, slug
+    `;
+    return rows.map((r) => ({ slug: r.slug as string, source_id: r.source_id as string }));
   }
 
   async resolveSlugs(partial: string): Promise<string[]> {
@@ -1252,7 +1275,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const rows = await sql`
       SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-             cc.model, cc.token_count
+             cc.model, cc.token_count, p.source_id
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       WHERE cc.embedding IS NULL
@@ -2377,6 +2400,196 @@ export class PostgresEngine implements BrainEngine {
     return result.length;
   }
 
+  /**
+   * v0.32.6 — batched per-page active-takes fetch (P1). One round-trip
+   * regardless of how many pages the caller passes. Honors holder allow-list
+   * for MCP scope enforcement. Pages with no active takes get an empty array.
+   */
+  async listActiveTakesForPages(
+    pageIds: number[],
+    opts: { takesHoldersAllowList?: string[] } = {},
+  ): Promise<Map<number, Take[]>> {
+    const out = new Map<number, Take[]>();
+    for (const pid of pageIds) out.set(pid, []);
+    if (pageIds.length === 0) return out;
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT t.*, p.slug AS page_slug
+      FROM takes t
+      JOIN pages p ON p.id = t.page_id
+      WHERE t.page_id = ANY(${pageIds}::int[])
+        AND t.active = true
+        AND (
+          ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
+          OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
+        )
+      ORDER BY t.page_id, t.row_num
+    `;
+    for (const r of rows) {
+      const take = takeRowToTake(r as Record<string, unknown>);
+      const bucket = out.get(take.page_id);
+      if (bucket) bucket.push(take);
+    }
+    return out;
+  }
+
+  /**
+   * v0.32.6 — persist a contradiction-probe run row (M5). Idempotent on
+   * run_id via ON CONFLICT DO NOTHING. Returns true iff a row was inserted.
+   */
+  async writeContradictionsRun(row: {
+    run_id: string;
+    judge_model: string;
+    prompt_version: string;
+    queries_evaluated: number;
+    queries_with_contradiction: number;
+    total_contradictions_flagged: number;
+    wilson_ci_lower: number;
+    wilson_ci_upper: number;
+    judge_errors_total: number;
+    cost_usd_total: number;
+    duration_ms: number;
+    source_tier_breakdown: Record<string, unknown>;
+    report_json: Record<string, unknown>;
+  }): Promise<boolean> {
+    const sql = this.sql;
+    const result = await sql`
+      INSERT INTO eval_contradictions_runs (
+        run_id, judge_model, prompt_version,
+        queries_evaluated, queries_with_contradiction, total_contradictions_flagged,
+        wilson_ci_lower, wilson_ci_upper, judge_errors_total,
+        cost_usd_total, duration_ms,
+        source_tier_breakdown, report_json
+      ) VALUES (
+        ${row.run_id}, ${row.judge_model}, ${row.prompt_version},
+        ${row.queries_evaluated}, ${row.queries_with_contradiction}, ${row.total_contradictions_flagged},
+        ${row.wilson_ci_lower}, ${row.wilson_ci_upper}, ${row.judge_errors_total},
+        ${row.cost_usd_total}, ${row.duration_ms},
+        ${sql.json(row.source_tier_breakdown as Parameters<typeof sql.json>[0])},
+        ${sql.json(row.report_json as Parameters<typeof sql.json>[0])}
+      )
+      ON CONFLICT (run_id) DO NOTHING
+    `;
+    return result.count > 0;
+  }
+
+  /**
+   * v0.32.6 — load probe runs from the last N days, newest first (M5).
+   * Used by `trend` sub-subcommand and the doctor `contradictions` check.
+   */
+  async loadContradictionsTrend(days: number): Promise<Array<{
+    run_id: string;
+    ran_at: string;
+    judge_model: string;
+    queries_evaluated: number;
+    queries_with_contradiction: number;
+    total_contradictions_flagged: number;
+    wilson_ci_lower: number;
+    wilson_ci_upper: number;
+    judge_errors_total: number;
+    cost_usd_total: number;
+    duration_ms: number;
+    source_tier_breakdown: Record<string, unknown>;
+    report_json: Record<string, unknown>;
+  }>> {
+    const sql = this.sql;
+    const cutoff = new Date(Date.now() - Math.max(0, days) * 86400000);
+    const rows = await sql`
+      SELECT run_id, ran_at, judge_model,
+             queries_evaluated, queries_with_contradiction, total_contradictions_flagged,
+             wilson_ci_lower, wilson_ci_upper, judge_errors_total,
+             cost_usd_total, duration_ms,
+             source_tier_breakdown, report_json
+      FROM eval_contradictions_runs
+      WHERE ran_at >= ${cutoff}
+      ORDER BY ran_at DESC
+    `;
+    return rows.map((r) => ({
+      run_id: r.run_id as string,
+      ran_at: (r.ran_at instanceof Date ? r.ran_at.toISOString() : String(r.ran_at)),
+      judge_model: r.judge_model as string,
+      queries_evaluated: Number(r.queries_evaluated),
+      queries_with_contradiction: Number(r.queries_with_contradiction),
+      total_contradictions_flagged: Number(r.total_contradictions_flagged),
+      wilson_ci_lower: Number(r.wilson_ci_lower),
+      wilson_ci_upper: Number(r.wilson_ci_upper),
+      judge_errors_total: Number(r.judge_errors_total),
+      cost_usd_total: Number(r.cost_usd_total),
+      duration_ms: Number(r.duration_ms),
+      source_tier_breakdown: r.source_tier_breakdown as Record<string, unknown>,
+      report_json: r.report_json as Record<string, unknown>,
+    }));
+  }
+
+  /**
+   * v0.32.6 — judge cache lookup (P2). Returns verdict JSON for a non-
+   * expired row matching the full 5-component key, else NULL.
+   */
+  async getContradictionCacheEntry(key: {
+    chunk_a_hash: string;
+    chunk_b_hash: string;
+    model_id: string;
+    prompt_version: string;
+    truncation_policy: string;
+  }): Promise<Record<string, unknown> | null> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT verdict
+      FROM eval_contradictions_cache
+      WHERE chunk_a_hash = ${key.chunk_a_hash}
+        AND chunk_b_hash = ${key.chunk_b_hash}
+        AND model_id = ${key.model_id}
+        AND prompt_version = ${key.prompt_version}
+        AND truncation_policy = ${key.truncation_policy}
+        AND expires_at > now()
+      LIMIT 1
+    `;
+    if (rows.length === 0) return null;
+    return rows[0].verdict as Record<string, unknown>;
+  }
+
+  /**
+   * v0.32.6 — judge cache upsert. ON CONFLICT DO UPDATE refreshes verdict +
+   * slides expires_at forward; same-key re-runs are safe.
+   */
+  async putContradictionCacheEntry(opts: {
+    chunk_a_hash: string;
+    chunk_b_hash: string;
+    model_id: string;
+    prompt_version: string;
+    truncation_policy: string;
+    verdict: Record<string, unknown>;
+    ttl_seconds?: number;
+  }): Promise<void> {
+    const sql = this.sql;
+    const ttl = Math.max(60, opts.ttl_seconds ?? 30 * 86400);
+    const expiresAt = new Date(Date.now() + ttl * 1000);
+    await sql`
+      INSERT INTO eval_contradictions_cache (
+        chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy,
+        verdict, expires_at
+      ) VALUES (
+        ${opts.chunk_a_hash}, ${opts.chunk_b_hash}, ${opts.model_id},
+        ${opts.prompt_version}, ${opts.truncation_policy},
+        ${sql.json(opts.verdict as Parameters<typeof sql.json>[0])}, ${expiresAt}
+      )
+      ON CONFLICT (chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy)
+      DO UPDATE SET
+        verdict = EXCLUDED.verdict,
+        expires_at = EXCLUDED.expires_at,
+        created_at = now()
+    `;
+  }
+
+  /** v0.32.6 — periodic sweep of expired cache rows. */
+  async sweepContradictionCache(): Promise<number> {
+    const sql = this.sql;
+    const result = await sql`
+      DELETE FROM eval_contradictions_cache WHERE expires_at <= now()
+    `;
+    return result.count ?? 0;
+  }
+
   async listTakes(opts: TakesListOpts = {}): Promise<Take[]> {
     const sql = this.sql;
     const limit = clampSearchLimit(opts.limit, 100, 500);
@@ -2930,14 +3143,22 @@ export class PostgresEngine implements BrainEngine {
     await conn.unsafe(sqlStr);
   }
 
-  async getChunksWithEmbeddings(slug: string): Promise<Chunk[]> {
+  async getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]> {
     const conn = this.sql;
-    const rows = await conn`
-      SELECT cc.* FROM content_chunks cc
-      JOIN pages p ON p.id = cc.page_id
-      WHERE p.slug = ${slug}
-      ORDER BY cc.chunk_index
-    `;
+    const sourceId = opts?.sourceId;
+    const rows = sourceId
+      ? await conn`
+          SELECT cc.* FROM content_chunks cc
+          JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
+          ORDER BY cc.chunk_index
+        `
+      : await conn`
+          SELECT cc.* FROM content_chunks cc
+          JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug = ${slug}
+          ORDER BY cc.chunk_index
+        `;
     return rows.map((r) => rowToChunk(r as Record<string, unknown>, true));
   }
 

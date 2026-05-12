@@ -777,12 +777,25 @@ async function extractLinksFromDB(
   const nullResolver = {
     resolve: async () => null as string | null,
   };
-  const allSlugs = await engine.getAllSlugs();
-  const slugList = Array.from(allSlugs);
+  // v0.32.8: listAllPageRefs enumerates (slug, source_id) so we can thread
+  // sourceId to getPage AND build a cross-source resolution map for link
+  // disambiguation. Pre-fix used getAllSlugs() which collapsed
+  // same-slug-different-source pages into one entry.
+  const allRefs = await engine.listAllPageRefs();
+  // For backward-compat checks (`allSlugs.has(...)` calls below), we still
+  // need a flat slug set. ALSO a per-slug → [sources] map for F10 resolution.
+  const allSlugs = new Set<string>();
+  const slugToSources = new Map<string, string[]>();
+  for (const ref of allRefs) {
+    allSlugs.add(ref.slug);
+    const list = slugToSources.get(ref.slug) ?? [];
+    list.push(ref.source_id);
+    slugToSources.set(ref.slug, list);
+  }
   let processed = 0, created = 0;
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
-  progress.start('extract.links_db', slugList.length);
+  progress.start('extract.links_db', allRefs.length);
 
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
@@ -804,9 +817,8 @@ async function extractLinksFromDB(
     }
   }
 
-  for (let i = 0; i < slugList.length; i++) {
-    const slug = slugList[i];
-    const page = await engine.getPage(slug);
+  for (const { slug, source_id } of allRefs) {
+    const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
     if (typeFilter && page.type !== typeFilter) continue;
     if (since) {
@@ -832,13 +844,38 @@ async function extractLinksFromDB(
       const fromSlug = c.fromSlug ?? slug;
       if (!allSlugs.has(c.targetSlug)) continue;
       if (!allSlugs.has(fromSlug)) continue;
+
+      // v0.32.8 F10: cross-source link resolution.
+      // from_source_id = origin page's source_id (this loop's source_id, or
+      // the candidate's fromSlug source if it lives in a different source).
+      // to_source_id = priority: origin's source > 'default' > skip (don't
+      // silently push a wrong-source edge).
+      const fromSources = slugToSources.get(fromSlug) ?? [];
+      const fromSourceId = fromSources.includes(source_id) ? source_id
+        : (fromSources.includes('default') ? 'default' : fromSources[0]);
+      const targetSources = slugToSources.get(c.targetSlug) ?? [];
+      let toSourceId: string;
+      if (targetSources.includes(fromSourceId)) {
+        toSourceId = fromSourceId;
+      } else if (targetSources.includes('default')) {
+        toSourceId = 'default';
+      } else {
+        // Target exists ONLY in non-origin/non-default sources. Skip — don't
+        // silently push a wrong-source edge. Tracking this as an unresolved
+        // ref would require expanding UnresolvedFrontmatterRef; for v0.32.8
+        // a quiet skip is the conservative choice (matches existing
+        // "target missing" semantics where allSlugs.has() returns false).
+        continue;
+      }
+
       if (dryRunSeen) {
-        const key = `${fromSlug}::${c.targetSlug}::${c.linkType}::${c.linkSource ?? 'markdown'}`;
+        const key = `${fromSourceId}::${fromSlug}::${toSourceId}::${c.targetSlug}::${c.linkType}::${c.linkSource ?? 'markdown'}`;
         if (dryRunSeen.has(key)) continue;
         dryRunSeen.add(key);
         if (jsonMode) {
           process.stdout.write(JSON.stringify({
-            action: 'add_link', from: fromSlug, to: c.targetSlug,
+            action: 'add_link', from: fromSlug, from_source_id: fromSourceId,
+            to: c.targetSlug, to_source_id: toSourceId,
             type: c.linkType, context: c.context, link_source: c.linkSource,
           }) + '\n');
         } else {
@@ -854,6 +891,12 @@ async function extractLinksFromDB(
           link_source: c.linkSource,
           origin_slug: c.originSlug,
           origin_field: c.originField,
+          // v0.32.8 F4: thread source ids so the batch JOIN doesn't fan out
+          // across sources. Default source_id='default' for back-compat with
+          // pre-v0.32.8 callers (the engine still accepts undefined).
+          from_source_id: fromSourceId,
+          to_source_id: toSourceId,
+          origin_source_id: source_id,
         });
         if (batch.length >= BATCH_SIZE) await flush();
       }
@@ -892,12 +935,14 @@ async function extractTimelineFromDB(
   typeFilter: PageType | undefined,
   since: string | undefined,
 ): Promise<{ created: number; pages: number }> {
-  const allSlugs = await engine.getAllSlugs();
-  const slugList = Array.from(allSlugs);
+  // v0.32.8: listAllPageRefs enumerates (slug, source_id) pairs so we can
+  // thread sourceId to getPage and addTimelineEntriesBatch. Pre-fix used
+  // getAllSlugs() which collapsed same-slug-different-source pages.
+  const allRefs = await engine.listAllPageRefs();
   let processed = 0, created = 0;
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
-  progress.start('extract.timeline_db', slugList.length);
+  progress.start('extract.timeline_db', allRefs.length);
 
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
@@ -919,9 +964,8 @@ async function extractTimelineFromDB(
     }
   }
 
-  for (let i = 0; i < slugList.length; i++) {
-    const slug = slugList[i];
-    const page = await engine.getPage(slug);
+  for (const { slug, source_id } of allRefs) {
+    const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
     if (typeFilter && page.type !== typeFilter) continue;
     if (since) {
@@ -935,12 +979,12 @@ async function extractTimelineFromDB(
 
     for (const entry of entries) {
       if (dryRunSeen) {
-        const key = `${slug}::${entry.date}::${entry.summary}`;
+        const key = `${source_id}::${slug}::${entry.date}::${entry.summary}`;
         if (dryRunSeen.has(key)) continue;
         dryRunSeen.add(key);
         if (jsonMode) {
           process.stdout.write(JSON.stringify({
-            action: 'add_timeline', slug, date: entry.date,
+            action: 'add_timeline', slug, source_id, date: entry.date,
             summary: entry.summary, ...(entry.detail ? { detail: entry.detail } : {}),
           }) + '\n');
         } else {
@@ -948,7 +992,9 @@ async function extractTimelineFromDB(
         }
         created++;
       } else {
-        batch.push({ slug, date: entry.date, summary: entry.summary, detail: entry.detail || '' });
+        // v0.32.8 F4: thread source_id so the JOIN matches the right page
+        // when two sources share the same slug.
+        batch.push({ slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id });
         if (batch.length >= BATCH_SIZE) await flush();
       }
     }

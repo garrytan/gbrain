@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { buildSyncManifest, isSyncable, pathToSlug } from '../src/core/sync.ts';
+import { buildGitInvocation } from '../src/commands/sync.ts';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
@@ -463,5 +464,99 @@ describe('sync regression — #132 nested transaction deadlock', () => {
       const line = prelude.slice(lineStart, prelude.indexOf('\n', lastTxIdx));
       expect(line.trim().startsWith('//')).toBe(true);
     }
+  });
+});
+
+describe('resolveSlugByPathOrSourcePath (CJK wave v0.32.7, codex F4)', () => {
+  let pgEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = new PGLiteEngine();
+    await pgEngine.connect({});
+    await pgEngine.initSchema();
+  });
+
+  afterAll(async () => {
+    await pgEngine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await (pgEngine as any).db.exec('DELETE FROM content_chunks');
+    await (pgEngine as any).db.exec('DELETE FROM pages');
+  });
+
+  test('returns stored slug when source_path matches a row', async () => {
+    const { resolveSlugByPathOrSourcePath } = await import('../src/commands/sync.ts');
+    // Seed a frontmatter-fallback page: slug doesn't derive from path (emoji)
+    await pgEngine.executeRaw(
+      `INSERT INTO pages (slug, type, title, compiled_truth, page_kind, source_path)
+       VALUES ('projects/launch', 'project', 'Launch', 'body', 'markdown', '🚀.md')`,
+    );
+    const slug = await resolveSlugByPathOrSourcePath(pgEngine, '🚀.md');
+    expect(slug).toBe('projects/launch');
+  });
+
+  test('falls back to resolveSlugForPath when no source_path matches', async () => {
+    const { resolveSlugByPathOrSourcePath } = await import('../src/commands/sync.ts');
+    // No row seeded — fallback returns the path-derived slug.
+    const slug = await resolveSlugByPathOrSourcePath(pgEngine, 'concepts/hello-world.md');
+    expect(slug).toBe('concepts/hello-world');
+  });
+
+  test('scoped by source_id when provided', async () => {
+    const { resolveSlugByPathOrSourcePath } = await import('../src/commands/sync.ts');
+    // Same source_path under TWO sources — without source_id scope we'd
+    // get either at random. With source_id we get the right one.
+    await pgEngine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('source-a', 'A') ON CONFLICT DO NOTHING`,
+    );
+    await pgEngine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('source-b', 'B') ON CONFLICT DO NOTHING`,
+    );
+    await pgEngine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, title, compiled_truth, page_kind, source_path)
+       VALUES ('source-a', 'slug-a/page', 'note', 'A', 'a', 'markdown', '🚀.md')`,
+    );
+    await pgEngine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, title, compiled_truth, page_kind, source_path)
+       VALUES ('source-b', 'slug-b/page', 'note', 'B', 'b', 'markdown', '🚀.md')`,
+    );
+    expect(await resolveSlugByPathOrSourcePath(pgEngine, '🚀.md', 'source-a')).toBe('slug-a/page');
+    expect(await resolveSlugByPathOrSourcePath(pgEngine, '🚀.md', 'source-b')).toBe('slug-b/page');
+  });
+});
+
+describe('git() helper invocation order (CJK wave v0.32.7)', () => {
+  // The git CLI requires `-c key=val` to appear BEFORE the subcommand,
+  // and `-C path` BEFORE the subcommand too. Pin the emit order so a future
+  // refactor can't silently put `-c` after the subcommand and break CJK
+  // path emission.
+
+  test('core.quotepath=false is always emitted first', () => {
+    const argv = buildGitInvocation('/repo', ['diff', '--name-status']);
+    expect(argv).toEqual([
+      '-c', 'core.quotepath=false',
+      '-C', '/repo',
+      'diff', '--name-status',
+    ]);
+  });
+
+  test('extra configs append AFTER quotepath, BEFORE -C and subcommand', () => {
+    const argv = buildGitInvocation('/repo', ['diff'], ['foo=bar', 'baz=qux']);
+    expect(argv).toEqual([
+      '-c', 'core.quotepath=false',
+      '-c', 'foo=bar',
+      '-c', 'baz=qux',
+      '-C', '/repo',
+      'diff',
+    ]);
+  });
+
+  test('empty args produces a valid invocation', () => {
+    const argv = buildGitInvocation('/repo', []);
+    expect(argv).toEqual([
+      '-c', 'core.quotepath=false',
+      '-C', '/repo',
+    ]);
   });
 });

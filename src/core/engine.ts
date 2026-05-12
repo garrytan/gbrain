@@ -498,6 +498,20 @@ export interface BrainEngine {
    */
   getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>>;
 
+  /**
+   * v0.32.8: cross-source page enumeration. Returns one row per (slug,
+   * source_id) pair across the brain, ordered by (source_id, slug) for
+   * deterministic iteration on large brains. Used by extract-takes,
+   * extract, and integrity to replace the `getAllSlugs() → getPage(slug)`
+   * N+1 pattern, which silently defaulted to source_id='default' and
+   * skipped non-default-source pages.
+   *
+   * Cheap by design: only slug + source_id, not the full Page row. For
+   * loops that need page.compiled_truth / timeline / frontmatter, use
+   * `forEachPage` from src/core/engine-iter.ts instead.
+   */
+  listAllPageRefs(): Promise<Array<{ slug: string; source_id: string }>>;
+
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
   searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]>;
@@ -847,6 +861,116 @@ export interface BrainEngine {
   putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void>;
 
   // ============================================================
+  // v0.32.6 Contradiction probe — batched takes fetch + cache + trends
+  // ============================================================
+
+  /**
+   * Batch fetch: for each page_id in the input array, return the page's
+   * currently-active takes. Single query under the hood (`WHERE page_id =
+   * ANY($1) AND active = true`); replaces the O(K) loop of listTakes calls
+   * the contradiction probe would otherwise pay per probe-query.
+   *
+   * Returns a Map keyed on page_id; pages with no active takes get an empty
+   * array (NOT undefined) so callers can avoid existence checks.
+   *
+   * Honors `takesHoldersAllowList` for MCP scope enforcement (mirrors
+   * listTakes contract). Pass undefined from trusted local callers.
+   */
+  listActiveTakesForPages(
+    pageIds: number[],
+    opts?: { takesHoldersAllowList?: string[] },
+  ): Promise<Map<number, Take[]>>;
+
+  /**
+   * Persist a single contradiction-probe run row. Caller supplies a full
+   * `ContradictionsRunRow`-shaped object; the engine inserts as-is.
+   *
+   * Idempotent on `run_id`: re-inserting an existing run_id is a no-op
+   * (caller passes ISO-timestamp-shaped run_ids that won't collide
+   * unintentionally). Returns true iff a row was inserted.
+   */
+  writeContradictionsRun(row: {
+    run_id: string;
+    judge_model: string;
+    prompt_version: string;
+    queries_evaluated: number;
+    queries_with_contradiction: number;
+    total_contradictions_flagged: number;
+    wilson_ci_lower: number;
+    wilson_ci_upper: number;
+    judge_errors_total: number;
+    cost_usd_total: number;
+    duration_ms: number;
+    source_tier_breakdown: Record<string, unknown>;
+    report_json: Record<string, unknown>;
+  }): Promise<boolean>;
+
+  /**
+   * Load contradiction-probe run history within the last N days, ordered
+   * newest first. Used by `gbrain eval suspected-contradictions trend` and
+   * by the doctor `contradictions` check. `report_json` and
+   * `source_tier_breakdown` are parsed JSONB columns.
+   */
+  loadContradictionsTrend(days: number): Promise<Array<{
+    run_id: string;
+    ran_at: string;
+    judge_model: string;
+    queries_evaluated: number;
+    queries_with_contradiction: number;
+    total_contradictions_flagged: number;
+    wilson_ci_lower: number;
+    wilson_ci_upper: number;
+    judge_errors_total: number;
+    cost_usd_total: number;
+    duration_ms: number;
+    source_tier_breakdown: Record<string, unknown>;
+    report_json: Record<string, unknown>;
+  }>>;
+
+  /**
+   * Cache lookup for the contradiction probe's persistent judge cache (P2).
+   * Returns the verdict JSON if a row exists with matching key AND non-expired
+   * `expires_at`. NULL means cache miss (judge call needed).
+   *
+   * Key shape mirrors the table primary key: (chunk_a_hash, chunk_b_hash,
+   * model_id, prompt_version, truncation_policy). Codex's outside-voice
+   * critique fixed the key to include prompt_version + truncation_policy so
+   * prompt edits cleanly invalidate prior verdicts.
+   */
+  getContradictionCacheEntry(key: {
+    chunk_a_hash: string;
+    chunk_b_hash: string;
+    model_id: string;
+    prompt_version: string;
+    truncation_policy: string;
+  }): Promise<Record<string, unknown> | null>;
+
+  /**
+   * Upsert a contradiction-probe judge verdict into the persistent cache.
+   * `ttl_seconds` controls expires_at (default 30 days from now). Caller
+   * supplies pre-hashed chunk text + the verdict to cache.
+   *
+   * ON CONFLICT DO UPDATE so re-runs refresh expires_at; this is the simplest
+   * shape for "I judged the same pair again with the same config, slide the
+   * TTL forward."
+   */
+  putContradictionCacheEntry(opts: {
+    chunk_a_hash: string;
+    chunk_b_hash: string;
+    model_id: string;
+    prompt_version: string;
+    truncation_policy: string;
+    verdict: Record<string, unknown>;
+    ttl_seconds?: number;
+  }): Promise<void>;
+
+  /**
+   * Sweep expired cache entries. Returns count deleted. Periodic call from
+   * cache.ts — keeps the table bounded without requiring a cron.
+   */
+  sweepContradictionCache(): Promise<number>;
+
+  // ============================================================
   // v0.31 Hot memory — facts table operations
   // ============================================================
   /**
@@ -1019,7 +1143,7 @@ export interface BrainEngine {
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;
-  getChunksWithEmbeddings(slug: string): Promise<Chunk[]>;
+  getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]>;
 
   // Raw SQL (for Minions job queue and other internal modules)
   executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
