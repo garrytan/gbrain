@@ -25,6 +25,7 @@ import { VERSION } from '../version.ts';
 import {
   GET_RECENT_SALIENCE_DESCRIPTION,
   FIND_ANOMALIES_DESCRIPTION,
+  FIND_EXPERTS_DESCRIPTION,
   GET_RECENT_TRANSCRIPTS_DESCRIPTION,
   LIST_PAGES_DESCRIPTION,
   QUERY_DESCRIPTION,
@@ -2219,6 +2220,41 @@ const find_anomalies: Operation = {
   cliHints: { name: 'anomalies' },
 };
 
+// v0.33: expertise + relationship-proximity routing. CLI: gbrain whoknows.
+const find_experts: Operation = {
+  name: 'find_experts',
+  description: FIND_EXPERTS_DESCRIPTION,
+  scope: 'read',
+  params: {
+    topic: {
+      type: 'string',
+      description: 'The topic to route. Free-form natural language.',
+    },
+    limit: {
+      type: 'number',
+      description: 'Max results (default 5).',
+    },
+    explain: {
+      type: 'boolean',
+      description: 'Include factor breakdown per result (expertise, recency, salience).',
+    },
+  },
+  handler: async (_ctx, p) => {
+    const { findExperts } = await import('../commands/whoknows.ts');
+    const topic = typeof p.topic === 'string' ? p.topic : '';
+    if (!topic.trim()) {
+      throw new OperationError('invalid_params', '`topic` is required and must be a non-empty string.');
+    }
+    return findExperts(_ctx.engine, {
+      topic,
+      limit: typeof p.limit === 'number' ? p.limit : undefined,
+      explain: p.explain === true,
+    });
+  },
+  cliHints: { name: 'whoknows', positional: ['topic'] },
+};
+
+// v0.32.6: contradiction probe MCP surface (M3)
 const find_contradictions: Operation = {
   name: 'find_contradictions',
   description: FIND_CONTRADICTIONS_DESCRIPTION,
@@ -2801,6 +2837,8 @@ export const operations: Operation[] = [
   extract_facts, recall, forget_fact,
   // v0.32.6: contradiction probe MCP surface (M3)
   find_contradictions,
+  // v0.33: expertise + relationship-proximity routing
+  find_experts,
 ];
 
 export const operationsByName = Object.fromEntries(

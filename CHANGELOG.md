@@ -2,6 +2,117 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.33.1.0] - 2026-05-10
+
+**Ask gbrain who in your network knows about a topic, and get a ranked answer with the reasoning shown.**
+
+The new `gbrain whoknows <topic>` command (CLI + `find_experts` MCP op) routes expertise + relationship-proximity queries against person and company pages in your brain. Returns top-5 by default. `--explain` dumps the per-result factor breakdown so you can see why the ranking landed where it did. The release ships the wedge query without committing to a new substrate; community detection and a formal relationship_score table are deferred until the eval set proves they're earned, not because they sound good in a CHANGELOG.
+
+### What you can now do
+
+**Ask the question you actually ask.** `gbrain whoknows "lab automation"` returns the top-5 people or companies in your brain that know about lab automation, ranked by expertise depth (sub-linear chunk-match), relationship recency (6-month half-life), and salience. Filters at SQL to person/company pages only — note pages and articles drop out without you asking. Mirrors the v0.29 `salience` / `anomalies` shape: CLI + MCP op + thin-client routing all on day one.
+
+**See the math.** `gbrain whoknows "fintech compliance" --explain` adds a one-line factor breakdown per result. You see `expertise=0.405 (raw=0.500) recency=0.846 (60d) salience=0.300 → factor=0.650`. Trust through transparency, not opacity. The MCP op accepts the same flag; agents can return the breakdown to the user verbatim.
+
+**Get a SQL-level type filter for free.** The new `SearchOpts.types: PageType[]` parameter on `searchHybrid` (and underlying `searchKeyword` + `searchVector` in both engines) pushes the page-type filter into SQL via `AND p.type = ANY($N::text[])`. The limit budget goes to candidate-typed pages instead of being eaten by transcripts and articles. Future entity-only search reuses the parameter without touching this code.
+
+**Grade the headline against a two-layer eval gate.** `gbrain eval whoknows test/fixtures/whoknows-eval.jsonl` runs the locked ENG-D2 two-layer gate: Layer 1 hand-labeled fixture passes at ≥ 80% top-3 hit rate (the primary gate); Layer 2 `eval_candidates` replay passes at ≥ 0.4 mean set-Jaccard@3 (the regression gate). Layer 2 auto-skips with a stderr warning if `eval_candidates` has fewer than 20 replay-eligible captured rows — sparseness fallback lets users without `GBRAIN_CONTRIBUTOR_MODE=1` history still ship.
+
+**See if you did the assignment.** `gbrain doctor` adds a `whoknows_health` check that warns when `test/fixtures/whoknows-eval.jsonl` is missing, empty, or undersized (< 5 rows). The check is intentionally narrow: it does NOT measure hit-rate regression (that's the eval command's job). It surfaces "you haven't written your fixture yet" — the single highest-leverage signal in the doctor sweep.
+
+### The locked ranking spec (ENG-D1)
+
+```
+score = log(1 + raw_match)            // expertise (sub-linear)
+      × max(0.1, exp(-days/180))      // recency (6mo half-life, floored at 0.1)
+      × (0.5 + 0.5 × clamp(salience)) // salience (centered at 0.5)
+```
+
+Floors prevent multiplicative-zero edge cases (cold-start people without an `effective_date` get `recency_factor = 0.1` — visible, not zeroed). NaN inputs (negative recency, missing salience, undefined match score) all return `Number.isFinite(score) === true`. Same-score ties break alphabetically by slug for determinism. 16 unit tests in `test/whoknows.test.ts` pin the math.
+
+### Eval-gated trajectory
+
+| Outcome at end of week 1 | What ships in v0.33 |
+|---|---|
+| Naive whoknows ≥ 80% on hand-labeled + ≥ 0.4 Jaccard on replay | Clean release: command family + eval gate + doctor check. Substrate (community detection, formal `relationships` table) queues to v0.34 contingent on demand. |
+| Naive whoknows fails the eval | v0.34 picks up substrate work (composite-keyed `relationships` table + person-person projection from `attended` links + Jaccard-stable community alignment via graphology Louvain + Haiku-named clusters). The eval told us substrate was earned. |
+
+### What this means for your workflow
+
+If you've been muscle-memorying the search bar to find "who in my network knows about X" — that workflow becomes `gbrain whoknows`. The `--explain` flag means you stop wondering why result #2 landed at #2; you can see the recency or salience that put it there. The MCP op makes the same query agent-composable: an agent asks `find_experts` for routing candidates and brings them to the conversation.
+
+The release is eval-gated by design (per /office-hours, /plan-ceo-review, and Codex outside-voice). If the naive ranking passes your real-brain eval, you didn't need the cathedral substrate after all. If it fails, v0.34 builds it — measured, not speculated.
+
+## To take advantage of v0.33.1
+
+`gbrain upgrade` should do this automatically. Then run the eval gate against your real brain:
+
+1. **Write your eval fixture** at `test/fixtures/whoknows-eval.jsonl`:
+   ```bash
+   # 10 queries you'd actually ask, with hand-labeled expected slugs:
+   # {"query":"lab automation","expected_top_3_slugs":["wiki/people/your-expert"],"notes":"..."}
+   ```
+   The shipped placeholder uses obviously-example slugs (`wiki/people/example-alice`) so you won't mistake it for real grading.
+
+2. **Run the gate:**
+   ```bash
+   gbrain eval whoknows test/fixtures/whoknows-eval.jsonl
+   ```
+   Pass = ≥ 80% top-3 hit rate. Layer 2 (eval_candidates replay) auto-engages if you have ≥ 20 captured queries from `GBRAIN_CONTRIBUTOR_MODE=1` history; otherwise skips with a warning.
+
+3. **Ask the brain:**
+   ```bash
+   gbrain whoknows "lab automation"
+   gbrain whoknows "fintech compliance" --explain
+   gbrain whoknows "ai agents" --limit 10 --json
+   ```
+
+4. **From an agent (MCP):**
+   ```json
+   {"tool": "find_experts", "params": {"topic": "lab automation", "limit": 5, "explain": true}}
+   ```
+   The op is `scope: 'read'`, accessible to any client with the read OAuth scope.
+
+5. **If `gbrain doctor` warns about `whoknows_health`,** it means your fixture is missing or undersized. The fix hint points at the exact path.
+
+6. **If any step fails,** please file an issue: https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor --json` and `gbrain eval whoknows test/fixtures/whoknows-eval.jsonl --json`.
+
+### Itemized changes
+
+**New CLI commands:**
+- `gbrain whoknows <topic> [--explain] [--limit N] [--json]` — routes expertise queries to top-K person/company pages.
+- `gbrain eval whoknows <fixture.jsonl> [--json] [--skip-replay]` — two-layer eval gate (quality fixture + regression replay).
+
+**New MCP op:**
+- `find_experts` (`scope: 'read'`, `localOnly: false`) — backs the same `findExperts()` core that the CLI calls. Mirrors the v0.29 `find_anomalies` naming convention. Accessible to read-scoped OAuth clients on HTTP MCP installs.
+
+**New core files:**
+- `src/commands/whoknows.ts` — pure `rankCandidates()` ranking function (ENG-D1 locked spec), `findExperts()` orchestrator (hybrid search + batch salience/recency fetch + rank), `runWhoknows()` CLI dispatch.
+- `src/commands/eval-whoknows.ts` — two-layer gate orchestrator. `jaccardAtK()` / `topKHit()` / `readFixture()` exported for tests.
+- `test/fixtures/whoknows-eval.jsonl` — 10-row synthetic placeholder.
+
+**searchHybrid extension:**
+- `SearchOpts.types?: PageType[]` — multi-type SQL-level filter, threaded through `searchKeyword` + `searchVector` + `searchKeywordChunks` on both engines. AND-applies alongside the existing single-value `type` filter. No retrieval waste: limit budget goes to typed candidates.
+
+**Doctor:**
+- `whoknows_health` check warns when the fixture is missing / empty / undersized.
+
+**Tests:**
+- `test/whoknows.test.ts` — 16 cases covering the 10 locked ENG-D3 shadow paths, ranking sanity (higher-match / more-recent / higher-salience outrank), source-id composite-key safety (Codex F1), factor-decomposition numerical pin.
+- `test/eval-whoknows.test.ts` — 23 cases on `jaccardAtK`, `topKHit`, fixture parsing, locked thresholds.
+- `test/whoknows-doctor.test.ts` — 5 cases on the fixture-presence states.
+- `test/e2e/whoknows.test.ts` — 5 E2E cases against a seeded PGLite brain, asserting the >= 80% gate against the synthetic fixture, type-filter exclusion, empty-result safety, `--explain` shape, limit honoring.
+
+**What we deferred (v0.34+ candidates):**
+- Formal `relationships` table (composite-keyed `(from_slug, from_source_id, to_slug, to_source_id)` per Codex F1) — eval-gated.
+- `page_communities` table + Jaccard-stable community alignment (Codex F4) — eval-gated.
+- Louvain via graphology-communities-louvain (CEO-D6 walked back from native igraph per Codex F5) — eval-gated.
+- `gbrain prep <person-slug>` and `gbrain stale` — moved to OpenClaw skills layer per Codex F8 (thin-harness ethos).
+- Proactive nudges, intro suggestions, conversation continuity — v0.34+ as the substrate proves itself.
+
+### Process notes
+
+The plan went through `/office-hours` → `/plan-ceo-review` → Codex outside-voice → `/plan-eng-review`. Each pass changed the shape. Office-hours locked the headline + eval-first principle. CEO review proposed 8 deliverables in SCOPE EXPANSION mode. Codex pushed back on 5 fronts (sequencing, eval methodology, library choice, layer separation, schema design) and was accepted on all 5 + 3 substrate defects. Eng review locked the ranking formula, the two-layer eval gate, the 10-case test list, and the SQL-level typeFilter. Net result: scope reduced ~75% from the cathedral version while shipping the actual wedge users ask for.
 ## [0.33.0] - 2026-05-11
 
 **`gbrain recall` now answers "what changed since last time?" in one command, and thin-client installs stop silently lying about empty results.**

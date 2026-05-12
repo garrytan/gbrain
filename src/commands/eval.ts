@@ -45,6 +45,13 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalCrossModal } = await import('./eval-cross-modal.ts');
     process.exit(await runEvalCrossModal(args.slice(1)));
   }
+  if (sub === 'whoknows') {
+    // v0.33 two-layer eval gate (ENG-D2): hand-labeled fixture =
+    // quality, eval_candidates replay = regression. Pass criteria
+    // baked in (>=80% top-3 hit rate; >=0.4 Jaccard with sparseness fallback).
+    const { runEvalWhoknows } = await import('./eval-whoknows.ts');
+    process.exit(await runEvalWhoknows(engine, args.slice(1)));
+  }
   if (sub === 'suspected-contradictions') {
     // v0.32.6 — contradiction probe. Engine connected (calls hybridSearch +
     // the eval_contradictions_cache + _runs tables). Matches the `replay`

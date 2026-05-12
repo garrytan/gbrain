@@ -795,6 +795,13 @@ export class PostgresEngine implements BrainEngine {
       params.push(type);
       typeClause = `AND p.type = $${params.length}`;
     }
+    // v0.33: multi-type filter for whoknows. AND-applied alongside the
+    // single-value `type` filter (callers can use either or both).
+    let typesClause = '';
+    if (opts?.types && opts.types.length > 0) {
+      params.push(opts.types);
+      typesClause = `AND p.type = ANY($${params.length}::text[])`;
+    }
     let excludeSlugsClause = '';
     if (excludeSlugs?.length) {
       params.push(excludeSlugs);
@@ -845,6 +852,7 @@ export class PostgresEngine implements BrainEngine {
         JOIN sources s ON s.id = p.source_id
         WHERE cc.search_vector @@ websearch_to_tsquery('english', $1)
           ${typeClause}
+          ${typesClause}
           ${excludeSlugsClause}
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${languageClause}
@@ -921,6 +929,13 @@ export class PostgresEngine implements BrainEngine {
       params.push(type);
       typeClause = `AND p.type = $${params.length}`;
     }
+    // v0.33: multi-type filter for whoknows. AND-applied alongside the
+    // single-value `type` filter (callers can use either or both).
+    let typesClause = '';
+    if (opts?.types && opts.types.length > 0) {
+      params.push(opts.types);
+      typesClause = `AND p.type = ANY($${params.length}::text[])`;
+    }
     let excludeSlugsClause = '';
     if (excludeSlugs?.length) {
       params.push(excludeSlugs);
@@ -966,6 +981,7 @@ export class PostgresEngine implements BrainEngine {
       JOIN sources s ON s.id = p.source_id
       WHERE cc.search_vector @@ websearch_to_tsquery('english', $1)
         ${typeClause}
+        ${typesClause}
         ${excludeSlugsClause}
         ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
         ${languageClause}
@@ -1022,6 +1038,13 @@ export class PostgresEngine implements BrainEngine {
       params.push(type);
       typeClause = `AND p.type = $${params.length}`;
     }
+    // v0.33: multi-type filter for whoknows. AND-applied alongside the
+    // single-value `type` filter (callers can use either or both).
+    let typesClause = '';
+    if (opts?.types && opts.types.length > 0) {
+      params.push(opts.types);
+      typesClause = `AND p.type = ANY($${params.length}::text[])`;
+    }
     let excludeSlugsClause = '';
     if (excludeSlugs?.length) {
       params.push(excludeSlugs);
@@ -1077,6 +1100,7 @@ export class PostgresEngine implements BrainEngine {
         WHERE cc.${col} IS NOT NULL ${modalityFilter}
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${typeClause}
+          ${typesClause}
           ${excludeSlugsClause}
           ${languageClause}
           ${symbolKindClause}

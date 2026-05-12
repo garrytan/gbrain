@@ -86,6 +86,66 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
  * Tolerance matches migration v48: any value with abs(weight - on_grid) > 1e-3
  * is genuinely off-grid (the 0.05 grid is 5e-2; float32 noise is ~1e-7).
  */
+/**
+ * v0.33: whoknows_health — verify the eval fixture is present at the
+ * documented path. Lightweight; just checks file existence and row count,
+ * not the eval gate outcome (that runs via `gbrain eval whoknows`).
+ *
+ * Surface is intentionally narrow: a missing fixture means the eval
+ * cannot run at all, which is the highest-leverage signal. Hit-rate
+ * regression detection lives in `gbrain eval whoknows --json` and is
+ * the job of the eval command, not the doctor sweep.
+ */
+export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> {
+  try {
+    const { existsSync, readFileSync, statSync } = await import('fs');
+    const path = await import('path');
+    const repoRoot = process.cwd();
+    const fixturePath = path.join(repoRoot, 'test/fixtures/whoknows-eval.jsonl');
+    if (!existsSync(fixturePath)) {
+      return {
+        name: 'whoknows_health',
+        status: 'warn',
+        message: `whoknows eval fixture missing at test/fixtures/whoknows-eval.jsonl. Fix: hand-label 10 queries you'd actually run, format {query, expected_top_3_slugs, notes}.`,
+      };
+    }
+    const stat = statSync(fixturePath);
+    if (stat.size === 0) {
+      return {
+        name: 'whoknows_health',
+        status: 'warn',
+        message: 'whoknows eval fixture exists but is empty. The eval cannot pass without queries.',
+      };
+    }
+    const raw = readFileSync(fixturePath, 'utf-8');
+    const rows = raw
+      .split('\n')
+      .filter((l) => {
+        const t = l.trim();
+        return t && !t.startsWith('#') && !t.startsWith('//');
+      });
+    if (rows.length < 5) {
+      return {
+        name: 'whoknows_health',
+        status: 'warn',
+        message: `whoknows eval fixture has only ${rows.length} row(s); ENG-D2 recommends 10. Fix: add more hand-labeled queries.`,
+      };
+    }
+    return {
+      name: 'whoknows_health',
+      status: 'ok',
+      message: `whoknows eval fixture present (${rows.length} queries). Run \`gbrain eval whoknows test/fixtures/whoknows-eval.jsonl\` to grade.`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'whoknows_health',
+      status: 'warn',
+      message: `Could not check whoknows fixture: ${msg}`,
+    };
+  }
+}
+
 export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> {
   try {
     const rows = await engine.executeRaw<{ off_grid: string | number; total: string | number }>(
@@ -1602,6 +1662,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // directly rather than the full `runDoctor` pipeline (codex review #7).
   progress.heartbeat('takes_weight_grid');
   checks.push(await takesWeightGridCheck(engine));
+
+  // v0.33: whoknows_health — fixture presence + row count. The eval
+  // gate itself runs via `gbrain eval whoknows`; this check is the
+  // "did you do the assignment?" signal.
+  progress.heartbeat('whoknows_health');
+  checks.push(await whoknowsHealthCheck(engine));
 
   // 11. Markdown body completeness (v0.12.3 reliability wave).
   // v0.12.0's splitBody ate everything after the first `---` horizontal rule,
