@@ -249,6 +249,11 @@ function collectFiles(target: string): string[] {
       continue;
     }
     for (const name of entries) {
+      // Skip the same directories the `generate` walker (line ~421) and
+      // disk-walk.ts:56 already skip. Without this, `validate` recurses into
+      // `node_modules/` and flags every dependency's HISTORY.md / CHANGELOG.md
+      // as MISSING_OPEN — false-positive noise that swamps real findings.
+      if (name === '.git' || name === 'node_modules' || name === '.obsidian') continue;
       const full = join(dir, name);
       let entryStat: ReturnType<typeof lstatSync>;
       try {
