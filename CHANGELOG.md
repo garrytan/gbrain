@@ -2,6 +2,86 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.32.3.0] - 2026-05-11
+
+**Compress a 25KB AGENTS.md down to 13KB without losing routing accuracy.**
+**Pattern proven across Opus 4.7, Sonnet 4.6, and Haiku 4.5 — beats the verbose baseline by +13 to +17pp at 48% the size.**
+
+Downstream agent forks (OpenClaw and friends) grow their AGENTS.md / RESOLVER.md routing files as they add skills. At ~200+ skills these files hit 25-30KB and eat the agent's context budget. v0.32.3.0 ships `functional-area-resolver`, a skill documenting a two-layer dispatch pattern: replace one row per skill with one entry per functional area, with each area listing its sub-skills in a `(dispatcher for: ...)` clause. The LLM reads one area entry and routes to the correct sub-skill.
+
+This skill is the *static-prompt analog* of hierarchical agent routing — a 2024-2025 research direction (AnyTool, RAG-MCP, Anthropic Agent Skills progressive disclosure). The published hierarchical schemes resolve at runtime via a second LLM call. This one inlines the hierarchy into a single-LLM-pass dispatcher list. Our contribution: showing that single-pass dispatch holds up empirically across three model tiers.
+
+### The numbers that matter
+
+Training corpus (n=20 fixtures × 3 seeds, LENIENT scoring — predicted slug shares dispatcher area with expected):
+
+| Variant | Opus 4.7 | Sonnet 4.6 | Haiku 4.5 | Size |
+|---|---|---|---|---|
+| baseline (270 bullet rows) | 81.7% | 86.7% | 73.3% | 25KB |
+| **functional-areas** (this pattern) | **98.3%** | **100%** | **88.3%** | **13KB** |
+| resolver-of-resolvers (compression WITHOUT dispatcher clause) | 63.3% | **41.7%** | 65.0% | 10KB |
+
+Three findings:
+
+1. **Functional-areas beats the verbose baseline on training across all three models** (+13 to +17pp) at 48% the size. Held-out (n=5, lenient) saturates at 100% for both baseline and functional-areas across all three models.
+2. **The `(dispatcher for: ...)` clause is the load-bearing signal.** resolver-of-resolvers strips it and collapses to 41.7% on Sonnet — exactly the failure case the pattern's authors predicted, now observed.
+3. **Strict scoring under-counts.** A prompt that tells the LLM "drill into the dispatcher list" causes the model to predict more-specific sub-skills (`gmail` instead of `executive-assistant`). Strict scoring marks that as failure; lenient (same-area) scoring counts it correct. Lenient matches production agent behavior — an agent that lands in `gmail` for an email intent succeeds either way.
+
+Receipts at `evals/functional-area-resolver/baseline-runs/2026-05-11-{opus-4-7,sonnet-4-6,haiku-4-5}.jsonl`. Reproduce with `cd evals/functional-area-resolver && node harness.mjs --model {opus|sonnet|haiku}`. The receipt format binds (model, prompt_template_hash, fixtures_hash, harness_sha, ts) so future contributors can verify whether published numbers still reproduce.
+
+### What this means for downstream agents
+
+If you maintain an agent fork with >150 skills and AGENTS.md hitting 25KB+:
+
+1. Apply the functional-area compression pattern to your AGENTS.md (read `skills/functional-area-resolver/SKILL.md` for the procedure).
+2. Update your agent's harness prompt to handle the `(dispatcher for: ...)` clause — this is load-bearing. Without it, compression collapses routing accuracy to ~30-60%. Reference prompt in `evals/functional-area-resolver/harness-runner.ts:PROMPT_TEMPLATE`.
+3. Run `gbrain routing-eval` after compression to verify structural routing still passes. Run the harness for an end-to-end LLM check at ~$0.30-1.70 per model.
+
+### Itemized changes
+
+**New skill: `functional-area-resolver`** — renamed from the original `compress-agents-md` PR. The pattern is general (any routing table) so the skill name describes the contribution, not the file. Triggers broadened to cover both RESOLVER.md and AGENTS.md phrasings ("compress my resolver", "AGENTS.md too large", "RESOLVER.md too big", "functional area dispatcher", "shrink routing table"). SKILL.md adds preconditions (refuse to compress if file <12KB or working tree dirty), a multi-file routing precedence subsection (v0.31.7 merge of `skills/RESOLVER.md` + `../AGENTS.md`), and a MANDATORY verification step that gates on >=95% accuracy via the new harness.
+
+**A/B eval surface at `evals/functional-area-resolver/`** — lives OUTSIDE `skills/` deliberately so the skillpack bundler doesn't ship eval infrastructure to every downstream install. Three real production resolver variants extracted from a private deployment's AGENTS.md at git commits `93848ff3b^` (baseline, 25KB) and `93848ff3b` (functional-areas, 13KB), with owner PII scrubbed. `resolver-of-resolvers.md` derived mechanically from functional-areas by stripping `(dispatcher for: ...)` clauses (the ablation case). 20-fixture training corpus + 5-fixture held-out blind corpus, n=3 seeded repeats per call, t-distribution 95% CIs.
+
+**TypeScript harness (`evals/functional-area-resolver/harness-runner.ts`)** — routed through gbrain's gateway (`src/core/ai/gateway.ts:chat()`) with self-configuration. Supports `--model {opus|sonnet|haiku}` for cross-model eval, `--variants-dir` + `--variants` for description-length sweeps, strict + lenient scoring (both columns in every output row), cost-estimate prompt before each run, missing-binary fallback. Receipt header binds (model, prompt_template_hash, fixtures_hash, harness_sha, ts) — re-runs are auditable against the harness state. 45 unit tests in `harness-runner.test.ts`. Companion `rescore.mjs` re-scores existing JSONL with lenient tolerance for zero API cost.
+
+**Three baseline receipts committed** in `evals/functional-area-resolver/baseline-runs/`: one per model (Opus 4.7, Sonnet 4.6, Haiku 4.5). Each contains the full 225-row run (3 variants × 25 fixtures × 3 seeds) with both strict and lenient scoring. ~$3 total API spend across the cross-model sweep.
+
+**Strict + lenient scoring** — every output row carries `correct` (strict, slug match) and `correct_lenient` (predicted shares dispatcher area with expected). Strict scoring under-counts: when the LLM correctly drills into a sub-skill listed in the dispatcher clause (e.g. predicts `gmail` for an email intent when the fixture wrote `executive-assistant`), strict marks it wrong. Lenient reflects production behavior where any sub-skill in the right area resolves correctly.
+
+**Bundle wire-up** — added `functional-area-resolver` to `skills/manifest.json`, `skills/RESOLVER.md` Operational section (adjacent to `skillify`), and `openclaw.plugin.json` skills array. Plugin manifest version bumped from `0.25.1` to `0.32.3.0` so install receipts stop being stale.
+
+**Routing fixtures** — `skills/functional-area-resolver/routing-eval.jsonl` has 8 positive fixtures (5 original + 3 covering broadened triggers) plus 4 adversarial negative fixtures targeting `skillify`, `skill-creator`, `book-mirror`, `concept-synthesis` to prove the broadened triggers don't over-capture adjacent meta-skills. `gbrain routing-eval` reports 70/70 passes (100% structural accuracy).
+
+**Prior-art citations** — SKILL.md now cites AnyTool ([arXiv:2402.04253](https://arxiv.org/abs/2402.04253), the hierarchical-routing-helps argument), RAG-MCP ([arXiv:2505.03275](https://arxiv.org/html/2505.03275v1), the 49.2% token-reduction prior result), and Anthropic Agent Skills progressive disclosure (the structural design pattern). The skill is positioned as the static-prompt analog of the runtime hierarchical schemes in the 2024-2025 literature.
+
+**Nine v0.33.x follow-up TODOs filed** — dogfood gbrain's own RESOLVER.md, CLI promotion to `gbrain routing-eval --ab-compare`, held-out corpus growth to >=20, cross-vendor (Gemini + GPT) verification, per-row description length sweep, structural compression to ~10KB, hierarchical area-of-areas, embedding-based pre-router, adversarial fixtures, run-1 vs run-2 prompt-design ablation methodology doc. See `TODOS.md` for context.
+
+## To take advantage of v0.32.3.0
+
+`gbrain upgrade` does not auto-surface new skills in existing installs — skills are installed via `gbrain skillpack install`. After upgrading the binary:
+
+1. **Surface the new skill in your install:**
+   ```bash
+   gbrain skillpack install --update
+   ```
+   This adds `functional-area-resolver` to your managed skills block. The skill is discoverable on next agent invocation.
+
+2. **(Optional) Verify the skill is reachable:**
+   ```bash
+   gbrain check-resolvable --json | grep functional-area-resolver
+   gbrain routing-eval                      # All routing fixtures, including the new ones, must pass
+   ```
+
+3. **(Maintainer-only) Re-baseline the eval table** — only relevant if you're contributing to gbrain itself:
+   ```bash
+   cd evals/functional-area-resolver
+   node harness.mjs                         # ~$1.70 at Opus 4.7 pricing; needs ANTHROPIC_API_KEY
+   ```
+   Move the resulting JSONL to `baseline-runs/<date>-opus-4-7.jsonl` and update the SKILL.md table with the new CI numbers.
+
+4. **If `gbrain doctor` warns about anything after upgrade**, file an issue at https://github.com/garrytan/gbrain/issues with the doctor output. v0.32.3.0 adds no schema migrations, so the upgrade should be invisible to existing brains.
+
 ## [0.32.0] - 2026-05-10
 
 **5 new embedding providers + the discoverability fix that closes the 17-PR dupe cluster.**
