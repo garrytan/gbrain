@@ -41,6 +41,7 @@ import { GBrainError, PAGE_SORT_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
+import { hasCJK, escapeLikePattern } from './cjk.ts';
 
 type PGLiteDB = PGlite;
 
@@ -530,9 +531,12 @@ export class PGLiteEngine implements BrainEngine {
       : (page.effective_date ?? null);
     const effectiveDateSource = page.effective_date_source ?? null;
     const importFilename = page.import_filename ?? null;
+    // v0.32.7 CJK wave: chunker_version + source_path columns.
+    const chunkerVersion = page.chunker_version ?? null;
+    const sourcePath = page.source_path ?? null;
     const { rows } = await this.db.query(
-      `INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, now(), $10::timestamptz, $11, $12)
+      `INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, now(), $10::timestamptz, $11, $12, COALESCE($13, 1), $14)
        ON CONFLICT (source_id, slug) DO UPDATE SET
          type = EXCLUDED.type,
          page_kind = EXCLUDED.page_kind,
@@ -544,9 +548,11 @@ export class PGLiteEngine implements BrainEngine {
          updated_at = now(),
          effective_date        = COALESCE(EXCLUDED.effective_date,        pages.effective_date),
          effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source),
-         import_filename       = COALESCE(EXCLUDED.import_filename,       pages.import_filename)
+         import_filename       = COALESCE(EXCLUDED.import_filename,       pages.import_filename),
+         chunker_version       = COALESCE(EXCLUDED.chunker_version,       pages.chunker_version),
+         source_path           = COALESCE(EXCLUDED.source_path,           pages.source_path)
        RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename`,
-      [sourceId, slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename]
+      [sourceId, slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath]
     );
     return rowToPage(rows[0] as Record<string, unknown>);
   }
@@ -722,6 +728,21 @@ export class PGLiteEngine implements BrainEngine {
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
 
+    // v0.26.5: visibility filter (soft-deleted + archived-source).
+    const visibilityClause = buildVisibilityClause('p', 's');
+
+    // v0.32.7: CJK query branch. PGLite uses websearch_to_tsquery('english')
+    // which can't tokenize CJK; queries return empty. Switch to ILIKE on
+    // chunk_text with bigram-frequency-count ranking when the query contains
+    // CJK characters. ASCII path stays exactly the same below.
+    if (hasCJK(query)) {
+      return this._searchKeywordCJK(query, {
+        limit, offset, innerLimit, sourceFactorCase,
+        hardExcludeClause, visibilityClause, detailFilter, opts,
+        dedup: true,
+      });
+    }
+
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
     const params: unknown[] = [query, innerLimit, limit, offset];
     let extraFilter = '';
@@ -745,9 +766,6 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.beforeDate);
       extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
-
-    // v0.26.5: visibility filter (soft-deleted + archived-source).
-    const visibilityClause = buildVisibilityClause('p', 's');
 
     const { rows } = await this.db.query(
       `WITH ranked AS (
@@ -784,6 +802,130 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   /**
+   * v0.32.7 CJK keyword fallback. PGLite's `websearch_to_tsquery('english')`
+   * can't tokenize CJK so the FTS path returns empty for Chinese / Japanese /
+   * Korean queries. This routes to an ILIKE substring scan with
+   * bigram-frequency-count ranking as a ts_rank substitute.
+   *
+   * Codex outside-voice C8 corrections in place:
+   *   - Two distinct parameter bindings: $qLike (LIKE-escaped, for ILIKE) and
+   *     $qRaw (un-escaped, for ranking arithmetic via position/replace).
+   *     Escaped chars cannot be reused as ranking substrings.
+   *   - Explicit `ESCAPE '\'` on the ILIKE clause.
+   *   - Symmetric: no asymmetric whitespace strip (caller's query and
+   *     chunk_text are compared as-stored).
+   *   - Empty-query guard returns no results without binding SQL.
+   *
+   * Postgres engine is intentionally untouched (multi-tenant deployments
+   * can install pgroonga / zhparser when needed; out of scope here).
+   */
+  private async _searchKeywordCJK(
+    query: string,
+    ctx: {
+      limit: number;
+      offset: number;
+      innerLimit: number;
+      sourceFactorCase: string;
+      hardExcludeClause: string;
+      visibilityClause: string;
+      detailFilter: string;
+      opts: SearchOpts | undefined;
+      dedup: boolean;
+    },
+  ): Promise<SearchResult[]> {
+    const { limit, offset, innerLimit, sourceFactorCase, hardExcludeClause, visibilityClause, detailFilter, opts, dedup } = ctx;
+    const qRaw = query;
+    if (qRaw.length === 0) return [];
+    const qLike = escapeLikePattern(qRaw);
+
+    // $1 = qLike (escaped for ILIKE)
+    // $2 = qRaw  (raw for position()/replace() ranking arithmetic)
+    // $3 = inner limit (dedup path) OR final limit (chunk-grain path)
+    // $4 = final limit (dedup path only) — see callers
+    // $5 = offset (dedup path)  /  $4 = offset (chunk-grain path)
+    const params: unknown[] = dedup
+      ? [qLike, qRaw, innerLimit, limit, offset]
+      : [qLike, qRaw, limit, offset];
+
+    let extraFilter = '';
+    if (opts?.language) {
+      params.push(opts.language);
+      extraFilter += ` AND cc.language = $${params.length}`;
+    }
+    if (opts?.symbolKind) {
+      params.push(opts.symbolKind);
+      extraFilter += ` AND cc.symbol_type = $${params.length}`;
+    }
+    if (opts?.afterDate) {
+      params.push(opts.afterDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    }
+    if (opts?.beforeDate) {
+      params.push(opts.beforeDate);
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
+
+    // Bigram-frequency count: count occurrences of $qRaw in chunk_text via
+    // (length(chunk) - length(replace(chunk, q, ''))) / length(q). Acts as
+    // a ts_rank substitute. position()-tiebreaker so earlier-in-chunk hits
+    // outrank later ones at the same occurrence count.
+    const scoreExpr = `
+      ((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $2, ''))) / NULLIF(LENGTH($2), 0)::real
+        + 1.0 / NULLIF(POSITION($2 IN cc.chunk_text), 0)::real)
+      * ${sourceFactorCase}
+    `;
+
+    if (dedup) {
+      const { rows } = await this.db.query(
+        `WITH ranked AS (
+           SELECT
+             p.slug, p.id as page_id, p.title, p.type, p.source_id,
+             cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+             ${scoreExpr} AS score,
+             CASE WHEN p.updated_at < (
+               SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+             ) THEN true ELSE false END AS stale
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+           JOIN sources s ON s.id = p.source_id
+           WHERE cc.chunk_text ILIKE '%' || $1 || '%' ESCAPE '\\' ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+             AND cc.modality = 'text'
+           ORDER BY score DESC
+           LIMIT $3
+         ),
+         best_per_page AS (
+           SELECT DISTINCT ON (slug) *
+           FROM ranked
+           ORDER BY slug, score DESC
+         )
+         SELECT * FROM best_per_page
+         ORDER BY score DESC
+         LIMIT $4 OFFSET $5`,
+        params,
+      );
+      return (rows as Record<string, unknown>[]).map(rowToSearchResult);
+    } else {
+      const { rows } = await this.db.query(
+        `SELECT
+           p.slug, p.id as page_id, p.title, p.type, p.source_id,
+           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+           ${scoreExpr} AS score,
+           CASE WHEN p.updated_at < (
+             SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+           ) THEN true ELSE false END AS stale
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         JOIN sources s ON s.id = p.source_id
+         WHERE cc.chunk_text ILIKE '%' || $1 || '%' ESCAPE '\\' ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+         ORDER BY score DESC
+         LIMIT $3 OFFSET $4`,
+        params,
+      );
+      return (rows as Record<string, unknown>[]).map(rowToSearchResult);
+    }
+  }
+
+  /**
    * v0.20.0 Cathedral II Layer 3 (1b) chunk-grain keyword search.
    *
    * Ranks at chunk grain via content_chunks.search_vector WITHOUT the
@@ -810,6 +952,18 @@ export class PGLiteEngine implements BrainEngine {
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    const visibilityClause = buildVisibilityClause('p', 's');
+
+    // v0.32.7: CJK branch (same as searchKeyword but without page-dedup).
+    if (hasCJK(query)) {
+      return this._searchKeywordCJK(query, {
+        limit, offset,
+        innerLimit: 0,             // unused on chunk-grain (no inner CTE)
+        sourceFactorCase,
+        hardExcludeClause, visibilityClause, detailFilter, opts,
+        dedup: false,
+      });
+    }
 
     const params: unknown[] = [query, limit, offset];
     let extraFilter = '';
@@ -831,8 +985,7 @@ export class PGLiteEngine implements BrainEngine {
       extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
 
-    // v0.26.5: visibility filter for the chunk-grain anchor primitive.
-    const visibilityClause = buildVisibilityClause('p', 's');
+    // visibilityClause already declared above (v0.32.7: hoisted so CJK branch can reuse).
 
     const { rows } = await this.db.query(
       `SELECT
