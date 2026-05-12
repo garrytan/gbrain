@@ -296,6 +296,21 @@ Common false negatives on the harness eval (NOT bugs in your compression):
 Show the user the proposed edit (or the actual git diff) and wait for
 explicit approval before staging. Same convention as `skills/book-mirror/SKILL.md`.
 
+## Contract
+
+This skill guarantees:
+
+- Routing matches the canonical triggers in the frontmatter.
+- Compression is only performed when the preconditions in Step 1 pass (file ≥12KB AND clean working tree, or `--force`).
+- The mandatory verification gate in Step 6 fires on the user's edited file, not on sample variants. The user runs `gbrain routing-eval --json` AND the gbrain-repo harness (`node harness.mjs --variants-dir <tmp> --variants my-edit`) before committing the compressed file.
+- Privacy contract preserved: no fork-specific filesystem path literals (`/data/brain/`, `/data/.openclaw/`) leak into the compressed output.
+
+The full behavior contract is documented in the body sections above; this section exists for the conformance test.
+
+## Output Format
+
+The compressed routing file follows the area-entry template documented in Step 4 ("Build the area entry format"). Each entry: `- **{Area Name}**: {trigger phrases} -> \`{dispatcher-skill}\` (dispatcher for: {sub-skill list})`. The dispatcher arrow may be either ASCII `->` (default in this template) or Unicode `→` (used in some production deployments); the gbrain harness accepts both.
+
 ## Anti-Patterns
 
 - **Resolver-of-resolvers with pipe tables.** Tested and failed (see eval

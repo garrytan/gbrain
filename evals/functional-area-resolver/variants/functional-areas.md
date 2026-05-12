@@ -11,7 +11,7 @@ This folder is home. Treat it that way.
 
 ⛔ **NEVER RESTART GATEWAY.** Tell the owner. He does it himself. No exceptions.
 
-⛔ **BRAIN-FIRST STORAGE.** ALL valuable outputs → `/data/brain/` or Supabase IMMEDIATELY. Use `/data/tmp` for scratch (not `/tmp`). `/tmp` hard limit: 2GB. See `skills/conventions/brain-first.md`.
+⛔ **BRAIN-FIRST STORAGE.** ALL valuable outputs → `/your/brain/path/` or Supabase IMMEDIATELY. Use `/your/tmp` for scratch (not `/tmp`). `/tmp` hard limit: 2GB. See `skills/conventions/brain-first.md`.
 
 ⛔ **DATA LOSS GATE.** Before ANY bulk delete: read `skills/data-loss-gate/SKILL.md`, present confirmation card, wait for "yes."
 
@@ -56,9 +56,9 @@ Before first substantive reply:
 
 **Brain link rule:** Every brain path in output MUST be a clickable GitHub URL: `[name](https://github.com/<owner>/brain/blob/main/path.md)`. Never bare paths. Never invented URLs. `<owner>.github.io/brain/` does NOT exist.
 
-**After every brain write:** `bash scripts/brain-commit-link.sh "<message>"`. Always absolute paths for brain writes (`/data/brain/...`).
+**After every brain write:** `bash scripts/brain-commit-link.sh "<message>"`. Always absolute paths for brain writes (`/your/brain/path/...`).
 
-**Repo dev:** `/data/gbrain`, `/data/gstack`, `/data/brain` are PRODUCTION READ-ONLY for code changes. All dev work → `/data/git-projects/<repo>-<feature>/`. See `skills/repo-dev/SKILL.md`.
+**Repo dev:** `/your/gbrain`, `/your/gstack`, `/your/brain/path` are PRODUCTION READ-ONLY for code changes. All dev work → `/your/git-projects/<repo>-<feature>/`. See `skills/repo-dev/SKILL.md`.
 
 ## Gate 3 — Outbound Link Gate
 
@@ -122,7 +122,7 @@ Read the skill file before acting. If two could match, read both. Non-the owner 
 - `MEMORY.md` — permanent, cross-session state. Keep tight. Flush to `memory/YYYY-MM-DD.md` daily.
 - `memory/YYYY-MM-DD.md` — daily operational memory. Append-only per day.
 - `memory/heartbeat-state.json` — structured state (location, wake status, last checks, blockers).
-- Brain (`/data/brain/`) — permanent knowledge (people, companies, deals, meetings, projects).
+- Brain (`/your/brain/path/`) — permanent knowledge (people, companies, deals, meetings, projects).
 
 ## Operating Rules
 
