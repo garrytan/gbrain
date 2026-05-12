@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { operations } from '../src/core/operations.ts';
-import { formatMcpToolResult, prepareMcpToolParams } from '../src/mcp/server.ts';
-import { operationToMcpTool } from '../src/mcp/tool-schema.ts';
+import type { Operation } from '../src/core/operations.ts';
+import {
+  createMcpToolCatalogProvider,
+  formatMcpToolResult,
+  mcpResultTextBudgetForFinalFrame,
+  prepareMcpToolParams,
+} from '../src/mcp/server.ts';
 
 function byteLength(text: string): number {
   return Buffer.byteLength(text, 'utf-8');
@@ -19,7 +24,8 @@ afterEach(() => {
 
 describe('MCP response guard', () => {
   test('compact MCP tool catalog stays below the stdio pipe pressure budget', () => {
-    const tools = operations.map(operation => operationToMcpTool(operation, { compact: true }));
+    const catalog = createMcpToolCatalogProvider();
+    const tools = catalog.getTools({ compact: true });
     const bytes = byteLength(JSON.stringify({ tools }));
 
     expect(tools.length).toBe(operations.length);
@@ -27,6 +33,56 @@ describe('MCP response guard', () => {
 
     const dryRunMutation = tools.find(tool => tool.name === 'dry_run_memory_mutation');
     expect((dryRunMutation?.inputSchema.properties as any).operation.enum).toContain('put_page');
+  });
+
+  test('cached MCP tool catalog returns stable compact and full arrays', () => {
+    const sampleOperations: Operation[] = [{
+      name: 'sample',
+      description: 'A sample operation with a deliberately long description for compact schema coverage.',
+      params: {
+        slug: {
+          type: 'string',
+          required: true,
+          description: 'Page slug',
+        },
+      },
+      handler: async () => ({ ok: true }),
+    }];
+    const catalog = createMcpToolCatalogProvider(sampleOperations);
+
+    const compactTools = catalog.getTools({ compact: true });
+    const compactToolsAgain = catalog.getTools({ compact: true });
+    const fullTools = catalog.getTools({ compact: false });
+    const fullToolsAgain = catalog.getTools({ compact: false });
+
+    expect(compactTools).toBe(compactToolsAgain);
+    expect(fullTools).toBe(fullToolsAgain);
+    expect(compactTools).not.toBe(fullTools);
+    expect(compactTools[0].description.length).toBeLessThan(fullTools[0].description.length);
+    expect((compactTools[0].inputSchema.properties as any).slug.description).toBeUndefined();
+    expect((fullTools[0].inputSchema.properties as any).slug.description).toBe('Page slug');
+  });
+
+  test('mcpResultTextBudgetForFinalFrame reserves outer JSON-RPC frame space', () => {
+    const maxFrameBytes = 24_000;
+    const maxResultTextBytes = mcpResultTextBudgetForFinalFrame({ maxFrameBytes });
+
+    expect(maxResultTextBytes).toBeLessThan(maxFrameBytes);
+    expect(maxResultTextBytes).toBeGreaterThanOrEqual(512);
+
+    const text = formatMcpToolResult('get_page', {
+      slug: 'brain/quoted-page',
+      title: 'Quoted Page',
+      compiled_truth: `"quoted"\n`.repeat(maxFrameBytes),
+      timeline: `"timeline"\n`.repeat(maxFrameBytes),
+    }, { maxResultTextBytes });
+    const frame = `${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      result: { content: [{ type: 'text', text }] },
+    })}\n`;
+
+    expect(byteLength(frame)).toBeLessThanOrEqual(maxFrameBytes);
   });
 
   test('adds a bounded get_page window for MCP calls unless full content is requested', () => {

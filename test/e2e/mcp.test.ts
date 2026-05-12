@@ -15,6 +15,7 @@ import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { operations } from '../../src/core/operations.ts';
 import { operationToMcpTool } from '../../src/mcp/tool-schema.ts';
+import { DEFAULT_MCP_MAX_STDIO_FRAME_BYTES } from '../../src/mcp/stdio-frame-budget.ts';
 import { assertOk, createSqliteCliHarness, parseJsonSuffix } from './sqlite-cli-helpers.ts';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -24,6 +25,162 @@ function parseMcpText<T = any>(result: any): T {
   const text = result.content?.find((entry: any) => entry.type === 'text')?.text;
   expect(typeof text).toBe('string');
   return parseJsonSuffix<T>(text);
+}
+
+const rpcEncoder = new TextEncoder();
+const rpcDecoder = new TextDecoder();
+
+function byteLength(text: string): number {
+  return Buffer.byteLength(text, 'utf-8');
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+type JsonRpcStdin = {
+  write: (chunk: Uint8Array) => unknown;
+  flush?: () => unknown;
+  end?: () => unknown;
+  close?: () => unknown;
+};
+
+type BudgetedJsonRpcFrame = {
+  line: string;
+  frameBytes: number;
+  response: any;
+};
+
+function expectReadableStream(value: unknown, label: string): ReadableStream<Uint8Array> {
+  if (!value || typeof (value as any).getReader !== 'function') {
+    throw new Error(`Expected readable ${label}`);
+  }
+  return value as ReadableStream<Uint8Array>;
+}
+
+function expectJsonRpcStdin(value: unknown): JsonRpcStdin {
+  if (!value || typeof (value as any).write !== 'function') {
+    throw new Error('Expected writable MCP stdin');
+  }
+  return value as JsonRpcStdin;
+}
+
+function createJsonLineReader(stream: ReadableStream<Uint8Array>, label: string) {
+  const reader = stream.getReader();
+  let buffer = '';
+
+  async function readLine(timeoutMs = 5_000): Promise<string> {
+    const startedAt = Date.now();
+    while (true) {
+      const newlineIndex = buffer.indexOf('\n');
+      if (newlineIndex >= 0) {
+        const line = buffer.slice(0, newlineIndex);
+        buffer = buffer.slice(newlineIndex + 1);
+        return line.endsWith('\r') ? line.slice(0, -1) : line;
+      }
+
+      const remainingMs = timeoutMs - (Date.now() - startedAt);
+      if (remainingMs <= 0) {
+        throw new Error(`Timed out waiting for ${label} line; buffered=${buffer}`);
+      }
+
+      const chunk = await Promise.race([
+        reader.read(),
+        sleep(remainingMs).then(() => {
+          throw new Error(`Timed out waiting for ${label} line; buffered=${buffer}`);
+        }),
+      ]);
+      if (chunk.done) {
+        throw new Error(`Unexpected EOF while reading ${label}; buffered=${buffer}`);
+      }
+      buffer += rpcDecoder.decode(chunk.value, { stream: true });
+    }
+  }
+
+  return {
+    readLine,
+    cancel: () => reader.cancel(),
+  };
+}
+
+async function writeJsonRpc(
+  stdin: JsonRpcStdin,
+  message: Record<string, unknown>,
+): Promise<void> {
+  stdin.write(rpcEncoder.encode(`${JSON.stringify(message)}\n`));
+  await stdin.flush?.();
+}
+
+async function readBudgetedJsonRpcFrame(
+  stdout: ReturnType<typeof createJsonLineReader>,
+  expectedId: number,
+  maxFrameBytes = DEFAULT_MCP_MAX_STDIO_FRAME_BYTES,
+): Promise<BudgetedJsonRpcFrame> {
+  const line = await stdout.readLine();
+  const response = JSON.parse(line);
+  const frameBytes = byteLength(`${line}\n`);
+  expect(response.id).toBe(expectedId);
+  expect(frameBytes).toBeLessThanOrEqual(maxFrameBytes);
+  return { line, frameBytes, response };
+}
+
+async function readBudgetedJsonRpcResponse(
+  stdout: ReturnType<typeof createJsonLineReader>,
+  expectedId: number,
+  maxFrameBytes = DEFAULT_MCP_MAX_STDIO_FRAME_BYTES,
+): Promise<any> {
+  return (await readBudgetedJsonRpcFrame(stdout, expectedId, maxFrameBytes)).response;
+}
+
+async function closeJsonRpcStdin(stdin: JsonRpcStdin | null): Promise<void> {
+  if (!stdin) return;
+  await Promise.resolve(stdin.flush?.()).catch(() => undefined);
+  await Promise.resolve(stdin.end?.()).catch(() => undefined);
+  await Promise.resolve(stdin.close?.()).catch(() => undefined);
+}
+
+async function waitForProcessExit(
+  proc: ReturnType<typeof Bun.spawn>,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (proc.exitCode !== null) return true;
+  return Promise.race([
+    proc.exited.then(() => true).catch(() => true),
+    sleep(timeoutMs).then(() => false),
+  ]);
+}
+
+async function settleStderrText(
+  stderrText: Promise<string> | null,
+  timeoutMs: number,
+): Promise<void> {
+  if (!stderrText) return;
+  await Promise.race([
+    stderrText.catch(() => ''),
+    sleep(timeoutMs).then(() => ''),
+  ]);
+}
+
+async function cleanupRawMcpProcess(input: {
+  proc: ReturnType<typeof Bun.spawn> | null;
+  stdin: JsonRpcStdin | null;
+  stdout: ReturnType<typeof createJsonLineReader> | null;
+  stderrText: Promise<string> | null;
+}): Promise<void> {
+  await closeJsonRpcStdin(input.stdin);
+  await input.stdout?.cancel().catch(() => undefined);
+
+  if (input.proc && input.proc.exitCode === null) {
+    input.proc.kill('SIGTERM');
+    if (!await waitForProcessExit(input.proc, 2_000) && input.proc.exitCode === null) {
+      input.proc.kill('SIGKILL');
+      if (!await waitForProcessExit(input.proc, 2_000)) {
+        input.proc.unref();
+      }
+    }
+  }
+
+  await settleStderrText(input.stderrText, 500);
 }
 
 describe('E2E: MCP Tool Generation', () => {
@@ -162,6 +319,149 @@ describe('E2E: MCP Tool Generation', () => {
       } finally {
         rmSync(rootDir, { recursive: true, force: true });
       }
+    }
+  }, 30_000);
+
+  test('raw stdio MCP server keeps all response frames within configured budgets', async () => {
+    const h = createSqliteCliHarness('mcp-raw-budget');
+    let proc: ReturnType<typeof Bun.spawn> | null = null;
+    let stdout: ReturnType<typeof createJsonLineReader> | null = null;
+    let stderrText: Promise<string> | null = null;
+    let stdin: JsonRpcStdin | null = null;
+
+    try {
+      const init = h.run(['init', '--local', '--json']);
+      assertOk(init, ['init', '--local', '--json']);
+
+      proc = Bun.spawn({
+        cmd: ['bun', 'run', 'src/cli.ts', 'serve'],
+        cwd: repoRoot,
+        env: {
+          ...h.env,
+          MBRAIN_MCP_MAX_STDIO_FRAME_BYTES: '24000',
+          MBRAIN_MCP_TOOL_LIST_FRAME_BYTES: '64000',
+        },
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      stderrText = new Response(expectReadableStream(proc.stderr, 'MCP stderr')).text();
+      stdout = createJsonLineReader(expectReadableStream(proc.stdout, 'MCP stdout'), 'MCP stdout');
+      stdin = expectJsonRpcStdin(proc.stdin);
+
+      await writeJsonRpc(stdin, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'mbrain-raw-e2e', version: '0.0.0' },
+        },
+      });
+      const initialized = await readBudgetedJsonRpcResponse(stdout, 1);
+      expect(initialized.result.serverInfo.name).toBe('mbrain');
+
+      await writeJsonRpc(stdin, {
+        jsonrpc: '2.0',
+        method: 'notifications/initialized',
+        params: {},
+      });
+
+      await writeJsonRpc(stdin, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/list',
+        params: {},
+      });
+      const listed = await readBudgetedJsonRpcResponse(stdout, 2, 64_000);
+      expect(listed.result.tools.map((tool: any) => tool.name)).toContain('get_health');
+
+      await writeJsonRpc(stdin, {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'get_health', arguments: {} },
+      });
+      const health = await readBudgetedJsonRpcResponse(stdout, 3);
+      expect(health.result.content[0].type).toBe('text');
+      expect(() => JSON.parse(health.result.content[0].text)).not.toThrow();
+
+      await writeJsonRpc(stdin, {
+        jsonrpc: '2.0',
+        id: 4,
+        method: 'tools/call',
+        params: { name: 'get_page', arguments: { slug: 'brain/missing-page' } },
+      });
+      const missingPage = await readBudgetedJsonRpcResponse(stdout, 4);
+      expect(missingPage.result.isError).toBe(true);
+      expect(JSON.parse(missingPage.result.content[0].text).error).toBe('page_not_found');
+
+      const oversizedSlug = 'concepts/mcp-oversized-stdio-page';
+      const oversizedContent = [
+        '---',
+        'type: concept',
+        'title: MCP Oversized Stdio Page',
+        'tags: [mcp, e2e]',
+        '---',
+        '',
+        `This oversized MCP page exercises stdio response guarding. ${'A'.repeat(80_000)} [Source: MCP E2E, direct tool call, 2026-05-12 00:00 KST]`,
+        '',
+        '---',
+        '',
+        `- 2026-05-12 | Oversized stdio timeline evidence. ${'B'.repeat(40_000)} [Source: MCP E2E, direct tool call, 2026-05-12 00:00 KST]`,
+        '',
+      ].join('\n');
+
+      await writeJsonRpc(stdin, {
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'tools/call',
+        params: {
+          name: 'put_page',
+          arguments: {
+            slug: oversizedSlug,
+            content: oversizedContent,
+            expected_content_hash: null,
+          },
+        },
+      });
+      const putOversized = await readBudgetedJsonRpcResponse(stdout, 5);
+      expect(JSON.parse(putOversized.result.content[0].text).slug).toBe(oversizedSlug);
+
+      await writeJsonRpc(stdin, {
+        jsonrpc: '2.0',
+        id: 6,
+        method: 'tools/call',
+        params: {
+          name: 'get_page',
+          arguments: { slug: oversizedSlug, full_content: true },
+        },
+      });
+      const oversizedRead = await readBudgetedJsonRpcFrame(stdout, 6, DEFAULT_MCP_MAX_STDIO_FRAME_BYTES);
+      expect(oversizedRead.frameBytes).toBeLessThanOrEqual(24_000);
+      if ('error' in oversizedRead.response) {
+        expect(oversizedRead.response.error.message).toContain('MBrain MCP stdio frame exceeded byte budget');
+      } else {
+        const contentText = oversizedRead.response.result.content[0].text;
+        expect(byteLength(contentText)).toBeLessThanOrEqual(DEFAULT_MCP_MAX_STDIO_FRAME_BYTES);
+        const content = JSON.parse(contentText);
+        expect(content.slug).toBe(oversizedSlug);
+        expect(content.compiled_truth.length).toBeLessThan(80_000);
+        expect(content._mbrain_mcp_response.truncated).toBe(true);
+      }
+
+      await writeJsonRpc(stdin, {
+        jsonrpc: '2.0',
+        id: 7,
+        method: 'mbrain/unknown',
+        params: {},
+      });
+      const unknown = await readBudgetedJsonRpcResponse(stdout, 7);
+      expect(unknown.error.code).toBe(-32601);
+    } finally {
+      await cleanupRawMcpProcess({ proc, stdin, stdout, stderrText });
+      h.teardown();
     }
   }, 30_000);
 

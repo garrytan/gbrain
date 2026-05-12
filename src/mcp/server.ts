@@ -1,22 +1,70 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError, MCP_INSTRUCTIONS } from '../core/operations.ts';
-import type { OperationContext } from '../core/operations.ts';
+import { operations as defaultOperations, OperationError, MCP_INSTRUCTIONS } from '../core/operations.ts';
+import type { Operation, OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../core/engine-factory.ts';
 import { VERSION } from '../version.ts';
 import { operationToMcpTool } from './tool-schema.ts';
+import {
+  BudgetedStdioServerTransport,
+  DEFAULT_MCP_MAX_STDIO_FRAME_BYTES,
+} from './stdio-frame-budget.ts';
 
 export const DEFAULT_MCP_MAX_RESULT_TEXT_BYTES = 24_000;
 export const DEFAULT_MCP_GET_PAGE_CHAR_LIMIT = 6_000;
 const MIN_MCP_MAX_RESULT_TEXT_BYTES = 512;
+const MCP_RESULT_TEXT_FRAME_OVERHEAD_BYTES = 1_024;
 const TRUNCATION_MARKER = '\n\n[truncated by mbrain MCP response guard]';
 
 export type FormatMcpToolResultOptions = {
   maxResultTextBytes?: number;
 };
+
+export type McpToolCatalogOptions = {
+  compact?: boolean;
+};
+
+export type McpToolCatalogProvider = {
+  getTools(options?: McpToolCatalogOptions): ReturnType<typeof operationToMcpTool>[];
+};
+
+export type McpResultTextBudgetForFinalFrameOptions = {
+  maxFrameBytes?: number;
+};
+
+export function createMcpToolCatalogProvider(
+  operations: Operation[] = defaultOperations,
+): McpToolCatalogProvider {
+  let compactTools: ReturnType<typeof operationToMcpTool>[] | undefined;
+  let fullTools: ReturnType<typeof operationToMcpTool>[] | undefined;
+
+  return {
+    getTools({ compact = false }: McpToolCatalogOptions = {}) {
+      if (compact) {
+        compactTools ??= operations.map(operation => operationToMcpTool(operation, { compact: true }));
+        return compactTools;
+      }
+
+      fullTools ??= operations.map(operation => operationToMcpTool(operation, { compact: false }));
+      return fullTools;
+    },
+  };
+}
+
+export function mcpResultTextBudgetForFinalFrame(
+  options: McpResultTextBudgetForFinalFrameOptions = {},
+): number {
+  const maxFrameBytes = normalizeMcpMaxStdioFrameBytes(
+    options.maxFrameBytes ?? parseConfiguredMcpMaxStdioFrameBytes(),
+  );
+  const availableForText = Math.max(
+    MIN_MCP_MAX_RESULT_TEXT_BYTES,
+    maxFrameBytes - MCP_RESULT_TEXT_FRAME_OVERHEAD_BYTES,
+  );
+  return Math.max(MIN_MCP_MAX_RESULT_TEXT_BYTES, Math.floor(availableForText / 2));
+}
 
 export function prepareMcpToolParams(
   toolName: string,
@@ -59,6 +107,20 @@ function shouldCompactMcpToolSchemas(): boolean {
   const raw = process.env.MBRAIN_MCP_COMPACT_TOOL_SCHEMAS;
   if (raw === undefined) return true;
   return !['0', 'false', 'no', 'off'].includes(raw.trim().toLowerCase());
+}
+
+function parseConfiguredMcpMaxStdioFrameBytes(): number {
+  const raw = process.env.MBRAIN_MCP_MAX_STDIO_FRAME_BYTES;
+  if (!raw) return DEFAULT_MCP_MAX_STDIO_FRAME_BYTES;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_MCP_MAX_STDIO_FRAME_BYTES;
+}
+
+function normalizeMcpMaxStdioFrameBytes(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_MCP_MAX_STDIO_FRAME_BYTES;
+  return Math.max(MIN_MCP_MAX_RESULT_TEXT_BYTES, Math.floor(value));
 }
 
 export function formatMcpToolResult(
@@ -357,18 +419,17 @@ export async function startMcpServer(engine: BrainEngine | Promise<BrainEngine>)
       instructions: MCP_INSTRUCTIONS,
     },
   );
+  const toolCatalog = createMcpToolCatalogProvider();
 
   // Generate tool definitions from operations
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: operations.map(operation => operationToMcpTool(operation, {
-      compact: shouldCompactMcpToolSchemas(),
-    })),
+    tools: toolCatalog.getTools({ compact: shouldCompactMcpToolSchemas() }),
   }));
 
   // Dispatch tool calls to operation handlers
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     const { name, arguments: params } = request.params;
-    const op = operations.find(o => o.name === name);
+    const op = defaultOperations.find(o => o.name === name);
     if (!op) {
       return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
     }
@@ -394,17 +455,32 @@ export async function startMcpServer(engine: BrainEngine | Promise<BrainEngine>)
         },
       };
       const result = await op.handler(ctx, prepareMcpToolParams(name, params));
-      return { content: [{ type: 'text', text: formatMcpToolResult(name, result) }] };
+      return {
+        content: [{
+          type: 'text',
+          text: formatMcpToolResult(name, result, {
+            maxResultTextBytes: mcpResultTextBudgetForFinalFrame(),
+          }),
+        }],
+      };
     } catch (e: unknown) {
       if (e instanceof OperationError) {
-        return { content: [{ type: 'text', text: formatMcpToolResult(name, e.toJSON()) }], isError: true };
+        return {
+          content: [{
+            type: 'text',
+            text: formatMcpToolResult(name, e.toJSON(), {
+              maxResultTextBytes: mcpResultTextBudgetForFinalFrame(),
+            }),
+          }],
+          isError: true,
+        };
       }
       const msg = e instanceof Error ? e.message : String(e);
       return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
     }
   });
 
-  const transport = new StdioServerTransport();
+  const transport = new BudgetedStdioServerTransport();
   await server.connect(transport);
 }
 
@@ -414,7 +490,7 @@ export async function handleToolCall(
   tool: string,
   params: Record<string, unknown>,
 ): Promise<unknown> {
-  const op = operations.find(o => o.name === tool);
+  const op = defaultOperations.find(o => o.name === tool);
   if (!op) throw new Error(`Unknown tool: ${tool}`);
 
   const ctx: OperationContext = {

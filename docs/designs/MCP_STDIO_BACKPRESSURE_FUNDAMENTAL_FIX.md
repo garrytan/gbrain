@@ -399,6 +399,16 @@ complete until the whole invariant set passes.
 8. Use source-ref indexing and search snippet optimization only if benchmarks
    show they are part of the observed stall path.
 
+Implementation status:
+
+- Step 1 is implemented in this PR slice: exact final-frame measurement,
+  budgeted stdio transport, cached compact/full tool catalogs, inner tool-result
+  budgeting, raw stdout regression tests, and full-schema compatibility coverage.
+- Steps 2-8 remain future work. The repository still does not prove inbound
+  oversized request rejection, execution concurrency bounds, snapshot-bound
+  continuations, durable derived jobs, derived freshness semantics, or
+  dual-channel Telegram heartbeat behavior.
+
 ## Resolved Decisions And Remaining Open Questions
 
 1. Should `structuredContent` be opt-in in the same PR, or documented as a later
