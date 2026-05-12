@@ -157,17 +157,24 @@ describe('dims.dimsProviderOptions', () => {
     expect(opts).toBeUndefined();
   });
 
-  test('Voyage openai-compatible returns dimensions for the SDK shim', () => {
+  test('Voyage flexible-dim models return dimensions for the SDK shim', () => {
     const opts = dimsProviderOptions('openai-compatible', 'voyage-3-large', 1024);
     expect(opts).toEqual({ openaiCompatible: { dimensions: 1024 } });
     const v4Opts = dimsProviderOptions('openai-compatible', 'voyage-4-large', 2048);
     expect(v4Opts).toEqual({ openaiCompatible: { dimensions: 2048 } });
-    const v4NanoOpts = dimsProviderOptions('openai-compatible', 'voyage-4-nano', 512);
-    expect(v4NanoOpts).toEqual({ openaiCompatible: { dimensions: 512 } });
   });
 
   test('Voyage model without flexible dimensions returns undefined', () => {
     const opts = dimsProviderOptions('openai-compatible', 'voyage-3-lite', 1024);
+    expect(opts).toBeUndefined();
+  });
+
+  // Negative regression pin: voyage-4-nano is an open-weight variant that
+  // Voyage's hosted API rejects `output_dimension` on (fixed 1024-dim).
+  // Don't re-add it to VOYAGE_OUTPUT_DIMENSION_MODELS without cross-checking
+  // Voyage's docs. See src/core/ai/dims.ts for the rationale.
+  test('voyage-4-nano returns undefined (open-weight, fixed-dim)', () => {
+    const opts = dimsProviderOptions('openai-compatible', 'voyage-4-nano', 512);
     expect(opts).toBeUndefined();
   });
 });

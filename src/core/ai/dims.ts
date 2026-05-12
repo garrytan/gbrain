@@ -11,11 +11,18 @@
 
 import type { Implementation } from './types.ts';
 
+// Voyage hosted models that accept `output_dimension` (values:
+// 256 / 512 / 1024 / 2048). Per Voyage's API parameter docs as of 2026-05.
+// voyage-4-nano is intentionally NOT in this set: it's the open-weight
+// variant listed separately by Voyage as fixed 1024-dim. Adding it here
+// would tell the SDK to send `dimensions: N`, which voyageCompatFetch then
+// rewrites to `output_dimension: N` — and Voyage's hosted nano endpoint
+// rejects the parameter. The negative regression assertion in
+// test/ai/gateway.test.ts pins this contract.
 const VOYAGE_OUTPUT_DIMENSION_MODELS = new Set([
   'voyage-4-large',
   'voyage-4',
   'voyage-4-lite',
-  'voyage-4-nano',
   'voyage-3-large',
   'voyage-3.5',
   'voyage-3.5-lite',
