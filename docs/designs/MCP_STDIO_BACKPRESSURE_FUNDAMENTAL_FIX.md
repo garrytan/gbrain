@@ -420,9 +420,15 @@ Implementation status:
   `compiled_truth`, `timeline_range`, default `page`, and `line_span` reads
   through projection/window APIs. MCP fallback continuations also preserve
   snapshot hashes and window offsets.
-- Steps 5-8 remain future work. The repository still does not prove durable
-  derived jobs, derived freshness semantics, or dual-channel Telegram heartbeat
-  behavior.
+- Step 5 is implemented in this PR slice: `derived_jobs` and
+  `derived_index_state` are present in fresh schemas and migrations, engine APIs
+  enqueue/coalesce/supersede derived work, ready completion is serialized with
+  enqueue, stale completions are target-guarded, and page imports invalidate
+  chunks/manifest/sections into durable pending work with derived freshness
+  tracked by content hash plus extractor/schema metadata.
+- Steps 6-8 remain future work. The repository still does not prove the
+  foreground-aware worker drain loop, restart/burst worker behavior, or
+  dual-channel Telegram heartbeat behavior.
 
 ## Resolved Decisions And Remaining Open Questions
 

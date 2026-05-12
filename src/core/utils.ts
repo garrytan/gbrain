@@ -5,6 +5,8 @@ import type {
   NoteManifestEntry,
   NoteManifestHeading,
   NoteSectionEntry,
+  DerivedIndexState,
+  DerivedJob,
   ContextMapEntry,
   ContextAtlasEntry,
   MemoryCandidateEntry,
@@ -183,6 +185,40 @@ export function rowToNoteSectionEntry(row: Record<string, unknown>): NoteSection
     content_hash: row.content_hash as string,
     extractor_version: row.extractor_version as string,
     last_indexed_at: new Date(row.last_indexed_at as string),
+  };
+}
+
+export function rowToDerivedJob(row: Record<string, unknown>): DerivedJob {
+  return {
+    id: row.id as string,
+    scope_id: row.scope_id as string,
+    slug: row.slug as string,
+    artifact_kind: row.artifact_kind as DerivedJob['artifact_kind'],
+    target_content_hash: row.target_content_hash as string,
+    manifest_path: row.manifest_path == null ? null : String(row.manifest_path),
+    derived_parameters: parseJsonObject(row.derived_parameters),
+    status: row.status as DerivedJob['status'],
+    attempts: Number(row.attempts),
+    last_error: row.last_error == null ? null : String(row.last_error),
+    lease_owner: row.lease_owner == null ? null : String(row.lease_owner),
+    lease_expires_at: row.lease_expires_at == null ? null : new Date(row.lease_expires_at as string),
+    created_at: new Date(row.created_at as string),
+    updated_at: new Date(row.updated_at as string),
+  };
+}
+
+export function rowToDerivedIndexState(row: Record<string, unknown>): DerivedIndexState {
+  return {
+    scope_id: row.scope_id as string,
+    slug: row.slug as string,
+    artifact_kind: row.artifact_kind as DerivedIndexState['artifact_kind'],
+    target_content_hash: row.target_content_hash as string,
+    indexed_content_hash: row.indexed_content_hash == null ? null : String(row.indexed_content_hash),
+    status: row.status as DerivedIndexState['status'],
+    extractor_version: row.extractor_version as string,
+    derived_schema_version: row.derived_schema_version as string,
+    last_error: row.last_error == null ? null : String(row.last_error),
+    updated_at: new Date(row.updated_at as string),
   };
 }
 

@@ -12,8 +12,8 @@ import {
   importFromContent,
   importFromFile,
   MAX_MARKDOWN_IMPORT_BYTES,
-  refreshDerivedStorageForPage,
 } from './import-file.ts';
+import { canonicalDerivedTags, DERIVED_SCHEMA_VERSION } from './derived-jobs.ts';
 import { parseMarkdown, serializeMarkdown } from './markdown.ts';
 import { slugifyPath } from './sync.ts';
 import {
@@ -73,7 +73,11 @@ import {
   getStructuralContextMapEntry,
   listStructuralContextMapEntries,
 } from './services/context-map-service.ts';
-import { DEFAULT_NOTE_MANIFEST_SCOPE_ID, rebuildNoteManifestEntries } from './services/note-manifest-service.ts';
+import {
+  DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+  NOTE_MANIFEST_EXTRACTOR_VERSION,
+  rebuildNoteManifestEntries,
+} from './services/note-manifest-service.ts';
 import { findStructuralPath, getStructuralNeighbors, type StructuralNodeId } from './services/note-structural-graph-service.ts';
 import { rebuildNoteSectionEntries } from './services/note-section-service.ts';
 import { buildTaskResumeCard } from './services/task-memory-service.ts';
@@ -184,7 +188,6 @@ export interface OperationContext {
   config: MBrainConfig;
   logger: Logger;
   dryRun: boolean;
-  scheduleBackground?: (description: string, task: () => Promise<void>) => void;
 }
 
 export interface Operation {
@@ -2540,35 +2543,6 @@ type PutPageTransactionOutcome =
       error: OperationError;
     };
 
-async function refreshPutPageDerivedStorageIfNeeded(
-  ctx: OperationContext,
-  result: PutPageImportResult,
-  manifestPath?: string,
-): Promise<PutPageImportResult | null> {
-  if (!result.deferred_derived) return null;
-  const expectedContentHash = result.content_hash ?? null;
-
-  const refresh = async () => {
-    const refreshed = await refreshDerivedStorageForPage(ctx.engine, result.slug, {
-      path: manifestPath,
-      expectedContentHash,
-    });
-    if (refreshed.error) {
-      ctx.logger.warn(`put_page deferred derived refresh skipped for ${result.slug}: ${refreshed.error}`);
-    }
-    return refreshed;
-  };
-
-  if (ctx.scheduleBackground) {
-    ctx.scheduleBackground(`put_page deferred derived refresh for ${result.slug}`, async () => {
-      await refresh();
-    });
-    return null;
-  }
-
-  return refresh();
-}
-
 const put_page: Operation = {
   name: 'put_page',
   description: 'Create or update a knowledge page to record new information about people, companies, concepts, or systems discovered during the conversation. Markdown with YAML frontmatter; content should follow the compiled truth + timeline pattern. Rejects generic, numeric-only, or globally bucketed documentation slugs. Chunks, embeds, and reconciles tags.',
@@ -2808,14 +2782,7 @@ const put_page: Operation = {
       await recordPutPageConflict(ctx.engine, outcome.audit, outcome.conflict);
       throw outcome.error;
     }
-    const refreshedDerived = await refreshPutPageDerivedStorageIfNeeded(
-      ctx,
-      outcome.result,
-      markdownTarget?.relativePath,
-    );
-    return putPageOperationResult(refreshedDerived
-      ? { ...outcome.result, chunks: refreshedDerived.chunks, deferred_derived: false }
-      : outcome.result);
+    return putPageOperationResult(outcome.result);
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
@@ -2909,6 +2876,39 @@ const query: Operation = {
 
 // --- Tags ---
 
+async function mutateTagAndEnqueueManifestRefresh(
+  engine: BrainEngine,
+  slug: string,
+  tag: string,
+  mutate: (tx: BrainEngine, slug: string, tag: string) => Promise<void>,
+): Promise<void> {
+  const normalizedSlug = validateSlug(slug);
+  await engine.transaction(async (tx) => {
+    const page = await tx.getPageForUpdate(normalizedSlug);
+    if (!page) return;
+
+    await mutate(tx, normalizedSlug, tag);
+    if (!page.content_hash) return;
+    const tags = await tx.getTags(normalizedSlug);
+    const existingManifest = await tx.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, normalizedSlug);
+    const manifestPath = existingManifest?.path ?? `${normalizedSlug}.md`;
+    await tx.deleteNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, normalizedSlug);
+    await tx.enqueueDerivedJob({
+      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      slug: normalizedSlug,
+      artifact_kind: 'note_manifest',
+      target_content_hash: page.content_hash,
+      manifest_path: manifestPath,
+      derived_parameters: {
+        manifest_path: manifestPath,
+        tags: canonicalDerivedTags(tags),
+        extractor_version: NOTE_MANIFEST_EXTRACTOR_VERSION,
+        derived_schema_version: DERIVED_SCHEMA_VERSION,
+      },
+    });
+  });
+}
+
 const add_tag: Operation = {
   name: 'add_tag',
   description: 'Add tag to page',
@@ -2919,8 +2919,13 @@ const add_tag: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'add_tag', slug: p.slug, tag: p.tag };
-    await ctx.engine.addTag(p.slug as string, p.tag as string);
-    return { status: 'ok' };
+    await mutateTagAndEnqueueManifestRefresh(
+      ctx.engine,
+      p.slug as string,
+      p.tag as string,
+      (tx, slug, tag) => tx.addTag(slug, tag),
+    );
+    return { status: 'ok', derived_storage: 'scheduled' };
   },
   cliHints: { name: 'tag', positional: ['slug', 'tag'] },
 };
@@ -2935,8 +2940,13 @@ const remove_tag: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'remove_tag', slug: p.slug, tag: p.tag };
-    await ctx.engine.removeTag(p.slug as string, p.tag as string);
-    return { status: 'ok' };
+    await mutateTagAndEnqueueManifestRefresh(
+      ctx.engine,
+      p.slug as string,
+      p.tag as string,
+      (tx, slug, tag) => tx.removeTag(slug, tag),
+    );
+    return { status: 'ok', derived_storage: 'scheduled' };
   },
   cliHints: { name: 'untag', positional: ['slug', 'tag'] },
 };

@@ -1,6 +1,15 @@
 import postgres from 'postgres';
 import type { BrainEngine } from './engine.ts';
 import {
+  canonicalDerivedParameters,
+  derivedJobMatchesTarget,
+  derivedExtractorVersion,
+  derivedSchemaVersion,
+  normalizeDerivedParameters,
+  retargetDerivedJobSlug,
+  retargetDefaultManifestPath,
+} from './derived-jobs.ts';
+import {
   assertMemoryCandidateCreateStatus,
   assertMemoryCandidateStatusEventInput,
   isAllowedMemoryCandidateStatusUpdate,
@@ -22,6 +31,12 @@ import type {
   NoteSectionEntry,
   NoteSectionEntryInput,
   NoteSectionFilters,
+  DerivedArtifactKind,
+  DerivedIndexState,
+  DerivedIndexStateFilters,
+  DerivedJob,
+  DerivedJobFilters,
+  DerivedJobInput,
   ContextMapEntry,
   ContextMapEntryInput,
   ContextMapFilters,
@@ -127,6 +142,8 @@ import {
   rowToMemoryCandidateStatusEvent,
   rowToMemoryCandidateSupersessionEntry,
   rowToCanonicalHandoffEntry,
+  rowToDerivedIndexState,
+  rowToDerivedJob,
   rowToNoteManifestEntry,
   rowToNoteSectionEntry,
   rowToProfileMemoryEntry,
@@ -448,8 +465,16 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async deletePage(slug: string): Promise<void> {
-    const sql = this.sql;
-    await sql`DELETE FROM pages WHERE slug = ${slug}`;
+    const normalizedSlug = validateSlug(slug);
+    await this.transaction(async (txBase) => {
+      const sql = (txBase as PostgresEngine).sql;
+      await sql`LOCK TABLE pages IN SHARE ROW EXCLUSIVE MODE`;
+      await sql`SELECT id FROM pages WHERE slug = ${normalizedSlug} FOR UPDATE`;
+      await sql`LOCK TABLE derived_jobs IN EXCLUSIVE MODE`;
+      await sql`DELETE FROM derived_jobs WHERE slug = ${normalizedSlug}`;
+      await sql`DELETE FROM derived_index_state WHERE slug = ${normalizedSlug}`;
+      await sql`DELETE FROM pages WHERE slug = ${normalizedSlug}`;
+    });
   }
 
   async listPages(filters?: PageFilters): Promise<Page[]> {
@@ -3054,6 +3079,343 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
+  async enqueueDerivedJob(input: DerivedJobInput): Promise<DerivedJob> {
+    return this.transaction(async (tx) => (
+      tx as PostgresEngine
+    ).enqueueDerivedJobInTransaction(input));
+  }
+
+  private async enqueueDerivedJobInTransaction(input: DerivedJobInput): Promise<DerivedJob> {
+    const sql = this.sql;
+    await sql`LOCK TABLE derived_jobs IN EXCLUSIVE MODE`;
+    const normalizedSlug = validateSlug(input.slug);
+    const parameters = normalizeDerivedParameters(input);
+    const parametersJson = canonicalDerivedParameters(parameters);
+    const manifestPath = input.manifest_path ?? null;
+    const activeRows = await sql`
+      SELECT id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+             derived_parameters, status, attempts, last_error, lease_owner,
+             lease_expires_at, created_at, updated_at
+      FROM derived_jobs
+      WHERE scope_id = ${input.scope_id}
+        AND slug = ${normalizedSlug}
+        AND artifact_kind = ${input.artifact_kind}
+        AND status IN ('pending', 'running')
+    `;
+    const existing = (activeRows as Record<string, unknown>[])
+      .map(rowToDerivedJob)
+      .find((job) => (
+        job.target_content_hash === input.target_content_hash
+        && job.manifest_path === manifestPath
+        && canonicalDerivedParameters(job.derived_parameters) === parametersJson
+      ));
+
+    if (existing) {
+      const rows = await sql`
+        UPDATE derived_jobs
+        SET updated_at = now()
+        WHERE id = ${existing.id}
+        RETURNING id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+                  derived_parameters, status, attempts, last_error, lease_owner,
+                  lease_expires_at, created_at, updated_at
+      `;
+      await this.upsertPendingDerivedIndexState(input, normalizedSlug, parameters);
+      return rowToDerivedJob(rows[0] as Record<string, unknown>);
+    }
+
+    await sql`
+      UPDATE derived_jobs
+      SET status = 'superseded',
+          lease_owner = NULL,
+          lease_expires_at = NULL,
+          updated_at = now()
+      WHERE scope_id = ${input.scope_id}
+        AND slug = ${normalizedSlug}
+        AND artifact_kind = ${input.artifact_kind}
+        AND status IN ('pending', 'running')
+    `;
+
+    const id = crypto.randomUUID();
+    const rows = await sql`
+      INSERT INTO derived_jobs (
+        id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+        derived_parameters, status, attempts, created_at, updated_at
+      ) VALUES (
+        ${id},
+        ${input.scope_id},
+        ${normalizedSlug},
+        ${input.artifact_kind},
+        ${input.target_content_hash},
+        ${manifestPath},
+        ${sql.json(jsonParam(parameters))},
+        'pending',
+        0,
+        now(),
+        now()
+      )
+      RETURNING id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+                derived_parameters, status, attempts, last_error, lease_owner,
+                lease_expires_at, created_at, updated_at
+    `;
+    await this.upsertPendingDerivedIndexState(input, normalizedSlug, parameters);
+    return rowToDerivedJob(rows[0] as Record<string, unknown>);
+  }
+
+  async listDerivedJobs(filters?: DerivedJobFilters): Promise<DerivedJob[]> {
+    const sql = this.sql;
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const params: PostgresParam[] = [];
+    const clauses: string[] = [];
+    if (filters?.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.slug) {
+      params.push(validateSlug(filters.slug));
+      clauses.push(`slug = $${params.length}`);
+    }
+    if (filters?.artifact_kind) {
+      params.push(filters.artifact_kind);
+      clauses.push(`artifact_kind = $${params.length}`);
+    }
+    if (filters?.status) {
+      params.push(filters.status);
+      clauses.push(`status = $${params.length}`);
+    }
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+              derived_parameters, status, attempts, last_error, lease_owner,
+              lease_expires_at, created_at, updated_at
+       FROM derived_jobs
+       ${whereClause}
+       ORDER BY updated_at DESC, created_at DESC, id ASC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToDerivedJob);
+  }
+
+  async getDerivedIndexState(
+    scopeId: string,
+    slug: string,
+    artifactKind: DerivedArtifactKind,
+  ): Promise<DerivedIndexState | null> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT scope_id, slug, artifact_kind, target_content_hash, indexed_content_hash,
+             status, extractor_version, derived_schema_version, last_error, updated_at
+      FROM derived_index_state
+      WHERE scope_id = ${scopeId}
+        AND slug = ${validateSlug(slug)}
+        AND artifact_kind = ${artifactKind}
+    `;
+    if (rows.length === 0) return null;
+    return rowToDerivedIndexState(rows[0] as Record<string, unknown>);
+  }
+
+  async listDerivedIndexStates(filters?: DerivedIndexStateFilters): Promise<DerivedIndexState[]> {
+    const sql = this.sql;
+    const limit = filters?.limit ?? 100;
+    const offset = filters?.offset ?? 0;
+    const params: PostgresParam[] = [];
+    const clauses: string[] = [];
+    if (filters?.scope_id) {
+      params.push(filters.scope_id);
+      clauses.push(`scope_id = $${params.length}`);
+    }
+    if (filters?.slug) {
+      params.push(validateSlug(filters.slug));
+      clauses.push(`slug = $${params.length}`);
+    }
+    if (filters?.artifact_kind) {
+      params.push(filters.artifact_kind);
+      clauses.push(`artifact_kind = $${params.length}`);
+    }
+    if (filters?.status) {
+      params.push(filters.status);
+      clauses.push(`status = $${params.length}`);
+    }
+    params.push(limit);
+    params.push(offset);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await sql.unsafe(
+      `SELECT scope_id, slug, artifact_kind, target_content_hash, indexed_content_hash,
+              status, extractor_version, derived_schema_version, last_error, updated_at
+       FROM derived_index_state
+       ${whereClause}
+       ORDER BY updated_at DESC, slug ASC, artifact_kind ASC
+       LIMIT $${params.length - 1}
+       OFFSET $${params.length}`,
+      params,
+    );
+    return (rows as Record<string, unknown>[]).map(rowToDerivedIndexState);
+  }
+
+  async markDerivedIndexReady(input: {
+    scope_id: string;
+    slug: string;
+    artifact_kind: DerivedArtifactKind;
+    target_content_hash: string;
+    indexed_content_hash: string;
+    manifest_path?: string | null;
+    derived_parameters?: Record<string, unknown>;
+    extractor_version?: string;
+    derived_schema_version?: string;
+    require_active_job?: boolean;
+  }): Promise<DerivedIndexState> {
+    return this.transaction(async (tx) => (
+      tx as PostgresEngine
+    ).markDerivedIndexReadyInTransaction(input));
+  }
+
+  private async markDerivedIndexReadyInTransaction(input: {
+    scope_id: string;
+    slug: string;
+    artifact_kind: DerivedArtifactKind;
+    target_content_hash: string;
+    indexed_content_hash: string;
+    manifest_path?: string | null;
+    derived_parameters?: Record<string, unknown>;
+    extractor_version?: string;
+    derived_schema_version?: string;
+    require_active_job?: boolean;
+  }): Promise<DerivedIndexState> {
+    const sql = this.sql;
+    await sql`LOCK TABLE derived_jobs IN EXCLUSIVE MODE`;
+    const normalizedSlug = validateSlug(input.slug);
+    const parameters = normalizeDerivedParameters({
+      scope_id: input.scope_id,
+      slug: normalizedSlug,
+      artifact_kind: input.artifact_kind,
+      target_content_hash: input.target_content_hash,
+      manifest_path: input.manifest_path ?? null,
+      derived_parameters: input.derived_parameters,
+      extractor_version: input.extractor_version,
+      derived_schema_version: input.derived_schema_version,
+    });
+    const target: DerivedJobInput = {
+      scope_id: input.scope_id,
+      slug: normalizedSlug,
+      artifact_kind: input.artifact_kind,
+      target_content_hash: input.target_content_hash,
+      manifest_path: input.manifest_path ?? null,
+      derived_parameters: parameters,
+    };
+    const activeRows = await sql`
+      SELECT id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+             derived_parameters, status, attempts, last_error, lease_owner,
+             lease_expires_at, created_at, updated_at
+      FROM derived_jobs
+      WHERE scope_id = ${input.scope_id}
+        AND slug = ${normalizedSlug}
+        AND artifact_kind = ${input.artifact_kind}
+        AND status IN ('pending', 'running')
+    `;
+    const activeJobs = (activeRows as Record<string, unknown>[]).map(rowToDerivedJob);
+    const matchingJob = activeJobs.find((job) => derivedJobMatchesTarget(job, target));
+    const currentState = await this.getDerivedIndexState(input.scope_id, normalizedSlug, input.artifact_kind);
+    if (activeJobs.length > 0 && !matchingJob) {
+      return currentState ?? await this.upsertPendingDerivedIndexStateFromJob(activeJobs[0]!);
+    }
+    if (input.require_active_job && !matchingJob) {
+      if (currentState) return currentState;
+      await this.upsertPendingDerivedIndexState(target, normalizedSlug, parameters);
+      return (await this.getDerivedIndexState(input.scope_id, normalizedSlug, input.artifact_kind))!;
+    }
+    if (!matchingJob && currentState?.status === 'pending' && currentState.target_content_hash !== input.target_content_hash) {
+      return currentState;
+    }
+    if (matchingJob) {
+      await sql`DELETE FROM derived_jobs WHERE id = ${matchingJob.id}`;
+    }
+    const extractorVersion = derivedExtractorVersion(target);
+    const schemaVersion = derivedSchemaVersion(target);
+    const rows = await sql`
+      INSERT INTO derived_index_state (
+        scope_id, slug, artifact_kind, target_content_hash, indexed_content_hash,
+        status, extractor_version, derived_schema_version, last_error, updated_at
+      ) VALUES (
+        ${input.scope_id},
+        ${normalizedSlug},
+        ${input.artifact_kind},
+        ${input.target_content_hash},
+        ${input.indexed_content_hash},
+        'ready',
+        ${extractorVersion},
+        ${schemaVersion},
+        NULL,
+        now()
+      )
+      ON CONFLICT (scope_id, slug, artifact_kind) DO UPDATE SET
+        target_content_hash = EXCLUDED.target_content_hash,
+        indexed_content_hash = EXCLUDED.indexed_content_hash,
+        status = EXCLUDED.status,
+        extractor_version = EXCLUDED.extractor_version,
+        derived_schema_version = EXCLUDED.derived_schema_version,
+        last_error = NULL,
+        updated_at = EXCLUDED.updated_at
+      RETURNING scope_id, slug, artifact_kind, target_content_hash, indexed_content_hash,
+                status, extractor_version, derived_schema_version, last_error, updated_at
+    `;
+    return rowToDerivedIndexState(rows[0] as Record<string, unknown>);
+  }
+
+  private async upsertPendingDerivedIndexState(
+    input: DerivedJobInput,
+    normalizedSlug: string,
+    parameters: Record<string, unknown>,
+  ): Promise<void> {
+    const sql = this.sql;
+    const extractorVersion = derivedExtractorVersion({ ...input, derived_parameters: parameters });
+    const schemaVersion = derivedSchemaVersion({ ...input, derived_parameters: parameters });
+    await sql`
+      INSERT INTO derived_index_state (
+        scope_id, slug, artifact_kind, target_content_hash, indexed_content_hash,
+        status, extractor_version, derived_schema_version, last_error, updated_at
+      ) VALUES (
+        ${input.scope_id},
+        ${normalizedSlug},
+        ${input.artifact_kind},
+        ${input.target_content_hash},
+        NULL,
+        'pending',
+        ${extractorVersion},
+        ${schemaVersion},
+        NULL,
+        now()
+      )
+      ON CONFLICT (scope_id, slug, artifact_kind) DO UPDATE SET
+        target_content_hash = EXCLUDED.target_content_hash,
+        indexed_content_hash = NULL,
+        status = EXCLUDED.status,
+        extractor_version = EXCLUDED.extractor_version,
+        derived_schema_version = EXCLUDED.derived_schema_version,
+        last_error = NULL,
+        updated_at = EXCLUDED.updated_at
+    `;
+  }
+
+  private async upsertPendingDerivedIndexStateFromJob(job: DerivedJob): Promise<DerivedIndexState> {
+    await this.upsertPendingDerivedIndexState(
+      {
+        scope_id: job.scope_id,
+        slug: job.slug,
+        artifact_kind: job.artifact_kind,
+        target_content_hash: job.target_content_hash,
+        manifest_path: job.manifest_path,
+        derived_parameters: job.derived_parameters,
+      },
+      job.slug,
+      job.derived_parameters,
+    );
+    return (await this.getDerivedIndexState(job.scope_id, job.slug, job.artifact_kind))!;
+  }
+
   async upsertContextMapEntry(input: ContextMapEntryInput): Promise<ContextMapEntry> {
     const sql = this.sql;
     const rows = await sql`
@@ -3228,9 +3590,64 @@ export class PostgresEngine implements BrainEngine {
 
   // Sync
   async updateSlug(oldSlug: string, newSlug: string): Promise<void> {
-    newSlug = validateSlug(newSlug);
-    const sql = this.sql;
-    await sql`UPDATE pages SET slug = ${newSlug}, updated_at = now() WHERE slug = ${oldSlug}`;
+    const normalizedOldSlug = validateSlug(oldSlug);
+    const normalizedNewSlug = validateSlug(newSlug);
+    await this.transaction(async (txBase) => {
+      const sql = (txBase as PostgresEngine).sql;
+      const oldDefaultPath = `${normalizedOldSlug}.md`;
+      const newDefaultPath = retargetDefaultManifestPath(normalizedOldSlug, normalizedNewSlug, oldDefaultPath)!;
+      const oldSectionIdPrefix = `${normalizedOldSlug}#`;
+      const newSectionIdPrefix = `${normalizedNewSlug}#`;
+      await sql`LOCK TABLE pages IN SHARE ROW EXCLUSIVE MODE`;
+      await sql`SELECT id FROM pages WHERE slug = ${normalizedOldSlug} FOR UPDATE`;
+      await sql`LOCK TABLE derived_jobs IN EXCLUSIVE MODE`;
+      const jobs = await sql`
+        SELECT id, manifest_path, derived_parameters
+        FROM derived_jobs
+        WHERE slug = ${normalizedOldSlug}
+      `;
+      await sql`UPDATE pages SET slug = ${normalizedNewSlug}, updated_at = now() WHERE slug = ${normalizedOldSlug}`;
+      for (const job of jobs as Record<string, unknown>[]) {
+        const retargeted = retargetDerivedJobSlug({
+          manifest_path: job.manifest_path == null ? null : String(job.manifest_path),
+          derived_parameters: job.derived_parameters,
+        }, normalizedOldSlug, normalizedNewSlug);
+        await sql`
+          UPDATE derived_jobs
+          SET slug = ${normalizedNewSlug},
+              manifest_path = ${retargeted.manifest_path},
+              derived_parameters = ${sql.json(jsonParam(retargeted.derived_parameters))},
+              updated_at = now()
+          WHERE id = ${String(job.id)}
+        `;
+      }
+      await sql`
+        UPDATE note_manifest_entries
+        SET slug = ${normalizedNewSlug},
+            path = CASE WHEN path = ${oldDefaultPath} THEN ${newDefaultPath} ELSE path END,
+            last_indexed_at = now()
+        WHERE slug = ${normalizedOldSlug}
+      `;
+      await sql`
+        UPDATE note_section_entries
+        SET page_slug = ${normalizedNewSlug},
+            page_path = CASE WHEN page_path = ${oldDefaultPath} THEN ${newDefaultPath} ELSE page_path END,
+            section_id = CASE
+              WHEN substr(section_id, 1, ${oldSectionIdPrefix.length}) = ${oldSectionIdPrefix}
+                THEN ${newSectionIdPrefix} || substr(section_id, ${oldSectionIdPrefix.length + 1})
+              ELSE section_id
+            END,
+            parent_section_id = CASE
+              WHEN parent_section_id IS NOT NULL
+                AND substr(parent_section_id, 1, ${oldSectionIdPrefix.length}) = ${oldSectionIdPrefix}
+                THEN ${newSectionIdPrefix} || substr(parent_section_id, ${oldSectionIdPrefix.length + 1})
+              ELSE parent_section_id
+            END,
+            last_indexed_at = now()
+        WHERE page_slug = ${normalizedOldSlug}
+      `;
+      await sql`UPDATE derived_index_state SET slug = ${normalizedNewSlug}, updated_at = now() WHERE slug = ${normalizedOldSlug}`;
+    });
   }
 
   async rewriteLinks(_oldSlug: string, _newSlug: string): Promise<void> {

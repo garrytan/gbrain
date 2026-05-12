@@ -14,10 +14,8 @@ import type { BrainEngine } from '../engine.ts';
 import { loadConfig } from '../config.ts';
 import { createConnectedEngine, supportsParallelWorkers } from '../engine-factory.ts';
 import { getEngineCapabilities } from '../engine-capabilities.ts';
-import { buildPageChunks, importFile } from '../import-file.ts';
+import { buildPageChunks, importFile, importFromContent } from '../import-file.ts';
 import { parseMarkdown, type ParsedMarkdown } from '../markdown.ts';
-import { buildNoteManifestEntry, DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
-import { buildNoteSectionEntries } from './note-section-service.ts';
 import { isSyncable, pathToSlug, slugifyPath } from '../sync.ts';
 import type { ChunkInput } from '../types.ts';
 import { importContentHash, validateSlug } from '../utils.ts';
@@ -72,6 +70,7 @@ type PreparedImport =
       slug: string;
       parsed: ParsedMarkdown;
       hash: string;
+      content: string;
       chunks: ChunkInput[];
     }
   | {
@@ -149,6 +148,7 @@ async function prepareImportFile(
     slug: expectedSlug,
     parsed,
     hash: importContentHash(parsed),
+    content,
     chunks: buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter),
   };
 }
@@ -166,107 +166,10 @@ async function commitPreparedImport(
     };
   }
 
-  const existing = await engine.getPage(prepared.slug);
-  if (existing?.content_hash === prepared.hash) {
-    const existingManifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, prepared.slug);
-    if (existingManifest?.path === prepared.relativePath) {
-      return { slug: prepared.slug, status: 'skipped', chunks: 0 };
-    }
-
-    await engine.transaction(async (tx) => {
-      const tags = await tx.getTags(prepared.slug);
-      const manifest = await tx.upsertNoteManifestEntry(buildNoteManifestEntry({
-        page_id: existing.id,
-        slug: existing.slug,
-        path: prepared.relativePath,
-        tags,
-        content_hash: prepared.hash,
-        page: existing,
-      }));
-      await tx.replaceNoteSectionEntries(
-        manifest.scope_id,
-        manifest.slug,
-        buildNoteSectionEntries({
-          scope_id: manifest.scope_id,
-          page_id: existing.id,
-          page_slug: existing.slug,
-          page_path: manifest.path,
-          page: existing,
-          manifest,
-        }),
-      );
-    });
-    return { slug: prepared.slug, status: 'skipped', chunks: 0 };
-  }
-
-  await engine.transaction(async (tx) => {
-    if (existing) {
-      await tx.createVersion(prepared.slug);
-    }
-
-    const storedPage = await tx.putPage(prepared.slug, {
-      type: prepared.parsed.type,
-      title: prepared.parsed.title,
-      compiled_truth: prepared.parsed.compiled_truth,
-      timeline: prepared.parsed.timeline || '',
-      frontmatter: prepared.parsed.frontmatter,
-      content_hash: prepared.hash,
-    });
-
-    const existingTags = await tx.getTags(prepared.slug);
-    const newTags = new Set(prepared.parsed.tags);
-    for (const old of existingTags) {
-      if (!newTags.has(old)) {
-        await tx.removeTag(prepared.slug, old);
-      }
-    }
-    for (const tag of prepared.parsed.tags) {
-      await tx.addTag(prepared.slug, tag);
-    }
-
-    await tx.deleteChunks(prepared.slug);
-    await tx.upsertChunks(prepared.slug, prepared.chunks);
-    const manifest = await tx.upsertNoteManifestEntry(buildNoteManifestEntry({
-      page_id: storedPage.id,
-      slug: storedPage.slug,
-      path: prepared.relativePath,
-      tags: prepared.parsed.tags,
-      content_hash: prepared.hash,
-      page: {
-        type: storedPage.type,
-        title: storedPage.title,
-        compiled_truth: storedPage.compiled_truth,
-        timeline: storedPage.timeline,
-        frontmatter: storedPage.frontmatter,
-        content_hash: storedPage.content_hash,
-      },
-    }));
-    await tx.replaceNoteSectionEntries(
-      manifest.scope_id,
-      manifest.slug,
-      buildNoteSectionEntries({
-        scope_id: manifest.scope_id,
-        page_id: storedPage.id,
-        page_slug: storedPage.slug,
-        page_path: manifest.path,
-        page: {
-          type: storedPage.type,
-          title: storedPage.title,
-          compiled_truth: storedPage.compiled_truth,
-          timeline: storedPage.timeline,
-          frontmatter: storedPage.frontmatter,
-          content_hash: storedPage.content_hash,
-        },
-        manifest,
-      }),
-    );
+  return importFromContent(engine, prepared.slug, prepared.content, {
+    path: prepared.relativePath,
+    deferDerived: true,
   });
-
-  return {
-    slug: prepared.slug,
-    status: 'imported',
-    chunks: prepared.chunks.length,
-  };
 }
 
 export function defaultImportWorkers(): number {

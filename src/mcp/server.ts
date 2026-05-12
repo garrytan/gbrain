@@ -605,14 +605,6 @@ export async function startMcpServer(engine: BrainEngine | Promise<BrainEngine>)
             error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
           },
           dryRun: !!(params?.dry_run),
-          scheduleBackground: (description, task) => {
-            setTimeout(() => {
-              task().catch((error: unknown) => {
-                const message = error instanceof Error ? error.message : String(error);
-                process.stderr.write(`[warn] ${description} failed: ${message}\n`);
-              });
-            }, 0);
-          },
         };
         return op.handler(ctx, prepareMcpToolParams(name, params));
       });

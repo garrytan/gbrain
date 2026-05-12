@@ -6,6 +6,12 @@ import type {
   NoteSectionEntry,
   NoteSectionEntryInput,
   NoteSectionFilters,
+  DerivedArtifactKind,
+  DerivedIndexState,
+  DerivedIndexStateFilters,
+  DerivedJob,
+  DerivedJobFilters,
+  DerivedJobInput,
   ContextMapEntry,
   ContextMapEntryInput,
   ContextMapFilters,
@@ -234,6 +240,28 @@ export interface BrainEngine {
   getNoteSectionEntry(scopeId: string, sectionId: string): Promise<NoteSectionEntry | null>;
   listNoteSectionEntries(filters?: NoteSectionFilters): Promise<NoteSectionEntry[]>;
   deleteNoteSectionEntries(scopeId: string, pageSlug: string): Promise<void>;
+
+  // Durable derived jobs and freshness state
+  enqueueDerivedJob(input: DerivedJobInput): Promise<DerivedJob>;
+  listDerivedJobs(filters?: DerivedJobFilters): Promise<DerivedJob[]>;
+  getDerivedIndexState(
+    scopeId: string,
+    slug: string,
+    artifactKind: DerivedArtifactKind,
+  ): Promise<DerivedIndexState | null>;
+  listDerivedIndexStates(filters?: DerivedIndexStateFilters): Promise<DerivedIndexState[]>;
+  markDerivedIndexReady(input: {
+    scope_id: string;
+    slug: string;
+    artifact_kind: DerivedArtifactKind;
+    target_content_hash: string;
+    indexed_content_hash: string;
+    manifest_path?: string | null;
+    derived_parameters?: Record<string, unknown>;
+    extractor_version?: string;
+    derived_schema_version?: string;
+    require_active_job?: boolean;
+  }): Promise<DerivedIndexState>;
 
   // Persisted context maps
   upsertContextMapEntry(input: ContextMapEntryInput): Promise<ContextMapEntry>;
