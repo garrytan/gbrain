@@ -1107,6 +1107,12 @@ async function handleCliOnly(command: string, args: string[]) {
         await runModels(engine, args);
         break;
       }
+      case 'search': {
+        // v0.32.3 search-lite — `gbrain search modes/stats/tune`.
+        const { runSearch } = await import('./commands/search.ts');
+        await runSearch(engine, args);
+        break;
+      }
       case 'takes': {
         const { runTakes } = await import('./commands/takes.ts');
         await runTakes(engine, args);
