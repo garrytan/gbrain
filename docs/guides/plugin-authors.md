@@ -79,6 +79,10 @@ with a warning naming both sources.
 v0.16+ may open up plugin-declared tools with a separate contract. Don't
 expect it.
 
+For host-native tool or HTTP route packages, use the host-adapter boundary in
+[`docs/guides/host-adapters.md`](host-adapters.md) instead of adding host
+runtime assumptions to a GBrain plugin definition.
+
 ## `gbrain.plugin.json`
 
 | field            | type   | required | notes                                                              |
