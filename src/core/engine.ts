@@ -871,6 +871,53 @@ export interface BrainEngine {
   ): Promise<{ id: number; status: FactInsertStatus }>;
 
   /**
+   * v0.32.2: batch insert for fence-extracted fact rows. Persists the
+   * v51 fence columns (`row_num`, `source_markdown_slug`) alongside the
+   * standard NewFact fields.
+   *
+   * Designed for the `extract_facts` cycle phase: wipe-then-batch-insert
+   * per page. No dedup is performed here — callers (the cycle phase via
+   * `deleteFactsForPage` + this) own that contract. Bypasses the
+   * single-row supersede flow because fence reconciliation is the canonical
+   * source-of-truth direction, not the consolidator path.
+   *
+   * Insertion is atomic per call: all rows commit in a single transaction
+   * or none commit (the transaction rolls back on any constraint
+   * violation, e.g. the v51 partial UNIQUE index on
+   * `(source_id, source_markdown_slug, row_num)`).
+   *
+   * Returns the inserted ids in input-order so callers can correlate
+   * fence-row → DB-id without a separate lookup.
+   */
+  insertFacts(
+    rows: Array<NewFact & { row_num: number; source_markdown_slug: string }>,
+    ctx: { source_id: string },
+  ): Promise<{ inserted: number; ids: number[] }>;
+
+  /**
+   * v0.32.2: hard-delete every fact row scoped to a single fence page.
+   *
+   * Keyed on `(source_id, source_markdown_slug)`. Used by the
+   * `extract_facts` cycle phase before re-inserting from the fence — the
+   * fence is canonical, the DB is the derived index, so each phase run
+   * wipes the page-scoped index and rebuilds it from the markdown.
+   *
+   * Hard DELETE (not soft-delete via `expired_at`). A fence row that
+   * disappears from markdown corresponds to a fact the user removed
+   * entirely from history; the DB mirrors that. Forgotten facts that
+   * stay in the fence as strikethrough rows survive the wipe because
+   * the re-insert puts them back with `valid_until = today` per the
+   * `extract-from-fence` derivation contract.
+   *
+   * Pre-v51 rows (NULL `source_markdown_slug`) are NEVER deleted by this
+   * call — the partial UNIQUE index on `row_num IS NOT NULL` is the
+   * structural guarantee that legacy rows live in a different keyspace
+   * until the v0_32_2 migration backfills them. Cycle-phase callers in
+   * commit 7 add the empty-fence-guard as a belt-and-suspenders check.
+   */
+  deleteFactsForPage(slug: string, source_id: string): Promise<{ deleted: number }>;
+
+  /**
    * Mark a fact expired. Never DELETE. Returns true iff a row was updated.
    * Idempotent-as-false (already expired returns false without changing state).
    */
