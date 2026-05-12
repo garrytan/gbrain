@@ -93,6 +93,24 @@ GBrain exposes 30+ MCP tools via stdio:
 
 Add to `~/.claude/server.json` (Claude Code), Settings > MCP Servers (Cursor), or your client's MCP config.
 
+### OpenClaw native adapter
+
+The root `openclaw.plugin.json` bundle exposes GBrain's skills, MCP server, and
+`gbrain-context` context engine to OpenClaw. For OpenClaw-native tools and
+host-owned extraction, install the optional adapter package at
+[`plugins/openclaw-gbrain`](plugins/openclaw-gbrain/):
+
+```bash
+openclaw plugins install --dangerously-force-unsafe-install ./plugins/openclaw-gbrain
+openclaw plugins enable gbrain
+openclaw gateway restart
+```
+
+The adapter adds `gbrain_status`, `gbrain_search`, `gbrain_query`, `openclaw
+gbrain status`, and authenticated `/plugins/gbrain/extract`. The extraction
+route calls OpenClaw's logged-in model runtime and applies plugin-level
+timeout, queue, and file-size limits before invoking a model.
+
 ### Remote MCP with OAuth 2.1 (ChatGPT, Claude Desktop, Cowork, Perplexity)
 
 `gbrain serve --http` starts a production-grade OAuth 2.1 server with an embedded admin dashboard. Zero external infrastructure. Every major AI client connects, every request is scoped, every action is logged.
