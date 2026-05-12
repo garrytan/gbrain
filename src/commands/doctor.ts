@@ -2347,6 +2347,15 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     checks.push(await checkSyncFreshness(engine));
   }
 
+  // v0.32.3 search-lite — mode + eval_drift surfaces. Status stays 'ok' per
+  // [CDX-20]; hint lives in `message`.
+  if (engine !== null) {
+    progress.heartbeat('search_mode');
+    checks.push(await checkSearchMode(engine));
+    progress.heartbeat('eval_drift');
+    checks.push(await checkEvalDrift(engine));
+  }
+
   progress.finish();
 
   const hasFail = outputResults(checks, jsonOutput);
