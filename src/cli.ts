@@ -1056,6 +1056,12 @@ async function handleCliOnly(command: string, args: string[]) {
         await runOrphans(engine, args);
         break;
       }
+      // v0.32.7 CJK wave — post-upgrade markdown re-chunk sweep.
+      case 'reindex': {
+        const { runReindex } = await import('./commands/reindex.ts');
+        await runReindex(engine, args);
+        break;
+      }
       // v0.29 — Salience + Anomaly Detection
       case 'salience': {
         const { runSalience } = await import('./commands/salience.ts');
