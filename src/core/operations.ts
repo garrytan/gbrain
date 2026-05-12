@@ -2214,7 +2214,7 @@ const find_experts: Operation = {
       explain: p.explain === true,
     });
   },
-  cliHints: { name: 'whoknows' },
+  cliHints: { name: 'whoknows', positional: ['topic'] },
 };
 
 const get_recent_transcripts: Operation = {
