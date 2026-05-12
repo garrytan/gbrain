@@ -364,14 +364,16 @@ async function scanIntegrityBatch(
   // — gbrain lint should reject stringly-typed validate at write time.
   const validateCondition = sql`AND (frontmatter->>'validate' IS NULL OR frontmatter->>'validate' != 'false')`;
 
-  // DISTINCT ON (slug) mirrors getAllSlugs()'s Set<string> semantics: multi-source
-  // brains can have the same slug under multiple source_ids (UNIQUE(source_id, slug)
-  // since v0.18.0); we want one scan per slug, not one per row.
+  // v0.32.4: scan ONE row per (source_id, slug) pair, not one per slug.
+  // Pre-fix used DISTINCT ON (slug) which collapsed multi-source rows into
+  // one — that was the bug class. Now batch parity matches the sequential
+  // listAllPageRefs() walk: integrity violations in non-default-source pages
+  // get reported instead of silently shadowed by their default-source twin.
   const rows = await sql`
-    SELECT DISTINCT ON (slug) slug, compiled_truth, frontmatter
+    SELECT slug, compiled_truth, frontmatter
     FROM pages
     WHERE 1=1 ${typeCondition} ${validateCondition}
-    ORDER BY slug
+    ORDER BY source_id, slug
     LIMIT ${limit}
   `;
 
