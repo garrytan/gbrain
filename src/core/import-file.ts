@@ -204,6 +204,16 @@ export async function importFromContent(
      * fallback). MCP `put_page` callers leave undefined (no file).
      */
     sourcePath?: string;
+    /**
+     * v0.32.7 CJK wave (codex post-merge F1): bypass the
+     * `existing.content_hash === hash` short-circuit and ALWAYS re-chunk +
+     * re-embed. Used by `gbrain reindex --markdown` so a chunker version
+     * bump actually reaches unchanged-source pages. Without this, the
+     * sweep silently no-ops on every page whose markdown body hasn't
+     * been edited since the last import — defeating the whole purpose of
+     * the version bump.
+     */
+    forceRechunk?: boolean;
   } = {},
 ): Promise<ImportResult> {
   // v0.18.0+ multi-source: when caller is syncing under a non-default source,
@@ -249,7 +259,7 @@ export async function importFromContent(
   };
 
   const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
-  if (existing?.content_hash === hash) {
+  if (existing?.content_hash === hash && !opts.forceRechunk) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };
   }
 
@@ -399,7 +409,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean; inferFrontmatter?: boolean; sourceId?: string } = {},
+  opts: { noEmbed?: boolean; inferFrontmatter?: boolean; sourceId?: string; forceRechunk?: boolean } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);

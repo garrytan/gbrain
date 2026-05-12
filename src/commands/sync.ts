@@ -163,6 +163,39 @@ export interface SyncOpts {
 }
 
 /**
+ * v0.32.7 CJK wave (codex post-merge F4): resolve a slug by `pages.source_path`
+ * first, falling back to `resolveSlugForPath(path)`.
+ *
+ * Frontmatter-fallback pages (emoji-only / Thai / Arabic / exotic-script
+ * filenames where `slugifyPath` returns empty and the slug came from the
+ * frontmatter) have a slug that ISN'T derivable from the path. Delete and
+ * rename operations that only know the path would otherwise orphan these
+ * pages by trying to delete the path-derived (wrong) slug.
+ *
+ * Returns the actual stored slug when source_path matches a row, or the
+ * path-derived slug when there's no match (normal-case path-derived pages).
+ */
+export async function resolveSlugByPathOrSourcePath(
+  engine: BrainEngine,
+  path: string,
+  sourceId?: string,
+): Promise<string> {
+  try {
+    const rows = await engine.executeRaw<{ slug: string }>(
+      sourceId
+        ? `SELECT slug FROM pages WHERE source_path = $1 AND source_id = $2 LIMIT 1`
+        : `SELECT slug FROM pages WHERE source_path = $1 LIMIT 1`,
+      sourceId ? [path, sourceId] : [path],
+    );
+    if (rows.length > 0 && rows[0].slug) return rows[0].slug;
+  } catch {
+    // Fall through — best-effort. Pre-migration brains or query errors
+    // shouldn't break delete/rename for path-derived pages.
+  }
+  return resolveSlugForPath(path);
+}
+
+/**
  * git CLI helper.
  *
  * `configs` flags are emitted as `-c key=val` pairs BEFORE `-C repoPath` and
@@ -528,7 +561,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // pages in sources B/C/D.
   const pageOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   for (const path of unsyncableModified) {
-    const slug = resolveSlugForPath(path);
+    const slug = await resolveSlugByPathOrSourcePath(engine, path, opts.sourceId);
     try {
       const existing = await engine.getPage(slug, pageOpts);
       if (existing) {
@@ -600,7 +633,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   if (filtered.deleted.length > 0) {
     progress.start('sync.deletes', filtered.deleted.length);
     for (const path of filtered.deleted) {
-      const slug = resolveSlugForPath(path);
+      const slug = await resolveSlugByPathOrSourcePath(engine, path, opts.sourceId);
       await engine.deletePage(slug, deleteOpts);
       pagesAffected.push(slug);
       progress.tick(1, slug);
@@ -619,7 +652,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // either sweep them all OR violate (source_id, slug) UNIQUE).
     const renameOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
     for (const { from, to } of filtered.renamed) {
-      const oldSlug = resolveSlugForPath(from);
+      const oldSlug = await resolveSlugByPathOrSourcePath(engine, from, opts.sourceId);
+      // The new path doesn't yet have a row, so resolve from path only.
       const newSlug = resolveSlugForPath(to);
       try {
         await engine.updateSlug(oldSlug, newSlug, renameOpts);

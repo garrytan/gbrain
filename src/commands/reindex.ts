@@ -174,24 +174,28 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
         if (row.source_path && repoPath) {
           const absPath = resolve(repoPath, row.source_path);
           if (existsSync(absPath)) {
+            // importFromFile re-parses the markdown and calls importFromContent
+            // internally; we route through it with forceRechunk so the
+            // chunker-version bump actually applies (codex post-merge F1).
             await importFromFile(engine, absPath, row.source_path, {
               noEmbed: !!opts.noEmbed,
               sourceId: row.source_id,
               inferFrontmatter: false,
+              forceRechunk: true,
             });
             reindexed++;
             continue;
           }
         }
-        // Fallback path: synthesize a minimal frontmatter shell from the
-        // stored compiled_truth + slug. The page's title / frontmatter /
-        // timeline get re-fetched inside importFromContent via getPage's
-        // existing-row content_hash check; on hash match it short-circuits.
-        // Force a re-chunk by passing a NULL content_hash (importFromContent
-        // bypasses the unchanged shortcut when there's no existing hash).
+        // Fallback path: re-chunk the stored compiled_truth in place.
+        // forceRechunk bypasses the content_hash short-circuit so the bumped
+        // chunker actually applies — without this, every unchanged-source page
+        // is silently skipped and the version bump never reaches existing
+        // chunks (codex post-merge F1).
         await importFromContent(engine, row.slug, row.compiled_truth, {
           sourceId: row.source_id,
           noEmbed: !!opts.noEmbed,
+          forceRechunk: true,
         });
         reindexed++;
       } catch (err) {

@@ -90,6 +90,37 @@ describe('gbrain reindex --markdown (v0.32.7)', () => {
     expect(Number(remaining[0].count)).toBe(3);
   });
 
+  test('REGRESSION: forceRechunk bypasses content_hash short-circuit (codex F1)', async () => {
+    // The bug: importFromContent skips pages whose content_hash matches even
+    // when the chunker version is stale. The fix: reindex passes
+    // forceRechunk: true so the bumped chunker actually applies.
+    //
+    // We can't easily verify chunk_text changed (CJK delimiters are additive
+    // for English text), but we can verify chunker_version was bumped on the
+    // row even though compiled_truth + content_hash are unchanged from the
+    // import.
+    await seedLegacyPage('regression-force-rechunk', 'unchanged body text');
+
+    // First reindex pass — content_hash gets stamped to match the body.
+    await runReindex(engine, ['--markdown', '--no-embed']);
+
+    // Mock a "stale chunker" state: reset chunker_version to 1 WITHOUT
+    // changing compiled_truth. A non-forceRechunk import would now skip.
+    await engine.executeRaw(
+      `UPDATE pages SET chunker_version = 1 WHERE slug = 'regression-force-rechunk'`,
+    );
+
+    // Second reindex pass — must bump chunker_version DESPITE content_hash
+    // matching the stored value.
+    const result = await runReindex(engine, ['--markdown', '--no-embed']);
+    expect(result.reindexed).toBe(1);
+
+    const rows = await engine.executeRaw<{ chunker_version: number }>(
+      `SELECT chunker_version FROM pages WHERE slug = 'regression-force-rechunk'`,
+    );
+    expect(Number(rows[0].chunker_version)).toBe(MARKDOWN_CHUNKER_VERSION);
+  });
+
   test('skips pages already at current chunker_version', async () => {
     // Pre-bump page (chunker_version = 1)
     await seedLegacyPage('note-up', 'pending body');
