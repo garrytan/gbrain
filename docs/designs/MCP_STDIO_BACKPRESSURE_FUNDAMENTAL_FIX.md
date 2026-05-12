@@ -408,10 +408,15 @@ Implementation status:
   before JSON parsing, bounded oversized-request error frames, continued
   responsiveness after rejection, serialized mutating MCP tool execution, and
   bounded heavy-read execution with lightweight tools left responsive.
-- Steps 3-8 remain future work. The repository still does not prove
-  snapshot-bound continuations, engine-level projection/window APIs, durable
-  derived jobs, derived freshness semantics, or dual-channel Telegram heartbeat
-  behavior.
+- Step 3 is implemented in this PR slice: `BrainEngine.getPageProjection`
+  returns page metadata plus requested `compiled_truth`/`timeline` windows from
+  one engine query, with SQLite/Postgres/PGLite implementations and
+  Unicode-scalar window contract tests. Existing full `getPage` reads remain
+  compatible.
+- Steps 4-8 remain future work. The repository still does not prove
+  snapshot-bound continuations, `get_page`/`read_context` projection wiring,
+  durable derived jobs, derived freshness semantics, or dual-channel Telegram
+  heartbeat behavior.
 
 ## Resolved Decisions And Remaining Open Questions
 

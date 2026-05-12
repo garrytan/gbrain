@@ -11,12 +11,17 @@ import {
 } from './memory-inbox-status.ts';
 import { LATEST_VERSION } from './migrate.ts';
 import { ensurePageChunks } from './page-chunks.ts';
+import {
+  normalizePageProjectionWindows,
+  PAGE_WINDOW_FIELDS,
+  rowToPageProjection,
+} from './page-projection.ts';
 import { buildPageCentroid } from './services/page-embedding.ts';
 import { selectLocalVectorChunkIds, selectLocalVectorPageIds } from './search/vector-prefilter.ts';
 import { searchLocalVectors } from './search/vector-local.ts';
 import { slugifyPath } from './sync.ts';
 import type {
-  Page, PageInput, PageFilters, PageType,
+  Page, PageInput, PageFilters, PageProjection, PageProjectionOptions, PageType,
   NoteManifestEntry,
   NoteManifestEntryInput,
   NoteManifestFilters,
@@ -664,6 +669,38 @@ export class SQLiteEngine implements BrainEngine {
       WHERE slug = ?
     `).get(validateSlug(slug)) as Record<string, unknown> | null;
     return row ? rowToPage(row) : null;
+  }
+
+  async getPageProjection(slug: string, options: PageProjectionOptions = {}): Promise<PageProjection | null> {
+    const normalizedSlug = validateSlug(slug);
+    const windows = normalizePageProjectionWindows(options);
+    const selectColumns = [
+      'id',
+      'slug',
+      'type',
+      'title',
+      'frontmatter',
+      'content_hash',
+      'created_at',
+      'updated_at',
+    ];
+    const params: unknown[] = [];
+
+    for (const field of PAGE_WINDOW_FIELDS) {
+      const window = windows[field];
+      if (!window) continue;
+      selectColumns.push(`length(${field}) AS ${field}_total_chars`);
+      selectColumns.push(`substr(${field}, ?, ?) AS ${field}_window_text`);
+      params.push(window.char_start + 1, window.char_limit);
+    }
+
+    params.push(normalizedSlug);
+    const row = this.database.query(`
+      SELECT ${selectColumns.join(', ')}
+      FROM pages
+      WHERE slug = ?
+    `).get(...sqliteBindings(params)) as Record<string, unknown> | null;
+    return row ? rowToPageProjection(row, windows) : null;
   }
 
   async getPageForUpdate(slug: string): Promise<Page | null> {

@@ -63,6 +63,38 @@ export interface PageInput {
   content_hash?: string;
 }
 
+export type PageWindowField = 'compiled_truth' | 'timeline';
+
+export interface PageTextWindowRequest {
+  char_start?: number;
+  char_limit: number;
+}
+
+export interface PageTextWindow {
+  text: string;
+  char_start: number;
+  total_chars: number;
+  returned_chars: number;
+  next_char_start: number | null;
+  has_more: boolean;
+}
+
+export interface PageProjection {
+  id: number;
+  slug: string;
+  type: PageType;
+  title: string;
+  frontmatter: Record<string, unknown>;
+  content_hash?: string;
+  created_at: Date;
+  updated_at: Date;
+  content_windows: Partial<Record<PageWindowField, PageTextWindow>>;
+}
+
+export interface PageProjectionOptions {
+  windows?: Partial<Record<PageWindowField, PageTextWindowRequest>>;
+}
+
 export interface PageFilters {
   type?: PageType;
   tag?: string;

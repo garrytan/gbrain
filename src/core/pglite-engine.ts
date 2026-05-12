@@ -13,9 +13,14 @@ import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import { buildFrontmatterSearchText } from './markdown.ts';
 import { ensurePageChunks } from './page-chunks.ts';
+import {
+  normalizePageProjectionWindows,
+  PAGE_WINDOW_FIELDS,
+  rowToPageProjection,
+} from './page-projection.ts';
 import { buildPageCentroid } from './services/page-embedding.ts';
 import type {
-  Page, PageInput, PageFilters, PageType,
+  Page, PageInput, PageFilters, PageProjection, PageProjectionOptions, PageType,
   NoteManifestEntry,
   NoteManifestEntryInput,
   NoteManifestFilters,
@@ -221,6 +226,39 @@ export class PGLiteEngine implements BrainEngine {
     );
     if (rows.length === 0) return null;
     return rowToPage(rows[0] as Record<string, unknown>);
+  }
+
+  async getPageProjection(slug: string, options: PageProjectionOptions = {}): Promise<PageProjection | null> {
+    const windows = normalizePageProjectionWindows(options);
+    const selectColumns = [
+      'id',
+      'slug',
+      'type',
+      'title',
+      'frontmatter',
+      'content_hash',
+      'created_at',
+      'updated_at',
+    ];
+    const params: unknown[] = [];
+
+    for (const field of PAGE_WINDOW_FIELDS) {
+      const window = windows[field];
+      if (!window) continue;
+      selectColumns.push(`char_length(${field}) AS ${field}_total_chars`);
+      params.push(window.char_start + 1, window.char_limit);
+      selectColumns.push(`substr(${field}, $${params.length - 1}, $${params.length}) AS ${field}_window_text`);
+    }
+
+    params.push(validateSlug(slug));
+    const { rows } = await this.db.query(
+      `SELECT ${selectColumns.join(', ')}
+       FROM pages
+       WHERE slug = $${params.length}`,
+      params,
+    );
+    if (rows.length === 0) return null;
+    return rowToPageProjection(rows[0] as Record<string, unknown>, windows);
   }
 
   async getPageForUpdate(slug: string): Promise<Page | null> {
