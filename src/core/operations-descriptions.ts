@@ -63,3 +63,17 @@ export const SEARCH_DESCRIPTION =
   "Keyword search using full-text search. For personal/emotional questions, " +
   "prefer get_recent_salience or find_anomalies — they surface activity bursts " +
   "without needing a search term.";
+
+// ──────────────────────────────────────────────────────────────────────────────
+// v0.33.0 — contradiction probe MCP surface (M3)
+// ──────────────────────────────────────────────────────────────────────────────
+
+export const FIND_CONTRADICTIONS_DESCRIPTION =
+  "v0.33.0 — return suspected-contradiction findings from the most recent " +
+  "`gbrain eval suspected-contradictions` probe run, optionally filtered by slug " +
+  "and/or severity. Use this when the user asks 'what's inconsistent in my " +
+  "brain', 'show me contradictions about Acme', 'high-severity issues only', or " +
+  "wants to act on the probe's findings without re-running it. Returns " +
+  "{contradictions: [{a, b, severity, axis, confidence, resolution_command}]}. " +
+  "Reads the cached run row — does NOT trigger a new probe; users run " +
+  "`gbrain eval suspected-contradictions` for that.";

@@ -1490,6 +1490,86 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   }
 
+  // 11a-bis-3. contradictions probe summary (v0.33.0 — M1).
+  //
+  // Reads the most recent eval_contradictions_runs row and surfaces:
+  //   - headline count + severity breakdown
+  //   - paste-ready resolution commands per HIGH-severity finding
+  //   - Wilson CI band so the user knows whether the headline is trustworthy
+  // Skipped (status: 'ok') when the table is empty — the probe simply hasn't
+  // run yet, which is normal on a fresh install.
+  progress.heartbeat('contradictions');
+  try {
+    const recent = await engine.loadContradictionsTrend(7);
+    if (recent.length === 0) {
+      checks.push({
+        name: 'contradictions',
+        status: 'ok',
+        message: 'No probe runs in the last 7 days. Run `gbrain eval suspected-contradictions --query "..." --top-k 5` to populate.',
+      });
+    } else {
+      const latest = recent[0];
+      const report = latest.report_json as Record<string, unknown> | null;
+      const perQuery = (report?.per_query as Array<{
+        contradictions: Array<{
+          severity: 'low' | 'medium' | 'high';
+          axis: string;
+          a: { slug: string };
+          b: { slug: string };
+          resolution_command: string;
+        }>;
+      }> | undefined) ?? [];
+      let high = 0, medium = 0, low = 0;
+      const highFindings: Array<{ a: string; b: string; axis: string; cmd: string }> = [];
+      for (const q of perQuery) {
+        for (const c of q.contradictions) {
+          if (c.severity === 'high') {
+            high++;
+            highFindings.push({ a: c.a.slug, b: c.b.slug, axis: c.axis, cmd: c.resolution_command });
+          } else if (c.severity === 'medium') medium++;
+          else low++;
+        }
+      }
+      const total = high + medium + low;
+      if (total === 0) {
+        checks.push({
+          name: 'contradictions',
+          status: 'ok',
+          message: `Latest probe run (${latest.ran_at.slice(0, 10)}) found no suspected contradictions across ${latest.queries_evaluated} queries.`,
+        });
+      } else {
+        const ciLow = (latest.wilson_ci_lower * 100).toFixed(0);
+        const ciHigh = (latest.wilson_ci_upper * 100).toFixed(0);
+        const lines = [
+          `${total} suspected contradictions (high=${high} medium=${medium} low=${low}) detected by latest probe — Wilson CI 95%: ${ciLow}-${ciHigh}%.`,
+        ];
+        for (const f of highFindings.slice(0, 3)) {
+          lines.push(`  HIGH: ${f.a} vs ${f.b}${f.axis ? ' — ' + f.axis : ''}`);
+          lines.push(`    → ${f.cmd}`);
+        }
+        if (highFindings.length > 3) {
+          lines.push(`  …and ${highFindings.length - 3} more — see \`gbrain eval suspected-contradictions review\``);
+        }
+        checks.push({
+          name: 'contradictions',
+          status: high > 0 ? 'warn' : 'ok',
+          message: lines.join('\n  '),
+        });
+      }
+    }
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42P01') {
+      checks.push({ name: 'contradictions', status: 'ok', message: 'Skipped (eval_contradictions_runs table unavailable — apply migrations to enable)' });
+    } else {
+      checks.push({
+        name: 'contradictions',
+        status: 'warn',
+        message: `Could not read contradictions trend: ${(err as Error)?.message ?? String(err)}`,
+      });
+    }
+  }
+
   // 11a-bis-2. facts_extraction_health (v0.31.2 — codex P1 #3).
   //
   // Mirrors the eval_capture check shape but reads facts:absorb rows
