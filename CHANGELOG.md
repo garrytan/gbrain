@@ -4,6 +4,15 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP stdio backpressure work now has an explicit validation boundary.**
+  The current PR evidence covers MBrain's own stdio frame budgeting,
+  bounded reads, canonical writes, and durable derived-worker behavior. The
+  repository does not include the Hermes/OpenClaw + Telegram dual-channel
+  harness, so Telegram heartbeat p95/max-delay validation remains external and
+  is not proven by these tests alone.
+
 ## [0.10.3] - 2026-05-09
 
 ### Changed

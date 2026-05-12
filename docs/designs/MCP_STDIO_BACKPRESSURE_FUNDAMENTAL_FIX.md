@@ -432,9 +432,14 @@ Implementation status:
   mutating foreground MCP calls are active or queued, releases a claimed job
   before refresh if foreground pressure appears after claim, and
   restart/burst-yield/foreground-pressure tests prove durable drain behavior.
-- Steps 7-8 remain future work. The repository still does not prove the
-  dual-channel Telegram heartbeat behavior or source-ref/search optimization
-  impact with benchmark evidence.
+- Step 7 is implemented as an explicit validation boundary: this repository
+  does not contain the Hermes/OpenClaw + Telegram harness, so it proves the
+  MBrain stdio, bounded-read, canonical-write, and derived-worker side of the
+  stall only. Full Telegram heartbeat p95/max-delay validation remains an
+  external harness requirement.
+- Step 8 remains future work. Source-ref indexing and search snippet
+  optimization should only be included if benchmark evidence shows they affect
+  the observed Hermes/Telegram stall path.
   The foreground-pressure signal is currently process-local to one MCP server;
   multi-process deployments should run a single derived worker per backing
   store, or set `MBRAIN_DERIVED_WORKER=0` on additional servers, until DB-wide
