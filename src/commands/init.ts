@@ -664,6 +664,68 @@ function readLine(prompt: string): Promise<string> {
 }
 
 /**
+ * v0.32.3 [CDX-9]: readLine + EOF detection + default fallback + timeout.
+ *
+ * The legacy readLine hangs forever if stdin closes (EOF mid-prompt) or
+ * the user never types anything. The mode-picker plan calls out "TTY
+ * closes mid-prompt → defaults to balanced" as a failure path, but the
+ * raw helper can't implement that contract.
+ *
+ * This wrapper:
+ *   - Resolves to `defaultValue` if stdin emits 'end' before 'data'
+ *   - Resolves to `defaultValue` if `timeoutMs` elapses with no input
+ *   - Resolves to the typed value (trimmed) on normal data event
+ *
+ * `defaultValue` is returned VERBATIM when the user just hits Enter (empty
+ * data). That's the affordance that makes `Mode [balanced]: _` work.
+ *
+ * Non-TTY stdin (pipe, scripted init) returns defaultValue immediately
+ * without printing the prompt, so e2e tests don't hang.
+ */
+export function readLineSafe(
+  prompt: string,
+  defaultValue: string,
+  timeoutMs: number = 60_000,
+): Promise<string> {
+  return new Promise((resolve) => {
+    // Non-TTY (pipe, redirect, scripted init) → no prompt, no wait.
+    if (!process.stdin.isTTY) {
+      resolve(defaultValue);
+      return;
+    }
+
+    process.stdout.write(prompt);
+    process.stdin.setEncoding('utf-8');
+
+    let settled = false;
+    const finish = (value: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      process.stdin.removeListener('data', onData);
+      process.stdin.removeListener('end', onEnd);
+      try { process.stdin.pause(); } catch { /* swallow */ }
+      resolve(value);
+    };
+
+    const onData = (chunk: Buffer | string) => {
+      const raw = chunk.toString().trim();
+      finish(raw.length === 0 ? defaultValue : raw);
+    };
+    const onEnd = () => finish(defaultValue);
+
+    const timer = setTimeout(() => {
+      process.stdout.write(`\n[timeout after ${Math.round(timeoutMs / 1000)}s, using default: ${defaultValue}]\n`);
+      finish(defaultValue);
+    }, timeoutMs);
+
+    process.stdin.once('data', onData);
+    process.stdin.once('end', onEnd);
+    process.stdin.resume();
+  });
+}
+
+/**
  * Detect GStack installation across known host paths.
  * Uses gstack-global-discover if available, falls back to path checking.
  */
