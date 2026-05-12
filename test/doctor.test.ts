@@ -101,6 +101,18 @@ describe('doctor command', () => {
     expect(source).toMatch(/table:\s*'files'.*col:\s*'metadata'/);
   });
 
+  test('effective_date_health ignores empty frontmatter date fields', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    const block = source.slice(
+      source.indexOf('// 11a-2. effective_date_health'),
+      source.indexOf('// 11a-3.'),
+    );
+    expect(block.length).toBeGreaterThan(0);
+    expect(block).toContain("NULLIF(frontmatter->>'event_date', '') IS NOT NULL");
+    expect(block).toContain("NULLIF(frontmatter->>'date', '') IS NOT NULL");
+    expect(block).toContain("NULLIF(frontmatter->>'published', '') IS NOT NULL");
+  });
+
   // v0.31.2 — facts_extraction_health check added in PR1 commit 12.
   // Reads ingest_log rows with source_type='facts:absorb' (written by
   // writeFactsAbsorbLog from src/core/facts/absorb-log.ts), groups by
