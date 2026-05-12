@@ -2706,8 +2706,8 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 55,
-    name: 'edges_backfilled_at_v0_33_2',
-    // v0.33.2 W0c — resumable symbol-resolution backfill watermark.
+    name: 'edges_backfilled_at_v0_33_3',
+    // v0.33.3 W0c — resumable symbol-resolution backfill watermark.
     //
     // The within-file two-pass resolver (src/core/chunkers/symbol-resolver.ts)
     // walks every content_chunks row that has unresolved edges

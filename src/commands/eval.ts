@@ -46,7 +46,7 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     process.exit(await runEvalCrossModal(args.slice(1)));
   }
   if (sub === 'code-retrieval') {
-    // v0.33.2 pre-w0 — code-retrieval baseline / gate harness. Needs a brain
+    // v0.33.3 pre-w0 — code-retrieval baseline / gate harness. Needs a brain
     // for the baseline (BaselineStrategy calls hybridSearch); --compare
     // mode reads JSON only but the engine is already connected by this
     // dispatcher.

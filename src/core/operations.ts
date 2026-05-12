@@ -2971,7 +2971,7 @@ export const operations: Operation[] = [
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing
   find_experts,
-  // v0.33.2: Cathedral III code-intelligence (MCP-exposed; were CLI_ONLY pre-v0.33.2)
+  // v0.33.3: Cathedral III code-intelligence (MCP-exposed; were CLI_ONLY pre-v0.33.3)
   code_callers, code_callees, code_def, code_refs,
 ];
 

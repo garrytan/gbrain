@@ -104,7 +104,7 @@ describeE2E('E2E: runCycle against real Postgres', () => {
     //   v0.29   = 10 (added `recompute_emotional_weight` between patterns and embed)
     //   v0.31   = 11 (added `consolidate` between recompute_emotional_weight and embed)
     //   v0.32.2 = 12 (added `extract_facts` between extract and patterns)
-    //   v0.33.2 = 13 (added `resolve_symbol_edges` between extract_facts and patterns)
+    //   v0.33.3 = 13 (added `resolve_symbol_edges` between extract_facts and patterns)
     expect(report.phases.length).toBe(13);
 
     // Nothing got written.
