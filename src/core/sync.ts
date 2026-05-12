@@ -71,6 +71,7 @@ const CODE_EXTENSIONS = new Set<string>([
   '.css',
   '.html', '.htm',
   '.vue',
+  '.astro',
   '.json',
   '.yaml', '.yml',
   '.toml',

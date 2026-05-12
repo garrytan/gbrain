@@ -60,6 +60,7 @@ const FENCE_TAG_TO_PSEUDO_PATH: Record<string, string> = {
   css: 'fence.css',
   html: 'fence.html',
   vue: 'fence.vue',
+  astro: 'fence.astro',
   json: 'fence.json',
   yaml: 'fence.yaml', yml: 'fence.yaml',
   toml: 'fence.toml',
