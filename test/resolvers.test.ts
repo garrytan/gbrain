@@ -620,3 +620,47 @@ describe('x_handle_to_tweet resolver', () => {
     expect(query).toContain('words');
   });
 });
+
+describe('resolver schema invariants', () => {
+  // Strict JSON Schema validators (Gemini Pro tool-call API is the canonical
+  // offender) reject any { type: 'array' } that lacks an items field. Resolver
+  // schemas are NOT covered by buildToolDefs but ride along when resolvers are
+  // exposed via an MCP/tool bridge, so they need the same invariant.
+  function findArraysMissingItems(node: unknown, path: string, acc: string[]): void {
+    if (!node || typeof node !== 'object') return;
+    const obj = node as Record<string, unknown>;
+    if (obj.type === 'array' && !('items' in obj)) {
+      acc.push(path);
+    }
+    for (const [k, v] of Object.entries(obj)) {
+      findArraysMissingItems(v, `${path}.${k}`, acc);
+    }
+  }
+
+  test('xHandleToTweetResolver outputSchema has items on every array', () => {
+    const missing: string[] = [];
+    findArraysMissingItems(
+      xHandleToTweetResolver.outputSchema,
+      'xHandleToTweetResolver.outputSchema',
+      missing,
+    );
+    expect(missing).toEqual([]);
+  });
+
+  test('xHandleToTweetResolver inputSchema has items on every array', () => {
+    const missing: string[] = [];
+    findArraysMissingItems(
+      xHandleToTweetResolver.inputSchema,
+      'xHandleToTweetResolver.inputSchema',
+      missing,
+    );
+    expect(missing).toEqual([]);
+  });
+
+  test('urlReachableResolver schemas have items on every array', () => {
+    const missing: string[] = [];
+    findArraysMissingItems(urlReachableResolver.inputSchema, 'urlReachableResolver.inputSchema', missing);
+    findArraysMissingItems(urlReachableResolver.outputSchema, 'urlReachableResolver.outputSchema', missing);
+    expect(missing).toEqual([]);
+  });
+});
