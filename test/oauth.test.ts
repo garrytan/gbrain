@@ -131,6 +131,46 @@ describe('client registration', () => {
       sql`INSERT INTO oauth_clients (client_id, client_name, scope) VALUES (${clientId}, ${'dup'}, ${'read'})`,
     ).rejects.toThrow();
   });
+
+  // RFC 7591 §2: a DCR client registering with token_endpoint_auth_method "none"
+  // is a public client and MUST NOT receive a client_secret. Before this fix,
+  // gbrain unconditionally generated a secret, which caused the MCP SDK's
+  // clientAuth middleware to demand client_secret_post auth at /token and
+  // reject every PKCE-only public-client exchange (Claude Code, Cursor, etc.).
+  test('DCR with token_endpoint_auth_method "none" issues no client_secret', async () => {
+    const registered = await provider.clientsStore.registerClient({
+      client_name: 'public-pkce-client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code', 'refresh_token'],
+      scope: 'read',
+      token_endpoint_auth_method: 'none',
+    });
+
+    expect(registered.client_id).toStartWith('gbrain_cl_');
+    expect(registered.client_secret).toBeUndefined();
+
+    const stored = await provider.clientsStore.getClient(registered.client_id);
+    expect(stored).toBeDefined();
+    // Postgres NULL surfaces as null on read; MCP SDK's clientAuth middleware
+    // uses a truthy check (`if (client.client_secret)`), so falsy is the
+    // contract that matters for the PKCE-only flow to succeed.
+    expect(stored!.client_secret).toBeFalsy();
+    expect(stored!.token_endpoint_auth_method).toBe('none');
+  });
+
+  test('DCR without token_endpoint_auth_method defaults to confidential client', async () => {
+    const registered = await provider.clientsStore.registerClient({
+      client_name: 'confidential-default',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+    });
+
+    expect(registered.client_secret).toStartWith('gbrain_cs_');
+
+    const stored = await provider.clientsStore.getClient(registered.client_id);
+    expect(stored!.client_secret).toBeDefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
