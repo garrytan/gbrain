@@ -805,6 +805,68 @@ permission to run them — see the "run without asking" rule above.
 Never leave `gbrain-test-pg` running. If you find a stale one from a previous run,
 stop and remove it before starting a new one.
 
+## Search Mode (v0.32.3)
+
+GBrain ships three named search modes that bundle the search-lite knobs from
+PR #897 into a single config key. Pick one at install time; the rest of the
+project resolves through `src/core/search/mode.ts`.
+
+| Knob                          | `conservative` | `balanced` | `tokenmax`     |
+|-------------------------------|----------------|------------|----------------|
+| `cache.enabled`               | true           | true       | true           |
+| `cache.similarity_threshold`  | 0.92           | 0.92       | 0.92           |
+| `cache.ttl_seconds`           | 3600           | 3600       | 3600           |
+| `intentWeighting`             | true           | true       | true           |
+| `tokenBudget`                 | **4000**       | **12000**  | **off**        |
+| `expansion` (LLM multi-query) | false          | false      | **true**       |
+| `searchLimit` default         | 10             | 25         | 50             |
+
+**Resolution chain** (matches the v0.31.12 model-tier pattern at
+`src/core/model-config.ts:resolveModel`):
+
+    per-call SearchOpts → per-key config (search.cache.enabled, …) →
+      MODE_BUNDLES[search.mode] → MODE_BUNDLES.balanced (fallback)
+
+Mode resolution lives in **bare `hybridSearch`** (NOT just the cached wrapper)
+per `[CDX-5+6]` in `~/.claude/plans/lets-take-a-look-validated-parrot.md` — so
+`gbrain eval replay` and `gbrain eval longmemeval` test the same mode-affected
+behavior as the production `query` op.
+
+**Cache-key contamination hotfix `[CDX-4]`:** migration v56 added a
+`knobs_hash` column to `query_cache`. The lookup filter is now
+`WHERE source_id = $ AND knobs_hash = $ AND embedding similarity < $` so a
+tokenmax write (expansion=on, limit=50) can't be served to a conservative
+read.
+
+**Three CLI surfaces:**
+
+    gbrain search modes              # what is running, with per-knob attribution
+    gbrain search modes --reset      # clear search.* overrides (mode bundle wins)
+    gbrain search stats [--days N]   # cache hit rate, intent mix, budget drops
+    gbrain search tune [--apply]     # data-driven recommendations
+
+The install picker fires inside `gbrain init` AFTER `engine.initSchema()`
+(non-TTY auto-selects). The upgrade banner fires once via `runPostUpgrade`
+in `src/commands/upgrade.ts`, gated by `search.mode_upgrade_notice_shown`.
+
+## Eval discipline (v0.32.3)
+
+Every metric printed by any `gbrain eval *` or `gbrain search stats` command
+resolves through `src/core/eval/metric-glossary.ts` so industry terms
+(`P@k`, `nDCG@k`, `MRR`, `Jaccard@k`) carry a plain-English line in human
+output and a `_meta.metric_glossary` block in JSON output (one block per
+response per `[CDX-25]`, NOT sibling `_gloss` fields).
+
+The full methodology — datasets, sample selection, pre-registered
+expectations, threats to validity, paired-bootstrap + Bonferroni p-value
+discipline `[CDX-14]` — lives in `docs/eval/SEARCH_MODE_METHODOLOGY.md`.
+Auto-regenerated `docs/eval/METRIC_GLOSSARY.md` is CI-guarded against
+drift (`scripts/check-eval-glossary-fresh.sh`).
+
+Per-run records land at `<repo>/.gbrain-evals/eval-results.jsonl` per
+`[CDX-23]`. The user's personal `~/.gbrain` brain is NEVER touched —
+audit trail lives in the source repo's git history.
+
 ## Skills
 
 Read the skill files in `skills/` before doing brain operations. GBrain ships 29 skills
@@ -1752,6 +1814,8 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Research", "track", "extract from email", "investor updates", "donations" | `skills/data-research/SKILL.md` |
 | Share a brain page as a link | `skills/publish/SKILL.md` |
 | "validate frontmatter", "check frontmatter", "fix frontmatter", "frontmatter audit", "brain lint" | `skills/frontmatter-guard/SKILL.md` |
+| "what search mode", "is my cache hot", "tune my retrieval", "compare search modes", "clear search overrides" | `gbrain search modes/stats/tune` directly. See `skills/conventions/search-modes.md` |
+| "eval results", "search benchmark", "haters-immune methodology", "regression check on retrieval" | `gbrain eval run-all` / `gbrain eval compare`. See `docs/eval/SEARCH_MODE_METHODOLOGY.md` |
 
 ## Content & media ingestion
 
@@ -1909,9 +1973,20 @@ the full doc map, use `llms.txt` at the same URL root.
 ```bash
 git clone https://github.com/garrytan/gbrain.git && cd gbrain && bun install && bun link
 gbrain init                     # local brain, ready in 2 seconds
+                                # picks a search mode (conservative / balanced / tokenmax)
 gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
+gbrain search modes             # see the active search mode + per-knob attribution
+gbrain search stats             # cache hit rate + intent mix after some real usage
 ```
+
+**v0.32.3 — named search modes.** `gbrain init` asks once which mode fits
+your workload: `conservative` (4K token budget, no LLM expansion — cheapest),
+`balanced` (12K budget, no expansion — Sonnet-tier sweet spot), or `tokenmax`
+(no budget, expansion ON — for frontier models). Auto-suggests based on your
+configured `models.tier.subagent`. Non-TTY installs auto-pick `balanced` and
+print a hint pointing at `gbrain config set search.mode <m>`. Methodology +
+eval results live at [docs/eval/SEARCH_MODE_METHODOLOGY.md](docs/eval/SEARCH_MODE_METHODOLOGY.md).
 
 **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
 postinstall hook on global installs, so schema migrations never run and the CLI
