@@ -16,9 +16,43 @@ import { embed } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
 import { autoDetectDetail, classifyQuery } from './query-intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
+import { buildVisibilityClause } from './sql-ranking.ts';
 
-const RRF_K = 60;
+const RRF_K = 20;
 const COMPILED_TRUTH_BOOST = 2.0;
+/**
+ * Graph-hop rerank: after dedup, extract `[text](slug)` markdown wikilinks
+ * from the top-K winning chunks and inject the linked pages as additional
+ * candidates with score = parent_score * GRAPH_HOP_DECAY. Heuristic-free
+ * (multilingual-safe regex, no slug-prefix branching, no entity dictionary).
+ * Targets the dominant failure mode where the gold page is mentioned as a
+ * wikilink inside a winning container chunk but never surfaces in top-k.
+ */
+const GRAPH_HOP_TOPK = 6;
+const GRAPH_HOP_DECAY = 0.55;
+/**
+ * Rank-aware decay range: anchor at rank 0 contributes injected score with
+ * decay = GRAPH_HOP_DECAY + GRAPH_HOP_RANK_BONUS; the decay falls linearly
+ * to GRAPH_HOP_DECAY for the last anchor in the top-K window. Same DB cost,
+ * pure score-shaping.
+ */
+const GRAPH_HOP_RANK_BONUS = 0.2;
+const GRAPH_HOP_MAX_INJECT = 15;
+/**
+ * Depth-2 traversal cap. After depth-1 candidates are hydrated, scan their
+ * chunk_text for further wikilinks and inject those as depth-2 candidates
+ * with compounded decay. Capped separately so link-rich pages can't dominate
+ * the merged result set. Best-effort: depth-2 SELECT failures fall through
+ * to depth-1 result without breaking base retrieval.
+ */
+const GRAPH_HOP_DEPTH2_MAX_INJECT = 10;
+/**
+ * Depth-2 base decay. Compounded with the depth-1 decay already baked into
+ * each depth-1 anchor's score. Mid-range: lets depth-2 candidates compete
+ * with low-rank depth-1, but stays below high-rank depth-1 + originals.
+ */
+const GRAPH_HOP_DEPTH2_DECAY = 0.7;
+const GRAPH_HOP_LINK_RE = /\[[^\]\n]+\]\(([^)\s#]+)\)/g;
 /**
  * Backlink boost coefficient. Score is multiplied by (1 + BACKLINK_BOOST_COEF * log(1 + count)).
  * - 0 backlinks: factor = 1.0 (no boost).
@@ -405,8 +439,203 @@ export async function hybridSearch(
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
+  // Graph-hop rerank: surface pages mentioned as wikilinks inside winning
+  // chunks. Best-effort; failures fall through to deduped.
+  let withGraphHop = deduped;
+  try {
+    withGraphHop = await graphHopRerank(engine, deduped, opts?.sourceId);
+  } catch {
+    // Non-fatal: missing tables or transient DB error must not break base retrieval.
+  }
+
+  // Query-token overlap rerank: when same-prefix-family pages tie on RRF
+  // (e.g. "Demo Day W34" returns 13 demo-day pages), boost results whose
+  // chunk_text contains more of the query's distinct word-tokens. Pure
+  // multiplicative score-shaping. Multilingual-safe via Unicode word
+  // boundaries (\p{L}+); no English stopword list, no entity dictionary.
+  applyQueryTokenOverlapBoost(withGraphHop, query);
+  withGraphHop.sort((a, b) => b.score - a.score);
+
   emitMeta({ vector_enabled: true, detail_resolved: detailResolved, expansion_applied: expansionApplied });
-  return deduped.slice(offset, offset + limit);
+  return withGraphHop.slice(offset, offset + limit);
+}
+
+/**
+ * Multiply each result's score by (1 + QTO_FACTOR * matched / total) where
+ * matched counts how many of the query's distinct word-tokens appear in the
+ * result's chunk_text. \p{L}+ tokenization is multilingual-safe.
+ */
+const QTO_FACTOR = 0.15;
+const QTO_TOKEN_RE = /\p{L}+/gu;
+function applyQueryTokenOverlapBoost(results: SearchResult[], query: string): void {
+  const queryTokens = new Set<string>();
+  for (const m of (query.match(QTO_TOKEN_RE) ?? [])) {
+    if (m.length >= 2) queryTokens.add(m.toLowerCase());
+  }
+  if (queryTokens.size === 0) return;
+  for (const r of results) {
+    const text = (r.chunk_text || '').toLowerCase();
+    let matched = 0;
+    for (const t of queryTokens) {
+      if (text.includes(t)) matched++;
+    }
+    if (matched > 0) {
+      const factor = 1 + QTO_FACTOR * (matched / queryTokens.size);
+      r.score *= factor;
+    }
+  }
+}
+
+/**
+ * Hydrate a slug list against `pages` + `content_chunks`. Returns one row
+ * per slug (DISTINCT ON p.slug), scored from `candidateScore`. Pure DB I/O —
+ * no scoring decisions. Used by both depth-1 and depth-2 of graphHopRerank.
+ */
+async function hydrateSlugs(
+  engine: BrainEngine,
+  candidateScore: Map<string, number>,
+  sourceId?: string,
+  cap = GRAPH_HOP_MAX_INJECT,
+): Promise<SearchResult[]> {
+  if (candidateScore.size === 0) return [];
+  const slugSet = new Set<string>();
+  for (const k of candidateScore.keys()) {
+    const idx = k.indexOf('::');
+    slugSet.add(idx === -1 ? k : k.slice(idx + 2));
+  }
+  const slugs = [...slugSet].slice(0, cap * 4);
+  const sourceFilter = sourceId ? ' AND p.source_id = $2' : '';
+  const params: unknown[] = [slugs];
+  if (sourceId) params.push(sourceId);
+  const visibility = buildVisibilityClause('p', 's');
+  const rows = await engine.executeRaw<{
+    slug: string; page_id: number; title: string; type: string; source_id: string;
+    chunk_id: number; chunk_index: number; chunk_text: string; chunk_source: string;
+  }>(
+    `SELECT DISTINCT ON (p.slug) p.slug, p.id as page_id, p.title, p.type, p.source_id,
+            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
+       FROM pages p
+       JOIN content_chunks cc ON cc.page_id = p.id
+       JOIN sources s ON s.id = p.source_id
+      WHERE p.slug = ANY($1::text[])${sourceFilter} ${visibility}
+      ORDER BY p.slug, cc.chunk_index ASC`,
+    params,
+  );
+  if (rows.length === 0) return [];
+  return rows.map(r => {
+    const key = `${r.source_id ?? 'default'}::${r.slug}`;
+    return {
+      slug: r.slug,
+      page_id: r.page_id,
+      title: r.title,
+      type: r.type as import('../types.ts').PageType,
+      chunk_text: r.chunk_text,
+      chunk_source: r.chunk_source as 'compiled_truth' | 'timeline',
+      chunk_id: r.chunk_id,
+      chunk_index: r.chunk_index,
+      score: candidateScore.get(key) ?? 0.001,
+      stale: false,
+      source_id: r.source_id,
+    };
+  });
+}
+
+/**
+ * Extract wikilinks from a list of anchor results. Returns a key → score map
+ * where key = `${source_id}::${slug}`. Skips http/mailto links, normalizes
+ * leading `./` and trailing `.md`. Multilingual-safe regex (no entity dicts,
+ * no slug-prefix branching). Ranking-aware: anchor at index 0 contributes
+ * the highest decay; the last anchor contributes the base decay.
+ */
+function extractWikilinkCandidates(
+  anchors: SearchResult[],
+  existing: Set<string>,
+  baseDecay: number,
+): Map<string, number> {
+  const candidateScore = new Map<string, number>();
+  if (anchors.length === 0) return candidateScore;
+  const rankSpan = Math.max(1, anchors.length - 1);
+  for (let i = 0; i < anchors.length; i++) {
+    const a = anchors[i];
+    const text = a.chunk_text || '';
+    const decay = baseDecay + GRAPH_HOP_RANK_BONUS * (1 - i / rankSpan);
+    GRAPH_HOP_LINK_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = GRAPH_HOP_LINK_RE.exec(text)) !== null) {
+      const target = m[1];
+      if (!target || target.startsWith('http://') || target.startsWith('https://') || target.startsWith('mailto:')) continue;
+      const slug = target.replace(/^\.?\//, '').replace(/\.md$/i, '').split('#')[0].trim();
+      if (!slug || slug.includes(' ')) continue;
+      const key = `${a.source_id ?? 'default'}::${slug}`;
+      if (existing.has(key)) continue;
+      const injected = a.score * decay;
+      const prev = candidateScore.get(key);
+      if (prev === undefined || injected > prev) candidateScore.set(key, injected);
+    }
+  }
+  return candidateScore;
+}
+
+/**
+ * Two-pass graph-hop rerank.
+ *
+ * Pass 1 (depth-1): extract `[text](slug)` markdown wikilinks from the top-K
+ * winning chunks, inject linked pages with score = anchor * rank_aware_decay.
+ *
+ * Pass 2 (depth-2): scan the hydrated depth-1 chunks' chunk_text for further
+ * wikilinks and inject those with score = depth1_score * GRAPH_HOP_DECAY
+ * (compounded). Targets the dominant remaining failure shape — "Who invested
+ * in X?" where the gold person is two graph hops away (company → deal →
+ * investor). Best-effort: depth-2 SELECT failures fall through to the
+ * depth-1 result so base retrieval never breaks.
+ *
+ * Heuristic-free, multilingual-safe (regex only, no slug-prefix branching,
+ * no entity dictionary).
+ */
+async function graphHopRerank(
+  engine: BrainEngine,
+  results: SearchResult[],
+  sourceId?: string,
+): Promise<SearchResult[]> {
+  if (results.length === 0) return results;
+
+  // ---- Depth 1 ----
+  const anchorsD1 = results.slice(0, GRAPH_HOP_TOPK);
+  const existing = new Set(results.map(r => `${r.source_id ?? 'default'}::${r.slug}`));
+  const d1Candidates = extractWikilinkCandidates(anchorsD1, existing, GRAPH_HOP_DECAY);
+  if (d1Candidates.size === 0) return results;
+
+  const d1Hydrated = await hydrateSlugs(engine, d1Candidates, sourceId, GRAPH_HOP_MAX_INJECT);
+  if (d1Hydrated.length === 0) return results;
+  d1Hydrated.sort((a, b) => b.score - a.score);
+  const d1Capped = d1Hydrated.slice(0, GRAPH_HOP_MAX_INJECT);
+
+  // ---- Depth 2 (best-effort) ----
+  // Scan the hydrated depth-1 chunks for further wikilinks and inject them
+  // as depth-2 candidates with compounded decay. Wrap in try/catch so DB
+  // errors fall through to the depth-1 result without breaking retrieval.
+  let d2Capped: SearchResult[] = [];
+  try {
+    const existingForD2 = new Set(existing);
+    for (const r of d1Capped) {
+      existingForD2.add(`${r.source_id ?? 'default'}::${r.slug}`);
+    }
+    // Use the hydrated depth-1 chunks as anchors. Their `score` already
+    // carries the depth-1 decay, so extractWikilinkCandidates compounds it.
+    const d2Candidates = extractWikilinkCandidates(d1Capped, existingForD2, GRAPH_HOP_DEPTH2_DECAY);
+    if (d2Candidates.size > 0) {
+      const d2Hydrated = await hydrateSlugs(engine, d2Candidates, sourceId, GRAPH_HOP_DEPTH2_MAX_INJECT);
+      d2Hydrated.sort((a, b) => b.score - a.score);
+      d2Capped = d2Hydrated.slice(0, GRAPH_HOP_DEPTH2_MAX_INJECT);
+    }
+  } catch {
+    // Non-fatal: depth-2 missing data must not break depth-1 retrieval.
+    d2Capped = [];
+  }
+
+  const merged = [...results, ...d1Capped, ...d2Capped];
+  merged.sort((a, b) => b.score - a.score);
+  return merged;
 }
 
 /**
