@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { buildSyncManifest, isSyncable, pathToSlug } from '../src/core/sync.ts';
+import { buildGitInvocation } from '../src/commands/sync.ts';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
@@ -463,5 +464,40 @@ describe('sync regression — #132 nested transaction deadlock', () => {
       const line = prelude.slice(lineStart, prelude.indexOf('\n', lastTxIdx));
       expect(line.trim().startsWith('//')).toBe(true);
     }
+  });
+});
+
+describe('git() helper invocation order (CJK wave v0.32.7)', () => {
+  // The git CLI requires `-c key=val` to appear BEFORE the subcommand,
+  // and `-C path` BEFORE the subcommand too. Pin the emit order so a future
+  // refactor can't silently put `-c` after the subcommand and break CJK
+  // path emission.
+
+  test('core.quotepath=false is always emitted first', () => {
+    const argv = buildGitInvocation('/repo', ['diff', '--name-status']);
+    expect(argv).toEqual([
+      '-c', 'core.quotepath=false',
+      '-C', '/repo',
+      'diff', '--name-status',
+    ]);
+  });
+
+  test('extra configs append AFTER quotepath, BEFORE -C and subcommand', () => {
+    const argv = buildGitInvocation('/repo', ['diff'], ['foo=bar', 'baz=qux']);
+    expect(argv).toEqual([
+      '-c', 'core.quotepath=false',
+      '-c', 'foo=bar',
+      '-c', 'baz=qux',
+      '-C', '/repo',
+      'diff',
+    ]);
+  });
+
+  test('empty args produces a valid invocation', () => {
+    const argv = buildGitInvocation('/repo', []);
+    expect(argv).toEqual([
+      '-c', 'core.quotepath=false',
+      '-C', '/repo',
+    ]);
   });
 });

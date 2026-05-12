@@ -162,8 +162,24 @@ export interface SyncOpts {
   skipLock?: boolean;
 }
 
-function git(repoPath: string, ...args: string[]): string {
-  return execFileSync('git', ['-C', repoPath, ...args], {
+/**
+ * git CLI helper.
+ *
+ * `configs` flags are emitted as `-c key=val` pairs BEFORE `-C repoPath` and
+ * BEFORE the subcommand. `core.quotepath=false` is always emitted first so CJK
+ * (and other non-ASCII) paths arrive as UTF-8 in `diff --name-status` and
+ * sibling commands. Callers that need additional git config should pass via
+ * the `configs` parameter; never inline `-c` into `args`.
+ *
+ * Exported for `test/sync.test.ts` invariant assertion only.
+ */
+export function buildGitInvocation(repoPath: string, args: string[], configs: string[] = []): string[] {
+  const cfg = ['core.quotepath=false', ...configs].flatMap(c => ['-c', c]);
+  return [...cfg, '-C', repoPath, ...args];
+}
+
+function git(repoPath: string, args: string[], configs: string[] = []): string {
+  return execFileSync('git', buildGitInvocation(repoPath, args, configs), {
     encoding: 'utf-8',
     timeout: 30000,
   }).trim();
@@ -171,7 +187,7 @@ function git(repoPath: string, ...args: string[]): string {
 
 function isDetachedHead(repoPath: string): boolean {
   try {
-    git(repoPath, 'symbolic-ref', '--quiet', 'HEAD');
+    git(repoPath, ['symbolic-ref', '--quiet', 'HEAD']);
     return false;
   } catch {
     return true;
@@ -183,8 +199,8 @@ function unique<T>(items: T[]): T[] {
 }
 
 function buildDetachedWorkingTreeManifest(repoPath: string): SyncManifest {
-  const manifest = buildSyncManifest(git(repoPath, 'diff', '--name-status', '-M', 'HEAD'));
-  const untracked = git(repoPath, 'ls-files', '--others', '--exclude-standard')
+  const manifest = buildSyncManifest(git(repoPath, ['diff', '--name-status', '-M', 'HEAD']));
+  const untracked = git(repoPath, ['ls-files', '--others', '--exclude-standard'])
     .split('\n')
     .filter(line => line.length > 0);
 
@@ -410,7 +426,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // Get current HEAD
   let headCommit: string;
   try {
-    headCommit = git(repoPath, 'rev-parse', 'HEAD');
+    headCommit = git(repoPath, ['rev-parse', 'HEAD']);
   } catch {
     throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
   }
@@ -421,7 +437,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // Ancestry validation: if lastCommit exists, verify it's still in history
   if (lastCommit) {
     try {
-      git(repoPath, 'cat-file', '-t', lastCommit);
+      git(repoPath, ['cat-file', '-t', lastCommit]);
     } catch {
       console.error(`Sync anchor commit ${lastCommit.slice(0, 8)} missing (force push?). Running full reimport.`);
       return performFullSync(engine, repoPath, headCommit, opts);
@@ -429,7 +445,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
     // Verify ancestry
     try {
-      git(repoPath, 'merge-base', '--is-ancestor', lastCommit, headCommit);
+      git(repoPath, ['merge-base', '--is-ancestor', lastCommit, headCommit]);
     } catch {
       console.error(`Sync anchor ${lastCommit.slice(0, 8)} is not an ancestor of HEAD. Running full reimport.`);
       return performFullSync(engine, repoPath, headCommit, opts);
@@ -482,7 +498,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
 
   // Diff using git diff (net result, not per-commit)
-  const diffOutput = git(repoPath, 'diff', '--name-status', '-M', `${lastCommit}..${headCommit}`);
+  const diffOutput = git(repoPath, ['diff', '--name-status', '-M', `${lastCommit}..${headCommit}`]);
   const manifest = buildSyncManifest(diffOutput);
   if (detachedWorkingTreeManifest) {
     manifest.added = unique([...manifest.added, ...detachedWorkingTreeManifest.added]);
@@ -764,7 +780,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // prevents *this* gbrain process from stepping on itself; this gate
   // catches drift caused by external `git` commands the lock cannot see.
   try {
-    const currentHead = git(repoPath, 'rev-parse', 'HEAD');
+    const currentHead = git(repoPath, ['rev-parse', 'HEAD']);
     if (currentHead !== headCommit) {
       failedFiles.push({
         path: '<head>',
