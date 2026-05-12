@@ -469,6 +469,23 @@ describe('gbrain-context engine', () => {
     }
   });
 
+  it('T-NEW4: compact() returns no-runtime fallback when SDK is absent', async () => {
+    // The standalone test environment has no openclaw/plugin-sdk installed,
+    // so the lazy SDK load in ensureSdkLoaded() hits the catch branch and
+    // _delegateCompactionToRuntime falls back to the no-runtime stub. This
+    // test pins that fallback shape so a refactor that drops the fallback
+    // (or returns a different shape) gets caught immediately.
+    __resetSdkLoadStateForTests();
+    tmpDir = makeWorkspace();
+    const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
+
+    const result = await engine.compact({
+      sessionId: 'fallback-test',
+      sessionFile: '/tmp/never-read',
+    });
+    expect(result).toEqual({ ok: true, compacted: false, reason: 'no-runtime' });
+  });
+
   it('L0-B: SDK load is lazy — engine creation does NOT trigger module-load constraint', async () => {
     // Codex F7: pre-L0-B, src/core/context-engine.ts used top-level
     // `await import('openclaw/plugin-sdk/core')` which is a hard module-load

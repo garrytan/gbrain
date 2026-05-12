@@ -107,6 +107,19 @@ export const ENGINE_VERSION = '0.1.0';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
+/**
+ * Sync-load + parse a JSON file from the workspace. Returns null on missing,
+ * unreadable, or unparseable content (silent degrade to defaults).
+ *
+ * **Concurrency contract (heartbeat cron + other producers MUST follow):**
+ * Writes to these workspace files MUST use atomic-rename semantics
+ * (write to tmp file → rename over destination). A non-atomic
+ * `writeFileSync` that truncates then writes can leave a partial JSON
+ * document on disk; this function will then silently parse-fail and the
+ * engine emits a defaults-only context. The race window is tiny but real
+ * on every `assemble()` call. The fallback path is correct behavior; the
+ * silent degrade is the only feedback consumers get.
+ */
 function loadJsonFile<T = unknown>(filePath: string): T | null {
   try {
     if (!existsSync(filePath)) return null;
