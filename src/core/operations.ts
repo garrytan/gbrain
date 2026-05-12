@@ -2618,7 +2618,7 @@ const extract_facts: Operation = {
 const recall: Operation = {
   name: 'recall',
   description:
-    'v0.31: query per-source hot memory (facts table). Filters by entity / since / session. Remote callers see only visibility=world facts. Returns most-recent first. Use --semantic in v0.32+ for embedding search; v0.31 is plain SELECT + filters.',
+    'v0.31: query per-source hot memory (facts table). Filters by entity / since / session. Remote callers see only visibility=world facts. Returns most-recent first. v0.32 adds optional include_pending to return pending_consolidation_count alongside facts in one round trip.',
   params: {
     entity: { type: 'string', description: 'Entity slug (canonical). Returns facts about this entity newest first.' },
     since: { type: 'string', description: 'ISO datetime or duration shorthand (e.g. "8 hours ago"). Returns facts created since.' },
@@ -2627,6 +2627,7 @@ const recall: Operation = {
     supersessions: { type: 'boolean', description: 'When true, return only the supersession audit log (expired_at + superseded_by both set).' },
     limit: { type: 'number', description: 'Max rows to return. Default 50, cap 100.' },
     grep: { type: 'string', description: 'Substring filter on fact text (case-insensitive). Applied client-side after recall.' },
+    include_pending: { type: 'boolean', description: 'v0.32: when true, response includes pending_consolidation_count (facts not yet promoted to takes by the dream-cycle consolidate phase). One round trip; backward-compatible (field omitted when false).' },
   },
   scope: 'read',
   handler: async (ctx, p) => {
@@ -2682,6 +2683,23 @@ const recall: Operation = {
 
     if (grep) rows = rows.filter(r => r.fact.toLowerCase().includes(grep));
 
+    // v0.32: optional pending-consolidation count piggy-backed on the recall
+    // response. Single round trip on thin-client; omitted when not requested
+    // so existing callers see no shape change.
+    let pending_consolidation_count: number | undefined;
+    if (p.include_pending === true) {
+      try {
+        pending_consolidation_count = await ctx.engine.countUnconsolidatedFacts(sourceId);
+      } catch (e) {
+        // Best-effort: if the count query fails we still return facts. Field
+        // stays undefined so callers can tell the difference between "0
+        // pending" and "we couldn't ask."
+        process.stderr.write(
+          `[recall] countUnconsolidatedFacts failed: ${(e as Error).message}\n`,
+        );
+      }
+    }
+
     return {
       facts: rows.map(r => ({
         id: r.id,
@@ -2705,6 +2723,7 @@ const recall: Operation = {
         created_at: r.created_at.toISOString(),
       })),
       total: rows.length,
+      ...(pending_consolidation_count !== undefined ? { pending_consolidation_count } : {}),
     };
   },
 };

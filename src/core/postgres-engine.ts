@@ -2273,6 +2273,17 @@ export class PostgresEngine implements BrainEngine {
     return rows.map(rowToFactPg);
   }
 
+  async countUnconsolidatedFacts(source_id: string): Promise<number> {
+    const sql = this.sql;
+    const rows = await sql<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count FROM facts
+      WHERE source_id = ${source_id}
+        AND consolidated_at IS NULL
+        AND expired_at IS NULL
+    `;
+    return Number(rows[0]?.count ?? 0);
+  }
+
   async findCandidateDuplicates(
     source_id: string,
     entitySlug: string,

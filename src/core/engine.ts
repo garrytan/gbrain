@@ -1078,6 +1078,13 @@ export interface BrainEngine {
   ): Promise<FactRow[]>;
 
   /**
+   * v0.32: count facts that haven't been promoted to takes by the consolidate
+   * phase yet (active + unconsolidated). Drives `gbrain recall --pending`.
+   * Single SQL: COUNT(*) WHERE consolidated_at IS NULL AND expired_at IS NULL.
+   */
+  countUnconsolidatedFacts(source_id: string): Promise<number>;
+
+  /**
    * Find candidate duplicates for a new fact within a source+entity bucket.
    * Entity-prefilter is mandatory (bounds the contradiction-classifier blast
    * radius). Hard cap k=5 by default. Embedding-cosine when both sides have

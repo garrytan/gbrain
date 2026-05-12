@@ -113,6 +113,189 @@ The release is eval-gated by design (per /office-hours, /plan-ceo-review, and Co
 ### Process notes
 
 The plan went through `/office-hours` → `/plan-ceo-review` → Codex outside-voice → `/plan-eng-review`. Each pass changed the shape. Office-hours locked the headline + eval-first principle. CEO review proposed 8 deliverables in SCOPE EXPANSION mode. Codex pushed back on 5 fronts (sequencing, eval methodology, library choice, layer separation, schema design) and was accepted on all 5 + 3 substrate defects. Eng review locked the ranking formula, the two-layer eval gate, the 10-case test list, and the SQL-level typeFilter. Net result: scope reduced ~75% from the cathedral version while shipping the actual wedge users ask for.
+## [0.33.0] - 2026-05-11
+
+**`gbrain recall` now answers "what changed since last time?" in one command, and thin-client installs stop silently lying about empty results.**
+**Adds `--since-last-run`, `--pending`, `--rollup`, `--watch` to recall; fixes a silent-wrong-brain class bug across 9 commands.**
+
+A re-read of the v0.32 "agent integration" brief found ~70% of the spec already shipped in v0.31 (facts table, extraction pipeline, recall/think/extract_facts MCP ops, the dream-cycle consolidate phase that promotes facts to takes, `_meta.brain_hot_memory` injection on most MCP responses). The actual remaining gap was operator-facing: a "morning pulse" that surfaces what changed in hot memory since the last briefing. v0.33 ships that, with two structural fixes that fell out of the eng review + two rounds of Codex outside-voice review.
+
+### The numbers that matter
+
+Source: live audit of `src/cli.ts` against `src/core/operations.ts` MCP op list during the v0.33 plan review (eng-review D3 + Codex round 2 #4).
+
+```
+Commands that opened the empty local PGLite on thin-client installs:
+  v0.32 → 9 commands (recall, forget, jobs list/get, pages, files, eval,
+                       code-def, code-refs, code-callers, code-callees)
+  v0.33 → 0 commands  (4 route through MCP, 7 refuse with pinpoint hints)
+
+`gbrain recall` flag surface:
+  v0.32 → 9 flags (entity, since, session, today, supersessions,
+                   include-expired, as-context, grep, json)
+  v0.33 → 13 flags (+ since-last-run, pending, rollup, watch)
+```
+
+### What this means for you
+
+Operators running `gbrain init --mcp-only` (thin-client mode pointing at a remote brain) no longer get silent-empty results from `gbrain recall <entity>`. The command routes through `callRemoteTool('recall', ...)` against the remote brain — the same pattern v0.31.1 applied to `salience`, `anomalies`, `graph-query`, and `think`, but missed for `recall`. The same fix lands for `forget`, `jobs list`, and `jobs get` (all four were operationally invisible bugs). Seven host-bound commands (`pages`, `files`, `eval`, the four `code-*` symbol-lookup commands) now refuse cleanly with a pinpoint hint instead of returning empty.
+
+For the morning briefing workflow, `gbrain recall --since-last-run --supersessions --pending --rollup --json` is the new one-line invocation. The briefing skill (`skills/briefing/SKILL.md`) consumes it as a "Brain pulse" preamble step. State lives in `~/.gbrain/recall-cursors/<source>.json` (atomic write, kebab-case slug, per-source separation). Watch mode adds a second cursor file (`<source>.watch.json`) so an operator who quits a watch session never accidentally skips facts on the next morning's standalone briefing.
+
+### To take advantage of v0.33.0
+
+`gbrain upgrade` should do this automatically. If it didn't:
+
+1. **Try the new flags:**
+   ```bash
+   gbrain recall --since-last-run --pending --rollup
+   gbrain recall --watch 60       # Ctrl-C to exit
+   ```
+2. **For thin-client installs:** confirm recall routes through the remote brain:
+   ```bash
+   gbrain recall --since-last-run --pending --rollup --json
+   ```
+   Should return facts from your remote brain, NOT silent-empty.
+3. **Update your briefing routine:** the briefing skill at
+   `skills/briefing/SKILL.md` now has a "Hot memory pulse (v0.32)" preamble
+   step. Your agent reads it on next invocation; no manual action needed if
+   you use the bundled skillpack.
+4. **No schema migration**, no new MCP op, no breaking change to existing
+   recall callers. The `recall` MCP op grows one optional input field
+   (`include_pending`) and one optional output field
+   (`pending_consolidation_count`); existing callers see no shape change.
+5. **If `gbrain recall` on your thin-client install still returns empty,**
+   file an issue at https://github.com/garrytan/gbrain/issues with
+   `gbrain doctor` output.
+
+### Itemized changes
+
+#### `gbrain recall` — four new flags
+
+- **`--since-last-run`** reads `~/.gbrain/recall-cursors/<source>.json` for the
+  last-run cutoff. First run defaults to 24h. Mutually exclusive with
+  `--since`. Cursor written is `T_start` (captured BEFORE the first read SQL
+  fires), not `T_finish`, so facts inserted during render/write get included
+  by the next run instead of dropped (Codex round 1 #2 regression).
+- **`--pending`** appends a "Pending consolidation: N unconsolidated facts"
+  footer. Backed by a new engine method `BrainEngine.countUnconsolidatedFacts`
+  on both PGLite and Postgres. The `recall` MCP op gains an optional
+  `include_pending` param + `pending_consolidation_count` output field so
+  thin-client round-trips through one HTTP request instead of two.
+- **`--rollup`** prepends a "Top mentions" header with the top-5 entities by
+  fact count in the window. Computed on the full result set, NOT a LIMIT-100
+  slice (Codex round 1 #8). JSON shape uses `top_entities: [{entity_slug,
+  count}]` matching `test/facts-doctor-shape.test.ts:49` (Codex shape drift
+  guard).
+- **`--watch [SECONDS]`** re-runs recall on an interval. Default 60s, range
+  [1, 3600]; `0` or negative exits 2; > 3600 clamps to 3600 with stderr warn.
+  TTY: clear-screen-and-redraw. Non-TTY (pipe to `tee`): plain delimited
+  blocks. SIGINT-only clean exit. Per-tick errors stderr-logged but loop
+  continues; exponential backoff `min(SECONDS × 2^(N-1), 5×SECONDS)` on
+  consecutive failures; exit after 5 consecutive failures with the briefing
+  cursor NOT advanced. Watch state lives in a separate cursor file
+  (`<source>.watch.json`) so quitting watch never clobbers the briefing
+  cursor (Codex round 2 #8).
+- **`--watch <30s` on thin-client emits a stderr warning** about per-tick
+  remote MCP call cost.
+
+#### Thin-client routing audit (the silent-empty-results bug class)
+
+- **Fixed `gbrain recall` on thin-client.** Was opening the empty local PGLite
+  and returning "No matching facts" against a populated remote brain. Routes
+  through `callRemoteTool('recall', ...)` mirroring `salience.ts:80`.
+- **Fixed `gbrain forget <id>` on thin-client.** Same gap as recall; routes
+  through `callRemoteTool('forget_fact', ...)`.
+- **Fixed `gbrain jobs list` + `gbrain jobs get <id>` on thin-client.** Both
+  have `list_jobs` / `get_job` MCP ops in v0.31.x; the CLI just wasn't using
+  them. Other `jobs` subcommands (submit, cancel, retry, prune, work,
+  supervisor, stats, smoke) stay host-bound because they manage local queue
+  state.
+- **Added to `THIN_CLIENT_REFUSED_COMMANDS` with pinpoint hints:** `pages`
+  (purge-deleted is admin+localOnly), `files` (file_list / file_url MCP ops
+  are localOnly:true), `eval` (export/prune/replay have no MCP equivalent),
+  and the four `code-*` symbol-lookup commands (no MCP ops exist for them
+  yet — filed as a v0.34 candidate to add them). Each gets a 1-liner hint in
+  `THIN_CLIENT_REFUSE_HINTS` explaining what to do instead.
+- **Source resolver thin-client adjustment.** `resolveSourceId`'s
+  `assertSourceExists` check is skipped on thin-client (the local `sources`
+  table is empty by definition; the remote brain validates against its own
+  table). Kebab-case `SOURCE_ID_RE` regex still gates locally as a syntactic
+  check. (Codex round 2 #6.)
+
+#### Cross-session bridge framing (Codex round 2 #1)
+
+`_meta.brain_hot_memory` injection ships on most MCP responses (via
+`dispatchToolCall(metaHook)` at `serve-http.ts:935-940` and
+`dispatch.ts:249-258`). It is **deliberately suppressed** for `recall`,
+`extract_facts`, and `forget_fact` responses (`meta-hook.ts:44-47`) because
+for those ops the hot memory IS the response payload — wrapping it in `_meta`
+would duplicate. Agents that call `search` / `query` / `get_page` / `think`
+get hot memory as `_meta`; agents that call `recall` directly get the same
+data as the response body. The earlier draft's "every MCP response" copy was
+misleading; this entry corrects the record.
+
+#### MCP tool mapping (v0.32 brief → current op names)
+
+The v0.32 brief proposed `brain_*` prefixed tools. v0.33 keeps the existing
+idiomatic op names — the `brain_*` prefix is redundant inside a server
+literally named "the brain":
+
+| v0.32 brief | Actual MCP op |
+|---|---|
+| brain_search | `search` |
+| brain_think | `think` |
+| brain_recall | `recall` |
+| brain_remember | `extract_facts` |
+| brain_takes | `takes_list` / `takes_search` (read-only by design) |
+| brain_get | `get_page` |
+| brain_write | `put_page` |
+
+Takes-write via MCP is intentionally not exposed: the dream-cycle consolidate
+phase is the canonical write path (facts cluster into takes when ≥3 evidence
+points support a position). Adding a direct `add_take` MCP op would bypass
+that gate and turn takes into a noisy log. The trust gate on `think --save` /
+`think --take` for remote callers (`operations.ts:1237-1238`) exists for the
+same reason.
+
+#### Tests
+
+- `test/recall-extensions.test.ts` (17 PGLite-backed cases): pins
+  `countUnconsolidatedFacts` SQL semantics (ignores expired, ignores
+  consolidated, source-scoped, returns 0 on empty), cursor state file
+  round-trip + corrupt/future fallback + briefing vs watch separation +
+  atomic write tmp suffix (Codex round 1 #7) + non-fatal write failures.
+- `test/recall-rollup.test.ts` (8 pure-function cases): CRITICAL regression
+  guards for Codex round 1 #8 — top-K computed over the full window NOT
+  LIMIT-100 slice; JSON shape pinned to `{entity_slug, count}` matching
+  `test/facts-doctor-shape.test.ts:49`; null entity_slug skipped not
+  bucketed; ties broken alphabetically for stable output.
+- `test/thin-client-routing-audit.test.ts` (20 source-grounded cases): pins
+  every v0.33 REFUSE addition in `THIN_CLIENT_REFUSED_COMMANDS` + every
+  v0.31.1-era original; pins every ROUTE addition's `callRemoteTool` import
+  + call site in `recall.ts` and `jobs.ts`. Catches the audit-table
+  regression mode that motivated the v0.31.1 wave originally.
+
+#### Files touched
+
+- `src/commands/recall.ts` — 4 new flags + thin-client routing + watch loop + backoff
+- `src/core/recall-cursor-state.ts` — NEW: atomic per-source cursor state file (briefing + watch variants)
+- `src/core/engine.ts` — `countUnconsolidatedFacts` interface declaration
+- `src/core/pglite-engine.ts` + `src/core/postgres-engine.ts` — engine method implementations
+- `src/core/operations.ts` — `recall` op extended with `include_pending` param + `pending_consolidation_count` output
+- `src/commands/jobs.ts` — thin-client routing for `list` + `get` subcommands
+- `src/cli.ts` — 7 additions to `THIN_CLIENT_REFUSED_COMMANDS` + hints
+- `skills/briefing/SKILL.md` — "Hot memory pulse" preamble step
+- `test/recall-extensions.test.ts`, `test/recall-rollup.test.ts`, `test/thin-client-routing-audit.test.ts` — NEW test files
+
+#### Plan review trail
+
+CEO review (`/plan-ceo-review`) → SELECTIVE EXPANSION mode → Path 2 pivot
+after Codex round 1 (10 findings; 3 structural, 7 mechanical) → eng review
+(`/plan-eng-review`) added the thin-client routing audit as in-scope (D3=C
+option) → Codex round 2 found 9 more findings (4 load-bearing, 5 mechanical
+hardening); all absorbed. Final scope: 13 files, ~800 LOC implementation
++ ~400 LOC tests. CEO + ENG + CODEX×2 CLEARED at plan approval.
 ## [0.32.8] - 2026-05-11
 
 **Multi-source brains finish what they start. Embed, extract, takes, patterns, integrity, migrate-engine all now respect which source a page belongs to. The disk-side collision is fixed via a per-source subdir layout, and a CI gate prevents the bug class from coming back.**
