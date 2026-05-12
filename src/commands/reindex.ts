@@ -17,7 +17,7 @@
  * Codex outside-voice C2 — the original PR #599 `MARKDOWN_CHUNKER_VERSION`
  * fold into content_hash was a no-op because `performSync` only re-imports
  * files whose content actually changed, not files whose hash WOULD change
- * if recomputed. This sweep + the migration v51 column are how the bump
+ * if recomputed. This sweep + the migration v52 column are how the bump
  * actually reaches existing markdown pages.
  */
 
@@ -75,7 +75,7 @@ function parseArgs(args: string[]): ReindexOpts {
 
 /**
  * Count markdown pages that haven't been re-chunked by the current
- * MARKDOWN_CHUNKER_VERSION. Cheap; uses the partial index from migration v51.
+ * MARKDOWN_CHUNKER_VERSION. Cheap; uses the partial index from migration v52.
  */
 async function countPending(engine: BrainEngine): Promise<number> {
   const rows = await engine.executeRaw<{ count: string | number }>(

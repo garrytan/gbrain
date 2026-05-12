@@ -51,6 +51,15 @@ export interface TextChunk {
 // bypass the per-token MCP allow-list (Codex P0 #3 privacy fix).
 import { stripTakesFence } from '../takes-fence.ts';
 
+// v0.32.2 (Codex R2-#1 P0): same posture for facts — private fact rows must
+// not reach content_chunks.chunk_text, embeddings, or search. Pass
+// `keepVisibility: ['world']` so world-visibility facts remain searchable
+// (they're public knowledge by definition) while private rows are stripped
+// at the row level. The fence shell stays in the chunked body so callers
+// that re-import the chunk content can still parse it; only the private
+// rows go.
+import { stripFactsFence } from '../facts-fence.ts';
+
 export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
   const chunkOverlap = opts?.chunkOverlap || 50;
@@ -62,7 +71,11 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   // accessible only via the takes table; their content must not appear in
   // content_chunks where the per-token allow-list cannot reach. The
   // takes_fence_chunk_leak doctor check verifies this invariant.
-  const stripped = stripTakesFence(text);
+  //
+  // v0.32.2: also strip private facts (Codex R2-#1). World facts stay so
+  // search retains its public-knowledge surface; private rows are filtered
+  // out at the fence-row level via stripFactsFence({keepVisibility:['world']}).
+  const stripped = stripFactsFence(stripTakesFence(text), { keepVisibility: ['world'] });
   if (!stripped || stripped.trim().length === 0) return [];
 
   const wordCount = countWords(stripped);

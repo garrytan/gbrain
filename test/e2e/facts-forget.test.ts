@@ -13,7 +13,7 @@ beforeAll(async () => { if (RUN) await setupDB(); });
 afterAll(async () => { if (RUN) await teardownDB(); });
 
 d('forget_fact (Postgres)', () => {
-  test('expires the fact, idempotent on re-call (returns fact_not_found)', async () => {
+  test('expires the fact, idempotent on re-call (returns fact_already_expired)', async () => {
     const engine = getEngine();
     const inserted = await engine.insertFact(
       { fact: 'forget me', kind: 'fact', source: 'test' },
@@ -31,7 +31,10 @@ d('forget_fact (Postgres)', () => {
     });
     expect(r2.isError).toBe(true);
     const payload2 = JSON.parse(r2.content[0].text);
-    expect(payload2.error).toBe('fact_not_found');
+    // v0.32.2: more precise discriminator. The first call expires the fact;
+    // the second call sees expired_at IS NOT NULL and surfaces
+    // `fact_already_expired` instead of the older opaque `fact_not_found`.
+    expect(payload2.error).toBe('fact_already_expired');
   });
 
   test('expired facts disappear from active recall but show under --include-expired', async () => {
