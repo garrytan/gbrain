@@ -144,6 +144,21 @@ export interface PageInput {
   effective_date_source?: EffectiveDateSource | null;
   /** v0.29.1: basename without extension captured at import. */
   import_filename?: string | null;
+  /**
+   * v0.32.7 CJK wave: bumped to MARKDOWN_CHUNKER_VERSION (2) on import so the
+   * post-upgrade `gbrain reindex --markdown` sweep can find pre-bump pages
+   * via `WHERE chunker_version < 2`. Defaults to 1 at the schema level when
+   * omitted (existing rows pre-migration inherit 1; new imports overwrite
+   * with the current version).
+   */
+  chunker_version?: number | null;
+  /**
+   * v0.32.7 CJK wave: repo-relative import path. Lets sync's delete/rename
+   * paths resolve a frontmatter-fallback slug back to its filesystem source
+   * (CJK + emoji + exotic-script files whose path doesn't derive a slug).
+   * NULL on legacy / non-file callers (MCP `put_page`, fixture seeds).
+   */
+  source_path?: string | null;
 }
 
 export interface PageFilters {

@@ -45,16 +45,62 @@
   infra: `~/.gbrain/oauth/<provider>.json` + `gbrain auth login <provider>`.
   Build alongside #691 in one OAuth-subsystem wave.
 
-- [ ] **v0.32.x: CJK PGLite keyword fallback (#765 extracted).** 313094319-sudo
-  hit a real gap: PGLite's FTS doesn't tokenize CJK well, so Chinese queries
-  return empty results even with proper embeddings. Their PR added a
-  hasCJK detection branch in `searchKeyword` that switches to LIKE-based
-  fuzzy matching with a custom scoring function. ~150 lines of new SQL +
-  scoring + tests. Worth its own focused PR rather than folded into the
-  v0.32 wave's adjacent-fix lane. Extract `extractSearchTokens`,
-  `normalizeSearchText`, `hasCJK` helpers + the CJK branch in
-  `pglite-engine.ts:searchKeyword`. Includes tests for romaji + Korean
-  Hangul + traditional/simplified Chinese.
+- [x] **v0.32.7: CJK PGLite keyword fallback (#765 extracted).** Landed
+  in the CJK fix wave. `hasCJK` + `escapeLikePattern` live in
+  `src/core/cjk.ts`; the CJK branch in `pglite-engine.ts:searchKeyword`
+  uses ILIKE + bigram-frequency-count ranking. Postgres path deferred
+  (see new follow-up below).
+
+- [ ] **v0.33+: Postgres CJK FTS via pgroonga / zhparser / ngram trigrams.**
+  v0.32.7 only fixed CJK keyword search on PGLite. Multi-tenant Postgres
+  deployments still hit empty results for CJK queries because
+  `to_tsvector('english', ...)` can't segment Chinese / Japanese / Korean.
+  Installing pgroonga or zhparser is an operator decision (extension
+  install permission, multi-tenant rollout), so gbrain can't default it.
+  Plan: doctor advisory pointing at the relevant extension docs;
+  searchKeyword / searchKeywordChunks fall through to PGLite-style ILIKE
+  when the extension isn't installed. Defer until users complain.
+
+- [ ] **v0.33+: widen CJK ranges to Unicode property escapes.** v0.32.7
+  uses BMP-only ranges (Han `4e00-9fff`, Hiragana `3040-309f`, Katakana
+  `30a0-30ff`, Hangul Syllables `ac00-d7af`). Misses Han Extensions A/B/C,
+  halfwidth katakana, compatibility ideographs, compatibility Jamo, and
+  iteration marks `々` / `〇`. Switch to `\p{Script=Han}` / `\p{Script=Hiragana}` /
+  `\p{Script=Katakana}` / `\p{Script=Hangul}` (TS supports unicode property
+  escapes with the `u` flag). Astral-plane support also requires
+  `Array.from(str)`-style codepoint iteration in the chunker's char-slice
+  fallback (current `String.prototype.slice` splits surrogate pairs).
+  Defer until first user hits the gap.
+
+- [ ] **v0.33+: `git diff --name-status -z` + NUL framing.** v0.32.7
+  added `core.quotepath=false` which handles non-ASCII paths but doesn't
+  cover tabs, newlines, or quotes in filenames. The `-z` flag with
+  NUL-byte path framing is the robust fix for the whole encoding class.
+  Affects `src/commands/sync.ts:buildDetachedWorkingTreeManifest` +
+  `buildSyncManifest`. Defer until someone files a tab-in-filename issue.
+
+- [ ] **v0.33+: CJK-aware overlap context in chunker.** v0.32.7
+  `extractTrailingContext` is still whitespace-token-based, so CJK chunks
+  under the maxChars cap have no useful overlap with the previous chunk.
+  Search continuity across chunk boundaries degrades for pure CJK content.
+  The maxChars sliding-window in v0.32.7 IS overlap-protected for the
+  hard-cap path, so this only affects normal-size chunks. Plan: switch
+  `extractTrailingContext` to char-count when `countCJKAwareWords` would
+  have triggered the CJK branch.
+
+- [ ] **v0.33+: other non-Latin scripts (Thai, Arabic, Cyrillic,
+  Devanagari).** Same five-layer fix pattern as CJK applies: slugify
+  needs the script range, chunker needs density-threshold counting,
+  PGLite keyword fallback would benefit from script-aware tokenization.
+  Defer until first issue.
+
+- [ ] **v0.33+: embedding pricing refresh mechanism.** v0.32.7 added
+  `src/core/embedding-pricing.ts` as a static lookup table sibling to
+  `anthropic-pricing.ts`. Both drift when providers change rates. Plan:
+  a `gbrain prices refresh` skill that diffs against a published canonical
+  source (OpenAI pricing page, Anthropic pricing page) and proposes an
+  update PR. Or a release-cadence audit checklist item. Today: when the
+  estimate looks off, hand-edit the constants.
 
 - [ ] **v0.32.x: interactive provider chooser in `gbrain init`.** The full
   wizard piece of the v0.32 discoverability lane was deferred. Today
