@@ -165,7 +165,7 @@ class WriteTxImpl implements WriteTx {
   }
 
   async appendTimeline(slug: string, entry: TimelineInput): Promise<void> {
-    await this.engine.addTimelineEntry(slug, entry);
+    await this.engine.addTimelineEntry(slug, entry); // gbrain-allow-direct-insert: BrainWriter is the canonical synthesize-phase write surface — output gets fenced into pages via putPage in the same transaction
     this.touchedSlugs.add(slug);
   }
 
@@ -202,11 +202,11 @@ class WriteTxImpl implements WriteTx {
   }
 
   async addLink(from: string, to: string, context?: string, linkType?: string): Promise<void> {
-    await this.engine.addLink(from, to, context, linkType);
+    await this.engine.addLink(from, to, context, linkType); // gbrain-allow-direct-insert: BrainWriter is the canonical synthesize-phase write surface
     // Reverse back-link — both directions inside the same outer transaction.
     // Uses 'backlink' label on the reverse if no linkType was specified so
     // the reverse is distinguishable from the forward semantic type.
-    await this.engine.addLink(to, from, context, linkType ? `${linkType}_back` : 'backlink');
+    await this.engine.addLink(to, from, context, linkType ? `${linkType}_back` : 'backlink'); // gbrain-allow-direct-insert: BrainWriter synthesize-phase reverse back-link in the same transaction as the forward addLink above
     this.touchedSlugs.add(from);
     this.touchedSlugs.add(to);
   }

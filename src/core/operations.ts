@@ -18,6 +18,7 @@ import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
+import { stripFactsFence } from './facts-fence.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -402,17 +403,38 @@ const get_page: Operation = {
     }
 
     const tags = await ctx.engine.getTags(page.slug, sourceOpts);
-    // Privacy boundary for the per-token takes-holder allow-list (v0.28.6).
-    // takes_list / takes_search / think.gather filter rows by holder at the
-    // SQL layer, but takes are also rendered as a markdown table inside the
-    // page body between TAKES_FENCE markers — `extract-takes.ts` ("markdown
-    // is canonical, the takes table is a derived index"). A read-only token
-    // restricted to e.g. `world` could call `get_page <slug>` and recover
-    // every non-`world` claim verbatim from the body. Strip the fence here
-    // when the caller carries an allow-list (i.e. the remote MCP path).
-    // Local CLI callers leave takesHoldersAllowList unset and see the fence.
-    const visibleBody = ctx.takesHoldersAllowList
-      ? { ...page, compiled_truth: stripTakesFence(page.compiled_truth) }
+    // Privacy boundary for the per-token allow-list (v0.28.6 for takes,
+    // v0.32.2 for facts).
+    //
+    // takes_list / takes_search / think.gather filter rows by holder at
+    // the SQL layer, but takes AND facts are also rendered as markdown
+    // tables inside the page body between fence markers. A read-only
+    // remote MCP caller could otherwise call `get_page <slug>` and
+    // recover every fence row verbatim.
+    //
+    // v0.32.2 (Codex R2-#5): the strip trigger is now `ctx.remote === true`
+    // rather than the takes-holders-allow-list flag (which subagent paths
+    // didn't set, leaving a pre-existing privacy hole). Subagent + remote
+    // MCP + scope-restricted-token callers all get the strip; local CLI
+    // (`ctx.remote === false`) sees the full fence. Closes the
+    // pre-existing takes hole as a bonus.
+    //
+    // Both fences are stripped:
+    //  - stripTakesFence: drops the entire takes table for untrusted
+    //    readers (per-token holder allow-list is the row-level surface
+    //    for trusted callers).
+    //  - stripFactsFence({keepVisibility: ['world']}): keeps world rows,
+    //    drops private. World facts are public knowledge by definition;
+    //    untrusted readers see them. Private facts never cross the boundary.
+    const isUntrustedReader = ctx.remote === true;
+    const visibleBody = isUntrustedReader
+      ? {
+          ...page,
+          compiled_truth: stripFactsFence(
+            stripTakesFence(page.compiled_truth),
+            { keepVisibility: ['world'] },
+          ),
+        }
       : page;
     return { ...visibleBody, tags, ...(resolved_slug ? { resolved_slug } : {}) };
   },
@@ -1345,7 +1367,7 @@ const add_link: Operation = {
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId, originSourceId: ctx.sourceId }
       : undefined;
-    await ctx.engine.addLink(
+    await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
       p.from as string, p.to as string,
       (p.context as string) || '', (p.link_type as string) || '',
       undefined, undefined, undefined,
@@ -1478,7 +1500,7 @@ const add_timeline_entry: Operation = {
     }
     // v0.31.8 (D7): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    await ctx.engine.addTimelineEntry(p.slug as string, {
+    await ctx.engine.addTimelineEntry(p.slug as string, { // gbrain-allow-direct-insert: add_timeline_entry MCP op is the explicit canonical surface for manual timeline entries
       date,
       source: (p.source as string) || '',
       summary: p.summary as string,
@@ -2614,18 +2636,26 @@ const recall: Operation = {
 
 const forget_fact: Operation = {
   name: 'forget_fact',
-  description: 'v0.31: mark a fact as expired (sets expired_at; never DELETE). Idempotent-as-false on already-expired or unknown ids.',
+  description: 'v0.32.2: forget a fact. Rewrites the page\'s `## Facts` fence to strike through the row and set valid_until=today (the DB\'s expired_at derives via valid_until + now() on the next reconcile so the forget survives `gbrain rebuild`). Falls back to legacy DB-only expire for pre-v51 / thin-client rows. Idempotent on already-expired or unknown ids.',
   params: {
-    id: { type: 'number', required: true, description: 'Fact id to expire.' },
+    id: { type: 'number', required: true, description: 'Fact id to forget.' },
+    reason: { type: 'string', required: false, description: 'Optional reason; written to the fence row\'s context cell as "forgotten: <reason>". Default: "forgotten".' },
   },
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'forget_fact', id: p.id };
     const id = p.id as number;
-    const ok = await ctx.engine.expireFact(id);
-    if (!ok) throw new OperationError('fact_not_found', `Fact id ${id} not found or already expired.`);
-    return { id, expired: true };
+    const reason = typeof p.reason === 'string' ? p.reason : undefined;
+    const { forgetFactInFence } = await import('./facts/forget.ts');
+    const result = await forgetFactInFence(ctx.engine, id, { reason });
+    if (!result.ok && result.path === 'not_found') {
+      throw new OperationError('fact_not_found', `Fact id ${id} not found.`);
+    }
+    if (!result.ok && result.path === 'already_expired') {
+      throw new OperationError('fact_already_expired', `Fact id ${id} already expired.`);
+    }
+    return { id, expired: true, path: result.path, reason: result.reason };
   },
 };
 
