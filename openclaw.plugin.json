@@ -8,19 +8,25 @@
       "type": "string",
       "required": true,
       "description": "PostgreSQL connection URL (Supabase recommended)",
-      "uiHints": { "sensitive": true }
+      "uiHints": {
+        "sensitive": true
+      }
     },
     "openai_api_key": {
       "type": "string",
       "required": false,
       "description": "OpenAI API key for embeddings (uses OPENAI_API_KEY env var if not set)",
-      "uiHints": { "sensitive": true }
+      "uiHints": {
+        "sensitive": true
+      }
     }
   },
   "mcpServers": {
     "gbrain": {
       "command": "./bin/gbrain",
-      "args": ["serve"]
+      "args": [
+        "serve"
+      ]
     }
   },
   "skills": [
@@ -75,5 +81,10 @@
     "compat": {
       "pluginApi": ">=2026.4.0"
     }
+  },
+  "contracts": {
+    "contextEngines": [
+      "gbrain-context"
+    ]
   }
 }
