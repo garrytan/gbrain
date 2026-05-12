@@ -147,6 +147,7 @@ describe('renderTrendChart', () => {
         cost_usd_total: 1.0,
         duration_ms: 45000,
         source_tier_breakdown: { curated_vs_curated: 0, curated_vs_bulk: 0, bulk_vs_bulk: 0, other: 0 },
+        report_json: mkReport('r-test'),
       },
     ]);
     expect(out).toContain('Date');
@@ -166,6 +167,7 @@ describe('renderTrendChart', () => {
         wilson_ci_lower: 0.4, wilson_ci_upper: 0.6,
         judge_errors_total: 0, cost_usd_total: 5, duration_ms: 60000,
         source_tier_breakdown: { curated_vs_curated: 0, curated_vs_bulk: 0, bulk_vs_bulk: 0, other: 0 },
+        report_json: mkReport('r-test'),
       },
       {
         run_id: 'small',
@@ -177,6 +179,7 @@ describe('renderTrendChart', () => {
         wilson_ci_lower: 0.0, wilson_ci_upper: 0.1,
         judge_errors_total: 0, cost_usd_total: 1, duration_ms: 30000,
         source_tier_breakdown: { curated_vs_curated: 0, curated_vs_bulk: 0, bulk_vs_bulk: 0, other: 0 },
+        report_json: mkReport('r-test'),
       },
     ];
     const out = renderTrendChart(rows);

@@ -8,6 +8,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { ProbeReport, SourceTierBreakdown } from './types.ts';
+export type { ProbeReport, SourceTierBreakdown } from './types.ts';
 
 export interface TrendRow {
   run_id: string;
@@ -22,6 +23,8 @@ export interface TrendRow {
   cost_usd_total: number;
   duration_ms: number;
   source_tier_breakdown: SourceTierBreakdown;
+  /** Full ProbeReport blob; consumed by `review` sub-subcommand. */
+  report_json: ProbeReport;
 }
 
 /** Write one row per run. Returns true iff inserted (idempotent on run_id). */
@@ -63,6 +66,7 @@ export async function loadTrend(engine: BrainEngine, days: number): Promise<Tren
     cost_usd_total: r.cost_usd_total,
     duration_ms: r.duration_ms,
     source_tier_breakdown: (r.source_tier_breakdown ?? { curated_vs_curated: 0, curated_vs_bulk: 0, bulk_vs_bulk: 0, other: 0 }) as unknown as SourceTierBreakdown,
+    report_json: r.report_json as unknown as ProbeReport,
   }));
 }
 
