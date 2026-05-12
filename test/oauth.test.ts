@@ -388,6 +388,62 @@ describe('authorization code flow', () => {
     await expect(provider.exchangeAuthorizationCode(client, expiredCode)).rejects.toThrow();
   });
 
+  // F-AUTHZ regression. The MCP SDK's authorize handler splits `?scope=...`
+  // verbatim and forwards the raw list to the provider, so the provider must
+  // clamp against the client's registered grant. Pre-fix the INSERT into
+  // oauth_codes used `params.scopes || []` raw, so a `read`-registered client
+  // requesting `?scope=admin` got an admin access token at /token exchange.
+  // This pins the parallel posture to client_credentials' filter pattern
+  // (line 513-515) and refresh's F3 subset enforcement (RFC 6749 §6).
+  test('authorize clamps requested scopes against client.scope (RFC 6749 §3.3)', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'authz-clamp-test', ['authorization_code'], 'read',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+
+    // Read-only client requests admin via the SDK's parsed scopes array.
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['read', 'write', 'admin'],
+    }, mockRes);
+
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    const tokens = await provider.exchangeAuthorizationCode(client, code);
+
+    // The token's stored scopes must equal the clamped subset.
+    const auth = await provider.verifyAccessToken(tokens.access_token);
+    expect(auth.scopes).toEqual(['read']);
+    expect(auth.scopes).not.toContain('write');
+    expect(auth.scopes).not.toContain('admin');
+  });
+
+  test('authorize subset request returns subset', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'authz-subset-test', ['authorization_code'], 'read write',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['read'],
+    }, mockRes);
+
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const auth = await provider.verifyAccessToken(tokens.access_token);
+    expect(auth.scopes).toEqual(['read']);
+  });
+
   // CSO finding #2 regression. The pre-fix SELECT-then-DELETE pattern let two
   // concurrent token requests with the same code both pass the SELECT, both
   // running DELETE (no-op on second) and both calling issueTokens. The fix is

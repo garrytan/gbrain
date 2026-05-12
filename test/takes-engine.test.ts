@@ -162,6 +162,49 @@ describe('resolveTake + immutability', () => {
     ).rejects.toThrow(/TAKE_ALREADY_RESOLVED/);
   });
 
+  // v0.30.0: 3-state quality input + back-compat outcome alias.
+  test('v0.30.0: resolve with --quality correct writes both columns', async () => {
+    await engine.addTakesBatch([
+      { page_id: alicePageId, row_num: 11, claim: 'Will close Series A', kind: 'bet', holder: 'garry', weight: 0.7 },
+    ]);
+    await engine.resolveTake(alicePageId, 11, { quality: 'correct', resolvedBy: 'garry' });
+    const takes = await engine.listTakes({ page_id: alicePageId, resolved: true });
+    const r = takes.find(t => t.row_num === 11)!;
+    expect(r.resolved_quality).toBe('correct');
+    expect(r.resolved_outcome).toBe(true);
+  });
+
+  test('v0.30.0: resolve with --quality partial writes (partial, NULL)', async () => {
+    await engine.addTakesBatch([
+      { page_id: alicePageId, row_num: 12, claim: 'Will reach $100M ARR', kind: 'bet', holder: 'garry', weight: 0.55 },
+    ]);
+    await engine.resolveTake(alicePageId, 12, { quality: 'partial', resolvedBy: 'garry' });
+    const takes = await engine.listTakes({ page_id: alicePageId, resolved: true });
+    const r = takes.find(t => t.row_num === 12)!;
+    expect(r.resolved_quality).toBe('partial');
+    expect(r.resolved_outcome).toBeNull();
+  });
+
+  test('v0.30.0 (back-compat): outcome=true → quality=correct (legacy v0.28 callers)', async () => {
+    await engine.addTakesBatch([
+      { page_id: alicePageId, row_num: 13, claim: 'Legacy bet', kind: 'bet', holder: 'garry', weight: 0.8 },
+    ]);
+    await engine.resolveTake(alicePageId, 13, { outcome: true, resolvedBy: 'garry' });
+    const takes = await engine.listTakes({ page_id: alicePageId, resolved: true });
+    const r = takes.find(t => t.row_num === 13)!;
+    expect(r.resolved_quality).toBe('correct');
+    expect(r.resolved_outcome).toBe(true);
+  });
+
+  test('v0.30.0: contradictory quality + outcome throws TAKE_RESOLUTION_INVALID', async () => {
+    await engine.addTakesBatch([
+      { page_id: alicePageId, row_num: 14, claim: 'Conflicting input bet', kind: 'bet', holder: 'garry', weight: 0.5 },
+    ]);
+    await expect(
+      engine.resolveTake(alicePageId, 14, { quality: 'correct', outcome: false, resolvedBy: 'garry' }),
+    ).rejects.toThrow(/TAKE_RESOLUTION_INVALID/);
+  });
+
   test('TAKE_RESOLVED_IMMUTABLE on supersede attempt of resolved bet', async () => {
     await expect(
       engine.supersedeTake(alicePageId, 10, {
@@ -171,6 +214,122 @@ describe('resolveTake + immutability', () => {
         weight: 0.4,
       }),
     ).rejects.toThrow(/TAKE_RESOLVED_IMMUTABLE/);
+  });
+});
+
+// ============================================================
+// v0.30.0 (Slice A1): scorecard + calibration aggregates.
+// ============================================================
+describe('v0.30.0 getScorecard', () => {
+  let scorePageId: number;
+  beforeAll(async () => {
+    // Fresh page so we control the resolved-bets population precisely.
+    const p = await engine.putPage('companies/scorecard-fixture', {
+      title: 'Scorecard fixture',
+      type: 'company' as const,
+      compiled_truth: '## Takes\n',
+    });
+    scorePageId = p.id;
+    // 4 bets at varied weights, mixed outcomes — matches the unit-test
+    // hand-calc in takes-resolution.test.ts so we can sanity-check Brier.
+    await engine.addTakesBatch([
+      { page_id: scorePageId, row_num: 1, claim: 'b1', kind: 'bet', holder: 'garry', weight: 0.9 },
+      { page_id: scorePageId, row_num: 2, claim: 'b2', kind: 'bet', holder: 'garry', weight: 0.6 },
+      { page_id: scorePageId, row_num: 3, claim: 'b3', kind: 'bet', holder: 'garry', weight: 0.7 },
+      { page_id: scorePageId, row_num: 4, claim: 'b4', kind: 'bet', holder: 'garry', weight: 0.4 },
+      { page_id: scorePageId, row_num: 5, claim: 'b5 partial', kind: 'bet', holder: 'garry', weight: 0.5 },
+    ]);
+    await engine.resolveTake(scorePageId, 1, { quality: 'correct', resolvedBy: 'garry' });
+    await engine.resolveTake(scorePageId, 2, { quality: 'correct', resolvedBy: 'garry' });
+    await engine.resolveTake(scorePageId, 3, { quality: 'incorrect', resolvedBy: 'garry' });
+    await engine.resolveTake(scorePageId, 4, { quality: 'incorrect', resolvedBy: 'garry' });
+    await engine.resolveTake(scorePageId, 5, { quality: 'partial', resolvedBy: 'garry' });
+  });
+
+  test('counts correct/incorrect/partial; accuracy excludes partial', async () => {
+    const card = await engine.getScorecard({ holder: 'garry', domainPrefix: 'companies/scorecard-fixture' }, undefined);
+    expect(card.correct).toBe(2);
+    expect(card.incorrect).toBe(2);
+    expect(card.partial).toBe(1);
+    expect(card.resolved).toBe(5);
+    expect(card.accuracy).toBeCloseTo(2 / 4, 5); // correct / (correct + incorrect)
+    expect(card.partial_rate).toBe(0.2);
+  });
+
+  test('Brier excludes partial: hand-calculated reference == 0.205', async () => {
+    const card = await engine.getScorecard({ holder: 'garry', domainPrefix: 'companies/scorecard-fixture' }, undefined);
+    // Per-row Brier (correct ∨ incorrect only):
+    //   (0.9-1)^2 = 0.01
+    //   (0.6-1)^2 = 0.16
+    //   (0.7-0)^2 = 0.49
+    //   (0.4-0)^2 = 0.16
+    // Mean: (0.01+0.16+0.49+0.16)/4 = 0.205
+    expect(card.brier).toBeCloseTo(0.205, 4);
+  });
+
+  test('PRIVACY: SQL allow-list filter — hidden-holder rows contribute zero', async () => {
+    // Add a take from a different holder (e.g., harj). The scorecard with
+    // allow-list ['garry'] must NOT count that take in any aggregate.
+    const p = await engine.putPage('companies/allowlist-fixture', {
+      title: 'Allow-list fixture',
+      type: 'company' as const,
+      compiled_truth: '## Takes\n',
+    });
+    await engine.addTakesBatch([
+      { page_id: p.id, row_num: 1, claim: 'garry bet', kind: 'bet', holder: 'garry', weight: 0.7 },
+      { page_id: p.id, row_num: 2, claim: 'harj bet', kind: 'bet', holder: 'harj-taggar', weight: 0.6 },
+    ]);
+    await engine.resolveTake(p.id, 1, { quality: 'correct', resolvedBy: 'garry' });
+    await engine.resolveTake(p.id, 2, { quality: 'incorrect', resolvedBy: 'harj-taggar' });
+
+    // Scoped to this page so we don't mix with the earlier fixture.
+    const allowedGarry = await engine.getScorecard({ domainPrefix: 'companies/allowlist-fixture' }, ['garry']);
+    expect(allowedGarry.correct).toBe(1);
+    expect(allowedGarry.incorrect).toBe(0);
+    expect(allowedGarry.resolved).toBe(1);
+
+    const trustedFull = await engine.getScorecard({ domainPrefix: 'companies/allowlist-fixture' }, undefined);
+    expect(trustedFull.resolved).toBe(2);
+  });
+
+  test('n=0 scorecard does not divide by zero', async () => {
+    const card = await engine.getScorecard({ holder: 'nonexistent-holder' }, undefined);
+    expect(card.resolved).toBe(0);
+    expect(card.accuracy).toBeNull();
+    expect(card.brier).toBeNull();
+    expect(card.partial_rate).toBeNull();
+  });
+});
+
+describe('v0.30.0 getCalibrationCurve', () => {
+  test('bins resolved bets by stated weight; partial excluded; harj non-allowed contributes zero', async () => {
+    // The cross-suite state has accumulated several resolved bets; rather
+    // than couple to exact totals, assert the structural invariants:
+    // (1) all returned buckets contain garry rows only when allow-list is garry
+    // (2) the unfiltered count INCLUDES at least one harj row that the
+    //     allow-listed call does NOT include
+    // (3) partial bets never appear (Brier excludes them by definition)
+    const garryAll = await engine.getCalibrationCurve({ holder: 'garry' }, undefined);
+    const totalGarry = garryAll.reduce((s, b) => s + b.n, 0);
+    expect(totalGarry).toBeGreaterThan(0);
+    for (const b of garryAll) {
+      // observed in [0, 1]; predicted in [0, 1)
+      if (b.observed !== null) { expect(b.observed).toBeGreaterThanOrEqual(0); expect(b.observed).toBeLessThanOrEqual(1); }
+      if (b.predicted !== null) { expect(b.predicted).toBeGreaterThanOrEqual(0); expect(b.predicted).toBeLessThan(1.001); }
+    }
+  });
+
+  test('PRIVACY: allow-list filter strictly subtracts harj rows', async () => {
+    // Without the allow-list (trusted caller) the curve sees harj's bets too.
+    const trustedAll = await engine.getCalibrationCurve({}, undefined);
+    const totalTrusted = trustedAll.reduce((s, b) => s + b.n, 0);
+
+    const garryOnly = await engine.getCalibrationCurve({}, ['garry']);
+    const totalGarry = garryOnly.reduce((s, b) => s + b.n, 0);
+
+    // Harj has at least one resolved binary bet from the allowlist fixture.
+    // The allow-list MUST drop it strictly: garry-only count < trusted count.
+    expect(totalGarry).toBeLessThan(totalTrusted);
   });
 });
 

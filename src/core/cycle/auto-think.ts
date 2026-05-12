@@ -117,6 +117,7 @@ export async function runPhaseAutoThink(
   const modelId = await resolveModel(engine, {
     configKey: 'models.auto_think',
     deprecatedConfigKey: 'dream.auto_think.model',
+    tier: 'deep',
     fallback: 'opus',
   });
 

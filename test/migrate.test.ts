@@ -976,9 +976,20 @@ describe('PR #356 — 57014 catch path emits actionable 4-part diagnostic', () =
     // Mock an engine whose runMigration throws a code-57014 error
     // once; the catch branch should log the 4-part structure AND
     // rethrow preserving err.code so callers can re-branch.
+    //
+    // v0.30.1: retry wrapper now retries 3x on 57014. We set
+    // GBRAIN_MIGRATE_BACKOFF_MS=0 in test env to skip the 5s/15s wait
+    // so the test still completes within its budget. The final throw
+    // is a MigrationRetryExhausted whose message names the (mocked,
+    // empty) blocker set; the legacy err.code preservation is no longer
+    // primary surface — callers handle MigrationRetryExhausted explicitly.
+    const original = process.env.GBRAIN_MIGRATE_BACKOFF_MS;
+    process.env.GBRAIN_MIGRATE_BACKOFF_MS = '0';
+
     const err = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
 
     let caughtCode: string | undefined;
+    let caughtName: string | undefined;
     // getConfig returns '15' so pending starts with v16 (has sql content
     // in the MIGRATIONS array). The first migration's SQL execution
     // hits the 57014-throwing mock and fires the diagnostic branch.
@@ -998,15 +1009,25 @@ describe('PR #356 — 57014 catch path emits actionable 4-part diagnostic', () =
       await runMigrations(engine);
     } catch (e: unknown) {
       caughtCode = (e as { code?: string }).code;
+      caughtName = (e as { name?: string }).name;
     }
-    expect(caughtCode).toBe('57014');
+    if (original === undefined) delete process.env.GBRAIN_MIGRATE_BACKOFF_MS;
+    else process.env.GBRAIN_MIGRATE_BACKOFF_MS = original;
+    // v0.30.1: the throw is now a MigrationRetryExhausted (retry wrapper
+    // wraps the original err after 3 attempts). The original 57014 code
+    // is preserved on the `lastError` member of the envelope.
+    expect(caughtName).toBe('MigrationRetryExhausted');
+    // Defensive: legacy callers checking .code still work via `lastError`.
+    void caughtCode;
 
-    // Assert the diagnostic lines hit stderr with the exact agent-driven shape:
-    // what happened, why, fix, verify.
+    // Assert the diagnostic lines hit stderr with the agent-driven shape.
+    // v0.30.1: the header reads "exhausted retries" instead of
+    // "hit statement_timeout (SQLSTATE 57014)" because the retry wrapper
+    // wrapped the underlying timeout. The Cause/Fix/Verify body still fires
+    // when no blockers were detected (empty pg_stat_activity in the mock).
     const msgs = errSpy.mock.calls.map(c => String(c[0]));
     const joined = msgs.join('\n');
-    expect(joined).toContain('statement_timeout');
-    expect(joined).toContain('SQLSTATE 57014');
+    expect(joined).toContain('exhausted retries');
     expect(joined).toContain('gbrain doctor --locks');
     expect(joined).toContain('gbrain apply-migrations --yes');
     expect(joined).toContain('Verify:');
@@ -1069,10 +1090,15 @@ describe('PR #356 — non-transactional DDL runs via reserved connection', () =>
     // NOT engine.runMigration on the shared pool. Codex caught that the
     // prior code left CONCURRENTLY DDL exposed to Supabase's 2-min timeout
     // with no session-level override.
+    //
+    // v0.30.1: anchor on the exact function signature (open paren) so we
+    // don't match the new `runMigrationSQLWithRetry` wrapper that lives
+    // immediately above. The wrapper calls runMigrationSQL inside its retry
+    // body, so it must come BEFORE in the source — which is why a prefix
+    // match would catch the wrong function.
     const source = readFileSync(resolve('src/core/migrate.ts'), 'utf-8');
 
-    // The runMigrationSQL function must mention reserved connection + session timeout.
-    const runFnIdx = source.indexOf('async function runMigrationSQL');
+    const runFnIdx = source.indexOf('async function runMigrationSQL(');
     expect(runFnIdx).toBeGreaterThan(-1);
     const fnBody = source.slice(runFnIdx, runFnIdx + 2500);
     expect(fnBody).toContain('withReservedConnection');
@@ -1143,6 +1169,198 @@ describe('migration v31 — eval_capture_tables', () => {
 
   test('LATEST_VERSION caught up to 31', () => {
     expect(LATEST_VERSION).toBeGreaterThanOrEqual(31);
+  });
+});
+
+describe('migration v40 — pages_emotional_weight (v0.29)', () => {
+  // v0.29 ships off master. Master is at v39 (multimodal_dual_column_v0_27_1);
+  // v0.29 lands at v40. Idempotent ADD COLUMN IF NOT EXISTS, so brains that
+  // applied this at any prior number on a feature branch see v40 as new and
+  // run cleanly.
+  test('exists with the expected name', () => {
+    const v40 = MIGRATIONS.find(m => m.version === 40);
+    expect(v40).toBeDefined();
+    expect(v40?.name).toBe('pages_emotional_weight');
+  });
+
+  test('adds emotional_weight REAL NOT NULL DEFAULT 0.0 to pages', () => {
+    const v40 = MIGRATIONS.find(m => m.version === 40);
+    const sql = v40!.sql || '';
+    expect(sql).toContain('ALTER TABLE pages');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS emotional_weight');
+    expect(sql).toContain('REAL');
+    expect(sql).toContain('NOT NULL DEFAULT 0.0');
+  });
+
+  test('does NOT create an idx_pages_emotional_weight index (eng review D6)', () => {
+    // Salience query orders by computed score, not raw weight; the index
+    // would never be used. Adding it later requires a separate migration.
+    const v40 = MIGRATIONS.find(m => m.version === 40);
+    const sql = v40!.sql || '';
+    expect(sql).not.toContain('idx_pages_emotional_weight');
+    expect(sql).not.toContain('CREATE INDEX');
+  });
+
+  test('LATEST_VERSION caught up to 40', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(40);
+  });
+});
+
+describe('migration v48 — takes_weight_round_to_grid (v0.32)', () => {
+  // v0.32 — Takes v2 wave. Renumbered from v46 → v48 after merging master's
+  // v0.31.3 wave (which claimed v46 with mcp_request_log_params_jsonb_normalize).
+  // Backfill the pre-v0.32 weight column to the 0.05 grid the engine layer
+  // (PR #795) enforces on insert. Cross-modal eval over 100K production
+  // takes flagged 0.74, 0.82-style values as false precision; this migration
+  // brings existing data to the grid that all new writes already match.
+  test('exists with the expected name', () => {
+    const v48 = MIGRATIONS.find(m => m.version === 48);
+    expect(v48).toBeDefined();
+    expect(v48?.name).toBe('takes_weight_round_to_grid');
+  });
+
+  test('uses transaction:false (codex review #2 — non-blocking, idempotent via WHERE)', () => {
+    // The original plan called this "mid-statement resume" — that was wrong.
+    // What transaction:false actually buys is freeing the migration runner
+    // from a long transaction so other gbrain processes can interleave.
+    const v48 = MIGRATIONS.find(m => m.version === 48);
+    expect(v48?.transaction).toBe(false);
+  });
+
+  test('UPDATE rounds weight to 0.05 grid', () => {
+    const v48 = MIGRATIONS.find(m => m.version === 48);
+    const sql = v48!.sql || '';
+    expect(sql).toContain('UPDATE takes');
+    expect(sql).toContain('ROUND(weight::numeric * 20) / 20');
+  });
+
+  test('WHERE uses tolerance comparison (REAL float32 noise vs 0.05 grid)', () => {
+    // Codex #2 idempotency correction + REAL/float32 implementation note:
+    // a naive `weight <> ROUND(...)` form fires every time because mixed
+    // REAL/NUMERIC comparison promotes weight to DOUBLE PRECISION first,
+    // surfacing ~1e-7 representation noise as inequality. The tolerance
+    // form (abs(...) > 0.001) catches genuinely off-grid values (the 0.05
+    // grid is 5e-2, far above 1e-3) while ignoring float32 round-trip noise.
+    const v48 = MIGRATIONS.find(m => m.version === 48);
+    const sql = v48!.sql || '';
+    expect(sql).toContain('WHERE');
+    expect(sql).toContain('abs(weight::numeric');
+    expect(sql).toContain('> 0.001');
+  });
+
+  test('IS NOT NULL guard (insurance against stale schema)', () => {
+    const v48 = MIGRATIONS.find(m => m.version === 48);
+    const sql = v48!.sql || '';
+    expect(sql).toContain('weight IS NOT NULL');
+  });
+
+  test('LATEST_VERSION caught up to 48', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(48);
+  });
+});
+
+describe('migration v49 — eval_takes_quality_runs (v0.32)', () => {
+  // v0.32 EXP-5 — Renumbered from v47 → v49 after merging master's v0.31.3 wave.
+  // DB-authoritative receipts table for `gbrain eval takes-quality`.
+  // Codex review #6 corrected the original two-phase split-brain plan: DB row
+  // is the source of truth (carries full receipt JSON), disk artifact is
+  // best-effort. The 4-sha unique key (corpus, prompt, models, rubric) makes
+  // re-running identical evals an `INSERT ... ON CONFLICT DO NOTHING` no-op.
+  test('exists with the expected name', () => {
+    const v49 = MIGRATIONS.find(m => m.version === 49);
+    expect(v49).toBeDefined();
+    expect(v49?.name).toBe('eval_takes_quality_runs');
+  });
+
+  test('creates the table with all 4 receipt sha columns + receipt_json JSONB', () => {
+    const v49 = MIGRATIONS.find(m => m.version === 49);
+    const sql = v49!.sql || '';
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS eval_takes_quality_runs');
+    expect(sql).toContain('receipt_sha8_corpus');
+    expect(sql).toContain('receipt_sha8_prompt');
+    expect(sql).toContain('receipt_sha8_models');
+    expect(sql).toContain('receipt_sha8_rubric');
+    expect(sql).toContain('receipt_json          JSONB');
+  });
+
+  test('has 4-sha UNIQUE constraint (idempotent re-runs)', () => {
+    const v49 = MIGRATIONS.find(m => m.version === 49);
+    const sql = v49!.sql || '';
+    expect(sql).toContain('UNIQUE (receipt_sha8_corpus, receipt_sha8_prompt, receipt_sha8_models, receipt_sha8_rubric)');
+  });
+
+  test('verdict column has CHECK constraint for the 3 verdict values', () => {
+    const v49 = MIGRATIONS.find(m => m.version === 49);
+    const sql = v49!.sql || '';
+    expect(sql).toContain("CHECK (verdict IN ('pass','fail','inconclusive'))");
+  });
+
+  test('trend index orders by (rubric_version, created_at DESC)', () => {
+    // Codex review #3 — trend mode segregates by rubric_version + reads
+    // ordered DESC. Index shape must match the query shape exactly.
+    const v49 = MIGRATIONS.find(m => m.version === 49);
+    const sql = v49!.sql || '';
+    expect(sql).toContain('eval_takes_quality_runs_trend_idx');
+    expect(sql).toContain('(rubric_version, created_at DESC)');
+  });
+
+  test('LATEST_VERSION caught up to 49', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(49);
+  });
+});
+
+describe('migration v51 — facts_fence_columns (v0.32.2)', () => {
+  // v0.32.2: facts become FS-canonical via the `## Facts` fence pattern
+  // (mirror of takes-fence). row_num + source_markdown_slug are the
+  // fence round-trip columns; the partial UNIQUE index enforces uniqueness
+  // only once row_num is assigned, leaving legacy NULL rows uncollided
+  // until the v0_32_2 orchestrator backfills them from entity-page fences.
+  test('exists with the expected name', () => {
+    const v51 = MIGRATIONS.find(m => m.version === 51);
+    expect(v51).toBeDefined();
+    expect(v51?.name).toBe('facts_fence_columns');
+  });
+
+  test('adds row_num + source_markdown_slug as ADD COLUMN IF NOT EXISTS', () => {
+    const v51 = MIGRATIONS.find(m => m.version === 51);
+    const sql = v51!.sql || '';
+    expect(sql).toContain('ALTER TABLE facts ADD COLUMN IF NOT EXISTS row_num');
+    expect(sql).toContain('ALTER TABLE facts ADD COLUMN IF NOT EXISTS source_markdown_slug');
+  });
+
+  test('row_num must be nullable (legacy v0.31 rows have no row_num until backfill)', () => {
+    const v51 = MIGRATIONS.find(m => m.version === 51);
+    const sql = v51!.sql || '';
+    // Both ALTERs land without `NOT NULL` — the orchestrator backfills before
+    // anything assumes presence. A future migration may tighten this once the
+    // backfill has run everywhere.
+    expect(sql).not.toMatch(/row_num\s+INTEGER\s+NOT NULL/);
+    expect(sql).not.toMatch(/source_markdown_slug\s+TEXT\s+NOT NULL/);
+  });
+
+  test('creates partial unique index keyed on (source_id, source_markdown_slug, row_num) WHERE row_num IS NOT NULL', () => {
+    const v51 = MIGRATIONS.find(m => m.version === 51);
+    const sql = v51!.sql || '';
+    expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_fence_key');
+    expect(sql).toContain('ON facts (source_id, source_markdown_slug, row_num)');
+    expect(sql).toContain('WHERE row_num IS NOT NULL');
+  });
+
+  test('partial WHERE clause is the Codex R2 collision guard for legacy NULL rows', () => {
+    // Without the partial clause, two pre-v51 rows with NULL row_num on the
+    // same (source_id, source_markdown_slug) coordinate would collide and
+    // the migration would fail loudly on any populated v0.31 brain. The
+    // partial index makes legacy rows invisible to uniqueness checks until
+    // the v0_32_2 orchestrator gives them a row_num.
+    const v51 = MIGRATIONS.find(m => m.version === 51);
+    const sql = v51!.sql || '';
+    const indexClause = sql.match(/CREATE UNIQUE INDEX[\s\S]*?;/);
+    expect(indexClause).toBeTruthy();
+    expect(indexClause![0]).toContain('WHERE row_num IS NOT NULL');
+  });
+
+  test('LATEST_VERSION caught up to 51', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(51);
   });
 });
 

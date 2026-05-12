@@ -22,6 +22,8 @@
 
 import type { BrainEngine } from './engine.ts';
 
+export type ModelTier = 'utility' | 'reasoning' | 'deep' | 'subagent';
+
 export interface ResolveModelOpts {
   /** CLI flag value (e.g. `--model opus` → 'opus'). Highest precedence. */
   cliFlag?: string;
@@ -31,6 +33,16 @@ export interface ResolveModelOpts {
   deprecatedConfigKey?: string;
   /** Env var to consult after global default. Defaults to `GBRAIN_MODEL`. */
   envVar?: string;
+  /**
+   * Tier classification (v0.31.12). Looked up after `models.default` and
+   * before the env var. Routing groups: `utility` (haiku-class, classification
+   * + expansion + verdict), `reasoning` (sonnet-class, default chat +
+   * synthesis + fact extraction), `deep` (opus-class, expensive reasoning),
+   * `subagent` (Anthropic-only multi-turn tool loop — never inherits a
+   * non-Anthropic `models.default`; falls back to TIER_DEFAULTS.subagent
+   * with a one-shot stderr warn instead).
+   */
+  tier?: ModelTier;
   /** Hardcoded last-resort fallback. */
   fallback: string;
 }
@@ -43,6 +55,48 @@ export const DEFAULT_ALIASES: Record<string, string> = {
   gemini: 'gemini-3-pro',
   gpt:    'gpt-5',
 };
+
+/**
+ * Default model for each tier. Used as the hardcoded fallback when no
+ * `models.tier.<tier>` config + no `models.default` is set. Subagent gets
+ * Sonnet (Anthropic Messages API tool-loop shape required); reasoning gets
+ * Sonnet (default workhorse); deep gets Opus 4.7 (expensive reasoning);
+ * utility gets Haiku (fast classification).
+ *
+ * Users override via `gbrain config set models.tier.<tier> <model>`.
+ */
+export const TIER_DEFAULTS: Record<ModelTier, string> = {
+  utility:   'claude-haiku-4-5-20251001',
+  reasoning: 'claude-sonnet-4-6',
+  deep:      'claude-opus-4-7',
+  subagent:  'claude-sonnet-4-6',
+};
+
+/**
+ * v0.31.12 subagent runtime enforcement (layer 2).
+ *
+ * Returns true if a resolved `provider:model` (or bare model id) points at
+ * an Anthropic-shape API. The subagent loop in
+ * `src/core/minions/handlers/subagent.ts` makes Anthropic Messages API calls
+ * with prompt caching on system + tools; routing it elsewhere silently
+ * breaks. When `tier === 'subagent'` resolves to a non-Anthropic provider,
+ * we log a stderr warn AND fall back to `TIER_DEFAULTS.subagent`.
+ */
+export function isAnthropicProvider(modelString: string): boolean {
+  if (!modelString) return false;
+  const trimmed = modelString.trim();
+  // `provider:model` form: check provider prefix.
+  const colon = trimmed.indexOf(':');
+  if (colon !== -1) {
+    return trimmed.slice(0, colon).trim().toLowerCase() === 'anthropic';
+  }
+  // Bare model id: known Anthropic models start with `claude-`. Conservative:
+  // we'd rather warn-on-Anthropic-typo than silently route gpt-5 to the
+  // subagent loop.
+  return trimmed.toLowerCase().startsWith('claude-');
+}
+
+const _subagentTierWarningsEmitted = new Set<string>();
 
 // Module-level set of deprecated config keys we've already warned about.
 // Reset on process restart; one warning per (key, process) per Codex P1 #11.
@@ -107,18 +161,59 @@ export async function resolveModel(
     // 4. Global default
     const def = await engine.getConfig('models.default');
     if (def && def.trim()) {
-      return await resolveAlias(engine, def.trim());
+      const resolved = await resolveAlias(engine, def.trim());
+      return enforceSubagentAnthropic(resolved, opts.tier, 'models.default');
+    }
+
+    // 5. Tier override (v0.31.12)
+    if (opts.tier) {
+      const tierVal = await engine.getConfig(`models.tier.${opts.tier}`);
+      if (tierVal && tierVal.trim()) {
+        const resolved = await resolveAlias(engine, tierVal.trim());
+        return enforceSubagentAnthropic(resolved, opts.tier, `models.tier.${opts.tier}`);
+      }
     }
   }
 
-  // 5. Env var
+  // 6. Env var
   const env = process.env[envVar];
   if (env && env.trim()) {
-    return await resolveAlias(engine, env.trim());
+    const resolved = await resolveAlias(engine, env.trim());
+    return enforceSubagentAnthropic(resolved, opts.tier, `env:${envVar}`);
   }
 
-  // 6. Hardcoded fallback
+  // 7. Tier default (v0.31.12 — when no override beats us, the tier's
+  //    canonical model wins over caller-supplied fallback)
+  if (opts.tier && TIER_DEFAULTS[opts.tier]) {
+    return await resolveAlias(engine, TIER_DEFAULTS[opts.tier]);
+  }
+
+  // 8. Hardcoded fallback (caller-supplied)
   return await resolveAlias(engine, opts.fallback);
+}
+
+/**
+ * v0.31.12 subagent runtime enforcement (layer 2): if `tier === 'subagent'`
+ * resolved to a non-Anthropic model, warn once per (source, model) and fall
+ * back to `TIER_DEFAULTS.subagent`. Source is the resolution-chain step that
+ * produced the bad value (`models.default`, `models.tier.subagent`, etc.) so
+ * the user sees where to fix it.
+ *
+ * Returns the resolved value unchanged for non-subagent tiers or when the
+ * resolved value is already Anthropic.
+ */
+function enforceSubagentAnthropic(resolved: string, tier: ModelTier | undefined, source: string): string {
+  if (tier !== 'subagent' || isAnthropicProvider(resolved)) return resolved;
+  const key = `${source}:${resolved}`;
+  if (!_subagentTierWarningsEmitted.has(key)) {
+    _subagentTierWarningsEmitted.add(key);
+    process.stderr.write(
+      `[models] tier.subagent resolved to non-Anthropic provider "${resolved}" via "${source}". ` +
+      `The subagent loop is Anthropic-only — falling back to ${TIER_DEFAULTS.subagent}. ` +
+      `Fix: gbrain config set models.tier.subagent anthropic:<model>\n`,
+    );
+  }
+  return TIER_DEFAULTS.subagent;
 }
 
 /**
@@ -152,4 +247,5 @@ export async function resolveAlias(
 /** Test-only helper: clear the deprecation-warning memo so tests re-emit. */
 export function _resetDeprecationWarningsForTest(): void {
   _deprecationWarningsEmitted.clear();
+  _subagentTierWarningsEmitted.clear();
 }

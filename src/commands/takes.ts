@@ -305,29 +305,206 @@ async function cmdSupersede(engine: BrainEngine, args: string[]): Promise<void> 
 async function cmdResolve(engine: BrainEngine, args: string[]): Promise<void> {
   const slug = args[0];
   const rowNumStr = flagValue(args, '--row');
+  const qualityStr = flagValue(args, '--quality');
   const outcomeStr = flagValue(args, '--outcome');
-  if (!slug || !rowNumStr || !outcomeStr) {
-    console.error('Usage: gbrain takes resolve <slug> --row N --outcome true|false [--value N --unit usd|pct|count] [--source "..."] [--by <slug>]');
+  if (!slug || !rowNumStr || (!qualityStr && !outcomeStr)) {
+    console.error('Usage: gbrain takes resolve <slug> --row N --quality correct|incorrect|partial [--evidence "..."] [--value N --unit usd|pct|count] [--by <slug>]');
+    console.error('       (back-compat) gbrain takes resolve <slug> --row N --outcome true|false [...]');
+    process.exit(1);
+  }
+  if (qualityStr && outcomeStr) {
+    console.error('Error: --quality and --outcome are mutually exclusive (choose one).');
     process.exit(1);
   }
   const rowNum = parseInt(rowNumStr, 10);
-  const outcome = outcomeStr === 'true';
+
+  // v0.30.0: --quality is the new primary input. --outcome stays as a back-compat
+  // alias auto-mapping true→correct / false→incorrect; cannot express partial.
+  let quality: 'correct' | 'incorrect' | 'partial' | undefined;
+  let outcome: boolean | undefined;
+  if (qualityStr) {
+    if (qualityStr !== 'correct' && qualityStr !== 'incorrect' && qualityStr !== 'partial') {
+      console.error(`Invalid --quality "${qualityStr}". Expected: correct, incorrect, partial.`);
+      process.exit(1);
+    }
+    quality = qualityStr;
+  } else if (outcomeStr) {
+    if (outcomeStr !== 'true' && outcomeStr !== 'false') {
+      console.error(`Invalid --outcome "${outcomeStr}". Expected: true or false.`);
+      process.exit(1);
+    }
+    outcome = outcomeStr === 'true';
+    console.error('[deprecated] --outcome is the v0.28 alias for --quality. Prefer --quality correct|incorrect|partial in new scripts.');
+  }
+
   const valueStr = flagValue(args, '--value');
   const value = valueStr === undefined ? undefined : parseFloat(valueStr);
   const unit = flagValue(args, '--unit');
-  const source = flagValue(args, '--source');
+  // --evidence is the v0.30.0 alias for --source on the resolve subcommand
+  // (semantic clarity: "what evidence resolved this bet?").
+  const source = flagValue(args, '--evidence') ?? flagValue(args, '--source');
   const resolvedBy = flagValue(args, '--by') ?? 'garry';
+  const dirArg = flagValue(args, '--dir');
 
   const pageId = await getPageId(engine, slug);
   await engine.resolveTake(pageId, rowNum, {
+    quality,
     outcome,
     value,
     unit,
     source,
     resolvedBy,
   });
-  console.log(`Resolved take #${rowNum} on ${slug}: outcome=${outcome}${valueStr ? ` value=${value}${unit ? ` ${unit}` : ''}` : ''}.`);
-  console.log(`(Markdown rendering of resolution metadata: deferred to v0.29 — DB stores it; takes-fence renderer doesn't yet surface resolved_* in the table.)`);
+
+  // Mirror resolution into the markdown fence so the page is self-describing.
+  // The renderer conditionally widens the table to 13 columns when at least one
+  // row has resolution data; pages with no resolved rows keep the 7-col shape.
+  // Round-trip via parseTakesFence + renderTakesFence preserves all rows.
+  const brainDir = await resolveBrainDir(engine, dirArg ?? null);
+  await withPageLock(slug, async () => {
+    const path = pageFilePath(brainDir, slug);
+    const body = readBodyOrEmpty(path);
+    if (!body) {
+      console.warn(`[takes resolve] markdown file not found at ${path}; DB updated but on-disk page absent.`);
+      return;
+    }
+    const { parseTakesFence, renderTakesFence, TAKES_FENCE_BEGIN, TAKES_FENCE_END } = await import('../core/takes-fence.ts');
+    const parsed = parseTakesFence(body);
+    const target = parsed.takes.find(t => t.rowNum === rowNum);
+    if (!target) {
+      console.warn(`[takes resolve] DB updated but row #${rowNum} not in markdown fence; run 'gbrain extract takes --slugs ${slug}' to reconcile.`);
+      return;
+    }
+    // Derive resolved fields from the inputs. Mirror the engine semantics:
+    // quality wins when both set; partial → outcome=null.
+    const finalQuality = quality ?? (outcome === true ? 'correct' : outcome === false ? 'incorrect' : undefined);
+    if (!finalQuality) return; // unreachable — covered by earlier validation
+    const finalOutcome = finalQuality === 'partial' ? undefined
+                       : finalQuality === 'correct' ? true : false;
+    const updated = {
+      ...target,
+      resolvedAt: new Date().toISOString().slice(0, 10),
+      resolvedQuality: finalQuality,
+      resolvedOutcome: finalOutcome,
+      resolvedEvidence: source,
+      resolvedValue: value,
+      resolvedUnit: unit,
+      resolvedBy,
+    };
+    const allRows = parsed.takes.map(t => t.rowNum === rowNum ? updated : t);
+    const newFence = renderTakesFence(allRows);
+    const beginIdx = body.indexOf(TAKES_FENCE_BEGIN);
+    const endIdx = body.indexOf(TAKES_FENCE_END, beginIdx + TAKES_FENCE_BEGIN.length);
+    const out = body.slice(0, beginIdx) + newFence + body.slice(endIdx + TAKES_FENCE_END.length);
+    writeBody(path, out);
+  });
+
+  const finalQuality = quality ?? (outcome === true ? 'correct' : outcome === false ? 'incorrect' : 'unknown');
+  const valueSummary = valueStr ? ` value=${value}${unit ? ` ${unit}` : ''}` : '';
+  console.log(`Resolved take #${rowNum} on ${slug}: quality=${finalQuality}${valueSummary}.`);
+}
+
+/**
+ * v0.30.0: aggregate calibration scorecard for a holder.
+ *
+ * Brier scope (D5+D11): partial bets are excluded from Brier — partial
+ * isn't a binary outcome to compare a probability against. The partial_rate
+ * counter reports the rate as a separate signal so hedging behavior stays
+ * visible even though it doesn't enter the calibration math. When the rate
+ * exceeds 20% the CLI prints a warning line; calibration on a hedge-heavy
+ * scorecard is artificially clean, and the user should know.
+ */
+async function cmdScorecard(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = flagPresent(args, '--json');
+  const holder = args[0] && !args[0].startsWith('--') ? args[0] : flagValue(args, '--holder');
+  const domainPrefix = flagValue(args, '--domain');
+  const since = flagValue(args, '--since');
+  const until = flagValue(args, '--until');
+  const { PARTIAL_RATE_WARNING_THRESHOLD } = await import('../core/takes-resolution.ts');
+
+  const card = await engine.getScorecard(
+    { holder, domainPrefix, since, until },
+    /* allowList */ undefined, // CLI is local + trusted; MCP path threads allowList from the caller
+  );
+
+  if (json) {
+    console.log(JSON.stringify(card, null, 2));
+    return;
+  }
+
+  if (card.resolved === 0) {
+    console.log(`No resolved bets yet${holder ? ` for ${holder}` : ''}.`);
+    return;
+  }
+  const fmt = (n: number | null, digits = 3) => n === null ? '—' : n.toFixed(digits);
+  console.log(`# Scorecard${holder ? ` — ${holder}` : ''}`);
+  if (domainPrefix) console.log(`Scope: domain=${domainPrefix}`);
+  if (since || until) console.log(`Window: ${since ?? 'all'} → ${until ?? 'now'}`);
+  console.log('');
+  console.log(`  total bets:    ${card.total_bets}`);
+  console.log(`  resolved:      ${card.resolved}`);
+  console.log(`  correct:       ${card.correct}`);
+  console.log(`  incorrect:     ${card.incorrect}`);
+  console.log(`  partial:       ${card.partial}`);
+  console.log(`  accuracy:      ${fmt(card.accuracy)}`);
+  console.log(`  Brier:         ${fmt(card.brier, 4)}   (correct ∨ incorrect only; lower is better; 0.25 = always-50% baseline)`);
+  console.log(`  partial_rate:  ${fmt(card.partial_rate)}`);
+  if (card.partial_rate !== null && card.partial_rate > PARTIAL_RATE_WARNING_THRESHOLD) {
+    console.log('');
+    console.log(`  [!] partial_rate is high (>${(PARTIAL_RATE_WARNING_THRESHOLD * 100).toFixed(0)}%) — calibration may be optimistic.`);
+    console.log(`      Hedged bets escape the Brier denominator. Resolve them more decisively if the data supports it.`);
+  }
+  if (card.resolved < 100) {
+    console.log('');
+    console.log(`  Note: n=${card.resolved} is small. Brier is noisy below ~100 resolved bets.`);
+  }
+}
+
+/**
+ * v0.30.0: calibration curve. Bins resolved correct+incorrect bets by stated
+ * weight and reports observed vs predicted frequency per bucket. The diagonal
+ * (observed ≈ predicted in every bucket) is perfect calibration.
+ */
+async function cmdCalibration(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = flagPresent(args, '--json');
+  const holder = args[0] && !args[0].startsWith('--') ? args[0] : flagValue(args, '--holder');
+  const bucketSizeStr = flagValue(args, '--bucket-size');
+  const bucketSize = bucketSizeStr === undefined ? 0.1 : parseFloat(bucketSizeStr);
+  if (!Number.isFinite(bucketSize) || bucketSize <= 0 || bucketSize > 1) {
+    console.error(`Invalid --bucket-size "${bucketSizeStr}". Expected a number in (0, 1].`);
+    process.exit(1);
+  }
+
+  const buckets = await engine.getCalibrationCurve(
+    { holder, bucketSize },
+    /* allowList */ undefined,
+  );
+
+  if (json) {
+    console.log(JSON.stringify(buckets, null, 2));
+    return;
+  }
+
+  if (buckets.length === 0) {
+    console.log(`No resolved correct/incorrect bets yet${holder ? ` for ${holder}` : ''}.`);
+    return;
+  }
+  console.log(`# Calibration curve${holder ? ` — ${holder}` : ''}`);
+  console.log(`Bucket size: ${bucketSize}`);
+  console.log('');
+  console.log(`  bucket          n     observed  predicted  delta`);
+  console.log(`  --------------- ----- --------- ---------- -------`);
+  const fmt = (n: number | null) => n === null ? '   —' : n.toFixed(3);
+  for (const b of buckets) {
+    const range = `${b.bucket_lo.toFixed(2)}-${b.bucket_hi.toFixed(2)}`.padEnd(15);
+    const nStr = String(b.n).padStart(5);
+    const obs = fmt(b.observed).padStart(9);
+    const pred = fmt(b.predicted).padStart(10);
+    const delta = b.observed !== null && b.predicted !== null
+      ? (b.observed - b.predicted).toFixed(3).padStart(7)
+      : '     —';
+    console.log(`  ${range} ${nStr} ${obs} ${pred} ${delta}`);
+  }
 }
 
 // --- Dispatcher ---
@@ -348,8 +525,14 @@ Subcommands:
                                           Update mutable fields
   takes supersede <slug> --row N --claim "..." [--kind k] [--who h] [--weight 0.5] [--source "..."]
                                           Strikethrough old + append new
-  takes resolve <slug> --row N --outcome true|false [--value N --unit usd|pct|count] [--source "..."] [--by <slug>]
-                                          Record bet resolution (immutable)
+  takes resolve <slug> --row N --quality correct|incorrect|partial
+                       [--evidence "..."] [--value N --unit usd|pct|count] [--by <slug>]
+                                          Record bet resolution (immutable, v0.30.0)
+                                          Back-compat: --outcome true|false (deprecated alias)
+  takes scorecard [<holder>] [--domain <prefix>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
+                                          Aggregate calibration scorecard (v0.30.0)
+  takes calibration [<holder>] [--bucket-size 0.1] [--json]
+                                          Calibration curve binned by stated weight (v0.30.0)
 
 Common flags:
   --dir <path>    Override the brain directory (default: sync.repo_path config)
@@ -362,11 +545,13 @@ Common flags:
   const rest = args.slice(1);
 
   switch (sub) {
-    case 'search':    return cmdSearch(engine, rest);
-    case 'add':       return cmdAdd(engine, rest);
-    case 'update':    return cmdUpdate(engine, rest);
-    case 'supersede': return cmdSupersede(engine, rest);
-    case 'resolve':   return cmdResolve(engine, rest);
+    case 'search':      return cmdSearch(engine, rest);
+    case 'add':         return cmdAdd(engine, rest);
+    case 'update':      return cmdUpdate(engine, rest);
+    case 'supersede':   return cmdSupersede(engine, rest);
+    case 'resolve':     return cmdResolve(engine, rest);
+    case 'scorecard':   return cmdScorecard(engine, rest);
+    case 'calibration': return cmdCalibration(engine, rest);
     default:
       // No subcommand keyword → treat first arg as <slug> for the list path.
       return cmdList(engine, args);

@@ -131,6 +131,7 @@ export async function runPhaseDrift(
   const modelId = await resolveModel(engine, {
     configKey: 'models.drift',
     deprecatedConfigKey: 'dream.drift.model',
+    tier: 'reasoning',
     fallback: 'sonnet',
   });
   const meter = new BudgetMeter({

@@ -34,7 +34,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
 
   afterAll(async () => {
     if (pg) await pg.disconnect();
-  });
+  }, 30_000);
 
   beforeEach(async () => {
     // Clean slate so cross-test seeding doesn't bleed. CASCADE pages also
@@ -65,7 +65,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
     expect(modality.column_default).toContain("'text'");
     const embImg = rows.find(r => r.column_name === 'embedding_image')!;
     expect(embImg.data_type).toBe('USER-DEFINED');
-  });
+  }, 30_000);
 
   test('partial HNSW index idx_chunks_embedding_image exists with WHERE clause', async () => {
     const rows = await pg.executeRaw<{ indexname: string; indexdef: string }>(
@@ -77,7 +77,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
     expect(rows[0].indexdef.toLowerCase()).toContain('hnsw');
     expect(rows[0].indexdef.toLowerCase()).toContain('where');
     expect(rows[0].indexdef.toLowerCase()).toContain('embedding_image is not null');
-  });
+  }, 30_000);
 
   test('files table parity: same column shape as PGLite', async () => {
     const rows = await pg.executeRaw<{ column_name: string }>(
@@ -99,7 +99,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
       'source_id',
       'storage_path',
     ]);
-  });
+  }, 30_000);
 
   test('pages.page_kind CHECK admits image (migration v36 widening)', async () => {
     // Insert a page with page_kind='image'. CHECK pre-v0.27.1 would reject.
@@ -111,7 +111,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
       timeline: '',
     });
     expect(result.id).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   test('upsertFile end-to-end on Postgres', async () => {
     const r = await pg.upsertFile({
@@ -138,7 +138,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
     });
     expect(r2.id).toBe(r.id);
     expect(r2.created).toBe(false);
-  });
+  }, 30_000);
 
   test('upsertChunks writes embedding_image + modality columns (round-trip)', async () => {
     const page = await pg.putPage('photos/round-trip', {
@@ -169,7 +169,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
     expect(rows[0].modality).toBe('image');
     expect(rows[0].has_image).toBe(true);
     expect(rows[0].has_text).toBe(false); // image rows leave embedding NULL
-  });
+  }, 30_000);
 
   test('searchVector with embeddingColumn=embedding_image returns image rows on Postgres', async () => {
     // Seed: one text page (1536-dim primary embedding) and two image pages
@@ -217,7 +217,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
     expect(slugs).not.toContain('notes/text-only');
     // Nearest-first ordering.
     expect(hits[0].slug).toBe('photos/b');
-  });
+  }, 30_000);
 
   test('searchKeyword hides image rows by default (modality filter on Postgres)', async () => {
     // Seed text + image pages with chunk_text the FTS would normally match.
@@ -247,7 +247,7 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
     const slugs = out.map(r => r.slug);
     expect(slugs).toContain('notes/keyword');
     expect(slugs).not.toContain('photos/keyword');
-  });
+  }, 30_000);
 
   test('cross-engine parity: same fixture, identical chunk + file shape on PGLite + Postgres', async () => {
     // Direct comparison against PGLite for the dual-column architecture.
@@ -323,12 +323,12 @@ describe.skipIf(skip)('multimodal v0.27.1 against real Postgres', () => {
     } finally {
       await pglite.disconnect();
     }
-  });
+  }, 30_000);
 
   test('migration v36 ran (schema_version >= 36)', async () => {
     // initSchema runs migrations; verify config table reflects v36+ landed.
     const v = await pg.getConfig('version');
     const ver = parseInt(v ?? '0', 10);
     expect(ver).toBeGreaterThanOrEqual(36);
-  });
+  }, 30_000);
 });

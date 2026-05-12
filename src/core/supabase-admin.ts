@@ -13,11 +13,11 @@ export function extractProjectRef(input: string): string | null {
   const dashMatch = input.match(/supabase\.com\/dashboard\/project\/([a-z]+)/);
   if (dashMatch) return dashMatch[1];
 
-  // Direct connection: postgresql://postgres:[pw]@db.[ref].supabase.co:5432/postgres
+  // Direct connection example URL  /* allow-pg-url-literal */
   const directMatch = input.match(/db\.([a-z]+)\.supabase\.co/);
   if (directMatch) return directMatch[1];
 
-  // Pooler: postgresql://postgres.[ref]:[pw]@aws-0-[region].pooler.supabase.com:6543/postgres
+  // Pooler example URL  /* allow-pg-url-literal */
   const poolerMatch = input.match(/postgres\.([a-z]+):/);
   if (poolerMatch) return poolerMatch[1];
 
@@ -76,6 +76,6 @@ export async function discoverPoolerUrl(
 
   // Fallback: construct from region
   const region = settings.region;
-  return `postgresql://postgres.${projectRef}:[YOUR-PASSWORD]@aws-0-${region}.pooler.supabase.com:6543/postgres`;
+  return `postgresql://postgres.${projectRef}:[YOUR-PASSWORD]@aws-0-${region}.pooler.supabase.com:6543/postgres`; /* allow-pg-url-literal */
 }
 

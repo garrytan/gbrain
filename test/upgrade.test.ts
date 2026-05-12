@@ -74,12 +74,34 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
 
   // v0.28.5 cluster D: 3-signal layered detection.
   test('bun-link signal walks .git/config for garrytan/gbrain match', () => {
-    // detectBunLink reads .git/config and matches our repo name as a
-    // case-insensitive substring. Confirm both the function exists and
-    // that it does the loose substring check (not a strict URL parse).
     expect(source).toContain('function detectBunLink');
     expect(source).toContain('GBRAIN_GITHUB_REPO');
     expect(source).toContain('toLowerCase()');
+  });
+
+  test('detectBunLink does not gate on isSymbolicLink (bun resolves argv[1])', () => {
+    // v0.28.5 gated on lstatSync(argv1).isSymbolicLink() which always
+    // returned false because bun resolves symlinks before setting argv[1].
+    // The function body between "function detectBunLink" and the next
+    // top-level function must not contain isSymbolicLink.
+    const fnStart = source.indexOf('function detectBunLink');
+    const fnEnd = source.indexOf('\nfunction ', fnStart + 1);
+    const fnBody = source.slice(fnStart, fnEnd > -1 ? fnEnd : undefined);
+    expect(fnBody).not.toContain('isSymbolicLink');
+    expect(fnBody).not.toContain('lstatSync');
+  });
+
+  test('detectBunLink returns repoRoot, not a string literal', () => {
+    expect(source).toContain("{ repoRoot: string } | null");
+    expect(source).toContain('repoRoot: dir');
+  });
+
+  test('bun-link upgrade uses execFileSync for shell-injection safety', () => {
+    // execFileSync with array args bypasses the shell (same pattern as
+    // dry-fix.ts:172). execSync with template strings is vulnerable to
+    // paths containing shell metacharacters.
+    expect(source).toContain("execFileSync('git', ['-C', linkInfo.repoRoot, 'pull', '--ff-only']");
+    expect(source).toContain("execFileSync('bun', ['install']");
   });
 
   test('classifyBunInstall checks repository.url AND src/cli.ts marker', () => {

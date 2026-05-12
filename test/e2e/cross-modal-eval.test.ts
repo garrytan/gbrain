@@ -28,7 +28,7 @@ beforeEach(() => {
     embedding_model: 'openai:text-embedding-3-large',
     embedding_dimensions: 1536,
     expansion_model: 'anthropic:claude-haiku-4-5-20251001',
-    chat_model: 'anthropic:claude-sonnet-4-6-20250929',
+    chat_model: 'anthropic:claude-sonnet-4-6',
     base_urls: undefined,
     env: {
       OPENAI_API_KEY: 'sk-test',

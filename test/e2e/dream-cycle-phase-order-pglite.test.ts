@@ -1,21 +1,27 @@
 /**
- * E2E full 8-phase cycle on PGLite, no API key required.
+ * E2E full cycle on PGLite, no API key required.
  *
- * Verifies that the v0.23 phase order — lint → backlinks → sync →
- * synthesize → extract → patterns → embed → orphans — is honored
- * end-to-end through runCycle when no API key is present (synthesize
- * + patterns skip cleanly, the other six phases run unchanged).
+ * Verifies the current phase order is honored end-to-end through runCycle
+ * when no API key is present (synthesize + patterns skip cleanly, the
+ * remaining phases run unchanged).
+ *
+ * Phase ordering history:
+ *   v0.23 — 8 phases: lint → backlinks → sync → synthesize → extract →
+ *           patterns → embed → orphans
+ *   v0.26.5 — 9 phases (added `purge` last)
+ *   v0.29 — 10 phases (added `recompute_emotional_weight` between patterns
+ *           and embed; `purge` stays last)
  *
  * Two regression-relevant invariants:
- *   1. CycleReport.phases preserves the 8-phase order — no future
+ *   1. CycleReport.phases preserves the documented order — no future
  *      reorder regresses without breaking this test.
- *   2. CycleReport.totals carries the new v0.23 fields:
+ *   2. CycleReport.totals carries the v0.23 fields:
  *      transcripts_processed, synth_pages_written, patterns_written.
  *
  * No DATABASE_URL required. Mocks embedBatch so the embed phase doesn't
  * attempt OpenAI calls.
  *
- * Run: bun test test/e2e/dream-cycle-eight-phase-pglite.test.ts
+ * Run: bun test test/e2e/dream-cycle-phase-order-pglite.test.ts
  */
 
 import { describe, test, expect, mock } from 'bun:test';
@@ -80,21 +86,38 @@ async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
   }
 }
 
-describe('E2E v0.23 8-phase cycle', () => {
-  test('ALL_PHASES is the 8-phase order in the documented sequence', () => {
-    expect(ALL_PHASES).toEqual([
-      'lint',
-      'backlinks',
-      'sync',
-      'synthesize',
-      'extract',
-      'patterns',
-      'embed',
-      'orphans',
-    ]);
+// v0.31: phase set has grown from v0.23's 8 phases. The order below is
+// the canonical sequence enforced by ALL_PHASES in src/core/cycle.ts.
+// Maintenance contract: when a future migration adds or removes a phase,
+// extend this constant AND update both assertions below.
+//
+// Phase history:
+//   v0.23   — 8 phases (lint → ... → orphans)
+//   v0.26.5 — added `purge` (last)
+//   v0.29   — added `recompute_emotional_weight` between patterns and embed
+//   v0.31   — added `consolidate` between recompute_emotional_weight and embed
+type CyclePhase = (typeof ALL_PHASES)[number];
+const EXPECTED_PHASES: CyclePhase[] = [
+  'lint',
+  'backlinks',
+  'sync',
+  'synthesize',
+  'extract',
+  'extract_facts',               // v0.32.2 — reconcile fence → DB facts index
+  'patterns',
+  'recompute_emotional_weight', // v0.29
+  'consolidate',                // v0.31
+  'embed',
+  'orphans',
+  'purge',                       // v0.26.5
+];
+
+describe('E2E full cycle phase order', () => {
+  test('ALL_PHASES matches the documented sequence', () => {
+    expect(ALL_PHASES).toEqual(EXPECTED_PHASES);
   });
 
-  test('full cycle on dry-run returns CycleReport.phases in v0.23 order with new totals fields', async () => {
+  test('full cycle on dry-run returns CycleReport.phases in canonical order with v0.23 totals fields', async () => {
     const rig = await setupRig();
     try {
       await withoutAnthropicKey(async () => {
@@ -102,23 +125,18 @@ describe('E2E v0.23 8-phase cycle', () => {
           brainDir: rig.brainDir,
           dryRun: true,
         });
-        // Phase ordering preserved
+        // Phase ordering preserved across releases
         const phaseNames = report.phases.map(p => p.phase);
-        expect(phaseNames).toEqual([
-          'lint',
-          'backlinks',
-          'sync',
-          'synthesize',
-          'extract',
-          'patterns',
-          'embed',
-          'orphans',
-        ]);
-        // New totals fields exist (v0.23 additive growth)
+        expect(phaseNames).toEqual(EXPECTED_PHASES);
+        // Additive totals fields across v0.23, v0.26.5, v0.31 all present
         expect(report.totals).toMatchObject({
           transcripts_processed: 0,
           synth_pages_written: 0,
           patterns_written: 0,
+          purged_sources_count: 0,
+          purged_pages_count: 0,
+          facts_consolidated: 0,
+          consolidate_takes_written: 0,
         });
         // Synthesize and patterns are skipped (not_configured / insufficient_evidence)
         const synth = report.phases.find(p => p.phase === 'synthesize');

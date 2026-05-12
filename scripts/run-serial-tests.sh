@@ -30,5 +30,29 @@ if [ "${1:-}" = "--dry-run-list" ]; then
   exit 0
 fi
 
-echo "[serial-tests] running ${#files[@]} file(s) with --max-concurrency=1"
-exec bun test --max-concurrency=1 --timeout=60000 "${files[@]}"
+echo "[serial-tests] running ${#files[@]} file(s), one bun process per file"
+
+# Each serial file gets its OWN bun process. `--max-concurrency=1` was not
+# enough: files in the same process share the module registry, so a top-level
+# `mock.module(...)` in one file leaks into the next file's imports
+# (eval-takes-quality-runner mocks gateway.ts and the next file fails on
+# `import { resetGateway }` because the mock factory didn't export it).
+# Per-file processes give true isolation; cost is ~100ms startup × N files.
+fail_count=0
+failed_files=()
+for f in "${files[@]}"; do
+  if ! bun test --max-concurrency=1 --timeout=60000 "$f"; then
+    fail_count=$((fail_count + 1))
+    failed_files+=("$f")
+  fi
+done
+
+if [ "$fail_count" -gt 0 ]; then
+  echo "" >&2
+  echo "[serial-tests] $fail_count file(s) failed:" >&2
+  for f in "${failed_files[@]}"; do
+    echo "  - $f" >&2
+  done
+  exit 1
+fi
+echo "[serial-tests] all ${#files[@]} file(s) passed"

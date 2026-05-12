@@ -7,6 +7,8 @@ import {
   resolveModel,
   resolveAlias,
   DEFAULT_ALIASES,
+  TIER_DEFAULTS,
+  isAnthropicProvider,
   _resetDeprecationWarningsForTest,
 } from '../src/core/model-config.ts';
 
@@ -141,5 +143,86 @@ describe('resolveModel — 6-tier precedence', () => {
     });
     expect(firstWarn).toContain('deprecated config');
     expect(stderrCapture).toBe('');
+  });
+});
+
+describe('resolveModel — v0.31.12 tier system', () => {
+  test('models.default beats tier override', async () => {
+    stub.set('models.default', 'opus');
+    stub.set('models.tier.reasoning', 'haiku');
+    const m = await resolveModel(stub as never, {
+      tier: 'reasoning',
+      fallback: 'sonnet',
+    });
+    expect(m).toBe(DEFAULT_ALIASES.opus);
+  });
+
+  test('models.tier.<tier> beats env + fallback', async () => {
+    stub.set('models.tier.reasoning', 'opus');
+    process.env.GBRAIN_MODEL = 'haiku';
+    const m = await resolveModel(stub as never, {
+      tier: 'reasoning',
+      fallback: 'sonnet',
+    });
+    expect(m).toBe(DEFAULT_ALIASES.opus);
+  });
+
+  test('TIER_DEFAULTS wins over caller fallback when no override', async () => {
+    const m = await resolveModel(stub as never, {
+      tier: 'reasoning',
+      fallback: 'haiku',
+    });
+    expect(m).toBe(TIER_DEFAULTS.reasoning);
+  });
+
+  test('tier.subagent falls back to TIER_DEFAULTS.subagent when models.default is non-Anthropic', async () => {
+    stub.set('models.default', 'openai:gpt-5.5');
+    const m = await resolveModel(stub as never, {
+      tier: 'subagent',
+      fallback: 'sonnet',
+    });
+    expect(m).toBe(TIER_DEFAULTS.subagent);
+    expect(stderrCapture).toContain('tier.subagent');
+    expect(stderrCapture).toContain('non-Anthropic');
+    expect(stderrCapture).toContain('models.default');
+  });
+
+  test('tier.subagent falls back when explicitly set to non-Anthropic', async () => {
+    stub.set('models.tier.subagent', 'openai:gpt-5.5');
+    const m = await resolveModel(stub as never, {
+      tier: 'subagent',
+      fallback: 'sonnet',
+    });
+    expect(m).toBe(TIER_DEFAULTS.subagent);
+    expect(stderrCapture).toContain('models.tier.subagent');
+  });
+
+  test('tier.subagent accepts explicit Anthropic override', async () => {
+    stub.set('models.tier.subagent', 'anthropic:claude-opus-4-7');
+    const m = await resolveModel(stub as never, {
+      tier: 'subagent',
+      fallback: 'sonnet',
+    });
+    expect(m).toBe('anthropic:claude-opus-4-7');
+    expect(stderrCapture).toBe('');
+  });
+
+  test('isAnthropicProvider matches provider-prefixed and bare claude-* ids', () => {
+    expect(isAnthropicProvider('anthropic:claude-sonnet-4-6')).toBe(true);
+    expect(isAnthropicProvider('claude-opus-4-7')).toBe(true);
+    expect(isAnthropicProvider('openai:gpt-5.5')).toBe(false);
+    expect(isAnthropicProvider('gemini-3-pro')).toBe(false);
+    expect(isAnthropicProvider('')).toBe(false);
+  });
+
+  test('alias-chain conflict: forward + reverse for same id (Codex F6)', async () => {
+    // Codex F6: if both forward and reverse aliases exist, depth cap (2)
+    // prevents infinite loop. Canonicalization is deterministic — terminates
+    // and returns a valid string, no NaN/undefined fall-through.
+    stub.set('models.aliases.claude-sonnet-4-6', 'claude-sonnet-5');
+    stub.set('models.aliases.claude-sonnet-5', 'claude-sonnet-4-6');
+    const result = await resolveAlias(stub as never, 'claude-sonnet-4-6');
+    expect(typeof result).toBe('string');
+    expect(result.length).toBeGreaterThan(0);
   });
 });

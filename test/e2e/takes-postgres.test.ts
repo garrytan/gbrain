@@ -228,3 +228,177 @@ d('v0.28 MCP allow-list — Postgres dispatch', () => {
     expect(env.remote_persisted_blocked).toBe(true);
   });
 });
+
+// ============================================================
+// v0.30.0 (Slice A1): 3-state quality + scorecard + calibration on real PG.
+// Mirrors the unit-test invariants (PGLite) against postgres.js and the
+// real CHECK constraint enforcement.
+// ============================================================
+d('v0.30.0 takes resolve --quality on real Postgres', () => {
+  test('quality=correct writes both columns; CHECK constraint is enforced', async () => {
+    const engine = getEngine();
+    await engine.addTakesBatch([
+      { page_id: acmePageId, row_num: 50, claim: 'Series A correct', kind: 'bet', holder: 'garry', weight: 0.7 },
+    ]);
+    await engine.resolveTake(acmePageId, 50, { quality: 'correct', resolvedBy: 'garry' });
+    const rows = await engine.executeRaw<{ resolved_outcome: boolean | null; resolved_quality: string | null }>(
+      `SELECT resolved_outcome, resolved_quality FROM takes WHERE page_id = $1 AND row_num = $2`,
+      [acmePageId, 50],
+    );
+    expect(rows[0].resolved_outcome).toBe(true);
+    expect(rows[0].resolved_quality).toBe('correct');
+  });
+
+  test('quality=partial writes (partial, NULL) + CHECK accepts it', async () => {
+    const engine = getEngine();
+    await engine.addTakesBatch([
+      { page_id: acmePageId, row_num: 51, claim: 'partial scope bet', kind: 'bet', holder: 'garry', weight: 0.55 },
+    ]);
+    await engine.resolveTake(acmePageId, 51, { quality: 'partial', resolvedBy: 'garry' });
+    const rows = await engine.executeRaw<{ resolved_outcome: boolean | null; resolved_quality: string | null }>(
+      `SELECT resolved_outcome, resolved_quality FROM takes WHERE page_id = $1 AND row_num = $2`,
+      [acmePageId, 51],
+    );
+    expect(rows[0].resolved_outcome).toBeNull();
+    expect(rows[0].resolved_quality).toBe('partial');
+  });
+
+  test('CHECK constraint rejects contradictory raw UPDATE', async () => {
+    const engine = getEngine();
+    await engine.addTakesBatch([
+      { page_id: acmePageId, row_num: 52, claim: 'unresolved bet', kind: 'bet', holder: 'garry', weight: 0.6 },
+    ]);
+    // Bypass the engine method's deriveResolutionTuple guard and write a
+    // contradictory tuple directly. The schema CHECK should refuse.
+    await expect(
+      engine.executeRaw(
+        `UPDATE takes SET resolved_at = now(), resolved_outcome = true, resolved_quality = 'incorrect' WHERE page_id = $1 AND row_num = $2`,
+        [acmePageId, 52],
+      ),
+    ).rejects.toThrow(/takes_resolution_consistency|check constraint/i);
+  });
+
+  test('back-compat: resolveTake with outcome=true → quality=correct on real PG', async () => {
+    const engine = getEngine();
+    await engine.addTakesBatch([
+      { page_id: acmePageId, row_num: 53, claim: 'legacy v0.28 callers', kind: 'bet', holder: 'garry', weight: 0.7 },
+    ]);
+    await engine.resolveTake(acmePageId, 53, { outcome: true, resolvedBy: 'garry' });
+    const rows = await engine.executeRaw<{ resolved_outcome: boolean; resolved_quality: string }>(
+      `SELECT resolved_outcome, resolved_quality FROM takes WHERE page_id = $1 AND row_num = $2`,
+      [acmePageId, 53],
+    );
+    expect(rows[0].resolved_outcome).toBe(true);
+    expect(rows[0].resolved_quality).toBe('correct');
+  });
+});
+
+d('v0.30.0 scorecard + calibration on real Postgres', () => {
+  // Note: this suite runs after the other Postgres takes suites in this
+  // file, so the takes table already has resolved data from the earlier
+  // tests. We don't need a fresh seed — we just verify the aggregate
+  // queries work end-to-end against postgres.js bind shapes.
+  test('getScorecard returns coherent shape against real PG', async () => {
+    const engine = getEngine();
+    const card = await engine.getScorecard({ holder: 'garry' }, undefined);
+    expect(card.total_bets).toBeGreaterThan(0);
+    expect(card.resolved).toBeGreaterThanOrEqual(0);
+    expect(card.correct + card.incorrect + card.partial).toBe(card.resolved);
+    if (card.correct + card.incorrect > 0) {
+      expect(card.brier).not.toBeNull();
+      expect(card.brier!).toBeGreaterThanOrEqual(0);
+      expect(card.brier!).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test('getCalibrationCurve returns ordered buckets against real PG', async () => {
+    const engine = getEngine();
+    const buckets = await engine.getCalibrationCurve({ holder: 'garry' }, undefined);
+    // Buckets must be ordered by bucket_lo ascending.
+    for (let i = 1; i < buckets.length; i++) {
+      expect(buckets[i].bucket_lo).toBeGreaterThanOrEqual(buckets[i - 1].bucket_lo);
+    }
+    // Every bucket has n > 0 (empty buckets aren't returned by GROUP BY).
+    for (const b of buckets) expect(b.n).toBeGreaterThan(0);
+  });
+
+  test('PRIVACY: scorecard SQL allow-list excludes hidden holders on real PG', async () => {
+    const engine = getEngine();
+    // Seed a holder that the scorecard with allow-list ['garry'] should
+    // not see. Use a fresh page so the assertion is local and not noisy.
+    const harjPage = await engine.putPage('companies/scorecard-allowlist-fixture', {
+      title: 'Allow-list fixture', type: 'company', compiled_truth: '## Takes\n',
+    });
+    await engine.addTakesBatch([
+      { page_id: harjPage.id, row_num: 1, claim: 'g bet',  kind: 'bet', holder: 'garry',       weight: 0.7 },
+      { page_id: harjPage.id, row_num: 2, claim: 'h bet',  kind: 'bet', holder: 'harj-taggar', weight: 0.6 },
+    ]);
+    await engine.resolveTake(harjPage.id, 1, { quality: 'correct',   resolvedBy: 'garry' });
+    await engine.resolveTake(harjPage.id, 2, { quality: 'incorrect', resolvedBy: 'harj-taggar' });
+
+    const garryOnly = await engine.getScorecard(
+      { domainPrefix: 'companies/scorecard-allowlist-fixture' },
+      ['garry'],
+    );
+    const trustedFull = await engine.getScorecard(
+      { domainPrefix: 'companies/scorecard-allowlist-fixture' },
+      undefined,
+    );
+    expect(garryOnly.resolved).toBe(1);
+    expect(garryOnly.correct).toBe(1);
+    expect(trustedFull.resolved).toBe(2);
+    // Allow-list strictly subtracts the harj row.
+    expect(trustedFull.resolved - garryOnly.resolved).toBe(1);
+  });
+});
+
+// ============================================================
+// v0.30.0: MCP dispatch path for takes_scorecard + takes_calibration.
+// ============================================================
+d('v0.30.0 MCP dispatch — Postgres', () => {
+  test('takes_scorecard via MCP returns correct counts with allow-list', async () => {
+    const engine = getEngine();
+    const result = await dispatchToolCall(engine, 'takes_scorecard', { holder: 'garry' }, {
+      remote: true,
+      takesHoldersAllowList: ['garry'],
+    });
+    expect(result.isError).toBeFalsy();
+    const card = JSON.parse(result.content[0].text);
+    expect(card).toHaveProperty('correct');
+    expect(card).toHaveProperty('incorrect');
+    expect(card).toHaveProperty('partial');
+    expect(card).toHaveProperty('brier');
+    expect(card).toHaveProperty('partial_rate');
+  });
+
+  test('takes_calibration via MCP returns bucket array with allow-list', async () => {
+    const engine = getEngine();
+    const result = await dispatchToolCall(engine, 'takes_calibration', { holder: 'garry', bucket_size: 0.1 }, {
+      remote: true,
+      takesHoldersAllowList: ['garry'],
+    });
+    expect(result.isError).toBeFalsy();
+    const buckets = JSON.parse(result.content[0].text);
+    expect(Array.isArray(buckets)).toBe(true);
+    if (buckets.length > 0) {
+      expect(buckets[0]).toHaveProperty('bucket_lo');
+      expect(buckets[0]).toHaveProperty('bucket_hi');
+      expect(buckets[0]).toHaveProperty('n');
+      expect(buckets[0]).toHaveProperty('observed');
+      expect(buckets[0]).toHaveProperty('predicted');
+    }
+  });
+
+  test('PRIVACY: takes_scorecard with allow-list ["world"] excludes garry rows', async () => {
+    const engine = getEngine();
+    // 'world' has only fact-kind takes in the seed; bets are garry-only.
+    // Scorecard scoped to world should report zero resolved.
+    const result = await dispatchToolCall(engine, 'takes_scorecard', {}, {
+      remote: true,
+      takesHoldersAllowList: ['world'],
+    });
+    const card = JSON.parse(result.content[0].text);
+    // No resolved bets exist with holder='world' in our seed.
+    expect(card.resolved).toBe(0);
+  });
+});

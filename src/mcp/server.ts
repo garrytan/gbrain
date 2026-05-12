@@ -6,6 +6,7 @@ import { operations } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
+import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
@@ -35,18 +36,50 @@ export async function startMcpServer(engine: BrainEngine) {
     return dispatchToolCall(engine, name, params, {
       remote: true,
       takesHoldersAllowList: ['world'],
+      // v0.31: source defaults to 'default' for stdio (no per-token scope).
+      // Operators who want a different source on stdio MCP should set
+      // GBRAIN_SOURCE in the env or use --source via `gbrain call`.
+      sourceId: process.env.GBRAIN_SOURCE || 'default',
+      // v0.31 (eD3): _meta.brain_hot_memory injection so Claude Desktop /
+      // Code see the brain's relevant hot memory automatically alongside
+      // every tool-call response. Best-effort; absorbs errors.
+      metaHook: getBrainHotMemoryMeta,
     });
   });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Exit cleanly when MCP client disconnects (stdin EOF) or on signals.
+  // Without this, orphaned serve processes accumulate and contend for the
+  // PGLite write lock, causing ingest jobs (email-sync) to time out.
+  let shuttingDown = false;
+  const shutdown = (reason: string, code = 0) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stderr.write(`[gbrain-serve] shutdown: ${reason}\n`);
+    Promise.resolve(engine.disconnect?.())
+      .catch(() => {})
+      .finally(() => process.exit(code));
+  };
+  process.stdin.on('end', () => shutdown('stdin end'));
+  process.stdin.on('close', () => shutdown('stdin close'));
+  // @ts-ignore — SDK exposes onclose on transport
+  transport.onclose = () => shutdown('transport close');
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGHUP', () => shutdown('SIGHUP'));
 }
 
 // Backward compat: used by `gbrain call` command (trusted local path).
+// v0.31.8 (D22): accept opts.sourceId so `gbrain call --source X <op> <json>`
+// can scope the op handler to that source. resolveSourceId() in call.ts is
+// the upstream resolver; this layer just passes the resolved id through.
 export async function handleToolCall(
   engine: BrainEngine,
   tool: string,
   params: Record<string, unknown>,
+  opts?: { sourceId?: string },
 ): Promise<unknown> {
   const op = operations.find(o => o.name === tool);
   if (!op) throw new Error(`Unknown tool: ${tool}`);
@@ -57,6 +90,7 @@ export async function handleToolCall(
   const ctx = buildOperationContext(engine, params, {
     remote: false,
     logger: { info: console.log, warn: console.warn, error: console.error },
+    ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
   });
 
   return op.handler(ctx, params);

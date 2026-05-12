@@ -66,7 +66,97 @@ Supabase gives you managed Postgres + pgvector (vector search built in) for $25/
 - `gbrain init --non-interactive --url <connection_string>` -- for scripts/agents
 - `gbrain doctor --json` -- health check after init
 
-There is no `--local`, `--sqlite`, or offline mode. GBrain requires Postgres + pgvector.
+There is no `--local`, `--sqlite`, or offline mode. GBrain requires Postgres + pgvector
+(local PGLite or remote Supabase / self-hosted).
+
+## Phase A.5: Choose Topology (run BEFORE Phase A)
+
+GBrain supports three deployment shapes. Pick the right one before installing,
+because picking wrong creates contention or duplicate work that's painful to
+unwind. Read `docs/architecture/topologies.md` for the full picture; the short
+version:
+
+Ask the user this BEFORE running `gbrain init`:
+
+> "Three deployment shapes:
+>  1. **Single brain (default)** — one machine, one DB, one agent. Pick this if
+>     unsure.
+>  2. **Cross-machine thin client** — your brain lives on another machine
+>     (e.g. brain-host) running `gbrain serve --http`, and this install just
+>     calls it over MCP. No local DB on this machine.
+>  3. **Per-worktree code + shared remote artifacts** — Conductor users with
+>     multiple worktrees indexing the same code repo. Each worktree owns its
+>     own code engine; artifacts live on a shared remote brain.
+>
+>  Which fits?"
+
+### If the user picks 1 (single brain) — proceed to Phase A
+
+Continue with the existing `gbrain init --supabase` / `--pglite` setup below.
+
+### If the user picks 2 (cross-machine thin client)
+
+1. **Confirm a host already exists.** Ask: "Is the remote `gbrain serve --http`
+   already running on the host machine?" If no, the user needs to set up the
+   host first (Phases A-C on the host, then `gbrain serve --http`). Don't try
+   to run init on this machine until the host is up.
+
+2. **Get OAuth credentials from the host operator.** Ask the user to run
+   on the host:
+   ```bash
+   gbrain auth register-client <name> \
+     --grant-types client_credentials \
+     --scopes read,write,admin
+   ```
+   The `admin` scope is required because `gbrain remote ping` and
+   `gbrain remote doctor` (Tier B convenience commands) call MCP ops with
+   `admin` scope. `read,write` alone breaks ping/doctor.
+
+3. **Run thin-client init on this machine:**
+   ```bash
+   gbrain init --mcp-only \
+     --issuer-url https://<host>:<port> \
+     --mcp-url https://<host>:<port>/mcp \
+     --oauth-client-id <id> \
+     --oauth-client-secret <secret>
+   ```
+   Or set `GBRAIN_REMOTE_CLIENT_SECRET` env var instead of the flag (preferred
+   for headless / scripted setup). Pre-flight runs three smoke probes; any
+   failure surfaces an actionable error.
+
+4. **Configure your agent's MCP client.** Add a server entry pointing at
+   `<mcp_url>` with the bearer token. See `docs/mcp/CLAUDE_DESKTOP.md`,
+   `docs/mcp/CLAUDE_CODE.md`, etc. for per-client snippets.
+
+5. **Verify with `gbrain doctor`.** Thin-client doctor runs OAuth discovery,
+   token round-trip, and MCP smoke against the host. Should report
+   `mode: thin-client` with all checks green.
+
+6. **Skip Phases B, C, C.5, and H entirely.** They're for local engines.
+   The host's autopilot handles sync/extract/embed. Thin clients consume
+   only.
+
+7. **Continue to Phase D (brain-first lookup).** It works identically over
+   MCP — the agent uses the same brain-ops skill to query/search/get_page,
+   they just round-trip through the host's `gbrain serve --http`.
+
+If init reports "thin-client config already present", a previous setup
+already configured this machine. Refusing without `--force` is the correct
+behavior; either accept the existing config or pass `--force` to refresh.
+
+### If the user picks 3 (split-engine per-worktree)
+
+This shape requires per-worktree wiring that gstack handles, not gbrain
+directly. gbrain's role is just to run a local engine when `GBRAIN_HOME` is
+set — that already works.
+
+Point the user at `docs/architecture/topologies.md` (the Topology 3 section)
+for the wiring recipe, then continue with Phase A as normal — `gbrain init`
+on this machine sets up the artifact brain (the "default" home). The
+per-worktree code engines are configured per-worktree as gstack creates them.
+
+If the user has a remote artifact brain (Topology 2 + 3 combined), follow
+the thin-client setup above for the artifact brain instead of Phase A.
 
 ## Phase A: Supabase Setup (recommended)
 
@@ -366,6 +456,38 @@ each check: [list results]. Everything is working / [specific item] needs attent
 
 If already configured or user declines, skip.
 
+## Phase J: Cold Start — Populate Your Brain (AUTOMATIC)
+
+Setup is done. The brain works. But it's empty. **This is the most important
+moment** — an empty brain is useless. Transition directly to the cold-start
+skill to fill it with the user's actual data.
+
+**Do not end setup without offering cold-start.** The user just invested 15+
+minutes in setup. The payoff is seeing their brain come alive with their own
+data. Stopping here is like installing a phone and never adding contacts.
+
+Present this immediately after verification passes:
+
+> "✅ GBrain is set up and verified. Now let's fill it with your data.
+>
+> I can connect your Google services (contacts, calendar, email), import
+> your existing notes, pull in conversations from ChatGPT/Claude, and
+> archive your tweets — all in one session. Each step is optional.
+>
+> **Ready to populate your brain?**"
+
+If the user says yes (or anything affirmative):
+→ **Load and execute `skills/cold-start/SKILL.md`** immediately. Do not
+just print a reference — actually run the cold-start skill.
+
+If the user says no or wants to stop:
+→ Record in `~/.gbrain/cold-start-state.json`:
+```json
+{"deferred": true, "deferred_at": "ISO-timestamp", "phases_completed": []}
+```
+→ Tell them: "You can run cold-start anytime by asking me to 'fill my brain'
+or 'cold start'."
+
 ## Schema State Tracking
 
 After presenting the recommended directories (Phase C/E) and the user selects which
@@ -381,6 +503,7 @@ re-suggesting things the user already declined.
 
 ## Anti-Patterns
 
+- **Ending setup without offering cold-start.** An empty brain is useless. Phase J (cold-start) is where setup pays off. Always present the "Ready to populate?" prompt after verification. Skipping this is like installing an app and never logging in.
 - **Asking for the Supabase anon key.** GBrain connects directly to Postgres over the wire protocol, not through the REST API. Only the database connection string is needed.
 - **Skipping live sync setup.** If sync doesn't run automatically, the vector DB falls behind and search returns stale answers. Phase H is not optional.
 - **Declaring setup complete without verification.** "The command ran" is not the same as "it worked." Push a test change, wait for sync, search for the corrected text.
@@ -401,10 +524,13 @@ Live sync: [configured / method]
 Health check: all OK / [specific failures]
 Verification: [GBRAIN_VERIFY.md results]
 
-Next steps:
-- Read docs/GBRAIN_SKILLPACK.md for production agent patterns
-- [any pending items]
+🧠 Ready to populate your brain? I can connect your Google services,
+import your notes, and pull in your conversations — all in one session.
+→ Launching cold-start...
 ```
+
+**The output should transition directly into cold-start (Phase J), not end
+with a bullet list.** The bullet list is for when the user defers cold-start.
 
 ## Tools Used
 

@@ -10,9 +10,15 @@ GBrain is those patterns, generalized. 34 skills. Install in 30 minutes. Your ag
 
 **New in v0.25.0 — BrainBench-Real (session capture, contributor opt-in):** with `GBRAIN_CONTRIBUTOR_MODE=1` set in your shell, every real `query` + `search` call through MCP, CLI, or the subagent tool-bridge gets captured (PII-scrubbed) into an `eval_candidates` table. Snapshot with `gbrain eval export`, replay against your code change with `gbrain eval replay`. Three numbers come back: mean Jaccard@k between captured and current retrieved slugs, top-1 stability, and latency Δ. **Off by default** for production users — no surprise data accumulation. Walkthrough: [docs/eval-bench.md](docs/eval-bench.md). NDJSON wire format: [docs/eval-capture.md](docs/eval-capture.md).
 
+**New in v0.28.8 — LongMemEval in the box:** `gbrain eval longmemeval <dataset.jsonl>` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against gbrain's hybrid retrieval. One in-memory PGLite per run, `TRUNCATE` between questions (runtime-enumerated tables, schema-migration-safe), 25.9ms p50 per question on Apple Silicon. Your `~/.gbrain` brain is never touched. Retrieved chat content is sanitized with the same `INJECTION_PATTERNS` that protect takes — one source of truth for prompt-injection defense. Hand the JSONL output to LongMemEval's `evaluate_qa.py` to score.
+
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
 > **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
+
+> **Embedding providers:** OpenAI is the default, but gbrain ships with **14 recipes** covering Voyage, Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy (universal), and 5 more. Run `gbrain providers list` to see them, or read [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for setup, pricing, and a decision tree. `gbrain doctor` will surface alternative providers whose env vars you already have set.
+
+> **New in v0.32.3.0 — compress your AGENTS.md without losing accuracy:** if your downstream agent fork has grown a 25KB+ `AGENTS.md` / `RESOLVER.md`, the new [`functional-area-resolver`](skills/functional-area-resolver/SKILL.md) skill ships a two-layer dispatch pattern that compresses 25KB → 13KB (48% the size) while **beating** the verbose baseline by +13 to +17pp across Opus 4.7, Sonnet 4.6, and Haiku 4.5. A/B eval harness, cross-model receipts, and reproduction instructions live at [`evals/functional-area-resolver/`](evals/functional-area-resolver/). The static-prompt analog of AnyTool / RAG-MCP / Anthropic Agent Skills progressive disclosure — single-LLM-pass dispatch, no second routing call.
 
 ## Install
 
@@ -483,6 +489,8 @@ Run `gbrain integrations` to see status.
 
 The repo is the system of record. GBrain is the retrieval layer. The agent reads and writes through both. Human always wins... edit any markdown file and `gbrain sync` picks up the changes.
 
+For multi-machine setups (cross-machine thin client) and multi-worktree setups (per-worktree code engine + shared remote artifacts), see [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
+
 ## The Knowledge Model
 
 Every page follows the compiled truth + timeline pattern:
@@ -730,11 +738,30 @@ SKILLS (v0.19)
                                         SKILLIFY_STUB). Accepts RESOLVER.md OR AGENTS.md.
   gbrain routing-eval [--llm] [--json]  Intent→skill routing accuracy on fixtures
 
+EVAL
+  gbrain eval --qrels <path>            Legacy IR-eval (P@k, R@k, MRR, nDCG@k against ground truth)
+  gbrain eval export [--since DUR]      Stream captured eval_candidates as NDJSON (BrainBench-Real)
+  gbrain eval prune --older-than DUR    Retention cleanup for eval_candidates (requires window)
+  gbrain eval replay --against FILE     Replay captured queries vs current build (Jaccard@k, top-1, latency Δ)
+  gbrain eval longmemeval <dataset>     Run public LongMemEval against gbrain hybrid retrieval (v0.28.8)
+                                        [--limit N] [--retrieval-only] [--keyword-only] [--expansion]
+                                        [--top-k K] [--model M] [--output FILE]
+
 ADMIN
   gbrain doctor [--json] [--fast]       Health checks (resolver, skills, DB, embeddings)
   gbrain doctor --fix [--dry-run]       Auto-fix DRY violations (delegate inlined rules to conventions)
   gbrain doctor --locks                 List idle-in-tx backends (57014 diagnostic, Postgres only)
   gbrain stats                          Brain statistics
+  gbrain models                         Show live model routing (tier defaults,
+                                        per-task overrides, alias map, source-of-truth).
+                                        v0.31.12: tier system + recipe-models merge.
+                                        Power-user override:
+                                          gbrain config set models.default opus
+                                          gbrain config set models.tier.deep opus
+  gbrain models doctor                  1-token reachability probe for each configured
+                                        chat/expansion model. Catches `model_not_found`
+                                        before the next agent run silently degrades.
+                                        [--skip=<provider>] [--json]
   gbrain serve                          MCP server (stdio)
   gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard
                                         [--token-ttl 3600] [--enable-dcr]
@@ -754,11 +781,26 @@ ADMIN
                                         $GBRAIN_HOME/clones/<id>/ and re-cloned on sync if
                                         it goes missing. Also exposed via MCP for remote
                                         agent setup (whoami + sources_{add,list,remove,status}).
-  gbrain dream [--dry-run] [--phase N]  8-phase maintenance cycle (lint→backlinks→sync→synthesize
-                                        →extract→patterns→embed→orphans). v0.23 added synthesize +
-                                        patterns: transcripts → reflections + cross-session themes.
+  gbrain dream [--dry-run] [--phase N]  11-phase maintenance cycle (lint→backlinks→sync→synthesize
+                                        →extract→patterns→recompute_emotional_weight→consolidate
+                                        →embed→orphans→purge). v0.23 added synthesize + patterns.
+                                        v0.29 added emotional-weight recompute. v0.30.2: synthesize
+                                        chunks fat transcripts. v0.31: consolidate promotes hot facts
+                                        into takes overnight.
   gbrain dream --input <file>           Ad-hoc transcript synthesis (implies --phase synthesize)
   gbrain dream --date YYYY-MM-DD        Synthesize a single day; --from/--to for backfill ranges
+
+  # v0.31 Hot Memory: cross-session facts queryable in real time.
+  gbrain recall <entity>                List active facts for an entity (newest first)
+  gbrain recall --since "1h ago"        Recency-filtered recall
+  gbrain recall --session <id>          Facts captured in a session id
+  gbrain recall --today                 Markdown render with kind icons (📅🎯🤝💭📌)
+  gbrain recall --supersessions         Audit log of auto-overwritten facts
+  gbrain recall --grep <text>           Substring filter (case-insensitive)
+  gbrain recall --as-context            Prompt-injection-ready markdown for headless agents
+  gbrain recall --json                  Structured output with effective_confidence per row
+  gbrain forget <fact-id>               Expire a fact (soft delete; never hard-DELETE)
+
   gbrain check-backlinks check|fix      Back-link enforcement
   gbrain lint [--fix]                   LLM artifact detection
   gbrain repair-jsonb [--dry-run]       Repair v0.12.0 double-encoded JSONB (Postgres)

@@ -138,17 +138,25 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
     expect(r.source).toBe('explicit');
   });
 
-  it('REGRESSION-GATE: returns no_skills_dir error when no --skills-dir and findRepoRoot fails', () => {
-    // Temporarily chdir to a guaranteed-empty tmpdir. findRepoRoot will walk
-    // up and fail to find skills/RESOLVER.md.
+  it('v0.31.7: empty cwd falls back to install-path (finds bundled skills/)', () => {
+    // Temporarily chdir to a guaranteed-empty tmpdir. findRepoRoot from cwd
+    // walks up and fails — but autoDetectSkillsDirReadOnly's tier-5
+    // install-path fallback then walks up from the gbrain module's own
+    // location and finds the bundled skills/ dir. This is the v0.31.7
+    // capability: doctor and check-resolvable work from anywhere.
+    //
+    // To test the underlying no_skills_dir error path, see the unit tests
+    // in test/repo-root.test.ts that drive autoDetectSkillsDirReadOnly
+    // with mocked env to suppress the install-path success.
     const empty = mkdtempSync(join(tmpdir(), 'empty-for-resolve-'));
     const original = process.cwd();
     try {
       process.chdir(empty);
       const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
-      expect(r.error).toBe('no_skills_dir');
-      expect(r.dir).toBeNull();
-      expect(typeof r.message).toBe('string');
+      // Install-path fallback succeeds when test runs inside the gbrain repo.
+      expect(r.error).toBeNull();
+      expect(r.dir).toMatch(/\/skills$/);
+      expect(r.source).toBe('install_path');
     } finally {
       process.chdir(original);
       rmSync(empty, { recursive: true, force: true });
@@ -357,5 +365,28 @@ describe('gbrain check-resolvable CLI — integration', () => {
     expect(r.status === 0 || r.status === 1).toBe(true);
     expect(r.stdout).toContain('Auto-detected skills directory');
     expect(r.stdout).toContain('/skills');
+  });
+
+  // v0.31.7 D6 regression guard: --fix must refuse install-path fallback.
+  // Without this gate, `cd ~ && gbrain check-resolvable --fix` would silently
+  // mutate SKILL.md files in the bundled gbrain repo via autoFixDryViolations.
+  // Codex caught this leak in the v0.31.7 ship review.
+  it('v0.31.7 D6: --fix refuses when source is install_path', () => {
+    // Run from a guaranteed-empty tempdir so the install-path fallback fires.
+    const empty = mkdtempSync(join(tmpdir(), 'cr-fix-installpath-'));
+    try {
+      // Pass --fix; expect refusal exit + clear error message.
+      const r = spawnSync('bun', ['run', CLI, 'check-resolvable', '--fix'], {
+        cwd: empty,
+        env: { ...process.env, OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
+        encoding: 'utf-8',
+      });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('install-path fallback');
+      expect(r.stderr).toContain('refused');
+      expect(r.stderr).toMatch(/GBRAIN_SKILLS_DIR|OPENCLAW_WORKSPACE|--skills-dir/);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
   });
 });

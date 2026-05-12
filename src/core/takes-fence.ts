@@ -38,16 +38,59 @@
 
 export type TakeKind = 'fact' | 'take' | 'bet' | 'hunch';
 
+export type TakeQuality = 'correct' | 'incorrect' | 'partial';
+
 export interface ParsedTake {
   rowNum: number;
   claim: string;        // strikethrough markers stripped; inner text only
   kind: TakeKind;
-  holder: string;       // 'world' | 'garry' | 'brain' | <slug>
-  weight: number;       // 0..1 (raw — may be out of range; engine clamps)
+  /**
+   * Who HOLDS this belief — the person asserting/endorsing it.
+   * NOT the person the belief is ABOUT (that's the subject, implicit in the claim).
+   *
+   * Cross-modal eval (2026-05-10, 3 frontier models on 100K takes) found
+   * holder/subject confusion was the #1 attribution error (6.5/10).
+   *
+   * The test: "Did this person SAY or CLEARLY IMPLY this?"
+   *   YES → holder = people/slug
+   *   NO, it's your analysis of them → holder = brain
+   *
+   * Examples:
+   *   ✅ holder=people/garry-tan claim="AI will replace 50% of coding" (Garry SAID this)
+   *   ✅ holder=brain claim="Garry has a hero/rescuer pattern" (analysis OF Garry)
+   *   ✅ holder=people/bo-lu claim="We can hit $10M ARR" (Bo Lu SAID this)
+   *   ❌ holder=people/garry-tan claim="Garry has a hero/rescuer pattern" (not his belief)
+   *   ❌ holder=companies/hermes claim="Latency is 15-20s" (Zain said it → people/zain)
+   *
+   * Values: 'world' (consensus fact) | 'people/<slug>' (individual's stated belief) |
+   *         'companies/<slug>' (institutional fact, no individual claimant) |
+   *         'brain' (AI-inferred when holder is genuinely ambiguous)
+   *
+   * Additional rules from production eval:
+   *   - Amplification ≠ endorsement: retweet-only → max weight 0.55
+   *   - Self-reported ≠ verified: "Saif reports 7 figures" → people/saif, NOT world
+   *   - Founder describing company → people/founder, NOT companies/slug
+   */
+  holder: string;
+  weight: number;       // 0..1 (raw — may be out of range; engine clamps). Prefer 0.05 increments.
   sinceDate?: string;   // ISO 'YYYY-MM-DD' or 'YYYY-MM' (caller's choice)
   untilDate?: string;
   source?: string;
   active: boolean;      // false when claim was wrapped in ~~ ~~
+  // v0.30.0 (Slice A1) resolution fields. Optional + always undefined on
+  // unresolved rows. The renderer emits the resolved/quality/evidence/value/
+  // unit/by columns ONLY when at least one row on the page has resolvedQuality
+  // set; pages with no resolved rows keep their narrow 7-column shape.
+  // Round-trip preservation through cmdUpdate/cmdSupersede is the codex F3
+  // safety net — without it, every update after a resolve silently deletes
+  // the resolution data on the next render.
+  resolvedAt?: string;       // ISO timestamp 'YYYY-MM-DD' or full ISO
+  resolvedQuality?: TakeQuality;
+  resolvedOutcome?: boolean; // back-compat boolean; derivable from quality
+  resolvedEvidence?: string; // human note (alias for resolved_source)
+  resolvedValue?: number;
+  resolvedUnit?: string;
+  resolvedBy?: string;       // slug or 'garry'
 }
 
 export interface ParseResult {
@@ -59,27 +102,119 @@ export interface ParseResult {
 export const TAKES_FENCE_BEGIN = '<!--- gbrain:takes:begin -->';
 export const TAKES_FENCE_END   = '<!--- gbrain:takes:end -->';
 
+/**
+ * Holder grammar (v0.32 — EXP-4). The contract documented on ParsedTake.holder
+ * lifted to a runtime check.
+ *
+ * Valid (canonical):
+ *   `world` | `brain` | `people/<slug>` | `companies/<slug>`
+ *
+ * Valid (legacy compat — production brains shipped with bare-slug holders
+ * before the namespaced JSDoc landed in PR #795):
+ *   `<slug>` (single lowercase segment with no namespace prefix)
+ *
+ * Slug character class is sourced from sync.ts:SLUG_SEGMENT_PATTERN — the
+ * actual grammar `slugifySegment()` produces, NOT a stricter invented one
+ * (codex review #3 — `companies/acme.io` and `people/foo_bar` are valid;
+ * the original PR's `[a-z0-9-]+` would have warned on both).
+ *
+ * Catches the eval-flagged error modes:
+ *   - `Garry`            — uppercase letter (rejected: not in [a-z0-9._-])
+ *   - `people/Garry-Tan` — mixed case in slug (rejected for same reason)
+ *   - `world/garry-tan`  — `world` is a literal, no slash variant
+ *   - `users/garry`      — only `people/...` and `companies/...` are namespaced
+ *
+ * The legacy bare-slug form is reserved for v0.33 promotion to error;
+ * v0.32 emits warnings only.
+ */
+import { SLUG_SEGMENT_PATTERN } from './sync.ts';
+export const HOLDER_REGEX = new RegExp(
+  `^(?:world|brain|(?:people|companies)/${SLUG_SEGMENT_PATTERN.source}|${SLUG_SEGMENT_PATTERN.source})$`,
+);
+
+/**
+ * Returns true when `holder` matches the documented grammar. Used by
+ * parseTakesFence to surface TAKES_HOLDER_INVALID warnings in v0.32 (warning
+ * only — markdown source-of-truth contract preserves the row). Promoted to
+ * error in v0.33 once production sync-failures show warning rate trending
+ * to zero.
+ */
+export function isValidHolder(holder: string): boolean {
+  return HOLDER_REGEX.test(holder);
+}
+
 const KIND_VALUES: ReadonlySet<string> = new Set(['fact', 'take', 'bet', 'hunch']);
+const QUALITY_VALUES: ReadonlySet<string> = new Set(['correct', 'incorrect', 'partial']);
 
-// Match a markdown table row's cell-stripped content. Allows surrounding
-// whitespace and tolerates trailing `|`.
-function parseRowCells(line: string): string[] | null {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith('|') || !trimmed.includes('|', 1)) return null;
-  // Strip leading and trailing pipes, split on `|`, trim cells.
-  const inner = trimmed.replace(/^\|/, '').replace(/\|$/, '');
-  return inner.split('|').map(c => c.trim());
+// v0.30.0: header tokens that mark a v0.30-shape fence. Presence of `quality`
+// (or any other resolution column) widens the parser to read 7+ extra cells
+// per row. Missing tokens → v0.28 7-column shape, parsed exactly as before.
+const RESOLUTION_HEADER_TOKENS = ['resolved', 'quality', 'evidence', 'value', 'unit', 'by'] as const;
+type ResolutionColumn = typeof RESOLUTION_HEADER_TOKENS[number];
+
+function parseQualityCell(raw: string): TakeQuality | undefined {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return undefined;
+  if (QUALITY_VALUES.has(trimmed)) return trimmed as TakeQuality;
+  return undefined;
 }
 
-function isSeparatorRow(cells: string[]): boolean {
-  return cells.every(c => /^[-:\s]+$/.test(c)) && cells.length > 0;
+function parseFloatCell(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const n = parseFloat(trimmed);
+  return Number.isFinite(n) ? n : undefined;
 }
 
-function stripStrikethrough(s: string): { text: string; struck: boolean } {
-  const m = s.match(/^~~(.+?)~~$/);
-  if (m) return { text: m[1].trim(), struck: true };
-  return { text: s, struck: false };
+/**
+ * Normalize a weight for storage. Single source of truth used by both engines
+ * at all 4 takes write sites (addTakesBatch + updateTake × postgres + pglite).
+ *
+ * Pipeline:
+ *   1. NaN / Infinity / -Infinity → 0.5 (default), clamped=true.
+ *   2. Out of [0, 1] → clamp to [0, 1], clamped=true.
+ *   3. Round to 0.05 grid (cross-modal eval over 100K takes flagged 0.74,
+ *      0.82-style values as false precision; the engine layer enforces a
+ *      coarser grid that matches actual calibration accuracy).
+ *
+ * 0 and 1 round to themselves exactly (Math.round(20)/20 = 1.0,
+ * Math.round(0)/20 = 0). The clamped flag is the trigger for the engine's
+ * TAKES_WEIGHT_CLAMPED stderr counter; rounding alone does NOT set it.
+ *
+ * `undefined` and `null` inputs return 0.5 with clamped=false (the default
+ * weight when a fence row omits the column).
+ */
+export function normalizeWeightForStorage(
+  raw: number | null | undefined,
+): { weight: number; clamped: boolean } {
+  let w = raw ?? 0.5;
+  let clamped = false;
+  if (!Number.isFinite(w)) {
+    clamped = true;
+    w = 0.5;
+  } else if (w < 0 || w > 1) {
+    clamped = true;
+    w = Math.max(0, Math.min(1, w));
+  }
+  return { weight: Math.round(w * 20) / 20, clamped };
 }
+
+function parseStringCell(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+// Pipe-row parsing, separator detection, and strikethrough handling moved
+// to src/core/fence-shared.ts in v0.32.2 — same primitives are used by
+// facts-fence and any future fence-based category. Behavior here is
+// byte-identical to the v0.28-shipped inline versions; the takes-fence
+// test suite is the regression gate.
+import {
+  parseRowCells,
+  isSeparatorRow,
+  stripStrikethrough,
+  escapeFenceCell as safeFenceCell,
+} from './fence-shared.ts';
 
 function parseSinceCell(raw: string): { since?: string; until?: string } {
   const trimmed = raw.trim();
@@ -115,6 +250,9 @@ export function parseTakesFence(body: string): ParseResult {
   const lines = inner.split('\n');
   const takes: ParsedTake[] = [];
   let sawHeader = false;
+  // Map from resolution column name → cell index in the row. Empty when the
+  // fence is a v0.28 7-column shape; populated when resolution columns appear.
+  const resolutionColIdx: Partial<Record<ResolutionColumn, number>> = {};
   const seenRowNums = new Set<number>();
 
   for (let i = 0; i < lines.length; i++) {
@@ -124,11 +262,18 @@ export function parseTakesFence(body: string): ParseResult {
     if (!cells) continue;
 
     // Header row: `| # | claim | kind | who | weight | since | source |`
+    // (v0.28 7-column shape) OR with extra `| resolved | quality | evidence
+    // | value | unit | by |` columns appended (v0.30 13-column shape).
     if (!sawHeader) {
-      // Best-effort detection: header has 'claim' and 'kind' tokens.
       const lower = cells.map(c => c.toLowerCase());
       if (lower.includes('claim') && lower.includes('kind')) {
         sawHeader = true;
+        // Detect v0.30 resolution columns. Columns are positional, but tolerate
+        // any subset (forward-compat: future schemas might add more).
+        for (const tok of RESOLUTION_HEADER_TOKENS) {
+          const idx = lower.indexOf(tok);
+          if (idx !== -1) resolutionColIdx[tok] = idx;
+        }
         continue;
       }
       // First content row before header — skip with warning.
@@ -139,7 +284,7 @@ export function parseTakesFence(body: string): ParseResult {
     // Separator row (just dashes/colons) — skip.
     if (isSeparatorRow(cells)) continue;
 
-    // Expect 7 cells: row_num, claim, kind, holder, weight, since, source.
+    // Expect 7 cells minimum: row_num, claim, kind, holder, weight, since, source.
     if (cells.length < 6) {
       warnings.push(`TAKES_TABLE_MALFORMED: only ${cells.length} cells in row "${line.trim()}"`);
       continue;
@@ -163,6 +308,19 @@ export function parseTakesFence(body: string): ParseResult {
       continue;
     }
 
+    // v0.32 EXP-4: holder grammar check. Warning-only — preserve the row
+    // (markdown source-of-truth contract). Caller (extract-takes.ts) maps
+    // these into the failedFiles[] payload so the v0_28_0 migration's
+    // backfill phase emits sync-failures records and doctor's sync_failures
+    // check shows the breakdown by code (`TAKES_HOLDER_INVALID=N`).
+    const holderTrimmed = holderRaw.trim();
+    if (!isValidHolder(holderTrimmed)) {
+      warnings.push(
+        `TAKES_HOLDER_INVALID: "${holderTrimmed}" in row ${rowNumStr} (expected: world | brain | people/<slug> | companies/<slug>)`,
+      );
+      // Fall through — row is still parsed and stored.
+    }
+
     const weight = parseFloat(weightRaw);
     if (!Number.isFinite(weight)) {
       warnings.push(`TAKES_TABLE_MALFORMED: non-numeric weight "${weightRaw}"`);
@@ -171,6 +329,26 @@ export function parseTakesFence(body: string): ParseResult {
 
     const { text: claimText, struck } = stripStrikethrough(claimRaw);
     const { since, until } = parseSinceCell(sinceRaw);
+
+    // v0.30 resolution columns. Only populated when the header contained the
+    // matching tokens AND the row has cells at those positions.
+    const cellAt = (col: ResolutionColumn): string | undefined => {
+      const idx = resolutionColIdx[col];
+      if (idx === undefined) return undefined;
+      return idx < cells.length ? cells[idx] : undefined;
+    };
+    const resolvedAt        = cellAt('resolved');
+    const qualityRaw        = cellAt('quality');
+    const evidenceRaw       = cellAt('evidence');
+    const valueRaw          = cellAt('value');
+    const unitRaw           = cellAt('unit');
+    const byRaw             = cellAt('by');
+    const resolvedQuality   = qualityRaw !== undefined ? parseQualityCell(qualityRaw) : undefined;
+    // Derive resolvedOutcome from quality so the parsed shape is self-consistent
+    // for callers that read either field.
+    const resolvedOutcome   = resolvedQuality === 'correct'   ? true
+                            : resolvedQuality === 'incorrect' ? false
+                            :                                    undefined;
 
     takes.push({
       rowNum,
@@ -182,6 +360,13 @@ export function parseTakesFence(body: string): ParseResult {
       untilDate: until,
       source: sourceRaw.trim() || undefined,
       active: !struck,
+      resolvedAt:        resolvedAt        ? parseStringCell(resolvedAt)  : undefined,
+      resolvedQuality,
+      resolvedOutcome,
+      resolvedEvidence:  evidenceRaw       ? parseStringCell(evidenceRaw) : undefined,
+      resolvedValue:     valueRaw          ? parseFloatCell(valueRaw)     : undefined,
+      resolvedUnit:      unitRaw           ? parseStringCell(unitRaw)     : undefined,
+      resolvedBy:        byRaw             ? parseStringCell(byRaw)       : undefined,
     });
   }
 
@@ -196,18 +381,50 @@ export function parseTakesFence(body: string): ParseResult {
  * Render a takes array back to a fenced markdown table. Round-trip safe
  * with parseTakesFence. Output uses tight column padding (one space per
  * side) — readable but not pretty-printed.
+ *
+ * v0.30.0 (Slice A1, codex F3 fix): conditional render of resolution
+ * columns. When ANY take in the array has `resolvedQuality !== undefined`,
+ * the renderer widens the table to 13 columns (`# | claim | kind | who |
+ * weight | since | source | resolved | quality | evidence | value | unit |
+ * by |`). Pages with no resolved rows keep the narrow 7-column shape
+ * exactly as v0.28 emitted. The parser tolerates both shapes.
+ *
+ * Round-trip preservation is the safety net for the silent-data-loss bug
+ * codex caught: every CLI that re-renders a fence (cmdUpdate, cmdSupersede,
+ * cmdAdd) must read existing rows via parseTakesFence and pass them
+ * through to renderTakesFence so resolution data on resolved rows survives
+ * unrelated edits to other rows on the same page. The
+ * round-trip-preservation test in test/takes-fence.test.ts is the
+ * regression gate.
  */
 export function renderTakesFence(takes: ParsedTake[]): string {
-  const header = `| # | claim | kind | who | weight | since | source |`;
-  const separator = `|---|-------|------|-----|--------|-------|--------|`;
+  const hasAnyResolution = takes.some(t => t.resolvedQuality !== undefined);
+  const header = hasAnyResolution
+    ? `| # | claim | kind | who | weight | since | source | resolved | quality | evidence | value | unit | by |`
+    : `| # | claim | kind | who | weight | since | source |`;
+  const separator = hasAnyResolution
+    ? `|---|-------|------|-----|--------|-------|--------|----------|---------|----------|-------|------|----|`
+    : `|---|-------|------|-----|--------|-------|--------|`;
   const rows = takes.map(t => {
     const claimCell = t.active ? t.claim : `~~${t.claim}~~`;
     const sinceCell = t.untilDate ? `${t.sinceDate ?? ''} → ${t.untilDate}` : (t.sinceDate ?? '');
     const w = formatWeight(t.weight);
     const source = t.source ?? '';
-    // Escape any pipes inside cells so the table doesn't break.
-    const safe = (s: string) => s.replace(/\|/g, '\\|');
-    return `| ${t.rowNum} | ${safe(claimCell)} | ${t.kind} | ${safe(t.holder)} | ${w} | ${safe(sinceCell)} | ${safe(source)} |`;
+    // Escape any pipes inside cells so the table doesn't break. The
+    // escapeFenceCell primitive lives in fence-shared.ts and is re-aliased
+    // as `safe` here purely to keep the row-render lines visually compact.
+    const safe = safeFenceCell;
+    const baseCells = `| ${t.rowNum} | ${safe(claimCell)} | ${t.kind} | ${safe(t.holder)} | ${w} | ${safe(sinceCell)} | ${safe(source)} |`;
+    if (!hasAnyResolution) return baseCells;
+    // Resolution cells. Empty string for unresolved rows keeps the table
+    // visually clean; the parser treats empty cells as undefined fields.
+    const resolved   = t.resolvedAt       ? safe(t.resolvedAt)              : '';
+    const quality    = t.resolvedQuality  ?? '';
+    const evidence   = t.resolvedEvidence ? safe(t.resolvedEvidence)        : '';
+    const value      = t.resolvedValue !== undefined ? formatWeight(t.resolvedValue) : '';
+    const unit       = t.resolvedUnit     ? safe(t.resolvedUnit)            : '';
+    const by         = t.resolvedBy       ? safe(t.resolvedBy)              : '';
+    return `${baseCells} ${resolved} | ${quality} | ${evidence} | ${value} | ${unit} | ${by} |`;
   });
   const inner = ['', header, separator, ...rows, ''].join('\n');
   return `${TAKES_FENCE_BEGIN}${inner}${TAKES_FENCE_END}`;
