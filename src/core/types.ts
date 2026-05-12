@@ -100,7 +100,7 @@ export interface Page {
    * `source_id` column so callers like `embed` can thread it through
    * getChunks / upsertChunks without defaulting to 'default'.
    *
-   * v0.32.4: required. The DB column is `NOT NULL DEFAULT 'default'`, so
+   * v0.32.8: required. The DB column is `NOT NULL DEFAULT 'default'`, so
    * `rowToPage` always returns it from the engine. Callers can now thread
    * `page.source_id` directly without `!` non-null assertions.
    *

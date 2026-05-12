@@ -316,7 +316,7 @@ export async function scanIntegrity(
     }
   }
 
-  // v0.32.4: listAllPageRefs replaces getAllSlugs+getPage N+1 pattern that
+  // v0.32.8: listAllPageRefs replaces getAllSlugs+getPage N+1 pattern that
   // silently defaulted to source_id='default' for non-default-source pages.
   // Now we enumerate (slug, source_id) pairs and thread sourceId to getPage.
   const allRefs = (await engine.listAllPageRefs()).sort((a, b) =>
@@ -364,7 +364,7 @@ async function scanIntegrityBatch(
   // — gbrain lint should reject stringly-typed validate at write time.
   const validateCondition = sql`AND (frontmatter->>'validate' IS NULL OR frontmatter->>'validate' != 'false')`;
 
-  // v0.32.4: scan ONE row per (source_id, slug) pair, not one per slug.
+  // v0.32.8: scan ONE row per (source_id, slug) pair, not one per slug.
   // Pre-fix used DISTINCT ON (slug) which collapsed multi-source rows into
   // one — that was the bug class. Now batch parity matches the sequential
   // listAllPageRefs() walk: integrity violations in non-default-source pages
@@ -447,7 +447,7 @@ async function cmdAuto(args: string[]): Promise<void> {
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
   try {
-    // v0.32.4: listAllPageRefs enumerates (slug, source_id) pairs so we
+    // v0.32.8: listAllPageRefs enumerates (slug, source_id) pairs so we
     // can thread sourceId to getPage. Pre-fix this defaulted to 'default'
     // and silently skipped non-default-source pages.
     const allRefs = (await engine.listAllPageRefs()).sort((a, b) =>

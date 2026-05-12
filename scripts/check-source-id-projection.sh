@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # CI guard: fail if any SELECT projection on `pages` that feeds rowToPage()
-# drops `source_id`. After v0.32.4, Page.source_id is required at the type
+# drops `source_id`. After v0.32.8, Page.source_id is required at the type
 # level; a projection that omits the column makes rowToPage return a Page
 # with source_id=undefined, which TypeScript's `: string` then lies about.
 #
 # This complements the type-system guard. The grep finds the specific 4-tuple
-# shape (id, slug, type, title) without source_id — the exact pre-v0.32.4
+# shape (id, slug, type, title) without source_id — the exact pre-v0.32.8
 # pattern that codex's plan review flagged.
 #
 # Usage: scripts/check-source-id-projection.sh
@@ -88,7 +88,7 @@ done
 if [ "$EXIT" = 1 ]; then
   echo
   echo "ERROR: SELECT/RETURNING projection on \`pages\` is missing source_id."
-  echo "       After v0.32.4, Page.source_id is required at the type level."
+  echo "       After v0.32.8, Page.source_id is required at the type level."
   echo "       Add \`source_id\` to the projection or rowToPage will lie."
   echo "       See ~/.claude/plans/gleaming-soaring-mccarthy.md F2 finding."
   exit 1

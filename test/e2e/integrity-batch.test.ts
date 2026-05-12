@@ -41,7 +41,7 @@ describeE2E('scanIntegrity batch parity (E2E, Postgres-only)', () => {
   });
 
   describe('dedup', () => {
-    test('multi-source duplicate slugs scan ONE PER (source, slug) PAIR (v0.32.4 bug-class fix)', async () => {
+    test('multi-source duplicate slugs scan ONE PER (source, slug) PAIR (v0.32.8 bug-class fix)', async () => {
       const engine = getEngine();
       const conn = getConn();
 
@@ -70,7 +70,7 @@ describeE2E('scanIntegrity batch parity (E2E, Postgres-only)', () => {
       const batchResult = await scanIntegrity(engine, { limit: 100, batchLoad: true });
       const seqResult = await scanIntegrity(engine, { limit: 100, batchLoad: false });
 
-      // v0.32.4: both paths now scan EACH (source, slug) row independently.
+      // v0.32.8: both paths now scan EACH (source, slug) row independently.
       // Pre-fix the test pinned dedup-to-1 — that hid the bug where alt-source
       // rows were silently dropped. Now batch + sequential both report 2.
       expect(batchResult.pagesScanned).toBe(seqResult.pagesScanned);

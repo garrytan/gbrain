@@ -44,7 +44,7 @@ export function contentHash(page: PageInput): string {
 }
 
 /**
- * v0.32.4: validate a `source_id` is safe for use as a filesystem path
+ * v0.32.8: validate a `source_id` is safe for use as a filesystem path
  * segment AND as a SQL identifier value. Used by the per-source disk-layout
  * fix in patterns.ts/synthesize.ts before any `join(brainDir, source_id, ...)`
  * call, and at `putSource()` time so invalid ids never make it into the DB.
@@ -96,7 +96,7 @@ export function rowToPage(row: Record<string, unknown>): Page {
     ...(salienceTouchedAt !== undefined && { salience_touched_at: salienceTouchedAt }),
     // v0.31.12: propagate source_id so downstream callers (embed, reconcile-links)
     // can thread it through getChunks / upsertChunks without defaulting to 'default'.
-    // v0.32.4: Page.source_id is required. Every SELECT feeding rowToPage now
+    // v0.32.8: Page.source_id is required. Every SELECT feeding rowToPage now
     // projects the column (enforced by scripts/check-source-id-projection.sh).
     // Fail-loud default to 'default' if the row genuinely lacks it (would mean
     // an upstream caller bypassed the projection check; better to surface than

@@ -132,8 +132,8 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     console.log('Previous migration was to a different target. Starting fresh.');
     manifest = null;
   }
-  // v0.32.4 F8: manifest keys are now `${source_id}::${slug}` so multi-source
-  // migrations don't collide on same-slug-different-source pages. Pre-v0.32.4
+  // v0.32.8 F8: manifest keys are now `${source_id}::${slug}` so multi-source
+  // migrations don't collide on same-slug-different-source pages. Pre-v0.32.8
   // entries were bare slugs; we keep treating those as default-source for
   // back-compat resume.
   const completedSet = new Set(manifest?.completed_slugs || []);
@@ -159,7 +159,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
 
   let migrated = 0;
   for (const page of pagesToMigrate) {
-    // v0.32.4 F8: thread source_id end-to-end so multi-source pages migrate
+    // v0.32.8 F8: thread source_id end-to-end so multi-source pages migrate
     // intact. Pre-fix: putPage / getTags / getTimeline / getRawData / getLinks
     // all silently defaulted to source_id='default', so non-default-source
     // tags / timeline / raw / links were either dropped or attached to the
@@ -226,7 +226,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   progress.finish();
 
   // Copy links (after all pages exist in target).
-  // v0.32.4 F8: thread source_id so cross-source links migrate correctly.
+  // v0.32.8 F8: thread source_id so cross-source links migrate correctly.
   console.log('Copying links...');
   progress.start('migrate.copy_links', allPages.length);
   for (const page of allPages) {

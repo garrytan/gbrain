@@ -1,7 +1,7 @@
 /**
- * v0.32.4 — multi-source bug class regression suite.
+ * v0.32.8 — multi-source bug class regression suite.
  *
- * Pins the behaviors that were silently broken pre-v0.32.4 when a brain has
+ * Pins the behaviors that were silently broken pre-v0.32.8 when a brain has
  * more than one source. Pre-fix, every cycle phase and extract pass called
  * slug-only engine methods inside a loop over pages and silently defaulted
  * to source_id='default' for every non-default-source page.

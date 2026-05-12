@@ -450,7 +450,7 @@ export async function runPhaseSynthesize(
     // D6 orchestrator slug rewrite: chunkInfo drives post-hoc rewrite of
     // bare-hash slugs to `<hash6>-c<idx>` so chunked siblings can't collide
     // even if Sonnet drops the chunk suffix.
-    // v0.32.4: refs carry source_id so reverseWriteRefs picks the correct
+    // v0.32.8: refs carry source_id so reverseWriteRefs picks the correct
     // (source, slug) row (currently always 'default' from subagent put_page).
     const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo);
 
@@ -793,7 +793,7 @@ async function collectChildPutPageSlugs(
   // properly-stored jsonb objects (input->>'slug') and double-encoded jsonb
   // strings from pre-fix data ((input #>> '{}')::jsonb->>'slug').
   //
-  // v0.32.4: returns Array<{slug, source_id}> instead of string[]. Subagent
+  // v0.32.8: returns Array<{slug, source_id}> instead of string[]. Subagent
   // put_page tool schema doesn't expose source_id (subagents are scoped to
   // a single source); default to 'default' for the current dream-cycle
   // product behavior. Threading the source_id through reverseWriteRefs
@@ -852,14 +852,14 @@ async function reverseWriteRefs(
 ): Promise<number> {
   let count = 0;
   for (const { slug, source_id } of refs) {
-    // v0.32.4 F6: validate source_id is filesystem-safe before any join().
+    // v0.32.8 F6: validate source_id is filesystem-safe before any join().
     validateSourceId(source_id);
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
     const tags = await engine.getTags(slug, { sourceId: source_id });
     try {
       const md = renderPageToMarkdown(page, tags);
-      // v0.32.4 F6: non-default sources land at brainDir/.sources/<id>/<slug>.md
+      // v0.32.8 F6: non-default sources land at brainDir/.sources/<id>/<slug>.md
       // so same-slug-different-source pages don't collide. Default-source
       // pages stay at brainDir/<slug>.md so single-source brains see no change.
       const filePath = source_id === 'default'

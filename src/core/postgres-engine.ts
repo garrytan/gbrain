@@ -716,7 +716,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async listAllPageRefs(): Promise<Array<{ slug: string; source_id: string }>> {
-    // v0.32.4: cross-source page enumeration. ORDER BY (source_id, slug) for
+    // v0.32.8: cross-source page enumeration. ORDER BY (source_id, slug) for
     // deterministic iteration (F11) — same-slug-different-source pages stay
     // grouped predictably. WHERE deleted_at IS NULL matches default getPage
     // visibility semantics (v0.26.5).

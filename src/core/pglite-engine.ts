@@ -679,7 +679,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async listAllPageRefs(): Promise<Array<{ slug: string; source_id: string }>> {
-    // v0.32.4: see postgres-engine.ts:listAllPageRefs for context. ORDER BY
+    // v0.32.8: see postgres-engine.ts:listAllPageRefs for context. ORDER BY
     // (source_id, slug) for determinism; WHERE deleted_at IS NULL matches
     // default page visibility.
     const { rows } = await this.db.query(

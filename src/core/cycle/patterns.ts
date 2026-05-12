@@ -106,7 +106,7 @@ export async function runPhasePatterns(
     }
 
     // Collect refs the subagent wrote (codex finding #2 — query tool exec rows).
-    // v0.32.4: refs carry source_id so reverseWriteRefs targets the right
+    // v0.32.8: refs carry source_id so reverseWriteRefs targets the right
     // (source, slug) row instead of the first DB match.
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id]);
 
@@ -226,7 +226,7 @@ async function collectChildPutPageSlugs(
   childIds: number[],
 ): Promise<Array<{ slug: string; source_id: string }>> {
   if (childIds.length === 0) return [];
-  // v0.32.4: subagent put_page tool schema doesn't expose source_id (subagents
+  // v0.32.8: subagent put_page tool schema doesn't expose source_id (subagents
   // are scoped to a single source). Default to 'default' here; multi-source
   // dream cycles are a v0.33 follow-up. The point of threading source_id is
   // so reverseWriteRefs can pass it through getPage and pick the correct
@@ -258,7 +258,7 @@ async function reverseWriteRefs(
 ): Promise<number> {
   let count = 0;
   for (const { slug, source_id } of refs) {
-    // v0.32.4 F6: guard against malformed source_id (would let join() break
+    // v0.32.8 F6: guard against malformed source_id (would let join() break
     // out of brainDir). validateSourceId throws on `..`, `/`, etc.
     validateSourceId(source_id);
     const page = await engine.getPage(slug, { sourceId: source_id });
@@ -266,7 +266,7 @@ async function reverseWriteRefs(
     const tags = await engine.getTags(slug, { sourceId: source_id });
     try {
       const md = renderPageToMarkdown(page, tags);
-      // v0.32.4 F6: non-default sources land under brainDir/.sources/<id>/<slug>.md
+      // v0.32.8 F6: non-default sources land under brainDir/.sources/<id>/<slug>.md
       // so same-slug-different-source pages don't collide on disk. Default-source
       // pages stay at brainDir/<slug>.md so single-source brains see no change.
       // `.sources/` is a reserved prefix; walkBrainRepo skips dot-dirs.

@@ -177,7 +177,7 @@ export async function extractTakesFromFs(
  * Snapshot-stable (uses listAllPageRefs). Doesn't read disk — works on
  * Postgres-only deployments without a local checkout.
  *
- * v0.32.4: replaces the prior `getAllSlugs() → getPage(slug)` pattern. The
+ * v0.32.8: replaces the prior `getAllSlugs() → getPage(slug)` pattern. The
  * old version dropped `source_id` between the enumeration and the lookup,
  * so a non-default-source page either matched the wrong (default-source)
  * row or returned null when it didn't exist in default. Now we enumerate
@@ -191,8 +191,8 @@ export async function extractTakesFromDb(
     pagesScanned: 0, pagesWithTakes: 0, takesUpserted: 0, warnings: [], failedFiles: [],
   };
   const dryRun = opts.dryRun ?? false;
-  // v0.32.4: when caller supplies bare slugs, default sourceId='default'
-  // (back-compat with pre-v0.32.4 callers). When no slugs supplied, enumerate
+  // v0.32.8: when caller supplies bare slugs, default sourceId='default'
+  // (back-compat with pre-v0.32.8 callers). When no slugs supplied, enumerate
   // every (slug, source_id) pair across all sources.
   const refs: Array<{ slug: string; source_id: string }> = opts.slugs && opts.slugs.length > 0
     ? opts.slugs.map(slug => ({ slug, source_id: 'default' }))

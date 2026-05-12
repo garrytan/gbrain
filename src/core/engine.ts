@@ -499,7 +499,7 @@ export interface BrainEngine {
   getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>>;
 
   /**
-   * v0.32.4: cross-source page enumeration. Returns one row per (slug,
+   * v0.32.8: cross-source page enumeration. Returns one row per (slug,
    * source_id) pair across the brain, ordered by (source_id, slug) for
    * deterministic iteration on large brains. Used by extract-takes,
    * extract, and integrity to replace the `getAllSlugs() → getPage(slug)`

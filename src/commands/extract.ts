@@ -777,7 +777,7 @@ async function extractLinksFromDB(
   const nullResolver = {
     resolve: async () => null as string | null,
   };
-  // v0.32.4: listAllPageRefs enumerates (slug, source_id) so we can thread
+  // v0.32.8: listAllPageRefs enumerates (slug, source_id) so we can thread
   // sourceId to getPage AND build a cross-source resolution map for link
   // disambiguation. Pre-fix used getAllSlugs() which collapsed
   // same-slug-different-source pages into one entry.
@@ -845,7 +845,7 @@ async function extractLinksFromDB(
       if (!allSlugs.has(c.targetSlug)) continue;
       if (!allSlugs.has(fromSlug)) continue;
 
-      // v0.32.4 F10: cross-source link resolution.
+      // v0.32.8 F10: cross-source link resolution.
       // from_source_id = origin page's source_id (this loop's source_id, or
       // the candidate's fromSlug source if it lives in a different source).
       // to_source_id = priority: origin's source > 'default' > skip (don't
@@ -862,7 +862,7 @@ async function extractLinksFromDB(
       } else {
         // Target exists ONLY in non-origin/non-default sources. Skip — don't
         // silently push a wrong-source edge. Tracking this as an unresolved
-        // ref would require expanding UnresolvedFrontmatterRef; for v0.32.4
+        // ref would require expanding UnresolvedFrontmatterRef; for v0.32.8
         // a quiet skip is the conservative choice (matches existing
         // "target missing" semantics where allSlugs.has() returns false).
         continue;
@@ -891,9 +891,9 @@ async function extractLinksFromDB(
           link_source: c.linkSource,
           origin_slug: c.originSlug,
           origin_field: c.originField,
-          // v0.32.4 F4: thread source ids so the batch JOIN doesn't fan out
+          // v0.32.8 F4: thread source ids so the batch JOIN doesn't fan out
           // across sources. Default source_id='default' for back-compat with
-          // pre-v0.32.4 callers (the engine still accepts undefined).
+          // pre-v0.32.8 callers (the engine still accepts undefined).
           from_source_id: fromSourceId,
           to_source_id: toSourceId,
           origin_source_id: source_id,
@@ -935,7 +935,7 @@ async function extractTimelineFromDB(
   typeFilter: PageType | undefined,
   since: string | undefined,
 ): Promise<{ created: number; pages: number }> {
-  // v0.32.4: listAllPageRefs enumerates (slug, source_id) pairs so we can
+  // v0.32.8: listAllPageRefs enumerates (slug, source_id) pairs so we can
   // thread sourceId to getPage and addTimelineEntriesBatch. Pre-fix used
   // getAllSlugs() which collapsed same-slug-different-source pages.
   const allRefs = await engine.listAllPageRefs();
@@ -992,7 +992,7 @@ async function extractTimelineFromDB(
         }
         created++;
       } else {
-        // v0.32.4 F4: thread source_id so the JOIN matches the right page
+        // v0.32.8 F4: thread source_id so the JOIN matches the right page
         // when two sources share the same slug.
         batch.push({ slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id });
         if (batch.length >= BATCH_SIZE) await flush();
