@@ -2,6 +2,120 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.33.0] - 2026-05-11
+
+**Your brain learns to detect its own integrity drift.**
+**New `gbrain eval suspected-contradictions` probe + doctor + MCP wire-up.**
+
+A user (Fergtic, Chronicle writeup) flagged that gbrain handles contradictions for *curated* pages via compiled-truth-plus-timeline + source-boost, but raw extracted claims don't have a supersession story. On evaluation, most of the supersession case is already handled — `takes.active` filter hides superseded takes from search; source-boost ranks curated content above bulk; recency-decay applies per-prefix half-life; compiled_truth chunks get a guaranteed slot in dedup. What's NOT measured: whether unmarked semantic contradictions actually surface in retrieval results, and whether the brain has a self-healing loop to act on them once detected.
+
+v0.33.0 is a complete brain-consistency subsystem, not a one-off probe. A measurement instrument + agent-facing surface + dream-cycle integration + persistent cache + time-series tracking. The size is intentional — the goal is "trustworthy nightly cadence" not "run it once and decide."
+
+### The numbers that matter
+
+A full 9-commit branch behind the feature flag of "the user asked for it." 226 hermetic tests + 12 real-Postgres E2E cases. The probe ships ready for the user's brain to populate.
+
+```
+new command              gbrain eval suspected-contradictions [run|trend|review]
+new MCP op               find_contradictions(slug?, severity?, limit?)
+new doctor check         contradictions  (paste-ready resolution commands)
+new dream-cycle hook     synthesize phase reads prior contradictions per slug
+new schema migrations    v51 (eval_contradictions_cache), v52 (eval_contradictions_runs)
+new engine methods       listActiveTakesForPages, writeContradictionsRun,
+                          loadContradictionsTrend, getContradictionCacheEntry,
+                          putContradictionCacheEntry, sweepContradictionCache
+```
+
+The probe samples top-K retrieval pairs per query (cross-slug + intra-page chunk-vs-take), runs a date pre-filter to skip obvious quarterly-update shapes, asks an LLM judge with severity scoring, aggregates into a per-query + global report with Wilson 95% confidence interval on the headline percentage. Soft budget cap with pre-flight refuse + mid-run stop. Persistent judge cache keyed on `(chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy)` so prompt edits cleanly invalidate prior verdicts. `judge_errors` is first-class in the report (parse_fail, refusal, timeout, http_5xx, unknown) — silent skips were the wrong default; counting errors in the denominator keeps the headline honest.
+
+### What this means for new users
+
+`gbrain init` keeps OpenAI as the zero-config default. After the migration, run `gbrain eval suspected-contradictions --query "what is X" --top-k 5` to see what the probe finds against your real brain. If `gbrain doctor` flags any high-severity contradictions, each one ships with a paste-ready resolution command: `gbrain takes supersede`, `gbrain dream --phase synthesize --slug`, or `gbrain takes mark-debate`. The agent can call `find_contradictions(slug="companies/acme")` during conversations to surface findings proactively.
+
+The bigger swing (chunk-level `revises` field + ranking change + synthesize-prompt coupling) is still gated on probe data — if your Wilson CI lower-bound stays <5% across a month of nightly runs, source-boost + recency-decay + curated pages are doing the job and we stop. If >15%, plan in v0.34+.
+
+### To take advantage of v0.33.0
+
+`gbrain upgrade` should do this automatically. If it didn't:
+
+1. **Apply the migrations:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+   Adds tables v51 + v52 plus their indexes. Idempotent on both PGLite and Postgres.
+
+2. **Run the probe against a few real queries:**
+   ```bash
+   gbrain eval suspected-contradictions --query "what is alice's role at acme" --top-k 5 --json
+   ```
+   Default budget is $5 in TTY, $1 non-TTY. Judge defaults to `anthropic:claude-haiku-4-5`.
+
+3. **Inspect findings in doctor:**
+   ```bash
+   gbrain doctor
+   ```
+   Look for the `contradictions` check. High-severity items ship with paste-ready resolution commands.
+
+4. **Read the new docs**: `docs/contradictions.md` (architecture + severity rubric) and `docs/eval-bench.md` (workflow for nightly runs + trend tracking).
+
+5. **No breaking changes**: existing search, ranking, synthesize, and takes behavior is unchanged. The find_contradictions MCP op is read-scope (NOT in the subagent allowlist — user-initiated only).
+
+6. **Privacy posture**: probe output (slugs, chunk text, take claims) is stored in `eval_contradictions_runs.report_json` on your local brain. The build-contradictions-fixture script applies a multi-pass redactor before any output is committed to the repo; the operator must inspect every redaction.
+
+### Itemized changes
+
+#### Probe core (9 modules)
+
+- `src/core/eval-contradictions/types.ts` — wire contract. `schema_version: 1`, `PROMPT_VERSION = '1'`, `TRUNCATION_POLICY = '1500-chars-utf8-safe'`. Stable JSON output shapes (ProbeReport, ContradictionFinding, JudgeVerdict, etc.).
+- `src/core/eval-contradictions/judge.ts` — `judgeContradiction()` is the single LLM call. Query-conditioned prompt (Codex outside-voice fix — judge sees the user's query, not just two free-form chunks). Holder context for take pairs so "Alice thinks X vs Bob thinks not-X" doesn't get flagged. UTF-8-safe truncation at `maxPairChars` (default 1500, surrogate-pair aware). C1 confidence-floor double-enforcement: orchestrator filters `contradicts: true` cases where `confidence < 0.7` even if the model ignored the prompt rule.
+- `src/core/eval-contradictions/runner.ts` — the orchestrator. Pair generation (cross-slug + intra-page), date pre-filter (3-rule), deterministic sampling, A2 budget tracker, cache integration, C2 first-class judge_errors, Wilson CI aggregation, hot_pages roll-up. `PreFlightBudgetError` is a discriminable rejection class.
+- `src/core/eval-contradictions/date-filter.ts` — 3-rule layered pre-filter (Codex fix to the naive single-rule approach). Same-paragraph-dual-date overrides the separation rule (flip-flop case sees the judge). Missing-date side always falls through to the judge.
+- `src/core/eval-contradictions/calibration.ts` — Wilson 95% confidence interval, exact-clamping at p=0 and p=1, small-sample warning when n < 30.
+- `src/core/eval-contradictions/cost-tracker.ts` — A2 soft ceiling + P3 embedding-spend tracking. Anthropic + OpenAI per-MTok pricing baked in.
+- `src/core/eval-contradictions/cache.ts` — P2 persistent cache wrapper. 5-component key (Codex fix includes prompt_version + truncation_policy). Order-independent on (a, b) via lex-sorted SHA-256 hashes. Shape-validates JSONB on read so corrupt rows treat as miss.
+- `src/core/eval-contradictions/cross-source.ts` — M6 source-tier breakdown. Reuses `DEFAULT_SOURCE_BOOSTS` prefix logic; emits {curated_vs_curated, curated_vs_bulk, bulk_vs_bulk, other} counts.
+- `src/core/eval-contradictions/severity-classify.ts` — M4 severity helpers (parse, sort, bucket, hot-page rollup).
+- `src/core/eval-contradictions/auto-supersession.ts` — M7 resolution-proposal generator. Classifies into takes_supersede / dream_synthesize / takes_mark_debate / manual_review with paste-ready CLI commands.
+- `src/core/eval-contradictions/judge-errors.ts` — typed error collector (Codex fix — silent skip was wrong; errors counted in denominator).
+- `src/core/eval-contradictions/trends.ts` — M5 time-series helpers (write/read + ASCII chart renderer).
+- `src/core/eval-contradictions/fixture-redact.ts` — privacy redactor for the gold-fixture build path (slug rewrite, name placeholders, monetary obfuscation, PII scrubber wrapper). Fail-closed via `isCleanForCommit`.
+
+#### CLI + dispatch + agent surfaces
+
+- `src/commands/eval-suspected-contradictions.ts` — new `gbrain eval suspected-contradictions [run|trend|review]` command. ~350 LOC. A4 empty-capture UX: `--from-capture` against empty `eval_candidates` exits 2 with hint naming `GBRAIN_CONTRIBUTOR_MODE=1`.
+- `src/commands/eval.ts` — sub-subcommand dispatch updated (~5 lines).
+- `src/commands/doctor.ts` — new `contradictions` check (M1). Severity-sorted findings with paste-ready commands; gracefully skipped pre-migration.
+- `src/core/operations.ts` — new `find_contradictions` MCP op (M3, read scope, NOT localOnly). Filter by slug substring + severity + limit.
+- `src/core/operations-descriptions.ts` — `FIND_CONTRADICTIONS_DESCRIPTION` constant.
+- `src/core/cycle/synthesize.ts` — M2 prompt injection. `loadPriorContradictionsBlock` pre-fetches the latest probe's top-5-by-severity findings once at phase start and threads them into `buildSynthesisPrompt` as an informational block. Subagent sees what to reconcile when writing to flagged slugs. Empty trend = empty block, fresh-install behavior unchanged.
+
+#### Engine surface (P1 + M3 + M5 + P2)
+
+- `src/core/engine.ts` + `src/core/postgres-engine.ts` + `src/core/pglite-engine.ts` — 6 new methods. P1 `listActiveTakesForPages` batches the per-page active-take fetch (single `WHERE page_id = ANY($1)` instead of N round-trips). M5 `writeContradictionsRun` + `loadContradictionsTrend` are the time-series surface. P2 `getContradictionCacheEntry` + `putContradictionCacheEntry` + `sweepContradictionCache` are the cache surface. JSONB writes use `sql.json()` on Postgres (no double-encode regression class) and `$N::jsonb` on PGLite.
+
+#### Schema (2 migrations)
+
+- `src/core/migrate.ts` — v51 `eval_contradictions_cache` (composite PK on 5 components; expires_at-driven TTL). v52 `eval_contradictions_runs` (Wilson CI bounds, source_tier_breakdown JSONB, full report_json blob). Both idempotent on both engines.
+- `src/core/pglite-schema.ts` + `src/schema.sql` — DDL mirror. RLS-enable lines for the two new tables.
+- `src/core/schema-embedded.ts` — regenerated.
+
+#### Scripts + fixtures
+
+- `scripts/build-contradictions-fixture.ts` — operator script for building the privacy-redacted gold fixture against a real brain. Interactive labeling, multi-pass redactor, pre-commit `isCleanForCommit` safety gate.
+- `test/fixtures/contradictions-mini.jsonl` — 5 redacted-style queries for CLI smoke testing.
+
+#### Tests
+
+- 226 hermetic unit tests across 15 files: judge (25), runner (26), trends (15), engine methods (17), cache (14), cost (12), date-filter (15), calibration (13), severity (14), judge-errors (12), cross-source (13), auto-supersession (12), fixture-redact (16), integrations (11), plus shared helpers.
+- 12 real-Postgres E2E cases in `test/e2e/eval-contradictions-postgres.test.ts` covering migrations, JSONB round-trip, cache TTL with `now()`, M5 trend TIMESTAMPTZ ordering, and the find_contradictions MCP op end-to-end. Required-on-DATABASE_URL per gbrain convention.
+
+#### For contributors
+
+- Three-layer cohesion in the runner: pair generation → date pre-filter → cache lookup → judge → cost track → aggregate. Hermetic via `judgeFn` + `searchFn` dependency injection — no test ever touches the real LLM gateway or hybrid search.
+- `__setChatTransportForTests` already existed at `src/core/ai/gateway.ts:421` — judge tests use direct `chatFn` injection instead (cleaner for one-shot wrappers).
+- Codex outside-voice review caught 5 fixes that are now standard: command rename (`contradictions` → `suspected-contradictions`), judge_errors as first-class output, prompt_version + truncation_policy in cache key, Wilson CI on headline, query-conditioned judge prompt. All folded in.
+- Decision-point not in TODOS.md per user preference: after a month of nightly runs, check Wilson CI lower-bound. If <5%, source-boost + recency-decay + curated pages are doing the job and the bigger swing (chunk-level `revises`) stops here. If >15%, plan for v0.34+.
+
 ## [0.32.0] - 2026-05-10
 
 **5 new embedding providers + the discoverability fix that closes the 17-PR dupe cluster.**
