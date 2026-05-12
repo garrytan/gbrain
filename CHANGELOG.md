@@ -2,6 +2,126 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.32.7] - 2026-05-11
+
+**CJK users get a working brain end-to-end on PGLite.**
+**Six layers of ASCII-only assumptions fixed in one wave.**
+
+For the past month Chinese / Japanese / Korean gbrain users have been hitting silent data loss at six different points in the pipeline: `git diff` dropping CJK paths, slugify collapsing them to empty, import rejecting them, the chunker treating a whole Chinese paragraph as one word and exceeding the OpenAI embedding token limit, search returning nothing on PGLite, and adjacent slug validators rejecting CJK even after the slugify fix. Five PRs from @vinsew over April 14 to May 3 plus one extracted from @313094319-sudo's #765 land together as one coherent collector. Codex's outside-voice review on the plan caught four critical bugs the eng review missed — the original "fold chunker version into content_hash" idea was a no-op, the cost prompt referenced phantom data fields, the LIKE SQL needed two distinct param bindings, and `countCJKAwareWords` would have over-split English-heavy docs with one foreign term.
+
+After this release, `gbrain sync` of `品牌圣经.md` actually creates a page at slug `品牌圣经`, the chunker produces ≤ 6000-char chunks regardless of script, `gbrain search "测试"` returns hits on a PGLite brain, and an Apple Notes export with `2026-04-14 22_38 記録-個人智能体_原文.md` lands cleanly through incremental sync. Postgres CJK keyword search needs an extension (pgroonga or zhparser); pgroonga + ngram trigram support is the next v0.33+ TODO.
+
+### The numbers that matter
+
+Every fix layer has a concrete observable change. Counts from a fresh PGLite brain with a 4-page Chinese/Japanese/Korean fixture:
+
+| Layer | Pre-fix | Post-fix |
+|---|---|---|
+| `git diff --name-status` on CJK path | quoted octal escapes (`\345\223\201`); dropped from manifest | UTF-8 path literal; included in manifest |
+| `slugifySegment("品牌圣经")` | `""` (silent collision with `"销售论证文档" → ""`) | `"品牌圣经"` |
+| `importFromFile` of root-level `小米.md` | `Invalid slug: ""` | imported as slug `小米` |
+| `countWords` on a 1000-char Chinese paragraph | `1` (treated as single token; embedder rejects with `400 maximum input length 8192 tokens`) | `1000` (char count via 30% density threshold) |
+| `gbrain search "测试"` on PGLite | empty results (English FTS tokenizer can't segment CJK) | bigram-count-ranked hits |
+| `pages.chunker_version` post-upgrade reindex | n/a (re-embed never fired) | `gbrain upgrade` prints cost estimate + reindex sweep brings every markdown page to v2 |
+
+`gbrain upgrade` prints a stderr line before the sweep starts:
+
+```
+[chunker-bump] Will re-embed ~1386 markdown pages via openai:text-embedding-3-large, est. ~$0.50, ~23min. Press Ctrl-C within 10s to abort.
+```
+
+On a 1386-page brain (the maintainer's own deployment) the cost is roughly $0.50 + 3 minutes wall-clock. On a 100K-page brain it scales linearly to ~$36 + 30 minutes. Headless installs (CI, cron) skip the wait; `GBRAIN_NO_REEMBED=1` opts out entirely with a doctor warning marker.
+
+### What this means for CJK users
+
+If you imported a Chinese / Japanese / Korean brain pre-v0.32.7 and saw silently empty search or `Invalid slug` errors, run `gbrain upgrade` and the wave heals you up automatically. The reindex sweep bumps `chunker_version` from 1 → 2 on every markdown page; on the next sync, files like `小米.md` that previously failed with `Invalid slug: ""` import cleanly via the frontmatter-slug fallback path. The audit trail at `~/.gbrain/audit/slug-fallback-YYYY-Www.jsonl` shows you every file where the fallback fired.
+
+### Itemized changes
+
+**Six layers of CJK fixes (contributed by @vinsew via PRs #114 / #115 / #119 / #598 / #599 + @313094319-sudo via #765, extracted CJK piece):**
+
+- New `src/core/cjk.ts` module — single source of truth for CJK detection (Han, Hiragana, Katakana, Hangul Syllables), the slug-char string used by adjacent validators, sentence + clause delimiter sets, and the 30% density threshold heuristic. Replaces the inline regex in `expansion.ts:58` so four-place drift becomes impossible.
+- `gbrain sync` git helper refactored: `git()` now takes `configs?: string[]` as a separate parameter and always prepends `core.quotepath=false`. CJK paths arrive as UTF-8 literals through `diff`, `log`, `rev-parse`. Hardened so no future call site can put `-c` after the subcommand and silently break path emission. New invariant test `test/sync.test.ts:git() helper invocation order`.
+- `slugifySegment` extended to preserve CJK characters with NFC re-normalization for Hangul Jamo recomposition. `SLUG_SEGMENT_PATTERN` (used by takes-holder validation) extended in the same commit so CJK slugs don't get rejected by adjacent validators. Audit pass also extended `validatePageSlug`, `validateFilename` in `src/core/operations.ts`. Existing `café` → `cafe` Latin-accent regression preserved.
+- Recursive chunker fixes: CJK-aware `countWords` via 30% density threshold (English docs with one foreign term stay whitespace-tokenized; Chinese-dominant docs get char-counted), CJK sentence delimiters `。！？` at L2 + clause delimiters `；：，、` at L3, char-slice fallback in `splitOnWhitespace` when a single "word" exceeds target, and `maxChars` hard cap (default 6000) with sliding-window `splitByChars` and 500-char overlap. `MARKDOWN_CHUNKER_VERSION = 2` exported.
+- `gbrain import` of CJK / emoji / Thai / Arabic root-level files: when `slugifyPath` returns empty AND frontmatter has a `slug:`, the frontmatter slug becomes authoritative (anti-spoof rule preserved when path slug is non-empty). Audit trail at `~/.gbrain/audit/slug-fallback-YYYY-Www.jsonl` records every fallback fire; `gbrain doctor`'s new `slug_fallback_audit` check surfaces a 7-day rolling count as an `ok` line.
+- PGLite CJK keyword fallback in `searchKeyword` + `searchKeywordChunks`: detects `hasCJK(query)` and switches the SQL strategy to `ILIKE ... ESCAPE '\'` over `chunk_text` with bigram-frequency-count ranking. Two distinct parameter bindings ($qLike escaped for the ILIKE, $qRaw raw for the position/replace arithmetic) per codex's C8 catch. Source-boost, hard-exclude, visibility, and DISTINCT-ON survival all preserved. ASCII queries continue through `websearch_to_tsquery('english')` unchanged.
+
+**Migration v51 (`cjk_wave_pages_chunker_version_and_source_path`):**
+
+- `pages.chunker_version SMALLINT NOT NULL DEFAULT 1` — set to `MARKDOWN_CHUNKER_VERSION` on every import going forward.
+- `pages.source_path TEXT` — captures the import-time repo-relative path so sync's delete/rename paths can resolve frontmatter-fallback slugs.
+- Partial indexes on both (markdown-only / non-null) so the post-upgrade sweep query is fast.
+- PGLite + Postgres parity via the standard `ALTER TABLE ... IF NOT EXISTS` shape.
+
+**New `gbrain reindex --markdown` command:**
+
+- Walks `WHERE chunker_version < 2 AND page_kind = 'markdown'` in 100-row batches. For rows with non-null `source_path` re-imports via `importFromFile`; rows without fall back to `importFromContent` from the stored markdown body.
+- Idempotent: re-runs after partial completion pick up where they left off via id-ordered batches.
+- Flags: `--limit N`, `--dry-run`, `--json`, `--no-embed` (offline / CI), `--repo PATH`.
+- Wired into `gbrain upgrade`'s post-upgrade hook automatically.
+
+**Cost-estimate prompt in `gbrain upgrade`:**
+
+- Computes pending page count + char totals from real SQL (`COUNT(*)` + `SUM(LENGTH(compiled_truth)) + SUM(LENGTH(timeline))` against the chunker_version-filtered query — no phantom `markdown_body` column).
+- Resolves the gateway's embedding model + dollar cost via the new `src/core/embedding-pricing.ts` map keyed `provider:model` (OpenAI text-embedding-3-large + 3-small + ada-002, Voyage 3-large + 3). Unknown providers degrade to `estimate unavailable for <provider>` instead of fabricating numbers.
+- TTY-only 10-second Ctrl-C window; non-TTY auto-proceeds; `GBRAIN_REEMBED_GRACE_SECONDS=0` skips wait; `GBRAIN_NO_REEMBED=1` exits with doctor-warning marker.
+
+**`gbrain doctor` gains `slug_fallback_audit` check:**
+
+- Reads the latest weekly `~/.gbrain/audit/slug-fallback-*.jsonl`, counts info-severity entries in the last 7 days, and surfaces the count as an `ok` line. No health-score docking; no warning. `sync-failures.jsonl` (which gates bookmark advancement) stays untouched — info rows live in their own surface per codex C7.
+
+**Tests:**
+
+- 16 new unit cases in `test/cjk.test.ts` covering `hasCJK`, `countCJKAwareWords` (30% density threshold), `escapeLikePattern`, the four CJK constants.
+- 9 new chunker cases including long Chinese paragraph splits, Japanese `。` delimiter, Korean Hangul, mixed CJK+English, maxChars sliding window, and a pure-English regression.
+- 16 new slug-validation cases for the CJK ranges + a SLUG_SEGMENT_PATTERN test that confirms `café` still works and Vietnamese (out of scope) stays rejected.
+- 5 new migration-v51 cases (column presence, default, indexes, default inheritance).
+- 5 new reindex cases (dry-run, idempotent re-run, --limit cap, skip-already-bumped, version bump).
+- 11 new upgrade-prompt cases (real-data estimate, unknown provider fallback, TTY / non-TTY paths, GBRAIN_NO_REEMBED, GBRAIN_REEMBED_GRACE_SECONDS=0).
+- 6 new audit-jsonl cases (logSlugFallback, readRecentSlugFallbacks, 7-day window, corrupt-row tolerance).
+- 8 new pglite-engine cases (CJK detection routes to LIKE branch, bigram ranking, LIKE-meta escape, regression on ASCII FTS).
+- 3 new sync git-helper invariant cases pinning the `-c` flag order.
+- 2 new E2E files: `test/e2e/sync-cjk-git.test.ts` (real git CLI emits UTF-8 paths) and `test/e2e/cjk-roundtrip.test.ts` (PGLite-in-memory import → chunk → search).
+
+**NOT in scope (filed as v0.33+ TODOs):**
+
+- Postgres-side CJK FTS (pgroonga / zhparser / ngram trigrams). Multi-tenant Postgres deployments still can't search Chinese; defer until users complain.
+- Widening CJK ranges to Unicode property escapes (`\p{Script=Han}` etc.) for Han Extensions A/B/C, halfwidth katakana, compatibility ideographs, iteration marks (`々` / `〇`). BMP set covers >99% of real content.
+- `git diff --name-status -z` + NUL framing for the path-encoding completeness pass (handles tabs/newlines/quotes that `core.quotepath=false` doesn't cover).
+- `extractTrailingContext` CJK-aware overlap. Real bug but the maxChars hard cap is protective; the v0.33+ fix gives normal-size CJK chunks proper overlap context.
+- Other non-Latin scripts (Thai, Arabic, Cyrillic, Devanagari).
+
+## To take advantage of v0.32.7
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Run the markdown reindex sweep:**
+   ```bash
+   gbrain reindex --markdown
+   ```
+   Or skip the embedding cost and let the next `gbrain embed --stale` pass fill in vectors:
+   ```bash
+   gbrain reindex --markdown --no-embed
+   gbrain embed --stale
+   ```
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   gbrain search "测试"   # or your favorite CJK substring; should return hits on a PGLite brain
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/audit/slug-fallback-*.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how gbrain maintainers find fragile upgrade paths. Thank you @vinsew + @313094319-sudo for filing the originating PRs.
+
 ## [0.32.0] - 2026-05-10
 
 **5 new embedding providers + the discoverability fix that closes the 17-PR dupe cluster.**
