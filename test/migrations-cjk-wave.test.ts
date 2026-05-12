@@ -1,5 +1,5 @@
 /**
- * v0.32.7 CJK wave — migration v52 (cjk_wave_pages_chunker_version_and_source_path).
+ * v0.32.7 CJK wave — migration v54 (cjk_wave_pages_chunker_version_and_source_path).
  *
  * Asserts the two new columns + partial indexes on `pages` exist after schema
  * initialization on PGLite. Postgres parity is covered by test/e2e/schema-drift.test.ts.
@@ -20,7 +20,7 @@ afterAll(async () => {
   await engine.disconnect();
 });
 
-describe('migration v52: cjk_wave_pages_chunker_version_and_source_path', () => {
+describe('migration v54: cjk_wave_pages_chunker_version_and_source_path', () => {
   test('pages.chunker_version exists with default 1', async () => {
     const rows = await engine.executeRaw<{ column_name: string; data_type: string; column_default: string | null; is_nullable: string }>(
       `SELECT column_name, data_type, column_default, is_nullable

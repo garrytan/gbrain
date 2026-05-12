@@ -35,7 +35,7 @@ export interface ReembedEstimate {
 
 /**
  * Compute the re-embed estimate using only what's actually on the `pages`
- * table after migration v52 applied. Used by both the post-upgrade prompt
+ * table after migration v54 applied. Used by both the post-upgrade prompt
  * and tests.
  */
 export async function computeReembedEstimate(

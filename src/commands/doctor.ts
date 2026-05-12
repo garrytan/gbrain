@@ -344,6 +344,9 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // surfacing layer.)
   checks.push(await checkSubagentProvider(engine));
 
+  // 6. Sync freshness check
+  checks.push(await checkSyncFreshness(engine));
+
   return computeDoctorReport(checks);
 }
 
@@ -389,6 +392,145 @@ async function checkSubagentProvider(engine: BrainEngine): Promise<Check> {
       name: 'subagent_provider',
       status: 'warn',
       message: `Could not check subagent provider: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+// Module-scoped flag so the NaN-fallback warning fires once per process.
+let _syncFreshnessEnvWarned = false;
+
+function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
+  const raw = process.env[varName];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    if (!_syncFreshnessEnvWarned) {
+      _syncFreshnessEnvWarned = true;
+      console.warn(
+        `[gbrain doctor] Ignoring invalid ${varName}=${raw}; using default ${fallback}h.`,
+      );
+    }
+    return fallback;
+  }
+  return n;
+}
+
+/**
+ * Sync freshness check (v0.32.4) — verify that sources with local_path have
+ * been synced recently. Detects the silent failure mode where `gbrain sync`
+ * stopped running and brain search now misses recent pages.
+ *
+ * Pure staleness check. Reads `sources.last_sync_at` only — no filesystem
+ * access. Filesystem-vs-DB drift detection is intentionally out of scope:
+ *   - doctorReportRemote runs in the HTTP MCP server (src/commands/serve-http.ts);
+ *     walking arbitrary DB-supplied paths from a remote-callable endpoint
+ *     crosses a trust boundary (OAuth write scope could mutate local_path).
+ *   - Drift detection belongs in `multi_source_drift` which already has
+ *     GBRAIN_DRIFT_LIMIT + GBRAIN_DRIFT_TIMEOUT_MS guards.
+ *
+ * Thresholds (env-overridable, default = 24h warn / 72h fail):
+ *   - GBRAIN_SYNC_FRESHNESS_WARN_HOURS
+ *   - GBRAIN_SYNC_FRESHNESS_FAIL_HOURS
+ * Invalid values (NaN, ≤0) fall back to defaults with a once-per-process warn.
+ *
+ * Edge cases handled:
+ *   - last_sync_at IS NULL → fail "never synced"
+ *   - last_sync_at > now() (clock skew / corrupted timestamp) → warn
+ *   - mixed sources → highest-severity drives the overall status
+ *   - executeRaw throws → outer-catch warn so doctor keeps running
+ *
+ * Failure messages embed `source.id` so the fix command
+ * `gbrain sync --source <id>` matches what the user copy-pastes.
+ */
+export async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
+  try {
+    const sources = await engine.executeRaw<{
+      id: string;
+      name: string;
+      local_path: string | null;
+      last_sync_at: Date | null;
+    }>(
+      `SELECT id, name, local_path, last_sync_at FROM sources WHERE local_path IS NOT NULL`,
+    );
+
+    if (sources.length === 0) {
+      return {
+        name: 'sync_freshness',
+        status: 'ok',
+        message: 'No federated sources to sync',
+      };
+    }
+
+    const warnHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_WARN_HOURS', 24);
+    const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
+    const warnMs = warnHours * 60 * 60 * 1000;
+    const failMs = failHours * 60 * 60 * 1000;
+
+    const now = Date.now();
+    const issues: string[] = [];
+    let hasWarnings = false;
+    let hasFailures = false;
+
+    for (const source of sources) {
+      // Embed source.id in user-visible messages so `gbrain sync --source <id>`
+      // matches what the user copy-pastes. Show display name in parens when set.
+      const display = source.name && source.name !== source.id
+        ? `'${source.id}' (${source.name})`
+        : `'${source.id}'`;
+
+      if (!source.last_sync_at) {
+        issues.push(`Source ${display} has never been synced`);
+        hasFailures = true;
+        continue;
+      }
+
+      const lastSync = new Date(source.last_sync_at).getTime();
+      const ageMs = now - lastSync;
+
+      if (ageMs < 0) {
+        issues.push(
+          `Source ${display} has future last_sync_at — clock skew or corrupted timestamp`,
+        );
+        hasWarnings = true;
+        continue;
+      }
+
+      const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
+      const ageDays = Math.floor(ageHours / 24);
+
+      if (ageMs > failMs) {
+        issues.push(`Source ${display} last synced ${ageDays}d ago — brain search is stale!`);
+        hasFailures = true;
+      } else if (ageMs > warnMs) {
+        issues.push(`Source ${display} last synced ${ageHours}h ago`);
+        hasWarnings = true;
+      }
+    }
+
+    if (hasFailures) {
+      return {
+        name: 'sync_freshness',
+        status: 'fail',
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source`,
+      };
+    }
+    if (hasWarnings) {
+      return {
+        name: 'sync_freshness',
+        status: 'warn',
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh`,
+      };
+    }
+    return {
+      name: 'sync_freshness',
+      status: 'ok',
+      message: `All ${sources.length} federated source(s) synced recently`,
+    };
+  } catch (e) {
+    return {
+      name: 'sync_freshness',
+      status: 'warn',
+      message: `Could not check sync freshness: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
 }
@@ -1509,6 +1651,86 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   }
 
+  // 11a-bis-3. contradictions probe summary (v0.32.6 — M1).
+  //
+  // Reads the most recent eval_contradictions_runs row and surfaces:
+  //   - headline count + severity breakdown
+  //   - paste-ready resolution commands per HIGH-severity finding
+  //   - Wilson CI band so the user knows whether the headline is trustworthy
+  // Skipped (status: 'ok') when the table is empty — the probe simply hasn't
+  // run yet, which is normal on a fresh install.
+  progress.heartbeat('contradictions');
+  try {
+    const recent = await engine.loadContradictionsTrend(7);
+    if (recent.length === 0) {
+      checks.push({
+        name: 'contradictions',
+        status: 'ok',
+        message: 'No probe runs in the last 7 days. Run `gbrain eval suspected-contradictions --query "..." --top-k 5` to populate.',
+      });
+    } else {
+      const latest = recent[0];
+      const report = latest.report_json as Record<string, unknown> | null;
+      const perQuery = (report?.per_query as Array<{
+        contradictions: Array<{
+          severity: 'low' | 'medium' | 'high';
+          axis: string;
+          a: { slug: string };
+          b: { slug: string };
+          resolution_command: string;
+        }>;
+      }> | undefined) ?? [];
+      let high = 0, medium = 0, low = 0;
+      const highFindings: Array<{ a: string; b: string; axis: string; cmd: string }> = [];
+      for (const q of perQuery) {
+        for (const c of q.contradictions) {
+          if (c.severity === 'high') {
+            high++;
+            highFindings.push({ a: c.a.slug, b: c.b.slug, axis: c.axis, cmd: c.resolution_command });
+          } else if (c.severity === 'medium') medium++;
+          else low++;
+        }
+      }
+      const total = high + medium + low;
+      if (total === 0) {
+        checks.push({
+          name: 'contradictions',
+          status: 'ok',
+          message: `Latest probe run (${latest.ran_at.slice(0, 10)}) found no suspected contradictions across ${latest.queries_evaluated} queries.`,
+        });
+      } else {
+        const ciLow = (latest.wilson_ci_lower * 100).toFixed(0);
+        const ciHigh = (latest.wilson_ci_upper * 100).toFixed(0);
+        const lines = [
+          `${total} suspected contradictions (high=${high} medium=${medium} low=${low}) detected by latest probe — Wilson CI 95%: ${ciLow}-${ciHigh}%.`,
+        ];
+        for (const f of highFindings.slice(0, 3)) {
+          lines.push(`  HIGH: ${f.a} vs ${f.b}${f.axis ? ' — ' + f.axis : ''}`);
+          lines.push(`    → ${f.cmd}`);
+        }
+        if (highFindings.length > 3) {
+          lines.push(`  …and ${highFindings.length - 3} more — see \`gbrain eval suspected-contradictions review\``);
+        }
+        checks.push({
+          name: 'contradictions',
+          status: high > 0 ? 'warn' : 'ok',
+          message: lines.join('\n  '),
+        });
+      }
+    }
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42P01') {
+      checks.push({ name: 'contradictions', status: 'ok', message: 'Skipped (eval_contradictions_runs table unavailable — apply migrations to enable)' });
+    } else {
+      checks.push({
+        name: 'contradictions',
+        status: 'warn',
+        message: `Could not read contradictions trend: ${(err as Error)?.message ?? String(err)}`,
+      });
+    }
+  }
+
   // 11a-bis-2. facts_extraction_health (v0.31.2 — codex P1 #3).
   //
   // Mirrors the eval_capture check shape but reads facts:absorb rows
@@ -2025,6 +2247,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         });
       }
     } catch { /* config table missing on a very old brain — skip */ }
+  }
+
+  // Sync freshness check (v0.32 — Check that sources are synced recently)
+  if (engine !== null) {
+    progress.heartbeat('sync_freshness');
+    checks.push(await checkSyncFreshness(engine));
   }
 
   progress.finish();

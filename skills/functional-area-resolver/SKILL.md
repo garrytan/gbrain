@@ -303,7 +303,7 @@ This skill guarantees:
 - Routing matches the canonical triggers in the frontmatter.
 - Compression is only performed when the preconditions in Step 1 pass (file ≥12KB AND clean working tree, or `--force`).
 - The mandatory verification gate in Step 6 fires on the user's edited file, not on sample variants. The user runs `gbrain routing-eval --json` AND the gbrain-repo harness (`node harness.mjs --variants-dir <tmp> --variants my-edit`) before committing the compressed file.
-- Privacy contract preserved: no fork-specific filesystem path literals (the agent-private `/data/brain` and `/data/.openclaw` roots) leak into the compressed output.
+- Privacy contract preserved: no fork-specific filesystem path literals (server-side brain home, OpenClaw fork home) leak into the compressed output.
 
 The full behavior contract is documented in the body sections above; this section exists for the conformance test.
 

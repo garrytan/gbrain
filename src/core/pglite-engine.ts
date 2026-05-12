@@ -2358,6 +2358,180 @@ export class PGLiteEngine implements BrainEngine {
     return result.rows.length;
   }
 
+  /** v0.32.6 P1 — batched per-page active-takes fetch for the contradiction probe. */
+  async listActiveTakesForPages(
+    pageIds: number[],
+    opts: { takesHoldersAllowList?: string[] } = {},
+  ): Promise<Map<number, Take[]>> {
+    const out = new Map<number, Take[]>();
+    for (const pid of pageIds) out.set(pid, []);
+    if (pageIds.length === 0) return out;
+    const { rows } = await this.db.query(
+      `SELECT t.*, p.slug AS page_slug
+       FROM takes t
+       JOIN pages p ON p.id = t.page_id
+       WHERE t.page_id = ANY($1::int[])
+         AND t.active = true
+         AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
+       ORDER BY t.page_id, t.row_num`,
+      [pageIds, opts.takesHoldersAllowList ?? null]
+    );
+    for (const r of rows) {
+      const take = takeRowToTake(r as Record<string, unknown>);
+      const bucket = out.get(take.page_id);
+      if (bucket) bucket.push(take);
+    }
+    return out;
+  }
+
+  /** v0.32.6 M5 — persist a probe run row. Idempotent on run_id. */
+  async writeContradictionsRun(row: {
+    run_id: string;
+    judge_model: string;
+    prompt_version: string;
+    queries_evaluated: number;
+    queries_with_contradiction: number;
+    total_contradictions_flagged: number;
+    wilson_ci_lower: number;
+    wilson_ci_upper: number;
+    judge_errors_total: number;
+    cost_usd_total: number;
+    duration_ms: number;
+    source_tier_breakdown: Record<string, unknown>;
+    report_json: Record<string, unknown>;
+  }): Promise<boolean> {
+    const result = await this.db.query(
+      `INSERT INTO eval_contradictions_runs (
+         run_id, judge_model, prompt_version,
+         queries_evaluated, queries_with_contradiction, total_contradictions_flagged,
+         wilson_ci_lower, wilson_ci_upper, judge_errors_total,
+         cost_usd_total, duration_ms,
+         source_tier_breakdown, report_json
+       ) VALUES (
+         $1, $2, $3,
+         $4, $5, $6,
+         $7, $8, $9,
+         $10, $11,
+         $12::jsonb, $13::jsonb
+       )
+       ON CONFLICT (run_id) DO NOTHING`,
+      [
+        row.run_id, row.judge_model, row.prompt_version,
+        row.queries_evaluated, row.queries_with_contradiction, row.total_contradictions_flagged,
+        row.wilson_ci_lower, row.wilson_ci_upper, row.judge_errors_total,
+        row.cost_usd_total, row.duration_ms,
+        row.source_tier_breakdown, row.report_json,
+      ]
+    );
+    return (result.affectedRows ?? 0) > 0;
+  }
+
+  /** v0.32.6 M5 — read probe runs from the last N days. */
+  async loadContradictionsTrend(days: number): Promise<Array<{
+    run_id: string;
+    ran_at: string;
+    judge_model: string;
+    queries_evaluated: number;
+    queries_with_contradiction: number;
+    total_contradictions_flagged: number;
+    wilson_ci_lower: number;
+    wilson_ci_upper: number;
+    judge_errors_total: number;
+    cost_usd_total: number;
+    duration_ms: number;
+    source_tier_breakdown: Record<string, unknown>;
+    report_json: Record<string, unknown>;
+  }>> {
+    const cutoff = new Date(Date.now() - Math.max(0, days) * 86400000);
+    const { rows } = await this.db.query(
+      `SELECT run_id, ran_at, judge_model,
+              queries_evaluated, queries_with_contradiction, total_contradictions_flagged,
+              wilson_ci_lower, wilson_ci_upper, judge_errors_total,
+              cost_usd_total, duration_ms,
+              source_tier_breakdown, report_json
+       FROM eval_contradictions_runs
+       WHERE ran_at >= $1
+       ORDER BY ran_at DESC`,
+      [cutoff]
+    );
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      run_id: r.run_id as string,
+      ran_at: r.ran_at instanceof Date ? (r.ran_at as Date).toISOString() : String(r.ran_at),
+      judge_model: r.judge_model as string,
+      queries_evaluated: Number(r.queries_evaluated),
+      queries_with_contradiction: Number(r.queries_with_contradiction),
+      total_contradictions_flagged: Number(r.total_contradictions_flagged),
+      wilson_ci_lower: Number(r.wilson_ci_lower),
+      wilson_ci_upper: Number(r.wilson_ci_upper),
+      judge_errors_total: Number(r.judge_errors_total),
+      cost_usd_total: Number(r.cost_usd_total),
+      duration_ms: Number(r.duration_ms),
+      source_tier_breakdown: r.source_tier_breakdown as Record<string, unknown>,
+      report_json: r.report_json as Record<string, unknown>,
+    }));
+  }
+
+  /** v0.32.6 P2 — cache lookup; returns verdict JSON or null. */
+  async getContradictionCacheEntry(key: {
+    chunk_a_hash: string;
+    chunk_b_hash: string;
+    model_id: string;
+    prompt_version: string;
+    truncation_policy: string;
+  }): Promise<Record<string, unknown> | null> {
+    const { rows } = await this.db.query(
+      `SELECT verdict FROM eval_contradictions_cache
+       WHERE chunk_a_hash = $1
+         AND chunk_b_hash = $2
+         AND model_id = $3
+         AND prompt_version = $4
+         AND truncation_policy = $5
+         AND expires_at > now()
+       LIMIT 1`,
+      [key.chunk_a_hash, key.chunk_b_hash, key.model_id, key.prompt_version, key.truncation_policy]
+    );
+    if (rows.length === 0) return null;
+    return (rows[0] as Record<string, unknown>).verdict as Record<string, unknown>;
+  }
+
+  /** v0.32.6 P2 — cache upsert with TTL refresh on conflict. */
+  async putContradictionCacheEntry(opts: {
+    chunk_a_hash: string;
+    chunk_b_hash: string;
+    model_id: string;
+    prompt_version: string;
+    truncation_policy: string;
+    verdict: Record<string, unknown>;
+    ttl_seconds?: number;
+  }): Promise<void> {
+    const ttl = Math.max(60, opts.ttl_seconds ?? 30 * 86400);
+    const expiresAt = new Date(Date.now() + ttl * 1000);
+    await this.db.query(
+      `INSERT INTO eval_contradictions_cache (
+         chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy,
+         verdict, expires_at
+       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+       ON CONFLICT (chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy)
+       DO UPDATE SET
+         verdict = EXCLUDED.verdict,
+         expires_at = EXCLUDED.expires_at,
+         created_at = now()`,
+      [
+        opts.chunk_a_hash, opts.chunk_b_hash, opts.model_id,
+        opts.prompt_version, opts.truncation_policy,
+        opts.verdict, expiresAt,
+      ]
+    );
+  }
+
+  /** v0.32.6 P2 — periodic sweep of expired cache rows. */
+  async sweepContradictionCache(): Promise<number> {
+    const result = await this.db.query(
+      `DELETE FROM eval_contradictions_cache WHERE expires_at <= now()`
+    );
+    return result.affectedRows ?? 0;
+  }
+
   async listTakes(opts: TakesListOpts = {}): Promise<Take[]> {
     const limit = clampSearchLimit(opts.limit, 100, 500);
     const offset = Math.max(0, Math.floor(opts.offset ?? 0));
