@@ -1,5 +1,0 @@
-{"intent": "My AGENTS.md is 30KB and hitting context limits, how do I shrink it", "expected_skill": "compress-agents-md"}
-{"intent": "The daily doctor says context-health is red because AGENTS.md is too large", "expected_skill": "compress-agents-md"}
-{"intent": "How do I compress my resolver table without losing routing accuracy", "expected_skill": "compress-agents-md"}
-{"intent": "Convert my 200-row skill resolver into functional areas", "expected_skill": "compress-agents-md"}
-{"intent": "What's the functional area dispatcher pattern for AGENTS.md", "expected_skill": "compress-agents-md"}
