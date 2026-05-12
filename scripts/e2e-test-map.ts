@@ -27,6 +27,14 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/cycle.ts": ["test/e2e/cycle.test.ts", "test/e2e/dream.test.ts"],
   // Multi-source sync writes share the per-source bookmark anchor.
   "src/core/sync.ts": ["test/e2e/sync.test.ts", "test/e2e/multi-source.test.ts"],
+  // v0.32.4 multi-source bug class regression suite — fires on any cycle
+  // phase, extract, integrity, embed, or migrate-engine change.
+  "src/core/cycle/extract-takes.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/core/cycle/patterns.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/core/cycle/synthesize.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/commands/embed.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/commands/migrate-engine.ts": ["test/e2e/multi-source-bug-class.test.ts"],
   // Any minions queue/worker/handler change exercises all minion E2E.
   "src/core/minions/**": [
     "test/e2e/minions-concurrency.test.ts",

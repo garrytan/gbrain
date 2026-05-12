@@ -2,57 +2,79 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.32.4] - 2026-05-10
+## [0.32.4] - 2026-05-11
 
-**`gbrain embed` now finishes the job on multi-source brains. Non-default sources stop silently dropping out.**
+**Multi-source brains finish what they start. Embed, extract, takes, patterns, integrity, migrate-engine all now respect which source a page belongs to. The disk-side collision is fixed via a per-source subdir layout, and a CI gate prevents the bug class from coming back.**
 
-If you run gbrain with more than one source (say a `media-corpus` alongside `default`), embed was leaving thousands of chunks unembedded. The CLI reported success, your search results were quietly missing the same pages every time, and three consecutive `embed --stale` passes wouldn't move the number. This release threads `source_id` through every page → chunk handoff so embed actually covers the brain you have, not just the half it could see.
+If you run gbrain with more than one source (say a `media-corpus` alongside `default`), the bug pattern was everywhere: embed was leaving thousands of chunks unembedded, extract was silently dropping links from non-default sources, takes never extracted, `gbrain dream` was overwriting `brainDir/people/alice.md` with whichever source happened to reverse-write last. The CLI reported success on all of it. This release threads `source_id` through every page-to-chunk-to-link-to-take handoff, fixes the disk-side collision with a `.sources/` subdir layout, and adds a CI gate so future SELECT projections can't silently drop the column again.
 
 ### The numbers that matter
 
-On the brain that surfaced this:
-
 ```
-Pages on non-default source        →  5,042
-Chunks left unembedded pre-fix     →  ~22,000
-Chunks recovered on first re-run   →  97 across 35 pages (after 3 prior --stale runs that recovered 0)
+Pages on non-default source (production multi-source brain)  →  5,042
+Chunks left unembedded pre-fix                               →  ~22,000
+Chunks recovered on first re-run                             →  97 across 35 pages
+                                                                (after 3 prior --stale
+                                                                runs that recovered 0)
+Engine SELECT projections audited for source_id              →  4 sites (was 2 missing)
+Bug sites threaded with explicit source_id                   →  5 (extract-takes,
+                                                                patterns, synthesize,
+                                                                extract, integrity)
+                                                                + migrate-engine end-to-end
 ```
-
-Same brain, same command, same data. The CLI was reading `source_id='default'` on every chunk lookup because the page type didn't carry the field forward. Composite-key grouping on `(source_id, slug)` was the fix.
 
 ### What changed
 
-- **`embed --stale`, `embed --all`, and per-slug embed** all thread `source_id` from `listPages()` through `getChunks()` / `upsertChunks()`. The bug class where the engine defaulted to the `default` source on chunk reads is closed across all three paths.
-- **`gbrain embed --source <id>`** is a new flag for scoping embed to one source explicitly. Useful for re-embedding just `media-corpus` after a model swap.
-- **`Page` type carries `source_id`** so any future code iterating `listPages()` results can fan out correctly without rediscovering this footgun.
-- **`PageFilters.sourceId`** lets callers scope `listPages()` to one source at the SQL layer instead of filtering client-side.
-- **`migrate-engine`** had the same pattern: `getChunksWithEmbeddings()` now accepts `{ sourceId }` so engine-to-engine migration carries multi-source chunks intact.
+- **Bug-class extermination**: `embed`, `extract` (links + timeline), `extract-takes`, `patterns` reverse-write, `synthesize` reverse-write, `integrity` scan, and `migrate-engine` all now use `listAllPageRefs()` to enumerate `(slug, source_id)` pairs and thread `sourceId` through every engine method call. Pre-fix, each of these silently defaulted to `source_id='default'` for non-default-source pages.
+- **`gbrain embed --source <id>`** flag for scoping embed to one source explicitly. Useful for re-embedding just `media-corpus` after a model swap.
+- **Per-source disk layout**: `gbrain dream` reverse-write now lands non-default source pages at `brainDir/.sources/<source>/<slug>.md`. Default-source pages stay at `brainDir/<slug>.md` so single-source brains see no change. `.sources/` is a reserved prefix; the leading dot keeps it out of default-source sync (`walkBrainRepo` skips dot-dirs).
+- **Source-aware link resolution**: a media-corpus page wikilinking to `people/alice` resolves to `alice@media-corpus` if that page exists, `alice@default` as a fallback, or stays unresolved (rather than silently pushing the edge to the wrong source). `addLinksBatch` callers now fill `from_source_id` / `to_source_id` / `origin_source_id` so the JOIN targets the right page.
+- **`migrate-engine` end-to-end source_id threading**: page + tags + timeline + raw + versions + links all carry source_id through the migration. Resume manifest keyed on `${source_id}::${slug}` so multi-source resumes don't collide on same-slug-different-source rows.
+- **New iteration primitive**: `engine.listAllPageRefs()` returns `Array<{slug, source_id}>` ordered by `(source_id, slug)`. Cheap cross-source enumeration for hot loops on large brains. Replaces the `getAllSlugs() → getPage(slug)` N+1 pattern.
+- **`Page.source_id` is now required at the type level**: the DB column is `NOT NULL DEFAULT 'default'`; the type now matches. Test fixtures building synthetic Page rows must set the field.
+- **`validateSourceId()`**: new helper in `src/core/utils.ts`. Allows `[a-z0-9_-]+` only; rejects `..`, `/`, dots, uppercase. Used by the disk-layout fix before any `join(brainDir, source_id, ...)` call so source_id can't traverse out of brainDir.
+- **CI gate (`scripts/check-source-id-projection.sh`)**: greps engine SELECT projections for the rowToPage feeder shape and fails the build if any drops `source_id`. Wired into `bun run verify`. Codex's outside-voice review caught two pre-existing projections (`getPage`, `putPage RETURNING`) that lacked the column; this commit fixes them and prevents the regression from recurring.
 
 ### To take advantage of v0.32.4
 
-`gbrain upgrade` should do this automatically. To recover any chunks that were silently skipped on prior runs:
+`gbrain upgrade` should do this automatically. Existing multi-source brains see immediate improvement on the next dream cycle.
 
-1. Re-run the embed sweep:
+1. Recover any chunks silently skipped on prior runs:
    ```bash
    gbrain embed --stale
    ```
-2. Or scope to one source if you know which one was affected:
+2. Re-run extract to pick up multi-source links + timeline entries:
    ```bash
-   gbrain embed --source media-corpus --stale
+   gbrain extract all
    ```
 3. Verify with `gbrain doctor` — embed coverage should jump on multi-source brains.
 
 Single-source (`default`-only) brains see no behavior change. The fix is a no-op on the brain shape that ships from `gbrain init`.
 
+Existing on-disk files at `brainDir/<slug>.md` for non-default sources stay where they are (no migration). The next reverse-write of those pages by the dream cycle moves them to `brainDir/.sources/<source>/<slug>.md`. Force the move today by deleting the stale file and re-running `gbrain dream --phase patterns`.
+
+### For contributors
+
+- `Page.source_id` is now a required field. Test fixtures building synthetic Page rows must include it.
+- `LinkBatchInput.from_source_id` / `to_source_id` / `origin_source_id` and `TimelineBatchInput.source_id` are still optional but recommended at every call site. Future v0.33 may flip them to required.
+- New `scripts/check-source-id-projection.sh` CI gate: any new SELECT touching `pages` that feeds `rowToPage` must project `source_id`.
+
 ### Itemized changes
 
-- `src/core/types.ts` — `Page.source_id?: string`; `PageFilters.sourceId?: string`; `StaleChunkRow.source_id`.
-- `src/core/engine.ts` — `BrainEngine.getChunksWithEmbeddings(slug, opts?: { sourceId? })`.
-- `src/core/postgres-engine.ts` + `src/core/pglite-engine.ts` — `listPages()` wires `sourceId` into the WHERE clause; `listStaleChunks()` selects `p.source_id`; `getChunksWithEmbeddings()` honors the optional scope.
-- `src/commands/embed.ts` — all three code paths (`embedPage`, `embedAll`, `embedAllStale`) accept and thread `sourceId`. CLI gains `--source <id>`. `embedAllStale` groups by composite `(source_id::slug)` so two pages with the same slug on different sources don't collide.
-- `src/commands/migrate-engine.ts` — threads `page.source_id` through `getChunksWithEmbeddings` + `upsertChunks` so PGLite ↔ Postgres migration preserves multi-source chunk ownership.
+- `src/core/types.ts` — `Page.source_id: string` (now required).
+- `src/core/engine.ts` — new `BrainEngine.listAllPageRefs(): Promise<Array<{slug, source_id}>>`.
+- `src/core/postgres-engine.ts` + `src/core/pglite-engine.ts` — implement `listAllPageRefs` with `ORDER BY source_id, slug`; add `source_id` to the `getPage` SELECT projection and `putPage` RETURNING projection.
+- `src/core/utils.ts` — new `validateSourceId(id)` helper.
+- `src/core/cycle/extract-takes.ts` — `listAllPageRefs` replaces `getAllSlugs+getPage` N+1; threads `sourceId` to `getPage`.
+- `src/core/cycle/patterns.ts` + `synthesize.ts` — `reverseWriteSlugs` → `reverseWriteRefs` with `Array<{slug, source_id}>` contract. Per-source disk layout for non-default sources; `validateSourceId` guard before any `join()`.
+- `src/commands/extract.ts` — `extractLinksFromDB` + `extractTimelineFromDB` use `listAllPageRefs`. Cross-source link resolution rule (origin > default > skip). Threads `from_source_id` / `to_source_id` / `origin_source_id` to `addLinksBatch`; `source_id` to `addTimelineEntriesBatch`.
+- `src/commands/integrity.ts` — `listAllPageRefs` replaces `getAllSlugs+getPage` N+1 in both the primary scan and auto-repair loops.
+- `src/commands/migrate-engine.ts` — page + tags + timeline + raw + versions + links all carry `sourceId`. Resume manifest key now `${source_id}::${slug}`.
+- `src/commands/embed.ts` — (from prior commit in this PR) three code paths thread `sourceId`; `--source <id>` CLI flag; `embedAllStale` composite-key grouping.
+- `scripts/check-source-id-projection.sh` (NEW) — CI gate.
+- `test/e2e/multi-source-bug-class.test.ts` (NEW) — 7-case PGLite E2E regression suite pinning every bug site.
 
-Supersedes #845 (which fixed `embed --stale` only) with the comprehensive cross-path fix.
+Supersedes #845 (which fixed `embed --stale` only).
 
 ## [0.32.0] - 2026-05-10
 
