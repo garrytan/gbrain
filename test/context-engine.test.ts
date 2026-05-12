@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { createGBrainContextEngine, ENGINE_ID, ENGINE_NAME } from '../src/core/context-engine.ts';
+import { createGBrainContextEngine, ENGINE_ID, ENGINE_NAME, __resetSdkLoadStateForTests } from '../src/core/context-engine.ts';
 
 interface WorkspaceOpts {
   heartbeat?: Record<string, unknown>;
@@ -367,10 +367,14 @@ describe('gbrain-context engine', () => {
     expect(result.systemPromptAddition).toContain('Home (SF)');
   });
 
-  it('A4: active flight to an UNKNOWN airport does NOT silently fall back to US/Pacific', async () => {
-    // BOM is not in AIRPORT_TZ. Pre-fix, this silently set tz to US/Pacific —
-    // the exact failure class this engine exists to prevent. The fix surfaces
-    // the uncertainty via the source field so the LLM can see it.
+  it('L0-A: active flight to an UNKNOWN airport emits NO concrete local time', async () => {
+    // BOM is not in AIRPORT_TZ. The v0.32.5 fix-wave attempted to close this
+    // failure mode by changing the `source` field to include `tz-unknown:BOM`,
+    // but the engine still emitted a concrete US/Pacific `Time:` and `Day:`
+    // line because resolveLocation returned tz: DEFAULT_TZ. Codex outside-voice
+    // review (F5) caught that the fix was cosmetic. This test now asserts the
+    // behavioral fix: when the airport is unknown, the engine MUST NOT emit a
+    // concrete local time at all.
     tmpDir = makeWorkspace({
       heartbeat: { garryAwake: true },
       flights: {
@@ -387,11 +391,23 @@ describe('gbrain-context engine', () => {
     });
 
     expect(result.systemPromptAddition).toBeDefined();
-    // The source field MUST surface the uncertainty — no silent-wrong-tz.
-    expect(result.systemPromptAddition).toContain('tz-unknown');
-    expect(result.systemPromptAddition).toContain('BOM');
-    // The flight is still surfaced as active travel.
-    expect(result.systemPromptAddition).toContain('AI191');
+    const block = result.systemPromptAddition!;
+
+    // The engine MUST NOT emit a US/Pacific Time field when the tz is unknown.
+    expect(block).not.toContain('US/Pacific');
+    expect(block).not.toMatch(/Time:\s+\d{4}-/);
+    expect(block).not.toMatch(/Day:\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)/);
+
+    // The explicit "timezone unavailable" warning MUST be present so the LLM
+    // sees the uncertainty.
+    expect(block).toContain('Timezone:');
+    expect(block).toContain('unknown');
+    expect(block).toContain('Local time NOT computed');
+
+    // The flight info + destination + source label are still surfaced.
+    expect(block).toContain('AI191');
+    expect(block).toContain('BOM');
+    expect(block).toContain('tz-unknown');
   });
 
   it('C4: calendar event summary with prompt-injection payload is sanitized', async () => {
@@ -451,6 +467,32 @@ describe('gbrain-context engine', () => {
     if (openTasksLine) {
       expect(openTasksLine).not.toContain('\n');
     }
+  });
+
+  it('L0-B: SDK load is lazy — engine creation does NOT trigger module-load constraint', async () => {
+    // Codex F7: pre-L0-B, src/core/context-engine.ts used top-level
+    // `await import('openclaw/plugin-sdk/core')` which is a hard module-load
+    // constraint. Any non-TLA runtime (older Node, CJS bridges, certain
+    // transpilers) fails BEFORE the plugin registers. Post-L0-B: the SDK is
+    // resolved on first assemble()/compact() call inside try/catch, so the
+    // module loads cleanly everywhere and the fallback path actually catches.
+    __resetSdkLoadStateForTests();
+    tmpDir = makeWorkspace();
+
+    // Engine factory must NOT trigger SDK load.
+    const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
+    expect(engine.info.id).toBe(ENGINE_ID);
+    expect(engine.info.ownsCompaction).toBe(false);
+
+    // First method call exercises the lazy path. Without the SDK installed,
+    // the fallback returns the no-runtime shape.
+    const result = await engine.compact({
+      sessionId: 'lazy-test',
+      sessionFile: '/tmp/never-read',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.compacted).toBe(false);
+    expect(result.reason).toBe('no-runtime');
   });
 
   it('C1: user awake at 2 AM does not trigger quiet hours (split semantic)', async () => {

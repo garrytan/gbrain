@@ -70,20 +70,35 @@ export interface ContextEngine {
   }): Promise<CompactResult>;
 }
 
-// Runtime helpers — loaded dynamically when running inside OpenClaw.
-// When running standalone (tests, dev), we use fallbacks.
+// Runtime helpers — loaded lazily on first assemble()/compact() call. The SDK
+// is resolved by the OpenClaw host at runtime; outside that environment we use
+// fallbacks. Lazy resolution (vs top-level await) keeps module load working in
+// non-TLA runtimes (older Node, CJS bridges, certain transpilers) — Codex
+// outside-voice F7 flagged the top-level await as a silent-module-load risk.
+let _sdkLoaded = false;
 let _delegateCompactionToRuntime: ((params: any) => Promise<CompactResult>) | undefined;
 let _buildMemorySystemPromptAddition: ((params: any) => string | undefined) | undefined;
 
-try {
-  // @ts-ignore — openclaw/plugin-sdk is resolved at runtime by the OpenClaw host; not a build-time dep.
-  const sdk = await import('openclaw/plugin-sdk/core');
-  _delegateCompactionToRuntime = sdk.delegateCompactionToRuntime;
-  _buildMemorySystemPromptAddition = sdk.buildMemorySystemPromptAddition;
-} catch {
-  // Not running inside OpenClaw — use fallbacks
-  _delegateCompactionToRuntime = async () => ({ ok: true, compacted: false, reason: 'no-runtime' });
-  _buildMemorySystemPromptAddition = () => undefined;
+async function ensureSdkLoaded(): Promise<void> {
+  if (_sdkLoaded) return;
+  _sdkLoaded = true;
+  try {
+    // @ts-ignore — openclaw/plugin-sdk is resolved at runtime by the OpenClaw host; not a build-time dep.
+    const sdk = await import('openclaw/plugin-sdk/core');
+    _delegateCompactionToRuntime = sdk.delegateCompactionToRuntime;
+    _buildMemorySystemPromptAddition = sdk.buildMemorySystemPromptAddition;
+  } catch {
+    // Not running inside OpenClaw — use fallbacks
+    _delegateCompactionToRuntime = async () => ({ ok: true, compacted: false, reason: 'no-runtime' });
+    _buildMemorySystemPromptAddition = () => undefined;
+  }
+}
+
+/** Test-only: reset the lazy-load state so a test can re-exercise the load path. */
+export function __resetSdkLoadStateForTests(): void {
+  _sdkLoaded = false;
+  _delegateCompactionToRuntime = undefined;
+  _buildMemorySystemPromptAddition = undefined;
 }
 
 export const ENGINE_ID = 'gbrain-context';
@@ -130,6 +145,15 @@ const AIRPORT_TZ: Record<string, string> = {
 
 const DEFAULT_TZ = 'US/Pacific';
 const DEFAULT_HOME = 'San Francisco';
+/**
+ * Sentinel `tz` value emitted when an active flight points to an airport not in
+ * AIRPORT_TZ. Pre-v0.32.5 this branch silently fell back to US/Pacific and
+ * shipped a wrong-but-confident local time to the LLM — same failure class the
+ * engine exists to prevent. Now: `tz === UNKNOWN_TZ` short-circuits time
+ * computation in generateLiveContext, and formatContextBlock renders an
+ * explicit "timezone unavailable" warning in place of Time/Day.
+ */
+const UNKNOWN_TZ = 'UNKNOWN';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -179,9 +203,17 @@ interface TaskFile {
 }
 
 interface LiveContext {
-  now: string;
+  /**
+   * ISO local time for `timezone`. NULL when timezone is unknown (e.g., active
+   * flight to an airport not in AIRPORT_TZ). Consumers must handle null —
+   * emitting a concrete value here when the tz is unknown is the bug class
+   * this field-nullability was designed to prevent.
+   */
+  now: string | null;
+  /** Timezone label. `UNKNOWN_TZ` sentinel when no mapping available. */
   timezone: string;
-  dayOfWeek: string;
+  /** Day-of-week. NULL when timezone is unknown (same reason as `now`). */
+  dayOfWeek: string | null;
   homeTime: string | null;
   location: {
     city: string;
@@ -190,9 +222,9 @@ interface LiveContext {
   };
   /** Whether the user has flagged themselves awake (heartbeat.garryAwake). */
   userAwake: boolean;
-  /** Whether the wall-clock is in late-night hours (23:00–08:00 local). */
+  /** Whether the wall-clock is in late-night hours (23:00–08:00 local). FALSE when timezone is unknown. */
   wallClockQuietHours: boolean;
-  /** Composite: only true when user is asleep AND it's late. Use this for "hold the turn" decisions. */
+  /** Composite: only true when user is asleep AND it's late. FALSE when timezone is unknown. */
   quietHoursActive: boolean;
   activeTravel: string | null;
   currentEvent: CalendarEvent | null;
@@ -250,12 +282,14 @@ function resolveLocation(
       return { city: active.destination, tz: knownTz, source: `flight:${active.flightNumber}` };
     }
     // Unknown airport. Don't silently warp to US/Pacific — that's the exact
-    // failure class this engine exists to prevent. Surface the uncertainty in
-    // the source field so the LLM can see the data is incomplete; use the
-    // heartbeat city if we have one, otherwise the destination string.
+    // failure class this engine exists to prevent. Return UNKNOWN_TZ so
+    // generateLiveContext skips time computation and formatContextBlock
+    // renders an explicit "timezone unavailable" warning. Pre-v0.32.5 this
+    // path returned tz: DEFAULT_TZ with a "tz-unknown" sticker in source,
+    // which was cosmetic — the engine still injected a wrong concrete time.
     return {
       city: hb?.currentLocation?.city ?? active.destination,
-      tz: DEFAULT_TZ,
+      tz: UNKNOWN_TZ,
       source: `flight:${active.flightNumber}:tz-unknown:${destUpper}`,
     };
   }
@@ -350,15 +384,24 @@ function generateLiveContext(workspaceDir: string): LiveContext {
   const calendarCache = loadJsonFile<CalendarCache>(join(workspaceDir, 'memory', 'calendar-cache.json'));
 
   const location = resolveLocation(hb, flights);
-  const time = getTimeInTz(location.tz);
   const nowMs = Date.now();
+
+  // Short-circuit time computation when timezone is unknown (active flight to
+  // an unmapped airport). Pre-v0.32.5 the engine fell back to US/Pacific and
+  // injected a confidently-wrong local time. Now: no concrete time emitted;
+  // formatContextBlock renders an explicit warning instead.
+  const tzKnown = location.tz !== UNKNOWN_TZ;
+  const time = tzKnown ? getTimeInTz(location.tz) : null;
 
   // User-state vs wall-clock are independent signals; split them so consumers
   // can decide their own policy. Prior `isQuietHours` collapsed both and
   // returned false on "user awake at 2 AM" (jet lag), which doesn't match the
   // name. Kept derived `quietHoursActive` for the existing format-block use.
   const userAwake = hb?.garryAwake ?? true;
-  const wallClockQuietHours = time.hour >= 23 || time.hour < 8;
+  // When timezone is unknown we cannot reason about wall-clock quiet hours.
+  // Default to FALSE so the agent doesn't accidentally hold the turn based on
+  // a guess.
+  const wallClockQuietHours = time ? (time.hour >= 23 || time.hour < 8) : false;
   const quietHoursActive = !userAwake && wallClockQuietHours;
 
   // Home time when traveling
@@ -384,9 +427,9 @@ function generateLiveContext(workspaceDir: string): LiveContext {
   const todayTasks = resolveTodayTasks(workspaceDir);
 
   return {
-    now: time.iso,
+    now: time?.iso ?? null,
     timezone: location.tz,
-    dayOfWeek: time.dayOfWeek,
+    dayOfWeek: time?.dayOfWeek ?? null,
     homeTime,
     location,
     userAwake,
@@ -421,10 +464,20 @@ function formatEventShort(evt: CalendarEvent, tz: string): string {
 function formatContextBlock(ctx: LiveContext): string {
   const lines: string[] = [
     `## Live Context (deterministic, injected by gbrain-context engine)`,
-    `- **Time:** ${ctx.now} (${ctx.timezone})`,
-    `- **Day:** ${ctx.dayOfWeek}`,
-    `- **Location:** ${ctx.location.city} (source: ${ctx.location.source})`,
   ];
+
+  // Time/Day vs Timezone-unavailable branch.
+  if (ctx.now && ctx.dayOfWeek && ctx.timezone !== UNKNOWN_TZ) {
+    lines.push(`- **Time:** ${ctx.now} (${ctx.timezone})`);
+    lines.push(`- **Day:** ${ctx.dayOfWeek}`);
+  } else {
+    // Active flight to an unmapped airport. Refuse to emit a guessed local
+    // time — the LLM should see the gap explicitly.
+    lines.push(`- **Timezone:** unknown (${ctx.location.source})`);
+    lines.push(`- ⚠️ Local time NOT computed — verify timezone before time-sensitive actions`);
+  }
+
+  lines.push(`- **Location:** ${ctx.location.city} (source: ${ctx.location.source})`);
 
   if (ctx.homeTime) {
     lines.push(`- **Home (SF):** ${ctx.homeTime}`);
@@ -485,6 +538,9 @@ export function createGBrainContextEngine(ctx: {
     },
 
     async assemble({ messages, tokenBudget, availableTools, citationsMode }) {
+      // Lazy SDK load on first method call (was top-level await pre-L0-B).
+      await ensureSdkLoaded();
+
       // 1. Generate deterministic context (<5ms, zero LLM calls)
       const liveCtx = generateLiveContext(workspaceDir);
       const contextBlock = formatContextBlock(liveCtx);
@@ -513,6 +569,8 @@ export function createGBrainContextEngine(ctx: {
     },
 
     async compact(params) {
+      // Lazy SDK load on first method call (was top-level await pre-L0-B).
+      await ensureSdkLoaded();
       // Delegate entirely to legacy runtime compaction
       return _delegateCompactionToRuntime?.(params) ?? { ok: true, compacted: false, reason: 'no-runtime' };
     },
