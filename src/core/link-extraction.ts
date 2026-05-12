@@ -43,7 +43,7 @@ export type LinkResolutionType = 'qualified' | 'unqualified';
  *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
  *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
  */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities|名雅居|人物|公司|概念|会议|产品|工艺|材料|系统|设备|营销工具|业务|流程|问题|项目|博主|同行|客户|学者|供应商|服务商|科技|行业|方法论|ai工具|技术|书籍|营销)';
 
 /**
  * Match `[Name](path)` markdown links pointing to entity directories.
