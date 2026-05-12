@@ -678,6 +678,18 @@ export class PGLiteEngine implements BrainEngine {
     return new Set((rows as { slug: string }[]).map(r => r.slug));
   }
 
+  async listAllPageRefs(): Promise<Array<{ slug: string; source_id: string }>> {
+    // v0.32.4: see postgres-engine.ts:listAllPageRefs for context. ORDER BY
+    // (source_id, slug) for determinism; WHERE deleted_at IS NULL matches
+    // default page visibility.
+    const { rows } = await this.db.query(
+      `SELECT slug, source_id FROM pages
+       WHERE deleted_at IS NULL
+       ORDER BY source_id, slug`
+    );
+    return (rows as { slug: string; source_id: string }[]).map(r => ({ slug: r.slug, source_id: r.source_id }));
+  }
+
   async resolveSlugs(partial: string): Promise<string[]> {
     // Try exact match first
     const exact = await this.db.query('SELECT slug FROM pages WHERE slug = $1', [partial]);

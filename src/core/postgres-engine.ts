@@ -715,6 +715,20 @@ export class PostgresEngine implements BrainEngine {
     return new Set(rows.map((r) => r.slug as string));
   }
 
+  async listAllPageRefs(): Promise<Array<{ slug: string; source_id: string }>> {
+    // v0.32.4: cross-source page enumeration. ORDER BY (source_id, slug) for
+    // deterministic iteration (F11) — same-slug-different-source pages stay
+    // grouped predictably. WHERE deleted_at IS NULL matches default getPage
+    // visibility semantics (v0.26.5).
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT slug, source_id FROM pages
+      WHERE deleted_at IS NULL
+      ORDER BY source_id, slug
+    `;
+    return rows.map((r) => ({ slug: r.slug as string, source_id: r.source_id as string }));
+  }
+
   async resolveSlugs(partial: string): Promise<string[]> {
     const sql = this.sql;
 

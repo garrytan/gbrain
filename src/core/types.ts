@@ -99,8 +99,14 @@ export interface Page {
    * v0.31.12: source that owns this page. Populated by rowToPage from the
    * `source_id` column so callers like `embed` can thread it through
    * getChunks / upsertChunks without defaulting to 'default'.
+   *
+   * v0.32.4: required. The DB column is `NOT NULL DEFAULT 'default'`, so
+   * `rowToPage` always returns it from the engine. Callers can now thread
+   * `page.source_id` directly without `!` non-null assertions.
+   *
+   * Test fixtures building synthetic Page rows must include this field.
    */
-  source_id?: string;
+  source_id: string;
 }
 
 export type EffectiveDateSource =
