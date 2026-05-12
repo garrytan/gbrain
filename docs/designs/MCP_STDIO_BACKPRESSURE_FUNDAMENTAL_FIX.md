@@ -437,13 +437,15 @@ Implementation status:
   MBrain stdio, bounded-read, canonical-write, and derived-worker side of the
   stall only. Full Telegram heartbeat p95/max-delay validation remains an
   external harness requirement.
-- Step 8 remains future work. Source-ref indexing and search snippet
-  optimization should only be included if benchmark evidence shows they affect
-  the observed Hermes/Telegram stall path.
-  The foreground-pressure signal is currently process-local to one MCP server;
-  multi-process deployments should run a single derived worker per backing
-  store, or set `MBRAIN_DERIVED_WORKER=0` on additional servers, until DB-wide
-  foreground pressure or worker election is added.
+- Step 8 is explicitly deferred: this PR does not include source-ref indexing
+  or search snippet optimization because no benchmark evidence in this
+  repository shows those paths dominate the observed Hermes/Telegram stall.
+  Add them only after profiling ties them to the stall path.
+
+Operational caveat: the foreground-pressure signal is currently process-local
+to one MCP server. Multi-process deployments should run a single derived worker
+per backing store, or set `MBRAIN_DERIVED_WORKER=0` on additional servers, until
+DB-wide foreground pressure or worker election is added.
 
 ## Resolved Decisions And Remaining Open Questions
 

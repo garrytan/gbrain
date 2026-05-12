@@ -11,7 +11,9 @@ All notable changes to MBrain will be documented in this file.
   bounded reads, canonical writes, and durable derived-worker behavior. The
   repository does not include the Hermes/OpenClaw + Telegram dual-channel
   harness, so Telegram heartbeat p95/max-delay validation remains external and
-  is not proven by these tests alone.
+  is not proven by these tests alone. Source-ref indexing and search snippet
+  optimization are intentionally deferred until profiling shows they are part of
+  the observed stall path.
 
 ## [0.10.3] - 2026-05-09
 
