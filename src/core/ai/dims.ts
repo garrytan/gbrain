@@ -15,19 +15,26 @@ const VOYAGE_OUTPUT_DIMENSION_MODELS = new Set([
   'voyage-4-large',
   'voyage-4',
   'voyage-4-lite',
+  'voyage-4-nano',
   'voyage-3-large',
   'voyage-3.5',
   'voyage-3.5-lite',
   'voyage-code-3',
 ]);
 
+export function supportsVoyageOutputDimension(modelId: string): boolean {
+  return VOYAGE_OUTPUT_DIMENSION_MODELS.has(modelId);
+}
+
 /**
  * Build the providerOptions blob for embedMany() that pins output dimensions.
  *
  * Matryoshka providers (OpenAI text-embedding-3, Gemini embedding-001) can be
  * asked to return reduced-dim vectors. Anthropic does not take a dimension
- * parameter. Most openai-compatible providers do not either, but Voyage's
- * OpenAI-compatible embeddings endpoint accepts `output_dimension`.
+ * parameter. Most openai-compatible providers do not either. Voyage's
+ * endpoint accepts `output_dimension`, but the AI SDK openai-compatible
+ * adapter only forwards `dimensions`; gateway.ts translates that field to
+ * Voyage's wire name in voyageCompatFetch.
  */
 export function dimsProviderOptions(
   implementation: Implementation,
@@ -53,10 +60,11 @@ export function dimsProviderOptions(
       return undefined;
     case 'openai-compatible':
       // Most openai-compatible providers (Ollama, LM Studio, vLLM, LiteLLM)
-      // do not expose a standard dimensions knob. Voyage's compat endpoint is
-      // the exception: it accepts output_dimension and defaults to 1024 dims.
-      if (VOYAGE_OUTPUT_DIMENSION_MODELS.has(modelId)) {
-        return { openaiCompatible: { output_dimension: dims } };
+      // do not expose a standard dimensions knob. Voyage is the exception,
+      // but it needs the SDK-supported field here so voyageCompatFetch can
+      // translate it to `output_dimension` before the HTTP request is sent.
+      if (supportsVoyageOutputDimension(modelId)) {
+        return { openaiCompatible: { dimensions: dims } };
       }
       // OpenAI text-embedding-3 family on the openai-compatible adapter
       // (Azure OpenAI hosts these via its OpenAI-compatible /embeddings
