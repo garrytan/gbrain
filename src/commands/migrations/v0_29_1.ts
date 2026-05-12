@@ -20,6 +20,7 @@
 
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../../core/engine.ts';
+import type { EngineConfig } from '../../core/types.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { childGlobalFlags } from '../../core/cli-options.ts';
 
@@ -52,7 +53,14 @@ async function phaseBBackfill(opts: OrchestratorOpts): Promise<OrchestratorPhase
     if (!cfg) throw new Error('No gbrain config; run `gbrain init` first.');
     const engineConfig = toEngineConfig(cfg);
     engine = await createEngine(engineConfig);
-    await engine.connect(engineConfig);
+    // Phase B's backfill runs explicit BEGIN/COMMIT for PGLite portability.
+    // postgres.js rejects manual transactions with UNSAFE_TRANSACTION when
+    // the pool's max > 1; force single-connection so the same code path
+    // works on both engines. Phase C (read-only verify) keeps the default.
+    // Cast pattern matches src/core/brain-registry.ts:406 — poolSize is
+    // accepted by postgres-engine's connect() but not surfaced on the
+    // generic BrainEngine.connect() interface.
+    await engine.connect({ ...engineConfig, poolSize: 1 } as EngineConfig & { poolSize: number });
 
     let totalExamined = 0;
     let totalUpdated = 0;
