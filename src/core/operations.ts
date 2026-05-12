@@ -18,6 +18,7 @@ import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
+import { CJK_SLUG_CHARS } from './cjk.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -143,8 +144,11 @@ export function validatePageSlug(slug: string): void {
   if (slug.length > 255) {
     throw new OperationError('invalid_params', 'page_slug exceeds 255 characters');
   }
-  if (!/^[a-z0-9][a-z0-9\-]*(\/[a-z0-9][a-z0-9\-]*)*$/i.test(slug)) {
-    throw new OperationError('invalid_params', `Invalid page_slug: ${slug} (allowed: alphanumeric, hyphens, forward-slash separated segments)`);
+  // v0.32.7: CJK ranges (Han / Hiragana / Katakana / Hangul Syllables) allowed
+  // in segments. ASCII shape rules (lead char, hyphen continuation) preserved.
+  const PAGE_SLUG_SEG = `[a-z0-9${CJK_SLUG_CHARS}][a-z0-9${CJK_SLUG_CHARS}\\-]*`;
+  if (!new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})*$`, 'i').test(slug)) {
+    throw new OperationError('invalid_params', `Invalid page_slug: ${slug} (allowed: alphanumeric, CJK, hyphens, forward-slash separated segments)`);
   }
 }
 
@@ -185,8 +189,11 @@ export function validateFilename(name: string): void {
   if (name.length > 255) {
     throw new OperationError('invalid_params', 'Filename exceeds 255 characters');
   }
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._\-]*$/.test(name)) {
-    throw new OperationError('invalid_params', `Invalid filename: ${name} (allowed: alphanumeric, dot, underscore, hyphen — no leading dot/dash, no control chars or backslash)`);
+  // v0.32.7: CJK ranges (Han / Hiragana / Katakana / Hangul) allowed in filenames.
+  // Leading-dot / leading-dash rejection preserved.
+  const FILENAME_RE = new RegExp(`^[a-zA-Z0-9${CJK_SLUG_CHARS}][a-zA-Z0-9${CJK_SLUG_CHARS}._\\-]*$`);
+  if (!FILENAME_RE.test(name)) {
+    throw new OperationError('invalid_params', `Invalid filename: ${name} (allowed: alphanumeric, CJK, dot, underscore, hyphen — no leading dot/dash, no control chars or backslash)`);
   }
 }
 
