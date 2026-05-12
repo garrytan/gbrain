@@ -559,7 +559,7 @@ export class PostgresEngine implements BrainEngine {
     const sourceCondition = sourceId ? sql`AND source_id = ${sourceId}` : sql``;
     const deletedCondition = includeDeleted ? sql`` : sql`AND deleted_at IS NULL`;
     const rows = await sql`
-      SELECT id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at
+      SELECT id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at
       FROM pages
       WHERE slug = ${slug} ${sourceCondition} ${deletedCondition}
       LIMIT 1
@@ -606,7 +606,7 @@ export class PostgresEngine implements BrainEngine {
         effective_date        = COALESCE(EXCLUDED.effective_date,        pages.effective_date),
         effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source),
         import_filename       = COALESCE(EXCLUDED.import_filename,       pages.import_filename)
-      RETURNING id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename
+      RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename
     `;
     return rowToPage(rows[0]);
   }
