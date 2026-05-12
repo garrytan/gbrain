@@ -541,18 +541,26 @@ function factRowToJson(r: FactRow): Record<string, unknown> {
 export async function runForget(engine: BrainEngine, args: string[]): Promise<void> {
   const idArg = args.find(a => /^\d+$/.test(a));
   if (!idArg) {
-    process.stderr.write('Usage: gbrain forget <fact-id>\n');
+    process.stderr.write('Usage: gbrain forget <fact-id> [--reason <text>]\n');
     process.exit(1);
   }
   const id = parseInt(idArg, 10);
 
-  // v0.32: thin-client routing for forget. Without this, `gbrain forget <id>`
-  // on a thin-client install would call engine.expireFact against the empty
-  // local PGLite and report "No active fact" while the real fact lives on
-  // the remote brain.
+  // Optional --reason <text> passes through to the fence's "forgotten:
+  // <reason>" context cell so the markdown carries the rationale.
+  let reason: string | undefined = undefined;
+  const idx = args.indexOf('--reason');
+  if (idx >= 0 && idx + 1 < args.length) reason = args[idx + 1];
+
+  // v0.33: thin-client routing. Without this, `gbrain forget <id>` on a
+  // thin-client install would call the local fence helper against the empty
+  // local PGLite and report "No fact" while the real fact lives on the
+  // remote brain.
   const cfg = loadConfig();
   if (isThinClient(cfg)) {
-    const raw = await callRemoteTool(cfg!, 'forget_fact', { id }, { timeoutMs: 30_000 });
+    const params: Record<string, unknown> = { id };
+    if (reason !== undefined) params.reason = reason;
+    const raw = await callRemoteTool(cfg!, 'forget_fact', params, { timeoutMs: 30_000 });
     const result = unpackToolResult<{ id: number; expired: boolean }>(raw);
     if (!result.expired) {
       process.stderr.write(`No active fact with id=${id}\n`);
@@ -562,12 +570,23 @@ export async function runForget(engine: BrainEngine, args: string[]): Promise<vo
     return;
   }
 
-  const ok = await engine.expireFact(id);
-  if (!ok) {
-    process.stderr.write(`No active fact with id=${id}\n`);
+  // v0.32.2: route through forgetFactInFence so the forget rewrites the
+  // page's `## Facts` fence and survives `gbrain rebuild`. Legacy rows
+  // fall back to the legacy DB-only expire path; the helper handles
+  // the fallback internally.
+  const { forgetFactInFence } = await import('../core/facts/forget.ts');
+  const result = await forgetFactInFence(engine, id, { reason });
+
+  if (!result.ok && result.path === 'not_found') {
+    process.stderr.write(`No fact with id=${id}\n`);
     process.exit(1);
   }
-  process.stdout.write(`Forgot fact id=${id}\n`);
+  if (!result.ok && result.path === 'already_expired') {
+    process.stderr.write(`Fact id=${id} is already expired\n`);
+    process.exit(1);
+  }
+  const suffix = result.path === 'fence' ? '' : ' (legacy DB-only — will not survive gbrain rebuild)';
+  process.stdout.write(`Forgot fact id=${id}${suffix}\n`);
 }
 
 function renderToday(rows: FactRow[]): string {

@@ -2076,6 +2076,63 @@ export class PostgresEngine implements BrainEngine {
     return (result.count ?? 0) > 0;
   }
 
+  async insertFacts(
+    rows: Array<NewFact & { row_num: number; source_markdown_slug: string }>,
+    ctx: { source_id: string },
+  ): Promise<{ inserted: number; ids: number[] }> {
+    if (rows.length === 0) return { inserted: 0, ids: [] };
+
+    const sql = this.sql;
+    // Single transaction so the v51 partial UNIQUE index can roll back
+    // the whole batch on constraint violation. Per-row INSERTs (not
+    // multi-row VALUES) keep the embedding-vs-no-embedding branching
+    // readable; batch sizes are small (5-30 rows per page in practice).
+    // No supersede flow in this path — fence reconciliation is the
+    // canonical source-of-truth direction, not the consolidator path.
+    const ids = await sql.begin(async (tx) => {
+      const out: number[] = [];
+      for (const input of rows) {
+        const validFrom = input.valid_from ?? new Date();
+        const validUntil = input.valid_until ?? null;
+        const kind = input.kind ?? 'fact';
+        const visibility = input.visibility ?? 'private';
+        const notability = input.notability ?? 'medium';
+        const confidence = input.confidence ?? 1.0;
+        const entitySlug = input.entity_slug ?? null;
+        const context = input.context ?? null;
+        const sourceSession = input.source_session ?? null;
+        const embedding = input.embedding ?? null;
+        const embeddedAt = embedding ? new Date() : null;
+        const embedLit = embedding ? toPgVectorLiteral(embedding) : null;
+
+        const ins = await tx<Array<{ id: number }>>`
+          INSERT INTO facts (
+            source_id, entity_slug, fact, kind, visibility, notability, context,
+            valid_from, valid_until, source, source_session, confidence,
+            embedding, embedded_at,
+            row_num, source_markdown_slug
+          ) VALUES (
+            ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${notability}, ${context},
+            ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
+            ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt},
+            ${input.row_num}, ${input.source_markdown_slug}
+          ) RETURNING id
+        `;
+        out.push(Number(ins[0].id));
+      }
+      return out;
+    });
+    return { inserted: ids.length, ids };
+  }
+
+  async deleteFactsForPage(slug: string, source_id: string): Promise<{ deleted: number }> {
+    const sql = this.sql;
+    const result = await sql`
+      DELETE FROM facts WHERE source_id = ${source_id} AND source_markdown_slug = ${slug}
+    `;
+    return { deleted: result.count ?? 0 };
+  }
+
   async listFactsByEntity(
     source_id: string,
     entitySlug: string,
