@@ -98,23 +98,21 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
 }
 
 export async function runEmbed(engine: BrainEngine, args: string[]): Promise<EmbedResult | undefined> {
-  const slugsIdx = args.indexOf('--slugs');
-  const all = args.includes('--all');
-  const stale = args.includes('--stale');
-  const dryRun = args.includes('--dry-run');
-  // v0.31.12: --source <id> scopes to a single source.
-  const sourceIdx = args.indexOf('--source');
-  const sourceId = sourceIdx >= 0 ? args[sourceIdx + 1] : undefined;
+  const { args: filteredArgs, value: sourceId } = extractValueOption(args, '--source');
+  const slugsIdx = filteredArgs.indexOf('--slugs');
+  const all = filteredArgs.includes('--all');
+  const stale = filteredArgs.includes('--stale');
+  const dryRun = filteredArgs.includes('--dry-run');
 
   let opts: EmbedOpts;
   if (slugsIdx >= 0) {
-    opts = { slugs: args.slice(slugsIdx + 1).filter(a => !a.startsWith('--')), dryRun, sourceId };
+    opts = { slugs: filteredArgs.slice(slugsIdx + 1).filter(a => !a.startsWith('--')), dryRun, sourceId };
   } else if (all || stale) {
     opts = { all, stale, dryRun, sourceId };
   } else {
-    const slug = args.find(a => !a.startsWith('--'));
+    const slug = filteredArgs.find(a => !a.startsWith('--'));
     if (!slug) {
-      console.error('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run]');
+      console.error('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--source id] [--dry-run]');
       process.exit(1);
     }
     opts = { slug, dryRun, sourceId };
@@ -142,6 +140,20 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   }
+}
+
+function extractValueOption(args: string[], flag: string): { args: string[]; value?: string } {
+  const filtered: string[] = [];
+  let value: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === flag) {
+      value = args[i + 1];
+      i++;
+      continue;
+    }
+    filtered.push(args[i]);
+  }
+  return { args: filtered, value };
 }
 
 async function embedPage(
@@ -246,7 +258,7 @@ async function embedAll(
   // chunks that already have embeddings.
   // ─────────────────────────────────────────────────────────────
   if (staleOnly) {
-    return await embedAllStale(engine, dryRun, result, onProgress);
+    return await embedAllStale(engine, dryRun, result, onProgress, sourceId);
   }
 
   // v0.31.12: when sourceId is set, scope listPages to that source.
@@ -362,10 +374,11 @@ async function embedAllStale(
   dryRun: boolean,
   result: EmbedResult,
   onProgress?: (done: number, total: number, embedded: number) => void,
+  sourceId?: string,
 ) {
   // Pre-flight: 0 stale chunks → nothing to do, no further DB reads.
   // Cheapest possible exit on the autopilot common case.
-  const staleCount = await engine.countStaleChunks();
+  const staleCount = await engine.countStaleChunks(sourceId ? { sourceId } : undefined);
   if (staleCount === 0) {
     if (dryRun) {
       console.log('[dry-run] Would embed 0 chunks (0 stale found)');
@@ -376,18 +389,17 @@ async function embedAllStale(
   }
 
   // Pull only the stale chunks (no embedding column).
-  const staleRows = await engine.listStaleChunks();
-  // v0.31.12: group by composite key (source_id::slug) so same-slug pages
-  // in different sources are embedded independently with correct source_id.
-  const byKey = new Map<string, typeof staleRows>();
+  const staleRows = await engine.listStaleChunks(sourceId ? { sourceId } : undefined);
+  const byPage = new Map<string, { sourceId: string; slug: string; rows: typeof staleRows }>();
   for (const row of staleRows) {
-    const key = `${row.source_id}::${row.slug}`;
-    const list = byKey.get(key);
-    if (list) list.push(row);
-    else byKey.set(key, [row]);
+    const rowSourceId = row.source_id || 'default';
+    const key = `${rowSourceId}\0${row.slug}`;
+    const group = byPage.get(key);
+    if (group) group.rows.push(row);
+    else byPage.set(key, { sourceId: rowSourceId, slug: row.slug, rows: [row] });
   }
 
-  const keys = Array.from(byKey.keys());
+  const groups = Array.from(byPage.values());
   const totalStaleChunks = staleRows.length;
   result.total_chunks += totalStaleChunks;
   // skipped is "chunks we considered and skipped due to having an embedding".
@@ -397,27 +409,21 @@ async function embedAllStale(
 
   if (dryRun) {
     result.would_embed += totalStaleChunks;
-    result.pages_processed += keys.length;
+    result.pages_processed += groups.length;
     if (onProgress) {
       // Emit a single tick to satisfy the contract (CLI progress reporters
       // expect at least one start/finish pair).
-      onProgress(keys.length, keys.length, 0);
+      onProgress(groups.length, groups.length, 0);
     }
-    console.log(`[dry-run] Would embed ${totalStaleChunks} chunks across ${keys.length} pages`);
+    console.log(`[dry-run] Would embed ${totalStaleChunks} chunks across ${groups.length} pages`);
     return;
   }
 
   const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
   let processed = 0;
 
-  async function embedOneKey(key: string) {
-    const stale = byKey.get(key)!;
-    // v0.31.12: extract source_id + slug from the stale row so getChunks
-    // and upsertChunks target the correct (source_id, slug) row. Pre-fix,
-    // both calls defaulted to source_id='default', silently discarding
-    // embeddings for every non-default source (e.g. media-corpus).
-    const sourceId = stale[0]?.source_id ?? 'default';
-    const slug = stale[0].slug;
+  async function embedOneGroup(group: { sourceId: string; slug: string; rows: typeof staleRows }) {
+    const stale = group.rows;
     try {
       const embeddings = await embedBatch(stale.map(c => c.chunk_text));
       // CRITICAL: passing ONLY the stale indices to upsertChunks would
@@ -426,7 +432,7 @@ async function embedAllStale(
       // re-fetch existing chunks for this page and merge. Bounded by the
       // stale slug count, not by total slugs — autopilot common case
       // is 0 stale (pre-flight short-circuit, never reaches this path).
-      const existing = await engine.getChunks(slug, { sourceId });
+      const existing = await engine.getChunks(group.slug, { sourceId: group.sourceId });
       const staleIdxToEmbedding = new Map<number, Float32Array>();
       for (let j = 0; j < stale.length; j++) {
         staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
@@ -440,26 +446,26 @@ async function embedAllStale(
         embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
-      await engine.upsertChunks(slug, merged, { sourceId });
+      await engine.upsertChunks(group.slug, merged, { sourceId: group.sourceId });
       result.embedded += stale.length;
     } catch (e: unknown) {
-      console.error(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
+      console.error(`\n  Error embedding ${group.sourceId}:${group.slug}: ${e instanceof Error ? e.message : e}`);
     }
     processed++;
     result.pages_processed++;
-    onProgress?.(processed, keys.length, result.embedded);
+    onProgress?.(processed, groups.length, result.embedded);
   }
 
   let nextIdx = 0;
   async function worker() {
-    while (nextIdx < keys.length) {
+    while (nextIdx < groups.length) {
       const idx = nextIdx++;
-      await embedOneKey(keys[idx]);
+      await embedOneGroup(groups[idx]);
     }
   }
 
-  const numWorkers = Math.min(CONCURRENCY, keys.length);
+  const numWorkers = Math.min(CONCURRENCY, groups.length);
   await Promise.all(Array.from({ length: numWorkers }, () => worker()));
 
-  console.log(`Embedded ${result.embedded} chunks across ${keys.length} pages`);
+  console.log(`Embedded ${result.embedded} chunks across ${groups.length} pages`);
 }

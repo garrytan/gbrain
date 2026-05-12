@@ -1237,24 +1237,32 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r) => rowToChunk(r as Record<string, unknown>));
   }
 
-  async countStaleChunks(): Promise<number> {
+  async countStaleChunks(opts?: { sourceId?: string }): Promise<number> {
     const sql = this.sql;
+    const sourceJoin = opts?.sourceId ? sql`JOIN pages p ON p.id = cc.page_id` : sql``;
+    const sourceCondition = opts?.sourceId ? sql`AND p.source_id = ${opts.sourceId}` : sql``;
     const [row] = await sql`
       SELECT count(*)::int AS count
-      FROM content_chunks
-      WHERE embedding IS NULL
+      FROM content_chunks cc
+      ${sourceJoin}
+      WHERE cc.embedding IS NULL
+        AND COALESCE(cc.modality, 'text') <> 'image'
+        ${sourceCondition}
     `;
     return Number((row as { count?: number } | undefined)?.count ?? 0);
   }
 
-  async listStaleChunks(): Promise<StaleChunkRow[]> {
+  async listStaleChunks(opts?: { sourceId?: string }): Promise<StaleChunkRow[]> {
     const sql = this.sql;
+    const sourceCondition = opts?.sourceId ? sql`AND p.source_id = ${opts.sourceId}` : sql``;
     const rows = await sql`
-      SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-             cc.model, cc.token_count, p.source_id
+      SELECT p.slug, p.source_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+             cc.model, cc.token_count
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       WHERE cc.embedding IS NULL
+        AND COALESCE(cc.modality, 'text') <> 'image'
+        ${sourceCondition}
       ORDER BY p.id, cc.chunk_index
       LIMIT 100000
     `;
