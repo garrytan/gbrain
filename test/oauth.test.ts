@@ -131,6 +131,46 @@ describe('client registration', () => {
       sql`INSERT INTO oauth_clients (client_id, client_name, scope) VALUES (${clientId}, ${'dup'}, ${'read'})`,
     ).rejects.toThrow();
   });
+
+  test('redirectUris persist (authorization_code clients need this)', async () => {
+    // Pre-flag default was [], which meant Claude.ai / ChatGPT failed at /authorize
+    // with "Unregistered redirect_uri" and forced an UPDATE oauth_clients by hand.
+    const uris = [
+      'https://claude.ai/api/mcp/auth_callback',
+      'https://claude.com/api/mcp/auth_callback',
+    ];
+    const { clientId } = await provider.registerClientManual(
+      'redirect-test', ['authorization_code', 'refresh_token'], 'read write', uris,
+    );
+    const client = await provider.clientsStore.getClient(clientId);
+    expect(client!.redirect_uris).toEqual(uris);
+  });
+
+  test('tokenEndpointAuthMethod="none" persists (PKCE-only clients)', async () => {
+    // ChatGPT custom connectors set this to `none` and never send a client_secret.
+    const { clientId } = await provider.registerClientManual(
+      'pkce-only', ['authorization_code', 'refresh_token'], 'read',
+      ['https://chatgpt.com/connector/oauth/test'], 'none',
+    );
+    const client = await provider.clientsStore.getClient(clientId);
+    expect(client!.token_endpoint_auth_method).toBe('none');
+  });
+
+  test('tokenEndpointAuthMethod defaults to "client_secret_post"', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'default-auth-method', ['client_credentials'], 'read',
+    );
+    const client = await provider.clientsStore.getClient(clientId);
+    expect(client!.token_endpoint_auth_method).toBe('client_secret_post');
+  });
+
+  test('unsupported tokenEndpointAuthMethod is rejected', async () => {
+    await expect(
+      provider.registerClientManual(
+        'bad-auth', ['client_credentials'], 'read', [], 'private_key_jwt',
+      ),
+    ).rejects.toThrow(/Invalid token_endpoint_auth_method/);
+  });
 });
 
 // ---------------------------------------------------------------------------
