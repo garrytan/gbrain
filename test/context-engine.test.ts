@@ -205,7 +205,7 @@ describe('gbrain-context engine', () => {
       calendar: {
         lastUpdated: new Date().toISOString(),
         events: [
-          { summary: '1:1 with Diana', start, end, attendees: ['diana@ycombinator.com'] },
+          { summary: '1:1 with @alice-example', start, end, attendees: ['alice@example.com'] },
         ],
       },
     });
@@ -217,8 +217,8 @@ describe('gbrain-context engine', () => {
     });
 
     expect(result.systemPromptAddition).toContain('Right now');
-    expect(result.systemPromptAddition).toContain('1:1 with Diana');
-    expect(result.systemPromptAddition).toContain('diana@ycombinator.com');
+    expect(result.systemPromptAddition).toContain('1:1 with @alice-example');
+    expect(result.systemPromptAddition).toContain('alice@example.com');
   });
 
   it('injects upcoming events within 4-hour window', async () => {
@@ -304,7 +304,7 @@ describe('gbrain-context engine', () => {
   it('injects open tasks from ops/tasks.md', async () => {
     tmpDir = makeWorkspace({
       heartbeat: { garryAwake: true },
-      tasks: `# Current Tasks\n\n## Today\n\n- [ ] **DM Technium re: Hermes PR** — needs merge\n- [ ] **Post open source manifesto** — from YC Labs\n- [x] ~~Reply to Bob McGrew~~ — DONE\n\n## Next up\n- [ ] Something later`,
+      tasks: `# Current Tasks\n\n## Today\n\n- [ ] **DM @charlie-example re: agent-fork PR** — needs merge\n- [ ] **Post open source manifesto** — from a-team\n- [x] ~~Reply to bob-example~~ — DONE\n\n## Next up\n- [ ] Something later`,
     });
     const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
 
@@ -314,10 +314,10 @@ describe('gbrain-context engine', () => {
     });
 
     expect(result.systemPromptAddition).toContain('Open tasks');
-    expect(result.systemPromptAddition).toContain('DM Technium');
+    expect(result.systemPromptAddition).toContain('@charlie-example');
     expect(result.systemPromptAddition).toContain('Post open source manifesto');
-    // Completed task should NOT appear
-    expect(result.systemPromptAddition).not.toContain('Reply to Bob');
+    // Completed task should NOT appear (the "## Today" parser filters [x] lines)
+    expect(result.systemPromptAddition).not.toContain('bob-example');
     // "Next up" section tasks should NOT appear
     expect(result.systemPromptAddition).not.toContain('Something later');
   });
