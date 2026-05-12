@@ -702,6 +702,25 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // Best-effort. A broken JSONL should not stop doctor.
   }
 
+  // 3d. Slug-fallback audit (v0.32.7 CJK wave, codex C7). Informational
+  // count of pages where importFromFile fell back to a frontmatter slug
+  // because the path slugified empty (emoji / Thai / Arabic / exotic-script
+  // filenames). NOT routed through sync-failures.jsonl — that surface
+  // gates bookmark advancement, info rows don't fit there.
+  try {
+    const { readRecentSlugFallbacks } = await import('../core/audit-slug-fallback.ts');
+    const fallbacks = readRecentSlugFallbacks(7);
+    if (fallbacks.length > 0) {
+      checks.push({
+        name: 'slug_fallback_audit',
+        status: 'ok',
+        message: `info: ${fallbacks.length} slug fallback${fallbacks.length === 1 ? '' : 's'} in the last 7 days (SLUG_FALLBACK_FRONTMATTER).`,
+      });
+    }
+  } catch {
+    // Best-effort; audit-log read failure shouldn't stop doctor.
+  }
+
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
   // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
   // For each non-default source with local_path set, walk the FS and surface
