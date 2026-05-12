@@ -1,11 +1,25 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { buildSyncManifest, isSyncable, pathToSlug } from '../src/core/sync.ts';
+import { getFlagValue } from '../src/commands/sync.ts';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+
+describe('sync CLI flag parsing', () => {
+  test('supports --source and --source-id aliases', () => {
+    expect(getFlagValue(['--source', 'named-src'], ['--source', '--source-id'])).toBe('named-src');
+    expect(getFlagValue(['--source-id', 'named-src'], ['--source', '--source-id'])).toBe('named-src');
+    expect(getFlagValue(['--source-id=named-src'], ['--source', '--source-id'])).toBe('named-src');
+  });
+
+  test('supports equals form for common sync flags', () => {
+    expect(getFlagValue(['--repo=/tmp/repo'], ['--repo'])).toBe('/tmp/repo');
+    expect(getFlagValue(['--workers=3'], ['--concurrency', '--workers'])).toBe('3');
+  });
+});
 
 describe('buildSyncManifest', () => {
   test('parses A/M/D entries from single commit', () => {

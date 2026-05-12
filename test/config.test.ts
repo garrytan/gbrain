@@ -1,8 +1,8 @@
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
+import { isSensitiveConfigKey, redactConfigValue } from '../src/commands/config.ts';
 
-// redactUrl is not exported, so we test it by reading the source and
-// reimplementing the regex to verify the pattern, then test via CLI
+// Keep a local regex check for backwards-compatible URL redaction behavior.
 
 // Extract the redactUrl regex pattern from source
 const configSource = readFileSync(
@@ -49,6 +49,25 @@ describe('redactUrl', () => {
 
   test('handles empty string', () => {
     expect(redactUrl('')).toBe('');
+  });
+});
+
+describe('config set output redaction', () => {
+  test('redacts API keys, tokens, secrets, PATs, and passwords', () => {
+    for (const key of ['openai_api_key', 'github.token', 'client-secret', 'db_password', 'github_pat']) {
+      expect(isSensitiveConfigKey(key)).toBe(true);
+      expect(redactConfigValue(key, 'sk-test-1234567890abcdef')).toBe('<REDACTED>');
+    }
+  });
+
+  test('leaves non-sensitive values visible', () => {
+    expect(isSensitiveConfigKey('sync.repo_path')).toBe(false);
+    expect(redactConfigValue('sync.repo_path', '/tmp/repo')).toBe('/tmp/repo');
+  });
+
+  test('redacts postgresql passwords even for non-sensitive key names', () => {
+    expect(redactConfigValue('database_url', 'postgresql://user:pass@host/db'))
+      .toBe('postgresql://user:***@host/db');
   });
 });
 

@@ -106,6 +106,17 @@ function estimateSyncAllCost(sources: Array<{ local_path: string | null; config:
   return { totalTokens, totalFiles, activeSources, perSource };
 }
 
+export function getFlagValue(args: string[], names: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    for (const name of names) {
+      if (arg === name) return args[i + 1]?.startsWith('--') ? undefined : args[i + 1];
+      if (arg.startsWith(`${name}=`)) return arg.slice(name.length + 1);
+    }
+  }
+  return undefined;
+}
+
 /** Interactive [y/N] prompt. Resolves false on non-y answers or EOF. */
 async function promptYesNo(question: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -1032,9 +1043,9 @@ async function performFullSync(
 }
 
 export async function runSync(engine: BrainEngine, args: string[]) {
-  const repoPath = args.find((a, i) => args[i - 1] === '--repo') || undefined;
+  const repoPath = getFlagValue(args, ['--repo']);
   const watch = args.includes('--watch');
-  const intervalStr = args.find((a, i) => args[i - 1] === '--interval');
+  const intervalStr = getFlagValue(args, ['--interval']);
   const interval = intervalStr ? parseInt(intervalStr, 10) : 60;
   const dryRun = args.includes('--dry-run');
   const full = args.includes('--full');
@@ -1045,8 +1056,8 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   const syncAll = args.includes('--all');
   const jsonOut = args.includes('--json');
   const yesFlag = args.includes('--yes');
-  const strategyArg = args.find((a, i) => args[i - 1] === '--strategy') as SyncOpts['strategy'] | undefined;
-  const concurrencyStr = args.find((a, i) => args[i - 1] === '--concurrency' || args[i - 1] === '--workers');
+  const strategyArg = getFlagValue(args, ['--strategy']) as SyncOpts['strategy'] | undefined;
+  const concurrencyStr = getFlagValue(args, ['--concurrency', '--workers']);
   // v0.22.13 (PR #490 Q2): parseWorkers throws on '0', '-3', 'foo', '1.5' instead
   // of silently falling through to auto-concurrency or NaN. Loud failure beats
   // a 4-worker spawn from a typo.
@@ -1077,7 +1088,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   // v0.18.0 Step 5: --source resolves to a sources(id) row. Falls back
   // to pre-v0.17 global config (sync.repo_path + sync.last_commit) when
   // no flag, no env, no dotfile is present.
-  const explicitSource = args.find((a, i) => args[i - 1] === '--source') || null;
+  const explicitSource = getFlagValue(args, ['--source', '--source-id']) || null;
   let sourceId: string | undefined = undefined;
   if (explicitSource || process.env.GBRAIN_SOURCE) {
     const { resolveSourceId } = await import('../core/source-resolver.ts');

@@ -1,12 +1,25 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig } from '../core/config.ts';
 
-function redactUrl(url: string): string {
+export function redactUrl(url: string): string {
   // Redact password in postgresql:// URLs
   return url.replace(
     /(postgresql:\/\/[^:]+:)([^@]+)(@)/,
     '$1***$3',
   );
+}
+
+export function isSensitiveConfigKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  return /(^|[_.-])(api[_-]?key|token|secret|password|passwd|pwd|pat)([_.-]|$)/.test(normalized)
+    || normalized.includes('password')
+    || normalized.endsWith('_key')
+    || normalized.endsWith('.key');
+}
+
+export function redactConfigValue(key: string, value: string): string {
+  if (value.includes('postgresql://')) return redactUrl(value);
+  return isSensitiveConfigKey(key) ? '<REDACTED>' : value;
 }
 
 export async function runConfig(engine: BrainEngine, args: string[]) {
@@ -42,7 +55,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
   } else if (action === 'set' && key && value) {
     await engine.setConfig(key, value);
-    console.log(`Set ${key} = ${value}`);
+    console.log(`Set ${key} = ${redactConfigValue(key, value)}`);
   } else {
     console.error('Usage: gbrain config [show|get|set] <key> [value]');
     process.exit(1);

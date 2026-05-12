@@ -1338,7 +1338,7 @@ SOURCES (multi-repo / multi-brain)
   sources add <id> --path <p>        Register a source (id = short name, e.g. 'wiki')
   sources remove <id>                Remove a source + its pages
   sync --all                         Sync all sources with a local_path
-  sync --source <id>                 Sync one specific source
+  sync --source <id>                 Sync one specific source (--source-id alias supported)
   repos ...                          DEPRECATED alias for 'sources' (v0.19.0)
 
 CODE INDEXING (v0.19.0 / v0.20.0 Cathedral II)
