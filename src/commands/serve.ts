@@ -201,7 +201,10 @@ function installStdioLifecycle(
   // Skip when stdin is a TTY: interactive `gbrain serve` use shouldn't
   // terminate just because the user hasn't typed anything. Signal /
   // watchdog paths still cover that case if needed.
-  if (!deps.stdin.isTTY) {
+  // Also skip stdin-end shutdown when MCP_STDIO=1: the gateway bundle-mcp
+  // layer spawns us with piped stdin that stays open for the session.
+  const skipStdinEndShutdown = deps.stdin.isTTY || process.env.MCP_STDIO === '1';
+  if (!skipStdinEndShutdown) {
     deps.stdin.once('end', () => beginShutdown('stdin-end'));
     deps.stdin.once('close', () => beginShutdown('stdin-close'));
   }

@@ -440,3 +440,27 @@ describe('runServe stdio lifecycle', () => {
     expect(h.logs.some(l => l.includes('cleanup error: synthetic disconnect failure'))).toBe(true);
   });
 });
+
+  test('MCP_STDIO=1 skips stdin end watcher (gateway bundle-mcp mode)', async () => {
+    // When MCP_STDIO=1, the OpenClaw gateway spawns gbrain with a piped
+    // stdin that closes after the initial JSON-RPC handshake. We must NOT
+    // treat that pipe-EOF as a permanent client disconnect.
+    process.env.MCP_STDIO = '1';
+    try {
+      const h = makeHarness();
+      await startInBackground(h.engine, [], h.opts);
+
+      // Emit stdin 'end' — with MCP_STDIO=1, no listener was registered, so
+      // this is a no-op. The process must stay alive.
+      h.stdin.emit('end');
+      await new Promise(r => setTimeout(r, 10));
+      expect(h.engine.disconnectCalls).toBe(0);
+
+      // Signal handlers still work — process exits via SIGTERM
+      h.signals.emit('SIGTERM');
+      await h.exited;
+      expect(h.engine.disconnectCalls).toBe(1);
+    } finally {
+      delete process.env.MCP_STDIO;
+    }
+  });
