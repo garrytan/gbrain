@@ -2,7 +2,7 @@
  * v0.31 Hot Memory — turn-extractor (Haiku).
  *
  * Pure function: given a conversation turn, return an array of NewFact rows
- * ready for `engine.insertFact()`. Pipeline:
+ * ready for the engine.insertFact path. Pipeline:
  *
  *   1. Sanitize turn_text via INJECTION_PATTERNS (reuses the takes/think
  *      sanitizer — single source of truth for prompt-injection defense).
@@ -92,7 +92,7 @@ export interface ExtractInput {
   maxFactsPerTurn?: number;
 }
 
-/** A pre-INSERT fact ready for engine.insertFact(input, ctx). */
+/** A pre-INSERT fact ready for the engine.insertFact path. */
 export type ExtractedFact = NewFact & { entity_slug: string | null };
 
 const EXTRACTOR_SYSTEM = [
