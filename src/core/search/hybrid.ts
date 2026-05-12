@@ -17,6 +17,7 @@ import { dedupResults } from './dedup.ts';
 import { autoDetectDetail, classifyQuery } from './query-intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { enforceTokenBudget } from './token-budget.ts';
+import { recordSearchTelemetry } from './telemetry.ts';
 import {
   weightsForIntent,
   effectiveRrfK,
@@ -285,11 +286,22 @@ export async function hybridSearch(
   // A throwing user callback must never break the search hot path — onMeta
   // is a public surface (gbrain/search/hybrid) so a third-party closure bug
   // shouldn't take down query/search responses.
+  //
+  // v0.32.3 search-lite: every emitMeta call ALSO records to the in-process
+  // search_telemetry rollup. Telemetry write is sync (bumps a bucket map),
+  // flush is fire-and-forget on 60s / 100-call thresholds. The hot path
+  // never waits.
+  let lastResultsCount = 0;
   const emitMeta = (meta: HybridSearchMeta): void => {
     try {
       opts?.onMeta?.(meta);
     } catch {
       // swallow — capture telemetry is best-effort
+    }
+    try {
+      recordSearchTelemetry(engine, meta, { results_count: lastResultsCount });
+    } catch {
+      // swallow — telemetry must never break the search hot path.
     }
   };
 
@@ -345,6 +357,7 @@ export async function hybridSearch(
     const noEmbedSliced = dedupResults(keywordResults).slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the no-embedding-provider path.
     const { results: noEmbedBudgeted, meta: noEmbedBudgetMeta } = enforceTokenBudget(noEmbedSliced, resolvedMode.tokenBudget);
+    lastResultsCount = noEmbedBudgeted.length;
     emitMeta({
       vector_enabled: false,
       detail_resolved: detailResolved,
@@ -401,6 +414,7 @@ export async function hybridSearch(
     const kwSliced = dedupResults(keywordResults).slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
     const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
+    lastResultsCount = kwBudgeted.length;
     emitMeta({
       vector_enabled: false,
       detail_resolved: detailResolved,
@@ -514,6 +528,7 @@ export async function hybridSearch(
   // hybridSearch enforces it too so eval-replay + eval-longmemeval see
   // the same budget behavior as the production query op.
   const { results: budgeted, meta: budgetMeta } = enforceTokenBudget(sliced, resolvedMode.tokenBudget);
+  lastResultsCount = budgeted.length;
   emitMeta({
     vector_enabled: true,
     detail_resolved: detailResolved,
