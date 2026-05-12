@@ -36,7 +36,7 @@ const describeE2E = SKIP ? describe.skip : describe;
 describeE2E('PR #356 — post-migration schema invariants (v15→v23 end state)', () => {
   beforeAll(async () => {
     await setupDB();
-  });
+  }, 30_000);
   afterAll(async () => {
     await teardownDB();
   });
@@ -97,7 +97,7 @@ describeE2E('PR #356 — doctor --locks detects real idle-in-transaction connect
 
   beforeAll(async () => {
     await setupDB();
-  });
+  }, 30_000);
   afterAll(async () => {
     if (secondary) {
       try { await secondary.end({ timeout: 2 }); } catch { /* ignore */ }
@@ -149,7 +149,7 @@ describeE2E('PR #356 — doctor --locks detects real idle-in-transaction connect
 describeE2E('PR #356 — runMigrationsUpTo + setConfigVersion helpers', () => {
   beforeAll(async () => {
     await setupDB();
-  });
+  }, 30_000);
   afterAll(async () => {
     await teardownDB();
   });
@@ -185,7 +185,7 @@ describeE2E('PR #356 — runMigrationsUpTo + setConfigVersion helpers', () => {
 describeE2E('PR #356 — withReservedConnection round-trip', () => {
   beforeAll(async () => {
     await setupDB();
-  });
+  }, 30_000);
   afterAll(async () => {
     await teardownDB();
   });

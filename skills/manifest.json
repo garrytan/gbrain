@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.25.1",
+  "version": "0.32.3.0",
   "conformance_version": "1.0.0",
   "description": "Personal knowledge brain with hybrid RAG search \u2014 GStack mod for agent platforms",
   "skills": [
@@ -198,6 +198,21 @@
       "name": "voice-note-ingest",
       "path": "voice-note-ingest/SKILL.md",
       "description": "Ingest voice notes with exact-phrasing preservation (never paraphrased); routes content based on a decision tree across originals/concepts/people/companies/ideas/personal/voice-notes."
+    },
+    {
+      "name": "cold-start",
+      "path": "cold-start/SKILL.md",
+      "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Uses ClawVisor for safe credential handling — agents never hold raw API keys."
+    },
+    {
+      "name": "ask-user",
+      "path": "ask-user/SKILL.md",
+      "description": "Reusable choice-gate pattern for presenting users with 2-4 options and stopping execution until they respond. Platform-agnostic (Telegram buttons, Discord, CLI, OpenClaw clarify tool)."
+    },
+    {
+      "name": "functional-area-resolver",
+      "path": "functional-area-resolver/SKILL.md",
+      "description": "Compress an agent's routing file (RESOLVER.md or AGENTS.md) by replacing skill-per-row tables with functional-area dispatcher entries. Two-layer dispatch keeps every sub-skill reachable at ~50% of the file size."
     }
   ],
   "dependencies": {

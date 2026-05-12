@@ -37,7 +37,7 @@ export interface GBrainConfig {
   expansion_model?: string;
   /**
    * Default chat model for `gateway.chat()` callers (v0.27+).
-   * Default: "anthropic:claude-sonnet-4-6-20250929".
+   * Default: "anthropic:claude-sonnet-4-6" (dateless per Anthropic's v0.31.12+ model-ID format).
    */
   chat_model?: string;
   /**
@@ -83,6 +83,39 @@ export interface GBrainConfig {
   embedding_multimodal_model?: string;
   embedding_image_ocr?: boolean;
   embedding_image_ocr_model?: string;
+
+  /**
+   * Thin-client mode (multi-topology v1). When set, this install does NOT
+   * have a local DB; it talks to a remote `gbrain serve --http` over MCP.
+   * The CLI dispatch guard in `src/cli.ts` checks for this field BEFORE
+   * `connectEngine` and refuses any DB-bound subcommand. The `engine` field
+   * above is still populated (default-inferred) but never used.
+   *
+   * Two URLs because OAuth discovery + `/token` live at the issuer root,
+   * while tool dispatch lives at `/mcp`. They compose from a common base
+   * in the typical setup but the config keeps them explicit so reverse-proxy
+   * topologies work.
+   *
+   * `oauth_client_secret` can also be supplied via the
+   * `GBRAIN_REMOTE_CLIENT_SECRET` env var (preferred for headless agents);
+   * env-var value wins when both are present.
+   */
+  remote_mcp?: {
+    issuer_url: string;
+    mcp_url: string;
+    oauth_client_id: string;
+    oauth_client_secret?: string;
+  };
+}
+
+/**
+ * True when this install is configured as a thin client of a remote
+ * `gbrain serve --http`. Single source of truth for the "is this a
+ * thin-client install?" check used by the CLI dispatch guard, doctor
+ * branch, and remote subcommands.
+ */
+export function isThinClient(config: GBrainConfig | null): boolean {
+  return !!config?.remote_mcp;
 }
 
 /**
@@ -101,16 +134,24 @@ export function loadConfig(): GBrainConfig | null {
 
   if (!fileConfig && !dbUrl) return null;
 
-  // Infer engine type if not explicitly set
-  const inferredEngine: 'postgres' | 'pglite' = fileConfig?.engine
-    || (fileConfig?.database_path ? 'pglite' : 'postgres');
+  // Infer engine type. A DATABASE_URL-style env var is always a Postgres
+  // connection target and must override a file-backed PGLite engine
+  // selection; otherwise direct-script / operator paths can silently hit
+  // the local PGLite brain while claiming to use the env URL. The PGLite
+  // database_path is also cleared when dbUrl is set so toEngineConfig
+  // doesn't pass a stale path through alongside the URL.
+  const inferredEngine: 'postgres' | 'pglite' = dbUrl
+    ? 'postgres'
+    : fileConfig?.engine || (fileConfig?.database_path ? 'pglite' : 'postgres');
 
   // Merge: env vars override config file. READ only — never mutate process.env.
   const merged = {
     ...fileConfig,
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
+    ...(dbUrl ? { database_path: undefined } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
+    ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
@@ -129,6 +170,9 @@ export function loadConfig(): GBrainConfig | null {
       : {}),
     ...(process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL
       ? { embedding_image_ocr_model: process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL }
+      : {}),
+    ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
+      ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }
       : {}),
   };
   return merged as GBrainConfig;

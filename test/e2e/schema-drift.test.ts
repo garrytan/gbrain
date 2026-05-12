@@ -99,7 +99,7 @@ describe.skipIf(skip)('schema drift: PGLite ↔ Postgres post-initSchema parity 
   afterAll(async () => {
     if (pglite) await pglite.disconnect();
     if (pg) await pg.disconnect();
-  });
+  }, 30_000);
 
   test('post-initSchema schemas are equivalent (modulo allowlist)', () => {
     const diff = diffSnapshots(pgSnap, pgliteSnap, { allowlistPgOnlyTables: PG_ONLY_TABLES });

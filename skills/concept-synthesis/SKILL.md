@@ -8,6 +8,7 @@ triggers:
   - "find patterns across my notes"
   - "build my intellectual map"
   - "trace idea evolution"
+  - "canon vs riff"
 mutating: true
 writes_pages: true
 writes_to:

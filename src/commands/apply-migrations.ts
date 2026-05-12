@@ -31,6 +31,17 @@ interface ApplyMigrationsArgs {
   noAutopilotInstall: boolean;
   /** Bug 3 — explicit reset for a wedged migration. Writes a 'retry' marker. */
   forceRetry?: string;
+  /**
+   * v0.30.1 namespaced --force flags (codex T5):
+   *   --force-orchestrator: write 'retry' markers for ALL wedged orchestrator migrations
+   *   --force-schema:       reset schema-version drift (re-run runMigrations)
+   *   --force-all:          both
+   */
+  forceOrchestrator?: boolean;
+  forceSchema?: boolean;
+  forceAll?: boolean;
+  /** v0.30.1 (D6 / X3): bypass verify-hook drift detection on a single run. */
+  skipVerify?: boolean;
   help: boolean;
 }
 
@@ -55,6 +66,10 @@ function parseArgs(args: string[]): ApplyMigrationsArgs {
     hostDir: val('--host-dir'),
     noAutopilotInstall: has('--no-autopilot-install'),
     forceRetry: val('--force-retry'),
+    forceOrchestrator: has('--force-orchestrator'),
+    forceSchema: has('--force-schema'),
+    forceAll: has('--force-all') || has('--force'),
+    skipVerify: has('--skip-verify'),
     help: has('--help') || has('-h'),
   };
 }
@@ -73,6 +88,16 @@ Usage:
                                          Clear a wedged migration (3+ consecutive
                                          partials). Writes a 'retry' marker so the
                                          next run treats it as fresh.
+  gbrain apply-migrations --force-orchestrator
+                                         Reset every wedged orchestrator migration
+                                         in one shot (writes 'retry' for each).
+  gbrain apply-migrations --force-schema
+                                         Reset schema-version drift; re-runs
+                                         runMigrations from current config.version.
+  gbrain apply-migrations --force        (alias --force-all) Apply both
+                                         --force-orchestrator and --force-schema.
+  gbrain apply-migrations --skip-verify  Bypass post-condition verify hooks on
+                                         non-idempotent migrations (D6 escape hatch).
 
 Flags:
   --mode <always|pain_triggered|off>     Set minion_mode without prompting.
@@ -276,6 +301,57 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     appendCompletedMigration({ version: cli.forceRetry, status: 'retry' });
     console.log(`Wrote 'retry' marker for v${cli.forceRetry}. Run \`gbrain apply-migrations --yes\` to re-attempt.`);
     return;
+  }
+
+  // v0.30.1 (codex T5): --force-orchestrator OR --force-all writes a 'retry'
+  // marker for EVERY wedged orchestrator migration in one shot. User re-runs
+  // `gbrain apply-migrations --yes` to actually re-attempt.
+  if (cli.forceOrchestrator || cli.forceAll) {
+    const completed = loadCompletedMigrations();
+    const idx = indexCompleted(completed);
+    let resetCount = 0;
+    for (const m of migrations) {
+      const status = statusForVersion(m.version, idx);
+      if (status === 'wedged') {
+        appendCompletedMigration({ version: m.version, status: 'retry' });
+        console.log(`Wrote 'retry' marker for v${m.version} (${m.featurePitch.headline.slice(0, 60)})`);
+        resetCount++;
+      }
+    }
+    if (resetCount === 0) {
+      console.log('No wedged orchestrator migrations found.');
+    } else {
+      console.log(`\nReset ${resetCount} wedged orchestrator migration(s). Run \`gbrain apply-migrations --yes\` to re-attempt.`);
+    }
+    if (!cli.forceAll) return; // --force-schema continues below if --force-all is set
+  }
+
+  // v0.30.1 (codex T5): --force-schema OR --force-all resets schema-version
+  // drift by re-running runMigrations(). When the actual DDL state diverges
+  // from config.version (the brain_config incident), this is the manual
+  // recovery path.
+  if (cli.forceSchema || cli.forceAll) {
+    try {
+      const { runMigrations } = await import('../core/migrate.ts');
+      const { loadConfig: lc, toEngineConfig } = await import('../core/config.ts');
+      const { createEngine } = await import('../core/engine-factory.ts');
+      const cfg = lc();
+      if (!cfg) {
+        console.error('No brain configured for --force-schema.');
+        process.exit(2);
+      }
+      const eng = await createEngine(toEngineConfig(cfg));
+      await eng.connect(toEngineConfig(cfg));
+      console.log('Running schema migrations from current config.version...');
+      const result = await runMigrations(eng);
+      console.log(`Applied ${result.applied} schema migration(s); now at v${result.current}.`);
+      await eng.disconnect();
+    } catch (err) {
+      console.error(`--force-schema failed: ${(err as Error).message}`);
+      process.exit(1);
+    }
+    if (cli.forceSchema && !cli.forceAll) return;
+    if (cli.forceAll) return; // both surfaces flushed
   }
 
   // Pre-flight: warn if schema migrations (migrate.ts) are behind.

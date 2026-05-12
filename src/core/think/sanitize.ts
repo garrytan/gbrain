@@ -16,7 +16,10 @@
  * Test fixtures in test/think-sanitize.test.ts pin 30+ known attack strings.
  */
 
-const INJECTION_PATTERNS: Array<{ name: string; rx: RegExp; replacement: string }> = [
+// v0.28.8: exported so the longmemeval benchmark harness can reuse the same
+// pattern set on retrieved chat content (src/eval/longmemeval/sanitize.ts).
+// Existing think/take consumers keep working unchanged.
+export const INJECTION_PATTERNS: Array<{ name: string; rx: RegExp; replacement: string }> = [
   // System / instruction overrides
   { name: 'ignore-prior',     rx: /ignore\s+(?:all\s+)?(?:prior|previous|above|earlier)\s+(?:instructions?|prompts?|messages?)/gi, replacement: '[redacted]' },
   { name: 'forget-everything', rx: /forget\s+(?:everything|all\s+(?:of\s+)?the\s+above)/gi, replacement: '[redacted]' },

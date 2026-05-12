@@ -72,6 +72,33 @@ export interface EmbeddingTouchpoint {
    * text embedding paths ignore it.
    */
   multimodal_models?: string[];
+  /**
+   * v0.32: when true, the recipe ships without a fixed model list and users
+   * MUST provide `--embedding-model provider:model` and
+   * `--embedding-dimensions N` explicitly. Used by litellm-proxy and
+   * llama-server (and any future "bring your own backend" recipe).
+   *
+   * Consumers:
+   *  - `recipes-contract.test.ts` permits `models.length === 0` only when
+   *    this flag is true.
+   *  - `gateway.ts` skips the model-list-must-include-modelId check.
+   *  - `init.ts:resolveAIOptions` refuses the implicit "first model" pick
+   *    for shorthand `--model <provider>` and prints a setup hint.
+   */
+  user_provided_models?: true;
+  /**
+   * v0.32 (#779 reworked): explicit opt-out of the missing-max_batch_tokens
+   * startup warning. Set to `true` for recipes whose batch capacity is
+   * genuinely dynamic (Ollama: depends on user-loaded model; LiteLLM proxy:
+   * depends on backend; llama.cpp: depends on `--ctx-size` at server launch).
+   *
+   * Without this flag, missing `max_batch_tokens` triggers a once-per-process
+   * stderr warning so future recipes that forget the cap (and would
+   * silently rely on recursive-halving) don't ship un-noticed. Recipes that
+   * declare `no_batch_cap: true` are explicitly opting out — the warning is
+   * noise for them.
+   */
+  no_batch_cap?: true;
 }
 
 /**
@@ -139,14 +166,74 @@ export interface Recipe {
     chat?: ChatTouchpoint;
   };
   /**
-   * Optional alias map for friendlier `provider:model` strings (Codex F-OV-5).
-   * Resolved at parse time so users can write `anthropic:claude-sonnet-4-6`
-   * instead of `anthropic:claude-sonnet-4-6-20250929`. Keys are aliases,
-   * values are canonical (declared) model ids.
+   * Optional alias map for friendlier `provider:model` strings.
+   * Resolved at parse time. For pre-4.6 models, undated forms alias to dated
+   * pinned snapshots (e.g. `claude-haiku-4-5` → `claude-haiku-4-5-20251001`).
+   * For Claude 4.6+, model IDs are dateless and self-pinned — no forward alias
+   * needed. Reverse-direction entries can rewrite stale/broken IDs back to
+   * canonical (e.g. `claude-sonnet-4-6-20250929` → `claude-sonnet-4-6`) for
+   * back-compat with users who have stale config strings.
    */
   aliases?: Record<string, string>;
   /** One-line description of setup (shown in wizard + env subcommand). */
   setup_hint?: string;
+  /**
+   * v0.32 (D12=A): unified auth resolver across embed / expansion / chat
+   * touchpoints. Returns the header name (`Authorization`, `api-key`, etc.)
+   * and the full header value (for Bearer-style providers, include the
+   * `Bearer ` prefix). Throws AIConfigError when required env is missing
+   * with a hint pointing at the recipe's setup_url.
+   *
+   * When omitted, the gateway applies a default that returns
+   * `{headerName: 'Authorization', token: 'Bearer ' + env[auth_env.required[0]]}`.
+   * The default is the right behavior for OpenAI-compatible providers with a
+   * single API key. Recipes deviating (Azure uses `api-key`; future OAuth
+   * providers fetch dynamic tokens) override this.
+   *
+   * IMPORTANT: this runs at gateway-configure time (NOT at embed-call time)
+   * so the env snapshot in `cfg.env` is consulted, never `process.env`.
+   */
+  resolveAuth?(env: Record<string, string | undefined>): {
+    headerName: string;
+    token: string;
+  };
+  /**
+   * v0.32: templated openai-compatible config for recipes whose URL shape
+   * doesn't fit a static `base_url_default`. Returns the resolved baseURL
+   * and an optional fetch wrapper for cases like Azure OpenAI that need a
+   * query parameter (?api-version=) injected on every request.
+   *
+   * Default behavior (when undefined): use `base_urls[recipe.id]` from
+   * config or `recipe.base_url_default`. Throws `AIConfigError` when both
+   * are missing.
+   *
+   * Currently only Azure OpenAI overrides this — the URL is templated
+   * from `AZURE_OPENAI_ENDPOINT` + `AZURE_OPENAI_DEPLOYMENT` and the fetch
+   * wrapper splices `api-version` into every request URL.
+   */
+  resolveOpenAICompatConfig?(env: Record<string, string | undefined>): {
+    baseURL: string;
+    fetch?: typeof fetch;
+  };
+  /**
+   * v0.32 (D13=A): optional runtime readiness check for local-server
+   * recipes (ollama, llama-server, future lmstudio-recipe). Returns
+   * `ready: false` when the local endpoint isn't reachable, with a `hint`
+   * the wizard / doctor can surface.
+   *
+   * Defaults to env-only readiness (`auth_env.required` all set) when
+   * absent. Consumed by `runExplain()` in `src/commands/providers.ts` and
+   * by the doctor's embedding probe; both wrap the call in
+   * `Promise.allSettled` with a 200ms timeout so a hung local server does
+   * not block the provider matrix.
+   *
+   * `baseURL`: optional resolved URL the gateway will actually call (from
+   * `cfg.base_urls[recipe.id]` or recipe defaults). Pass it so the probe
+   * checks the same endpoint as live traffic. Without it, the probe falls
+   * back to recipe defaults / env, which can disagree with config-only
+   * URL overrides (codex finding #5).
+   */
+  probe?(baseURL?: string): Promise<{ ready: boolean; hint?: string }>;
 }
 
 export interface AIGatewayConfig {

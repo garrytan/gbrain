@@ -101,6 +101,34 @@ describe('doctor command', () => {
     expect(source).toMatch(/table:\s*'files'.*col:\s*'metadata'/);
   });
 
+  // v0.31.2 — facts_extraction_health check added in PR1 commit 12.
+  // Reads ingest_log rows with source_type='facts:absorb' (written by
+  // writeFactsAbsorbLog from src/core/facts/absorb-log.ts), groups by
+  // (source_id, reason) over the last 24h, warns when any (source, reason)
+  // pair exceeds the configurable threshold (facts.absorb_warn_threshold,
+  // default 10).
+  test('doctor source contains facts_extraction_health check that iterates sources', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain('facts_extraction_health');
+    // The check must group by source_id, not hardcode 'default'.
+    const block = source.slice(
+      source.indexOf('// 11a-bis-2. facts_extraction_health'),
+      source.indexOf('// 11a-2. effective_date_health'),
+    );
+    expect(block.length).toBeGreaterThan(0);
+    expect(block).toContain('GROUP BY source_id');
+    expect(block).toContain("source_type = 'facts:absorb'");
+    expect(block).toContain('facts.absorb_warn_threshold');
+    // 24h window
+    expect(block).toMatch(/INTERVAL\s+'24\s*hours?'/i);
+    // Pre-v47 fallback (column missing) reports skipped not warn
+    expect(block).toContain("Skipped (ingest_log.source_id unavailable");
+    // RLS deny gives a useful message
+    expect(block).toContain('RLS denies SELECT on ingest_log');
+    // Negative: must NOT hardcode 'default' as the only source
+    expect(block).not.toMatch(/source_id\s*=\s*'default'/);
+  });
+
   // v0.18 RLS hardening — regression guards for PR #336 + schema backfill.
   // These are structural assertions on the source string so a silent revert
   // of the severity or the IN-filter removal fails loudly without a live DB.
@@ -173,5 +201,380 @@ describe('doctor command', () => {
     expect(block).toMatch(/engine\.kind\s*===\s*'pglite'/);
     // Recovery command names the migration version explicitly.
     expect(block).toContain('--force-retry 35');
+  });
+
+  // v0.31.7 IRON-RULE regression test for #376 + #536.
+  // The graph_coverage WARN message used to suggest stale verbs (`gbrain
+  // link-extract` / `gbrain timeline-extract`) that were removed in v0.16
+  // when extraction was consolidated into `gbrain extract <links|timeline|all>`.
+  // PR #376 (FUSED-ID) flagged the stale hint; PR #536 (mayazbay) replaced it
+  // with the canonical `gbrain extract all`. Pin the user-facing copy so a
+  // future edit can't silently re-regress to a stale verb.
+  test('graph_coverage hint uses canonical `gbrain extract all`, not removed verbs', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync('src/commands/doctor.ts', 'utf8');
+    // Canonical form (post-v0.16 single-verb consolidation).
+    expect(src).toContain('Run: gbrain extract all');
+    // Stale verb names removed in v0.16 must not return.
+    expect(src).not.toContain('gbrain link-extract');
+    expect(src).not.toContain('gbrain timeline-extract');
+  });
+
+  // v0.32 — takes_weight_grid pure-helper export.
+  // Codex review #7 demanded the check be extracted as a pure function so
+  // tests target it directly with stubbed engines instead of running the
+  // full runDoctor pipeline. This block validates the export shape and the
+  // 4 branches (no-takes / fail / warn / ok) behaviorally against PGLite.
+  test('takesWeightGridCheck is exported as a pure function', async () => {
+    const mod = await import('../src/commands/doctor.ts');
+    expect(typeof mod.takesWeightGridCheck).toBe('function');
+  });
+
+  test('takes_weight_grid: 0 takes → ok with "No takes yet"', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      const result = await takesWeightGridCheck(engine);
+      expect(result.name).toBe('takes_weight_grid');
+      expect(result.status).toBe('ok');
+      expect(result.message).toContain('No takes yet');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('takes_weight_grid: 100% on-grid → ok', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      // Seed a few on-grid takes via the engine's normalized path.
+      await engine.putPage('test/doc-on-grid', {
+        type: 'note', title: 't', compiled_truth: 'b', frontmatter: {},
+      });
+      const pageRows = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = 'test/doc-on-grid' LIMIT 1`,
+      );
+      await engine.addTakesBatch([
+        { page_id: pageRows[0].id, row_num: 1, claim: 'a', kind: 'take', holder: 'world', weight: 0.75 },
+        { page_id: pageRows[0].id, row_num: 2, claim: 'b', kind: 'take', holder: 'world', weight: 0.5 },
+        { page_id: pageRows[0].id, row_num: 3, claim: 'c', kind: 'take', holder: 'world', weight: 1.0 },
+      ]);
+      const result = await takesWeightGridCheck(engine);
+      expect(result.status).toBe('ok');
+      expect(result.message).toContain('on grid');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('takes_weight_grid: >10% off-grid → fail with fix hint', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      await engine.putPage('test/doc-fail', {
+        type: 'note', title: 't', compiled_truth: 'b', frontmatter: {},
+      });
+      const pageRows = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = 'test/doc-fail' LIMIT 1`,
+      );
+      // Bypass engine normalization: write off-grid weights directly.
+      // 8 of 10 off-grid → 80%, well past the 10% fail threshold.
+      for (let i = 1; i <= 8; i++) {
+        await engine.executeRaw(
+          `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, active)
+           VALUES ($1, $2, 'c', 'take', 'world', $3::real, true)`,
+          [pageRows[0].id, i, 0.74],
+        );
+      }
+      for (let i = 9; i <= 10; i++) {
+        await engine.executeRaw(
+          `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, active)
+           VALUES ($1, $2, 'c', 'take', 'world', 0.5::real, true)`,
+          [pageRows[0].id, i],
+        );
+      }
+      const result = await takesWeightGridCheck(engine);
+      expect(result.status).toBe('fail');
+      expect(result.message).toMatch(/8\/10/);
+      expect(result.message).toContain('apply-migrations');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('takes_weight_grid: 1-10% off-grid → warn', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      await engine.putPage('test/doc-warn', {
+        type: 'note', title: 't', compiled_truth: 'b', frontmatter: {},
+      });
+      const pageRows = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = 'test/doc-warn' LIMIT 1`,
+      );
+      // 5 off-grid out of 100 = 5% → warn band.
+      for (let i = 1; i <= 5; i++) {
+        await engine.executeRaw(
+          `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, active)
+           VALUES ($1, $2, 'c', 'take', 'world', 0.74::real, true)`,
+          [pageRows[0].id, i],
+        );
+      }
+      for (let i = 6; i <= 100; i++) {
+        await engine.executeRaw(
+          `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, active)
+           VALUES ($1, $2, 'c', 'take', 'world', 0.5::real, true)`,
+          [pageRows[0].id, i],
+        );
+      }
+      const result = await takesWeightGridCheck(engine);
+      expect(result.status).toBe('warn');
+      expect(result.message).toMatch(/5\/100/);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('takes_weight_grid: takes table missing → warn (graceful)', async () => {
+    const { takesWeightGridCheck } = await import('../src/commands/doctor.ts');
+    // Stub engine: executeRaw throws like a "relation does not exist" error.
+    const stubEngine = {
+      executeRaw: async () => {
+        throw new Error('relation "takes" does not exist');
+      },
+    } as any;
+    const result = await takesWeightGridCheck(stubEngine);
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('Could not check takes weight grid');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.31.8 D19 — wedge migration force-retry hint.
+//
+// The pre-v0.31.8 minions_migration check emitted a generic
+// `gbrain apply-migrations --yes` hint regardless of how partial the
+// migration was. Operators wedged on v0.29.1 (3 consecutive partials)
+// needed `--force-retry <v>` first because the apply-migrations runner's
+// 3-consecutive-partials guard rejected plain --yes. The v0.31.8 fix
+// extends the existing block in place: detect the wedge condition,
+// emit the force-retry hint when matched, fall back to the plain --yes
+// hint when the partial count is < 3.
+// ─────────────────────────────────────────────────────────────────────────
+describe('v0.31.8 — wedge migration force-retry hint (D19)', () => {
+  test('local doctor source contains wedge detection alongside the existing stuck path', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The existing forward-progress override stays intact. Both branches
+    // must be present and live next to each other; replacing the override
+    // with statusForVersion() would re-open stale wedge alerts (codex OV11).
+    expect(source).toContain('Forward-progress override');
+    expect(source).toContain('partialCount >= 3');
+    // Both branches must coexist. Wedged path builds the command list with
+    // --force-retry; partial path falls back to plain --yes. Order varies
+    // between the local + remote doctor blocks, so just assert presence.
+    expect(source).toContain('WEDGED MIGRATION(s)');
+    expect(source).toContain('MINIONS HALF-INSTALLED');
+    expect(source).toContain('--force-retry');
+    expect(source).toMatch(/MINIONS HALF-INSTALLED[\s\S]{0,400}--yes/);
+  });
+
+  test('wedge detection is local to doctor — no statusForVersion import (D19 anti-regression)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // D19 explicitly chose to extend the existing block in place rather than
+    // import statusForVersion, because statusForVersion is per-version only
+    // and doesn't encode the cross-version forward-progress override. If a
+    // future refactor re-introduces the import this regression guard
+    // catches it.
+    expect(source).not.toMatch(/import\s*\{\s*statusForVersion\s*\}/);
+    expect(source).not.toMatch(/from\s*['"]\.\/apply-migrations\.ts['"]/);
+  });
+
+  test('multiple wedged versions chain force-retry calls with &&', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The local doctor block uses `.join(' && ')` so multiple wedged
+    // versions render as a single copy-pasteable command line. Match BOTH
+    // engine.ts blocks (local doctor + remote doctor) — the regex finds
+    // either occurrence.
+    expect(source).toMatch(/wedged\.map\(v\s*=>\s*`gbrain apply-migrations --force-retry [^`]+`\)\.join\(' && '\)/);
+  });
+
+  test('remote doctor (doctorReportRemote) also emits the force-retry hint (D14)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // Check that the wedge detection is duplicated in the remote doctor
+    // path so thin-client operators see it. Find the doctorReportRemote
+    // function span and verify the wedge-hint code lives inside it.
+    const remoteStart = source.indexOf('export async function doctorReportRemote(');
+    expect(remoteStart).toBeGreaterThan(0);
+    const remoteEnd = source.indexOf('\nexport async function runDoctor(', remoteStart);
+    expect(remoteEnd).toBeGreaterThan(remoteStart);
+    const remoteBlock = source.slice(remoteStart, remoteEnd);
+    expect(remoteBlock).toContain('--force-retry');
+    expect(remoteBlock).toContain('partialCount >= 3');
+    expect(remoteBlock).toMatch(/WEDGED MIGRATION\(s\) on brain host/);
+  });
+});
+
+// ============================================================================
+// v0.32.4 — sync_freshness check
+// ============================================================================
+// Pure staleness probe: reads sources.last_sync_at, no filesystem access.
+// Drift detection was stripped in v0.32.4 — the doctorReportRemote path runs
+// in the HTTP MCP server and walking DB-supplied local_path values from there
+// crosses a trust boundary. Drift belongs in multi_source_drift's existing
+// guard infrastructure (GBRAIN_DRIFT_LIMIT / GBRAIN_DRIFT_TIMEOUT_MS).
+// ============================================================================
+
+describe('v0.32.4 — sync_freshness check', () => {
+  // Stub engine: only checkSyncFreshness's executeRaw matters. Per-case rows
+  // shape is `{id, name, local_path, last_sync_at}`.
+  function makeStubEngine(rows: any[]): any {
+    return { executeRaw: async () => rows };
+  }
+
+  function agoMs(ms: number): Date {
+    return new Date(Date.now() - ms);
+  }
+
+  test('empty sources → ok with no-federated-sources message', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([]));
+    expect(result.name).toBe('sync_freshness');
+    expect(result.status).toBe('ok');
+    expect(result.message).toBe('No federated sources to sync');
+  });
+
+  test('last_sync_at IS NULL → fail with "never been synced"', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: null },
+    ]));
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain('never been synced');
+    expect(result.message).toContain(`'wiki'`); // source.id embedded
+    expect(result.message).toContain('gbrain sync --source <id>');
+  });
+
+  test('last_sync_at > 72h ago → fail with day-rounded "Nd ago"', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(4 * 24 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('fail');
+    expect(result.message).toMatch(/4d ago/);
+    expect(result.message).toContain('brain search is stale');
+  });
+
+  test('exact 72h boundary → warn (>72h strict; 72h source NOT yet fail)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    // Exactly 72h. Strict `>` on fail threshold means 72h-stale is still in
+    // the warn window. (Tested boundary semantics.)
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(72 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('72h ago');
+  });
+
+  test('24h < last_sync_at < 72h → warn with hour-rounded "Nh ago"', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(30 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/30h ago/);
+  });
+
+  test('exact 24h boundary → ok (>24h strict)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    // Exactly 24h. Strict `>` on warn threshold means 24h-stale is still ok.
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(24 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('synced recently');
+  });
+
+  test('last_sync_at <= 24h → ok with "synced recently"', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(2 * 60 * 60 * 1000) },
+      { id: 'gstack', name: '', local_path: '/tmp/gstack', last_sync_at: agoMs(60 * 1000) },
+    ]));
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('2 federated source(s)');
+  });
+
+  test('future last_sync_at → warn (clock skew / corrupted timestamp)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    // 10 min in the future. Negative ageMs must NOT fall through as ok.
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: new Date(Date.now() + 10 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/future last_sync_at/);
+    expect(result.message).toMatch(/clock skew|corrupted timestamp/);
+  });
+
+  test('mixed sources (one fail + one warn) → fail with both issues listed', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(5 * 24 * 60 * 60 * 1000) },
+      { id: 'gstack', name: '', local_path: '/tmp/gstack', last_sync_at: agoMs(30 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain(`'wiki'`);
+    expect(result.message).toContain(`'gstack'`);
+    expect(result.message).toMatch(/5d ago/);
+    expect(result.message).toMatch(/30h ago/);
+  });
+
+  test('executeRaw throws → outer-catch returns warn (doctor keeps running)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const engine: any = {
+      executeRaw: async () => { throw new Error('connection refused'); },
+    };
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('Could not check sync freshness');
+    expect(result.message).toContain('connection refused');
+  });
+
+  test('env-var override: GBRAIN_SYNC_FRESHNESS_FAIL_HOURS=6 → 7h-stale fails', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const prev = process.env.GBRAIN_SYNC_FRESHNESS_FAIL_HOURS;
+    process.env.GBRAIN_SYNC_FRESHNESS_FAIL_HOURS = '6';
+    try {
+      const result = await checkSyncFreshness(makeStubEngine([
+        { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: agoMs(7 * 60 * 60 * 1000) },
+      ]));
+      expect(result.status).toBe('fail');
+      expect(result.message).toContain('brain search is stale');
+    } finally {
+      if (prev === undefined) delete process.env.GBRAIN_SYNC_FRESHNESS_FAIL_HOURS;
+      else process.env.GBRAIN_SYNC_FRESHNESS_FAIL_HOURS = prev;
+    }
+  });
+
+  test('source.id embedded in messages even when source.name is set', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki-id', name: 'My Wiki', local_path: '/tmp/wiki', last_sync_at: null },
+    ]));
+    expect(result.status).toBe('fail');
+    // User copy-pastes `gbrain sync --source wiki-id` (NOT "My Wiki"). Message
+    // must include the id so the CLI command actually works.
+    expect(result.message).toContain(`'wiki-id'`);
   });
 });

@@ -121,6 +121,24 @@ ALLOW_LIST=(
   # walkthrough; it explains the privacy-guard extension to the
   # operating agent and references the banned literals while doing so.
   'skills/migrations/v0.25.1.md'
+  # v0.29.1: the recency-decay default-map test asserts that
+  # DEFAULT_RECENCY_DECAY's keys do NOT include fork-specific path
+  # prefixes. The test must name the banned tokens to assert their
+  # absence — same exception status as scripts/check-privacy.sh,
+  # CHANGELOG.md, and CLAUDE.md (meta-rule enforcement requires
+  # mentioning what the rule forbids).
+  'test/recency-decay.test.ts'
+  # v0.32.5: the sibling check-test-real-names.sh enforces the same
+  # privacy rule for test fixtures and lists the banned names literally
+  # (Wintermute, Hermes, etc) inside its BANNED_NAMES + ALLOWLIST arrays.
+  # Same meta-rule-enforcement exception as scripts/check-privacy.sh itself.
+  'scripts/check-test-real-names.sh'
+  # v0.32.3.0: the functional-area-resolver skill's behavior-contract
+  # section describes the privacy guarantees the skill preserves and
+  # references the banned literals while doing so (line 306). Same
+  # meta-rule-enforcement exception as scripts/check-privacy.sh and
+  # CHANGELOG.md — describing what the rule forbids requires naming it.
+  'skills/functional-area-resolver/SKILL.md'
 )
 
 is_allowed() {

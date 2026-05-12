@@ -69,10 +69,18 @@ CREATE TABLE IF NOT EXISTS pages (
   timeline      TEXT    NOT NULL DEFAULT '',
   frontmatter   JSONB   NOT NULL DEFAULT '{}',
   content_hash  TEXT,
+  -- v0.29: deterministic 0..1 score (tag emotion + take density + user-as-holder ratio).
+  -- Populated by the recompute_emotional_weight cycle phase.
+  emotional_weight REAL NOT NULL DEFAULT 0.0,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- v0.26.5: soft-delete + recovery window (mirrors src/schema.sql).
   deleted_at    TIMESTAMPTZ,
+  -- v0.29.1: salience-and-recency, additive opt-in (mirrors src/schema.sql).
+  effective_date        TIMESTAMPTZ,
+  effective_date_source TEXT,
+  import_filename       TEXT,
+  salience_touched_at   TIMESTAMPTZ,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
@@ -83,6 +91,9 @@ CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 -- v0.26.5: partial index supports the autopilot purge sweep (mirrors src/schema.sql).
 CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
   ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
+-- v0.29.1: expression index for since/until date-range filters.
+CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
+  ON pages ((COALESCE(effective_date, updated_at)));
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -234,16 +245,20 @@ CREATE TABLE IF NOT EXISTS page_versions (
 CREATE INDEX IF NOT EXISTS idx_versions_page ON page_versions(page_id);
 
 -- ============================================================
--- ingest_log (v0.18.0 Step 1: source_id deferred to v17, see src/schema.sql)
+-- ingest_log (v0.31.2: source_id added — codex P1 #3, migration v50)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS ingest_log (
   id            SERIAL PRIMARY KEY,
+  source_id     TEXT    NOT NULL DEFAULT 'default',
   source_type   TEXT    NOT NULL,
   source_ref    TEXT    NOT NULL,
   pages_updated JSONB   NOT NULL DEFAULT '[]',
   summary       TEXT    NOT NULL DEFAULT '',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_ingest_log_source_type_created
+  ON ingest_log (source_id, source_type, created_at DESC);
 
 -- ============================================================
 -- config: brain-level settings
@@ -444,7 +459,15 @@ CREATE TABLE IF NOT EXISTS eval_candidates (
   remote                BOOLEAN      NOT NULL,
   job_id                INTEGER,
   subagent_id           INTEGER,
-  created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+  created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  -- v0.29.1 — agent-explicit recency + salience capture for replay (mirrors src/schema.sql).
+  as_of_ts              TIMESTAMPTZ,
+  salience_param        TEXT,
+  recency_param         TEXT,
+  salience_resolved     TEXT,
+  recency_resolved      TEXT,
+  salience_source       TEXT,
+  recency_source        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_eval_candidates_created_at ON eval_candidates(created_at DESC);
 
@@ -454,6 +477,74 @@ CREATE TABLE IF NOT EXISTS eval_capture_failures (
   reason  TEXT         NOT NULL CHECK (reason IN ('db_down', 'rls_reject', 'check_violation', 'scrubber_exception', 'other'))
 );
 CREATE INDEX IF NOT EXISTS idx_eval_capture_failures_ts ON eval_capture_failures(ts DESC);
+
+-- ============================================================
+-- eval_takes_quality_runs (v0.32 — EXP-5): DB-authoritative receipts for
+-- the takes-quality eval CLI. Schema mirrors src/schema.sql + migration v49.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS eval_takes_quality_runs (
+  id                    BIGSERIAL    PRIMARY KEY,
+  receipt_sha8_corpus   TEXT         NOT NULL,
+  receipt_sha8_prompt   TEXT         NOT NULL,
+  receipt_sha8_models   TEXT         NOT NULL,
+  receipt_sha8_rubric   TEXT         NOT NULL,
+  rubric_version        TEXT         NOT NULL,
+  verdict               TEXT         NOT NULL CHECK (verdict IN ('pass','fail','inconclusive')),
+  overall_score         REAL         NOT NULL,
+  dim_scores            JSONB        NOT NULL,
+  cost_usd              REAL         NOT NULL,
+  receipt_json          JSONB        NOT NULL,
+  receipt_disk_path     TEXT,
+  created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  UNIQUE (receipt_sha8_corpus, receipt_sha8_prompt, receipt_sha8_models, receipt_sha8_rubric)
+);
+CREATE INDEX IF NOT EXISTS eval_takes_quality_runs_trend_idx
+  ON eval_takes_quality_runs (rubric_version, created_at DESC);
+
+-- ============================================================
+-- eval_contradictions_cache (v0.32.6): persistent judge verdicts for the
+-- contradiction probe. Composite key includes prompt_version + truncation_
+-- policy so prompt edits cleanly invalidate prior verdicts (Codex fix).
+-- TTL via expires_at; sweep runs periodically from cache.ts.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS eval_contradictions_cache (
+  chunk_a_hash       TEXT         NOT NULL,
+  chunk_b_hash       TEXT         NOT NULL,
+  model_id           TEXT         NOT NULL,
+  prompt_version     TEXT         NOT NULL,
+  truncation_policy  TEXT         NOT NULL,
+  verdict            JSONB        NOT NULL,
+  created_at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  expires_at         TIMESTAMPTZ  NOT NULL,
+  PRIMARY KEY (chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy)
+);
+CREATE INDEX IF NOT EXISTS eval_contradictions_cache_expires_idx
+  ON eval_contradictions_cache (expires_at);
+
+-- ============================================================
+-- eval_contradictions_runs (v0.32.6): time-series tracking for the probe.
+-- One row per 'gbrain eval suspected-contradictions' run; source for the
+-- 'trend' sub-subcommand and the doctor 'contradictions' check.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS eval_contradictions_runs (
+  run_id                       TEXT         PRIMARY KEY,
+  ran_at                       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  schema_version               INTEGER      NOT NULL DEFAULT 1,
+  judge_model                  TEXT         NOT NULL,
+  prompt_version               TEXT         NOT NULL,
+  queries_evaluated            INTEGER      NOT NULL,
+  queries_with_contradiction   INTEGER      NOT NULL,
+  total_contradictions_flagged INTEGER      NOT NULL,
+  wilson_ci_lower              REAL         NOT NULL,
+  wilson_ci_upper              REAL         NOT NULL,
+  judge_errors_total           INTEGER      NOT NULL,
+  cost_usd_total               REAL         NOT NULL,
+  duration_ms                  INTEGER      NOT NULL,
+  source_tier_breakdown        JSONB        NOT NULL,
+  report_json                  JSONB        NOT NULL
+);
+CREATE INDEX IF NOT EXISTS eval_contradictions_runs_ran_at_idx
+  ON eval_contradictions_runs (ran_at DESC);
 
 -- ============================================================
 -- access_tokens: legacy bearer tokens for remote MCP access

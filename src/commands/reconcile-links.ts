@@ -89,8 +89,16 @@ export async function runReconcileLinks(
   // Fetch pages one at a time via getPage (no bulk read helper exists yet).
   // On a 47K-page brain this is the slow path; a v0.20.x follow-up can add
   // getPagesBatch. For the typical 2K–5K markdown count it's fine.
+  // v0.18.0+ multi-source: source-scope getPage so reconcile picks up the
+  // intended-source row for `default`-vs-`<source>` ambiguity. The link
+  // edges below also propagate the same sourceId (Data R1 MED 1: opt was
+  // declared on ReconcileLinksOpts but ignored end-to-end).
+  const getPageOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
+  const linkOpts = opts.sourceId
+    ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
+    : undefined;
   for (const mdSlug of mdSlugs) {
-    const page = await engine.getPage(mdSlug);
+    const page = await engine.getPage(mdSlug, getPageOpts);
     if (!page) {
       progress.tick(1, mdSlug);
       continue;
@@ -113,10 +121,12 @@ export async function runReconcileLinks(
       const ctx = ref.line ? `cited at ${ref.path}:${ref.line}` : ref.path;
       edgesAttempted++;
       try {
-        // Forward: guide documents code. addLink's inner SELECT drops
-        // silently if codeSlug isn't a page yet (benign — counted below).
-        await engine.addLink(mdSlug, codeSlug, ctx, 'documents', 'markdown', mdSlug, 'compiled_truth');
-        await engine.addLink(codeSlug, mdSlug, ref.path, 'documented_by', 'markdown', mdSlug, 'compiled_truth');
+        // Forward: guide documents code. addLink's inner JOIN drops silently
+        // if codeSlug isn't a page yet (benign — counted below). Source-
+        // qualified per opts.sourceId; same-source assumption mirrors the
+        // import-file.ts:303 doc↔impl auto-link.
+        await engine.addLink(mdSlug, codeSlug, ctx, 'documents', 'markdown', mdSlug, 'compiled_truth', linkOpts); // gbrain-allow-direct-insert: gbrain reconcile-links command — code-graph reconciliation from markdown references
+        await engine.addLink(codeSlug, mdSlug, ref.path, 'documented_by', 'markdown', mdSlug, 'compiled_truth', linkOpts); // gbrain-allow-direct-insert: gbrain reconcile-links command — reverse documented_by edge
       } catch (e: unknown) {
         // Per-link errors don't abort the batch. Track them for the summary.
         const msg = e instanceof Error ? e.message : String(e);
