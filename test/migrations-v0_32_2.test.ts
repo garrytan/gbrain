@@ -72,6 +72,17 @@ async function seedLegacyFact(input: {
   return r.rows[0].id;
 }
 
+function makeDirtyGitWorktree(dir: string): void {
+  const init = Bun.spawnSync({
+    cmd: ['git', 'init'],
+    cwd: dir,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  expect(init.exitCode).toBe(0);
+  writeFileSync(join(dir, 'uncommitted.md'), 'dirty', 'utf-8');
+}
+
 describe('phaseASchema', () => {
   test('passes when schema is at v51', async () => {
     // initSchema ran v51, so the version config + columns are set.
@@ -89,6 +100,19 @@ describe('phaseASchema', () => {
     const r = await __testing.phaseASchema(null, OPTS);
     expect(r.status).toBe('skipped');
     expect(r.detail).toBe('no_brain_configured');
+  });
+});
+
+describe('isLocalPathDirty', () => {
+  test('treats non-git source directories as untracked rather than dirty', () => {
+    expect(__testing.isLocalPathDirty(brainDir)).toBe(false);
+  });
+
+  test('fails closed on unexpected git probe errors', () => {
+    const notDirectory = join(brainDir, 'not-a-directory');
+    writeFileSync(notDirectory, 'file, not directory', 'utf-8');
+
+    expect(() => __testing.isLocalPathDirty(notDirectory)).toThrow();
   });
 });
 
@@ -235,6 +259,59 @@ describe('phaseBFenceFacts — happy path backfill', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query('SELECT row_num FROM facts');
     expect(rows.rows[0].row_num).toBeNull();
+  });
+
+  test('does not refuse a dirty source when there are no legacy facts to write', async () => {
+    makeDirtyGitWorktree(brainDir);
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r.status).toBe('complete');
+    expect(r.detail).toContain('scanned=0');
+    expect(r.detail).toContain('fenced=0');
+  });
+
+  test('does not refuse a dirty source when all legacy facts are structurally unfenceable', async () => {
+    makeDirtyGitWorktree(brainDir);
+    await seedLegacyFact({ entity_slug: null, fact: 'Unparented claim' });
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r.status).toBe('complete');
+    expect(r.detail).toContain('skipped_no_entity=1');
+    expect(r.detail).toContain('fenced=0');
+  });
+
+  test('does not refuse a dirty source that has no fenceable writes in this migration', async () => {
+    const unusedDir = mkdtempSync(join(tmpdir(), 'mig-v0_32_2-unused-source-'));
+    try {
+      makeDirtyGitWorktree(unusedDir);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(
+        `INSERT INTO sources (id, name, local_path, config)
+         VALUES ('unused-dirty', 'unused-dirty', $1, '{}'::jsonb)
+         ON CONFLICT (id) DO UPDATE SET local_path = excluded.local_path`,
+        [unusedDir],
+      );
+      await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Default source write only' });
+
+      const r = await __testing.phaseBFenceFacts(engine, OPTS);
+      expect(r.status).toBe('complete');
+      expect(r.detail).toContain('fenced=1');
+      expect(existsSync(join(brainDir, 'people/alice.md'))).toBe(true);
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(`DELETE FROM sources WHERE id = 'unused-dirty'`);
+      rmSync(unusedDir, { recursive: true, force: true });
+    }
+  });
+
+  test('still refuses a dirty source before writing fenceable facts', async () => {
+    makeDirtyGitWorktree(brainDir);
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Needs a fenced write' });
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r.status).toBe('failed');
+    expect(r.detail).toContain('source "default" has uncommitted changes');
+    expect(existsSync(join(brainDir, 'people/alice.md'))).toBe(false);
   });
 });
 
