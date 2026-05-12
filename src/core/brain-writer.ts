@@ -359,6 +359,14 @@ function walkDir(root: string, visit: (absPath: string) => boolean | void): void
       continue;
     }
     for (const name of entries) {
+      // Skip the same directories the `frontmatter generate` walker at
+      // src/commands/frontmatter.ts:421 and src/core/disk-walk.ts:56
+      // already skip. Without this, scanBrainSources (called by doctor's
+      // frontmatter_integrity check) recurses into `node_modules/` and
+      // flags every dependency's HISTORY.md / CHANGELOG.md / readme.md as
+      // MISSING_OPEN — the bug filed in #799 (800+ false-positives on
+      // JS/TS code sources).
+      if (name === '.git' || name === 'node_modules' || name === '.obsidian') continue;
       const full = join(dir, name);
       let st: ReturnType<typeof lstatSync>;
       try {
