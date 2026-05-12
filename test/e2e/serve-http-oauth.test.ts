@@ -875,4 +875,129 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(rejected).toBe(true);
     expect(body).not.toMatch(/"job_id"\s*:\s*"?\d+/);
   }, 15_000);
+
+  // =========================================================================
+  // Legacy SSE MCP transport (GET /sse + POST /messages)
+  // =========================================================================
+  //
+  // The newer Streamable HTTP transport on POST /mcp covers most MCP clients,
+  // but openclaw and other clients on older SDK versions still use the legacy
+  // SSEClientTransport pattern (two-endpoint: GET /sse + POST /messages). The
+  // server implementation lives next to POST /mcp in serve-http.ts; this test
+  // proves the full round-trip works for clients pinned to that transport.
+  //
+  // Test shape: open the SSE stream with a bearer, read the `endpoint` event
+  // the SDK emits, POST a tools/list to that endpoint with the same bearer,
+  // then receive the JSON-RPC response back on the SSE stream as a `message`
+  // event. Same scope rules + audit log path as POST /mcp.
+
+  /**
+   * Parse the next named SSE event from a streaming Response body. Reads
+   * chunks until one full event (`event:` + `data:` + blank line) has been
+   * assembled, then resolves with `{ event, data }`. Times out after `ms`.
+   */
+  async function readNextSseEvent(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    ms = 5000,
+  ): Promise<{ event: string; data: string }> {
+    const decoder = new TextDecoder();
+    let buf = '';
+    const deadline = Date.now() + ms;
+
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      const tick = await Promise.race([
+        reader.read(),
+        new Promise<{ done: true; value: undefined }>((resolve) =>
+          setTimeout(() => resolve({ done: true, value: undefined }), remaining),
+        ),
+      ]);
+
+      if (tick.done) throw new Error(`SSE event timeout after ${ms}ms; buffered: ${JSON.stringify(buf)}`);
+      buf += decoder.decode(tick.value as Uint8Array, { stream: true });
+
+      // Events end with a blank line. Split on \n\n to find complete frames.
+      const sep = buf.indexOf('\n\n');
+      if (sep !== -1) {
+        const frame = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        let event = 'message';
+        let data = '';
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim();
+          else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trimStart();
+        }
+        return { event, data };
+      }
+    }
+
+    throw new Error(`SSE event timeout after ${ms}ms; buffered: ${JSON.stringify(buf)}`);
+  }
+
+  test('legacy SSE transport: GET /sse + POST /messages round-trips tools/list', async () => {
+    const { access_token } = await mintToken('read');
+
+    // 1. Open the SSE stream.
+    const sseRes = await fetch(`${BASE}/sse`, {
+      headers: { 'Authorization': `Bearer ${access_token}`, 'Accept': 'text/event-stream' },
+    });
+    expect(sseRes.ok).toBe(true);
+    expect(sseRes.headers.get('content-type')).toContain('text/event-stream');
+
+    const reader = sseRes.body!.getReader();
+    try {
+      // 2. The SDK's SSEServerTransport.start() emits an `endpoint` event
+      //    immediately with the POST URL (containing the auto-generated
+      //    sessionId).
+      const endpointEvent = await readNextSseEvent(reader);
+      expect(endpointEvent.event).toBe('endpoint');
+      expect(endpointEvent.data).toMatch(/^\/messages\?sessionId=[A-Za-z0-9-]+/);
+
+      // 3. POST a tools/list to that endpoint. Same bearer.
+      const postRes = await fetch(`${BASE}${endpointEvent.data}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      });
+      // SDK responds 202 Accepted to the POST; the actual JSON-RPC result
+      // comes back on the SSE stream as a `message` event.
+      expect(postRes.ok).toBe(true);
+
+      // 4. Read the response off the SSE stream.
+      const messageEvent = await readNextSseEvent(reader);
+      expect(messageEvent.event).toBe('message');
+      const rpc = JSON.parse(messageEvent.data);
+      expect(rpc.jsonrpc).toBe('2.0');
+      expect(rpc.id).toBe(1);
+      expect(Array.isArray(rpc.result?.tools)).toBe(true);
+      expect(rpc.result.tools.length).toBeGreaterThan(0);
+    } finally {
+      try { await reader.cancel(); } catch { /* ignore */ }
+    }
+  }, 15_000);
+
+  test('legacy SSE: GET /sse without bearer returns 401', async () => {
+    const res = await fetch(`${BASE}/sse`, { headers: { 'Accept': 'text/event-stream' } });
+    expect(res.status).toBe(401);
+  });
+
+  test('legacy SSE: POST /messages with unknown sessionId returns 404', async () => {
+    const { access_token } = await mintToken('read');
+    const res = await fetch(`${BASE}/messages?sessionId=does-not-exist`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  test('legacy SSE: POST /messages without sessionId returns 400', async () => {
+    const { access_token } = await mintToken('read');
+    const res = await fetch(`${BASE}/messages`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    expect(res.status).toBe(400);
+  });
 });
