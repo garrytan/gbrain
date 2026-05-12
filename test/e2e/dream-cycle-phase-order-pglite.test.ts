@@ -103,6 +103,7 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'sync',
   'synthesize',
   'extract',
+  'extract_facts',               // v0.32.2 — reconcile fence → DB facts index
   'patterns',
   'recompute_emotional_weight', // v0.29
   'consolidate',                // v0.31

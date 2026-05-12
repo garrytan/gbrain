@@ -204,25 +204,17 @@ function parseStringCell(raw: string): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-// Match a markdown table row's cell-stripped content. Allows surrounding
-// whitespace and tolerates trailing `|`.
-function parseRowCells(line: string): string[] | null {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith('|') || !trimmed.includes('|', 1)) return null;
-  // Strip leading and trailing pipes, split on `|`, trim cells.
-  const inner = trimmed.replace(/^\|/, '').replace(/\|$/, '');
-  return inner.split('|').map(c => c.trim());
-}
-
-function isSeparatorRow(cells: string[]): boolean {
-  return cells.every(c => /^[-:\s]+$/.test(c)) && cells.length > 0;
-}
-
-function stripStrikethrough(s: string): { text: string; struck: boolean } {
-  const m = s.match(/^~~(.+?)~~$/);
-  if (m) return { text: m[1].trim(), struck: true };
-  return { text: s, struck: false };
-}
+// Pipe-row parsing, separator detection, and strikethrough handling moved
+// to src/core/fence-shared.ts in v0.32.2 — same primitives are used by
+// facts-fence and any future fence-based category. Behavior here is
+// byte-identical to the v0.28-shipped inline versions; the takes-fence
+// test suite is the regression gate.
+import {
+  parseRowCells,
+  isSeparatorRow,
+  stripStrikethrough,
+  escapeFenceCell as safeFenceCell,
+} from './fence-shared.ts';
 
 function parseSinceCell(raw: string): { since?: string; until?: string } {
   const trimmed = raw.trim();
@@ -418,8 +410,10 @@ export function renderTakesFence(takes: ParsedTake[]): string {
     const sinceCell = t.untilDate ? `${t.sinceDate ?? ''} → ${t.untilDate}` : (t.sinceDate ?? '');
     const w = formatWeight(t.weight);
     const source = t.source ?? '';
-    // Escape any pipes inside cells so the table doesn't break.
-    const safe = (s: string) => s.replace(/\|/g, '\\|');
+    // Escape any pipes inside cells so the table doesn't break. The
+    // escapeFenceCell primitive lives in fence-shared.ts and is re-aliased
+    // as `safe` here purely to keep the row-render lines visually compact.
+    const safe = safeFenceCell;
     const baseCells = `| ${t.rowNum} | ${safe(claimCell)} | ${t.kind} | ${safe(t.holder)} | ${w} | ${safe(sinceCell)} | ${safe(source)} |`;
     if (!hasAnyResolution) return baseCells;
     // Resolution cells. Empty string for unresolved rows keeps the table
