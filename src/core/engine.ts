@@ -10,8 +10,11 @@ import type {
   DerivedIndexState,
   DerivedIndexStateFilters,
   DerivedJob,
+  DerivedJobFailureInput,
   DerivedJobFilters,
   DerivedJobInput,
+  DerivedJobLeaseInput,
+  DerivedJobLeaseReleaseInput,
   ContextMapEntry,
   ContextMapEntryInput,
   ContextMapFilters,
@@ -243,6 +246,9 @@ export interface BrainEngine {
 
   // Durable derived jobs and freshness state
   enqueueDerivedJob(input: DerivedJobInput): Promise<DerivedJob>;
+  claimNextDerivedJob(input: DerivedJobLeaseInput): Promise<DerivedJob | null>;
+  releaseDerivedJobLease(input: DerivedJobLeaseReleaseInput): Promise<DerivedJob | null>;
+  markDerivedJobFailed(input: DerivedJobFailureInput): Promise<DerivedJob | null>;
   listDerivedJobs(filters?: DerivedJobFilters): Promise<DerivedJob[]>;
   getDerivedIndexState(
     scopeId: string,
@@ -260,6 +266,7 @@ export interface BrainEngine {
     derived_parameters?: Record<string, unknown>;
     extractor_version?: string;
     derived_schema_version?: string;
+    lease_owner?: string;
     require_active_job?: boolean;
   }): Promise<DerivedIndexState>;
 

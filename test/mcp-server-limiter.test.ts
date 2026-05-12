@@ -67,6 +67,42 @@ describe('MCP tool execution limiter', () => {
     expect(events).toEqual(['first-start', 'first-end', 'second-start']);
   });
 
+  test('reports foreground pressure while mutating work is active or queued', async () => {
+    const limiter = createMcpToolExecutionLimiter({ heavyReadConcurrency: 1 });
+    const mutating = operation('put_page', true);
+    const firstCanFinish = deferred();
+    const firstStarted = deferred();
+
+    const first = limiter.run(mutating, async () => {
+      firstStarted.resolve();
+      await firstCanFinish.promise;
+      return 'first';
+    });
+    await firstStarted.promise;
+    expect(limiter.getForegroundPressure()).toEqual({
+      active: 1,
+      queued: 0,
+      hasPressure: true,
+    });
+
+    const second = limiter.run(mutating, async () => 'second');
+    await Promise.resolve();
+    expect(limiter.getForegroundPressure()).toEqual({
+      active: 1,
+      queued: 1,
+      hasPressure: true,
+    });
+
+    firstCanFinish.resolve();
+    await expect(first).resolves.toBe('first');
+    await expect(second).resolves.toBe('second');
+    expect(limiter.getForegroundPressure()).toEqual({
+      active: 0,
+      queued: 0,
+      hasPressure: false,
+    });
+  });
+
   test('does not block light tools behind heavy reads', async () => {
     const limiter = createMcpToolExecutionLimiter({ heavyReadConcurrency: 1 });
     const heavy = operation('read_context');

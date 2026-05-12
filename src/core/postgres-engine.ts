@@ -5,6 +5,8 @@ import {
   derivedJobMatchesTarget,
   derivedExtractorVersion,
   derivedSchemaVersion,
+  normalizeDerivedJobLeaseDurationMs,
+  normalizeDerivedJobMaxAttempts,
   normalizeDerivedParameters,
   retargetDerivedJobSlug,
   retargetDefaultManifestPath,
@@ -35,8 +37,11 @@ import type {
   DerivedIndexState,
   DerivedIndexStateFilters,
   DerivedJob,
+  DerivedJobFailureInput,
   DerivedJobFilters,
   DerivedJobInput,
+  DerivedJobLeaseInput,
+  DerivedJobLeaseReleaseInput,
   ContextMapEntry,
   ContextMapEntryInput,
   ContextMapFilters,
@@ -3085,6 +3090,110 @@ export class PostgresEngine implements BrainEngine {
     ).enqueueDerivedJobInTransaction(input));
   }
 
+  async claimNextDerivedJob(input: DerivedJobLeaseInput): Promise<DerivedJob | null> {
+    return this.transaction(async (tx) => (
+      tx as PostgresEngine
+    ).claimNextDerivedJobInTransaction(input));
+  }
+
+  private async claimNextDerivedJobInTransaction(input: DerivedJobLeaseInput): Promise<DerivedJob | null> {
+    const sql = this.sql;
+    await sql`LOCK TABLE derived_jobs IN EXCLUSIVE MODE`;
+    const leaseDurationMs = normalizeDerivedJobLeaseDurationMs(input.lease_duration_ms);
+    const rows = await sql`
+      SELECT id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+             derived_parameters, status, attempts, last_error, lease_owner,
+             lease_expires_at, created_at, updated_at
+      FROM derived_jobs
+      WHERE status = 'pending'
+         OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= now()))
+      ORDER BY created_at ASC, updated_at ASC, id ASC
+      LIMIT 1
+    `;
+    if (rows.length === 0) return null;
+    const job = rowToDerivedJob(rows[0] as Record<string, unknown>);
+    const updatedRows = await sql`
+      UPDATE derived_jobs
+      SET status = 'running',
+          attempts = attempts + 1,
+          last_error = NULL,
+          lease_owner = ${input.lease_owner},
+          lease_expires_at = now() + (${leaseDurationMs} * interval '1 millisecond'),
+          updated_at = now()
+      WHERE id = ${job.id}
+      RETURNING id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+                derived_parameters, status, attempts, last_error, lease_owner,
+                lease_expires_at, created_at, updated_at
+    `;
+    return rowToDerivedJob(updatedRows[0] as Record<string, unknown>);
+  }
+
+  async markDerivedJobFailed(input: DerivedJobFailureInput): Promise<DerivedJob | null> {
+    return this.transaction(async (tx) => (
+      tx as PostgresEngine
+    ).markDerivedJobFailedInTransaction(input));
+  }
+
+  async releaseDerivedJobLease(input: DerivedJobLeaseReleaseInput): Promise<DerivedJob | null> {
+    return this.transaction(async (tx) => (
+      tx as PostgresEngine
+    ).releaseDerivedJobLeaseInTransaction(input));
+  }
+
+  private async releaseDerivedJobLeaseInTransaction(input: DerivedJobLeaseReleaseInput): Promise<DerivedJob | null> {
+    const sql = this.sql;
+    await sql`LOCK TABLE derived_jobs IN EXCLUSIVE MODE`;
+    const existing = await this.getDerivedJobById(input.id);
+    if (!existing) return null;
+    if (existing.status !== 'running') return existing;
+    if (existing.lease_owner !== input.lease_owner) return existing;
+
+    const rows = await sql`
+      UPDATE derived_jobs
+      SET status = 'pending',
+          attempts = GREATEST(attempts - 1, 0),
+          lease_owner = NULL,
+          lease_expires_at = NULL,
+          updated_at = now()
+      WHERE id = ${input.id} AND status = 'running' AND lease_owner = ${input.lease_owner}
+      RETURNING id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+                derived_parameters, status, attempts, last_error, lease_owner,
+                lease_expires_at, created_at, updated_at
+    `;
+    if (rows.length === 0) return this.getDerivedJobById(input.id);
+    return rowToDerivedJob(rows[0] as Record<string, unknown>);
+  }
+
+  private async markDerivedJobFailedInTransaction(input: DerivedJobFailureInput): Promise<DerivedJob | null> {
+    const sql = this.sql;
+    await sql`LOCK TABLE derived_jobs IN EXCLUSIVE MODE`;
+    const existing = await this.getDerivedJobById(input.id);
+    if (!existing) return null;
+    if (existing.status !== 'running') return existing;
+    if (input.lease_owner !== undefined && existing.lease_owner !== input.lease_owner) return existing;
+
+    const maxAttempts = normalizeDerivedJobMaxAttempts(input.max_attempts);
+    const nextStatus = existing.attempts < maxAttempts ? 'pending' : 'failed';
+    const rows = await sql`
+      UPDATE derived_jobs
+      SET status = ${nextStatus},
+          last_error = ${input.error},
+          lease_owner = NULL,
+          lease_expires_at = NULL,
+          updated_at = now()
+      WHERE id = ${input.id} AND status = 'running'
+      RETURNING id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+                derived_parameters, status, attempts, last_error, lease_owner,
+                lease_expires_at, created_at, updated_at
+    `;
+    if (rows.length === 0) return this.getDerivedJobById(input.id);
+    const updated = rowToDerivedJob(rows[0] as Record<string, unknown>);
+    if (updated.status === 'failed') {
+      await this.upsertFailedDerivedIndexStateFromJob(updated, input.error);
+    }
+    return updated;
+  }
+
   private async enqueueDerivedJobInTransaction(input: DerivedJobInput): Promise<DerivedJob> {
     const sql = this.sql;
     await sql`LOCK TABLE derived_jobs IN EXCLUSIVE MODE`;
@@ -3266,6 +3375,7 @@ export class PostgresEngine implements BrainEngine {
     derived_parameters?: Record<string, unknown>;
     extractor_version?: string;
     derived_schema_version?: string;
+    lease_owner?: string;
     require_active_job?: boolean;
   }): Promise<DerivedIndexState> {
     return this.transaction(async (tx) => (
@@ -3283,6 +3393,7 @@ export class PostgresEngine implements BrainEngine {
     derived_parameters?: Record<string, unknown>;
     extractor_version?: string;
     derived_schema_version?: string;
+    lease_owner?: string;
     require_active_job?: boolean;
   }): Promise<DerivedIndexState> {
     const sql = this.sql;
@@ -3317,7 +3428,10 @@ export class PostgresEngine implements BrainEngine {
         AND status IN ('pending', 'running')
     `;
     const activeJobs = (activeRows as Record<string, unknown>[]).map(rowToDerivedJob);
-    const matchingJob = activeJobs.find((job) => derivedJobMatchesTarget(job, target));
+    const matchingJob = activeJobs.find((job) => (
+      derivedJobMatchesTarget(job, target)
+      && (input.lease_owner === undefined || job.lease_owner === input.lease_owner)
+    ));
     const currentState = await this.getDerivedIndexState(input.scope_id, normalizedSlug, input.artifact_kind);
     if (activeJobs.length > 0 && !matchingJob) {
       return currentState ?? await this.upsertPendingDerivedIndexStateFromJob(activeJobs[0]!);
@@ -3414,6 +3528,57 @@ export class PostgresEngine implements BrainEngine {
       job.derived_parameters,
     );
     return (await this.getDerivedIndexState(job.scope_id, job.slug, job.artifact_kind))!;
+  }
+
+  private async getDerivedJobById(id: string): Promise<DerivedJob | null> {
+    const rows = await this.sql`
+      SELECT id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+             derived_parameters, status, attempts, last_error, lease_owner,
+             lease_expires_at, created_at, updated_at
+      FROM derived_jobs
+      WHERE id = ${id}
+    `;
+    if (rows.length === 0) return null;
+    return rowToDerivedJob(rows[0] as Record<string, unknown>);
+  }
+
+  private async upsertFailedDerivedIndexStateFromJob(
+    job: DerivedJob,
+    error: string,
+  ): Promise<void> {
+    const input: DerivedJobInput = {
+      scope_id: job.scope_id,
+      slug: job.slug,
+      artifact_kind: job.artifact_kind,
+      target_content_hash: job.target_content_hash,
+      manifest_path: job.manifest_path,
+      derived_parameters: job.derived_parameters,
+    };
+    await this.sql`
+      INSERT INTO derived_index_state (
+        scope_id, slug, artifact_kind, target_content_hash, indexed_content_hash,
+        status, extractor_version, derived_schema_version, last_error, updated_at
+      ) VALUES (
+        ${job.scope_id},
+        ${job.slug},
+        ${job.artifact_kind},
+        ${job.target_content_hash},
+        NULL,
+        'failed',
+        ${derivedExtractorVersion(input)},
+        ${derivedSchemaVersion(input)},
+        ${error},
+        now()
+      )
+      ON CONFLICT (scope_id, slug, artifact_kind) DO UPDATE SET
+        target_content_hash = EXCLUDED.target_content_hash,
+        indexed_content_hash = NULL,
+        status = EXCLUDED.status,
+        extractor_version = EXCLUDED.extractor_version,
+        derived_schema_version = EXCLUDED.derived_schema_version,
+        last_error = EXCLUDED.last_error,
+        updated_at = EXCLUDED.updated_at
+    `;
   }
 
   async upsertContextMapEntry(input: ContextMapEntryInput): Promise<ContextMapEntry> {

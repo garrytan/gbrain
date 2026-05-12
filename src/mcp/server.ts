@@ -1,6 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
+import { startDerivedWorker, type DerivedWorkerController } from '../core/derived-worker.ts';
 import { operations as defaultOperations, OperationError, MCP_INSTRUCTIONS } from '../core/operations.ts';
 import type { Operation, OperationContext } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
@@ -22,6 +23,7 @@ export const DEFAULT_MCP_GET_PAGE_CHAR_LIMIT = 6_000;
 const MIN_MCP_MAX_RESULT_TEXT_BYTES = 512;
 const MCP_RESULT_TEXT_FRAME_OVERHEAD_BYTES = 1_024;
 const TRUNCATION_MARKER = '\n\n[truncated by mbrain MCP response guard]';
+const DEFAULT_MCP_DERIVED_WORKER_POLL_INTERVAL_MS = 1_000;
 
 export type FormatMcpToolResultOptions = {
   maxResultTextBytes?: number;
@@ -47,6 +49,13 @@ export type McpToolExecutionLimiterOptions = {
 
 export type McpToolExecutionLimiter = {
   run<T>(operation: Operation, task: () => Promise<T>): Promise<T>;
+  getForegroundPressure(): McpForegroundPressure;
+};
+
+export type McpForegroundPressure = {
+  active: number;
+  queued: number;
+  hasPressure: boolean;
 };
 
 const DEFAULT_MCP_HEAVY_READ_CONCURRENCY = 2;
@@ -133,6 +142,13 @@ export function createMcpToolExecutionLimiter(
           return task();
       }
     },
+    getForegroundPressure(): McpForegroundPressure {
+      const snapshot = mutatingQueue.getSnapshot();
+      return {
+        ...snapshot,
+        hasPressure: snapshot.active > 0 || snapshot.queued > 0,
+      };
+    },
   };
 }
 
@@ -162,6 +178,13 @@ class McpConcurrencyQueue {
       next();
     }
   }
+
+  getSnapshot(): { active: number; queued: number } {
+    return {
+      active: this.active,
+      queued: this.queue.length,
+    };
+  }
 }
 
 function parseConfiguredMcpHeavyReadConcurrency(): number {
@@ -176,6 +199,19 @@ function parseConfiguredMcpHeavyReadConcurrency(): number {
 function normalizeMcpConcurrencyLimit(value: number, fallback: number): number {
   if (!Number.isFinite(value) || value <= 0) return fallback;
   return Math.max(1, Math.floor(value));
+}
+
+function shouldStartMcpDerivedWorker(): boolean {
+  return process.env.MBRAIN_DERIVED_WORKER !== '0';
+}
+
+function parseConfiguredMcpDerivedWorkerPollIntervalMs(): number {
+  const raw = process.env.MBRAIN_DERIVED_WORKER_POLL_INTERVAL_MS;
+  if (!raw) return DEFAULT_MCP_DERIVED_WORKER_POLL_INTERVAL_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.max(1, Math.floor(parsed))
+    : DEFAULT_MCP_DERIVED_WORKER_POLL_INTERVAL_MS;
 }
 
 export function mcpResultTextBudgetForFinalFrame(
@@ -635,6 +671,28 @@ export async function startMcpServer(engine: BrainEngine | Promise<BrainEngine>)
 
   const transport = new BudgetedStdioServerTransport();
   await server.connect(transport);
+  let derivedWorker: DerivedWorkerController | undefined;
+  let transportClosed = false;
+  const previousOnClose = transport.onclose;
+  transport.onclose = () => {
+    transportClosed = true;
+    derivedWorker?.stop();
+    previousOnClose?.();
+  };
+  if (shouldStartMcpDerivedWorker()) {
+    void enginePromise.then((resolvedEngine) => {
+      if (transportClosed) return;
+      derivedWorker = startDerivedWorker(resolvedEngine, {
+        leaseOwner: `mcp-stdio-${process.pid}`,
+        pollIntervalMs: parseConfiguredMcpDerivedWorkerPollIntervalMs(),
+        shouldYieldToForeground: () => toolExecutionLimiter.getForegroundPressure().hasPressure,
+        onError: (error) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          process.stderr.write(`[warn] derived worker error: ${msg}\n`);
+        },
+      });
+    }).catch(() => undefined);
+  }
 }
 
 // Backward compat: used by `mbrain call` command

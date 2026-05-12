@@ -9,6 +9,8 @@ import {
   derivedJobMatchesTarget,
   derivedExtractorVersion,
   derivedSchemaVersion,
+  normalizeDerivedJobLeaseDurationMs,
+  normalizeDerivedJobMaxAttempts,
   normalizeDerivedParameters,
   retargetDerivedJobSlug,
   retargetDefaultManifestPath,
@@ -44,8 +46,11 @@ import type {
   DerivedIndexState,
   DerivedIndexStateFilters,
   DerivedJob,
+  DerivedJobFailureInput,
   DerivedJobFilters,
   DerivedJobInput,
+  DerivedJobLeaseInput,
+  DerivedJobLeaseReleaseInput,
   ContextMapEntry,
   ContextMapEntryInput,
   ContextMapFilters,
@@ -3524,6 +3529,100 @@ export class SQLiteEngine implements BrainEngine {
     ).enqueueDerivedJobInTransaction(input));
   }
 
+  async claimNextDerivedJob(input: DerivedJobLeaseInput): Promise<DerivedJob | null> {
+    return this.transaction(async (tx) => (
+      tx as SQLiteEngine
+    ).claimNextDerivedJobInTransaction(input));
+  }
+
+  private async claimNextDerivedJobInTransaction(input: DerivedJobLeaseInput): Promise<DerivedJob | null> {
+    const now = new Date();
+    const timestamp = now.toISOString();
+    const leaseDurationMs = normalizeDerivedJobLeaseDurationMs(input.lease_duration_ms);
+    const leaseExpiresAt = new Date(now.getTime() + leaseDurationMs).toISOString();
+    const row = this.database.query(`
+      SELECT id, scope_id, slug, artifact_kind, target_content_hash, manifest_path,
+             derived_parameters, status, attempts, last_error, lease_owner,
+             lease_expires_at, created_at, updated_at
+      FROM derived_jobs
+      WHERE status = 'pending'
+         OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
+      ORDER BY created_at ASC, updated_at ASC, id ASC
+      LIMIT 1
+    `).get(timestamp) as Record<string, unknown> | null;
+    if (!row) return null;
+
+    const job = rowToDerivedJob(row);
+    this.database.run(`
+      UPDATE derived_jobs
+      SET status = 'running',
+          attempts = attempts + 1,
+          last_error = NULL,
+          lease_owner = ?,
+          lease_expires_at = ?,
+          updated_at = ?
+      WHERE id = ?
+    `, [input.lease_owner, leaseExpiresAt, timestamp, job.id]);
+    return this.getDerivedJobById(job.id);
+  }
+
+  async markDerivedJobFailed(input: DerivedJobFailureInput): Promise<DerivedJob | null> {
+    return this.transaction(async (tx) => (
+      tx as SQLiteEngine
+    ).markDerivedJobFailedInTransaction(input));
+  }
+
+  async releaseDerivedJobLease(input: DerivedJobLeaseReleaseInput): Promise<DerivedJob | null> {
+    return this.transaction(async (tx) => (
+      tx as SQLiteEngine
+    ).releaseDerivedJobLeaseInTransaction(input));
+  }
+
+  private async releaseDerivedJobLeaseInTransaction(input: DerivedJobLeaseReleaseInput): Promise<DerivedJob | null> {
+    const timestamp = nowIso();
+    const existing = await this.getDerivedJobById(input.id);
+    if (!existing) return null;
+    if (existing.status !== 'running') return existing;
+    if (existing.lease_owner !== input.lease_owner) return existing;
+
+    this.database.run(`
+      UPDATE derived_jobs
+      SET status = 'pending',
+          attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
+          lease_owner = NULL,
+          lease_expires_at = NULL,
+          updated_at = ?
+      WHERE id = ? AND status = 'running' AND lease_owner = ?
+    `, [timestamp, input.id, input.lease_owner]);
+    return this.getDerivedJobById(input.id);
+  }
+
+  private async markDerivedJobFailedInTransaction(input: DerivedJobFailureInput): Promise<DerivedJob | null> {
+    const timestamp = nowIso();
+    const existing = await this.getDerivedJobById(input.id);
+    if (!existing) return null;
+    if (existing.status !== 'running') return existing;
+    if (input.lease_owner !== undefined && existing.lease_owner !== input.lease_owner) return existing;
+
+    const maxAttempts = normalizeDerivedJobMaxAttempts(input.max_attempts);
+    const nextStatus = existing.attempts < maxAttempts ? 'pending' : 'failed';
+    this.database.run(`
+      UPDATE derived_jobs
+      SET status = ?,
+          last_error = ?,
+          lease_owner = NULL,
+          lease_expires_at = NULL,
+          updated_at = ?
+      WHERE id = ? AND status = 'running'
+    `, [nextStatus, input.error, timestamp, input.id]);
+
+    const updated = await this.getDerivedJobById(input.id);
+    if (updated?.status === 'failed') {
+      await this.upsertFailedDerivedIndexStateFromJob(updated, input.error, timestamp);
+    }
+    return updated;
+  }
+
   private async enqueueDerivedJobInTransaction(input: DerivedJobInput): Promise<DerivedJob> {
     const normalizedSlug = validateSlug(input.slug);
     const parameters = normalizeDerivedParameters(input);
@@ -3686,6 +3785,7 @@ export class SQLiteEngine implements BrainEngine {
     derived_parameters?: Record<string, unknown>;
     extractor_version?: string;
     derived_schema_version?: string;
+    lease_owner?: string;
     require_active_job?: boolean;
   }): Promise<DerivedIndexState> {
     return this.transaction(async (tx) => (
@@ -3703,6 +3803,7 @@ export class SQLiteEngine implements BrainEngine {
     derived_parameters?: Record<string, unknown>;
     extractor_version?: string;
     derived_schema_version?: string;
+    lease_owner?: string;
     require_active_job?: boolean;
   }): Promise<DerivedIndexState> {
     const normalizedSlug = validateSlug(input.slug);
@@ -3736,7 +3837,10 @@ export class SQLiteEngine implements BrainEngine {
         AND status IN ('pending', 'running')
     `).all(input.scope_id, normalizedSlug, input.artifact_kind) as Record<string, unknown>[];
     const activeJobs = activeRows.map(rowToDerivedJob);
-    const matchingJob = activeJobs.find((job) => derivedJobMatchesTarget(job, target));
+    const matchingJob = activeJobs.find((job) => (
+      derivedJobMatchesTarget(job, target)
+      && (input.lease_owner === undefined || job.lease_owner === input.lease_owner)
+    ));
     const currentState = await this.getDerivedIndexState(input.scope_id, normalizedSlug, input.artifact_kind);
     if (activeJobs.length > 0 && !matchingJob) {
       return currentState ?? await this.upsertPendingDerivedIndexStateFromJob(activeJobs[0]!);
@@ -3806,6 +3910,44 @@ export class SQLiteEngine implements BrainEngine {
       nowIso(),
     );
     return (await this.getDerivedIndexState(job.scope_id, job.slug, job.artifact_kind))!;
+  }
+
+  private async upsertFailedDerivedIndexStateFromJob(
+    job: DerivedJob,
+    error: string,
+    timestamp: string,
+  ): Promise<void> {
+    const input: DerivedJobInput = {
+      scope_id: job.scope_id,
+      slug: job.slug,
+      artifact_kind: job.artifact_kind,
+      target_content_hash: job.target_content_hash,
+      manifest_path: job.manifest_path,
+      derived_parameters: job.derived_parameters,
+    };
+    this.database.run(`
+      INSERT INTO derived_index_state (
+        scope_id, slug, artifact_kind, target_content_hash, indexed_content_hash,
+        status, extractor_version, derived_schema_version, last_error, updated_at
+      ) VALUES (?, ?, ?, ?, NULL, 'failed', ?, ?, ?, ?)
+      ON CONFLICT(scope_id, slug, artifact_kind) DO UPDATE SET
+        target_content_hash = excluded.target_content_hash,
+        indexed_content_hash = NULL,
+        status = excluded.status,
+        extractor_version = excluded.extractor_version,
+        derived_schema_version = excluded.derived_schema_version,
+        last_error = excluded.last_error,
+        updated_at = excluded.updated_at
+    `, [
+      job.scope_id,
+      job.slug,
+      job.artifact_kind,
+      job.target_content_hash,
+      derivedExtractorVersion(input),
+      derivedSchemaVersion(input),
+      error,
+      timestamp,
+    ]);
   }
 
   private async upsertPendingDerivedIndexState(

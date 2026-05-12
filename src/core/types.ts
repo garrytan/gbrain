@@ -261,6 +261,23 @@ export interface DerivedJobInput {
   derived_schema_version?: string;
 }
 
+export interface DerivedJobLeaseInput {
+  lease_owner: string;
+  lease_duration_ms?: number;
+}
+
+export interface DerivedJobFailureInput {
+  id: string;
+  error: string;
+  lease_owner?: string;
+  max_attempts?: number;
+}
+
+export interface DerivedJobLeaseReleaseInput {
+  id: string;
+  lease_owner: string;
+}
+
 export interface DerivedJobFilters {
   scope_id?: string;
   slug?: string;

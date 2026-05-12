@@ -38,6 +38,9 @@ export interface ImportFromContentOptions {
 export interface RefreshDerivedStorageOptions {
   path?: string;
   expectedContentHash?: string | null;
+  leaseOwner?: string;
+  leaseArtifactKind?: DerivedArtifactKind;
+  signal?: AbortSignal;
 }
 
 const PAGE_CHUNKS_EXTRACTOR_VERSION = 'recursive-chunks-v1';
@@ -54,6 +57,12 @@ const DERIVED_REFRESH_TARGET_CHANGED_ERROR =
 class DerivedRefreshTargetChangedError extends Error {
   constructor() {
     super(DERIVED_REFRESH_TARGET_CHANGED_ERROR);
+  }
+}
+
+class DerivedRefreshAbortedError extends Error {
+  constructor() {
+    super('Skipped derived refresh because the worker was stopped before completion.');
   }
 }
 
@@ -190,6 +199,7 @@ export async function refreshDerivedStorageForPage(
   let skipError: string | undefined;
 
   try {
+    assertDerivedRefreshNotAborted(options.signal);
     await engine.transaction(async (tx) => {
       const page = await tx.getPageForUpdate(normalizedSlug);
       if (!page) {
@@ -215,6 +225,7 @@ export async function refreshDerivedStorageForPage(
         return;
       }
 
+      assertDerivedRefreshNotAborted(options.signal);
       chunkCount = await replacePageDerivedStorage(
         tx,
         page,
@@ -222,10 +233,15 @@ export async function refreshDerivedStorageForPage(
         manifestPath,
         undefined,
         targetState.activeArtifactKinds,
+        options.leaseOwner,
+        options.leaseArtifactKind,
+        options.signal,
       );
     });
   } catch (error) {
-    if (!(error instanceof DerivedRefreshTargetChangedError)) throw error;
+    if (!(error instanceof DerivedRefreshTargetChangedError) && !(error instanceof DerivedRefreshAbortedError)) {
+      throw error;
+    }
     chunkCount = -1;
     skipError = error.message;
   }
@@ -257,9 +273,15 @@ async function replacePageDerivedStorage(
   manifestPath: string,
   chunks = buildPageChunks(page.compiled_truth, page.timeline, page.frontmatter),
   activeArtifactKinds?: ReadonlySet<DerivedArtifactKind>,
+  leaseOwner?: string,
+  leaseArtifactKind?: DerivedArtifactKind,
+  signal?: AbortSignal,
 ): Promise<number> {
+  assertDerivedRefreshNotAborted(signal);
   await engine.deleteChunks(page.slug);
+  assertDerivedRefreshNotAborted(signal);
   await engine.upsertChunks(page.slug, chunks);
+  assertDerivedRefreshNotAborted(signal);
   const manifest = await engine.upsertNoteManifestEntry(buildNoteManifestEntry({
     page_id: page.id,
     slug: page.slug,
@@ -268,6 +290,7 @@ async function replacePageDerivedStorage(
     content_hash: page.content_hash,
     page,
   }));
+  assertDerivedRefreshNotAborted(signal);
   await engine.replaceNoteSectionEntries(
     manifest.scope_id,
     manifest.slug,
@@ -280,10 +303,25 @@ async function replacePageDerivedStorage(
       manifest,
     }),
   );
-  if (!await markPageDerivedStorageReady(engine, page, manifestPath, tags, activeArtifactKinds)) {
+  assertDerivedRefreshNotAborted(signal);
+  if (!await markPageDerivedStorageReady(
+    engine,
+    page,
+    manifestPath,
+    tags,
+    activeArtifactKinds,
+    leaseOwner,
+    leaseArtifactKind,
+  )) {
     throw new DerivedRefreshTargetChangedError();
   }
   return chunks.length;
+}
+
+function assertDerivedRefreshNotAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) {
+    throw new DerivedRefreshAbortedError();
+  }
 }
 
 async function invalidatePageDerivedStorage(
@@ -323,9 +361,12 @@ async function markPageDerivedStorageReady(
   manifestPath: string,
   tags: string[] = [],
   activeArtifactKinds?: ReadonlySet<DerivedArtifactKind>,
+  leaseOwner?: string,
+  leaseArtifactKind?: DerivedArtifactKind,
 ): Promise<boolean> {
   if (!page.content_hash) return true;
   for (const artifactKind of PAGE_DERIVED_ARTIFACTS) {
+    const artifactLeaseOwner = leaseArtifactKind === artifactKind ? leaseOwner : undefined;
     const state = await engine.markDerivedIndexReady({
       scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
       slug: page.slug,
@@ -336,6 +377,7 @@ async function markPageDerivedStorageReady(
       derived_parameters: pageDerivedParameters(artifactKind, manifestPath, tags),
       extractor_version: PAGE_DERIVED_EXTRACTOR_VERSIONS[artifactKind],
       derived_schema_version: DERIVED_SCHEMA_VERSION,
+      lease_owner: artifactLeaseOwner,
       require_active_job: activeArtifactKinds?.has(artifactKind) === true,
     });
     if (!isReadyDerivedIndexState(state, page, artifactKind)) return false;

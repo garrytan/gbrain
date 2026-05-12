@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { importFromContent } from '../src/core/import-file.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from '../src/core/services/note-manifest-service.ts';
 
@@ -209,6 +210,237 @@ describe('derived job engine APIs', () => {
         indexed_content_hash: null,
         status: 'pending',
       });
+    });
+  });
+
+  test('claimNextDerivedJob leases pending work and reclaims expired running work', async () => {
+    await withEngines(async (engine, label) => {
+      const api = engine as any;
+      const slug = `concepts/${label}-lease-derived`;
+      const pending = await api.enqueueDerivedJob({
+        scope_id: 'workspace:default',
+        slug,
+        artifact_kind: 'note_manifest',
+        target_content_hash: 'hash-1',
+        manifest_path: `${slug}.md`,
+        derived_parameters: {
+          manifest_path: `${slug}.md`,
+          extractor_version: 'phase2-structural-v1',
+          derived_schema_version: 'page-derived-v1',
+        },
+      });
+
+      const claimed = await api.claimNextDerivedJob({
+        lease_owner: `${label}-worker-a`,
+        lease_duration_ms: 60_000,
+      });
+      expect(claimed).toMatchObject({
+        id: pending.id,
+        status: 'running',
+        attempts: 1,
+        lease_owner: `${label}-worker-a`,
+      });
+      expect(await api.claimNextDerivedJob({ lease_owner: `${label}-worker-b` })).toBeNull();
+
+      if (label === 'sqlite') {
+        api.database.run(`UPDATE derived_jobs SET lease_expires_at = ? WHERE id = ?`, [
+          '2000-01-01T00:00:00.000Z',
+          pending.id,
+        ]);
+      } else {
+        await api.db.query(`UPDATE derived_jobs SET lease_expires_at = $1 WHERE id = $2`, [
+          '2000-01-01T00:00:00.000Z',
+          pending.id,
+        ]);
+      }
+
+      const reclaimed = await api.claimNextDerivedJob({ lease_owner: `${label}-worker-b` });
+      expect(reclaimed).toMatchObject({
+        id: pending.id,
+        status: 'running',
+        attempts: 2,
+        lease_owner: `${label}-worker-b`,
+      });
+    });
+  });
+
+  test('markDerivedJobFailed retries until max attempts then marks derived state failed', async () => {
+    await withEngines(async (engine, label) => {
+      const api = engine as any;
+      const slug = `concepts/${label}-failed-derived`;
+      await api.enqueueDerivedJob({
+        scope_id: 'workspace:default',
+        slug,
+        artifact_kind: 'note_sections',
+        target_content_hash: 'hash-1',
+        manifest_path: `${slug}.md`,
+        derived_parameters: {
+          manifest_path: `${slug}.md`,
+          extractor_version: 'phase2-sections-v1',
+          derived_schema_version: 'page-derived-v1',
+        },
+      });
+
+      const first = await api.claimNextDerivedJob({ lease_owner: `${label}-worker` });
+      expect(first?.attempts).toBe(1);
+      const retried = await api.markDerivedJobFailed({
+        id: first.id,
+        error: 'temporary failure',
+        max_attempts: 2,
+      });
+      expect(retried).toMatchObject({
+        status: 'pending',
+        attempts: 1,
+        last_error: 'temporary failure',
+        lease_owner: null,
+      });
+
+      const second = await api.claimNextDerivedJob({ lease_owner: `${label}-worker` });
+      expect(second?.attempts).toBe(2);
+      const failed = await api.markDerivedJobFailed({
+        id: second.id,
+        error: 'permanent failure',
+        max_attempts: 2,
+      });
+      expect(failed).toMatchObject({
+        status: 'failed',
+        attempts: 2,
+        last_error: 'permanent failure',
+        lease_owner: null,
+      });
+      expect(await api.getDerivedIndexState('workspace:default', slug, 'note_sections')).toMatchObject({
+        status: 'failed',
+        target_content_hash: 'hash-1',
+        indexed_content_hash: null,
+        last_error: 'permanent failure',
+      });
+    });
+  });
+
+  test('releaseDerivedJobLease returns a claimed job to pending without burning an attempt', async () => {
+    await withEngines(async (engine, label) => {
+      const api = engine as any;
+      const slug = `concepts/${label}-release-derived`;
+      await api.enqueueDerivedJob({
+        scope_id: 'workspace:default',
+        slug,
+        artifact_kind: 'note_manifest',
+        target_content_hash: 'hash-1',
+        manifest_path: `${slug}.md`,
+        derived_parameters: {
+          manifest_path: `${slug}.md`,
+          extractor_version: 'phase2-structural-v1',
+          derived_schema_version: 'page-derived-v1',
+        },
+      });
+
+      const claimed = await api.claimNextDerivedJob({ lease_owner: `${label}-worker-a` });
+      expect(claimed).toMatchObject({
+        status: 'running',
+        attempts: 1,
+        lease_owner: `${label}-worker-a`,
+      });
+
+      const ownerless = await api.releaseDerivedJobLease({ id: claimed.id });
+      expect(ownerless).toMatchObject({
+        status: 'running',
+        attempts: 1,
+        lease_owner: `${label}-worker-a`,
+      });
+
+      const ignored = await api.releaseDerivedJobLease({
+        id: claimed.id,
+        lease_owner: `${label}-worker-b`,
+      });
+      expect(ignored).toMatchObject({
+        status: 'running',
+        attempts: 1,
+        lease_owner: `${label}-worker-a`,
+      });
+
+      const released = await api.releaseDerivedJobLease({
+        id: claimed.id,
+        lease_owner: `${label}-worker-a`,
+      });
+      expect(released).toMatchObject({
+        status: 'pending',
+        attempts: 0,
+        lease_owner: null,
+        lease_expires_at: null,
+      });
+    });
+  });
+
+  test('ready and failure completion respect the active lease owner when supplied', async () => {
+    await withEngines(async (engine, label) => {
+      const api = engine as any;
+      const slug = `concepts/${label}-lease-owner-derived`;
+      await api.enqueueDerivedJob({
+        scope_id: 'workspace:default',
+        slug,
+        artifact_kind: 'page_chunks',
+        target_content_hash: 'hash-1',
+        manifest_path: `${slug}.md`,
+        derived_parameters: {
+          manifest_path: `${slug}.md`,
+          extractor_version: 'recursive-chunks-v1',
+          derived_schema_version: 'page-derived-v1',
+        },
+      });
+
+      const claimed = await api.claimNextDerivedJob({
+        lease_owner: `${label}-worker-a`,
+        lease_duration_ms: 60_000,
+      });
+      expect(claimed?.lease_owner).toBe(`${label}-worker-a`);
+
+      const ignoredFailure = await api.markDerivedJobFailed({
+        id: claimed.id,
+        error: 'wrong owner',
+        lease_owner: `${label}-worker-b`,
+        max_attempts: 1,
+      });
+      expect(ignoredFailure).toMatchObject({
+        status: 'running',
+        lease_owner: `${label}-worker-a`,
+        last_error: null,
+      });
+
+      const staleCompletion = await api.markDerivedIndexReady({
+        scope_id: 'workspace:default',
+        slug,
+        artifact_kind: 'page_chunks',
+        target_content_hash: 'hash-1',
+        indexed_content_hash: 'hash-1',
+        manifest_path: `${slug}.md`,
+        derived_parameters: {
+          manifest_path: `${slug}.md`,
+          extractor_version: 'recursive-chunks-v1',
+          derived_schema_version: 'page-derived-v1',
+        },
+        lease_owner: `${label}-worker-b`,
+        require_active_job: true,
+      });
+      expect(staleCompletion.status).toBe('pending');
+      expect(await api.listDerivedJobs({ slug, status: 'running' })).toHaveLength(1);
+
+      const ready = await api.markDerivedIndexReady({
+        scope_id: 'workspace:default',
+        slug,
+        artifact_kind: 'page_chunks',
+        target_content_hash: 'hash-1',
+        indexed_content_hash: 'hash-1',
+        manifest_path: `${slug}.md`,
+        derived_parameters: {
+          manifest_path: `${slug}.md`,
+          extractor_version: 'recursive-chunks-v1',
+          derived_schema_version: 'page-derived-v1',
+        },
+        lease_owner: `${label}-worker-a`,
+        require_active_job: true,
+      });
+      expect(ready.status).toBe('ready');
+      expect(await api.listDerivedJobs({ slug })).toHaveLength(0);
     });
   });
 
@@ -612,6 +844,134 @@ describe('derived job engine APIs', () => {
       expect(jobs.find((job: any) => job.id === newer.id)?.manifest_path).toBe('concepts/new-path.md');
     });
   });
+
+  const postgresDatabaseUrl = process.env.DATABASE_URL;
+  if (postgresDatabaseUrl) {
+    test('postgres implements the derived job lease, release, retry, and owner contract', async () => {
+      const engine = new PostgresEngine();
+      const slug = `concepts/postgres-derived-contract-${Date.now()}`;
+      try {
+        await engine.connect({ engine: 'postgres', database_url: postgresDatabaseUrl });
+        await engine.initSchema();
+        await engine.enqueueDerivedJob({
+          scope_id: 'workspace:default',
+          slug,
+          artifact_kind: 'page_chunks',
+          target_content_hash: 'hash-1',
+          manifest_path: `${slug}.md`,
+          derived_parameters: {
+            manifest_path: `${slug}.md`,
+            extractor_version: 'recursive-chunks-v1',
+            derived_schema_version: 'page-derived-v1',
+          },
+        });
+
+        const firstClaim = await engine.claimNextDerivedJob({
+          lease_owner: 'postgres-worker-a',
+          lease_duration_ms: 60_000,
+        });
+        expect(firstClaim).toMatchObject({
+          slug,
+          status: 'running',
+          attempts: 1,
+          lease_owner: 'postgres-worker-a',
+        });
+
+        const ignoredFailure = await engine.markDerivedJobFailed({
+          id: firstClaim!.id,
+          error: 'wrong owner',
+          lease_owner: 'postgres-worker-b',
+          max_attempts: 1,
+        });
+        expect(ignoredFailure).toMatchObject({
+          status: 'running',
+          lease_owner: 'postgres-worker-a',
+          last_error: null,
+        });
+
+        const ignoredReady = await engine.markDerivedIndexReady({
+          scope_id: 'workspace:default',
+          slug,
+          artifact_kind: 'page_chunks',
+          target_content_hash: 'hash-1',
+          indexed_content_hash: 'hash-1',
+          manifest_path: `${slug}.md`,
+          derived_parameters: {
+            manifest_path: `${slug}.md`,
+            extractor_version: 'recursive-chunks-v1',
+            derived_schema_version: 'page-derived-v1',
+          },
+          lease_owner: 'postgres-worker-b',
+          require_active_job: true,
+        });
+        expect(ignoredReady.status).toBe('pending');
+
+        const ignoredRelease = await engine.releaseDerivedJobLease({
+          id: firstClaim!.id,
+          lease_owner: 'postgres-worker-b',
+        });
+        expect(ignoredRelease).toMatchObject({
+          status: 'running',
+          attempts: 1,
+          lease_owner: 'postgres-worker-a',
+        });
+
+        await engine.sql`
+          UPDATE derived_jobs
+          SET lease_expires_at = '2000-01-01T00:00:00.000Z'
+          WHERE id = ${firstClaim!.id}
+        `;
+        const reclaimed = await engine.claimNextDerivedJob({ lease_owner: 'postgres-worker-b' });
+        expect(reclaimed).toMatchObject({
+          id: firstClaim!.id,
+          status: 'running',
+          attempts: 2,
+          lease_owner: 'postgres-worker-b',
+        });
+
+        const released = await engine.releaseDerivedJobLease({
+          id: reclaimed!.id,
+          lease_owner: 'postgres-worker-b',
+        });
+        expect(released).toMatchObject({
+          status: 'pending',
+          attempts: 1,
+          lease_owner: null,
+        });
+
+        const finalClaim = await engine.claimNextDerivedJob({ lease_owner: 'postgres-worker-b' });
+        expect(finalClaim).toMatchObject({
+          id: firstClaim!.id,
+          status: 'running',
+          attempts: 2,
+        });
+        const failed = await engine.markDerivedJobFailed({
+          id: finalClaim!.id,
+          error: 'permanent failure',
+          lease_owner: 'postgres-worker-b',
+          max_attempts: 2,
+        });
+        expect(failed).toMatchObject({
+          status: 'failed',
+          attempts: 2,
+          last_error: 'permanent failure',
+        });
+        expect(await engine.getDerivedIndexState('workspace:default', slug, 'page_chunks')).toMatchObject({
+          status: 'failed',
+          indexed_content_hash: null,
+          last_error: 'permanent failure',
+        });
+      } finally {
+        if ((engine as any)._sql) {
+          await engine.sql`DELETE FROM derived_jobs WHERE slug = ${slug}`;
+          await engine.sql`DELETE FROM derived_index_state WHERE slug = ${slug}`;
+        }
+        await engine.disconnect().catch(() => undefined);
+      }
+    });
+  } else {
+    test.skip('postgres derived job lease contract skipped: DATABASE_URL is not configured', () => {});
+  }
 });
 
 function methodBody(source: string, methodName: string): string {

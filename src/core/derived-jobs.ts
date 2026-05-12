@@ -10,6 +10,8 @@ export const PAGE_DERIVED_ARTIFACTS: DerivedArtifactKind[] = [
   'note_manifest',
   'note_sections',
 ];
+export const DEFAULT_DERIVED_JOB_LEASE_DURATION_MS = 30_000;
+export const DEFAULT_DERIVED_JOB_MAX_ATTEMPTS = 3;
 
 export function normalizeDerivedParameters(input: DerivedJobInput): Record<string, unknown> {
   const parameters = canonicalizeJsonObject(input.derived_parameters ?? {});
@@ -73,6 +75,20 @@ export function canonicalDerivedTags(tags: string[]): string[] {
   return Array.from(new Set(tags.map((tag) => tag.trim()).filter(Boolean))).sort((left, right) => (
     left.localeCompare(right)
   ));
+}
+
+export function normalizeDerivedJobLeaseDurationMs(value: number | undefined): number {
+  if (!Number.isFinite(value) || value === undefined || value <= 0) {
+    return DEFAULT_DERIVED_JOB_LEASE_DURATION_MS;
+  }
+  return Math.max(1, Math.floor(value));
+}
+
+export function normalizeDerivedJobMaxAttempts(value: number | undefined): number {
+  if (!Number.isFinite(value) || value === undefined || value <= 0) {
+    return DEFAULT_DERIVED_JOB_MAX_ATTEMPTS;
+  }
+  return Math.max(1, Math.floor(value));
 }
 
 function parseJsonObject(value: unknown): Record<string, unknown> {

@@ -426,9 +426,19 @@ Implementation status:
   enqueue, stale completions are target-guarded, and page imports invalidate
   chunks/manifest/sections into durable pending work with derived freshness
   tracked by content hash plus extractor/schema metadata.
-- Steps 6-8 remain future work. The repository still does not prove the
-  foreground-aware worker drain loop, restart/burst worker behavior, or
-  dual-channel Telegram heartbeat behavior.
+- Step 6 is implemented in this PR slice: the MCP server starts a durable
+  derived worker by default, the worker leases and retries jobs with
+  content-hash and active-target guards, yields before claiming work when
+  mutating foreground MCP calls are active or queued, releases a claimed job
+  before refresh if foreground pressure appears after claim, and
+  restart/burst-yield/foreground-pressure tests prove durable drain behavior.
+- Steps 7-8 remain future work. The repository still does not prove the
+  dual-channel Telegram heartbeat behavior or source-ref/search optimization
+  impact with benchmark evidence.
+  The foreground-pressure signal is currently process-local to one MCP server;
+  multi-process deployments should run a single derived worker per backing
+  store, or set `MBRAIN_DERIVED_WORKER=0` on additional servers, until DB-wide
+  foreground pressure or worker election is added.
 
 ## Resolved Decisions And Remaining Open Questions
 
