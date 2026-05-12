@@ -183,6 +183,9 @@ HANDLER TYPES (built in)
   shell             Run a command or argv. Requires GBRAIN_ALLOW_SHELL_JOBS=1
                     on the worker. Params: {cmd?, argv?, cwd, env?}.
                     See: docs/guides/minions-shell-jobs.md
+  plugin handlers   Optional local job handlers loaded from GBRAIN_PLUGIN_PATH.
+                    Plugins must be absolute local directories with
+                    gbrain.plugin.json and job_handlers modules.
 `);
     return;
   }
@@ -899,7 +902,7 @@ HANDLER TYPES (built in)
       if (detach) {
         const { spawn } = await import('child_process');
         const childArgs = process.argv.slice(2).filter(a => a !== '--detach');
-        const child = spawn(process.execPath, [process.argv[1], ...childArgs], {
+        const child = spawn(cliPath, childArgs, {
           detached: true,
           stdio: ['ignore', 'ignore', 'inherit'],
           env: process.env,
@@ -1129,7 +1132,7 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
   // openclaw-seam startup line convention from v0.11+). Loaded
   // unconditionally; empty GBRAIN_PLUGIN_PATH is a no-op.
   try {
-    const { loadPluginsFromEnv } = await import('../core/minions/plugin-loader.ts');
+    const { loadPluginsFromEnv, registerPluginJobHandlersFromEnv } = await import('../core/minions/plugin-loader.ts');
     const { BRAIN_TOOL_ALLOWLIST } = await import('../core/minions/tools/brain-allowlist.ts');
     const validNames = new Set<string>();
     for (const n of BRAIN_TOOL_ALLOWLIST) validNames.add(`brain_${n}`);
@@ -1137,7 +1140,18 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     for (const w of loaded.warnings) process.stderr.write(w + '\n');
     for (const p of loaded.plugins) {
       process.stderr.write(
-        `[plugin-loader] loaded '${p.manifest.name}' v${p.manifest.version} (${p.subagents.length} subagents)\n`,
+        `[plugin-loader] loaded '${p.manifest.name}' v${p.manifest.version} ` +
+        `(${p.subagents.length} subagents, ${p.jobHandlers.length} job-handler modules)\n`,
+      );
+    }
+    const jobHandlerResult = await registerPluginJobHandlersFromEnv(worker, engine, {
+      validAgentToolNames: validNames,
+    });
+    for (const w of jobHandlerResult.warnings) process.stderr.write(w + '\n');
+    for (const entry of jobHandlerResult.registered) {
+      process.stderr.write(
+        `[plugin-loader] registered job handlers from '${entry.plugin}/${entry.module}': ` +
+        `${entry.handlers.length > 0 ? entry.handlers.join(', ') : '(none)'}\n`,
       );
     }
   } catch (e) {

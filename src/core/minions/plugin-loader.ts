@@ -32,7 +32,10 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import matter from 'gray-matter';
+import type { BrainEngine } from '../engine.ts';
+import type { MinionHandler } from './types.ts';
 
 export const SUPPORTED_PLUGIN_VERSION = 'gbrain-plugin-v1';
 
@@ -41,6 +44,7 @@ export interface PluginManifest {
   version: string;
   plugin_version: string;
   subagents?: string;
+  job_handlers?: string;
   description?: string;
 }
 
@@ -58,9 +62,23 @@ export interface SubagentDefinition {
   allowed_tools?: string[];
 }
 
+export interface JobHandlerDefinition {
+  /** The plugin that shipped this job-handler module. */
+  plugin_name: string;
+  /** Stable module name, derived from the handler filename. */
+  name: string;
+  /** Full path to the JS/TS module on disk. */
+  source_path: string;
+}
+
 export interface PluginLoadResult {
   /** Successfully loaded plugins with their subagents. */
-  plugins: Array<{ manifest: PluginManifest; rootDir: string; subagents: SubagentDefinition[] }>;
+  plugins: Array<{
+    manifest: PluginManifest;
+    rootDir: string;
+    subagents: SubagentDefinition[];
+    jobHandlers: JobHandlerDefinition[];
+  }>;
   /** Per-path warnings (rejected, missing, malformed) collected during load. */
   warnings: string[];
 }
@@ -119,7 +137,12 @@ export function loadPluginsFromEnv(opts: LoadOpts = {}): PluginLoadResult {
         accepted.push(sa);
       }
 
-      result.plugins.push({ manifest: loaded.manifest, rootDir: p, subagents: accepted });
+      result.plugins.push({
+        manifest: loaded.manifest,
+        rootDir: p,
+        subagents: accepted,
+        jobHandlers: loaded.jobHandlers,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       result.warnings.push(`[plugin-loader] unexpected error loading ${p}: ${msg}`);
@@ -145,6 +168,7 @@ function rejectIfNotAbsolute(p: string): string | null {
 export interface LoadedPlugin {
   manifest: PluginManifest;
   subagents: SubagentDefinition[];
+  jobHandlers: JobHandlerDefinition[];
 }
 
 /**
@@ -225,11 +249,112 @@ export function loadSinglePlugin(
     }
   }
 
-  return { manifest, subagents };
+  let jobHandlers: JobHandlerDefinition[];
+  try {
+    jobHandlers = loadJobHandlerDefinitions(rootDir, manifest);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  return { manifest, subagents, jobHandlers };
+}
+
+function loadJobHandlerDefinitions(rootDir: string, manifest: PluginManifest): JobHandlerDefinition[] | never {
+  if (manifest.job_handlers === undefined) return [];
+  if (typeof manifest.job_handlers !== 'string' || manifest.job_handlers.trim().length === 0) {
+    throw new Error('manifest "job_handlers" must be a non-empty relative directory path');
+  }
+
+  const handlersDir = path.resolve(rootDir, manifest.job_handlers);
+  if (!handlersDir.startsWith(rootDir + path.sep) && handlersDir !== rootDir) {
+    throw new Error(`job_handlers path escapes plugin root: ${manifest.job_handlers}`);
+  }
+  if (!fs.existsSync(handlersDir)) return [];
+  if (!fs.statSync(handlersDir).isDirectory()) {
+    throw new Error(`job_handlers path is not a directory: ${manifest.job_handlers}`);
+  }
+
+  const supported = new Set(['.js', '.mjs', '.ts']);
+  return fs.readdirSync(handlersDir)
+    .filter(entry => supported.has(path.extname(entry)))
+    .sort()
+    .map(entry => ({
+      plugin_name: manifest.name,
+      name: entry.replace(/\.(mjs|js|ts)$/, ''),
+      source_path: path.join(handlersDir, entry),
+    }));
+}
+
+export interface JobHandlerRegistrar {
+  readonly registeredNames: string[];
+  register(name: string, handler: MinionHandler): void;
+}
+
+export interface RegisterPluginJobHandlersResult {
+  registered: Array<{ plugin: string; module: string; handlers: string[] }>;
+  warnings: string[];
+}
+
+export async function registerPluginJobHandlersFromEnv(
+  worker: JobHandlerRegistrar,
+  engine: BrainEngine,
+  opts: LoadOpts = {},
+): Promise<RegisterPluginJobHandlersResult> {
+  const loaded = loadPluginsFromEnv(opts);
+  const warnings = [...loaded.warnings];
+  const registered: Array<{ plugin: string; module: string; handlers: string[] }> = [];
+
+  for (const plugin of loaded.plugins) {
+    for (const def of plugin.jobHandlers) {
+      const before = new Set(worker.registeredNames);
+      const handlersForModule: string[] = [];
+      const registrar: JobHandlerRegistrar = {
+        get registeredNames() {
+          return worker.registeredNames;
+        },
+        register(name: string, handler: MinionHandler) {
+          const normalized = (name || '').trim();
+          if (!normalized) {
+            throw new Error('job handler name cannot be empty');
+          }
+          if (before.has(normalized) || handlersForModule.includes(normalized)) {
+            throw new Error(`job handler '${normalized}' is already registered`);
+          }
+          worker.register(normalized, handler);
+          handlersForModule.push(normalized);
+        },
+      };
+
+      try {
+        const moduleUrl = pathToFileURL(def.source_path).href;
+        const mod = await import(moduleUrl);
+        const registerFn = mod.registerJobHandlers ?? mod.register ?? mod.default;
+        if (typeof registerFn !== 'function') {
+          warnings.push(
+            `[plugin-loader] job handler module ${def.source_path} has no registerJobHandlers/register/default export`,
+          );
+          continue;
+        }
+        await registerFn(registrar, engine, {
+          pluginName: plugin.manifest.name,
+          pluginRoot: plugin.rootDir,
+          manifest: plugin.manifest,
+          modulePath: def.source_path,
+        });
+        registered.push({ plugin: plugin.manifest.name, module: def.name, handlers: handlersForModule });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        warnings.push(`[plugin-loader] rejected job handler ${def.source_path}: ${msg}`);
+      }
+    }
+  }
+
+  return { registered, warnings };
 }
 
 /** Testing surface. */
 export const __testing = {
   rejectIfNotAbsolute,
   SUPPORTED_PLUGIN_VERSION,
+  loadJobHandlerDefinitions,
 };
