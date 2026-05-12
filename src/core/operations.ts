@@ -28,6 +28,7 @@ import {
   LIST_PAGES_DESCRIPTION,
   QUERY_DESCRIPTION,
   SEARCH_DESCRIPTION,
+  FIND_CONTRADICTIONS_DESCRIPTION,
 } from './operations-descriptions.ts';
 
 // --- Types ---
@@ -2204,6 +2205,72 @@ const find_anomalies: Operation = {
   cliHints: { name: 'anomalies' },
 };
 
+const find_contradictions: Operation = {
+  name: 'find_contradictions',
+  description: FIND_CONTRADICTIONS_DESCRIPTION,
+  scope: 'read',
+  // Reads eval_contradictions_runs.report_json for the latest run, then
+  // filters in-memory by slug and severity. No new probe is triggered;
+  // the agent surfaces what's already on disk.
+  params: {
+    slug: {
+      type: 'string',
+      description: 'Optional slug filter; matches either side of a pair (substring match on slug).',
+    },
+    severity: {
+      type: 'string',
+      enum: ['low', 'medium', 'high'],
+      description: 'Optional severity filter.',
+    },
+    limit: {
+      type: 'number',
+      description: 'Max findings to return. Default 20.',
+    },
+  },
+  handler: async (ctx, p) => {
+    const limit = typeof p.limit === 'number' && p.limit > 0 ? Math.min(p.limit, 100) : 20;
+    const slugFilter = typeof p.slug === 'string' ? p.slug.toLowerCase() : null;
+    const sevFilter = (p.severity === 'low' || p.severity === 'medium' || p.severity === 'high')
+      ? p.severity
+      : null;
+    const rows = await ctx.engine.loadContradictionsTrend(30);
+    if (rows.length === 0) {
+      return { contradictions: [], note: 'No probe runs in the last 30 days; run `gbrain eval suspected-contradictions` first.' };
+    }
+    const latest = rows[0];
+    const report = latest.report_json as Record<string, unknown> | null;
+    const perQuery = (report?.per_query as Array<{
+      contradictions: Array<{
+        kind: string;
+        severity: 'low' | 'medium' | 'high';
+        axis: string;
+        confidence: number;
+        a: { slug: string; chunk_id: number | null; take_id: number | null };
+        b: { slug: string; chunk_id: number | null; take_id: number | null };
+        resolution_kind: string;
+        resolution_command: string;
+      }>;
+    }> | undefined) ?? [];
+    const findings = perQuery.flatMap((q) => q.contradictions);
+    const filtered = findings.filter((f) => {
+      if (sevFilter && f.severity !== sevFilter) return false;
+      if (slugFilter) {
+        const sA = f.a.slug.toLowerCase();
+        const sB = f.b.slug.toLowerCase();
+        if (!sA.includes(slugFilter) && !sB.includes(slugFilter)) return false;
+      }
+      return true;
+    });
+    return {
+      run_id: latest.run_id,
+      ran_at: latest.ran_at,
+      contradictions: filtered.slice(0, limit),
+      total_in_run: findings.length,
+    };
+  },
+  cliHints: { name: 'find-contradictions' },
+};
+
 const get_recent_transcripts: Operation = {
   name: 'get_recent_transcripts',
   description: GET_RECENT_TRANSCRIPTS_DESCRIPTION,
@@ -2699,6 +2766,8 @@ export const operations: Operation[] = [
   get_recent_salience, find_anomalies, get_recent_transcripts,
   // v0.31: hot memory (facts table)
   extract_facts, recall, forget_fact,
+  // v0.32.6: contradiction probe MCP surface (M3)
+  find_contradictions,
 ];
 
 export const operationsByName = Object.fromEntries(

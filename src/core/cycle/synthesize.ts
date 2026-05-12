@@ -269,6 +269,12 @@ export async function runPhaseSynthesize(
       );
     }
 
+    // v0.32.6 M2: pre-fetch prior contradictions from the most recent probe
+    // run (if any). Surfaced as an informational block to the synthesize
+    // subagent so it knows which slugs it should reconcile if it writes to
+    // them. Best-effort — a probe that's never run is a normal early state.
+    const priorContradictionsBlock = await loadPriorContradictionsBlock(engine);
+
     // Discover.
     const transcripts = opts.inputFile
       ? loadAdHocTranscript(opts.inputFile, config.minChars, config.excludePatterns, opts.bypassDreamGuard)
@@ -389,7 +395,7 @@ export async function runPhaseSynthesize(
       const isChunked = chunks.length > 1;
       for (let i = 0; i < chunks.length; i++) {
         const childData: SubagentHandlerData = {
-          prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length),
+          prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length, priorContradictionsBlock),
           model: config.model,
           max_turns: 30,
           allowed_slug_prefixes: allowedSlugPrefixes,
@@ -709,11 +715,58 @@ Two reasons max, one phrase each.`;
  * collection time). Sonnet still gets the chunked seed via the prompt's
  * `USE THIS in slugs` rule for the happy path.
  */
+/**
+ * v0.32.6 M2 — Load prior probe findings into an informational block.
+ * Returns '' if no probe runs exist or the engine doesn't know how (pre-v33
+ * brain that hasn't applied migrations). Best-effort and silent on failure.
+ */
+async function loadPriorContradictionsBlock(engine: BrainEngine): Promise<string> {
+  try {
+    const rows = await engine.loadContradictionsTrend(30);
+    if (!rows || rows.length === 0) return '';
+    const latest = rows[0];
+    const report = latest.report_json as Record<string, unknown> | null;
+    const perQuery = (report?.per_query as Array<{
+      contradictions: Array<{
+        severity: 'low' | 'medium' | 'high';
+        axis: string;
+        a: { slug: string };
+        b: { slug: string };
+      }>;
+    }> | undefined) ?? [];
+    const findings: Array<{ severity: string; axis: string; a: string; b: string }> = [];
+    for (const q of perQuery) {
+      for (const c of q.contradictions) {
+        findings.push({ severity: c.severity, axis: c.axis, a: c.a.slug, b: c.b.slug });
+      }
+    }
+    if (findings.length === 0) return '';
+    // Sort by severity DESC (high first); take top 5 to keep prompt bounded.
+    const rank: Record<string, number> = { high: 3, medium: 2, low: 1 };
+    findings.sort((x, y) => (rank[y.severity] ?? 0) - (rank[x.severity] ?? 0));
+    const top = findings.slice(0, 5);
+    const lines = top.map((f) => `  - [${f.severity}] ${f.a} vs ${f.b}${f.axis ? ' — ' + f.axis : ''}`);
+    return [
+      '',
+      'PRIOR DETECTED CONTRADICTIONS (latest probe run, severity DESC, top 5):',
+      ...lines,
+      '',
+      'If your synthesis writes to any of these slugs, reconcile the contradiction',
+      'in the compiled_truth instead of recreating it. Either update to the newer/',
+      'correct value, mark the older claim as historical, or note the conflict',
+      'explicitly. Ignore findings irrelevant to what this transcript covers.',
+    ].join('\n');
+  } catch {
+    return '';
+  }
+}
+
 function buildSynthesisPrompt(
   t: DiscoveredTranscript,
   chunkText: string,
   chunkIdx: number,
   chunkTotal: number,
+  priorContradictionsBlock = '',
 ): string {
   const dateHint = t.inferredDate ?? today();
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
@@ -732,7 +785,7 @@ function buildSynthesisPrompt(
 CONTEXT
 - Today's date: ${dateHint}
 - Transcript hash suffix (USE THIS in slugs): ${hashSuffix}
-- Source file basename: ${baseSlugSegment}${chunkBanner}
+- Source file basename: ${baseSlugSegment}${chunkBanner}${priorContradictionsBlock}
 
 OUTPUT POLICY (ALL of these are required)
 1. Quote the user verbatim. Do not paraphrase memorable phrasings.

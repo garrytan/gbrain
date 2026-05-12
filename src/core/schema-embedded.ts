@@ -818,6 +818,47 @@ CREATE TABLE IF NOT EXISTS eval_takes_quality_runs (
 CREATE INDEX IF NOT EXISTS eval_takes_quality_runs_trend_idx
   ON eval_takes_quality_runs (rubric_version, created_at DESC);
 
+-- eval_contradictions_cache (v0.32.6): persistent judge verdicts for the
+-- contradiction probe. Composite primary key includes prompt_version +
+-- truncation_policy so any prompt edit cleanly invalidates prior verdicts
+-- (Codex outside-voice fix). TTL via expires_at; cache.ts sweeps periodically.
+CREATE TABLE IF NOT EXISTS eval_contradictions_cache (
+  chunk_a_hash       TEXT         NOT NULL,
+  chunk_b_hash       TEXT         NOT NULL,
+  model_id           TEXT         NOT NULL,
+  prompt_version     TEXT         NOT NULL,
+  truncation_policy  TEXT         NOT NULL,
+  verdict            JSONB        NOT NULL,
+  created_at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  expires_at         TIMESTAMPTZ  NOT NULL,
+  PRIMARY KEY (chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy)
+);
+CREATE INDEX IF NOT EXISTS eval_contradictions_cache_expires_idx
+  ON eval_contradictions_cache (expires_at);
+
+-- eval_contradictions_runs (v0.32.6): time-series tracking for the probe.
+-- One row per run; source for the \`trend\` sub-subcommand and the doctor
+-- \`contradictions\` check. report_json carries the full ProbeReport for replay.
+CREATE TABLE IF NOT EXISTS eval_contradictions_runs (
+  run_id                       TEXT         PRIMARY KEY,
+  ran_at                       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  schema_version               INTEGER      NOT NULL DEFAULT 1,
+  judge_model                  TEXT         NOT NULL,
+  prompt_version               TEXT         NOT NULL,
+  queries_evaluated            INTEGER      NOT NULL,
+  queries_with_contradiction   INTEGER      NOT NULL,
+  total_contradictions_flagged INTEGER      NOT NULL,
+  wilson_ci_lower              REAL         NOT NULL,
+  wilson_ci_upper              REAL         NOT NULL,
+  judge_errors_total           INTEGER      NOT NULL,
+  cost_usd_total               REAL         NOT NULL,
+  duration_ms                  INTEGER      NOT NULL,
+  source_tier_breakdown        JSONB        NOT NULL,
+  report_json                  JSONB        NOT NULL
+);
+CREATE INDEX IF NOT EXISTS eval_contradictions_runs_ran_at_idx
+  ON eval_contradictions_runs (ran_at DESC);
+
 -- NOTIFY trigger for real-time job events (Postgres only, not PGLite)
 CREATE OR REPLACE FUNCTION notify_minion_job_change() RETURNS trigger AS \$\$
 BEGIN
@@ -871,6 +912,9 @@ BEGIN
     ALTER TABLE eval_candidates ENABLE ROW LEVEL SECURITY;
     ALTER TABLE eval_capture_failures ENABLE ROW LEVEL SECURITY;
     ALTER TABLE eval_takes_quality_runs ENABLE ROW LEVEL SECURITY;
+    -- v0.32.6 contradiction probe tables
+    ALTER TABLE eval_contradictions_cache ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE eval_contradictions_runs ENABLE ROW LEVEL SECURITY;
     -- v0.26 OAuth 2.1 tables
     ALTER TABLE oauth_clients ENABLE ROW LEVEL SECURITY;
     ALTER TABLE oauth_tokens ENABLE ROW LEVEL SECURITY;
