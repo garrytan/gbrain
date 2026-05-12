@@ -469,6 +469,29 @@ describe('gbrain-context engine', () => {
     }
   });
 
+  it('C-prior C2: resolveTodayTasks returns empty when tasks.md exceeds 1MB', async () => {
+    // Defends against a runaway tasks file (clipboard-paste accident, log
+    // capture, etc) blocking every assemble() call with a multi-megabyte
+    // sync read. The size cap is 1MB; we generate a 2MB file.
+    const oversized = '# Tasks\n\n## Today\n\n- [ ] **Real task** — should-have-been-extracted\n' +
+      'x'.repeat(2_000_000);
+    tmpDir = makeWorkspace({
+      heartbeat: { garryAwake: true },
+      tasks: oversized,
+    });
+    const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
+
+    const result = await engine.assemble({
+      sessionId: 'oversized',
+      messages: [],
+    });
+
+    // The oversized file is skipped entirely — no "Real task" surfaces, and
+    // no "Open tasks:" line is emitted.
+    expect(result.systemPromptAddition).not.toContain('Real task');
+    expect(result.systemPromptAddition).not.toContain('Open tasks');
+  });
+
   it('T-NEW4: compact() returns no-runtime fallback when SDK is absent', async () => {
     // The standalone test environment has no openclaw/plugin-sdk installed,
     // so the lazy SDK load in ensureSdkLoaded() hits the catch branch and

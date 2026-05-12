@@ -13,7 +13,7 @@
  * @see https://docs.openclaw.ai/concepts/context-engine
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 // Types inlined from openclaw/plugin-sdk to avoid hard dependency during development.
 // At runtime inside OpenClaw, the real SDK is available; these types ensure build compat.
@@ -103,7 +103,17 @@ export function __resetSdkLoadStateForTests(): void {
 
 export const ENGINE_ID = 'gbrain-context';
 export const ENGINE_NAME = 'GBrain Context Engine';
-export const ENGINE_VERSION = '0.1.0';
+/**
+ * Engine contract version — bumps when the engine's public method shape
+ * changes (ContextEngine interface, AssembleResult fields, etc), NOT when
+ * the package version bumps. Pre-v0.32.5 this was named `ENGINE_VERSION`
+ * and looked like it should track package.json. Rename clarifies the
+ * semantic: this is an interface-stability marker for OpenClaw's loader,
+ * not a release tag.
+ */
+export const ENGINE_API_VERSION = '0.1.0';
+/** @deprecated Use ENGINE_API_VERSION. Kept for back-compat with v0.32.5 callers. */
+export const ENGINE_VERSION = ENGINE_API_VERSION;
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -368,10 +378,18 @@ function resolveActivity(
   return { currentEvent, nextEvents: nextEvents.slice(0, 3), calendarStale };
 }
 
+/** Soft cap on `ops/tasks.md` size to prevent a runaway file from blocking
+ * every `assemble()` call. 1 MB is generous for a human-edited task list. */
+const MAX_TASKS_MD_BYTES = 1_000_000;
+
 /** Extract open tasks from ops/tasks.md "## Today" section. */
 function resolveTodayTasks(workspaceDir: string): string[] {
   try {
-    const raw = readFileSync(join(workspaceDir, 'ops', 'tasks.md'), 'utf8');
+    const path = join(workspaceDir, 'ops', 'tasks.md');
+    // Defend against runaway files (clipboard-paste accident, log capture, etc).
+    // statSync throws if the file doesn't exist; that lands in the outer catch.
+    if (statSync(path).size > MAX_TASKS_MD_BYTES) return [];
+    const raw = readFileSync(path, 'utf8');
     const todayMatch = raw.match(/## Today[\s\S]*?(?=\n## |$)/);
     if (!todayMatch) return [];
 
@@ -541,7 +559,7 @@ export function createGBrainContextEngine(ctx: {
     info: {
       id: ENGINE_ID,
       name: ENGINE_NAME,
-      version: ENGINE_VERSION,
+      version: ENGINE_API_VERSION,
       ownsCompaction: false,  // delegate to legacy runtime
     } satisfies ContextEngineInfo,
 
