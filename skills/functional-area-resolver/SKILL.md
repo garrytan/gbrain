@@ -237,22 +237,59 @@ stay as individual rows — they're checked on every message, not dispatched.
 Run two gates before committing the compressed file. Do NOT commit if either
 fails.
 
-```bash
-# Structural verification — checks routing-eval.jsonl fixtures still resolve
-gbrain routing-eval --json
+**Gate 1: Structural verification.** Confirms your `routing-eval.jsonl`
+fixtures still resolve to the right skills under the compressed routing file.
+Run from the workspace whose routing file you just edited:
 
-# LLM A/B verification — re-runs the held-out corpus against the variants
-# (this is the gate that proves compression didn't drop sub-skills)
-cd evals/functional-area-resolver
-node harness.mjs
+```bash
+gbrain routing-eval --json
 ```
 
-If the harness's functional-areas variant scores below 95% on the held-out
-corpus, revert the compression and tune the area entries before re-running.
-Common causes of accuracy drops:
+If accuracy on your fixtures drops below 95%, revert and tune the area
+entries before re-running.
+
+**Gate 2: LLM A/B verification on YOUR edited file.** Confirms a frontier
+LLM can still drill into the dispatcher list and reach sub-skills under
+your specific compression. Requires a gbrain repo checkout because the
+harness lives there. Copy your edited routing file into the harness's
+variants directory, then invoke the harness with `--variants` pointing
+at it:
+
+```bash
+# In your agent workspace, identify the routing file you just compressed.
+EDITED=/path/to/your/AGENTS.md       # or skills/RESOLVER.md, whichever you edited
+
+# In your gbrain repo checkout:
+cd /path/to/gbrain/evals/functional-area-resolver
+TMP=$(mktemp -d)/variants && mkdir -p "$TMP"
+cp "$EDITED" "$TMP/my-edit.md"
+
+# Run the harness against your file (sequential, ~75 calls × $0.0076 ≈ $0.57 on Opus).
+ANTHROPIC_API_KEY=... node harness.mjs --variants-dir "$TMP" --variants my-edit \
+                                       --model opus --parallel 3 --yes
+```
+
+The harness uses gbrain's bundled fixture set, so this verifies "did the LLM
+land in the right sub-skill for routing intents the gbrain-bundled fixtures
+cover" — a regression check on shared skills, not a full re-eval of YOUR
+fixture set. For full eval coverage, mirror this skill's
+`fixtures.jsonl` + `fixtures-held-out.jsonl` setup with intents specific
+to your skills.
+
+If the lenient (same-area) score on your variant drops below 95%, revert the
+compression and tune. Common causes:
 - A sub-skill was omitted from the `(dispatcher for: ...)` list.
 - Trigger phrases for an area are too narrow (LLM can't recognize intent).
 - Areas were collapsed too aggressively (too few areas — see Anti-Patterns).
+- ASCII `->` vs Unicode `→` mismatch — the harness now accepts both, but
+  earlier versions only matched Unicode. Pin gbrain to v0.32.3.0+.
+
+Common false negatives on the harness eval (NOT bugs in your compression):
+- The gbrain-bundled fixtures target skill names like `enrich`, `query`,
+  `gmail`, `executive-assistant`. If your routing file doesn't expose
+  those skills at all, expect strict-scoring failures on those fixtures.
+  Lenient scoring stays accurate for any sub-skill present in your
+  `(dispatcher for: ...)` lists.
 
 ### Step 7: Review the diff before committing
 
