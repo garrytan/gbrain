@@ -465,6 +465,82 @@ describe('E2E: MCP Tool Generation', () => {
     }
   }, 30_000);
 
+  test('raw stdio MCP server rejects oversized inbound requests and remains responsive', async () => {
+    const h = createSqliteCliHarness('mcp-raw-inbound-budget');
+    let proc: ReturnType<typeof Bun.spawn> | null = null;
+    let stdout: ReturnType<typeof createJsonLineReader> | null = null;
+    let stderrText: Promise<string> | null = null;
+    let stdin: JsonRpcStdin | null = null;
+
+    try {
+      const init = h.run(['init', '--local', '--json']);
+      assertOk(init, ['init', '--local', '--json']);
+
+      proc = Bun.spawn({
+        cmd: ['bun', 'run', 'src/cli.ts', 'serve'],
+        cwd: repoRoot,
+        env: {
+          ...h.env,
+          MBRAIN_MCP_MAX_STDIO_REQUEST_BYTES: '1024',
+          MBRAIN_MCP_MAX_STDIO_FRAME_BYTES: '24000',
+        },
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      stderrText = new Response(expectReadableStream(proc.stderr, 'MCP stderr')).text();
+      stdout = createJsonLineReader(expectReadableStream(proc.stdout, 'MCP stdout'), 'MCP stdout');
+      stdin = expectJsonRpcStdin(proc.stdin);
+
+      await writeJsonRpc(stdin, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'mbrain-raw-inbound-e2e', version: '0.0.0' },
+        },
+      });
+      expect((await readBudgetedJsonRpcResponse(stdout, 1)).result.serverInfo.name).toBe('mbrain');
+
+      await writeJsonRpc(stdin, {
+        jsonrpc: '2.0',
+        method: 'notifications/initialized',
+        params: {},
+      });
+
+      stdin.write(rpcEncoder.encode(
+        `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_health","arguments":{"payload":"${'x'.repeat(4_096)}"}}}\n`,
+      ));
+      await stdin.flush?.();
+      const rejectedLine = await stdout.readLine();
+      const rejected = JSON.parse(rejectedLine);
+      expect(byteLength(`${rejectedLine}\n`)).toBeLessThanOrEqual(DEFAULT_MCP_MAX_STDIO_FRAME_BYTES);
+      expect(rejected).toMatchObject({
+        jsonrpc: '2.0',
+        error: {
+          code: -32700,
+          message: 'MBrain MCP stdio request exceeded byte budget',
+        },
+      });
+      expect('id' in rejected).toBe(false);
+
+      await writeJsonRpc(stdin, {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'get_health', arguments: {} },
+      });
+      const health = await readBudgetedJsonRpcResponse(stdout, 3);
+      expect(health.result.content[0].type).toBe('text');
+      expect(() => JSON.parse(health.result.content[0].text)).not.toThrow();
+    } finally {
+      await cleanupRawMcpProcess({ proc, stdin, stdout, stderrText });
+      h.teardown();
+    }
+  }, 30_000);
+
   test('stdio MCP server exposes and executes local SQLite memory lifecycle tools', async () => {
     const h = createSqliteCliHarness('mcp');
     let client: Client | null = null;

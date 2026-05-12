@@ -34,6 +34,53 @@ export type McpResultTextBudgetForFinalFrameOptions = {
   maxFrameBytes?: number;
 };
 
+export type McpToolExecutionClass = 'mutating' | 'heavy_read' | 'light';
+
+export type McpToolExecutionLimiterOptions = {
+  heavyReadConcurrency?: number;
+};
+
+export type McpToolExecutionLimiter = {
+  run<T>(operation: Operation, task: () => Promise<T>): Promise<T>;
+};
+
+const DEFAULT_MCP_HEAVY_READ_CONCURRENCY = 2;
+const HEAVY_READ_TOOL_NAMES = new Set([
+  'get_page',
+  'get_raw_data',
+  'get_chunks',
+  'search',
+  'query',
+  'get_note_structural_neighbors',
+  'find_note_structural_path',
+  'get_context_map_entry',
+  'get_context_map_report',
+  'get_context_map_explanation',
+  'query_context_map',
+  'find_context_map_path',
+  'get_context_atlas_entry',
+  'get_context_atlas_overview',
+  'get_context_atlas_report',
+  'get_atlas_orientation_card',
+  'get_atlas_orientation_bundle',
+  'get_broad_synthesis_route',
+  'get_precision_lookup_route',
+  'get_mixed_scope_bridge',
+  'get_mixed_scope_disclosure',
+  'get_personal_profile_lookup_route',
+  'get_personal_episode_lookup_route',
+  'select_retrieval_route',
+  'plan_retrieval_request',
+  'retrieve_context',
+  'read_context',
+  'reverify_code_claims',
+  'get_workspace_system_card',
+  'get_workspace_project_card',
+  'get_workspace_orientation_bundle',
+  'get_workspace_corpus_card',
+  'get_skillpack',
+]);
+
 export function createMcpToolCatalogProvider(
   operations: Operation[] = defaultOperations,
 ): McpToolCatalogProvider {
@@ -51,6 +98,79 @@ export function createMcpToolCatalogProvider(
       return fullTools;
     },
   };
+}
+
+export function classifyMcpToolExecution(operation: Operation): McpToolExecutionClass {
+  if (operation.mutating === true) return 'mutating';
+  if (HEAVY_READ_TOOL_NAMES.has(operation.name)) return 'heavy_read';
+  return 'light';
+}
+
+export function createMcpToolExecutionLimiter(
+  options: McpToolExecutionLimiterOptions = {},
+): McpToolExecutionLimiter {
+  const mutatingQueue = new McpConcurrencyQueue(1);
+  const heavyReadQueue = new McpConcurrencyQueue(
+    normalizeMcpConcurrencyLimit(
+      options.heavyReadConcurrency ?? parseConfiguredMcpHeavyReadConcurrency(),
+      DEFAULT_MCP_HEAVY_READ_CONCURRENCY,
+    ),
+  );
+
+  return {
+    run<T>(operation: Operation, task: () => Promise<T>): Promise<T> {
+      switch (classifyMcpToolExecution(operation)) {
+        case 'mutating':
+          return mutatingQueue.run(task);
+        case 'heavy_read':
+          return heavyReadQueue.run(task);
+        case 'light':
+          return task();
+      }
+    },
+  };
+}
+
+class McpConcurrencyQueue {
+  private active = 0;
+  private readonly queue: Array<() => void> = [];
+
+  constructor(private readonly limit: number) {}
+
+  run<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.queue.push(() => {
+        this.active += 1;
+        task().then(resolve, reject).finally(() => {
+          this.active -= 1;
+          this.drain();
+        });
+      });
+      this.drain();
+    });
+  }
+
+  private drain(): void {
+    while (this.active < this.limit) {
+      const next = this.queue.shift();
+      if (!next) return;
+      next();
+    }
+  }
+}
+
+function parseConfiguredMcpHeavyReadConcurrency(): number {
+  const raw = process.env.MBRAIN_MCP_HEAVY_READ_CONCURRENCY;
+  if (!raw) return DEFAULT_MCP_HEAVY_READ_CONCURRENCY;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_MCP_HEAVY_READ_CONCURRENCY;
+}
+
+function normalizeMcpConcurrencyLimit(value: number, fallback: number): number {
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.max(1, Math.floor(value));
 }
 
 export function mcpResultTextBudgetForFinalFrame(
@@ -420,6 +540,7 @@ export async function startMcpServer(engine: BrainEngine | Promise<BrainEngine>)
     },
   );
   const toolCatalog = createMcpToolCatalogProvider();
+  const toolExecutionLimiter = createMcpToolExecutionLimiter();
 
   // Generate tool definitions from operations
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -435,26 +556,28 @@ export async function startMcpServer(engine: BrainEngine | Promise<BrainEngine>)
     }
 
     try {
-      const resolvedEngine = await enginePromise;
-      const ctx: OperationContext = {
-        engine: resolvedEngine,
-        config: loadConfig() || DEFAULT_RUNTIME_CONFIG,
-        logger: {
-          info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
-          warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),
-          error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
-        },
-        dryRun: !!(params?.dry_run),
-        scheduleBackground: (description, task) => {
-          setTimeout(() => {
-            task().catch((error: unknown) => {
-              const message = error instanceof Error ? error.message : String(error);
-              process.stderr.write(`[warn] ${description} failed: ${message}\n`);
-            });
-          }, 0);
-        },
-      };
-      const result = await op.handler(ctx, prepareMcpToolParams(name, params));
+      const result = await toolExecutionLimiter.run(op, async () => {
+        const resolvedEngine = await enginePromise;
+        const ctx: OperationContext = {
+          engine: resolvedEngine,
+          config: loadConfig() || DEFAULT_RUNTIME_CONFIG,
+          logger: {
+            info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
+            warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),
+            error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
+          },
+          dryRun: !!(params?.dry_run),
+          scheduleBackground: (description, task) => {
+            setTimeout(() => {
+              task().catch((error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                process.stderr.write(`[warn] ${description} failed: ${message}\n`);
+              });
+            }, 0);
+          },
+        };
+        return op.handler(ctx, prepareMcpToolParams(name, params));
+      });
       return {
         content: [{
           type: 'text',

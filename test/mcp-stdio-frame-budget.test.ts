@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { PassThrough } from 'node:stream';
-import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import { JSONRPCMessageSchema, type JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { operations } from '../src/core/operations.ts';
 import {
   BudgetedStdioServerTransport,
+  DEFAULT_MCP_MAX_STDIO_REQUEST_BYTES,
   DEFAULT_MCP_MAX_STDIO_FRAME_BYTES,
   DEFAULT_MCP_TOOL_LIST_FRAME_BYTES,
   fitMcpStdioMessageToBudget,
@@ -24,10 +25,12 @@ function readWrittenFrame(stdout: PassThrough): string {
 }
 
 const originalMaxFrameBytes = process.env.MBRAIN_MCP_MAX_STDIO_FRAME_BYTES;
+const originalMaxRequestBytes = process.env.MBRAIN_MCP_MAX_STDIO_REQUEST_BYTES;
 const originalToolListFrameBytes = process.env.MBRAIN_MCP_TOOL_LIST_FRAME_BYTES;
 
 afterEach(() => {
   restoreEnv('MBRAIN_MCP_MAX_STDIO_FRAME_BYTES', originalMaxFrameBytes);
+  restoreEnv('MBRAIN_MCP_MAX_STDIO_REQUEST_BYTES', originalMaxRequestBytes);
   restoreEnv('MBRAIN_MCP_TOOL_LIST_FRAME_BYTES', originalToolListFrameBytes);
 });
 
@@ -166,6 +169,81 @@ describe('MCP stdio budget enforcement', () => {
 });
 
 describe('BudgetedStdioServerTransport', () => {
+  test('rejects an oversized inbound line and still delivers the next valid message', async () => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const transport = new BudgetedStdioServerTransport(stdin, stdout, {
+      maxFrameBytes: 512,
+      maxRequestBytes: 128,
+    });
+    const delivered: JSONRPCMessage[] = [];
+    transport.onmessage = message => delivered.push(message);
+
+    await transport.start();
+    stdin.write(Buffer.from('{"jsonrpc":"2.0","id":99,"method":"tools/call","params":{"payload":"'));
+    stdin.write(Buffer.from('x'.repeat(512)));
+    stdin.write(Buffer.from('"}}\n'));
+    stdin.write(Buffer.from('{"jsonrpc":"2.0","id":100,"method":"ping","params":{}}\n'));
+
+    await new Promise(resolve => setImmediate(resolve));
+
+    const frame = readWrittenFrame(stdout);
+    const parsed = JSON.parse(frame) as JSONRPCMessage;
+    expect(byteLength(frame)).toBeLessThanOrEqual(512);
+    expect(parsed).toMatchObject({
+      jsonrpc: '2.0',
+      error: {
+        code: -32700,
+        message: 'MBrain MCP stdio request exceeded byte budget',
+      },
+    });
+    expect('id' in parsed).toBe(false);
+    expect(JSONRPCMessageSchema.safeParse(parsed).success).toBe(true);
+    expect((parsed as any).error.data.max_request_bytes).toBe(128);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).toMatchObject({ jsonrpc: '2.0', id: 100, method: 'ping' });
+    await transport.close();
+  });
+
+  test('reports each complete oversized inbound line separately', async () => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const transport = new BudgetedStdioServerTransport(stdin, stdout, {
+      maxFrameBytes: 512,
+      maxRequestBytes: 128,
+    });
+
+    await transport.start();
+    const oversized = `{"jsonrpc":"2.0","id":99,"method":"tools/call","params":{"payload":"${'x'.repeat(512)}"}}\n`;
+    stdin.write(Buffer.from(oversized));
+    stdin.write(Buffer.from(oversized));
+
+    await new Promise(resolve => setImmediate(resolve));
+
+    const frames = stdout.read()?.toString('utf-8').trim().split('\n') ?? [];
+    expect(frames).toHaveLength(2);
+    for (const frame of frames) {
+      const parsed = JSON.parse(frame) as JSONRPCMessage;
+      expect(byteLength(`${frame}\n`)).toBeLessThanOrEqual(512);
+      expect(parsed).toMatchObject({
+        jsonrpc: '2.0',
+        error: {
+          code: -32700,
+          message: 'MBrain MCP stdio request exceeded byte budget',
+        },
+      });
+      expect('id' in parsed).toBe(false);
+      expect(JSONRPCMessageSchema.safeParse(parsed).success).toBe(true);
+    }
+    await transport.close();
+  });
+
+  test('uses a default inbound request budget large enough for existing raw put_page payloads', () => {
+    delete process.env.MBRAIN_MCP_MAX_STDIO_REQUEST_BYTES;
+
+    expect(DEFAULT_MCP_MAX_STDIO_REQUEST_BYTES).toBeGreaterThan(120_000);
+  });
+
   test('writes small frames unchanged', async () => {
     const stdin = new PassThrough();
     const stdout = new PassThrough();
