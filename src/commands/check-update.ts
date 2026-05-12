@@ -40,22 +40,38 @@ function upgradeCommandForMethod(method: string): string {
   }
 }
 
-async function fetchLatestRelease(): Promise<{ tag: string; published_at: string; url: string } | null> {
+export async function fetchLatestRelease(fetchImpl: typeof fetch = fetch): Promise<{ tag: string; published_at: string; url: string } | null> {
   try {
-    const res = await fetch('https://api.github.com/repos/garrytan/gbrain/releases/latest', {
+    const res = await fetchImpl('https://api.github.com/repos/garrytan/gbrain/releases/latest', {
+      headers: { 'User-Agent': `gbrain/${VERSION}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) {
+      const data = await res.json() as any;
+      if (data.tag_name) {
+        return {
+          tag: data.tag_name,
+          published_at: data.published_at || '',
+          url: data.html_url || '',
+        };
+      }
+    }
+  } catch { /* fall through to npm registry */ }
+
+  try {
+    const res = await fetchImpl('https://registry.npmjs.org/gbrain/latest', {
       headers: { 'User-Agent': `gbrain/${VERSION}` },
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
     const data = await res.json() as any;
+    if (!data.version) return null;
     return {
-      tag: data.tag_name || '',
-      published_at: data.published_at || '',
-      url: data.html_url || '',
+      tag: data.version,
+      published_at: data.time || '',
+      url: `https://www.npmjs.com/package/gbrain/v/${data.version}`,
     };
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 async function fetchChangelog(currentVersion: string, latestVersion: string): Promise<string> {
@@ -140,10 +156,10 @@ export async function runCheckUpdate(args: string[]) {
         release_url: '',
         changelog_diff: '',
         published_at: '',
-        error: 'no_releases',
+        error: 'api_unavailable',
       }, null, 2));
     } else {
-      console.log(`GBrain ${VERSION} — could not check for updates (no releases found or network unavailable).`);
+      console.log(`GBrain ${VERSION} — could not check for updates (GitHub releases and npm registry unavailable).`);
     }
     return;
   }
