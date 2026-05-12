@@ -9,15 +9,19 @@
  * validation stack.
  *
  * Path-guard contract: writeBrainPage refuses to write outside the source
- * path. .bak backups are the safety contract (works for both git and non-git
- * brain repos; the existing src/core/dry-fix.ts:getWorkingTreeStatus rejects
- * non-git repos as unsafe, which is the wrong shape for brain rewrites).
+ * path. Pre-write backups are the safety contract (works for both git and
+ * non-git brain repos; the existing src/core/dry-fix.ts:getWorkingTreeStatus
+ * rejects non-git repos as unsafe, which is the wrong shape for brain
+ * rewrites). Backups live under ~/.gbrain/backups/frontmatter/... instead of
+ * beside source files so bulk repair never litters the user's workspace.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync, copyFileSync, writeFileSync, mkdirSync, lstatSync } from 'fs';
-import { join, relative, resolve, dirname } from 'path';
+import { createHash } from 'crypto';
+import { existsSync, readFileSync, readdirSync, copyFileSync, writeFileSync, mkdirSync, lstatSync } from 'fs';
+import { join, relative, resolve, dirname, basename, isAbsolute } from 'path';
 import type { BrainEngine } from './engine.ts';
 import type { ProgressReporter } from './progress.ts';
+import { gbrainPath } from './config.ts';
 import {
   parseMarkdown,
   type ParseValidationCode,
@@ -38,6 +42,7 @@ export interface PerSourceReport {
   total: number;
   errors_by_code: Partial<Record<ParseValidationCode, number>>;
   sample: { path: string; codes: ParseValidationCode[] }[];
+  ignoredMissingOpen: number;
 }
 
 export interface AuditReport {
@@ -46,9 +51,44 @@ export interface AuditReport {
   errors_by_code: Partial<Record<ParseValidationCode, number>>;
   per_source: PerSourceReport[];
   scanned_at: string;
+  ignored_missing_open?: number;
 }
 
 const SAMPLE_PER_SOURCE = 20;
+
+// ---------------------------------------------------------------------------
+// Frontmatter backups
+// ---------------------------------------------------------------------------
+
+export function makeFrontmatterBackupRunId(date = new Date()): string {
+  return date.toISOString().replace(/[:.]/g, '-');
+}
+
+export interface FrontmatterBackupOpts {
+  sourcePath?: string;
+  backupRoot?: string;
+  runId?: string;
+}
+
+function sourceKey(sourcePath: string): string {
+  return createHash('sha256').update(resolve(sourcePath)).digest('hex').slice(0, 12);
+}
+
+export function defaultFrontmatterBackupRoot(runId = makeFrontmatterBackupRunId()): string {
+  return gbrainPath('backups', 'frontmatter', runId);
+}
+
+export function createFrontmatterBackup(filePath: string, opts: FrontmatterBackupOpts = {}): string {
+  const resolvedFile = resolve(filePath);
+  const resolvedSource = resolve(opts.sourcePath ?? dirname(resolvedFile));
+  const rel = relative(resolvedSource, resolvedFile);
+  const safeRel = rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : basename(resolvedFile);
+  const root = opts.backupRoot ?? defaultFrontmatterBackupRoot(opts.runId);
+  const backupPath = join(root, sourceKey(resolvedSource), safeRel + '.bak');
+  mkdirSync(dirname(backupPath), { recursive: true });
+  copyFileSync(resolvedFile, backupPath);
+  return backupPath;
+}
 
 // ---------------------------------------------------------------------------
 // autoFixFrontmatter
@@ -178,7 +218,7 @@ export function autoFixFrontmatter(
 }
 
 // ---------------------------------------------------------------------------
-// writeBrainPage — path-guarded write with .bak backup
+// writeBrainPage — path-guarded write with centralized backup
 // ---------------------------------------------------------------------------
 
 export class BrainWriterError extends Error {
@@ -193,15 +233,16 @@ export class BrainWriterError extends Error {
 }
 
 /**
- * Path-guarded brain page writer. Always writes `<filePath>.bak` before any
- * in-place mutation (the contract that replaces git-tree-clean for non-git
- * brain repos). Throws BrainWriterError if filePath is not under sourcePath.
+ * Path-guarded brain page writer. Always writes a backup under
+ * ~/.gbrain/backups/frontmatter/... before any in-place mutation (the contract
+ * that replaces git-tree-clean for non-git brain repos). Throws
+ * BrainWriterError if filePath is not under sourcePath.
  */
 export function writeBrainPage(
   filePath: string,
   content: string,
-  opts: { sourcePath: string; autoFix?: boolean },
-): { fixes: AuditFix[] } {
+  opts: { sourcePath: string; autoFix?: boolean; backupRoot?: string; backupRunId?: string },
+): { fixes: AuditFix[]; backupPath?: string } {
   const resolvedSource = resolve(opts.sourcePath);
   const resolvedTarget = resolve(filePath);
   if (resolvedTarget !== resolvedSource && !resolvedTarget.startsWith(resolvedSource + '/')) {
@@ -220,13 +261,18 @@ export function writeBrainPage(
     fixes = result.fixes;
   }
 
+  let backupPath: string | undefined;
   if (existsSync(filePath)) {
-    copyFileSync(filePath, filePath + '.bak');
+    backupPath = createFrontmatterBackup(filePath, {
+      sourcePath: opts.sourcePath,
+      backupRoot: opts.backupRoot,
+      runId: opts.backupRunId,
+    });
   } else {
     mkdirSync(dirname(filePath), { recursive: true });
   }
   writeFileSync(filePath, toWrite, 'utf8');
-  return { fixes };
+  return { fixes, backupPath };
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +288,10 @@ export interface ScanOpts {
   /** Limit scan to one source. When omitted, all registered sources with a
    *  local_path are scanned. */
   sourceId?: string;
+  /** Missing frontmatter is optional metadata coverage for broad document
+   * sources. Set true for curated page repos that require every file to carry
+   * YAML frontmatter. */
+  strictMissingOpen?: boolean;
   onProgress?: ProgressReporter;
   signal?: AbortSignal;
 }
@@ -254,6 +304,7 @@ export async function scanBrainSources(
   const totals: Partial<Record<ParseValidationCode, number>> = {};
   const perSource: PerSourceReport[] = [];
   let grandTotal = 0;
+  let ignoredMissingOpen = 0;
 
   for (const src of sources) {
     if (opts.signal?.aborted) break;
@@ -267,12 +318,14 @@ export async function scanBrainSources(
         total: 0,
         errors_by_code: {},
         sample: [],
+        ignoredMissingOpen: 0,
       });
       continue;
     }
     const report = scanOneSource(src.id, src.local_path, opts);
     perSource.push(report);
     grandTotal += report.total;
+    ignoredMissingOpen += report.ignoredMissingOpen;
     for (const [code, n] of Object.entries(report.errors_by_code)) {
       const k = code as ParseValidationCode;
       totals[k] = (totals[k] ?? 0) + (n as number);
@@ -285,6 +338,7 @@ export async function scanBrainSources(
     errors_by_code: totals,
     per_source: perSource,
     scanned_at: new Date().toISOString(),
+    ignored_missing_open: ignoredMissingOpen || undefined,
   };
 }
 
@@ -298,6 +352,7 @@ function scanOneSource(
   const rootResolved = resolve(sourcePath);
   let scanned = 0;
   let total = 0;
+  let ignoredMissingOpen = 0;
 
   walkDir(rootResolved, (absPath) => {
     if (opts.signal?.aborted) return false;
@@ -312,7 +367,12 @@ function scanOneSource(
     }
     const expectedSlug = slugifyPath(relPath);
     const parsed = parseMarkdown(content, relPath, { validate: true, expectedSlug });
-    const errs = parsed.errors ?? [];
+    const errs = (parsed.errors ?? []).filter((e) => {
+      if (e.code !== 'MISSING_OPEN') return true;
+      if (opts.strictMissingOpen) return true;
+      ignoredMissingOpen++;
+      return false;
+    });
     if (errs.length > 0) {
       total += errs.length;
       const codes: ParseValidationCode[] = [];
@@ -340,6 +400,7 @@ function scanOneSource(
     total,
     errors_by_code: errorsByCode,
     sample,
+    ignoredMissingOpen,
   };
 }
 
