@@ -105,15 +105,17 @@ export async function runPhasePatterns(
       try { await opts.yieldDuringPhase(); } catch { /* best-effort */ }
     }
 
-    // Collect slugs the subagent wrote (codex finding #2 — query tool exec rows).
-    const writtenSlugs = await collectChildPutPageSlugs(engine, [job.id]);
+    // Collect refs the subagent wrote (codex finding #2 — query tool exec rows).
+    // v0.32.4: refs carry source_id so reverseWriteRefs targets the right
+    // (source, slug) row instead of the first DB match.
+    const writtenRefs = await collectChildPutPageSlugs(engine, [job.id]);
 
     // Reverse-write to fs.
-    const reverseWriteCount = await reverseWriteSlugs(engine, opts.brainDir, writtenSlugs);
+    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
 
-    return ok(`${writtenSlugs.length} pattern page(s) written/updated (${outcome})`, {
+    return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, {
       reflections_considered: reflections.length,
-      patterns_written: writtenSlugs.length,
+      patterns_written: writtenRefs.length,
       reverse_write_count: reverseWriteCount,
       child_outcome: outcome,
       job_id: job.id,
@@ -222,10 +224,13 @@ When done, briefly list the pattern slugs you wrote/updated in your final messag
 async function collectChildPutPageSlugs(
   engine: BrainEngine,
   childIds: number[],
-): Promise<string[]> {
+): Promise<Array<{ slug: string; source_id: string }>> {
   if (childIds.length === 0) return [];
-  // Handle both properly-stored jsonb objects (input->>'slug') and
-  // double-encoded jsonb strings from pre-fix data ((input #>> '{}')::jsonb->>'slug').
+  // v0.32.4: subagent put_page tool schema doesn't expose source_id (subagents
+  // are scoped to a single source). Default to 'default' here; multi-source
+  // dream cycles are a v0.33 follow-up. The point of threading source_id is
+  // so reverseWriteRefs can pass it through getPage and pick the correct
+  // (source_id, slug) row instead of whatever the DB happens to return.
   const rows = await engine.executeRaw<{ slug: string }>(
     `SELECT DISTINCT
             COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
@@ -236,30 +241,44 @@ async function collectChildPutPageSlugs(
       ORDER BY 1`,
     [childIds],
   );
-  return rows.map(r => r.slug).filter((s): s is string => typeof s === 'string' && s.length > 0);
+  return rows
+    .map(r => r.slug)
+    .filter((s): s is string => typeof s === 'string' && s.length > 0)
+    .map(slug => ({ slug, source_id: 'default' }));
 }
 
 // ── Reverse-write ────────────────────────────────────────────────────
 
-async function reverseWriteSlugs(
+import { validateSourceId } from '../utils.ts';
+
+async function reverseWriteRefs(
   engine: BrainEngine,
   brainDir: string,
-  slugs: string[],
+  refs: Array<{ slug: string; source_id: string }>,
 ): Promise<number> {
   let count = 0;
-  for (const slug of slugs) {
-    const page = await engine.getPage(slug);
+  for (const { slug, source_id } of refs) {
+    // v0.32.4 F6: guard against malformed source_id (would let join() break
+    // out of brainDir). validateSourceId throws on `..`, `/`, etc.
+    validateSourceId(source_id);
+    const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
-    const tags = await engine.getTags(slug);
+    const tags = await engine.getTags(slug, { sourceId: source_id });
     try {
       const md = renderPageToMarkdown(page, tags);
-      const filePath = join(brainDir, `${slug}.md`);
+      // v0.32.4 F6: non-default sources land under brainDir/.sources/<id>/<slug>.md
+      // so same-slug-different-source pages don't collide on disk. Default-source
+      // pages stay at brainDir/<slug>.md so single-source brains see no change.
+      // `.sources/` is a reserved prefix; walkBrainRepo skips dot-dirs.
+      const filePath = source_id === 'default'
+        ? join(brainDir, `${slug}.md`)
+        : join(brainDir, '.sources', source_id, `${slug}.md`);
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, md, 'utf8');
       count++;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`[dream] reverse-write ${slug} failed: ${msg}\n`);
+      process.stderr.write(`[dream] reverse-write ${slug}@${source_id} failed: ${msg}\n`);
     }
   }
   return count;

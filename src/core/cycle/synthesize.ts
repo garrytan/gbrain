@@ -37,6 +37,7 @@ import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { discoverTranscripts, type DiscoveredTranscript } from './transcript-discovery.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
+import { validateSourceId } from '../utils.ts';
 
 // Slug regex from validatePageSlug — kept in sync.
 // Used for the orchestrator-written summary index slug.
@@ -449,15 +450,19 @@ export async function runPhaseSynthesize(
     // D6 orchestrator slug rewrite: chunkInfo drives post-hoc rewrite of
     // bare-hash slugs to `<hash6>-c<idx>` so chunked siblings can't collide
     // even if Sonnet drops the chunk suffix.
-    const writtenSlugs = await collectChildPutPageSlugs(engine, childIds, chunkInfo);
+    // v0.32.4: refs carry source_id so reverseWriteRefs picks the correct
+    // (source, slug) row (currently always 'default' from subagent put_page).
+    const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo);
 
     // Dual-write: reverse-render each DB row → markdown file.
-    const reverseWriteCount = await reverseWriteSlugs(engine, opts.brainDir, writtenSlugs);
+    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
     const summaryDate = opts.date ?? today();
     const summarySlug = `dream-cycle-summaries/${summaryDate}`;
+    // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
+    const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
       await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes);
     }
@@ -781,12 +786,19 @@ async function collectChildPutPageSlugs(
   engine: BrainEngine,
   childIds: number[],
   chunkInfo: Map<number, { idx: number; hash6: string }>,
-): Promise<string[]> {
+): Promise<Array<{ slug: string; source_id: string }>> {
   if (childIds.length === 0) return [];
   // Raw fetch — NO SELECT DISTINCT. Preserves per-child slug duplicates so
   // the orchestrator sees what each child wrote. COALESCE handles both
   // properly-stored jsonb objects (input->>'slug') and double-encoded jsonb
   // strings from pre-fix data ((input #>> '{}')::jsonb->>'slug').
+  //
+  // v0.32.4: returns Array<{slug, source_id}> instead of string[]. Subagent
+  // put_page tool schema doesn't expose source_id (subagents are scoped to
+  // a single source); default to 'default' for the current dream-cycle
+  // product behavior. Threading the source_id through reverseWriteRefs
+  // guarantees getPage targets the correct (source, slug) row instead of
+  // the first DB match.
   const rows = await engine.executeRaw<{ job_id: number; slug: string }>(
     `SELECT job_id,
             COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
@@ -802,7 +814,7 @@ async function collectChildPutPageSlugs(
     const ci = chunkInfo.get(r.job_id);
     rewritten.add(ci ? rewriteChunkedSlug(r.slug, ci.hash6, ci.idx) : r.slug);
   }
-  return Array.from(rewritten).sort();
+  return Array.from(rewritten).sort().map(slug => ({ slug, source_id: 'default' }));
 }
 
 /**
@@ -833,26 +845,33 @@ async function hasLegacySingleChunkCompletion(
 
 // ── Reverse-write DB rows → markdown files ───────────────────────────
 
-async function reverseWriteSlugs(
+async function reverseWriteRefs(
   engine: BrainEngine,
   brainDir: string,
-  slugs: string[],
+  refs: Array<{ slug: string; source_id: string }>,
 ): Promise<number> {
   let count = 0;
-  for (const slug of slugs) {
-    const page = await engine.getPage(slug);
+  for (const { slug, source_id } of refs) {
+    // v0.32.4 F6: validate source_id is filesystem-safe before any join().
+    validateSourceId(source_id);
+    const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
-    const tags = await engine.getTags(slug);
+    const tags = await engine.getTags(slug, { sourceId: source_id });
     try {
       const md = renderPageToMarkdown(page, tags);
-      const filePath = join(brainDir, `${slug}.md`);
+      // v0.32.4 F6: non-default sources land at brainDir/.sources/<id>/<slug>.md
+      // so same-slug-different-source pages don't collide. Default-source
+      // pages stay at brainDir/<slug>.md so single-source brains see no change.
+      const filePath = source_id === 'default'
+        ? join(brainDir, `${slug}.md`)
+        : join(brainDir, '.sources', source_id, `${slug}.md`);
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, md, 'utf8');
       count++;
     } catch (e) {
       // Per-slug failures are non-fatal — phase continues.
       const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`[dream] reverse-write ${slug} failed: ${msg}\n`);
+      process.stderr.write(`[dream] reverse-write ${slug}@${source_id} failed: ${msg}\n`);
     }
   }
   return count;

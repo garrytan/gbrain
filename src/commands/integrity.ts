@@ -316,16 +316,21 @@ export async function scanIntegrity(
     }
   }
 
-  const allSlugs = [...(await engine.getAllSlugs())].sort();
+  // v0.32.4: listAllPageRefs replaces getAllSlugs+getPage N+1 pattern that
+  // silently defaulted to source_id='default' for non-default-source pages.
+  // Now we enumerate (slug, source_id) pairs and thread sourceId to getPage.
+  const allRefs = (await engine.listAllPageRefs()).sort((a, b) =>
+    a.slug.localeCompare(b.slug) || a.source_id.localeCompare(b.source_id)
+  );
 
   const bareHits: BareTweetHit[] = [];
   const externalHits: ExternalLinkHit[] = [];
   let pagesScanned = 0;
 
-  for (const slug of allSlugs) {
+  for (const { slug, source_id } of allRefs) {
     if (typeFilter && !slug.startsWith(`${typeFilter}/`)) continue;
     if (pagesScanned >= limit) break;
-    const page = await engine.getPage(slug);
+    const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
     // Skip grandfathered pages (opted out of brain-integrity enforcement)
     if ((page.frontmatter as Record<string, unknown> | undefined)?.validate === false) continue;
@@ -440,14 +445,19 @@ async function cmdAuto(args: string[]): Promise<void> {
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
   try {
-    const allSlugs = [...(await engine.getAllSlugs())].sort();
-    const toScan = allSlugs.filter(s => !seen.has(s));
+    // v0.32.4: listAllPageRefs enumerates (slug, source_id) pairs so we
+    // can thread sourceId to getPage. Pre-fix this defaulted to 'default'
+    // and silently skipped non-default-source pages.
+    const allRefs = (await engine.listAllPageRefs()).sort((a, b) =>
+      a.slug.localeCompare(b.slug) || a.source_id.localeCompare(b.source_id)
+    );
+    const toScan = allRefs.filter(r => !seen.has(r.slug));
     progress.start('integrity.auto', toScan.length);
-    for (const slug of allSlugs) {
+    for (const { slug, source_id } of allRefs) {
       if (pagesProcessed >= limit) break;
       if (seen.has(slug)) continue;
 
-      const page = await engine.getPage(slug);
+      const page = await engine.getPage(slug, { sourceId: source_id });
       if (!page) continue;
 
       pagesProcessed++;
