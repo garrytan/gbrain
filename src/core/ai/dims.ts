@@ -58,6 +58,29 @@ export function dimsProviderOptions(
       if (VOYAGE_OUTPUT_DIMENSION_MODELS.has(modelId)) {
         return { openaiCompatible: { output_dimension: dims } };
       }
+      // OpenAI text-embedding-3 family on the openai-compatible adapter
+      // (Azure OpenAI hosts these via its OpenAI-compatible /embeddings
+      // endpoint). The provider defaults to the model's native size (3072
+      // for `-large`, 1536 for `-small`); without `dimensions`, brains
+      // configured for a smaller width (e.g. 1536) hard-fail at first embed.
+      if (modelId.startsWith('text-embedding-3')) {
+        return { openaiCompatible: { dimensions: dims } };
+      }
+      // DashScope text-embedding-v3 (Matryoshka 64-1024) and Zhipu
+      // embedding-3 (Matryoshka 256-2048) both accept `dimensions` on the
+      // OpenAI-compat path. Without this, user-selected non-default dims are
+      // silently ignored and the provider returns its default size.
+      if (modelId === 'text-embedding-v3' || modelId === 'embedding-3') {
+        return { openaiCompatible: { dimensions: dims } };
+      }
+      // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric
+      // retrieval. Default to 'db' (the indexing path) so embed() works for
+      // import. Queries also embed with type:'db', making retrieval
+      // symmetric. Asymmetric query support is a follow-up TODO that needs
+      // a query/document signal threaded through the embed seam.
+      if (modelId === 'embo-01') {
+        return { openaiCompatible: { type: 'db' } };
+      }
       return undefined;
   }
 }

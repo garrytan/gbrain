@@ -85,6 +85,121 @@ If you're on a thin-client install (no `sources.local_path`), facts still write 
 #### For contributors
 
 The CI gate's function-scoped allow-list is the structural mechanism that prevents future regressions from re-introducing the DB-only failure mode. New code that needs to call a derived-table writer must either route through the existing extract / reconcile / migration layer OR carry an explicit allow-list comment with a justification.
+## [0.32.0] - 2026-05-10
+
+**5 new embedding providers + the discoverability fix that closes the 17-PR dupe cluster.**
+**`gbrain providers list` now shows 14 recipes; `gbrain doctor` tells you which alternatives are already wired.**
+
+A triage of 197 open issues + 289 open PRs surfaced a 17-PR cluster of community embedding-provider PRs filed within ~3 weeks (Ollama, Gemini, Voyage, Azure, MiniMax, Copilot, llama-server, Vertex, DashScope, Zhipu, etc.). Most were dupes of work already in master — gbrain has shipped a comprehensive AI SDK gateway + recipe pattern since v0.14, with 9 providers built in. Users just didn't know.
+
+v0.32.0 ships the missing recipes that aren't covered by the existing pattern, plus a documentation pass + doctor advisory + improved error hints that close the discoverability gap. Codex outside-voice review during plan-eng-review caught the discoverability framing — without it, the wave would have shipped 8 recipes plus an OAuth subsystem instead of the focused 5-recipe + docs delivery.
+
+### The numbers that matter
+
+```
+gbrain providers list   →   v0.31.1: 9 providers   →   v0.32.0: 14 providers
+gbrain doctor           →   v0.31.1: 1 advisory     →   v0.32.0: 2 advisories (+ alternative_providers)
+```
+
+5 new recipes:
+
+| Recipe | Auth | Default dims | Notes |
+|---|---|---|---|
+| `azure-openai` | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` + `AZURE_OPENAI_DEPLOYMENT` | 1536 | First recipe with `api-key:` custom header (not Bearer); first with templated URL + `?api-version=` query injection |
+| `minimax` | `MINIMAX_API_KEY` | 1536 | China-region; embo-01 model; type='db' asymmetric retrieval field plumbed via dims.ts |
+| `dashscope` | `DASHSCOPE_API_KEY` | 1024 | Alibaba; international endpoint default; CJK-aware batching (chars_per_token=2) |
+| `zhipu` | `ZHIPUAI_API_KEY` | 1024 | BigModel; embedding-3 with Matryoshka up to 2048 (HNSW falls back to exact-scan past 2000 dims) |
+| `llama-server` | (none) | user-set | llama.cpp's `llama-server --embeddings`; user_provided_models recipe |
+
+### What this means for new users
+
+`gbrain init` keeps OpenAI as the zero-config default. Users with API keys for any of the other 13 providers see them surfaced via `gbrain doctor` ("Detected 2 alternative embedding providers ready to use: voyage, dashscope. Run `gbrain providers list` to switch."). Users on Azure tenancies, China-region, or local-only setups have first-class recipes instead of "find a workaround." Users with provider needs gbrain doesn't ship can route through LiteLLM proxy (the universal escape hatch) without writing custom code.
+
+For agents: every recipe is registered in the same `listRecipes()` registry, so `gbrain providers list/test/env/explain` automatically picks up new recipes without code changes. The recipe contract test (`test/ai/recipes-contract.test.ts`) keeps the registry honest.
+
+### To take advantage of v0.32.0
+
+`gbrain upgrade` should do this automatically. If it didn't:
+
+1. **Confirm the new recipes show:**
+   ```bash
+   gbrain providers list
+   ```
+   Should show 14 entries including `azure-openai`, `minimax`, `dashscope`, `zhipu`, `llama-server`.
+
+2. **Try the doctor advisory:**
+   ```bash
+   gbrain doctor
+   ```
+   Look for the `alternative_providers` row. If env vars for unconfigured providers are present, it'll name them.
+
+3. **Read the new docs** at [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) — capability matrix, decision tree, per-recipe setup, "my provider isn't listed" path.
+
+4. **No breaking changes**: the existing 9 recipes (openai, anthropic, google, deepseek, groq, ollama, litellm-proxy, together, voyage) keep working unchanged. The internal auth refactor (D12=A unified resolveAuth seam) is pinned by `test/ai/recipes-existing-regression.test.ts` so the next refactor can't silently break them.
+
+5. **If anything breaks**, file an issue at https://github.com/garrytan/gbrain/issues with `gbrain doctor` output. The only behavior change for existing recipes: Ollama expansion + chat now read `OLLAMA_API_KEY` when set (embedding already did; the unification aligns all three touchpoints).
+
+### Itemized changes
+
+#### Architectural foundations
+
+- **Recipe.resolveAuth(env) seam (D12=A)**: unified the openai-compatible auth path, which was duplicated 3 times across `instantiateEmbedding`, `instantiateExpansion`, `instantiateChat` with subtle drift. Default impl (used by all existing recipes unchanged) returns `{headerName: 'Authorization', token: 'Bearer <key>'}`. Recipes deviating override; Azure is the first.
+- **Recipe.resolveOpenAICompatConfig(env) seam**: env-templated baseURL + optional fetch wrapper for recipes whose URL shape doesn't fit a static `base_url_default`. Azure uses both seams.
+- **Recipe.probe() seam (D13=A)**: recipe-owned readiness check for local-server providers. Replaces the hardcoded `recipe.id === 'ollama'` special case in `runExplain()`. llama-server declares its own probe; future local providers self-register.
+- **EmbeddingTouchpoint.user_provided_models?: true (D8=A)**: explicit signal for recipes that ship without a fixed model list (litellm, llama-server). Replaces the legacy `recipe.id === 'litellm'` hardcode in gateway.ts:223; refusal in `init.ts:resolveAIOptions` for shorthand `--model` with a setup hint pointing at the explicit form.
+- **EmbeddingTouchpoint.no_batch_cap?: true**: silences the missing-max_batch_tokens startup warning for recipes with genuinely dynamic batch capacity (Ollama, LiteLLM proxy, llama-server). Pre-fix: 3 stderr warnings on every `configureGateway()` call. Post-fix: only `google` warns.
+
+#### Discoverability
+
+- New `docs/integrations/embedding-providers.md` (one-pager: capability table, decision tree, per-recipe setup, "my provider isn't listed" path to LiteLLM).
+- README embedding-providers callout near the top of the install section.
+- `gbrain doctor` adds an `alternative_providers` check that surfaces recipes whose env vars are already set but aren't the configured provider.
+- `gbrain init --model litellm` (or any user_provided_models recipe) now refuses with a structured setup hint instead of throwing "no embedding models listed."
+
+#### Codex review fixes (pre-merge)
+
+- **dimsProviderOptions on openai-compatible**: text-embedding-3-* (Azure), text-embedding-v3 (DashScope), and embedding-3 (Zhipu) now thread `dimensions` to the wire. Without this, Azure-default 3072d would mismatch a 1536d brain on the first embed; DashScope/Zhipu Matryoshka requests would be silently ignored.
+- **`gbrain init --embedding-model llama-server:foo` (verbose path)**: now refuses without `--embedding-dimensions`. Pre-fix, the verbose path fell through to the gateway's 1536d default and silently created the wrong-width schema (only the shorthand `--model` was guarded).
+- **MiniMax host correction**: `api.minimax.chat` → `api.minimaxi.com` (matches MiniMax's current OpenAI-compatible docs).
+- **`LLAMA_SERVER_BASE_URL` reaches the gateway**: `buildGatewayConfig` now threads `LLAMA_SERVER_BASE_URL`, `OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL`, `LITELLM_BASE_URL` env into `cfg.base_urls` so embed traffic actually hits the configured port. Pre-fix, the env-only setup let probe pass on a custom port while traffic still hit `localhost:8080`.
+- **`Recipe.probe(baseURL?)` accepts the resolved URL**: probe and gateway can no longer disagree when only `provider_base_urls` is set in config (no env). Callers with cfg pass the URL; legacy callers fall back to env.
+
+#### Adjacent fixes
+
+- **#779 (alexandreroumieu-codeapprentice) reworked**: `EmbeddingTouchpoint.no_batch_cap?: true` opt-out for dynamic-cap recipes.
+- **#121 (vinsew) reworked**: `~/.gbrain/config.json` API keys now propagate to the gateway env. Pre-fix, `openai_api_key` / `anthropic_api_key` config-file values were ignored (the gateway only saw `process.env`). Common bite: launchd-spawned daemons or agent subprocess tools without `~/.zshrc` propagation. Process env still wins on conflict.
+- `loadConfig()` now merges `ANTHROPIC_API_KEY` env var into the file-config result (was silently dropped).
+- IRON RULE regression test (`test/ai/recipes-existing-regression.test.ts`): pins that the v0.32 resolveAuth refactor preserves auth behavior for the existing 9 recipes.
+
+### Closed as superseded
+
+The following community PRs are closed because their work is now covered by the recipe system + LiteLLM proxy escape hatch + the recipes shipped in this wave:
+
+- #49, #58, #73, #100, #112, #134, #137, #150, #172, #178, #255, #327, #420, #482, #516, #780, #89 — pluggable embedding adapter / Ollama / Gemini / E5 / Azure-via-LiteLLM / etc.
+
+Each contributor identified a real gap; the patterns they prototyped converged on the recipe system that was shipped in v0.14. Thank you for the early signal.
+
+### Deferred to v0.32.x (with TODOS.md entries)
+
+- **#729 Vertex AI ADC** (lucha0404): proper ADC chain (metadata server, gcloud creds, service-account JSON) is a real product surface, not the single-source-JSON path the original PR proposed.
+- **#691 GitHub Copilot** (tonyxu-io): outbound OAuth is a new product surface (login flow, browser/device flow, refresh, UX), not a sidecar recipe. Needs its own design pass.
+- **#698 OpenAI Codex OAuth** (perlantir): same OAuth-product-surface argument; chat-only.
+- **#765 Hunyuan PGLite + CJK keyword fallback** (313094319-sudo): the CJK PGLite branch is ~150 lines of new SQL + scoring logic that deserves its own focused PR rather than being folded into a 9-commit wave.
+- **Interactive provider chooser in `gbrain init`**: the wizard piece of the discoverability lane. v0.32.0 ships the doctor advisory + cleaner refusal that close the 80% case; the full wizard is a v0.32.x follow-up.
+- **Real-credentials per-recipe smoke fixtures**: opt-in CI matrix gated on API-key budget approval.
+
+### Contributors
+
+Reworked from / inspired by:
+- @cacity (#148 MiniMax)
+- @JamesJZhang (#459 Azure OpenAI)
+- @Magicray1217 (#59 DashScope + Zhipu)
+- @SiyaoZheng (#702 llama-server)
+- @alexandreroumieu-codeapprentice (#779)
+- @vinsew (#121)
+- @100yenadmin / Eva (Voyage 4 Large 2048d HNSW policy, shipped earlier via 3004a87)
+
+Codex outside-voice review during plan-eng-review drove the scope reduction (D11=C) from 8 recipes + OAuth subsystem to 5 recipes + docs.
 
 ## [0.31.12] - 2026-05-10
 

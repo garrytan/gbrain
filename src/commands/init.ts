@@ -134,6 +134,18 @@ async function resolveAIOptions(
       console.error(`Unknown provider: ${shorthand}. Run \`gbrain providers list\` to see known providers.`);
       process.exit(1);
     }
+    // v0.32 D8=A: recipes flagged user_provided_models (litellm, llama-server)
+    // refuse implicit "first model" pick with a setup hint pointing the user
+    // at the explicit form. The shorthand --model is meaningless for these
+    // recipes because there's no canonical first model.
+    if (recipe.touchpoints.embedding?.user_provided_models === true) {
+      console.error(
+        `Provider ${shorthand} requires you to specify the model + dimensions explicitly:\n` +
+        `  gbrain init --embedding-model ${shorthand}:<your-model-id> --embedding-dimensions <N>\n` +
+        (recipe.setup_hint ? `\nSetup: ${recipe.setup_hint}` : '')
+      );
+      process.exit(1);
+    }
     const firstModel = recipe.touchpoints.embedding?.models[0];
     if (!firstModel) {
       console.error(`Provider ${shorthand} has no embedding models listed. Use --embedding-model provider:model.`);
@@ -150,6 +162,20 @@ async function resolveAIOptions(
     const { getRecipe } = await import('../core/ai/recipes/index.ts');
     const providerId = out.embedding_model.split(':')[0];
     const recipe = getRecipe(providerId);
+    // v0.32: user_provided_models recipes (litellm, llama-server) have
+    // default_dims=0 and ship with `models: []` — there's no sensible
+    // fallback. Refuse explicitly here too. Without this, the verbose path
+    // `--embedding-model llama-server:foo` (no --embedding-dimensions) would
+    // fall through to configureGateway's default (1536), creating a
+    // wrong-width schema that explodes only at first embed.
+    if (recipe?.touchpoints.embedding?.user_provided_models === true) {
+      console.error(
+        `Provider ${providerId} requires --embedding-dimensions <N> when using --embedding-model ${out.embedding_model}.\n` +
+        `User-driven-model recipes (litellm, llama-server) have no default dimension.\n` +
+        (recipe.setup_hint ? `\nSetup: ${recipe.setup_hint}` : '')
+      );
+      process.exit(1);
+    }
     if (recipe?.touchpoints.embedding?.default_dims) {
       out.embedding_dimensions = recipe.touchpoints.embedding.default_dims;
     }
