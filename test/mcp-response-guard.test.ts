@@ -178,6 +178,8 @@ describe('MCP response guard', () => {
     const parsed = JSON.parse(text);
     expect(parsed._mbrain_mcp_response.truncated).toBe(true);
     expect(parsed._mbrain_mcp_response.tool).toBe('unknown_large_tool');
+    expect(parsed._mbrain_mcp_response.hint).toContain('MBRAIN_MCP_MAX_RESULT_TEXT_BYTES');
+    expect(parsed._mbrain_mcp_response.hint).toContain('MBRAIN_MCP_MAX_STDIO_FRAME_BYTES');
     expect(parsed.partial_json.length).toBeGreaterThan(0);
   });
 });

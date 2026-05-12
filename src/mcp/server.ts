@@ -394,7 +394,7 @@ function mcpTruncationHint(toolName: string): string {
     case 'get_skillpack':
       return 'Request a narrower skillpack section instead of the full document.';
     default:
-      return 'Request a narrower result, reduce limits, or raise MBRAIN_MCP_MAX_RESULT_TEXT_BYTES intentionally.';
+      return 'Request a narrower result, reduce limits, or intentionally raise MBRAIN_MCP_MAX_RESULT_TEXT_BYTES for default MCP result text budgeting or MBRAIN_MCP_MAX_STDIO_FRAME_BYTES for MCP stdio.';
   }
 }
 
