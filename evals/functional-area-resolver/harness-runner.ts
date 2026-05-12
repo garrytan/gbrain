@@ -184,8 +184,12 @@ export function scoreFixture(predicted: string, expected: string): 0 | 1 {
  */
 export function parseDispatcherLists(variantContent: string): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
-  // Match: ...→ `dispatcher-slug` (dispatcher for: ...)
-  const re = /→\s*`([a-z][a-z0-9-]*)`\s*\(dispatcher for:\s*([^)]+)\)/g;
+  // Match both Unicode `→` (used in the real production AGENTS.md the variants
+  // came from) AND ASCII `->` (what SKILL.md's template emits when a user
+  // follows the documented instructions). Codex review P2-2: without ASCII
+  // support, downstream-authored resolvers silently fall through to strict
+  // scoring even though SKILL.md tells the user the template uses `->`.
+  const re = /(?:→|->)\s*`([a-z][a-z0-9-]*)`\s*\(dispatcher for:\s*([^)]+)\)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(variantContent)) !== null) {
     const dispatcher = m[1];
@@ -414,8 +418,27 @@ export async function main(argv: string[]): Promise<number> {
     env: { ...process.env } as Record<string, string>,
   });
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    process.stderr.write(`Error: ANTHROPIC_API_KEY is not set. The harness needs it to reach ${modelFull}.\n`);
+  // Provider-aware auth check (codex review P2-3). The CLI advertises full
+  // provider:model support and the test suite covers `openai:gpt-4o`, so the
+  // env-var gate must match the provider that will actually be called.
+  // Unknown providers fall through to the gateway, which will raise a clear
+  // recipe-specific error if any required env var is missing.
+  const REQUIRED_ENV_BY_PROVIDER: Record<string, string> = {
+    anthropic: 'ANTHROPIC_API_KEY',
+    openai: 'OPENAI_API_KEY',
+    google: 'GOOGLE_GENERATIVE_AI_API_KEY',
+    groq: 'GROQ_API_KEY',
+    voyage: 'VOYAGE_API_KEY',
+    together: 'TOGETHER_API_KEY',
+    deepseek: 'DEEPSEEK_API_KEY',
+    minimax: 'MINIMAX_API_KEY',
+    dashscope: 'DASHSCOPE_API_KEY',
+    zhipu: 'ZHIPUAI_API_KEY',
+  };
+  const providerId = modelFull.includes(':') ? modelFull.split(':', 1)[0] : 'anthropic';
+  const requiredEnv = REQUIRED_ENV_BY_PROVIDER[providerId];
+  if (requiredEnv && !process.env[requiredEnv]) {
+    process.stderr.write(`Error: ${requiredEnv} is not set. The harness needs it to reach ${modelFull}.\n`);
     return 2;
   }
 

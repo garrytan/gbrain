@@ -207,6 +207,33 @@ test('parseDispatcherLists: extracts dispatcher → sub-skills', () => {
   expect(m.get('exec-assist')).toEqual(new Set(['exec-assist', 'gmail', 'slack']));
 });
 
+test('parseDispatcherLists: accepts ASCII -> arrow (SKILL.md template format)', () => {
+  // Codex review P2-2: SKILL.md Step 4 documents the template with `->`,
+  // but the production variants use Unicode `→`. The regex must match
+  // both or downstream users following the template silently fall through
+  // to strict-only scoring.
+  const variant = `
+- **Brain**: foo bar -> \`brain-ops\` (dispatcher for: enrich, query)
+- **Comms**: email -> \`exec-assist\` (dispatcher for: gmail)
+`;
+  const m = parseDispatcherLists(variant);
+  expect(m.size).toBe(2);
+  expect(m.get('brain-ops')).toEqual(new Set(['brain-ops', 'enrich', 'query']));
+  expect(m.get('exec-assist')).toEqual(new Set(['exec-assist', 'gmail']));
+});
+
+test('parseDispatcherLists: mixed Unicode + ASCII arrows in same file', () => {
+  // A real-world fork could migrate gradually; harness must handle both.
+  const variant = `
+- **Brain**: foo → \`brain-ops\` (dispatcher for: enrich, query)
+- **Comms**: email -> \`exec-assist\` (dispatcher for: gmail, slack)
+`;
+  const m = parseDispatcherLists(variant);
+  expect(m.size).toBe(2);
+  expect(m.get('brain-ops')?.has('enrich')).toBe(true);
+  expect(m.get('exec-assist')?.has('gmail')).toBe(true);
+});
+
 test('parseDispatcherLists: zero dispatchers when no clauses present', () => {
   const variant = `
 - Row 1 → \`alpha\`
