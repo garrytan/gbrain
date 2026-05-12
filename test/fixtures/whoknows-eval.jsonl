@@ -1,27 +1,21 @@
-// v0.33 whoknows eval fixture — JSONL format, one row per query.
+// v0.33 whoknows eval fixture — 10 real routing queries from Garry's
+// brain. Each row: {query, expected_top_3_slugs, notes}.
 //
-// Schema: {query, expected_top_3_slugs, notes?}
+// Source: reference/vc-intro-network ("Who Takes Intros from Garry") and
+// adjacent routing context Garry maintains in his brain. Slugs verified
+// against the markdown source at ~/git/brain/people/<slug>.md as of
+// 2026-05-11.
 //
-// THIS IS A SHIPPED PLACEHOLDER. The intent of the assignment from
-// /office-hours D2 is: each gbrain user writes their own fixture from
-// real queries they actually ask, with hand-labeled correct answers.
-// The fixture below is synthetic (matches the seeded brain used by
-// test/e2e/whoknows.test.ts) so the eval harness has something to
-// grade in CI without an external brain.
-//
-// To use this for YOUR brain:
-//   1. Replace these queries with 10 real questions you'd ask.
-//   2. Replace expected_top_3_slugs with slugs of person/company pages
-//      in your brain that you'd accept as correct answers.
-//   3. Run: gbrain eval whoknows test/fixtures/whoknows-eval.jsonl
-//   4. If hit-rate < 80%, the eval gate fails the ship.
-{"query":"fintech payments","expected_top_3_slugs":["wiki/people/example-alice","wiki/companies/example-fintech-co"],"notes":"alice's compiled_truth mentions fintech payments; the company page is a relevant cohort match"}
-{"query":"crypto investing","expected_top_3_slugs":["wiki/companies/example-fund","wiki/people/example-bob"],"notes":"example-fund's content is crypto-native; bob is a crypto investor"}
-{"query":"ai agents","expected_top_3_slugs":["wiki/people/example-carol"],"notes":"carol's page covers AI agents in depth"}
-{"query":"distributed systems","expected_top_3_slugs":["wiki/people/example-dave"],"notes":"dave's compiled_truth has distributed-systems content"}
-{"query":"healthcare technology","expected_top_3_slugs":["wiki/companies/example-health-co","wiki/people/example-eve"],"notes":"healthtech company + eve as expert"}
-{"query":"developer tools","expected_top_3_slugs":["wiki/people/example-frank","wiki/companies/example-devtools-co"],"notes":"frank built developer tools; the company page reinforces"}
-{"query":"machine learning research","expected_top_3_slugs":["wiki/people/example-grace"],"notes":"grace publishes ML research"}
-{"query":"climate tech","expected_top_3_slugs":["wiki/companies/example-climate-co","wiki/people/example-hank"],"notes":"climate-focused company and person"}
-{"query":"enterprise sales","expected_top_3_slugs":["wiki/people/example-ivy"],"notes":"ivy has enterprise sales background"}
-{"query":"hardware engineering","expected_top_3_slugs":["wiki/people/example-jake","wiki/companies/example-hardware-co"],"notes":"jake is a hardware engineer; the company page is the cohort context"}
+// Ground truth is "would Garry actually route this intro / consider this
+// person an expert here." A hit is achieved when ANY of the expected
+// top-3 slugs appears in the eval's top-3 returned slugs.
+{"query":"healthtech seed VC who takes intros from Garry","expected_top_3_slugs":["people/eric-vishria","people/kristina-shen","people/rebecca-kaden"],"notes":"Eric Vishria (Benchmark, 1-Best, healthtech), Kristina Shen (Chemistry, healthtech), Rebecca Kaden (USV)"}
+{"query":"fintech seed investor","expected_top_3_slugs":["people/nick-shalek","people/parul-singh","people/elad-gil"],"notes":"Nick Shalek (Ribbit Capital, fintech-focused), Parul Singh (645 Ventures), Elad Gil (angel)"}
+{"query":"AI angel investor early stage","expected_top_3_slugs":["people/elad-gil","people/lachy-groom","people/gokul-rajaram"],"notes":"Three top-rated angels for AI seed rounds"}
+{"query":"Founders Fund partner for defense and deep tech","expected_top_3_slugs":["people/trae-stephens"],"notes":"Trae Stephens, defense partner at FF"}
+{"query":"USV partner for consumer marketplaces","expected_top_3_slugs":["people/rebecca-kaden"],"notes":"Rebecca Kaden at USV"}
+{"query":"Accel partner who funds YC seed","expected_top_3_slugs":["people/amit-kumar"],"notes":"Amit Kumar at Accel, 102 YC deals"}
+{"query":"YC partner who advises on fintech","expected_top_3_slugs":["people/diana-hu","people/jon-xu"],"notes":"Diana Hu and Jon Xu, YC GPs"}
+{"query":"Menlo Ventures Series A lead","expected_top_3_slugs":["people/joff-redfern"],"notes":"Joff Redfern at Menlo, ex-CPO Atlassian"}
+{"query":"Quiet Capital partner","expected_top_3_slugs":["people/lee-edwards"],"notes":"Lee Edwards at Quiet Capital, 52 YC deals"}
+{"query":"Index Ventures partner for SaaS","expected_top_3_slugs":["people/nina-achadian"],"notes":"Nina Achadian at Index, 69 YC deals"}
