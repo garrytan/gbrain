@@ -23,9 +23,17 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // Tree-sitter chunkers feed code-indexing E2E.
   "src/core/chunkers/**": ["test/e2e/code-indexing.test.ts"],
-  // OpenClaw context-engine plugin: engine + entry both feed the plugin-shape E2E.
-  "src/core/context-engine.ts": ["test/e2e/openclaw-context-engine-plugin.test.ts"],
-  "src/openclaw-context-engine.ts": ["test/e2e/openclaw-context-engine-plugin.test.ts"],
+  // OpenClaw context-engine plugin: engine + entry feed the plugin-shape E2E
+  // (mocked SDK) AND the real-loader Tier 2 E2E that spawns openclaw and
+  // actually installs the plugin into an isolated --profile.
+  "src/core/context-engine.ts": [
+    "test/e2e/openclaw-context-engine-plugin.test.ts",
+    "test/e2e/openclaw-plugin-load-real.test.ts",
+  ],
+  "src/openclaw-context-engine.ts": [
+    "test/e2e/openclaw-context-engine-plugin.test.ts",
+    "test/e2e/openclaw-plugin-load-real.test.ts",
+  ],
   // dream.ts is a thin alias over runCycle in cycle.ts.
   "src/core/cycle.ts": ["test/e2e/cycle.test.ts", "test/e2e/dream.test.ts"],
   // Multi-source sync writes share the per-source bookmark anchor.
