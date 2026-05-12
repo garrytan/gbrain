@@ -711,6 +711,31 @@ routing is narrowed to what the skill actually covers.
 **Skillify loop (v0.19):** skillify (the markdown orchestration), skillpack-check
 (agent-readable health report).
 
+**Routing-table compression (v0.32.3.0):** `skills/functional-area-resolver/` —
+two-layer dispatch pattern for shrinking large AGENTS.md / RESOLVER.md files
+(>=12KB) without losing routing accuracy. Replaces one row per skill with one
+entry per functional area, where each area declares its sub-skills in a
+`(dispatcher for: ...)` clause. The static-prompt analog of hierarchical agent
+routing (AnyTool [arXiv:2402.04253](https://arxiv.org/abs/2402.04253), RAG-MCP
+[arXiv:2505.03275](https://arxiv.org/html/2505.03275v1), Anthropic Agent Skills
+progressive disclosure). Empirically validated across Opus 4.7 / Sonnet 4.6 /
+Haiku 4.5: +13 to +17pp over the verbose baseline at 48% the size (25KB → 13KB
+on a real fork). The `(dispatcher for: ...)` clause is the load-bearing signal
+— strip it and lenient accuracy collapses to 41.7% on Sonnet (the
+`resolver-of-resolvers` ablation case). A/B eval surface lives at
+`evals/functional-area-resolver/` (outside `skills/` deliberately so the
+skillpack bundler doesn't ship eval infrastructure to downstream installs):
+gateway-routed TypeScript harness, 20 training + 5 held-out fixtures, strict +
+lenient scoring, three committed cross-model receipts in `baseline-runs/`.
+Receipt header binds (model, prompt_template_hash, fixtures_hash, harness_sha,
+ts) so future contributors can verify reproduction. Companion `rescore.mjs`
+re-scores existing JSONL with lenient tolerance for zero API cost. Reproduce
+with `cd evals/functional-area-resolver && node harness.mjs --model
+{opus|sonnet|haiku}` (~$0.30–1.70 per model). Nine v0.33.x follow-up TODOs
+filed for held-out corpus growth, cross-vendor verification, hierarchical
+area-of-areas, embedding-based pre-router, and the run-1 vs run-2
+prompt-design ablation methodology.
+
 **Operational health (v0.19.1):** smoke-test (8 post-restart health checks with auto-fix
 for Bun, CLI, DB, worker, Zod CJS, gateway, API key, brain repo; user-extensible via
 `~/.gbrain/smoke-tests.d/*.sh`).

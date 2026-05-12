@@ -811,6 +811,31 @@ routing is narrowed to what the skill actually covers.
 **Skillify loop (v0.19):** skillify (the markdown orchestration), skillpack-check
 (agent-readable health report).
 
+**Routing-table compression (v0.32.3.0):** `skills/functional-area-resolver/` —
+two-layer dispatch pattern for shrinking large AGENTS.md / RESOLVER.md files
+(>=12KB) without losing routing accuracy. Replaces one row per skill with one
+entry per functional area, where each area declares its sub-skills in a
+`(dispatcher for: ...)` clause. The static-prompt analog of hierarchical agent
+routing (AnyTool [arXiv:2402.04253](https://arxiv.org/abs/2402.04253), RAG-MCP
+[arXiv:2505.03275](https://arxiv.org/html/2505.03275v1), Anthropic Agent Skills
+progressive disclosure). Empirically validated across Opus 4.7 / Sonnet 4.6 /
+Haiku 4.5: +13 to +17pp over the verbose baseline at 48% the size (25KB → 13KB
+on a real fork). The `(dispatcher for: ...)` clause is the load-bearing signal
+— strip it and lenient accuracy collapses to 41.7% on Sonnet (the
+`resolver-of-resolvers` ablation case). A/B eval surface lives at
+`evals/functional-area-resolver/` (outside `skills/` deliberately so the
+skillpack bundler doesn't ship eval infrastructure to downstream installs):
+gateway-routed TypeScript harness, 20 training + 5 held-out fixtures, strict +
+lenient scoring, three committed cross-model receipts in `baseline-runs/`.
+Receipt header binds (model, prompt_template_hash, fixtures_hash, harness_sha,
+ts) so future contributors can verify reproduction. Companion `rescore.mjs`
+re-scores existing JSONL with lenient tolerance for zero API cost. Reproduce
+with `cd evals/functional-area-resolver && node harness.mjs --model
+{opus|sonnet|haiku}` (~$0.30–1.70 per model). Nine v0.33.x follow-up TODOs
+filed for held-out corpus growth, cross-vendor verification, hierarchical
+area-of-areas, embedding-based pre-router, and the run-1 vs run-2
+prompt-design ablation methodology.
+
 **Operational health (v0.19.1):** smoke-test (8 post-restart health checks with auto-fix
 for Bun, CLI, DB, worker, Zod CJS, gateway, API key, brain repo; user-extensible via
 `~/.gbrain/smoke-tests.d/*.sh`).
@@ -1745,6 +1770,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | Save or load reports | `skills/reports/SKILL.md` |
 | "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
 | "Skillify this", "is this a skill?", "make this proper" | `skills/skillify/SKILL.md` |
+| "Compress my resolver", "AGENTS.md too large", "RESOLVER.md too big", "functional area dispatcher", "shrink routing table" | `skills/functional-area-resolver/SKILL.md` |
 | "Is gbrain healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
 | Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
@@ -1837,6 +1863,8 @@ GBrain is those patterns, generalized. 34 skills. Install in 30 minutes. Your ag
 > **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
 
 > **Embedding providers:** OpenAI is the default, but gbrain ships with **14 recipes** covering Voyage, Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy (universal), and 5 more. Run `gbrain providers list` to see them, or read [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for setup, pricing, and a decision tree. `gbrain doctor` will surface alternative providers whose env vars you already have set.
+
+> **New in v0.32.3.0 — compress your AGENTS.md without losing accuracy:** if your downstream agent fork has grown a 25KB+ `AGENTS.md` / `RESOLVER.md`, the new [`functional-area-resolver`](skills/functional-area-resolver/SKILL.md) skill ships a two-layer dispatch pattern that compresses 25KB → 13KB (48% the size) while **beating** the verbose baseline by +13 to +17pp across Opus 4.7, Sonnet 4.6, and Haiku 4.5. A/B eval harness, cross-model receipts, and reproduction instructions live at [`evals/functional-area-resolver/`](evals/functional-area-resolver/). The static-prompt analog of AnyTool / RAG-MCP / Anthropic Agent Skills progressive disclosure — single-LLM-pass dispatch, no second routing call.
 
 ## Install
 
