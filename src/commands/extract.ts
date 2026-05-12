@@ -502,7 +502,7 @@ async function extractForSlugs(
   async function flushLinks() {
     if (linkBatch.length === 0) return;
     try {
-      linksCreated += await engine.addLinksBatch(linkBatch);
+      linksCreated += await engine.addLinksBatch(linkBatch); // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!jsonMode) console.error(`  link batch error (${linkBatch.length} rows lost): ${msg}`);
@@ -597,7 +597,7 @@ async function extractLinksFromDir(
   async function flush() {
     if (batch.length === 0) return;
     try {
-      created += await engine.addLinksBatch(batch);
+      created += await engine.addLinksBatch(batch); // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
@@ -721,7 +721,7 @@ export async function extractLinksForSlugs(
     try {
       const content = readFileSync(filePath, 'utf-8');
       for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs)) {
-        try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, undefined, undefined, undefined, linkOpts); created++; } catch { /* skip */ }
+        try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, undefined, undefined, undefined, linkOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback when batch path declines a row
       }
     } catch { /* skip */ }
   }
@@ -745,7 +745,7 @@ export async function extractTimelineForSlugs(
     try {
       const content = readFileSync(filePath, 'utf-8');
       for (const entry of extractTimelineFromContent(content, slug)) {
-        try { await engine.addTimelineEntry(entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts); created++; } catch { /* skip */ }
+        try { await engine.addTimelineEntry(entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback for timeline entries
       }
     } catch { /* skip */ }
   }
@@ -804,7 +804,7 @@ async function extractLinksFromDB(
   async function flush() {
     if (batch.length === 0) return;
     try {
-      created += await engine.addLinksBatch(batch);
+      created += await engine.addLinksBatch(batch); // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {

@@ -84,7 +84,10 @@ describe('forget_fact dispatch', () => {
     });
     expect(r2.isError).toBe(true);
     const payload = JSON.parse(r2.content[0].text);
-    expect(payload.error).toBe('fact_not_found');
+    // v0.32.2: more precise discriminator. The first call expires the fact;
+    // the second call sees expired_at IS NOT NULL and surfaces
+    // `fact_already_expired` instead of the older opaque `fact_not_found`.
+    expect(payload.error).toBe('fact_already_expired');
   });
 });
 

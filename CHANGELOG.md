@@ -76,6 +76,90 @@ Existing on-disk files at `brainDir/<slug>.md` for non-default sources stay wher
 
 Supersedes #845 (which fixed `embed --stale` only).
 
+## [0.32.2] - 2026-05-11
+
+**The GitHub repo is the system of record. The database is a derived cache. We do not back up the database — we rebuild it from the repo.**
+
+That has been gbrain's architectural intent since the takes system shipped. v0.32.2 makes it true for facts too, adds a CI gate that enforces the rule going forward, and ships a 3-layer privacy strip so private fact text never leaks across the MCP boundary or into search.
+
+v0.31 added hot-memory facts but they lived only in `facts`. Drop the table and the data was gone — the same DB-only failure mode that motivated the takes fence pattern in v0.28. v0.32.2 closes the gap. Every fact write now lands in markdown first (a fenced table on the entity page), then stamps the DB index. `gbrain forget` rewrites the fence with strikethrough + `valid_until=today` so the DB's `expired_at = valid_until + now()` rule reconstructs the forget state on rebuild. Existing v0.31 facts are backfilled to fences via the v0_32_2 orchestrator on `gbrain apply-migrations`.
+
+### The numbers that matter
+
+Before vs after, on the v0.32.2 system-of-record surface:
+
+| Category | Before v0.32.2 | After v0.32.2 |
+|---|---|---|
+| Takes | FS-canonical (fence in markdown) | FS-canonical |
+| Links | FS-canonical (markdown wikilinks) | FS-canonical |
+| Timeline | FS-canonical (`<!-- timeline -->` sentinel) | FS-canonical |
+| Tags | FS-canonical (frontmatter) | FS-canonical |
+| **Facts** | **DB-only (drop the table, lose the data)** | **FS-canonical (fenced on entity page)** |
+| `gbrain forget` | DB UPDATE only (lost on rebuild) | Fence rewrite (survives rebuild) |
+| `get_page` private leak via chunks | private fact bytes in `content_chunks` + search | chunker strips private rows |
+| `get_page` private leak via subagent | subagent path saw full fence | strip fires when `ctx.remote === true` |
+| Direct derived-table writes | unchecked across the codebase | CI gate blocks new ones |
+
+The CI invariant gate (`scripts/check-system-of-record.sh`, wired into `bun run verify`) scans `src/` + `scripts/` for direct `engine.insertFact` / `addLink` / `addLinksBatch` / `addTimelineEntry` / `upsertTake` / `insertFacts` / `expireFact` calls. Legitimate call sites carry `// gbrain-allow-direct-insert: <reason>` comments on the same line. New code that tries to write derived state directly fails the build.
+
+### What this means for you
+
+If you've been running v0.31 hot memory, run `gbrain apply-migrations --yes` after upgrading. The v0_32_2 orchestrator backfills your existing facts to entity-page fences atomically (dry-run by default; explicit `--write` required; refuses on dirty git tree). After that, `git diff` shows you the fences. Commit them and your facts now live in git. From now on, every new fact your agent extracts hits the fence first, then the DB.
+
+If you're on a thin-client install (no `sources.local_path`), facts still write to the DB index but skip the fence — they live in the legacy keyspace until you point a `local_path` at a real brain repo.
+
+### To take advantage of v0.32.2
+
+`gbrain upgrade` should do this automatically. If it did not, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Read the migration guide** at `skills/migrations/v0.32.2.md` — your agent picks this up automatically the next time you interact with it. The migration is fully mechanical; no host-agent action required beyond confirming the v0_32_2 orchestrator ran successfully.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   # Should show facts backfilled, no facts.write_failures.jsonl entries.
+   ls people/ companies/ | head -5
+   # Each entity page now has a `## Facts` fence (if it had v0.31 facts).
+   ```
+4. **If any step fails or the numbers look wrong,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and the contents of `~/.gbrain/facts.write_failures.jsonl` (if it exists). This feedback loop is how the upgrade path gets robust over time.
+
+### Itemized changes
+
+#### Schema
+- Migration v51 (`facts_fence_columns`): adds `facts.row_num INTEGER`, `facts.source_markdown_slug TEXT`, and the partial UNIQUE index `idx_facts_fence_key ON facts (source_id, source_markdown_slug, row_num) WHERE row_num IS NOT NULL`. ALTER-only on PG 11+/PGLite; both nullable; the partial WHERE clause stops legacy NULL-row_num rows from colliding pre-backfill.
+- Fresh-install parity: the v40 `factsDDL` CREATE TABLE block now declares the columns from the start, so brand-new installs hit a single CREATE that already has them and the v51 ALTERs no-op via `IF NOT EXISTS`.
+
+#### Core modules
+- `src/core/facts-fence.ts` (new): parser + renderer + upsert for the `<!--- gbrain:facts:begin --> ... :end -->` fenced table. 10 data columns (claim, kind, confidence, visibility, notability, valid_from, valid_until, source, context + strikethrough-encoded supersede / forgotten). Mirrors the v0.28 takes-fence pattern; both modules share the row-level primitives (`parseRowCells`, `isSeparatorRow`, `stripStrikethrough`, `escapeFenceCell`, `parseStringCell`) via the new `src/core/fence-shared.ts`.
+- `src/core/facts/extract-from-fence.ts` (new): pure mapper from ParsedFact[] → engine-ready batch insert rows. Handles the strikethrough → date derivation contract (forgotten rows stamp `valid_until = today`; supersededBy rows without explicit `valid_until` leave null for the consolidator).
+- `src/core/facts/fence-write.ts` (new): markdown-first write orchestrator. Acquires the v0.28 page-lock primitive, stub-creates the entity page if missing, atomic `.tmp + parse-validate + rename`, then engine.insertFacts batch.
+- `src/core/facts/forget.ts` (new): `forgetFactInFence(engine, factId, {reason})`. Rewrites the fence row with strikethrough + `valid_until = today` + `context: "forgotten: <reason>"`. Two-tier fallback to legacy `expireFact` for pre-v51 / thin-client / missing-file / row_num-drift cases.
+- `src/core/cycle/extract-facts.ts` (new): cycle phase that reconciles facts DB index from the fence. Empty-fence guard refuses to run while v0.31 legacy rows are pending the v0_32_2 backfill.
+- `src/core/facts/backstop.ts` (modified): `runFactsBackstop` AND `runFactsPipeline` (both entry points to fact extraction) rewritten to use `writeFactsToFence`. Cosine-similarity dedup against DB candidates runs BEFORE fence write.
+- `src/core/operations.ts` (modified): `get_page` strip trigger changed from `ctx.takesHoldersAllowList` to `ctx.remote === true`. Closes the pre-existing subagent privacy hole as a bonus. Both `stripTakesFence` and `stripFactsFence({keepVisibility: ['world']})` fire for untrusted readers. `forget_fact` MCP op routes through `forgetFactInFence`.
+- `src/core/chunkers/recursive.ts` (modified): `chunkText` calls `stripFactsFence({keepVisibility: ['world']})` alongside `stripTakesFence` before chunking. Private fact text never reaches `content_chunks.chunk_text`, embeddings, or search results.
+- `src/commands/recall.ts` (modified): `gbrain forget` CLI routes through `forgetFactInFence`. New optional `--reason <text>` flag; output names the path (fence vs legacy_db).
+
+#### Migration
+- `src/commands/migrations/v0_32_2.ts` (new): two-phase orchestrator. phaseAFenceFacts walks every legacy DB row, appends to its entity-page fence atomically. phaseBVerify diffs fence row counts against DB row counts per touched page. Dry-run by default; refuses on dirty working tree; idempotent re-run via (claim, source) semantic-key dedup.
+
+#### CI
+- `scripts/check-system-of-record.sh` (new): static-grep gate banning direct calls to derived-table writers outside the reconcile layer. Function-scoped allow-list via `// gbrain-allow-direct-insert: <reason>` comments on the same line as the call. Wired into `bun run verify`.
+
+#### Tests
+- 132 new tests across 9 test files cover the fence parser/renderer, extract-from-fence mapper, batch engine surface, fence-write orchestrator, migration orchestrator, cycle phase, 3-layer privacy strip, forget-as-fence, CI gate self-test, and the system-of-record invariant E2E capstone (full delete-and-rebuild round-trip).
+
+#### Docs
+- `docs/architecture/system-of-record.md` (new): the canonical manifesto + FS-canonical / derived / DB-only-by-design table + named exceptions + the 3-layer privacy boundary + the rule for new user-knowledge categories.
+- `skills/migrations/v0.32.2.md` (new): agent-facing migration guide.
+
+#### For contributors
+
+The CI gate's function-scoped allow-list is the structural mechanism that prevents future regressions from re-introducing the DB-only failure mode. New code that needs to call a derived-table writer must either route through the existing extract / reconcile / migration layer OR carry an explicit allow-list comment with a justification.
+
 ## [0.32.0] - 2026-05-10
 
 **5 new embedding providers + the discoverability fix that closes the 17-PR dupe cluster.**
