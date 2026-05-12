@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.32.4] - 2026-05-11
+## [0.32.8] - 2026-05-11
 
 **Multi-source brains finish what they start. Embed, extract, takes, patterns, integrity, migrate-engine all now respect which source a page belongs to. The disk-side collision is fixed via a per-source subdir layout, and a CI gate prevents the bug class from coming back.**
 
@@ -35,7 +35,7 @@ Bug sites threaded with explicit source_id                   →  5 (extract-tak
 - **`validateSourceId()`**: new helper in `src/core/utils.ts`. Allows `[a-z0-9_-]+` only; rejects `..`, `/`, dots, uppercase. Used by the disk-layout fix before any `join(brainDir, source_id, ...)` call so source_id can't traverse out of brainDir.
 - **CI gate (`scripts/check-source-id-projection.sh`)**: greps engine SELECT projections for the rowToPage feeder shape and fails the build if any drops `source_id`. Wired into `bun run verify`. Codex's outside-voice review caught two pre-existing projections (`getPage`, `putPage RETURNING`) that lacked the column; this commit fixes them and prevents the regression from recurring.
 
-### To take advantage of v0.32.4
+### To take advantage of v0.32.8
 
 `gbrain upgrade` should do this automatically. Existing multi-source brains see immediate improvement on the next dream cycle.
 
