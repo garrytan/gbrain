@@ -162,8 +162,57 @@ export interface SyncOpts {
   skipLock?: boolean;
 }
 
-function git(repoPath: string, ...args: string[]): string {
-  return execFileSync('git', ['-C', repoPath, ...args], {
+/**
+ * v0.32.7 CJK wave (codex post-merge F4): resolve a slug by `pages.source_path`
+ * first, falling back to `resolveSlugForPath(path)`.
+ *
+ * Frontmatter-fallback pages (emoji-only / Thai / Arabic / exotic-script
+ * filenames where `slugifyPath` returns empty and the slug came from the
+ * frontmatter) have a slug that ISN'T derivable from the path. Delete and
+ * rename operations that only know the path would otherwise orphan these
+ * pages by trying to delete the path-derived (wrong) slug.
+ *
+ * Returns the actual stored slug when source_path matches a row, or the
+ * path-derived slug when there's no match (normal-case path-derived pages).
+ */
+export async function resolveSlugByPathOrSourcePath(
+  engine: BrainEngine,
+  path: string,
+  sourceId?: string,
+): Promise<string> {
+  try {
+    const rows = await engine.executeRaw<{ slug: string }>(
+      sourceId
+        ? `SELECT slug FROM pages WHERE source_path = $1 AND source_id = $2 LIMIT 1`
+        : `SELECT slug FROM pages WHERE source_path = $1 LIMIT 1`,
+      sourceId ? [path, sourceId] : [path],
+    );
+    if (rows.length > 0 && rows[0].slug) return rows[0].slug;
+  } catch {
+    // Fall through — best-effort. Pre-migration brains or query errors
+    // shouldn't break delete/rename for path-derived pages.
+  }
+  return resolveSlugForPath(path);
+}
+
+/**
+ * git CLI helper.
+ *
+ * `configs` flags are emitted as `-c key=val` pairs BEFORE `-C repoPath` and
+ * BEFORE the subcommand. `core.quotepath=false` is always emitted first so CJK
+ * (and other non-ASCII) paths arrive as UTF-8 in `diff --name-status` and
+ * sibling commands. Callers that need additional git config should pass via
+ * the `configs` parameter; never inline `-c` into `args`.
+ *
+ * Exported for `test/sync.test.ts` invariant assertion only.
+ */
+export function buildGitInvocation(repoPath: string, args: string[], configs: string[] = []): string[] {
+  const cfg = ['core.quotepath=false', ...configs].flatMap(c => ['-c', c]);
+  return [...cfg, '-C', repoPath, ...args];
+}
+
+function git(repoPath: string, args: string[], configs: string[] = []): string {
+  return execFileSync('git', buildGitInvocation(repoPath, args, configs), {
     encoding: 'utf-8',
     timeout: 30000,
   }).trim();
@@ -171,7 +220,7 @@ function git(repoPath: string, ...args: string[]): string {
 
 function isDetachedHead(repoPath: string): boolean {
   try {
-    git(repoPath, 'symbolic-ref', '--quiet', 'HEAD');
+    git(repoPath, ['symbolic-ref', '--quiet', 'HEAD']);
     return false;
   } catch {
     return true;
@@ -183,8 +232,8 @@ function unique<T>(items: T[]): T[] {
 }
 
 function buildDetachedWorkingTreeManifest(repoPath: string): SyncManifest {
-  const manifest = buildSyncManifest(git(repoPath, 'diff', '--name-status', '-M', 'HEAD'));
-  const untracked = git(repoPath, 'ls-files', '--others', '--exclude-standard')
+  const manifest = buildSyncManifest(git(repoPath, ['diff', '--name-status', '-M', 'HEAD']));
+  const untracked = git(repoPath, ['ls-files', '--others', '--exclude-standard'])
     .split('\n')
     .filter(line => line.length > 0);
 
@@ -410,7 +459,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // Get current HEAD
   let headCommit: string;
   try {
-    headCommit = git(repoPath, 'rev-parse', 'HEAD');
+    headCommit = git(repoPath, ['rev-parse', 'HEAD']);
   } catch {
     throw new Error(`No commits in repo ${repoPath}. Make at least one commit before syncing.`);
   }
@@ -421,7 +470,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // Ancestry validation: if lastCommit exists, verify it's still in history
   if (lastCommit) {
     try {
-      git(repoPath, 'cat-file', '-t', lastCommit);
+      git(repoPath, ['cat-file', '-t', lastCommit]);
     } catch {
       console.error(`Sync anchor commit ${lastCommit.slice(0, 8)} missing (force push?). Running full reimport.`);
       return performFullSync(engine, repoPath, headCommit, opts);
@@ -429,7 +478,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
     // Verify ancestry
     try {
-      git(repoPath, 'merge-base', '--is-ancestor', lastCommit, headCommit);
+      git(repoPath, ['merge-base', '--is-ancestor', lastCommit, headCommit]);
     } catch {
       console.error(`Sync anchor ${lastCommit.slice(0, 8)} is not an ancestor of HEAD. Running full reimport.`);
       return performFullSync(engine, repoPath, headCommit, opts);
@@ -482,7 +531,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
 
   // Diff using git diff (net result, not per-commit)
-  const diffOutput = git(repoPath, 'diff', '--name-status', '-M', `${lastCommit}..${headCommit}`);
+  const diffOutput = git(repoPath, ['diff', '--name-status', '-M', `${lastCommit}..${headCommit}`]);
   const manifest = buildSyncManifest(diffOutput);
   if (detachedWorkingTreeManifest) {
     manifest.added = unique([...manifest.added, ...detachedWorkingTreeManifest.added]);
@@ -512,7 +561,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // pages in sources B/C/D.
   const pageOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   for (const path of unsyncableModified) {
-    const slug = resolveSlugForPath(path);
+    const slug = await resolveSlugByPathOrSourcePath(engine, path, opts.sourceId);
     try {
       const existing = await engine.getPage(slug, pageOpts);
       if (existing) {
@@ -584,7 +633,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   if (filtered.deleted.length > 0) {
     progress.start('sync.deletes', filtered.deleted.length);
     for (const path of filtered.deleted) {
-      const slug = resolveSlugForPath(path);
+      const slug = await resolveSlugByPathOrSourcePath(engine, path, opts.sourceId);
       await engine.deletePage(slug, deleteOpts);
       pagesAffected.push(slug);
       progress.tick(1, slug);
@@ -603,7 +652,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // either sweep them all OR violate (source_id, slug) UNIQUE).
     const renameOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
     for (const { from, to } of filtered.renamed) {
-      const oldSlug = resolveSlugForPath(from);
+      const oldSlug = await resolveSlugByPathOrSourcePath(engine, from, opts.sourceId);
+      // The new path doesn't yet have a row, so resolve from path only.
       const newSlug = resolveSlugForPath(to);
       try {
         await engine.updateSlug(oldSlug, newSlug, renameOpts);
@@ -764,7 +814,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // prevents *this* gbrain process from stepping on itself; this gate
   // catches drift caused by external `git` commands the lock cannot see.
   try {
-    const currentHead = git(repoPath, 'rev-parse', 'HEAD');
+    const currentHead = git(repoPath, ['rev-parse', 'HEAD']);
     if (currentHead !== headCommit) {
       failedFiles.push({
         path: '<head>',

@@ -256,6 +256,24 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         await engine.connect(toCfgSchema(cfgSchema));
         await engine.initSchema();
         console.log('  Schema up to date.');
+
+        // v0.32.7 CJK wave: chunker-version bump → re-embed sweep.
+        // Idempotent — `runReindex` short-circuits when no pages are pending.
+        try {
+          const { runPostUpgradeReembedPrompt } = await import('../core/post-upgrade-reembed.ts');
+          const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
+          let modelString = 'openai:text-embedding-3-large';
+          try { modelString = getEmbeddingModel(); } catch { /* gateway not configured — keep default */ }
+          const promptResult = await runPostUpgradeReembedPrompt(engine, modelString);
+          if (promptResult.proceeded) {
+            const { runReindex } = await import('./reindex.ts');
+            await runReindex(engine, ['--markdown']);
+          }
+        } catch (re) {
+          const msg = re instanceof Error ? re.message : String(re);
+          console.warn(`\nChunker-bump reindex skipped: ${msg}`);
+          console.warn('Run `gbrain reindex --markdown` manually when ready.');
+        }
       } finally {
         try { await engine.disconnect(); } catch { /* best-effort */ }
       }

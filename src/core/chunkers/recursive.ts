@@ -5,25 +5,40 @@
  * 5-level delimiter hierarchy:
  *   1. Paragraphs (\n\n)
  *   2. Lines (\n)
- *   3. Sentences (. ! ? followed by space or newline)
- *   4. Clauses (; : , )
- *   5. Words (whitespace)
+ *   3. Sentences (. ! ? followed by space or newline; plus CJK 。！？)
+ *   4. Clauses (; : , ; plus CJK ；：，、)
+ *   5. Words (whitespace + CJK char-slice fallback)
  *
  * Config: 300-word chunks with 50-word sentence-aware overlap.
+ * v0.32.7: maxChars hard cap (default 6000) sliding-window safety belt
+ * guarantees no chunk overflows OpenAI's 8192-token embedding limit even
+ * on pathological CJK / whitespace-less text.
+ *
  * Lossless invariant: non-overlapping portions reassemble to original.
  */
+
+import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
+
+/**
+ * Markdown chunker version. Folded into the per-page chunker_version column
+ * so post-upgrade reindex sweeps can find pages built with old chunkers and
+ * rebuild them on the new shape. Bump on any change that affects chunk
+ * boundaries (delimiters, word counting, maxChars cap).
+ */
+export const MARKDOWN_CHUNKER_VERSION = 2;
 
 const DELIMITERS: string[][] = [
   ['\n\n'],                          // L0: paragraphs
   ['\n'],                            // L1: lines
-  ['. ', '! ', '? ', '.\n', '!\n', '?\n'], // L2: sentences
-  ['; ', ': ', ', '],                // L3: clauses
-  [],                                // L4: words (whitespace split)
+  ['. ', '! ', '? ', '.\n', '!\n', '?\n', ...CJK_SENTENCE_DELIMITERS], // L2: sentences
+  ['; ', ': ', ', ', ...CJK_CLAUSE_DELIMITERS],                         // L3: clauses
+  [],                                // L4: words (whitespace + CJK char-slice fallback)
 ];
 
 export interface ChunkOptions {
   chunkSize?: number;    // target words per chunk (default 300)
   chunkOverlap?: number; // overlap words (default 50)
+  maxChars?: number;     // hard cap on any chunk's char length (default 6000)
 }
 
 export interface TextChunk {
@@ -48,6 +63,7 @@ import { stripFactsFence } from '../facts-fence.ts';
 export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
   const chunkOverlap = opts?.chunkOverlap || 50;
+  const maxChars = opts?.maxChars || 6000;
 
   if (!text || text.trim().length === 0) return [];
 
@@ -64,15 +80,47 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
 
   const wordCount = countWords(stripped);
   if (wordCount <= chunkSize) {
-    return [{ text: stripped.trim(), index: 0 }];
+    // Single-chunk path: still apply the maxChars cap.
+    const capped = capByChars(stripped.trim(), maxChars);
+    return capped.map((t, i) => ({ text: t, index: i }));
   }
 
   // Recursively split, then greedily merge to target size
   const pieces = recursiveSplit(stripped, 0, chunkSize);
   const merged = greedyMerge(pieces, chunkSize);
   const withOverlap = applyOverlap(merged, chunkOverlap);
+  // v0.32.7: hard char cap. Catches pathological CJK + whitespace-less text
+  // that the word-level pipeline can't bound (a single Chinese paragraph can
+  // exceed 8192 OpenAI embedding tokens at any word count).
+  const capped: string[] = [];
+  for (const chunk of withOverlap) {
+    capped.push(...capByChars(chunk.trim(), maxChars));
+  }
+  return capped.map((t, i) => ({ text: t, index: i }));
+}
 
-  return withOverlap.map((t, i) => ({ text: t.trim(), index: i }));
+/**
+ * Hard-cap a chunk's char length via a sliding window. Returns the input
+ * unchanged when it's already ≤ maxChars.
+ *
+ * Overlap is min(500, maxChars/10) so successive windows preserve semantic
+ * continuity across the cut.
+ *
+ * v0.32.7. BMP-only safe (does not split astral surrogate pairs in practice
+ * because declared CJK ranges are all BMP; widening to astral Han support
+ * is a v0.33+ follow-up that requires Array.from-style codepoint iteration).
+ */
+function capByChars(text: string, maxChars: number): string[] {
+  if (text.length <= maxChars) return text.length > 0 ? [text] : [];
+  const overlap = Math.min(500, Math.floor(maxChars / 10));
+  const stride = Math.max(1, maxChars - overlap);
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i += stride) {
+    const slice = text.slice(i, i + maxChars).trim();
+    if (slice.length > 0) out.push(slice);
+    if (i + maxChars >= text.length) break;
+  }
+  return out;
 }
 
 function recursiveSplit(text: string, level: number, target: number): string[] {
@@ -149,10 +197,28 @@ function splitAtDelimiters(text: string, delimiters: string[]): string[] {
 
 /**
  * Fallback: split on whitespace boundaries to hit target word count.
+ * v0.32.7: when the input is whitespace-less or any single "word" exceeds
+ * the target (CJK paragraph, base64 blob, long URL), slice on character
+ * boundaries so we still bound chunk size and the chunker makes forward
+ * progress. The downstream maxChars cap tightens this further.
  */
 function splitOnWhitespace(text: string, target: number): string[] {
   const words = text.match(/\S+\s*/g) || [];
-  if (words.length === 0) return [];
+
+  // No whitespace tokens, OR a single token longer than `target` chars
+  // (greedy /\S+/g returns a CJK paragraph as one "word"). Slice by char.
+  const noUsefulWhitespace =
+    words.length === 0 || (words.length === 1 && words[0].length > target);
+  if (noUsefulWhitespace) {
+    if (text.trim().length === 0) return [];
+    const pieces: string[] = [];
+    const charsPerPiece = Math.max(1, target);
+    for (let i = 0; i < text.length; i += charsPerPiece) {
+      const slice = text.slice(i, i + charsPerPiece);
+      if (slice.trim().length > 0) pieces.push(slice);
+    }
+    return pieces;
+  }
 
   const pieces: string[] = [];
   for (let i = 0; i < words.length; i += target) {
@@ -231,6 +297,18 @@ function extractTrailingContext(text: string, targetWords: number): string {
   return trailing;
 }
 
+/**
+ * Word count, CJK-aware (v0.32.7). For Latin-dominant text this behaves
+ * exactly like the historical `text.match(/\S+/g).length`. When CJK char
+ * density exceeds CJK_DENSITY_THRESHOLD (30%), each non-whitespace char is
+ * counted as one "word" so the chunker actually splits CJK paragraphs
+ * (whitespace-tokenization counts a whole Chinese paragraph as 1 word,
+ * letting it overflow the OpenAI embedding token limit).
+ *
+ * Delegated to src/core/cjk.ts so the slugify whitelist, expansion
+ * detection, and PGLite keyword fallback all agree on what "CJK enough"
+ * means.
+ */
 function countWords(text: string): number {
-  return (text.match(/\S+/g) || []).length;
+  return countCJKAwareWords(text);
 }
