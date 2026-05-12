@@ -329,26 +329,53 @@ async function revokeClient(clientId: string) {
 }
 
 async function registerClient(name: string, args: string[]) {
-  if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S]'); process.exit(1); }
+  if (!name) {
+    console.error(
+      'Usage: auth register-client <name> [--grant-types G] [--scopes S] '
+      + '[--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|none]',
+    );
+    process.exit(1);
+  }
   const grantsIdx = args.indexOf('--grant-types');
   const scopesIdx = args.indexOf('--scopes');
+  const authMethodIdx = args.indexOf('--token-endpoint-auth-method');
   const grantTypes = grantsIdx >= 0 && args[grantsIdx + 1]
     ? args[grantsIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
     : ['client_credentials'];
   const scopes = scopesIdx >= 0 && args[scopesIdx + 1] ? args[scopesIdx + 1] : 'read';
+
+  // --redirect-uri is repeatable: collect every occurrence's value. Required
+  // for authorization_code clients (Claude.ai, ChatGPT, etc.) — registering
+  // without one yields "invalid_request: Unregistered redirect_uri" at the
+  // /authorize step, forcing operators to UPDATE oauth_clients by hand.
+  const redirectUris: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--redirect-uri' && args[i + 1]) {
+      redirectUris.push(args[i + 1]);
+      i++;
+    }
+  }
+
+  const tokenEndpointAuthMethod = authMethodIdx >= 0 && args[authMethodIdx + 1]
+    ? args[authMethodIdx + 1]
+    : undefined;
 
   try {
     await withConfiguredSql(async (sql) => {
       const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
       const provider = new GBrainOAuthProvider({ sql });
       const { clientId, clientSecret } = await provider.registerClientManual(
-        name, grantTypes, scopes, [],
+        name, grantTypes, scopes, redirectUris, tokenEndpointAuthMethod,
       );
       console.log(`OAuth client registered: "${name}"\n`);
       console.log(`  Client ID:     ${clientId}`);
       console.log(`  Client Secret: ${clientSecret}\n`);
       console.log(`  Grant types: ${grantTypes.join(', ')}`);
-      console.log(`  Scopes:      ${scopes}\n`);
+      console.log(`  Scopes:      ${scopes}`);
+      if (redirectUris.length > 0) {
+        console.log(`  Redirect URIs: ${redirectUris.join(', ')}`);
+      }
+      console.log(`  Token endpoint auth: ${tokenEndpointAuthMethod || 'client_secret_post'}\n`);
       console.log('Save the client secret — it will not be shown again.');
       console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
     });
@@ -408,6 +435,12 @@ Usage:
   gbrain auth register-client <name> [options]             Register an OAuth 2.1 client (v0.26+)
      --grant-types <client_credentials,authorization_code> (default: client_credentials)
      --scopes "<read write admin>"                         (default: read)
+     --redirect-uri <uri>                                  (repeatable; required for
+                                                            authorization_code clients
+                                                            — Claude.ai, ChatGPT, etc.)
+     --token-endpoint-auth-method <method>                 (client_secret_post | none;
+                                                            default: client_secret_post.
+                                                            ChatGPT connectors use `none`.)
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);

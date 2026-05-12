@@ -28,6 +28,21 @@ import type { SqlQuery, SqlValue } from './sql-query.ts';
 export type { SqlQuery, SqlValue };
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Allowed values for `oauth_clients.token_endpoint_auth_method`. Mirrors the
+ * MCP SDK's mcpAuthRouter metadata default (`token_endpoint_auth_methods_supported`
+ * = `["client_secret_post", "none"]`). Adjust here if the SDK upgrade ever
+ * advertises additional methods (e.g. `client_secret_basic`).
+ */
+export const ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS: ReadonlySet<string> = new Set<string>([
+  'client_secret_post',
+  'none',
+]);
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -570,12 +585,24 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     grantTypes: string[],
     scopes: string,
     redirectUris: string[] = [],
+    tokenEndpointAuthMethod?: string,
   ): Promise<{ clientId: string; clientSecret: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
     // Pre-allowlist clients keep working (allowlist is registration-time;
     // existing rows aren't re-validated).
     assertAllowedScopes(parseScopeString(scopes));
+
+    // Validate token_endpoint_auth_method against what /.well-known advertises.
+    // Keeps the set in sync with token_endpoint_auth_methods_supported in
+    // serve-http.ts so clients can't register a method the server won't honor.
+    if (tokenEndpointAuthMethod !== undefined
+        && !ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS.has(tokenEndpointAuthMethod)) {
+      throw new Error(
+        `Invalid token_endpoint_auth_method "${tokenEndpointAuthMethod}". `
+        + `Allowed: ${[...ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS].join(', ')}.`,
+      );
+    }
 
     const clientId = generateToken('gbrain_cl_');
     const clientSecret = generateToken('gbrain_cs_');
@@ -584,9 +611,11 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     await this.sql`
       INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                  grant_types, scope, client_id_issued_at)
+                                  grant_types, scope, token_endpoint_auth_method,
+                                  client_id_issued_at)
       VALUES (${clientId}, ${secretHash}, ${name},
-              ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now})
+              ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes},
+              ${tokenEndpointAuthMethod || 'client_secret_post'}, ${now})
     `;
 
     return { clientId, clientSecret };
