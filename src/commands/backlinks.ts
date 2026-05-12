@@ -5,8 +5,8 @@
  * checks if back-links exist, and optionally creates them.
  *
  * Usage:
- *   gbrain check-backlinks check [--dir <brain-dir>]     # report missing back-links
- *   gbrain check-backlinks fix [--dir <brain-dir>]        # create missing back-links
+ *   gbrain check-backlinks check [dir] [--dir <brain-dir>] # report missing back-links
+ *   gbrain check-backlinks fix [dir] [--dir <brain-dir>]   # create missing back-links
  *   gbrain check-backlinks fix --dry-run                  # preview fixes
  */
 
@@ -190,6 +190,40 @@ export interface BacklinksResult {
   dryRun: boolean;
 }
 
+export interface ParsedBacklinksArgs {
+  subcommand: string | undefined;
+  brainDir: string;
+  dryRun: boolean;
+}
+
+export function parseBacklinksArgs(args: string[]): ParsedBacklinksArgs {
+  const subcommand = args[0];
+  const dryRun = args.includes('--dry-run');
+  const dirIdx = args.indexOf('--dir');
+  const flagDir = dirIdx >= 0 && args[dirIdx + 1] && !args[dirIdx + 1].startsWith('--')
+    ? args[dirIdx + 1]
+    : undefined;
+
+  let positionalDir: string | undefined;
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--dir') {
+      i++;
+      continue;
+    }
+    if (arg === '--dry-run') continue;
+    if (arg.startsWith('--')) continue;
+    positionalDir = arg;
+    break;
+  }
+
+  return {
+    subcommand,
+    brainDir: flagDir ?? positionalDir ?? '.',
+    dryRun,
+  };
+}
+
 /**
  * Library-level backlinks check/fix. Throws on validation errors; returns a
  * structured result so Minions handlers + autopilot-cycle can surface counts.
@@ -225,16 +259,14 @@ export async function runBacklinksCore(opts: BacklinksOpts): Promise<BacklinksRe
 }
 
 export async function runBacklinks(args: string[]) {
-  const subcommand = args[0];
-  const dirIdx = args.indexOf('--dir');
-  const brainDir = dirIdx >= 0 ? args[dirIdx + 1] : '.';
-  const dryRun = args.includes('--dry-run');
+  const { subcommand, brainDir, dryRun } = parseBacklinksArgs(args);
 
   if (!subcommand || !['check', 'fix'].includes(subcommand)) {
-    console.error('Usage: gbrain check-backlinks <check|fix> [--dir <brain-dir>] [--dry-run]');
+    console.error('Usage: gbrain check-backlinks <check|fix> [dir] [--dir <brain-dir>] [--dry-run]');
     console.error('  check    Report missing back-links');
     console.error('  fix      Create missing back-links (appends to Timeline)');
-    console.error('  --dir    Brain directory (default: current directory)');
+    console.error('  dir      Brain directory (default: current directory)');
+    console.error('  --dir    Brain directory override');
     console.error('  --dry-run  Preview fixes without writing');
     process.exit(1);
   }

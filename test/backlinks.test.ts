@@ -4,6 +4,7 @@ import {
   extractPageTitle,
   hasBacklink,
   buildBacklinkEntry,
+  parseBacklinksArgs,
 } from '../src/commands/backlinks.ts';
 
 describe('extractEntityRefs', () => {
@@ -76,5 +77,19 @@ describe('buildBacklinkEntry', () => {
   test('builds properly formatted entry', () => {
     const entry = buildBacklinkEntry('Q1 Review', '../../meetings/q1-review.md', '2026-04-11');
     expect(entry).toBe('- **2026-04-11** | Referenced in [Q1 Review](../../meetings/q1-review.md)');
+  });
+});
+
+describe('parseBacklinksArgs', () => {
+  test('uses positional dir for check and fix subcommands', () => {
+    expect(parseBacklinksArgs(['check', '/tmp/brain']).brainDir).toBe('/tmp/brain');
+    expect(parseBacklinksArgs(['fix', '/tmp/brain']).brainDir).toBe('/tmp/brain');
+  });
+
+  test('--dir overrides positional dir and preserves dry-run', () => {
+    const parsed = parseBacklinksArgs(['fix', '/tmp/ignored', '--dir', '/tmp/brain', '--dry-run']);
+    expect(parsed.subcommand).toBe('fix');
+    expect(parsed.brainDir).toBe('/tmp/brain');
+    expect(parsed.dryRun).toBe(true);
   });
 });
