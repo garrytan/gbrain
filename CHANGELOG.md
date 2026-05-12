@@ -106,6 +106,62 @@ A `/codex` outside-voice consult on the second fix wave's plan caught three find
 - Original PR [#873](https://github.com/garrytan/gbrain/pull/873) by @garrytan-agents. Two commits (deterministic injection + activity injection) preserved authorship-intact in this ship.
 - Codex (gpt-5-codex) outside-voice consult drove the L0 recalibration that closed the headline A4 cosmetic-fix gap and converted top-level await to lazy SDK resolution.
 
+## [0.32.4] - 2026-05-11
+
+**`gbrain doctor` now catches the silent failure mode where sync hasn't run in days.**
+**One new check, configurable thresholds, no surprises when clocks lie.**
+
+Brain search becoming stale because `gbrain sync` quietly stopped running is one of the most common "agent is missing recent pages" failure modes. The cron job dies. The watcher unloads. The autopilot daemon wedges. The user finds out a week later when an agent can't find a meeting they had three days ago. v0.32.4 adds a `sync_freshness` check to both the local `gbrain doctor` and the remote-MCP `doctorReportRemote` so the staleness surfaces the next time anyone runs doctor.
+
+The check queries `sources.last_sync_at` for every source with a `local_path` (the federated sources that actually sync from disk). Sources synced less than 24h ago are fine. Between 24h and 72h, the check warns. Past 72h — or never synced at all — it fails. Future timestamps from clock skew or corrupted DB writes also warn (instead of silently passing). The failure message embeds the source id so `gbrain sync --source <id>` is a clean copy-paste.
+
+Defaults aren't always right. Weekly-sync teams want a 7d fail threshold. Hourly CI brains want 6h. Two env vars override:
+
+```bash
+GBRAIN_SYNC_FRESHNESS_WARN_HOURS=24    # default
+GBRAIN_SYNC_FRESHNESS_FAIL_HOURS=72    # default
+```
+
+### What this means for operators
+
+Your next `gbrain doctor` either says `[OK] sync_freshness: All N federated source(s) synced recently` (you're fine) or names the stale source by id with a copy-pasteable fix command. Doctor goes from "everything is fine!" (while the agent silently misses three days of meetings) to "Source 'gstack' last synced 4d ago — brain search is stale!". The check runs in both the local doctor and the remote-MCP doctor, so thin-client deployments inherit the same surfacing without extra plumbing.
+
+The check is pure staleness — no filesystem access, no expensive walks. `doctorReportRemote` runs inside the HTTP MCP server, and walking arbitrary server filesystem paths from a remotely-callable endpoint would cross a trust boundary. Filesystem-vs-DB page drift detection is intentionally out of scope here; that work belongs in the existing `multi_source_drift` check which already has `GBRAIN_DRIFT_LIMIT` and `GBRAIN_DRIFT_TIMEOUT_MS` guards. A future PR resurrects drift detection with proper guards, slug normalization tests, and a meta-file allow-list.
+
+### To take advantage of v0.32.4
+
+`gbrain upgrade` ships the binary. No migration, no config:
+
+1. **Run doctor:**
+   ```bash
+   gbrain doctor
+   ```
+   Look for the new `sync_freshness` row. If it warns or fails, run `gbrain sync --source <id>` per the message.
+
+2. **Thin-client users:** `gbrain remote doctor` includes the same check end-to-end through MCP.
+
+3. **Customize thresholds** if the defaults don't fit your workflow:
+   ```bash
+   # Weekly-sync project: fail only past 7 days
+   GBRAIN_SYNC_FRESHNESS_FAIL_HOURS=168 gbrain doctor
+   # CI brain: fail at 4 hours
+   GBRAIN_SYNC_FRESHNESS_FAIL_HOURS=4 gbrain doctor
+   ```
+
+4. **No breaking changes.** The existing doctor surface is unchanged; this is one additive row.
+
+### Itemized changes
+
+#### Added
+- `sync_freshness` check in both `runDoctor` (local) and `doctorReportRemote` (thin-client) at `src/commands/doctor.ts:checkSyncFreshness`. Warn at 24h, fail at 72h. Names the source by id so the printed fix command (`gbrain sync --source <id>`) matches the user's copy-paste.
+- Future-`last_sync_at` is now a `warn` ("clock skew or corrupted timestamp") instead of silently falling through as `ok`. Negative ageMs from a future timestamp used to skip both threshold tests.
+- `GBRAIN_SYNC_FRESHNESS_WARN_HOURS` and `GBRAIN_SYNC_FRESHNESS_FAIL_HOURS` env vars override the 24h / 72h defaults. Invalid values (NaN, ≤0) fall back to defaults with a once-per-process stderr warn.
+- 12 unit tests in `test/doctor.test.ts` covering every branch: empty sources, never-synced, >72h fail with day-rounded message, exact 72h boundary, 24h-72h warn, exact 24h boundary, <24h ok, future timestamp, mixed sources (highest severity wins), executeRaw throws, env-var override, source.id-in-message regression.
+- `checkSyncFreshness` exported from `doctor.ts` so tests can target it directly (mirrors the pattern used by `takesWeightGridCheck`).
+
+#### Out of scope (deferred)
+- Filesystem-vs-DB page drift detection inside `sync_freshness`. Codex outside-voice review caught that walking DB-supplied `local_path` from `doctorReportRemote` crosses a trust boundary (the HTTP MCP server can receive remote-mutated `sources.local_path` values). Drift detection will land separately, integrated with `multi_source_drift`'s existing `GBRAIN_DRIFT_LIMIT` / `GBRAIN_DRIFT_TIMEOUT_MS` guards, with slug normalization tests and a meta-file allow-list, LOCAL-DOCTOR-ONLY.
+
 ## [0.32.3.0] - 2026-05-11
 
 **Compress a 25KB AGENTS.md down to 13KB without losing routing accuracy.**
