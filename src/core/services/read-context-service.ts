@@ -241,8 +241,38 @@ async function readTimelineRange(
   options: Pick<ReadSelectorOptions, 'token_budget' | 'include_source_refs'>,
 ): Promise<CanonicalContextRead | null> {
   if (!selector.slug) return null;
+  const hasCharWindow = selector.char_start !== undefined || selector.char_end !== undefined;
+  if (hasCharWindow) {
+    const page = await engine.getPage(selector.slug);
+    if (page?.timeline.trim()) {
+      const timeline = page.timeline.trim();
+      return buildRead({
+        selector,
+        title: `Timeline: ${selector.slug}`,
+        text: timeline,
+        authority: 'source_or_timeline_evidence',
+        source_refs: options.include_source_refs ? extractSourceRefs(timeline) : [],
+        include_source_refs: options.include_source_refs,
+        token_budget: options.token_budget,
+      });
+    }
+  }
+
   const entries = await engine.getTimeline(selector.slug);
-  if (entries.length === 0) return null;
+  if (entries.length === 0) {
+    const page = await engine.getPage(selector.slug);
+    if (!page?.timeline.trim()) return null;
+    const timeline = page.timeline.trim();
+    return buildRead({
+      selector,
+      title: `Timeline: ${selector.slug}`,
+      text: timeline,
+      authority: 'source_or_timeline_evidence',
+      source_refs: options.include_source_refs ? extractSourceRefs(timeline) : [],
+      include_source_refs: options.include_source_refs,
+      token_budget: options.token_budget,
+    });
+  }
 
   const text = entries
     .map((entry) => {

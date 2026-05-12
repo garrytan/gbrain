@@ -8,7 +8,12 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSyn
 import { basename, dirname, join, relative, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import type { MBrainConfig } from './config.ts';
-import { importFromContent, importFromFile, MAX_MARKDOWN_IMPORT_BYTES } from './import-file.ts';
+import {
+  importFromContent,
+  importFromFile,
+  MAX_MARKDOWN_IMPORT_BYTES,
+  refreshDerivedStorageForPage,
+} from './import-file.ts';
 import { parseMarkdown, serializeMarkdown } from './markdown.ts';
 import { slugifyPath } from './sync.ts';
 import {
@@ -177,6 +182,7 @@ export interface OperationContext {
   config: MBrainConfig;
   logger: Logger;
   dryRun: boolean;
+  scheduleBackground?: (description: string, task: () => Promise<void>) => void;
 }
 
 export interface Operation {
@@ -1667,6 +1673,10 @@ const get_page: Operation = {
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
+    content_char_limit: { type: 'number', description: 'Optional max characters per content field. Use continuation selectors for the rest.' },
+    compiled_truth_char_start: { type: 'number', description: 'Optional compiled_truth character offset for paged reads.' },
+    timeline_char_start: { type: 'number', description: 'Optional timeline character offset for paged reads.' },
+    full_content: { type: 'boolean', description: 'When true, ignore MCP/default content windowing and return full page content.' },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
@@ -1690,10 +1700,95 @@ const get_page: Operation = {
     }
 
     const tags = await ctx.engine.getTags(page.slug);
-    return { ...page, tags, ...(resolved_slug ? { resolved_slug } : {}) };
+    return applyGetPageWindow({
+      page: { ...page, tags, ...(resolved_slug ? { resolved_slug } : {}) },
+      contentCharLimit: p.full_content === true
+        ? undefined
+        : parsePositiveIntegerParam(p.content_char_limit, 'content_char_limit'),
+      compiledTruthCharStart: parseNonNegativeIntegerParam(p.compiled_truth_char_start, 'compiled_truth_char_start') ?? 0,
+      timelineCharStart: parseNonNegativeIntegerParam(p.timeline_char_start, 'timeline_char_start') ?? 0,
+    });
   },
   cliHints: { name: 'get', positional: ['slug'] },
 };
+
+function parseNonNegativeIntegerParam(value: unknown, name: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new OperationError('invalid_params', `${name} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function applyGetPageWindow(input: {
+  page: Record<string, any>;
+  contentCharLimit?: number;
+  compiledTruthCharStart: number;
+  timelineCharStart: number;
+}) {
+  const { page, contentCharLimit, compiledTruthCharStart, timelineCharStart } = input;
+  if (contentCharLimit === undefined) return page;
+
+  const compiledTruth = page.compiled_truth ?? '';
+  const timeline = page.timeline ?? '';
+  const compiledTruthWindow = contentWindowForField({
+    slug: page.slug,
+    kind: 'compiled_truth',
+    text: compiledTruth,
+    charStart: compiledTruthCharStart,
+    charLimit: contentCharLimit,
+  });
+  const timelineWindow = contentWindowForField({
+    slug: page.slug,
+    kind: 'timeline_range',
+    text: timeline,
+    charStart: timelineCharStart,
+    charLimit: contentCharLimit,
+  });
+
+  return {
+    ...page,
+    compiled_truth: compiledTruthWindow.text,
+    timeline: timelineWindow.text,
+    content_window: {
+      truncated: compiledTruthWindow.has_more || timelineWindow.has_more
+        || compiledTruthCharStart > 0
+        || timelineCharStart > 0,
+      char_limit: contentCharLimit,
+      compiled_truth: compiledTruthWindow,
+      timeline: timelineWindow,
+    },
+  };
+}
+
+function contentWindowForField(input: {
+  slug: string;
+  kind: 'compiled_truth' | 'timeline_range';
+  text: string;
+  charStart: number;
+  charLimit: number;
+}) {
+  const start = Math.min(input.charStart, input.text.length);
+  const end = Math.min(start + input.charLimit, input.text.length);
+  const text = input.text.slice(start, end);
+  const hasMore = end < input.text.length;
+  return {
+    text,
+    char_start: start,
+    returned_chars: text.length,
+    total_chars: input.text.length,
+    has_more: hasMore,
+    ...(hasMore
+      ? {
+        continuation_selector: {
+          kind: input.kind,
+          slug: input.slug,
+          char_start: end,
+        },
+      }
+      : {}),
+  };
+}
 
 const SOURCE_ATTRIBUTION_RE = /\[Source:\s*([^\]\n]*)\]/g;
 
@@ -2200,11 +2295,18 @@ async function assertPutPageMemoryWriteAllowed(
   }
 }
 
-function putPageOperationResult(result: { slug: string; status: string; chunks: number; error?: string }) {
+function putPageOperationResult(result: {
+  slug: string;
+  status: string;
+  chunks: number;
+  error?: string;
+  deferred_derived?: boolean;
+}) {
   return {
     slug: result.slug,
     status: result.status === 'imported' ? 'created_or_updated' : result.status,
     chunks: result.chunks,
+    ...(result.deferred_derived ? { derived_storage: 'scheduled' } : {}),
     ...(result.error ? { error: result.error } : {}),
   };
 }
@@ -2224,6 +2326,35 @@ type PutPageTransactionOutcome =
       error: OperationError;
     };
 
+async function refreshPutPageDerivedStorageIfNeeded(
+  ctx: OperationContext,
+  result: PutPageImportResult,
+  manifestPath?: string,
+): Promise<PutPageImportResult | null> {
+  if (!result.deferred_derived) return null;
+  const expectedContentHash = result.content_hash ?? null;
+
+  const refresh = async () => {
+    const refreshed = await refreshDerivedStorageForPage(ctx.engine, result.slug, {
+      path: manifestPath,
+      expectedContentHash,
+    });
+    if (refreshed.error) {
+      ctx.logger.warn(`put_page deferred derived refresh skipped for ${result.slug}: ${refreshed.error}`);
+    }
+    return refreshed;
+  };
+
+  if (ctx.scheduleBackground) {
+    ctx.scheduleBackground(`put_page deferred derived refresh for ${result.slug}`, async () => {
+      await refresh();
+    });
+    return null;
+  }
+
+  return refresh();
+}
+
 const put_page: Operation = {
   name: 'put_page',
   description: 'Create or update a knowledge page to record new information about people, companies, concepts, or systems discovered during the conversation. Markdown with YAML frontmatter; content should follow the compiled truth + timeline pattern. Rejects generic, numeric-only, or globally bucketed documentation slugs. Chunks, embeds, and reconciles tags.',
@@ -2239,11 +2370,13 @@ const put_page: Operation = {
     scope_id: { type: 'string', description: 'Optional audit scope id. Defaults to workspace:default.' },
     source_refs: { type: 'array', items: { type: 'string' }, description: 'Optional non-empty audit provenance references.' },
     metadata: { type: 'object', description: 'Optional audit metadata object.' },
+    defer_derived: { type: 'boolean', description: 'Commit the canonical page immediately and refresh chunks, manifest, and section indexes after the MCP response.' },
   },
   mutating: true,
   handler: async (ctx, p) => {
     const slug = putPageSlug(p.slug);
     const content = putPageContent(p.content);
+    const deferDerived = p.defer_derived === true;
     assertWritableSlugQuality(slug);
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
     const markdownTarget = await resolvePutPageMarkdownTarget(ctx.engine, slug, p.repo);
@@ -2387,9 +2520,10 @@ const put_page: Operation = {
             }
             return importFromFile(tx, markdownTarget.filePath, markdownTarget.relativePath, {
               slugPrefix: markdownTarget.slugPrefix,
+              deferDerived,
             });
           })()
-          : importFromContent(tx, slug, content));
+          : importFromContent(tx, slug, content, { deferDerived }));
         if (result.status === 'imported') {
           const finalPage = await tx.getPage(slug);
           if (!finalPage?.content_hash) {
@@ -2460,7 +2594,14 @@ const put_page: Operation = {
       await recordPutPageConflict(ctx.engine, outcome.audit, outcome.conflict);
       throw outcome.error;
     }
-    return putPageOperationResult(outcome.result);
+    const refreshedDerived = await refreshPutPageDerivedStorageIfNeeded(
+      ctx,
+      outcome.result,
+      markdownTarget?.relativePath,
+    );
+    return putPageOperationResult(refreshedDerived
+      ? { ...outcome.result, chunks: refreshedDerived.chunks, deferred_derived: false }
+      : outcome.result);
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };

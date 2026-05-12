@@ -6,7 +6,7 @@ import { estimateTokenCount } from './embedding.ts';
 import { buildNoteManifestEntry, DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './services/note-manifest-service.ts';
 import { buildNoteSectionEntries } from './services/note-section-service.ts';
 import { pathToSlug, slugifyPath } from './sync.ts';
-import type { ChunkInput } from './types.ts';
+import type { ChunkInput, Page } from './types.ts';
 import { importContentHash, validateSlug } from './utils.ts';
 
 export interface ImportResult {
@@ -14,9 +14,21 @@ export interface ImportResult {
   status: 'imported' | 'skipped' | 'error';
   chunks: number;
   error?: string;
+  deferred_derived?: boolean;
+  content_hash?: string;
 }
 
 export const MAX_MARKDOWN_IMPORT_BYTES = 5_000_000; // 5MB
+
+export interface ImportFromContentOptions {
+  path?: string;
+  deferDerived?: boolean;
+}
+
+export interface RefreshDerivedStorageOptions {
+  path?: string;
+  expectedContentHash?: string | null;
+}
 
 /**
  * Import content from a string. Core pipeline:
@@ -28,7 +40,7 @@ export async function importFromContent(
   engine: BrainEngine,
   slug: string,
   content: string,
-  options?: { path?: string },
+  options?: ImportFromContentOptions,
 ): Promise<ImportResult> {
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_MARKDOWN_IMPORT_BYTES) {
@@ -45,40 +57,34 @@ export async function importFromContent(
   const hash = importContentHash(parsed);
 
   const manifestPath = options?.path ?? `${validateSlug(slug)}.md`;
+  const deferDerived = options?.deferDerived === true;
   const existing = await engine.getPage(slug);
   if (existing?.content_hash === hash) {
     const existingManifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, slug);
     if (existingManifest?.path === manifestPath || !canRefreshDerivedStorage(existing)) {
-      return { slug, status: 'skipped', chunks: 0 };
+      return { slug, status: 'skipped', chunks: 0, content_hash: hash };
+    }
+
+    if (deferDerived) {
+      return {
+        slug,
+        status: 'skipped',
+        chunks: 0,
+        deferred_derived: true,
+        content_hash: hash,
+      };
     }
 
     await engine.transaction(async (tx) => {
       const tags = await tx.getTags(slug);
-      const manifest = await tx.upsertNoteManifestEntry(buildNoteManifestEntry({
-        page_id: existing.id,
-        slug: existing.slug,
-        path: manifestPath,
-        tags,
-        content_hash: hash,
-        page: existing,
-      }));
-      await tx.replaceNoteSectionEntries(
-        manifest.scope_id,
-        manifest.slug,
-        buildNoteSectionEntries({
-          scope_id: manifest.scope_id,
-          page_id: existing.id,
-          page_slug: existing.slug,
-          page_path: manifest.path,
-          page: existing,
-          manifest,
-        }),
-      );
+      await replacePageDerivedStorage(tx, existing, tags, manifestPath);
     });
-    return { slug, status: 'skipped', chunks: 0 };
+    return { slug, status: 'skipped', chunks: 0, content_hash: hash };
   }
 
-  const chunks = buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter);
+  const chunks = deferDerived
+    ? []
+    : buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter);
 
   // Transaction wraps all DB writes
   await engine.transaction(async (tx) => {
@@ -103,45 +109,111 @@ export async function importFromContent(
       await tx.addTag(slug, tag);
     }
 
-    await tx.deleteChunks(slug);
-    await tx.upsertChunks(slug, chunks);
-    const manifest = await tx.upsertNoteManifestEntry(buildNoteManifestEntry({
-      page_id: storedPage.id,
-      slug: storedPage.slug,
-      path: manifestPath,
-      tags: parsed.tags,
-      content_hash: hash,
-      page: {
-        type: storedPage.type,
-        title: storedPage.title,
-        compiled_truth: storedPage.compiled_truth,
-        timeline: storedPage.timeline,
-        frontmatter: storedPage.frontmatter,
-        content_hash: storedPage.content_hash,
-      },
-    }));
-    await tx.replaceNoteSectionEntries(
-      manifest.scope_id,
-      manifest.slug,
-      buildNoteSectionEntries({
-        scope_id: manifest.scope_id,
-        page_id: storedPage.id,
-        page_slug: storedPage.slug,
-        page_path: manifest.path,
-        page: {
-          type: storedPage.type,
-          title: storedPage.title,
-          compiled_truth: storedPage.compiled_truth,
-          timeline: storedPage.timeline,
-          frontmatter: storedPage.frontmatter,
-          content_hash: storedPage.content_hash,
-        },
-        manifest,
-      }),
-    );
+    if (deferDerived) {
+      await invalidatePageDerivedStorage(tx, storedPage.slug);
+    } else {
+      await replacePageDerivedStorage(tx, storedPage, parsed.tags, manifestPath, chunks);
+    }
   });
 
-  return { slug, status: 'imported', chunks: chunks.length };
+  return {
+    slug,
+    status: 'imported',
+    chunks: chunks.length,
+    ...(deferDerived ? { deferred_derived: true } : {}),
+    content_hash: hash,
+  };
+}
+
+export async function refreshDerivedStorageForPage(
+  engine: BrainEngine,
+  slug: string,
+  options: RefreshDerivedStorageOptions = {},
+): Promise<ImportResult> {
+  const normalizedSlug = validateSlug(slug);
+  const manifestPath = options.path ?? `${normalizedSlug}.md`;
+  let chunkCount = 0;
+  let contentHash: string | undefined;
+
+  await engine.transaction(async (tx) => {
+    const page = await tx.getPageForUpdate(normalizedSlug);
+    if (!page) {
+      throw new Error(`Cannot refresh derived storage for missing page: ${normalizedSlug}`);
+    }
+    contentHash = page.content_hash;
+
+    if (
+      options.expectedContentHash !== undefined
+      && options.expectedContentHash !== null
+      && page.content_hash !== options.expectedContentHash
+    ) {
+      chunkCount = -1;
+      return;
+    }
+
+    const tags = await tx.getTags(normalizedSlug);
+    chunkCount = await replacePageDerivedStorage(tx, page, tags, manifestPath);
+  });
+
+  if (chunkCount === -1) {
+    return {
+      slug: normalizedSlug,
+      status: 'skipped',
+      chunks: 0,
+      deferred_derived: false,
+      content_hash: contentHash,
+      error: 'Skipped derived refresh because content hash changed before the background job ran.',
+    };
+  }
+
+  return {
+    slug: normalizedSlug,
+    status: 'imported',
+    chunks: chunkCount,
+    deferred_derived: false,
+    content_hash: contentHash,
+  };
+}
+
+async function replacePageDerivedStorage(
+  engine: BrainEngine,
+  page: Page,
+  tags: string[],
+  manifestPath: string,
+  chunks = buildPageChunks(page.compiled_truth, page.timeline, page.frontmatter),
+): Promise<number> {
+  await engine.deleteChunks(page.slug);
+  await engine.upsertChunks(page.slug, chunks);
+  const manifest = await engine.upsertNoteManifestEntry(buildNoteManifestEntry({
+    page_id: page.id,
+    slug: page.slug,
+    path: manifestPath,
+    tags,
+    content_hash: page.content_hash,
+    page,
+  }));
+  await engine.replaceNoteSectionEntries(
+    manifest.scope_id,
+    manifest.slug,
+    buildNoteSectionEntries({
+      scope_id: manifest.scope_id,
+      page_id: page.id,
+      page_slug: page.slug,
+      page_path: manifest.path,
+      page,
+      manifest,
+    }),
+  );
+  return chunks.length;
+}
+
+async function invalidatePageDerivedStorage(
+  engine: BrainEngine,
+  slug: string,
+): Promise<void> {
+  await engine.deleteChunks(slug);
+  await engine.deleteNoteSectionEntries(DEFAULT_NOTE_MANIFEST_SCOPE_ID, slug);
+  await engine.deleteNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, slug);
 }
 
 function canRefreshDerivedStorage(page: unknown): page is {
@@ -174,7 +246,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  options?: { noEmbed?: boolean; slugPrefix?: string },
+  options?: { noEmbed?: boolean; slugPrefix?: string; deferDerived?: boolean },
 ): Promise<ImportResult> {
   const lstat = lstatSync(filePath);
   if (lstat.isSymbolicLink()) {
@@ -201,7 +273,10 @@ export async function importFromFile(
     };
   }
 
-  return importFromContent(engine, expectedSlug, content, { path: relativePath });
+  return importFromContent(engine, expectedSlug, content, {
+    path: relativePath,
+    deferDerived: options?.deferDerived,
+  });
 }
 
 function hasExplicitFrontmatterSlug(content: string): boolean {

@@ -303,6 +303,13 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  if (command === 'serve') {
+    const { runServe } = await import('./commands/serve.ts');
+    const enginePromise = connectEngine({ bootstrapLocalIfMissing: true });
+    await runServe(enginePromise);
+    return;
+  }
+
   const engineLoader = CLI_ENGINE_COMMANDS[command];
   if (!engineLoader) {
     return;
