@@ -27,12 +27,13 @@ export async function runUpgrade(args: string[]) {
       }
       console.log(`Upgrading bun-link source clone at ${linkInfo.repoRoot}...`);
       try {
-        execFileSync('git', ['-C', linkInfo.repoRoot, 'pull', '--ff-only'], { stdio: 'inherit', timeout: 120_000 });
-        execFileSync('bun', ['install'], { cwd: linkInfo.repoRoot, stdio: 'inherit', timeout: 120_000 });
+        upgradeBunLinkSourceClone(linkInfo.repoRoot);
         upgraded = true;
-      } catch {
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`Auto-upgrade failed: ${msg}`);
         console.error('Auto-upgrade failed. Try manually:');
-        console.error(`  cd ${linkInfo.repoRoot} && git pull && bun install`);
+        console.error(`  cd ${linkInfo.repoRoot} && git fetch --all --tags --prune && git merge <default-remote>/HEAD && bun install`);
       }
       break;
     }
@@ -105,6 +106,111 @@ export async function runUpgrade(args: string[]) {
     } catch {
       // features scan is best-effort
     }
+  }
+}
+
+export function upgradeBunLinkSourceClone(repoRoot: string): void {
+  ensureCleanWorktree(repoRoot);
+
+  const upstream = resolveUpstreamRef(repoRoot);
+  execFileSync('git', ['-C', repoRoot, 'fetch', upstream.remote, '--tags', '--prune'], {
+    stdio: 'inherit',
+    timeout: 120_000,
+  });
+
+  const upstreamRef = upstream.ref;
+  if (isAncestor(repoRoot, upstreamRef, 'HEAD')) {
+    console.log(`Source clone already includes ${upstreamRef}.`);
+  } else if (isAncestor(repoRoot, 'HEAD', upstreamRef)) {
+    execFileSync('git', ['-C', repoRoot, 'merge', '--ff-only', upstreamRef], {
+      stdio: 'inherit',
+      timeout: 120_000,
+    });
+  } else {
+    assertMergeClean(repoRoot, upstreamRef);
+    execFileSync('git', ['-C', repoRoot, 'merge', '--no-edit', upstreamRef], {
+      stdio: 'inherit',
+      timeout: 120_000,
+    });
+  }
+
+  execFileSync('bun', ['install'], { cwd: repoRoot, stdio: 'inherit', timeout: 120_000 });
+}
+
+function ensureCleanWorktree(repoRoot: string): void {
+  const status = execFileSync('git', ['-C', repoRoot, 'status', '--porcelain'], {
+    encoding: 'utf-8',
+    timeout: 10_000,
+  }).trim();
+  if (status) {
+    throw new Error('source clone has uncommitted changes; commit/stash them before upgrading');
+  }
+}
+
+function resolveUpstreamRef(repoRoot: string): { remote: string; ref: string } {
+  const tracked = gitOutput(repoRoot, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+  if (tracked) {
+    return { remote: tracked.split('/')[0] || 'origin', ref: tracked };
+  }
+
+  // Source-linked agent installs often run on custom integration branches with
+  // no tracking branch. Use the repository's default upstream branch instead
+  // of raw `git pull`, which fails with "no tracking information".
+  const remote = resolveDefaultRemote(repoRoot) || 'origin';
+  const remoteHead = gitOutput(repoRoot, ['rev-parse', '--abbrev-ref', `${remote}/HEAD`]);
+  return {
+    remote,
+    ref: remoteHead && !remoteHead.endsWith('/HEAD') ? remoteHead : `${remote}/master`,
+  };
+}
+
+function assertMergeClean(repoRoot: string, upstreamRef: string): void {
+  try {
+    execFileSync('git', ['-C', repoRoot, 'merge-tree', '--write-tree', 'HEAD', upstreamRef], {
+      stdio: 'pipe',
+      timeout: 60_000,
+    });
+  } catch {
+    throw new Error(`local branch and ${upstreamRef} diverged with conflicts; resolve a manual merge first`);
+  }
+}
+
+function resolveDefaultRemote(repoRoot: string): string | null {
+  const remotes = gitOutput(repoRoot, ['remote']);
+  if (!remotes) return null;
+
+  const names = remotes.split('\n').map(remote => remote.trim()).filter(Boolean);
+  for (const remote of names) {
+    const url = gitOutput(repoRoot, ['remote', 'get-url', remote]);
+    if (url?.toLowerCase().includes(GBRAIN_GITHUB_REPO)) {
+      return remote;
+    }
+  }
+
+  return names[0] || null;
+}
+
+function isAncestor(repoRoot: string, maybeAncestor: string, descendant: string): boolean {
+  try {
+    execFileSync('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', maybeAncestor, descendant], {
+      stdio: 'pipe',
+      timeout: 10_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function gitOutput(repoRoot: string, args: string[]): string | null {
+  try {
+    return execFileSync('git', ['-C', repoRoot, ...args], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 10_000,
+    }).trim() || null;
+  } catch {
+    return null;
   }
 }
 

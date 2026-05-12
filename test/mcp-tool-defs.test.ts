@@ -64,4 +64,14 @@ describe('buildToolDefs', () => {
       expect(Array.isArray(def.inputSchema.required)).toBe(true);
     }
   });
+
+  test('array parameters include items schemas for OpenAI function compatibility', () => {
+    for (const def of buildToolDefs(operations)) {
+      for (const [name, prop] of Object.entries(def.inputSchema.properties)) {
+        if (prop && typeof prop === 'object' && (prop as { type?: unknown }).type === 'array') {
+          expect((prop as { items?: unknown }).items, `${def.name}.${name}`).toBeDefined();
+        }
+      }
+    }
+  });
 });
