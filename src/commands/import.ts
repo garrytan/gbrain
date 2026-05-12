@@ -37,7 +37,13 @@ export interface RunImportResult {
 export async function runImport(
   engine: BrainEngine,
   args: string[],
-  opts: { commit?: string; strategy?: SyncStrategy; sourceId?: string } = {},
+  opts: {
+    commit?: string;
+    strategy?: SyncStrategy;
+    sourceId?: string;
+    exclude?: string[];
+    slugRoot?: string;
+  } = {},
 ): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
@@ -84,19 +90,28 @@ export async function runImport(
   );
   const fileTypeLabel = strategy === 'code' ? 'code'
     : strategy === 'auto' ? 'syncable' : 'markdown';
-  console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
+
+  // Apply exclude patterns from opts (passed by performFullSync for --exclude support)
+  let filteredFiles = allFiles;
+  if (opts.exclude && opts.exclude.length > 0) {
+    const { matchesAnyGlob } = await import('../core/sync.ts');
+    filteredFiles = allFiles.filter(abs => !matchesAnyGlob(relative(dir, abs), opts.exclude!));
+    console.log(`Found ${filteredFiles.length} ${fileTypeLabel} files (${allFiles.length - filteredFiles.length} excluded by --exclude patterns)`);
+  } else {
+    console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
+  }
 
   // Resume from checkpoint if available
   const checkpointPath = gbrainPath('import-checkpoint.json');
-  let files = allFiles;
+  let files = filteredFiles;
   let resumeIndex = 0;
 
   if (!fresh && existsSync(checkpointPath)) {
     try {
       const cp = JSON.parse(readFileSync(checkpointPath, 'utf-8'));
-      if (cp.dir === dir && cp.totalFiles === allFiles.length) {
+      if (cp.dir === dir && cp.totalFiles === filteredFiles.length) {
         resumeIndex = cp.processedIndex;
-        files = allFiles.slice(resumeIndex);
+        files = filteredFiles.slice(resumeIndex);
         console.log(`Resuming from checkpoint: skipping ${resumeIndex} already-processed files`);
       }
     } catch {
@@ -128,8 +143,10 @@ export async function runImport(
     progress.tick(1, `imported=${imported} skipped=${skipped} errors=${errors}`);
   }
 
+  const slugBase = opts.slugRoot ?? dir;
+
   async function processFile(eng: BrainEngine, filePath: string) {
-    const relativePath = relative(dir, filePath);
+    const relativePath = relative(slugBase, filePath);
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
     // file takes >5s. The user's hang surfaces as one file taking
     // forever — without this, the agent can't see which file.

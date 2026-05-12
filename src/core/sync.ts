@@ -202,7 +202,7 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(regex);
 }
 
-function matchesAnyGlob(path: string, patterns?: string[]): boolean {
+export function matchesAnyGlob(path: string, patterns?: string[]): boolean {
   if (!patterns || patterns.length === 0) return false;
   const normalized = path.replace(/\\/g, '/');
   return patterns.some((pattern) => globToRegex(pattern).test(normalized));
