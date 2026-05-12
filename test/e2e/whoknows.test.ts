@@ -143,24 +143,51 @@ afterAll(async () => {
 
 describe('whoknows E2E — quality gate on synthetic fixture', () => {
   test('runs findExperts and the fixture quality gate at >= 80% hit rate', async () => {
+    // v0.33.1.3: The shipped fixture at test/fixtures/whoknows-eval.jsonl
+    // is now real-brain data (people/eric-vishria, etc.) — those slugs
+    // don't exist in this E2E's synthetic seed. We define an inline
+    // synthetic fixture matching the seed above. Production users replace
+    // the shipped fixture with their own real queries; this test verifies
+    // the eval pipeline mechanically, not against shipped data.
+    const inlineFixture = [
+      { query: 'fintech payments',          expected: ['wiki/people/example-alice',  'wiki/companies/example-fintech-co'] },
+      { query: 'crypto investing',          expected: ['wiki/companies/example-fund', 'wiki/people/example-bob'] },
+      { query: 'ai agents',                 expected: ['wiki/people/example-carol'] },
+      { query: 'distributed systems',       expected: ['wiki/people/example-dave'] },
+      { query: 'healthcare technology',     expected: ['wiki/companies/example-health-co', 'wiki/people/example-eve'] },
+      { query: 'developer tools',           expected: ['wiki/people/example-frank', 'wiki/companies/example-devtools-co'] },
+      { query: 'machine learning research', expected: ['wiki/people/example-grace'] },
+      { query: 'climate tech',              expected: ['wiki/companies/example-climate-co', 'wiki/people/example-hank'] },
+      { query: 'enterprise sales',          expected: ['wiki/people/example-ivy'] },
+      { query: 'hardware engineering',      expected: ['wiki/people/example-jake', 'wiki/companies/example-hardware-co'] },
+    ];
+
+    let hits = 0;
+    for (const row of inlineFixture) {
+      const results = await findExperts(engine, { topic: row.query, limit: 5 });
+      const top3 = new Set(results.slice(0, 3).map((r) => r.slug));
+      const hit = row.expected.some((s) => top3.has(s));
+      if (hit) hits++;
+    }
+    const hitRate = hits / inlineFixture.length;
+    // Synthetic seed designed so every query has a clear best match.
+    // Assert >= 80% (the locked ENG-D2 threshold). In practice 100% on
+    // this controlled fixture.
+    expect(hitRate).toBeGreaterThanOrEqual(0.8);
+  }, 60_000);
+
+  test('shipped fixture at test/fixtures/whoknows-eval.jsonl loads and parses', () => {
+    // Sanity check that the shipped (real-brain) fixture exists and parses.
+    // Doesn't assert hit rate — the seeded brain doesn't have those slugs.
     const fixture = readFixture(
       `${process.cwd()}/test/fixtures/whoknows-eval.jsonl`,
     );
     expect(fixture.length).toBeGreaterThanOrEqual(5);
-
-    let hits = 0;
     for (const row of fixture) {
-      const results = await findExperts(engine, { topic: row.query, limit: 5 });
-      const top3 = new Set(results.slice(0, 3).map((r) => r.slug));
-      const hit = row.expected_top_3_slugs.some((s) => top3.has(s));
-      if (hit) hits++;
+      expect(typeof row.query).toBe('string');
+      expect(row.expected_top_3_slugs.length).toBeGreaterThanOrEqual(1);
     }
-    const hitRate = hits / fixture.length;
-    // The synthetic seed is designed so every query has a clear best
-    // person/company match. We assert >= 80% which is the locked threshold
-    // (ENG-D2). In practice we expect 100% on this controlled fixture.
-    expect(hitRate).toBeGreaterThanOrEqual(0.8);
-  }, 60_000);
+  });
 });
 
 describe('whoknows E2E — typeFilter and shadow paths', () => {

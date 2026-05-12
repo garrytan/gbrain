@@ -166,3 +166,25 @@ describe('eval-whoknows / thresholds', () => {
     expect(MIN_REPLAY_ROWS).toBe(20);
   });
 });
+
+// v0.33.1.3: WhoknowsFn is the per-query callable that the gates consume.
+// runEvalWhoknows picks the impl (local findExperts vs thin-client MCP-routed).
+// These tests pin the type-level contract and the export presence; full
+// thin-client routing E2E is in the engine-required integration suite.
+describe('eval-whoknows / WhoknowsFn contract', () => {
+  it('module exports WhoknowsFn type alias', async () => {
+    // The type is structurally `(topic: string, limit: number) => Promise<WhoknowsResult[]>`.
+    // Confirm import resolves without throwing.
+    const mod = await import('../src/commands/eval-whoknows.ts');
+    expect(typeof mod.runEvalWhoknows).toBe('function');
+  });
+
+  it('runEvalWhoknows accepts null engine (thin-client signature)', async () => {
+    // Signature gate: the function must be callable with engine=null. We use
+    // a missing-fixture path to short-circuit before any engine/MCP use, so
+    // this test pins ONLY the signature acceptance, not the routing logic.
+    const { runEvalWhoknows } = await import('../src/commands/eval-whoknows.ts');
+    const exitCode = await runEvalWhoknows(null, []); // no fixture path → 2
+    expect(exitCode).toBe(2);
+  });
+});

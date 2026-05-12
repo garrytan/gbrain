@@ -33,7 +33,9 @@
 
 import { readFileSync, existsSync } from 'fs';
 import type { BrainEngine } from '../core/engine.ts';
-import { findExperts } from './whoknows.ts';
+import { findExperts, type WhoknowsResult } from './whoknows.ts';
+import { loadConfig, isThinClient } from '../core/config.ts';
+import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 
 export const HIT_RATE_THRESHOLD = 0.8;
 export const REGRESSION_THRESHOLD = 0.4;
@@ -200,14 +202,21 @@ export function topKHit(actual: string[], expected: string[], k = 3): boolean {
   return false;
 }
 
+/**
+ * v0.33.1.3: per-query whoknows callable. The eval layers are agnostic
+ * about WHERE findExperts runs — local engine call vs thin-client MCP
+ * routed call. runEvalWhoknows picks the impl, the gates consume it.
+ */
+export type WhoknowsFn = (topic: string, limit: number) => Promise<WhoknowsResult[]>;
+
 async function runQualityGate(
-  engine: BrainEngine,
+  whoknows: WhoknowsFn,
   fixture: FixtureRow[],
   limit: number,
 ): Promise<QualityReport> {
   const rows: QualityRowResult[] = [];
   for (const row of fixture) {
-    const results = await findExperts(engine, { topic: row.query, limit });
+    const results = await whoknows(row.query, limit);
     const actualTop3 = results.slice(0, 3).map((r) => r.slug);
     rows.push({
       query: row.query,
@@ -278,6 +287,7 @@ function safeJsonArray(s: string): string[] {
 
 async function runRegressionGate(
   engine: BrainEngine,
+  whoknows: WhoknowsFn,
   limit: number,
 ): Promise<RegressionReport> {
   const captured = await loadReplayRows(engine);
@@ -293,7 +303,7 @@ async function runRegressionGate(
   }
   const rows: RegressionRowResult[] = [];
   for (const r of captured) {
-    const current = await findExperts(engine, { topic: r.query, limit });
+    const current = await whoknows(r.query, limit);
     const currentSlugs = current.slice(0, 3).map((x) => x.slug);
     rows.push({
       query: r.query,
@@ -313,7 +323,7 @@ async function runRegressionGate(
 }
 
 export async function runEvalWhoknows(
-  engine: BrainEngine,
+  engine: BrainEngine | null,
   args: string[],
 ): Promise<0 | 1 | 2> {
   const opts = parseArgs(args);
@@ -339,17 +349,54 @@ export async function runEvalWhoknows(
     return 2;
   }
 
-  const quality = await runQualityGate(engine, fixture, opts.limit);
-  const regression = opts.skipReplay
-    ? {
-        status: 'skipped' as const,
-        reason: '--skip-replay flag',
-        total: 0,
-        mean_jaccard: 0,
-        threshold: REGRESSION_THRESHOLD,
-        rows: [],
+  // v0.33.1.3: pick the whoknows impl. Thin-client mode routes per-query
+  // through the remote `find_experts` MCP op via the v0.31.1 routing seam
+  // (callRemoteTool). Local mode calls findExperts() directly. Either way,
+  // the gate logic below is impl-agnostic.
+  const cfg = loadConfig();
+  const thinClient = isThinClient(cfg);
+  if (!thinClient && !engine) {
+    console.error('gbrain eval whoknows: local engine required (not thin-client and no engine connected)');
+    return 2;
+  }
+  const whoknows: WhoknowsFn = thinClient
+    ? async (topic, limit) => {
+        const raw = await callRemoteTool(
+          cfg!,
+          'find_experts',
+          { topic, limit },
+          { timeoutMs: 30_000 },
+        );
+        return unpackToolResult<WhoknowsResult[]>(raw);
       }
-    : await runRegressionGate(engine, opts.limit);
+    : async (topic, limit) => findExperts(engine!, { topic, limit });
+
+  const quality = await runQualityGate(whoknows, fixture, opts.limit);
+  // Regression gate auto-skips on thin-client: eval_candidates lives in
+  // the remote brain's Postgres and there's no MCP op to stream rows.
+  // Quality gate alone gates ship in thin-client mode.
+  let regression: RegressionReport;
+  if (opts.skipReplay) {
+    regression = {
+      status: 'skipped',
+      reason: '--skip-replay flag',
+      total: 0,
+      mean_jaccard: 0,
+      threshold: REGRESSION_THRESHOLD,
+      rows: [],
+    };
+  } else if (thinClient || !engine) {
+    regression = {
+      status: 'skipped',
+      reason: 'thin-client mode: no local DB access to eval_candidates table',
+      total: 0,
+      mean_jaccard: 0,
+      threshold: REGRESSION_THRESHOLD,
+      rows: [],
+    };
+  } else {
+    regression = await runRegressionGate(engine, whoknows, opts.limit);
+  }
 
   const regressionPassed = regression.status !== 'failed';
   const overall = quality.passed && regressionPassed;
