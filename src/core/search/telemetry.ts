@@ -40,7 +40,6 @@ interface Bucket {
 
 const FLUSH_INTERVAL_MS = 60_000;
 const FLUSH_THRESHOLD_CALLS = 100;
-const FLUSH_EXIT_TIMEOUT_MS = 2_000;
 
 /**
  * Per-process telemetry singleton. Each gbrain process (CLI, stdio MCP,
@@ -187,21 +186,32 @@ class TelemetryWriter {
     if (this.exitHookInstalled) return;
     this.exitHookInstalled = true;
 
-    const drainOnExit = () => {
-      // 2-second cap. If flush takes longer (slow DB), we accept losing
-      // the last bucket rather than hanging the process exit.
-      const racing = Promise.race([
-        this.flush(),
-        new Promise<void>((resolve) => setTimeout(resolve, FLUSH_EXIT_TIMEOUT_MS)),
-      ]);
-      void racing.catch(() => { /* swallow */ });
-    };
+    // Lossy by design: skip the buffered drain entirely on process exit.
+    //
+    // The earlier implementation installed `process.on('beforeExit', drainOnExit)`
+    // with an inner `Promise.race([flush(), setTimeout(2000)])`. That enqueued
+    // new async work AFTER the event loop had emptied, which kept the process
+    // alive past beforeExit — short-lived CLI invocations (`gbrain query "the"`
+    // exiting after 100ms of work) ended up waiting on the DB write to settle.
+    // On a slow or busy PGLite, the write never settled and the CLI hung
+    // forever. That deadlock surfaced as the `test/e2e/claw-test.test.ts`
+    // hang (the harness spawns short-lived gbrain queries that should exit
+    // in <1s but never did).
+    //
+    // Resolution per [CDX-19]: the periodic flush timer (unref'd) handles
+    // long-running processes (HTTP MCP server, autopilot, jobs work). For
+    // short-lived CLI invocations, telemetry buffering of one search call
+    // is acceptable to lose. Stats are directional, not exact.
+    //
+    // The signal handlers (SIGINT / SIGTERM) also drop — kill -TERM should
+    // exit immediately, not block on a DB write that may never complete.
+  }
 
-    process.on('beforeExit', drainOnExit);
-    // SIGTERM / SIGINT: best-effort drain. If the process is killed -9,
-    // nothing we can do.
-    process.once('SIGINT', drainOnExit);
-    process.once('SIGTERM', drainOnExit);
+  // Test-only: previously inspected by tests. Retained as a no-op so the
+  // test harness's _resetTelemetryWriterForTest doesn't need to know about
+  // the exit-hook decision.
+  flushOnExitForTest(): Promise<void> {
+    return this.flush().catch(() => { /* swallow */ });
   }
 }
 
