@@ -14,11 +14,29 @@ export async function startMcpServer(engine: BrainEngine) {
     { capabilities: { tools: {} } },
   );
 
+  // Optional tool filtering via GBRAIN_EXPOSED_TOOLS env var.
+  // Comma-separated list of operation names to expose (e.g. "get_page,put_page,search").
+  // When unset, all operations are exposed (backward-compatible default).
+  const exposedToolsEnv = process.env.GBRAIN_EXPOSED_TOOLS;
+  const allowedOps = exposedToolsEnv
+    ? (() => {
+        const allowed = new Set(exposedToolsEnv.split(',').map(s => s.trim()).filter(Boolean));
+        const filtered = operations.filter(op => allowed.has(op.name));
+        if (filtered.length > 0) {
+          process.stderr.write(`[mcp] GBRAIN_EXPOSED_TOOLS: exposing ${filtered.length} of ${operations.length} tools\n`);
+        } else {
+          process.stderr.write(`[mcp] GBRAIN_EXPOSED_TOOLS set but matched 0 operations — exposing all ${operations.length}\n`);
+          return operations;
+        }
+        return filtered;
+      })()
+    : operations;
+
   // Generate tool definitions from operations. Extracted to buildToolDefs so
   // the subagent tool registry (v0.15+) can call the same mapper against a
   // filtered OPERATIONS subset instead of duplicating this shape.
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: buildToolDefs(operations),
+    tools: buildToolDefs(allowedOps),
   }));
 
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
