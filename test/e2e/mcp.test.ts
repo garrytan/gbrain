@@ -29,7 +29,7 @@ function parseMcpText<T = any>(result: any): T {
 describe('E2E: MCP Tool Generation', () => {
   test('operations generate valid MCP tool definitions', () => {
     // This replicates exactly what server.ts does in the tools/list handler
-    const tools = operations.map(operationToMcpTool);
+    const tools = operations.map((operation) => operationToMcpTool(operation));
 
     expect(tools.length).toBe(operations.length);
     expect(tools.length).toBeGreaterThanOrEqual(30);
