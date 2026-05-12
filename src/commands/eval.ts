@@ -52,6 +52,15 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalSuspectedContradictions } = await import('./eval-suspected-contradictions.ts');
     return runEvalSuspectedContradictions(engine, args.slice(1));
   }
+  // v0.32.3 search-lite — per-mode orchestrator + comparison report.
+  if (sub === 'run-all') {
+    const { runEvalRunAll } = await import('./eval-run-all.ts');
+    return runEvalRunAll(engine, args.slice(1));
+  }
+  if (sub === 'compare') {
+    const { runEvalCompare } = await import('./eval-compare.ts');
+    return runEvalCompare(args.slice(1));
+  }
 
   const opts = parseArgs(args);
 

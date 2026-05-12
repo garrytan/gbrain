@@ -117,7 +117,15 @@ export const METRIC_GLOSSARY: Readonly<Record<string, Readonly<MetricGlossEntry>
  * just need the plain-English line use eli10For().
  */
 export function getMetricGloss(metric: string): MetricGlossEntry | null {
-  return METRIC_GLOSSARY[metric] ?? null;
+  if (METRIC_GLOSSARY[metric]) return METRIC_GLOSSARY[metric];
+  // Fuzzy fallback for @N metrics: `recall@10` → `recall@k`, `ndcg@5` → `ndcg@k`.
+  // The glossary documents the family ("at k"); reports use a specific K value.
+  const atK = metric.match(/^(.+)@\d+$/);
+  if (atK) {
+    const family = `${atK[1]}@k`;
+    if (METRIC_GLOSSARY[family]) return METRIC_GLOSSARY[family];
+  }
+  return null;
 }
 
 /**
@@ -126,7 +134,8 @@ export function getMetricGloss(metric: string): MetricGlossEntry | null {
  * the eval-compare report's per-metric "Plain English:" lines.
  */
 export function eli10For(metric: string): string | null {
-  return METRIC_GLOSSARY[metric]?.eli10 ?? null;
+  const g = getMetricGloss(metric);
+  return g?.eli10 ?? null;
 }
 
 /**
@@ -142,7 +151,7 @@ export function eli10For(metric: string): string | null {
 export function buildMetricGlossaryMeta(metrics: ReadonlyArray<string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const m of metrics) {
-    const e = METRIC_GLOSSARY[m];
+    const e = getMetricGloss(m); // routes through fuzzy fallback
     if (e) out[m] = e.eli10;
   }
   return out;
