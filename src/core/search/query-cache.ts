@@ -62,14 +62,19 @@ export interface QueryCacheConfig {
 }
 
 /**
- * Deterministic ID for a (query, source) tuple. Used as the primary key
- * so re-caching the exact same query just bumps the row's hit_count and
- * created_at rather than inserting duplicates. Embedding similarity is
- * the LOOKUP key; query+source is the WRITE key.
+ * Deterministic ID for a (query, source, knobsHash) tuple. Used as the primary
+ * key so re-caching the exact same (query, mode, knobs) just bumps the row's
+ * hit_count and created_at rather than inserting duplicates.
+ *
+ * v0.32.3 [CDX-4]: knobsHash is now part of the key to prevent cross-mode
+ * cache contamination. A tokenmax write (expansion=on, limit=50) and a
+ * conservative write (no expansion, limit=10) for the same query+source
+ * land in distinct rows. Empty-string knobsHash is accepted (preserves
+ * existing test setups) but production calls always pass the resolved hash.
  */
-export function cacheRowId(queryText: string, sourceId: string): string {
+export function cacheRowId(queryText: string, sourceId: string, knobsHash = ''): string {
   const h = createHash('sha256');
-  h.update(`${sourceId}::${queryText}`);
+  h.update(`${sourceId}::${queryText}::${knobsHash}`);
   return h.digest('hex').slice(0, 32);
 }
 
@@ -120,12 +125,13 @@ export class SemanticQueryCache {
    */
   async lookup(
     queryEmbedding: Float32Array | null,
-    opts: { sourceId?: string } = {},
+    opts: { sourceId?: string; knobsHash?: string } = {},
   ): Promise<CacheLookupResult> {
     if (!this.enabled || !queryEmbedding || queryEmbedding.length === 0) {
       return { hit: false };
     }
     const sourceId = opts.sourceId ?? 'default';
+    const knobsHash = opts.knobsHash ?? '';
     const distanceThreshold = 1 - this.similarityThreshold;
     const vec = embeddingToPgVector(queryEmbedding);
 
@@ -133,6 +139,11 @@ export class SemanticQueryCache {
       // Find the closest cached query within the distance threshold and
       // freshness window. The TTL check is done in-query (created_at +
       // ttl_seconds > now) so we never return a stale row.
+      //
+      // v0.32.3 [CDX-4]: knobs_hash filter prevents cross-mode contamination.
+      // A tokenmax write (expansion=on, limit=50) and a conservative read
+      // (no expansion, limit=10) have distinct knobs hashes and miss each
+      // other. Rows with NULL knobs_hash (pre-v0.32.3) are excluded.
       const rows = await this.engine.executeRaw<{
         id: string;
         results: unknown;
@@ -145,12 +156,13 @@ export class SemanticQueryCache {
                 EXTRACT(EPOCH FROM (now() - created_at))::int AS age_seconds
          FROM query_cache
          WHERE source_id = $2
+           AND knobs_hash = $4
            AND embedding IS NOT NULL
            AND embedding <=> $1::vector < $3
            AND created_at + (ttl_seconds || ' seconds')::interval > now()
          ORDER BY embedding <=> $1::vector
          LIMIT 1`,
-        [vec, sourceId, distanceThreshold],
+        [vec, sourceId, distanceThreshold, knobsHash],
       );
 
       if (rows.length === 0) return { hit: false };
@@ -188,20 +200,26 @@ export class SemanticQueryCache {
     queryEmbedding: Float32Array | null,
     results: SearchResult[],
     meta: HybridSearchMeta,
-    opts: { sourceId?: string; ttlSeconds?: number } = {},
+    opts: { sourceId?: string; ttlSeconds?: number; knobsHash?: string } = {},
   ): Promise<void> {
     if (!this.enabled || !queryEmbedding || queryEmbedding.length === 0) return;
     const sourceId = opts.sourceId ?? 'default';
+    const knobsHash = opts.knobsHash ?? '';
     const ttl = clampTtl(opts.ttlSeconds ?? this.ttlSeconds);
-    const id = cacheRowId(queryText, sourceId);
+    const id = cacheRowId(queryText, sourceId, knobsHash);
     const vec = embeddingToPgVector(queryEmbedding);
 
     try {
+      // v0.32.3 [CDX-4]: knobs_hash threaded into the row so concurrent
+      // tokenmax + conservative writes for the same query+source live as
+      // distinct rows. The PK is `id` (which already encodes the hash),
+      // so ON CONFLICT (id) DO UPDATE just refreshes the same-mode row.
       await this.engine.executeRaw(
-        `INSERT INTO query_cache (id, query_text, source_id, embedding, results, meta, ttl_seconds, created_at)
-         VALUES ($1, $2, $3, $4::vector, $5::jsonb, $6::jsonb, $7, now())
+        `INSERT INTO query_cache (id, query_text, source_id, knobs_hash, embedding, results, meta, ttl_seconds, created_at)
+         VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, $7::jsonb, $8, now())
          ON CONFLICT (id) DO UPDATE SET
            query_text = EXCLUDED.query_text,
+           knobs_hash = EXCLUDED.knobs_hash,
            embedding  = EXCLUDED.embedding,
            results    = EXCLUDED.results,
            meta       = EXCLUDED.meta,
@@ -211,6 +229,7 @@ export class SemanticQueryCache {
           id,
           queryText,
           sourceId,
+          knobsHash,
           vec,
           JSON.stringify(results),
           JSON.stringify(meta),

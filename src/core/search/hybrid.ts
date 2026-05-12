@@ -553,11 +553,36 @@ export async function hybridSearchCached(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
+  // v0.32.3 search-lite mode: resolve mode + per-key overrides once. The
+  // resolved knob set drives cache enable/threshold/TTL AND the knobs_hash
+  // that scopes the cache row so a tokenmax write can't be served to a
+  // conservative read. See [CDX-4] in the plan.
+  const { loadSearchModeConfig, resolveSearchMode, knobsHash } = await import('./mode.ts');
+  const modeInputForCache = await loadSearchModeConfig(engine);
+  const resolvedForCache = resolveSearchMode({
+    mode: modeInputForCache.mode,
+    overrides: modeInputForCache.overrides,
+    perCall: {
+      cache_enabled: opts?.useCache,
+      tokenBudget: opts?.tokenBudget,
+      expansion: opts?.expansion,
+      intentWeighting: opts?.intentWeighting,
+      searchLimit: opts?.limit,
+    },
+  });
+  const cacheKnobsHash = knobsHash(resolvedForCache);
+
   // Cache decision: opts.useCache (explicit) wins over global config; global
-  // config wins over the built-in default (enabled = true).
+  // config wins over mode bundle default. Mode bundle is on for all 3 modes
+  // today; the resolver already folded everything through.
   const cacheCfg = await loadCacheConfig(engine);
-  const cacheEnabled = opts?.useCache ?? cacheCfg.enabled ?? true;
-  const cache = new SemanticQueryCache(engine, { ...cacheCfg, enabled: cacheEnabled });
+  const cacheEnabled = resolvedForCache.cache_enabled;
+  const cache = new SemanticQueryCache(engine, {
+    ...cacheCfg,
+    enabled: cacheEnabled,
+    similarityThreshold: resolvedForCache.cache_similarity_threshold,
+    ttlSeconds: resolvedForCache.cache_ttl_seconds,
+  });
 
   // Skip cache entirely when the request asks for two-pass walks or has
   // a non-default embedding column — those interact with structural state
@@ -593,7 +618,7 @@ export async function hybridSearchCached(
   }
 
   if (!skipCache && queryEmbedding && cacheStatus !== 'disabled') {
-    const hit = await cache.lookup(queryEmbedding, { sourceId: opts?.sourceId });
+    const hit = await cache.lookup(queryEmbedding, { sourceId: opts?.sourceId, knobsHash: cacheKnobsHash });
     if (hit.hit && hit.results) {
       cacheStatus = 'hit';
       cacheSimilarity = hit.similarity;
@@ -675,7 +700,7 @@ export async function hybridSearchCached(
     (innerMeta?.vector_enabled ?? false)
   ) {
     void cache
-      .store(query, queryEmbedding, results, finalMeta, { sourceId: opts?.sourceId })
+      .store(query, queryEmbedding, results, finalMeta, { sourceId: opts?.sourceId, knobsHash: cacheKnobsHash })
       .catch(() => { /* swallow */ });
   }
 
