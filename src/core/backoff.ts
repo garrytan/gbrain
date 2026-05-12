@@ -81,6 +81,20 @@ function getLoad(): number {
 
 /** Get memory usage fraction (0-1) */
 function getMemoryUsage(): number {
+  // Prefer /proc/meminfo MemAvailable on Linux — os.freemem() returns
+  // MemFree which excludes page cache, falsely reading "high pressure"
+  // in any container where the kernel caches files.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require('fs');
+    const meminfo: string = fs.readFileSync('/proc/meminfo', 'utf8');
+    const totalKb = Number(meminfo.match(/MemTotal:\s+(\d+)/)?.[1]);
+    const availKb = Number(meminfo.match(/MemAvailable:\s+(\d+)/)?.[1]);
+    if (totalKb > 0 && availKb >= 0) return 1 - availKb / totalKb;
+  } catch {
+    /* fall through to os.freemem() (non-Linux or /proc unavailable) */
+  }
+  // Non-Linux fallback (macOS, Windows, or any host without /proc/meminfo)
   const total = totalmem();
   if (total === 0) return 0;
   return 1 - (freemem() / total);
