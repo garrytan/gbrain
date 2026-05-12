@@ -851,6 +851,14 @@ export interface HybridSearchMeta {
     /** Age of the cached entry in seconds. Only set on hit. */
     age_seconds?: number;
   };
+  /**
+   * v0.32.3 (search-lite mode): the active search mode for this call.
+   * 'conservative' | 'balanced' | 'tokenmax'. Resolved from
+   * config.search.mode with per-call + per-key overrides applied. Surfaced
+   * so observability sees what mode actually ran (which can differ from
+   * the operator's `config.search.mode` setting if per-call overrides win).
+   */
+  mode?: 'conservative' | 'balanced' | 'tokenmax';
 }
 
 // Config

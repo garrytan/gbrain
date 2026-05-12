@@ -223,16 +223,39 @@ export async function hybridSearch(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
-  const limit = opts?.limit || 20;
+  // v0.32.3 search-lite mode: resolve the active mode + per-key overrides
+  // once at entry. Mode supplies DEFAULTS for intentWeighting, tokenBudget,
+  // expansion, and searchLimit when the caller leaves those undefined.
+  // Per-call opts and per-key config overrides still win.
+  //
+  // This MUST live in bare hybridSearch (NOT just in hybridSearchCached)
+  // because eval-replay and eval-longmemeval call bare hybridSearch — and
+  // per-mode evals would not test production search if modes lived only in
+  // the wrapper. See `[CDX-5+6]` in the plan.
+  const { loadSearchModeConfig, resolveSearchMode } = await import('./mode.ts');
+  const modeInput = await loadSearchModeConfig(engine);
+  const resolvedMode = resolveSearchMode({
+    mode: modeInput.mode,
+    overrides: modeInput.overrides,
+    perCall: {
+      intentWeighting: opts?.intentWeighting,
+      tokenBudget: opts?.tokenBudget,
+      expansion: opts?.expansion,
+      searchLimit: opts?.limit,
+    },
+  });
+
+  const limit = opts?.limit || resolvedMode.searchLimit;
   const offset = opts?.offset || 0;
   const innerLimit = Math.min(limit * 2, MAX_SEARCH_LIMIT);
 
   // v0.32.x search-lite: classify intent once up front. Drives BOTH the
   // legacy auto-detail / salience / recency suggestions AND the new
   // weight-adjustment path. Intent weighting is on by default and can
-  // be disabled via `opts.intentWeighting = false`.
+  // be disabled via `opts.intentWeighting = false`. The mode bundle
+  // supplies the default when neither per-call nor per-key sets it.
   const suggestions = classifyQuery(query);
-  const intentWeightingOn = opts?.intentWeighting !== false;
+  const intentWeightingOn = resolvedMode.intentWeighting;
   const intentWeights = intentWeightingOn
     ? weightsForIntent(suggestions.intent)
     : weightsForIntent('general');
@@ -319,20 +342,30 @@ export async function hybridSearch(
       await runPostFusionStages(engine, keywordResults, postFusionOpts);
       keywordResults.sort((a, b) => b.score - a.score);
     }
+    const noEmbedSliced = dedupResults(keywordResults).slice(offset, offset + limit);
+    // v0.32.3 search-lite: budget enforcement on the no-embedding-provider path.
+    const { results: noEmbedBudgeted, meta: noEmbedBudgetMeta } = enforceTokenBudget(noEmbedSliced, resolvedMode.tokenBudget);
     emitMeta({
       vector_enabled: false,
       detail_resolved: detailResolved,
       expansion_applied: false,
       intent: suggestions.intent,
+      mode: resolvedMode.resolved_mode,
+      ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
+        ? { token_budget: noEmbedBudgetMeta }
+        : {}),
     });
-    return dedupResults(keywordResults).slice(offset, offset + limit);
+    return noEmbedBudgeted;
   }
 
   // Determine query variants (optionally with expansion)
   // expandQuery already includes the original query in its return value,
-  // so we use it directly instead of prepending query again
+  // so we use it directly instead of prepending query again.
+  // v0.32.3 search-lite: expansion fires when (a) resolved mode says yes and
+  // (b) an expandFn is wired in. The mode bundle is the default; per-call
+  // SearchOpts.expansion still wins via resolveSearchMode's chain.
   let queries = [query];
-  if (opts?.expansion && opts?.expandFn) {
+  if (resolvedMode.expansion && opts?.expandFn) {
     try {
       queries = await opts.expandFn(query);
       if (queries.length === 0) queries = [query];
@@ -365,13 +398,20 @@ export async function hybridSearch(
       await runPostFusionStages(engine, keywordResults, postFusionOpts);
       keywordResults.sort((a, b) => b.score - a.score);
     }
+    const kwSliced = dedupResults(keywordResults).slice(offset, offset + limit);
+    // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
+    const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
     emitMeta({
       vector_enabled: false,
       detail_resolved: detailResolved,
       expansion_applied: expansionApplied,
       intent: suggestions.intent,
+      mode: resolvedMode.resolved_mode,
+      ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
+        ? { token_budget: kwBudgetMeta }
+        : {}),
     });
-    return dedupResults(keywordResults).slice(offset, offset + limit);
+    return kwBudgeted;
   }
 
   // Merge all result lists via RRF (includes normalization + boost)
@@ -468,13 +508,23 @@ export async function hybridSearch(
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
+  const sliced = deduped.slice(offset, offset + limit);
+  // v0.32.3 search-lite: budget enforcement at the main return path.
+  // hybridSearchCached used to be the only place this fired; now bare
+  // hybridSearch enforces it too so eval-replay + eval-longmemeval see
+  // the same budget behavior as the production query op.
+  const { results: budgeted, meta: budgetMeta } = enforceTokenBudget(sliced, resolvedMode.tokenBudget);
   emitMeta({
     vector_enabled: true,
     detail_resolved: detailResolved,
     expansion_applied: expansionApplied,
     intent: suggestions.intent,
+    mode: resolvedMode.resolved_mode,
+    ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
+      ? { token_budget: budgetMeta }
+      : {}),
   });
-  return deduped.slice(offset, offset + limit);
+  return budgeted;
 }
 
 // ----------------------------------------------------------------------
