@@ -227,6 +227,10 @@ export async function hybridSearch(
     // per-engine searchKeyword / searchVector apply the filters at SQL level.
     language: opts?.language,
     symbolKind: opts?.symbolKind,
+    // v0.33: multi-type filter for whoknows ('person','company'). Pushes
+    // type filter to SQL level so the limit budget goes to candidate-typed
+    // pages instead of being eaten by note/transcript/article pages.
+    types: opts?.types,
     // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
     // The engine still consumes the legacy field names; this aliasing keeps
     // PR #618 callers compiling while the new names are the public surface.

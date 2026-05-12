@@ -12,6 +12,8 @@ import { embedBatch, embedMultimodal } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
+import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
+import { logSlugFallback } from './audit-slug-fallback.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -195,6 +197,23 @@ export async function importFromContent(
      * disk path; the put_page MCP op derives it from the slug tail.
      */
     filename?: string;
+    /**
+     * v0.32.7 CJK wave: repo-relative path captured at import. Stored on
+     * `pages.source_path` so sync's delete/rename code can look up the
+     * page slug by path when the slug isn't derivable (frontmatter
+     * fallback). MCP `put_page` callers leave undefined (no file).
+     */
+    sourcePath?: string;
+    /**
+     * v0.32.7 CJK wave (codex post-merge F1): bypass the
+     * `existing.content_hash === hash` short-circuit and ALWAYS re-chunk +
+     * re-embed. Used by `gbrain reindex --markdown` so a chunker version
+     * bump actually reaches unchanged-source pages. Without this, the
+     * sweep silently no-ops on every page whose markdown body hasn't
+     * been edited since the last import — defeating the whole purpose of
+     * the version bump.
+     */
+    forceRechunk?: boolean;
   } = {},
 ): Promise<ImportResult> {
   // v0.18.0+ multi-source: when caller is syncing under a non-default source,
@@ -240,7 +259,7 @@ export async function importFromContent(
   };
 
   const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
-  if (existing?.content_hash === hash) {
+  if (existing?.content_hash === hash && !opts.forceRechunk) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };
   }
 
@@ -310,6 +329,12 @@ export async function importFromContent(
       effective_date: effectiveDate,
       effective_date_source: effectiveDateSource,
       import_filename: filenameForChain,
+      // v0.32.7 CJK wave: stamp the chunker version so the post-upgrade
+      // reindex sweep can find pre-bump pages via `chunker_version < 2`.
+      // Also capture the repo-relative source path so sync's delete/rename
+      // code can resolve frontmatter-fallback slugs back to their files.
+      chunker_version: MARKDOWN_CHUNKER_VERSION,
+      source_path: opts.sourcePath ?? null,
     }, txOpts);
 
     // Tag reconciliation: remove stale, add current
@@ -384,7 +409,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean; inferFrontmatter?: boolean; sourceId?: string } = {},
+  opts: { noEmbed?: boolean; inferFrontmatter?: boolean; sourceId?: string; forceRechunk?: boolean } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
@@ -426,8 +451,37 @@ export async function importFromFile(
   // Enforce path-authoritative slug. parseMarkdown prefers frontmatter.slug over
   // the path-derived slug, so a mismatch here means the frontmatter is trying
   // to rewrite a page whose filesystem location says something different.
+  //
+  // parsed.slug is `frontmatter.slug || inferSlug(filePath)` where inferSlug
+  // falls back to slugifyPath(). So parsed.slug.length > 0 with empty
+  // expectedSlug = frontmatter provided one; both empty = no usable slug.
   const expectedSlug = slugifyPath(relativePath);
-  if (parsed.slug !== expectedSlug) {
+  let resolvedSlug = expectedSlug;
+  let usedFrontmatterFallback = false;
+
+  if (expectedSlug === '') {
+    if (parsed.slug && parsed.slug.length > 0) {
+      // v0.32.7 CJK wave (PR #598 + codex C1/C6): path-derived slug is empty
+      // (emoji / Thai / Arabic / exotic-script filename). Frontmatter slug
+      // takes over. logSlugFallback fires below once we know the import
+      // isn't going to short-circuit.
+      resolvedSlug = parsed.slug;
+      usedFrontmatterFallback = true;
+    } else {
+      // No path slug, no frontmatter slug — friendlier error (D6=B).
+      return {
+        slug: '',
+        status: 'skipped',
+        chunks: 0,
+        error:
+          `Filename "${relativePath}" produces no usable slug. ` +
+          `Add a "slug:" to the frontmatter, or rename the file to use ` +
+          `ASCII / Chinese / Japanese / Korean characters.`,
+      };
+    }
+  } else if (parsed.slug !== expectedSlug) {
+    // Anti-spoof preserved: path DOES derive a slug, but the frontmatter slug
+    // claims a different one. Reject.
     return {
       slug: expectedSlug,
       status: 'skipped',
@@ -438,13 +492,23 @@ export async function importFromFile(
     };
   }
 
-  // Pass the path-derived slug explicitly so that any future change to
+  // Emit the dual-channel audit entry AFTER we know we're not going to
+  // short-circuit, so we don't log noise for failed imports.
+  if (usedFrontmatterFallback) {
+    logSlugFallback(resolvedSlug, relativePath);
+  }
+
+  // Pass the resolved slug explicitly so that any future change to
   // parseMarkdown's precedence rules cannot re-introduce this bug.
   // v0.29.1: thread the basename (without extension) for filename-date
   // precedence in computeEffectiveDate. e.g. `daily/2024-03-15.md` →
   // filename `2024-03-15`.
   const fileBasename = basename(relativePath, '.md');
-  return importFromContent(engine, expectedSlug, content, { ...opts, filename: fileBasename });
+  return importFromContent(engine, resolvedSlug, content, {
+    ...opts,
+    filename: fileBasename,
+    sourcePath: relativePath,
+  });
 }
 
 /**
