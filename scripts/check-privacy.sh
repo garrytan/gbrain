@@ -133,6 +133,12 @@ ALLOW_LIST=(
   # (Wintermute, Hermes, etc) inside its BANNED_NAMES + ALLOWLIST arrays.
   # Same meta-rule-enforcement exception as scripts/check-privacy.sh itself.
   'scripts/check-test-real-names.sh'
+  # v0.32.3.0: the functional-area-resolver skill's behavior-contract
+  # section describes the privacy guarantees the skill preserves and
+  # references the banned literals while doing so (line 306). Same
+  # meta-rule-enforcement exception as scripts/check-privacy.sh and
+  # CHANGELOG.md — describing what the rule forbids requires naming it.
+  'skills/functional-area-resolver/SKILL.md'
 )
 
 is_allowed() {

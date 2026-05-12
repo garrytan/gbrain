@@ -1,5 +1,27 @@
 # TODOS
 
+## functional-area-resolver follow-ups (v0.32.3.0)
+
+- [ ] **v0.33.x: Dogfood `functional-area-resolver` on gbrain's own `skills/RESOLVER.md`** when it crosses ~12KB (currently 8KB). Apply the pattern to the Operational section first (largest). Filed during v0.32.3.0 CEO review.
+
+- [ ] **v0.33.x: Promote `evals/functional-area-resolver/harness.mjs` to a first-class CLI command** `gbrain routing-eval --ab-compare <variant-dir>`. Removes the one-off harness as maintenance debt; gives every pattern-skill a way to ship its eval. Replaces the placeholder `--llm` flag in `src/core/routing-eval.ts:17-20`. Filed during v0.32.3.0 CEO review.
+
+- [ ] **v0.33.x: Expand held-out corpus to >=20 fixtures.** The current n=5 saturates at 100% across most cells and can't distinguish "100%" from "95% with one nondeterministic miss." Author independently (don't see variants while authoring). Filed during v0.32.3.0 boil-the-ocean push after codex outside-voice review.
+
+- [ ] **v0.33.x: Cross-vendor model verification.** Run the harness on Gemini 2.5 Pro and GPT-4o/5 in addition to the three Anthropic models we already covered. Compression gains may not transfer across vendor families (the `(dispatcher for: ...)` clause is interpreted differently by different prompt-tuned models). Wire through the existing gbrain gateway (recipes already exist for both vendors).
+
+- [ ] **v0.33.x: Per-row description length sweep.** Anthropic's Agent Skills median is ~80 tokens of frontmatter per skill ([Anthropic engineering blog](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills)). Sweep functional-areas at {20, 40, 80, 160} tokens per dispatcher row, eval each. Novel published contribution — no public data exists. ~$5 in API spend. Filed during v0.32.3.0 web research.
+
+- [ ] **v0.33.x: Structural compression of functional-areas (`(dispatcher for: ...)` → `dispatcher: [...]` YAML form, trim verbose triggers, separate hard gates to sibling file).** Target 13KB → 9-10KB without accuracy regression. Requires another full re-baseline run (~$3 across 3 models) to confirm no regression.
+
+- [ ] **v0.33.x: Hierarchical compression (area-of-areas).** Two-level: top-level mega-areas (knowledge / ops / comms) pointing to functional-area files loaded lazily. Predicted 13KB → 4-6KB. Risks resolver-of-resolvers-style collapse on the top-level layer. Worth an A/B but its own piece of work. Cross-reference AnyTool ([arXiv:2402.04253](https://arxiv.org/abs/2402.04253)) which formalizes this hierarchy at runtime.
+
+- [ ] **v0.33.x: Embedding-based area pre-router.** RAG-MCP shape ([arXiv:2505.03275](https://arxiv.org/html/2505.03275v1)) — cheap embedding model picks the area; only that area's sub-skills get sent to the LLM. Dramatic per-call payload reduction (~80%). Significant new code surface but big production cost win. Wire through the existing gateway's voyage or openai embedding recipes.
+
+- [ ] **v0.33.x: Adversarial-intent fixtures.** Intents specifically designed to test dispatcher-vs-subskill behavior on edge cases ("I want to do something brain-related" without specifying what). Targets the prompt-design failure mode (run-1 collapse) that our current 25 fixtures don't surface. ~10-15 fixtures, authored without looking at variant content.
+
+- [ ] **v0.33.x: Run-2 vs Run-1 prompt-design ablation.** Document the difference between the naive classifier prompt (run-1, every variant 30-60% training) and the dispatcher-aware prompt (run-2+, functional-areas 88-100% training) as a reproducible result. This is the strongest empirical finding from v0.32.3.0 and deserves its own callout in SKILL.md or a sibling METHODOLOGY.md.
+
 ## Embedding-provider follow-ups (v0.32.0)
 
 - [ ] **v0.32.x: Vertex AI ADC embedding provider (#729 originally).** lucha0404
