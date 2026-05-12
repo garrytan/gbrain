@@ -537,7 +537,7 @@ export interface BrainEngine {
    * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
    * does no further work after a single SELECT count(*) (~50 bytes wire).
    */
-  countStaleChunks(): Promise<number>;
+  countStaleChunks(opts?: { sourceId?: string }): Promise<number>;
   /**
    * Return every chunk where embedded_at IS NULL, with the metadata needed
    * to call embedBatch + upsertChunks. The `embedding` column is omitted
@@ -546,7 +546,7 @@ export interface BrainEngine {
    *
    * Bounded by an internal LIMIT of 100000 to mirror listPages.
    */
-  listStaleChunks(): Promise<StaleChunkRow[]>;
+  listStaleChunks(opts?: { sourceId?: string }): Promise<StaleChunkRow[]>;
   /**
    * Delete every chunk for a page. Internal page-id lookup is sourceId-scoped
    * when `opts.sourceId` is given; otherwise the bare-slug subquery returns

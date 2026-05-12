@@ -1257,25 +1257,39 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r));
   }
 
-  async countStaleChunks(): Promise<number> {
+  async countStaleChunks(opts?: { sourceId?: string }): Promise<number> {
+    const params: unknown[] = [];
+    const sourceJoin = opts?.sourceId ? 'JOIN pages p ON p.id = cc.page_id' : '';
+    const sourceWhere = opts?.sourceId ? 'AND p.source_id = $1' : '';
+    if (opts?.sourceId) params.push(opts.sourceId);
     const { rows } = await this.db.query(
       `SELECT count(*)::int AS count
-         FROM content_chunks
-        WHERE embedding IS NULL`,
+         FROM content_chunks cc
+         ${sourceJoin}
+        WHERE cc.embedding IS NULL
+          AND COALESCE(cc.modality, 'text') <> 'image'
+          ${sourceWhere}`,
+      params,
     );
     const count = (rows[0] as { count: number } | undefined)?.count ?? 0;
     return Number(count);
   }
 
-  async listStaleChunks(): Promise<StaleChunkRow[]> {
+  async listStaleChunks(opts?: { sourceId?: string }): Promise<StaleChunkRow[]> {
+    const params: unknown[] = [];
+    const sourceWhere = opts?.sourceId ? 'AND p.source_id = $1' : '';
+    if (opts?.sourceId) params.push(opts.sourceId);
     const { rows } = await this.db.query(
-      `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-              cc.model, cc.token_count, p.source_id
+      `SELECT p.slug, p.source_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+              cc.model, cc.token_count
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
         WHERE cc.embedding IS NULL
+          AND COALESCE(cc.modality, 'text') <> 'image'
+          ${sourceWhere}
         ORDER BY p.id, cc.chunk_index
         LIMIT 100000`,
+      params,
     );
     return rows as unknown as StaleChunkRow[];
   }
