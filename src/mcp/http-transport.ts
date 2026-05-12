@@ -330,6 +330,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // takes_search / query (when it returns takes) can server-side filter.
         const result = await dispatchToolCall(engine, toolName, args, {
           remote: true,
+          transport: 'http',
           takesHoldersAllowList: auth.takesHoldersAllowList,
         });
         const status = result.isError ? 'error' : 'success';

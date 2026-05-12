@@ -934,6 +934,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       try {
         toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
           remote: true,
+          transport: 'http',
           takesHoldersAllowList: tokenAllowList,
           sourceId: tokenSourceId,
           metaHook: getBrainHotMemoryMeta,

@@ -236,6 +236,12 @@ export interface OperationContext {
   logger: Logger;
   dryRun: boolean;
   /**
+   * Optional transport discriminator for operation handlers that need to
+   * explain their caller shape. Stdio MCP is remote/untrusted for data access,
+   * but has no per-token auth because it is a local pipe.
+   */
+  transport?: 'local' | 'stdio' | 'http';
+  /**
    * OAuth auth info (v0.8+). Present when the caller authenticated via OAuth 2.1
    * through `gbrain serve --http`. Contains clientId and granted scopes for
    * per-operation scope enforcement.
@@ -2324,8 +2330,9 @@ const whoami: Operation = {
     'Introspect the calling identity. Returns one of three transport shapes: ' +
     '{transport: "oauth", client_id, client_name, scopes, expires_at}, ' +
     '{transport: "legacy", token_name, scopes, expires_at: null}, or ' +
-    '{transport: "local", scopes: []}. Throws unknown_transport when the ' +
-    'context is ambiguous (remote=true without auth) — fail-closed posture ' +
+    '{transport: "local", scopes: []}. Stdio MCP reports local because it is ' +
+    'a local pipe without per-token auth. Throws unknown_transport when the ' +
+    'remote context is otherwise ambiguous (remote=true without auth) — fail-closed posture ' +
     'mirroring the v0.26.9 trust-boundary contract.',
   params: {},
   scope: 'read',
@@ -2335,7 +2342,7 @@ const whoami: Operation = {
     // where code conditionally trusted on `scopes.includes('admin')` instead
     // of `ctx.remote === false`. Empty scopes array forces clients to
     // special-case `transport: 'local'` explicitly.
-    if (ctx.remote === false) {
+    if (ctx.remote === false || ctx.transport === 'stdio') {
       return { transport: 'local', scopes: [] };
     }
     if (!ctx.auth) {

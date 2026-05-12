@@ -30,6 +30,8 @@ export interface ToolResult {
 export interface DispatchOpts {
   /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
   remote?: boolean;
+  /** Optional caller transport label for ops like whoami. */
+  transport?: OperationContext['transport'];
   /** Override the default stderr logger (e.g. CLI uses console.* directly). */
   logger?: OperationContext['logger'];
   /**
@@ -203,6 +205,7 @@ export function buildOperationContext(
     logger: opts.logger || stderrLogger,
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
+    transport: opts.transport ?? (opts.remote === false ? 'local' : undefined),
     takesHoldersAllowList: opts.takesHoldersAllowList,
     sourceId: opts.sourceId,
     auth: opts.auth,
