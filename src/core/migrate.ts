@@ -1589,6 +1589,24 @@ const MIGRATIONS: Migration[] = [
         ON derived_index_state(scope_id, status, updated_at DESC);
     `,
   },
+  {
+    version: 36,
+    name: 'chunk_content_hash_freshness',
+    sql: `
+      DO $$
+      BEGIN
+        IF to_regclass('content_chunks') IS NOT NULL THEN
+          ALTER TABLE content_chunks
+            ADD COLUMN IF NOT EXISTS chunk_content_hash TEXT NOT NULL DEFAULT '';
+
+          UPDATE content_chunks
+          SET chunk_content_hash = md5(chunk_source || E'\\n' || chunk_text)
+          WHERE chunk_content_hash = '';
+        END IF;
+      END;
+      $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

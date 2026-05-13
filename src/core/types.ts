@@ -2035,7 +2035,11 @@ export interface ContextConflict {
   source_refs: string[];
 }
 
-export type RetrievalSelectorWarningCode = 'stale_selector' | 'stale_continuation';
+export type RetrievalSelectorWarningCode =
+  | 'stale_selector'
+  | 'stale_continuation'
+  | 'derived_pending'
+  | 'derived_failed';
 
 export interface RetrievalSelectorWarning {
   code: RetrievalSelectorWarningCode;
@@ -2261,6 +2265,7 @@ export interface Chunk {
   chunk_index: number;
   chunk_text: string;
   chunk_source: ChunkSource;
+  chunk_content_hash: string;
   embedding: Float32Array | null;
   model: string;
   token_count: number | null;
@@ -2286,6 +2291,11 @@ export interface SearchResult {
   chunk_source: ChunkSource;
   score: number;
   stale: boolean;
+  derived_artifact_kind?: DerivedArtifactKind;
+  derived_status?: DerivedIndexStatus;
+  derived_target_content_hash?: string | null;
+  derived_indexed_content_hash?: string | null;
+  derived_warning?: string;
 }
 
 export interface SearchOpts {

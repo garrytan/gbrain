@@ -3,6 +3,7 @@ import type {
   CanonicalContextRead,
   ContextAnswerReady,
   ContextEvidenceClaim,
+  DerivedJobStatus,
   MemoryArtifactAuthority,
   PageTextWindow,
   ReadContextInput,
@@ -20,6 +21,7 @@ import { normalizeRetrievalSelector, retrievalSelectorId } from './retrieval-sel
 import { retrieveContext } from './retrieve-context-service.ts';
 import { evaluateScopeGate } from './scope-gate-service.ts';
 import { listAllNoteSectionEntries } from './structural-entry-pagination.ts';
+import { pathToSlug } from '../sync.ts';
 
 const DEFAULT_TOKEN_BUDGET = 900;
 const DEFAULT_MAX_SELECTORS = 3;
@@ -189,11 +191,13 @@ async function readSection(
   const scopeId = selector.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID;
   const section = await engine.getNoteSectionEntry(scopeId, selector.section_id);
   if (!section) {
+    await assertNoteSectionsDerivedCurrent(engine, selector, selectorPageSlug(selector), undefined, scopeId);
     await assertStaleIfCurrentPageHashChanged(engine, selector);
     return null;
   }
   const projection = await currentPageProjectionOrStale(engine, selector, section.page_slug);
   if (!projection) return null;
+  await assertNoteSectionsDerivedCurrent(engine, selector, section.page_slug, projection.content_hash, scopeId);
 
   return buildRead({
     selector: normalizeRetrievalSelector({
@@ -347,6 +351,14 @@ async function readSourceRef(
     return true;
   });
   if (matches.length !== 1) {
+    const scopeId = selector.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID;
+    await assertNoteSectionsDerivedCurrent(
+      engine,
+      selector,
+      await selectorPageSlugForSourceRefFreshness(engine, selector, sections, scopeId),
+      undefined,
+      scopeId,
+    );
     await assertStaleIfCurrentPageHashChanged(engine, selector);
     return null;
   }
@@ -865,10 +877,113 @@ async function currentPageProjectionOrStale(
   return projection;
 }
 
-function selectorPageSlug(selector: RetrievalSelector): string | undefined {
+async function assertNoteSectionsDerivedCurrent(
+  engine: BrainEngine,
+  selector: RetrievalSelector,
+  slug: string | undefined,
+  knownContentHash?: string,
+  scopeId = DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+): Promise<void> {
+  if (!slug) return;
+  const projection = knownContentHash === undefined
+    ? await engine.getPageProjection(slug)
+    : { slug, content_hash: knownContentHash };
+  if (!projection) {
+    assertCurrentContentHash(selector, undefined, slug);
+    return;
+  }
+  const state = await engine.getDerivedIndexState(
+    scopeId,
+    projection.slug,
+    'note_sections',
+  );
+  if (!state) return;
+
+  const currentContentHash = projection.content_hash ?? null;
+  const current = state.status === 'ready'
+    && state.target_content_hash === currentContentHash
+    && state.indexed_content_hash === currentContentHash;
+  if (current) return;
+
+  const code = state.status === 'failed' ? 'derived_failed' : 'derived_pending';
+  const selectorForWarning = { ...selector };
+  delete selectorForWarning.selector_id;
+  const warningSelector = normalizeRetrievalSelector({
+    ...selectorForWarning,
+    slug: projection.slug,
+    freshness: 'stale',
+  });
+  throw new StaleSelectorReadError({
+    code,
+    severity: 'warning',
+    selector_id: warningSelector.selector_id!,
+    selector: warningSelector,
+    slug: projection.slug,
+    expected_content_hash: state.target_content_hash,
+    current_content_hash: state.indexed_content_hash,
+    message: `Selector ${warningSelector.selector_id} depends on note_sections, but the derived index is ${state.status} for ${projection.slug}. Refresh derived storage before treating section/source_ref reads as current evidence.`,
+  });
+}
+
+function selectorPageSlug(
+  selector: RetrievalSelector,
+  sections?: ReadonlyArray<{ page_path: string; page_slug: string }>,
+): string | undefined {
   if (selector.slug) return selector.slug;
   const sectionIdSlug = selector.section_id?.split('#')[0]?.trim();
   if (sectionIdSlug) return sectionIdSlug;
+  const targetPath = selector.path?.split('#')[0]?.trim();
+  if (targetPath) {
+    const section = sections?.find((entry) => entry.page_path === targetPath);
+    if (section?.page_slug) return section.page_slug;
+    const pathSlug = pathToSlug(targetPath);
+    if (pathSlug) return pathSlug;
+  }
+  return undefined;
+}
+
+async function selectorPageSlugForSourceRefFreshness(
+  engine: BrainEngine,
+  selector: RetrievalSelector,
+  sections: ReadonlyArray<{ page_path: string; page_slug: string }>,
+  scopeId: string,
+): Promise<string | undefined> {
+  const targetPath = selector.path?.split('#')[0]?.trim();
+  if (!targetPath) return selectorPageSlug(selector, sections);
+  if (selector.slug || selector.section_id) return selectorPageSlug(selector, sections);
+
+  const sectionSlug = sections.find((entry) => entry.page_path === targetPath)?.page_slug;
+  if (sectionSlug) return sectionSlug;
+
+  const jobSlug = await derivedJobSlugForManifestPath(engine, scopeId, targetPath);
+  if (jobSlug) return jobSlug;
+
+  return selectorPageSlug(selector, sections);
+}
+
+async function derivedJobSlugForManifestPath(
+  engine: BrainEngine,
+  scopeId: string,
+  manifestPath: string,
+): Promise<string | undefined> {
+  const statuses: DerivedJobStatus[] = ['pending', 'running', 'failed'];
+  const limit = 100;
+  for (const status of statuses) {
+    let offset = 0;
+    while (true) {
+      const jobs = await engine.listDerivedJobs({
+        scope_id: scopeId,
+        artifact_kind: 'note_sections',
+        status,
+        limit,
+        offset,
+      });
+      const match = jobs.find((job) => job.manifest_path === manifestPath);
+      if (match) return match.slug;
+      if (jobs.length < limit) break;
+      offset += jobs.length;
+    }
+  }
   return undefined;
 }
 

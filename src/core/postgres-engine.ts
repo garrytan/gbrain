@@ -25,6 +25,7 @@ import {
   rowToPageProjection,
 } from './page-projection.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
+import { appendPendingDerivedSearchResults } from './search/derived-freshness.ts';
 import type {
   Page, PageInput, PageFilters, PageLineSpanProjection, PageLineSpanProjectionOptions, PageProjection, PageProjectionOptions, PageType,
   NoteManifestEntry,
@@ -120,6 +121,7 @@ import { ensurePageChunks } from './page-chunks.ts';
 import {
   validateSlug,
   contentHash,
+  chunkContentHash,
   applyMemoryRealmUpsertDefaults,
   hasMemoryCandidatePatchInput,
   hasOwn,
@@ -354,6 +356,14 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getPageProjection(slug: string, options: PageProjectionOptions = {}): Promise<PageProjection | null> {
+    return this.getPageProjectionWithSql(this.sql, slug, options);
+  }
+
+  private async getPageProjectionWithSql(
+    sql: ReturnType<typeof postgres>,
+    slug: string,
+    options: PageProjectionOptions = {},
+  ): Promise<PageProjection | null> {
     const windows = normalizePageProjectionWindows(options);
     const selectColumns = [
       'id',
@@ -376,7 +386,7 @@ export class PostgresEngine implements BrainEngine {
     }
 
     params.push(validateSlug(slug));
-    const rows = await this.sql.unsafe(
+    const rows = await sql.unsafe(
       `SELECT ${selectColumns.join(', ')}
        FROM pages
        WHERE slug = $${params.length}`,
@@ -588,43 +598,69 @@ export class PostgresEngine implements BrainEngine {
         `SELECT DISTINCT ON (ranked.slug)
           ranked.slug, ranked.page_id, ranked.title, ranked.type,
           CASE
-            WHEN ranked.frontmatter_score > ranked.chunk_score THEN ranked.search_text
-            ELSE ranked.chunk_text
+            WHEN ranked.frontmatter_score >= ranked.compiled_score
+              AND ranked.frontmatter_score >= ranked.timeline_score
+              AND ranked.frontmatter_score >= ranked.chunk_score THEN ranked.search_text
+            WHEN ranked.timeline_score >= ranked.compiled_score
+              AND ranked.timeline_score >= ranked.chunk_score THEN ranked.timeline
+            WHEN ranked.chunk_score > ranked.compiled_score THEN ranked.chunk_text
+            ELSE ranked.compiled_truth
           END AS chunk_text,
           CASE
-            WHEN ranked.frontmatter_score > ranked.chunk_score THEN 'frontmatter'
-            ELSE ranked.chunk_source
+            WHEN ranked.frontmatter_score >= ranked.compiled_score
+              AND ranked.frontmatter_score >= ranked.timeline_score
+              AND ranked.frontmatter_score >= ranked.chunk_score THEN 'frontmatter'
+            WHEN ranked.timeline_score >= ranked.compiled_score
+              AND ranked.timeline_score >= ranked.chunk_score THEN 'timeline'
+            WHEN ranked.chunk_score > ranked.compiled_score THEN ranked.chunk_source
+            ELSE 'compiled_truth'
           END AS chunk_source,
           ranked.page_score AS score,
-          ranked.stale
+          ranked.stale,
+          ranked.derived_artifact_kind,
+          ranked.derived_status,
+          ranked.derived_target_content_hash,
+          ranked.derived_indexed_content_hash
         FROM (
           SELECT
             p.slug,
             p.id AS page_id,
             p.title,
             p.type,
+            p.compiled_truth,
+            p.timeline,
             p.search_text,
             cc.chunk_text,
             cc.chunk_source,
             cc.chunk_index,
             ts_rank(to_tsvector('english', coalesce(p.search_text, '')), websearch_to_tsquery('english', $1)) AS frontmatter_score,
-            ts_rank(to_tsvector('english', coalesce(cc.chunk_text, '')), websearch_to_tsquery('english', $1)) AS chunk_score,
+            ts_rank(to_tsvector('english', coalesce(p.compiled_truth, '')), websearch_to_tsquery('english', $1)) AS compiled_score,
+            ts_rank(to_tsvector('english', coalesce(p.timeline, '')), websearch_to_tsquery('english', $1)) AS timeline_score,
+            coalesce(ts_rank(to_tsvector('english', coalesce(cc.chunk_text, '')), websearch_to_tsquery('english', $1)), 0) AS chunk_score,
             ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) AS page_score,
             CASE WHEN p.updated_at < (
               SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-            ) THEN true ELSE false END AS stale
+            ) THEN true ELSE false END AS stale,
+            dis.artifact_kind AS derived_artifact_kind,
+            dis.status AS derived_status,
+            dis.target_content_hash AS derived_target_content_hash,
+            dis.indexed_content_hash AS derived_indexed_content_hash
           FROM pages p
-          JOIN content_chunks cc ON cc.page_id = p.id
+          LEFT JOIN content_chunks cc ON cc.page_id = p.id
+          LEFT JOIN derived_index_state dis
+            ON dis.scope_id = 'workspace:default'
+           AND dis.slug = p.slug
+           AND dis.artifact_kind = 'page_chunks'
           WHERE p.search_vector @@ websearch_to_tsquery('english', $1)${filterSql}
         ) ranked
-        ORDER BY ranked.slug, GREATEST(ranked.frontmatter_score, ranked.chunk_score) DESC, ranked.page_score DESC, ranked.chunk_index ASC`,
+        ORDER BY ranked.slug, GREATEST(ranked.frontmatter_score, ranked.compiled_score, ranked.timeline_score, ranked.chunk_score) DESC, ranked.page_score DESC, ranked.chunk_index ASC`,
         params,
       );
 
       rows.sort((a: any, b: any) => b.score - a.score);
       rows.splice(limit);
 
-      return rows.map(rowToSearchResult);
+      return rows.map((row) => rowToSearchResult(row, query));
     });
   }
 
@@ -663,7 +699,14 @@ export class PostgresEngine implements BrainEngine {
         params,
       );
 
-      return rows.map(rowToSearchResult);
+      return appendPendingDerivedSearchResults(
+        {
+          listDerivedIndexStates: (filters) => this.listDerivedIndexStatesWithSql(sql, filters),
+          getPageProjection: (slug, options) => this.getPageProjectionWithSql(sql, slug, options),
+        },
+        rows.map((row) => rowToSearchResult(row)),
+        opts,
+      );
     });
   }
 
@@ -687,35 +730,46 @@ export class PostgresEngine implements BrainEngine {
 
     // Batch upsert: build a single multi-row INSERT ON CONFLICT statement
     // This avoids per-row round-trips and reduces lock contention under parallel workers
-    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at)';
+    const cols = '(page_id, chunk_index, chunk_text, chunk_source, chunk_content_hash, embedding, model, token_count, embedded_at)';
     const rows: string[] = [];
     const params: PostgresParam[] = [];
     let paramIdx = 1;
 
     for (const chunk of chunks) {
+      const chunkHash = chunkContentHash(chunk.chunk_text, chunk.chunk_source);
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
         : null;
 
       if (embeddingStr) {
-        rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, embeddingStr, chunk.model || 'nomic-embed-text', chunk.token_count || null);
+        rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, embeddingStr, chunk.model || 'nomic-embed-text', chunk.token_count || null);
       } else {
-        rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunk.model || 'nomic-embed-text', chunk.token_count || null);
+        rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, chunk.model || 'nomic-embed-text', chunk.token_count || null);
       }
     }
 
-    // Single statement upsert: preserves existing embeddings via COALESCE when new value is NULL
     await sql.unsafe(
       `INSERT INTO content_chunks ${cols} VALUES ${rows.join(', ')}
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
          chunk_text = EXCLUDED.chunk_text,
          chunk_source = EXCLUDED.chunk_source,
-         embedding = COALESCE(EXCLUDED.embedding, content_chunks.embedding),
-         model = COALESCE(EXCLUDED.model, content_chunks.model),
+         chunk_content_hash = EXCLUDED.chunk_content_hash,
+         embedding = CASE
+           WHEN EXCLUDED.embedding IS NOT NULL THEN EXCLUDED.embedding
+           WHEN EXCLUDED.chunk_content_hash = content_chunks.chunk_content_hash
+            AND EXCLUDED.model = content_chunks.model THEN content_chunks.embedding
+           ELSE NULL
+         END,
+         model = EXCLUDED.model,
          token_count = EXCLUDED.token_count,
-         embedded_at = COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)`,
+         embedded_at = CASE
+           WHEN EXCLUDED.embedding IS NOT NULL THEN EXCLUDED.embedded_at
+           WHEN EXCLUDED.chunk_content_hash = content_chunks.chunk_content_hash
+            AND EXCLUDED.model = content_chunks.model THEN content_chunks.embedded_at
+           ELSE NULL
+         END`,
       params,
     );
   }
@@ -3328,7 +3382,13 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async listDerivedIndexStates(filters?: DerivedIndexStateFilters): Promise<DerivedIndexState[]> {
-    const sql = this.sql;
+    return this.listDerivedIndexStatesWithSql(this.sql, filters);
+  }
+
+  private async listDerivedIndexStatesWithSql(
+    sql: ReturnType<typeof postgres>,
+    filters?: DerivedIndexStateFilters,
+  ): Promise<DerivedIndexState[]> {
     const limit = filters?.limit ?? 100;
     const offset = filters?.offset ?? 0;
     const params: PostgresParam[] = [];

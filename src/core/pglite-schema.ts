@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index   INTEGER NOT NULL,
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
+  chunk_content_hash TEXT NOT NULL DEFAULT '',
   embedding     vector(768),
   model         TEXT    NOT NULL DEFAULT 'nomic-embed-text',
   token_count   INTEGER,

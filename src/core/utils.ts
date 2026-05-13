@@ -68,6 +68,10 @@ export function contentHash(compiledTruth: string, timeline: string): string {
   return createHash('sha256').update(compiledTruth + '\n---\n' + timeline).digest('hex');
 }
 
+export function chunkContentHash(chunkText: string, chunkSource: string): string {
+  return createHash('md5').update(`${chunkSource}\n${chunkText}`).digest('hex');
+}
+
 /**
  * Hash contract for markdown imports and re-import idempotency.
  */
@@ -123,6 +127,7 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     chunk_index: row.chunk_index as number,
     chunk_text: row.chunk_text as string,
     chunk_source: row.chunk_source as Chunk['chunk_source'],
+    chunk_content_hash: String(row.chunk_content_hash ?? ''),
     embedding: includeEmbedding && row.embedding ? row.embedding as Float32Array : null,
     model: row.model as string,
     token_count: row.token_count as number | null,
@@ -130,16 +135,72 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
   };
 }
 
-export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
+export function rowToSearchResult(row: Record<string, unknown>, query?: string): SearchResult {
   return {
     slug: row.slug as string,
     page_id: row.page_id as number,
     title: row.title as string,
     type: row.type as PageType,
-    chunk_text: row.chunk_text as string,
+    chunk_text: query
+      ? boundedSearchSnippet(String(row.chunk_text ?? ''), query)
+      : row.chunk_text as string,
     chunk_source: row.chunk_source as SearchResult['chunk_source'],
     score: Number(row.score),
     stale: Boolean(row.stale),
+    ...searchResultDerivedFields(row),
+  };
+}
+
+export function boundedSearchSnippet(text: string, query: string, maxChars = 320): string {
+  if (text.length <= maxChars) return text;
+  const terms = query
+    .split(/[^\p{L}\p{N}_+.-]+/u)
+    .map((term) => term.trim().toLowerCase())
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
+  const lower = text.toLowerCase();
+  const firstMatch = terms
+    .map((term) => lower.indexOf(term))
+    .filter((idx) => idx >= 0)
+    .sort((left, right) => left - right)[0] ?? 0;
+  const start = Math.max(0, firstMatch - Math.floor(maxChars / 3));
+  const end = Math.min(text.length, start + maxChars);
+  const prefix = start > 0 ? '...' : '';
+  const suffix = end < text.length ? '...' : '';
+  return `${prefix}${text.slice(start, end)}${suffix}`;
+}
+
+export function searchResultDerivedFields(row: Record<string, unknown>): Pick<
+  SearchResult,
+  | 'derived_artifact_kind'
+  | 'derived_status'
+  | 'derived_target_content_hash'
+  | 'derived_indexed_content_hash'
+  | 'derived_warning'
+> {
+  if (row.derived_status == null || row.derived_artifact_kind == null) return {};
+
+  const artifactKind = String(row.derived_artifact_kind) as SearchResult['derived_artifact_kind'];
+  const status = String(row.derived_status) as SearchResult['derived_status'];
+  const targetContentHash = row.derived_target_content_hash == null
+    ? null
+    : String(row.derived_target_content_hash);
+  const indexedContentHash = row.derived_indexed_content_hash == null
+    ? null
+    : String(row.derived_indexed_content_hash);
+  const staleReady = status === 'ready'
+    && targetContentHash !== null
+    && indexedContentHash !== targetContentHash;
+  const warning = status !== 'ready' || staleReady
+    ? `${artifactKind} derived index is ${status}; canonical page-level match returned until derived data is current.`
+    : undefined;
+
+  return {
+    derived_artifact_kind: artifactKind,
+    derived_status: status,
+    derived_target_content_hash: targetContentHash,
+    derived_indexed_content_hash: indexedContentHash,
+    ...(warning ? { derived_warning: warning } : {}),
   };
 }
 

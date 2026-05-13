@@ -14,11 +14,10 @@ import type { BrainEngine } from '../engine.ts';
 import { loadConfig } from '../config.ts';
 import { createConnectedEngine, supportsParallelWorkers } from '../engine-factory.ts';
 import { getEngineCapabilities } from '../engine-capabilities.ts';
-import { buildPageChunks, importFile, importFromContent } from '../import-file.ts';
-import { parseMarkdown, type ParsedMarkdown } from '../markdown.ts';
+import { importFile, importFromContent } from '../import-file.ts';
+import { parseMarkdown } from '../markdown.ts';
 import { isSyncable, pathToSlug, slugifyPath } from '../sync.ts';
-import type { ChunkInput } from '../types.ts';
-import { importContentHash, validateSlug } from '../utils.ts';
+import { validateSlug } from '../utils.ts';
 
 export interface ImportRunOptions {
   rootDir: string;
@@ -68,10 +67,7 @@ type PreparedImport =
       filePath: string;
       relativePath: string;
       slug: string;
-      parsed: ParsedMarkdown;
-      hash: string;
       content: string;
-      chunks: ChunkInput[];
     }
   | {
       status: 'skipped';
@@ -146,10 +142,7 @@ async function prepareImportFile(
     filePath,
     relativePath,
     slug: expectedSlug,
-    parsed,
-    hash: importContentHash(parsed),
     content,
-    chunks: buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter),
   };
 }
 

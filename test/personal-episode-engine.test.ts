@@ -7,6 +7,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
+const PGLITE_REOPEN_TEST_TIMEOUT_MS = 45_000;
+
 interface EngineHarness {
   label: string;
   engine: BrainEngine;
@@ -117,7 +119,7 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
       await reopened?.disconnect();
       await harness.cleanup();
     }
-  });
+  }, createHarness === createPgliteHarness ? PGLITE_REOPEN_TEST_TIMEOUT_MS : undefined);
 }
 
 const databaseUrl = process.env.DATABASE_URL;

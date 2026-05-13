@@ -30,6 +30,7 @@ import {
   rowToPageProjection,
 } from './page-projection.ts';
 import { buildPageCentroid } from './services/page-embedding.ts';
+import { appendPendingDerivedSearchResults } from './search/derived-freshness.ts';
 import { selectLocalVectorChunkIds, selectLocalVectorPageIds } from './search/vector-prefilter.ts';
 import { searchLocalVectors } from './search/vector-local.ts';
 import { slugifyPath } from './sync.ts';
@@ -126,6 +127,7 @@ import { MBrainError } from './types.ts';
 import { buildFrontmatterSearchText, expandTechnicalAliases } from './markdown.ts';
 import {
   contentHash,
+  chunkContentHash,
   applyMemoryRealmUpsertDefaults,
   hasMemoryCandidatePatchInput,
   hasOwn,
@@ -138,6 +140,7 @@ import {
   normalizeMemoryRedactionPlanStatusPatch,
   normalizeMemorySessionAttachmentInput,
   normalizeMemorySessionInput,
+  searchResultDerivedFields,
   rowToCanonicalHandoffEntry,
   rowToMemoryCandidateContradictionEntry,
   rowToMemoryMutationEvent,
@@ -212,6 +215,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index INTEGER NOT NULL,
   chunk_text TEXT NOT NULL,
   chunk_source TEXT NOT NULL DEFAULT 'compiled_truth',
+  chunk_content_hash TEXT NOT NULL DEFAULT '',
   embedding BLOB,
   model TEXT NOT NULL DEFAULT 'nomic-embed-text',
   token_count INTEGER,
@@ -966,6 +970,10 @@ export class SQLiteEngine implements BrainEngine {
         p.compiled_truth,
         p.timeline,
         p.search_text,
+        dis.artifact_kind AS derived_artifact_kind,
+        dis.status AS derived_status,
+        dis.target_content_hash AS derived_target_content_hash,
+        dis.indexed_content_hash AS derived_indexed_content_hash,
         bm25(pages_fts, 8.0, 3.0, 2.0, 2.5) AS rank,
         CASE WHEN EXISTS (
           SELECT 1 FROM timeline_entries te
@@ -973,6 +981,10 @@ export class SQLiteEngine implements BrainEngine {
         ) THEN 1 ELSE 0 END AS stale
       FROM pages_fts
       JOIN pages p ON p.id = pages_fts.rowid
+      LEFT JOIN derived_index_state dis
+        ON dis.scope_id = 'workspace:default'
+       AND dis.slug = p.slug
+       AND dis.artifact_kind = 'page_chunks'
       WHERE pages_fts MATCH ?
     `;
 
@@ -1005,11 +1017,12 @@ export class SQLiteEngine implements BrainEngine {
     const omittedChunkIds = this.getOmittedLocalVectorChunkIds(embedding, limit, opts, candidatePageIds);
     const omittedRows = this.queryLocalVectorChunkRowsByIds(omittedChunkIds);
 
-    return searchLocalVectors(
+    const results = searchLocalVectors(
       embedding,
       [...shortlistedRows, ...omittedRows].map(rowToLocalVectorCandidate),
       limit,
     );
+    return appendPendingDerivedSearchResults(this, results, opts);
   }
 
   async upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void> {
@@ -1030,25 +1043,35 @@ export class SQLiteEngine implements BrainEngine {
 
     for (const chunk of chunks) {
       const embedding = chunk.embedding ? float32ToBlob(chunk.embedding) : null;
+      const chunkHash = chunkContentHash(chunk.chunk_text, chunk.chunk_source);
       db.run(`
         INSERT INTO content_chunks (
-          page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          page_id, chunk_index, chunk_text, chunk_source, chunk_content_hash, embedding, model, token_count, embedded_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(page_id, chunk_index) DO UPDATE SET
           chunk_text = excluded.chunk_text,
           chunk_source = excluded.chunk_source,
-          embedding = COALESCE(excluded.embedding, content_chunks.embedding),
+          chunk_content_hash = excluded.chunk_content_hash,
+          embedding = CASE
+            WHEN excluded.embedding IS NOT NULL THEN excluded.embedding
+            WHEN excluded.chunk_content_hash = content_chunks.chunk_content_hash
+              AND excluded.model = content_chunks.model THEN content_chunks.embedding
+            ELSE NULL
+          END,
           model = excluded.model,
           token_count = excluded.token_count,
           embedded_at = CASE
             WHEN excluded.embedding IS NOT NULL THEN excluded.embedded_at
-            ELSE content_chunks.embedded_at
+            WHEN excluded.chunk_content_hash = content_chunks.chunk_content_hash
+              AND excluded.model = content_chunks.model THEN content_chunks.embedded_at
+            ELSE NULL
           END
       `, [
         pageId,
         chunk.chunk_index,
         chunk.chunk_text,
         chunk.chunk_source,
+        chunkHash,
         embedding,
         chunk.model || DEFAULT_EMBEDDING_MODEL,
         chunk.token_count ?? null,
@@ -4782,6 +4805,9 @@ export class SQLiteEngine implements BrainEngine {
         case 35:
           this.ensureDerivedJobSchema();
           break;
+        case 36:
+          this.ensureChunkContentHashSchema();
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }
@@ -6101,6 +6127,22 @@ export class SQLiteEngine implements BrainEngine {
     return Boolean(row);
   }
 
+  private ensureChunkContentHashSchema(): void {
+    const columns = this.database.query(`PRAGMA table_info(content_chunks)`).all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'chunk_content_hash')) {
+      this.database.exec(`ALTER TABLE content_chunks ADD COLUMN chunk_content_hash TEXT NOT NULL DEFAULT '';`);
+    }
+    const chunks = this.database.query(`
+      SELECT id, chunk_text, chunk_source
+      FROM content_chunks
+      WHERE chunk_content_hash = ''
+    `).all() as Array<{ id: number; chunk_text: string; chunk_source: string }>;
+    const update = this.database.prepare(`UPDATE content_chunks SET chunk_content_hash = ? WHERE id = ?`);
+    for (const chunk of chunks) {
+      update.run(chunkContentHash(String(chunk.chunk_text), String(chunk.chunk_source)), chunk.id);
+    }
+  }
+
   private sqliteMemoryCandidatePatchColumnsExist(): boolean {
     const columns = this.database.query(`PRAGMA table_info(memory_candidate_entries)`).all() as Array<{ name: string }>;
     const names = new Set(columns.map((column) => column.name));
@@ -6605,6 +6647,7 @@ function rowToChunk(row: Record<string, unknown>, includeEmbedding = false): Chu
     chunk_index: Number(row.chunk_index),
     chunk_text: String(row.chunk_text),
     chunk_source: row.chunk_source as Chunk['chunk_source'],
+    chunk_content_hash: String(row.chunk_content_hash ?? ''),
     embedding: includeEmbedding ? blobToFloat32(row.embedding) : null,
     model: String(row.model),
     token_count: row.token_count === null || row.token_count === undefined ? null : Number(row.token_count),
@@ -7002,6 +7045,7 @@ function rowToSearchResult(row: Record<string, unknown>, query: string): SearchR
     chunk_source,
     score: Math.max(0, -rawRank),
     stale: Boolean(row.stale),
+    ...searchResultDerivedFields(row),
   };
 }
 

@@ -518,6 +518,15 @@ describe('import service', () => {
     });
   });
 
+  test('staged prepare path does not precompute page chunks before deferred commit', () => {
+    const source = readFileSync(
+      new URL('../src/core/services/import-service.ts', import.meta.url),
+      'utf-8',
+    );
+
+    expect(source).not.toContain('buildPageChunks');
+  });
+
   test('runImportService isolates staged prepare failures and continues committing later files in order', async () => {
     const rootDir = makeTempDir('mbrain-import-staged-prepare-error-');
     for (const name of ['a.md', 'b.md', 'c.md', 'd.md']) {

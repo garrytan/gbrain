@@ -674,6 +674,173 @@ describe('read context service', () => {
     });
   });
 
+  test('reports pending note_sections freshness instead of a generic missing section', async () => {
+    await withEngine('section-derived-pending', async (engine) => {
+      await importFromContent(engine, 'concepts/section-derived-pending', [
+        '---',
+        'type: concept',
+        'title: Section Derived Pending',
+        '---',
+        '# Compiled Truth',
+        '## Stable Section',
+        'Original section evidence. [Source: User, direct message, 2026-05-14 09:00 KST]',
+      ].join('\n'), { path: 'concepts/section-derived-pending.md' });
+
+      await importFromContent(engine, 'concepts/section-derived-pending', [
+        '---',
+        'type: concept',
+        'title: Section Derived Pending',
+        '---',
+        '# Compiled Truth',
+        '## Stable Section',
+        'Updated section evidence. [Source: User, direct message, 2026-05-14 09:01 KST]',
+      ].join('\n'), {
+        path: 'concepts/section-derived-pending.md',
+        deferDerived: true,
+      });
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'section',
+          section_id: 'concepts/section-derived-pending#compiled-truth/stable-section',
+        }],
+      });
+
+      expect(result.canonical_reads).toEqual([]);
+      expect(result.selector_warnings?.[0]).toMatchObject({
+        code: 'derived_pending',
+        slug: 'concepts/section-derived-pending',
+      });
+      expect(result.answer_ready.unsupported_reasons).toContain('derived_pending');
+    });
+  });
+
+  test('reports pending note_sections freshness for source_ref reads', async () => {
+    await withEngine('source-ref-derived-pending', async (engine) => {
+      await importFromContent(engine, 'concepts/source-ref-derived-pending', [
+        '---',
+        'type: concept',
+        'title: Source Ref Derived Pending',
+        '---',
+        '# Compiled Truth',
+        '## Evidence',
+        'Original evidence. [Source: User, direct message, 2026-05-14 09:02 KST]',
+      ].join('\n'), { path: 'concepts/source-ref-derived-pending.md' });
+
+      await importFromContent(engine, 'concepts/source-ref-derived-pending', [
+        '---',
+        'type: concept',
+        'title: Source Ref Derived Pending',
+        '---',
+        '# Compiled Truth',
+        '## Evidence',
+        'Updated evidence. [Source: User, direct message, 2026-05-14 09:03 KST]',
+      ].join('\n'), {
+        path: 'concepts/source-ref-derived-pending.md',
+        deferDerived: true,
+      });
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'source_ref',
+          slug: 'concepts/source-ref-derived-pending',
+          source_ref: 'User, direct message, 2026-05-14 09:03 KST',
+        }],
+      });
+
+      expect(result.canonical_reads).toEqual([]);
+      expect(result.selector_warnings?.[0]).toMatchObject({
+        code: 'derived_pending',
+        slug: 'concepts/source-ref-derived-pending',
+      });
+      expect(result.answer_ready.unsupported_reasons).toContain('derived_pending');
+    });
+  });
+
+  test('reports pending note_sections freshness for path-scoped source_ref reads', async () => {
+    await withEngine('source-ref-path-derived-pending', async (engine) => {
+      await importFromContent(engine, 'concepts/source-ref-path-derived-pending', [
+        '---',
+        'type: concept',
+        'title: Source Ref Path Derived Pending',
+        '---',
+        '# Compiled Truth',
+        '## Evidence',
+        'Original path evidence. [Source: User, direct message, 2026-05-14 09:04 KST]',
+      ].join('\n'), { path: 'concepts/source-ref-path-derived-pending.md' });
+
+      await importFromContent(engine, 'concepts/source-ref-path-derived-pending', [
+        '---',
+        'type: concept',
+        'title: Source Ref Path Derived Pending',
+        '---',
+        '# Compiled Truth',
+        '## Evidence',
+        'Updated path evidence. [Source: User, direct message, 2026-05-14 09:05 KST]',
+      ].join('\n'), {
+        path: 'concepts/source-ref-path-derived-pending.md',
+        deferDerived: true,
+      });
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'source_ref',
+          path: 'concepts/source-ref-path-derived-pending.md',
+          source_ref: 'User, direct message, 2026-05-14 09:05 KST',
+        }],
+      });
+
+      expect(result.canonical_reads).toEqual([]);
+      expect(result.selector_warnings?.[0]).toMatchObject({
+        code: 'derived_pending',
+        slug: 'concepts/source-ref-path-derived-pending',
+      });
+      expect(result.answer_ready.unsupported_reasons).toContain('derived_pending');
+    });
+  });
+
+  test('reports pending note_sections freshness for alias-path source_ref reads', async () => {
+    await withEngine('source-ref-alias-path-derived-pending', async (engine) => {
+      await importFromContent(engine, 'concepts/path-alias-source', [
+        '---',
+        'type: concept',
+        'title: Path Alias Source',
+        '---',
+        '# Compiled Truth',
+        '## Evidence',
+        'Original alias evidence. [Source: User, direct message, 2026-05-14 09:06 KST]',
+      ].join('\n'), { path: 'aliases/source-note.md' });
+
+      await importFromContent(engine, 'concepts/path-alias-source', [
+        '---',
+        'type: concept',
+        'title: Path Alias Source',
+        '---',
+        '# Compiled Truth',
+        '## Evidence',
+        'Updated alias evidence. [Source: User, direct message, 2026-05-14 09:07 KST]',
+      ].join('\n'), {
+        path: 'aliases/source-note.md',
+        deferDerived: true,
+      });
+
+      const result = await readContext(engine, {
+        selectors: [{
+          kind: 'source_ref',
+          path: 'aliases/source-note.md',
+          source_ref: 'User, direct message, 2026-05-14 09:07 KST',
+        }],
+      });
+
+      expect(result.canonical_reads).toEqual([]);
+      expect(result.selector_warnings?.[0]).toMatchObject({
+        code: 'derived_pending',
+        slug: 'concepts/path-alias-source',
+      });
+      expect(result.answer_ready.unsupported_reasons).toContain('derived_pending');
+    });
+  });
+
   test('accepts page content_hash for source_ref selectors', async () => {
     await withEngine('source-ref-page-hash', async (engine) => {
       await importFromContent(engine, 'concepts/source-ref-page-hash', [

@@ -14,6 +14,20 @@ All notable changes to MBrain will be documented in this file.
   is not proven by these tests alone. Source-ref indexing and search snippet
   optimization are intentionally deferred until profiling shows they are part of
   the observed stall path.
+- **Derived freshness is now explicit in search and canonical section reads.**
+  Keyword search can return canonical page-level matches while `page_chunks`
+  are pending or failed, and search results disclose the derived artifact
+  status instead of silently behaving like no canonical page matched. Section
+  and source-ref canonical reads now report pending/failed `note_sections`
+  freshness before serving derived-backed evidence.
+- **Chunk embeddings now carry a freshness identity.** Chunk rows store
+  `chunk_content_hash`, and chunk upserts clear existing embeddings whenever the
+  chunk text, source, or embedding model changes without a replacement
+  embedding.
+- **Derived worker foreground pressure is process-local.** Multi-process
+  deployments should run one derived worker per backing store, or set
+  `MBRAIN_DERIVED_WORKER=0` on additional MCP server processes, until DB-wide
+  foreground-pressure coordination or worker election is added.
 
 ## [0.10.3] - 2026-05-09
 

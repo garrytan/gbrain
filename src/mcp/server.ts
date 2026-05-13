@@ -143,10 +143,14 @@ export function createMcpToolExecutionLimiter(
       }
     },
     getForegroundPressure(): McpForegroundPressure {
-      const snapshot = mutatingQueue.getSnapshot();
+      const mutatingSnapshot = mutatingQueue.getSnapshot();
+      const heavyReadSnapshot = heavyReadQueue.getSnapshot();
+      const active = mutatingSnapshot.active + heavyReadSnapshot.active;
+      const queued = mutatingSnapshot.queued + heavyReadSnapshot.queued;
       return {
-        ...snapshot,
-        hasPressure: snapshot.active > 0 || snapshot.queued > 0,
+        active,
+        queued,
+        hasPressure: active > 0 || queued > 0,
       };
     },
   };
