@@ -23,7 +23,7 @@ import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveModel } from '../model-config.ts';
-import { chat, isAvailable } from '../ai/gateway.ts';
+import { chat } from '../ai/gateway.ts';
 
 /**
  * v0.34: LLM client interface for think synthesis.
@@ -251,28 +251,6 @@ export async function runThink(
         gaps: Array.isArray(r.gaps) ? (r.gaps as string[]).filter(g => typeof g === 'string') : [],
       };
     }
-  } else if (!isAvailable('chat')) {
-    // Production path: no provider has an API key for chat.
-    // Degrade gracefully — gather succeeded, synthesis skipped.
-    warnings.push('NO_LLM_API_KEY');
-    return {
-      question: opts.question,
-      answer: '(no LLM available — set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_GENERATIVE_AI_API_KEY)',
-      citations: [],
-      gaps: ['no LLM available; gather succeeded but synthesis skipped'],
-      pagesGathered: gather.pages.length,
-      takesGathered: gather.takes.length,
-      graphHits: gather.graphSlugs.length,
-      modelUsed,
-      rounds: 0,
-      warnings,
-      diagnostics: {
-        pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
-        takesFromKeyword: gather.diagnostics.takesFromKeyword,
-        takesFromVector: gather.diagnostics.takesFromVector,
-        graphHits: gather.diagnostics.graphHits,
-      },
-    };
   } else {
     // Production path: AI gateway (multi-provider) chat.
     // Convert bare model names (e.g. claude-opus-4-7) to provider:modelId
@@ -282,12 +260,40 @@ export async function runThink(
       ? modelUsed
       : `anthropic:${modelUsed}`;
 
-    const result = await chat({
-      model: gatewayModel,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-      maxTokens: DEFAULT_MAX_OUTPUT_TOKENS,
-    });
+    let result: Awaited<ReturnType<typeof chat>>;
+    try {
+      result = await chat({
+        model: gatewayModel,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+        maxTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Degrade gracefully for missing/misconfigured LLM while preserving the
+      // gathered evidence. Do not pre-check isAvailable('chat') here because
+      // it only inspects the configured default model and can incorrectly
+      // reject a per-command --model override such as litellm:gpt-5.5.
+      warnings.push('NO_LLM_API_KEY');
+      return {
+        question: opts.question,
+        answer: `(no LLM available — ${message})`,
+        citations: [],
+        gaps: ['no LLM available; gather succeeded but synthesis skipped'],
+        pagesGathered: gather.pages.length,
+        takesGathered: gather.takes.length,
+        graphHits: gather.graphSlugs.length,
+        modelUsed,
+        rounds: 0,
+        warnings,
+        diagnostics: {
+          pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
+          takesFromKeyword: gather.diagnostics.takesFromKeyword,
+          takesFromVector: gather.diagnostics.takesFromVector,
+          graphHits: gather.diagnostics.graphHits,
+        },
+      };
+    }
 
     const text = result.text;
     const parsed = tryParseJSON(text);

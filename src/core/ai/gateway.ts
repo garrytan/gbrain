@@ -499,13 +499,11 @@ export function isAvailable(touchpoint: TouchpointKind): boolean {
     // EmbeddingTouchpoint.user_provided_models (D8=A), or the legacy
     // `recipe.id === 'litellm'` heuristic (back-compat for pre-v0.32 builds
     // where the field hadn't been declared yet).
-    const isUserProvided =
-      touchpoint === 'embedding' &&
-      (touchpointConfig as any).user_provided_models === true;
+    const isUserProvided = (touchpointConfig as any).user_provided_models === true;
     if (
       Array.isArray(touchpointConfig.models) &&
       touchpointConfig.models.length === 0 &&
-      (recipe.id === 'litellm' || isUserProvided)
+      !isUserProvided
     ) return false;
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
