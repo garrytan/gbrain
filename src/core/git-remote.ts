@@ -6,8 +6,8 @@
  * IPv6 loopback, IPv4-mapped IPv6, metadata hostnames, hex/octal bypass,
  * and CGNAT 100.64/10).
  *
- * cloneRepo and pullRepo both spread GIT_SSRF_FLAGS so a future flag added
- * to one path lands on both — single source of truth.
+ * cloneRepo and pullRepo both spread GIT_SSRF_FLAGS so a future config flag
+ * added to one path lands on both — single source of truth.
  *
  * Tailscale 100.64/10 trips the integrations.ts allowlist (CGNAT line in
  * url-safety.ts isPrivateIpv4). For self-hosted internal git servers
@@ -20,18 +20,19 @@ import { join } from 'path';
 import { isInternalUrl } from './url-safety.ts';
 
 /**
- * SSRF-defensive flag set. Used by both cloneRepo and pullRepo.
+ * SSRF-defensive git config flag set. Used by both cloneRepo and pullRepo.
  * - http.followRedirects=false: closes DNS rebinding via redirect chains
  * - protocol.file.allow=never: no local-file URLs (defense in depth)
  * - protocol.ext.allow=never: no external helpers (`git-remote-foo`)
- * - --no-recurse-submodules: .gitmodules cannot become a second fetch surface
  */
 export const GIT_SSRF_FLAGS = [
   '-c', 'http.followRedirects=false',
   '-c', 'protocol.file.allow=never',
   '-c', 'protocol.ext.allow=never',
-  '--no-recurse-submodules',
 ] as const;
+
+/** Subcommand option: .gitmodules cannot become a second fetch surface. */
+export const GIT_NO_RECURSE_SUBMODULES = '--no-recurse-submodules' as const;
 
 export type RemoteUrlErrorCode =
   | 'invalid_url'
@@ -153,7 +154,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
     }
   }
 
-  const args: string[] = [...GIT_SSRF_FLAGS, 'clone'];
+  const args: string[] = [...GIT_SSRF_FLAGS, 'clone', GIT_NO_RECURSE_SUBMODULES];
   if (opts.depth !== 0) {
     args.push(`--depth=${opts.depth ?? 1}`);
   }
@@ -179,7 +180,14 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
 
 /** Pull a repo with --ff-only and the same SSRF-defensive flags as cloneRepo. */
 export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): void {
-  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', '--ff-only'];
+  const args: string[] = [
+    '-C',
+    repoPath,
+    ...GIT_SSRF_FLAGS,
+    'pull',
+    '--ff-only',
+    GIT_NO_RECURSE_SUBMODULES,
+  ];
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],

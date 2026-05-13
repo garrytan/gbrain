@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   GIT_SSRF_FLAGS,
+  GIT_NO_RECURSE_SUBMODULES,
   parseRemoteUrl,
   RemoteUrlError,
   cloneRepo,
@@ -75,9 +76,9 @@ beforeEach(() => {
 const fakePath = (): string => `${FAKE_GIT_DIR}:${process.env.PATH ?? ''}`;
 
 // ---------------------------------------------------------------------------
-// GIT_SSRF_FLAGS — pinned shape (snapshot test). If a future flag is added,
-// update the expected list here AND verify both cloneRepo + pullRepo pick it
-// up via the GIT_SSRF_FLAGS spread (the codex finding that motivated this).
+// GIT_SSRF_FLAGS — pinned shape (snapshot test). If a future config flag is
+// added, update the expected list here AND verify both cloneRepo + pullRepo
+// pick it up via the GIT_SSRF_FLAGS spread.
 // ---------------------------------------------------------------------------
 
 describe('GIT_SSRF_FLAGS', () => {
@@ -86,8 +87,12 @@ describe('GIT_SSRF_FLAGS', () => {
       '-c', 'http.followRedirects=false',
       '-c', 'protocol.file.allow=never',
       '-c', 'protocol.ext.allow=never',
-      '--no-recurse-submodules',
     ]);
+  });
+
+  test('submodule recursion guard is a subcommand option', () => {
+    expect(GIT_NO_RECURSE_SUBMODULES).toBe('--no-recurse-submodules');
+    expect([...GIT_SSRF_FLAGS]).not.toContain(GIT_NO_RECURSE_SUBMODULES);
   });
 });
 
@@ -229,9 +234,11 @@ describe('cloneRepo', () => {
     const calls = readArgvLog();
     expect(calls.length).toBe(1);
     const argv = calls[0];
-    // Pin the SSRF flags before the 'clone' verb (codex Q2 invariant).
+    // Pin the SSRF config flags before the 'clone' verb (codex Q2 invariant).
     expect(argv.slice(0, GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
-    expect(argv).toContain('clone');
+    const cloneIdx = GIT_SSRF_FLAGS.length;
+    expect(argv[cloneIdx]).toBe('clone');
+    expect(argv[cloneIdx + 1]).toBe(GIT_NO_RECURSE_SUBMODULES);
     expect(argv).toContain('--depth=1');
     expect(argv).toContain('https://example.com/repo');
     expect(argv[argv.length - 1]).toBe(dest);
@@ -297,7 +304,7 @@ describe('cloneRepo', () => {
 // ---------------------------------------------------------------------------
 
 describe('pullRepo', () => {
-  test('happy path: invokes git -C path with GIT_SSRF_FLAGS + pull --ff-only', async () => {
+  test('happy path: invokes git -C path with config flags + pull subcommand options', async () => {
     const repo = join(FAKE_GIT_DIR, 'pull-target');
     mkdirSync(repo, { recursive: true });
     await withEnv({ PATH: fakePath() }, async () => {
@@ -307,8 +314,11 @@ describe('pullRepo', () => {
     expect(argv[0]).toBe('-C');
     expect(argv[1]).toBe(repo);
     expect(argv.slice(2, 2 + GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
-    expect(argv).toContain('pull');
+    const pullIdx = 2 + GIT_SSRF_FLAGS.length;
+    expect(argv.slice(0, pullIdx)).not.toContain(GIT_NO_RECURSE_SUBMODULES);
+    expect(argv[pullIdx]).toBe('pull');
     expect(argv).toContain('--ff-only');
+    expect(argv.slice(pullIdx + 1)).toContain(GIT_NO_RECURSE_SUBMODULES);
     rmSync(repo, { recursive: true, force: true });
   });
 
