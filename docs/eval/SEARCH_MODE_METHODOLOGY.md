@@ -164,6 +164,37 @@ The mode-picker prompt at `gbrain init` and the CLAUDE.md `## Search Mode` table
 
 The picker copy + CLAUDE.md table are the canonical user-facing source. Update them in lockstep when the underlying chunker size or default `searchLimit` changes.
 
+## Mode × Model matrix (the 25x spread)
+
+The per-query math above assumes Sonnet 4.6 downstream. In reality, the
+downstream model tier is the BIGGER cost lever. Per-query cost at 100K
+queries/month, search payload only (no cache savings):
+
+| Mode (search tokens) | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.7 (\$5/M) |
+|---|---|---|---|
+| conservative (~4K) | **\$400/mo** | \$1,200/mo | \$2,000/mo |
+| balanced (~10K) | \$1,000/mo | \$3,000/mo | \$5,000/mo |
+| tokenmax (~20K) | \$2,000/mo | \$6,000/mo | **\$10,000/mo** |
+
+**Natural pairings span ~4x** (cheap model + tight mode → frontier model + loose
+mode). **Mismatches waste capacity:**
+
+- `tokenmax + Haiku`: Haiku gets 20K of search results stuffed into its
+  context per query. Haiku's reasoning is weaker; more chunks = more noise,
+  not more signal. You pay Haiku rates but get sub-Haiku quality. Wrong
+  direction.
+- `conservative + Opus`: Opus has 200K context window and can synthesize
+  across many chunks. Capping at 10 chunks / 4K tokens leaves Opus
+  reasoning underfed. You pay Opus rates but get conservative-shape
+  retrieval. Wasted spend.
+
+**Right-sizing rule:** match the mode's `searchLimit` to the downstream
+model's "useful context depth":
+
+- Haiku struggles past ~5-10 chunks of cross-referenced content → conservative
+- Sonnet handles ~25-40 chunks well → balanced
+- Opus benefits from 50+ chunks for multi-hop reasoning → tokenmax
+
 ## Realistic-scale anchor (single power-user agent loop)
 
 The per-query math above is honest but theoretical: it treats each search as an isolated billable event. Real agent loops amortize a lot of context across turns via Anthropic prompt caching. Here's what one heavy power-user loop actually looks like in production, anonymized + scaled so the numbers represent a representative power user rather than any specific deployment.
@@ -191,13 +222,34 @@ The cost difference between modes is concentrated in the search-attributable fra
 | balanced | ~30K (3 × 10K) | ~\$0.09 | ~\$77/mo | -\$78 |
 | conservative | ~12K (3 × 4K) | ~\$0.036 | ~\$31/mo | -\$124 |
 
-**Implied total agent spend by mode** (subtracting the saved search-attributable cost from the tokenmax anchor):
+**Implied total agent spend by NATURAL PAIRING** (mode + matched
+downstream model). Per-turn cost scales with the downstream model's
+per-token rate, since the cached prefix + uncached portion + reasoning
+tokens all bill at that rate:
 
-| Mode | Estimated total spend at this scale | Search as % of total |
+| Pairing | Per-turn cost | Total @ 860 turns/mo |
 |---|---|---|
-| tokenmax | ~\$700/mo | ~22% |
-| balanced | ~\$620/mo | ~12% |
-| conservative | ~\$575/mo | ~5% |
+| tokenmax + Opus (frontier, max quality) | ~\$0.85 | ~\$700/mo |
+| balanced + Sonnet (the sweet spot) | ~\$0.50 | ~\$430/mo |
+| conservative + Haiku (cost-sensitive) | ~\$0.20 | ~\$170/mo |
+
+**4x spread across natural pairings.** The model tier dominates because
+the per-token rate applies to the WHOLE per-turn payload (system + tools
++ history + reasoning + search), not just gbrain's chunks. Mode choice
+contributes ~10-20% on top of that base.
+
+**Mismatched pairings push you off the curve:**
+
+| Pairing | Per-turn estimate | Total @ 860 turns/mo | Compared to natural |
+|---|---|---|---|
+| tokenmax + Haiku | ~\$0.20 | ~\$170/mo | Same cost as conservative+Haiku, worse quality |
+| conservative + Opus | ~\$0.75 | ~\$640/mo | 92% of tokenmax+Opus spend, conservative-shape retrieval |
+
+The mismatch math says: a tokenmax+Haiku user pays the same as
+conservative+Haiku but gets a noisier context (Haiku can't filter signal
+from 50 chunks). A conservative+Opus user pays nearly the same as
+tokenmax+Opus but starves Opus on retrieval depth. Both burn budget for
+no improvement.
 
 **What this anchor tells us that the per-query math doesn't:**
 

@@ -74,33 +74,45 @@ describe('recommendModeFor — auto-suggestion heuristic', () => {
   });
 });
 
-describe('MENU_TEXT cost anchors (must match CLAUDE.md + methodology doc)', () => {
-  test('every mode lists its per-query cost', async () => {
+describe('MENU_TEXT cost-matrix anchors (must match CLAUDE.md + methodology doc)', () => {
+  test('25x corner-to-corner spread framing is named', async () => {
     const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    // The canonical anchors. Updating these REQUIRES bumping CLAUDE.md
-    // ## Search Mode table + docs/eval/SEARCH_MODE_METHODOLOGY.md in lockstep.
-    expect(MODE_PICKER_MENU).toContain('$0.012/query');  // conservative
-    expect(MODE_PICKER_MENU).toContain('$0.030/query');  // balanced
-    expect(MODE_PICKER_MENU).toContain('$0.060/query');  // tokenmax
+    // Updating these REQUIRES bumping CLAUDE.md ## Search Mode + the
+    // methodology doc + README in lockstep.
+    expect(MODE_PICKER_MENU).toContain('25x');
+    expect(MODE_PICKER_MENU).toContain('corner-to-corner');
   });
 
-  test('every mode lists its 100K-queries-per-month cost', async () => {
+  test('cost matrix lists every cell at the natural diagonal and corners', async () => {
     const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    expect(MODE_PICKER_MENU).toContain('$1,200/mo @ 100K');
-    expect(MODE_PICKER_MENU).toContain('$3,000/mo @ 100K');
-    expect(MODE_PICKER_MENU).toContain('$6,000/mo @ 100K');
+    // Four anchor cells: the two corners + the diagonal mids
+    expect(MODE_PICKER_MENU).toContain('$400/mo');     // conservative + Haiku
+    expect(MODE_PICKER_MENU).toContain('$3,000/mo');   // balanced + Sonnet (default natural)
+    expect(MODE_PICKER_MENU).toContain('$10,000/mo');  // tokenmax + Opus
   });
 
-  test('cost model assumption (Sonnet 4.6 @ $3/M) is documented', async () => {
+  test('all three downstream model rates are explicit', async () => {
     const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    expect(MODE_PICKER_MENU).toContain('Sonnet 4.6 downstream at $3/M');
-    expect(MODE_PICKER_MENU).toContain('1.7x');  // Opus 4.7 multiplier
-    expect(MODE_PICKER_MENU).toContain('0.33x'); // Haiku 4.5 multiplier
+    expect(MODE_PICKER_MENU).toContain('Haiku 4.5');
+    expect(MODE_PICKER_MENU).toContain('Sonnet 4.6');
+    expect(MODE_PICKER_MENU).toContain('Opus 4.7');
+    expect(MODE_PICKER_MENU).toContain('$1/M');
+    expect(MODE_PICKER_MENU).toContain('$3/M');
+    expect(MODE_PICKER_MENU).toContain('$5/M');
   });
 
-  test('tokenmax expansion surcharge is named explicitly', async () => {
+  test('tokenmax Haiku-expansion surcharge is named explicitly', async () => {
     const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    expect(MODE_PICKER_MENU).toContain('~$1.50 per 1K queries in Haiku expansion calls');
+    // Cross-line match — the surcharge phrase can wrap.
+    expect(MODE_PICKER_MENU.replace(/\s+/g, ' ')).toContain('~$1.50 per 1K queries');
+    expect(MODE_PICKER_MENU).toContain('Haiku expansion call');
+  });
+
+  test('cache-hit discount framing is named', async () => {
+    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
+    expect(MODE_PICKER_MENU).toContain('cache');
+    // The numbers below are full-payload pre-cache; real loops see 50-80% discount.
+    expect(MODE_PICKER_MENU).toMatch(/50-80%|discount/);
   });
 
   test('tune command is surfaced as the next step', async () => {

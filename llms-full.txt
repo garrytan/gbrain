@@ -825,29 +825,34 @@ project resolves through `src/core/search/mode.ts`.
 | `searchLimit` default         | 10             | 25         | 50             |
 
 **Cost anchors (downstream agent input cost — gbrain itself is rounding error).**
-Assumes Sonnet 4.6 @ \$3/M input. Opus 4.7 ~1.7×. Haiku 4.5 ~0.33×. Chunks ~400 tokens avg.
+The corner-to-corner spread is 25x once you pair mode with downstream model.
+Chunks ~400 tokens avg. Per-query cost @ 100K queries/month, full search
+payload, no cache savings:
 
-| Mode | Per-query | @ 1K queries | @ 100K queries |
+| Mode \ Downstream | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.7 (\$5/M) |
 |---|---|---|---|
-| conservative | ~\$0.012 | ~\$12/mo | ~\$1,200/mo |
-| balanced | ~\$0.030 | ~\$30/mo | ~\$3,000/mo |
-| tokenmax | ~\$0.060 | ~\$60/mo | ~\$6,000/mo |
+| conservative (~4K) | **\$400/mo** | \$1,200/mo | \$2,000/mo |
+| balanced (~10K) | \$1,000/mo | \$3,000/mo | \$5,000/mo |
+| tokenmax (~20K) | \$2,000/mo | \$6,000/mo | **\$10,000/mo** |
 
-tokenmax adds ~\$1.50 per 1K queries in Haiku expansion calls on top
-(\$150/mo @ 100K). Cache hits cut these numbers roughly in half on a brain with
-repeat-query traffic. **The cost picker copy in `gbrain init` carries the same
-numbers verbatim** — update both when refreshing.
+Natural pairings span ~4x. Mismatches (tokenmax+Haiku, conservative+Opus)
+waste capacity differently — too-big payload overwhelms a cheap model;
+too-small payload starves an expensive one.
 
-**Per-query math vs real-world spend.** The table above is what an isolated
-benchmark would measure. In real agent loops with disciplined Anthropic prompt
-caching (system + tools at top, retrieved chunks appended last), mode choice
-saves more like 10-20% of total agent spend, not the 5x the per-query ratio
-implies — most of the per-turn cost is the cached prefix, not the search
-payload. See the "Realistic-scale anchor" section in
-`docs/eval/SEARCH_MODE_METHODOLOGY.md` for the math on a representative
-single power-user loop (~860 turns/mo, ~\$700/mo at tokenmax, ~\$575/mo at
-conservative). Setups WITHOUT cache-aware prompt layout see the per-query
-framing reassert — mode choice matters more there.
+tokenmax adds ~\$1.50 per 1K queries in Haiku expansion calls on top of
+the matrix (\$150/mo @ 100K). Cache hits cut all numbers ~50%. **The cost
+picker copy in `gbrain init` carries the same matrix verbatim** — update
+both when refreshing.
+
+**Per-query math vs real-world spend.** The matrix above is what an
+isolated benchmark would measure. Real agent loops with disciplined
+Anthropic prompt caching see 50-80% discount on top (cache hits skip
+downstream entirely). The realistic-scale anchor in
+`docs/eval/SEARCH_MODE_METHODOLOGY.md` walks the natural pairings at
+single-power-user volume (~860 turns/mo): tokenmax+Opus ~\$700/mo,
+balanced+Sonnet ~\$430/mo, conservative+Haiku ~\$170/mo. Setups WITHOUT
+cache-aware prompt layout (frequent prefix churn) see the per-query
+matrix dominate — mode + model choice matters more there.
 
 **Resolution chain** (matches the v0.31.12 model-tier pattern at
 `src/core/model-config.ts:resolveModel`):
@@ -2009,17 +2014,19 @@ gbrain search stats             # cache hit rate + intent mix after some real us
 ```
 
 **v0.32.3 — named search modes.** `gbrain init` asks once which mode fits
-your workload. The cost numbers below are the downstream agent's input cost
-reading retrieved chunks (gbrain itself is rounding-error). Sonnet 4.6 @ \$3/M:
+your workload. The cost spread depends on BOTH the mode AND your downstream
+model — 25x corner-to-corner. Per-query cost @ 100K queries/month (search
+payload only, no cache savings):
 
-| Mode | Per-query | @ 1K queries | @ 100K queries | Best for |
-|---|---|---|---|---|
-| `conservative` | ~\$0.012 | ~\$12/mo | ~\$1,200/mo | Haiku subagents, high-volume loops |
-| `balanced` | ~\$0.030 | ~\$30/mo | ~\$3,000/mo | Sonnet-tier mixed workloads (default) |
-| `tokenmax` | ~\$0.060 | ~\$60/mo | ~\$6,000/mo | Opus/frontier, max retrieval quality |
+| Mode \ Downstream | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.7 (\$5/M) |
+|---|---|---|---|
+| `conservative` (~4K) | **\$400/mo** | \$1,200/mo | \$2,000/mo |
+| `balanced` (~10K) | \$1,000/mo | \$3,000/mo | \$5,000/mo |
+| `tokenmax` (~20K) | \$2,000/mo | \$6,000/mo | **\$10,000/mo** |
 
-Auto-suggests based on your configured `models.tier.subagent`. Non-TTY
-installs auto-pick `balanced` and print a hint pointing at
+Natural pairings (corner-diagonal) span ~4x at realistic single-user
+volume. Auto-suggests based on your configured `models.tier.subagent`.
+Non-TTY installs auto-pick `balanced` and print a hint pointing at
 `gbrain config set search.mode <m>`. After some real usage, run
 `gbrain search stats` for observability and `gbrain search tune` for
 data-driven recommendations. Methodology + eval results live at

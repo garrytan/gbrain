@@ -109,35 +109,41 @@ async function resolveInputs(engine: BrainEngine): Promise<ModePickerInputs> {
 const MENU_TEXT = `
 Search mode preference
 ──────────────────────
-GBrain ships a hybrid search engine with three named modes. Pick the one
-that matches your workload + budget tolerance.
+Three named modes. Cost depends on BOTH the mode AND your downstream model
+— the corner-to-corner spread is 25x. Pick the pairing intentionally.
 
-The "cost" of search isn't gbrain itself — it's the downstream agent's
-input cost reading the retrieved chunks back into its context window.
-gbrain's own overhead is rounding-error (semantic cache is free; only
-tokenmax adds a Haiku expansion call at ~$1.50 per 1K queries).
+The "cost" isn't gbrain itself — it's the downstream agent's input cost
+reading the retrieved chunks back into its context window. gbrain's own
+overhead is rounding-error (semantic cache is free; tokenmax adds ~$1.50
+per 1K queries for the Haiku expansion call).
 
-Numbers below assume Sonnet 4.6 downstream at $3/M input tokens. Opus
-4.7 is ~1.7x. Haiku 4.5 is ~0.33x. Chunks average ~400 tokens.
+Per-query cost @ 100K queries/mo (full search payload, no cache savings):
+
+                  Haiku 4.5     Sonnet 4.6    Opus 4.7
+                  ($1/M input)  ($3/M input)  ($5/M input)
+  conservative    $400/mo       $1,200/mo     $2,000/mo
+  balanced        $1,000/mo     $3,000/mo     $5,000/mo
+  tokenmax        $2,000/mo     $6,000/mo     $10,000/mo
+
+Natural pairings span ~4x (cheap/cheap → frontier/frontier). Mismatches
+(tokenmax+Haiku, conservative+Opus) waste capacity in different
+directions. Real agent loops with disciplined prompt caching see 50-80%
+discount on top of these numbers (cache hits skip downstream entirely).
 
   1) conservative   4K-token cap, no LLM expansion, 10 chunks max.
-                    ~$0.012/query  ~$12/mo @ 1K  ~$1,200/mo @ 100K
-                    Best for: cost-sensitive agents, Haiku subagents,
+                    Best for: Haiku subagents, cost-sensitive agents,
                     high-volume search loops, MCP servers w/ many users.
 
   2) balanced       12K cap, no LLM expansion, 25 chunks max.
-                    ~$0.030/query  ~$30/mo @ 1K  ~$3,000/mo @ 100K
                     Best for: Sonnet-tier work, mixed workloads.
                     (The middle path most users land on.)
 
   3) tokenmax       no cap, LLM query expansion ON, 50 chunks.
-                    ~$0.060/query  ~$60/mo @ 1K  ~$6,000/mo @ 100K
                     Best for: Opus/frontier models, max retrieval quality,
                     low-volume high-stakes work.
-                    Adds ~$1.50 per 1K queries in Haiku expansion calls.
 
 You can change this any time with: gbrain config set search.mode <mode>
-Per-knob tuning + a recommendation engine ships at: gbrain search tune
+Per-knob tuning + recommendation engine ships at: gbrain search tune
 `;
 
 /**
