@@ -163,17 +163,31 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // and embed batches that outlive a watchdog-killed worker.
     const tiniPath = detectTini();
     const startWorker = () => {
-      // Inject the RSS watchdog default (2048 MB) for the autopilot-supervised
-      // worker. Bare `gbrain jobs work` has no default; the supervisor and
-      // autopilot are the production paths that opt in.
-      const args = ['jobs', 'work', '--max-rss', '2048'];
+      // Inject the RSS watchdog (default 2048 MB, overridable via
+      // GBRAIN_AUTOPILOT_MAX_RSS_MB). Bare `gbrain jobs work` has no default;
+      // the supervisor and autopilot are the production paths that opt in.
+      // The env value is parent-validated here so a bad value (empty string,
+      // non-numeric, sub-256) does not crash-loop the worker through 5 spawn
+      // cycles before autopilot itself gives up.
+      const rawRss = process.env.GBRAIN_AUTOPILOT_MAX_RSS_MB;
+      const maxRssOverride = (() => {
+        if (!rawRss) return '2048';
+        const n = parseInt(rawRss, 10);
+        if (!Number.isFinite(n) || n < 0 || (n > 0 && n < 256)) {
+          console.error(`[autopilot] GBRAIN_AUTOPILOT_MAX_RSS_MB="${rawRss}" is invalid (must be 0 to disable, or >=256 MB). Falling back to 2048.`);
+          return '2048';
+        }
+        return String(n);
+      })();
+      const args = ['jobs', 'work', '--max-rss', maxRssOverride];
 
       const { cmd: spawnCmd, args: spawnArgs } = buildSpawnInvocation(tiniPath, cliPath, args);
 
       const child = spawn(spawnCmd, spawnArgs, { stdio: 'inherit', env: process.env });
       workerProc = child;
       lastWorkerStartTime = Date.now();
-      console.log(`[autopilot] Minions worker spawned (pid: ${child.pid}, watchdog: 2048MB${tiniPath ? ', tini: active' : ''})`);
+      const watchdogLabel = maxRssOverride === '0' ? 'disabled' : `${maxRssOverride}MB`;
+      console.log(`[autopilot] Minions worker spawned (pid: ${child.pid}, watchdog: ${watchdogLabel}${tiniPath ? ', tini: active' : ''})`);
 
       child.on('exit', (code) => {
         workerProc = null;
