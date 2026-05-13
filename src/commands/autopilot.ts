@@ -166,14 +166,15 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       // Inject the RSS watchdog default (2048 MB) for the autopilot-supervised
       // worker. Bare `gbrain jobs work` has no default; the supervisor and
       // autopilot are the production paths that opt in.
-      const args = ['jobs', 'work', '--max-rss', '2048'];
+      const maxRssOverride = process.env.GBRAIN_AUTOPILOT_MAX_RSS_MB ?? '2048';
+      const args = ['jobs', 'work', '--max-rss', maxRssOverride];
 
       const { cmd: spawnCmd, args: spawnArgs } = buildSpawnInvocation(tiniPath, cliPath, args);
 
       const child = spawn(spawnCmd, spawnArgs, { stdio: 'inherit', env: process.env });
       workerProc = child;
       lastWorkerStartTime = Date.now();
-      console.log(`[autopilot] Minions worker spawned (pid: ${child.pid}, watchdog: 2048MB${tiniPath ? ', tini: active' : ''})`);
+      console.log(`[autopilot] Minions worker spawned (pid: ${child.pid}, watchdog: ${maxRssOverride}MB${tiniPath ? ', tini: active' : ''})`);
 
       child.on('exit', (code) => {
         workerProc = null;
