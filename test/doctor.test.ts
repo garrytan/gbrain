@@ -1,4 +1,7 @@
 import { describe, test, expect } from 'bun:test';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -576,5 +579,20 @@ describe('v0.32.4 — sync_freshness check', () => {
     // User copy-pastes `gbrain sync --source wiki-id` (NOT "My Wiki"). Message
     // must include the id so the CLI command actually works.
     expect(result.message).toContain(`'wiki-id'`);
+  });
+
+  test('doctor resolves packaged skills from arbitrary cwd', () => {
+    const tempCwd = mkdtempSync(join(tmpdir(), 'gbrain-doctor-cwd-'));
+    const cliPath = join(import.meta.dir, '..', 'src', 'cli.ts');
+    const result = Bun.spawnSync({
+      cmd: ['bun', 'run', cliPath, 'doctor', '--json', '--fast'],
+      cwd: tempCwd,
+    });
+    const stdout = new TextDecoder().decode(result.stdout);
+    const payload = JSON.parse(stdout);
+    const resolver = payload.checks.find((check: any) => check.name === 'resolver_health');
+    const conformance = payload.checks.find((check: any) => check.name === 'skill_conformance');
+    expect(resolver.status).toBe('ok');
+    expect(conformance.status).toBe('ok');
   });
 });

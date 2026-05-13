@@ -28,6 +28,7 @@ writes_to:
 # Meeting Ingestion Skill
 
 > **Filing rule:** Read `skills/_brain-filing-rules.md` before creating any new page.
+> **Quality rule:** Citation, back-link, and notability standards live in `skills/conventions/quality.md`.
 
 ## Contract
 

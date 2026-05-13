@@ -38,6 +38,7 @@ writes_to:
 Ingest video, audio, PDF, book, screenshot, and GitHub repo content into the brain.
 
 > **Filing rule:** Read `skills/_brain-filing-rules.md` before creating any new page.
+> **Quality rule:** Citation, back-link, and notability standards live in `skills/conventions/quality.md`.
 
 ## Contract
 

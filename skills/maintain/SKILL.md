@@ -39,6 +39,8 @@ mutating: true
 
 Periodic brain health checks and cleanup.
 
+> Cross-cutting citation, back-link, and notability rules live in `skills/conventions/quality.md`.
+
 ## Contract
 
 This skill guarantees:

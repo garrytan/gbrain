@@ -30,6 +30,8 @@ writes_to:
 
 Enrich person and company pages from external sources. Scale effort to importance.
 
+> Cross-cutting citation, back-link, and notability rules live in `skills/conventions/quality.md`.
+
 ## Contract
 
 This skill guarantees:

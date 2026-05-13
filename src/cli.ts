@@ -891,6 +891,11 @@ async function handleCliOnly(command: string, args: string[]) {
     }
     return;
   }
+  if (command === 'config') {
+    const { runConfig } = await import('./commands/config.ts');
+    await runConfig(null, args);
+    return;
+  }
 
   if (command === 'smoke-test') {
     // Run smoke tests — no DB connection needed, the script handles its own checks

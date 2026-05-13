@@ -17,6 +17,8 @@ mutating: true
 
 Set up GBrain from scratch. Target: working brain in under 5 minutes.
 
+> Brain writing quality standards live in `skills/conventions/quality.md`.
+
 ## Contract
 
 - Setup completes with a working brain verified by `gbrain doctor --json` (all checks OK).

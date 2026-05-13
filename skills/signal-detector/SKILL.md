@@ -33,6 +33,8 @@ with EQUAL priority:
 Original thinking is AT LEAST as valuable as entity extraction. Ideas are the
 intellectual capital. Entities are bookkeeping. Both compound over time.
 
+> Cross-cutting citation, back-link, and notability rules live in `skills/conventions/quality.md`.
+
 ## Contract
 
 This skill guarantees:
