@@ -254,7 +254,10 @@ export async function extractLinksFromFile(
   const basenameMap = buildBasenameMap(allSlugs);
   const seen = new Set<string>();
   const addLink = (link: ExtractedLink) => {
-    if (!link.to_slug || link.to_slug === slug) return;
+    if (!link.from_slug || !link.to_slug) return;
+    // Incoming frontmatter edges legitimately target the page currently being
+    // processed (e.g. investors -> deal). Only drop true self-loops.
+    if (link.from_slug === link.to_slug) return;
     const key = `${link.from_slug}::${link.to_slug}::${link.link_type}`;
     if (seen.has(key)) return;
     seen.add(key);

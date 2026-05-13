@@ -8,8 +8,8 @@ let activeEmbedCalls = 0;
 let maxConcurrentEmbedCalls = 0;
 let totalEmbedCalls = 0;
 
-mock.module('../src/core/embedding.ts', () => ({
-  embedBatch: async (texts: string[]) => {
+mock.module('../src/core/embedding.ts', () => {
+  const mockEmbedBatch = async (texts: string[]) => {
     activeEmbedCalls++;
     totalEmbedCalls++;
     if (activeEmbedCalls > maxConcurrentEmbedCalls) {
@@ -19,8 +19,23 @@ mock.module('../src/core/embedding.ts', () => ({
     await new Promise(r => setTimeout(r, 30));
     activeEmbedCalls--;
     return texts.map(() => new Float32Array(1536));
-  },
-}));
+  };
+
+  return {
+    // Keep the mock module's public surface compatible with the real module;
+    // Bun mocks are process-wide, so other tests imported later in the same
+    // worker can still link modules that import embedding.ts.
+    EMBEDDING_MODEL: 'text-embedding-3-large',
+    EMBEDDING_DIMENSIONS: 1536,
+    EMBEDDING_COST_PER_1K_TOKENS: 0.00013,
+    embed: async () => new Float32Array(1536),
+    embedBatch: mockEmbedBatch,
+    embedMultimodal: async () => new Float32Array(1536),
+    getEmbeddingModelName: () => 'text-embedding-3-large',
+    getEmbeddingDimensions: () => 1536,
+    estimateEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
+  };
+});
 
 // Import AFTER mocking.
 const { runEmbed } = await import('../src/commands/embed.ts');

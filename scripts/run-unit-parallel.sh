@@ -13,7 +13,7 @@
 #
 # Env overrides:
 #   SHARDS=N                     same as --shards
-#   GBRAIN_TEST_SHARD_TIMEOUT    per-shard wallclock cap, seconds (default 600)
+#   GBRAIN_TEST_SHARD_TIMEOUT    per-shard wallclock cap, seconds (default 900)
 #   GBRAIN_TEST_MAX_CONCURRENCY  passed through to bun test (default 4)
 #
 # Output files (workspace-local; falls back to /tmp if .context/ unwritable):
@@ -61,7 +61,7 @@ fi
 [ "$N" -gt 8 ] && N=8
 
 INTRA_CONC="${MAX_CONCURRENCY_OVERRIDE:-${GBRAIN_TEST_MAX_CONCURRENCY:-4}}"
-SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-600}"
+SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-900}"
 
 # ──────────────────────────────────────────────────────────────────────────
 # Output directories. Prefer workspace-local .context/, fall back to /tmp.

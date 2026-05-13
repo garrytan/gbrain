@@ -227,6 +227,25 @@ function isDetachedHead(repoPath: string): boolean {
   }
 }
 
+function getPullSkipReason(repoPath: string): string | null {
+  try {
+    const remotes = git(repoPath, ['remote'])
+      .split('\n')
+      .map(remote => remote.trim())
+      .filter(Boolean);
+    if (remotes.length === 0) return 'no git remote configured';
+  } catch {
+    return 'unable to inspect git remotes';
+  }
+
+  try {
+    git(repoPath, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+    return null;
+  } catch {
+    return 'no upstream branch configured';
+  }
+}
+
 function unique<T>(items: T[]): T[] {
   return [...new Set(items)];
 }
@@ -439,19 +458,24 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // git-remote.ts so the flag set is consistent across initial clone and
   // ongoing pulls — single source of truth for the defensive flags.
   if (!opts.noPull && !detachedHead) {
-    const _t0 = Date.now();
-    console.error(`[gbrain phase] sync.git_pull start`);
-    try {
-      const { pullRepo } = await import('../core/git-remote.ts');
-      pullRepo(repoPath);
-      console.error(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`[gbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 80)})`);
-      if (msg.includes('non-fast-forward') || msg.includes('diverged')) {
-        console.error(`Warning: git pull failed (remote diverged). Syncing from local state.`);
-      } else {
-        console.error(`Warning: git pull failed: ${msg.slice(0, 100)}`);
+    const pullSkipReason = getPullSkipReason(repoPath);
+    if (pullSkipReason) {
+      console.error(`Skipping git pull for ${repoPath}: ${pullSkipReason}. Syncing from local working tree.`);
+    } else {
+      const _t0 = Date.now();
+      console.error(`[gbrain phase] sync.git_pull start`);
+      try {
+        const { pullRepo } = await import('../core/git-remote.ts');
+        pullRepo(repoPath);
+        console.error(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`[gbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 80)})`);
+        if (msg.includes('non-fast-forward') || msg.includes('diverged')) {
+          console.error(`Warning: git pull failed (remote diverged). Syncing from local state.`);
+        } else {
+          console.error(`Warning: git pull failed: ${msg.slice(0, 100)}`);
+        }
       }
     }
   }
@@ -509,6 +533,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    // A no-op sync is still a successful sync attempt. Keep freshness markers
+    // current so scheduled watchdog/doctor checks don't report a stale source
+    // just because the repository had no syncable commits since the last run.
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
+    await engine.setConfig('sync.last_run', new Date().toISOString());
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,

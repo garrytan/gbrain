@@ -361,6 +361,35 @@ describe('performSync dry-run never writes', () => {
     expect(typeof result.embedded).toBe('number');
   });
 
+  test('repo without remote skips git pull and syncs local working tree', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(' '));
+    };
+
+    try {
+      const result = await performSync(engine, {
+        repoPath,
+        noEmbed: true,
+        noExtract: true,
+      });
+
+      expect(result.status).toBe('first_sync');
+      expect(result.added).toBe(2);
+      expect(await engine.getPage('people/alice')).not.toBeNull();
+      expect(await engine.getPage('people/bob')).not.toBeNull();
+    } finally {
+      console.error = originalError;
+    }
+
+    const output = errors.join('\n');
+    expect(output).toContain(`Skipping git pull for ${repoPath}: no git remote configured. Syncing from local working tree.`);
+    expect(output).not.toContain('git pull failed');
+    expect(output).not.toContain('[gbrain phase] sync.git_pull error');
+  });
+
   test('detached HEAD skips git pull and ingests local working-tree files', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     const seeded = await performSync(engine, {

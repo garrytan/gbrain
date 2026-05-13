@@ -21,6 +21,21 @@ import { tmpdir } from 'os';
 import { execSync } from 'child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
+let testGbrainHome: string;
+let previousGbrainHome: string | undefined;
+
+beforeEach(() => {
+  testGbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-sync-par-home-'));
+  previousGbrainHome = process.env.GBRAIN_HOME;
+  process.env.GBRAIN_HOME = testGbrainHome;
+});
+
+afterEach(() => {
+  if (previousGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+  else process.env.GBRAIN_HOME = previousGbrainHome;
+  if (testGbrainHome) rmSync(testGbrainHome, { recursive: true, force: true });
+});
+
 function git(repo: string, ...args: string[]): string {
   return execSync(`git ${args.join(' ')}`, { cwd: repo, encoding: 'utf-8' }).trim();
 }
@@ -183,6 +198,33 @@ describe('sync-parallel: head-drift gate (CODEX-3)', () => {
     const { performSync } = await import('../src/commands/sync.ts');
     await performSync(engine, { repoPath, noPull: true, noEmbed: true });
     expect(await engine.getConfig('sync.last_commit')).toBe(head);
+  });
+
+  test('up-to-date source sync refreshes last_sync_at', async () => {
+    const head = seedRepoWithMarkdown(repoPath, 3);
+    await engine.executeRaw(
+      `UPDATE sources
+       SET local_path = $1,
+           last_commit = $2,
+           last_sync_at = now() - interval '3 days',
+           chunker_version = '4'
+       WHERE id = 'default'`,
+      [repoPath, head],
+    );
+
+    const before = await engine.executeRaw<{ last_sync_at: Date | string | null }>(
+      `SELECT last_sync_at FROM sources WHERE id = 'default'`,
+    );
+    const { performSync } = await import('../src/commands/sync.ts');
+    const result = await performSync(engine, { sourceId: 'default', noPull: true, noEmbed: true });
+    expect(result.status).toBe('up_to_date');
+
+    const after = await engine.executeRaw<{ last_sync_at: Date | string | null }>(
+      `SELECT last_sync_at FROM sources WHERE id = 'default'`,
+    );
+    expect(new Date(String(after[0].last_sync_at)).getTime()).toBeGreaterThan(
+      new Date(String(before[0].last_sync_at)).getTime(),
+    );
   });
 
   test('vanished-mid-sync file produces a failedFiles entry', async () => {
