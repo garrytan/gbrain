@@ -405,6 +405,15 @@ export interface SearchOpts {
   limit?: number;
   offset?: number;
   type?: PageType;
+  /**
+   * v0.33: multi-type filter. When set, search results are filtered to
+   * pages whose `type` is in this list, pushed to SQL via
+   * `AND p.type = ANY($N::text[])` in both engines. Stacks with the
+   * single-value `type` filter (both are AND-applied). Primary consumer
+   * is `gbrain whoknows` (filters to ['person','company']); future
+   * entity-only search reuses the parameter.
+   */
+  types?: PageType[];
   exclude_slugs?: string[];
   /**
    * Slug-prefix excludes — additive over DEFAULT_HARD_EXCLUDES (test/, archive/,
