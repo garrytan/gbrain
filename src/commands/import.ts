@@ -86,6 +86,11 @@ export async function runImport(
     : strategy === 'auto' ? 'syncable' : 'markdown';
   console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
 
+  // v0.33.1: sort newest-first so recent pages get processed before older ones.
+  // Brain paths are typically date-prefixed (meetings/2026-05-13-*, daily/2026-05-13.md)
+  // so a descending lexicographic sort naturally prioritizes recent content.
+  allFiles.sort((a, b) => b.localeCompare(a));
+
   // Resume from checkpoint if available
   const checkpointPath = gbrainPath('import-checkpoint.json');
   let files = allFiles;
