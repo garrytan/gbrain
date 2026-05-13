@@ -164,6 +164,58 @@ The mode-picker prompt at `gbrain init` and the CLAUDE.md `## Search Mode` table
 
 The picker copy + CLAUDE.md table are the canonical user-facing source. Update them in lockstep when the underlying chunker size or default `searchLimit` changes.
 
+## Realistic-scale anchor (single power-user agent loop)
+
+The per-query math above is honest but theoretical: it treats each search as an isolated billable event. Real agent loops amortize a lot of context across turns via Anthropic prompt caching. Here's what one heavy power-user loop actually looks like in production, anonymized + scaled so the numbers represent a representative power user rather than any specific deployment.
+
+**Reference shape — tokenmax in production at a single-user scale:**
+
+| Quantity | Approximate value |
+|---|---|
+| 30-day total agent spend | ~\$700/mo |
+| 30-day total tokens billed | ~800M |
+| Turns per month | ~860 (~29/day; one active agent loop) |
+| Average tokens per turn | ~900K |
+| Average cost per turn | ~\$0.85 |
+| Anthropic prompt-cache hit rate | ~88% |
+
+A "turn" here is one agent loop iteration: read user message, plan, execute tool calls (including gbrain searches), generate response. Each turn typically includes 2-4 gbrain searches.
+
+**Per-mode scaling from the tokenmax anchor:**
+
+The cost difference between modes is concentrated in the search-attributable fraction of per-turn cost. System prompt, tool definitions, conversation history, and reasoning tokens don't change with mode — only the chunks gbrain delivers do. Assume 3 searches per turn at the mode's `searchLimit`:
+
+| Mode | Search tokens/turn | Search cost/turn (at \$3/M effective) | Search-attributable @ 860 turns | Δ vs tokenmax |
+|---|---|---|---|---|
+| tokenmax | ~60K (3 × 20K) | ~\$0.18 | ~\$155/mo | — |
+| balanced | ~30K (3 × 10K) | ~\$0.09 | ~\$77/mo | -\$78 |
+| conservative | ~12K (3 × 4K) | ~\$0.036 | ~\$31/mo | -\$124 |
+
+**Implied total agent spend by mode** (subtracting the saved search-attributable cost from the tokenmax anchor):
+
+| Mode | Estimated total spend at this scale | Search as % of total |
+|---|---|---|
+| tokenmax | ~\$700/mo | ~22% |
+| balanced | ~\$620/mo | ~12% |
+| conservative | ~\$575/mo | ~5% |
+
+**What this anchor tells us that the per-query math doesn't:**
+
+1. **At realistic agent-loop scale with disciplined prompt caching, mode choice saves 10-20% of total agent spend** — meaningful, but smaller than the per-query 5x ratio implies. Disciplined prompt-cache layouts blunt the mode delta because most of the per-turn cost is the cached prefix, not the search payload.
+
+2. **Without that prompt-cache discipline, the per-query framing reasserts itself.** Setups that churn the prompt prefix on every turn (frequent system-prompt edits, untemplated tool defs, no prompt-cache structuring) see search payload contribute a much larger fraction of total cost. Those setups should care about mode choice more, not less.
+
+3. **The cache hit rate quoted here (~88%) is achievable but not automatic.** It requires structuring the prompt so the cached prefix stays stable across turns: system prompt + tool defs first, history compacted but cache-aware, retrieved chunks appended LAST (where their volatility doesn't invalidate the prefix). Agents that interleave search results inside the cached region pay the prefix-rebuild tax on every turn.
+
+**Caveats stacked here:**
+
+- The anchor represents ONE power-user loop. Multi-user fleets aggregate proportionally; the per-user shape doesn't change.
+- The "3 searches per turn" assumption varies wildly. A code-review agent might issue 10+ searches per turn; a chat-only loop might do 0.
+- The 88% cache hit rate is the high end of what's achievable. Half that is closer to a default agent without cache-aware prompt layout.
+- The "Δ vs tokenmax" math assumes the OTHER cost components (system, tools, history, reasoning) stay constant. In practice, conservative's smaller per-turn payload also leaves more room in the context window for history → which can change agent behavior in either direction.
+
+This anchor + the per-query math both live in this doc on purpose. The per-query framing is what an isolated benchmark would measure (and what `gbrain eval run-all` will produce). The realistic-scale anchor is what an operator actually pays. Both are honest; neither is the whole truth.
+
 ## Reproducibility footer
 
 Every release that publishes eval numbers includes a footer with:

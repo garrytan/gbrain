@@ -838,6 +838,17 @@ tokenmax adds ~\$1.50 per 1K queries in Haiku expansion calls on top
 repeat-query traffic. **The cost picker copy in `gbrain init` carries the same
 numbers verbatim** — update both when refreshing.
 
+**Per-query math vs real-world spend.** The table above is what an isolated
+benchmark would measure. In real agent loops with disciplined Anthropic prompt
+caching (system + tools at top, retrieved chunks appended last), mode choice
+saves more like 10-20% of total agent spend, not the 5x the per-query ratio
+implies — most of the per-turn cost is the cached prefix, not the search
+payload. See the "Realistic-scale anchor" section in
+`docs/eval/SEARCH_MODE_METHODOLOGY.md` for the math on a representative
+single power-user loop (~860 turns/mo, ~\$700/mo at tokenmax, ~\$575/mo at
+conservative). Setups WITHOUT cache-aware prompt layout see the per-query
+framing reassert — mode choice matters more there.
+
 **Resolution chain** (matches the v0.31.12 model-tier pattern at
 `src/core/model-config.ts:resolveModel`):
 
