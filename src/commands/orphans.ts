@@ -52,8 +52,33 @@ const DENY_PREFIXES = [
   'openclaw/config/',
 ];
 
-/** First slug segments where no inbound links is expected */
-const FIRST_SEGMENT_EXCLUSIONS = new Set(['scratch', 'thoughts', 'catalog', 'entities']);
+/** First slug segments where no inbound links is expected.
+ * Vanilla defaults plus env overlay (GBRAIN_ORPHAN_EXCLUDE_FIRST_SEGMENTS,
+ * comma-separated). Matching is exact on slug.split('/')[0] — entries
+ * containing '/' will never match and are warned to stderr at module load
+ * time so the operator can correct them. The vanilla list is upstream-
+ * untouched; user-specific terminal/staging dirs (e.g. briefs, sessions,
+ * inbox, reflections) are added via env when wanted. */
+const FIRST_SEGMENT_EXCLUSIONS: Set<string> = (() => {
+  const vanilla = ['scratch', 'thoughts', 'catalog', 'entities'];
+  const raw = process.env.GBRAIN_ORPHAN_EXCLUDE_FIRST_SEGMENTS;
+  if (!raw) return new Set(vanilla);
+  const overlay: string[] = [];
+  const invalid: string[] = [];
+  for (const part of raw.split(',')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    if (trimmed.includes('/')) {
+      invalid.push(trimmed);
+      continue;
+    }
+    overlay.push(trimmed);
+  }
+  if (invalid.length > 0) {
+    console.error(`[orphans] GBRAIN_ORPHAN_EXCLUDE_FIRST_SEGMENTS ignored entries containing '/': ${invalid.join(', ')} — matching is exact on the first slug segment, not prefix.`);
+  }
+  return new Set([...vanilla, ...overlay]);
+})();
 
 // --- Filter logic ---
 
