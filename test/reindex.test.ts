@@ -7,6 +7,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { readFileSync } from 'fs';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runReindex } from '../src/commands/reindex.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
@@ -134,5 +135,39 @@ describe('gbrain reindex --markdown (v0.32.7)', () => {
     const result = await runReindex(engine, ['--markdown', '--no-embed']);
     expect(result.pending).toBe(1);
     expect(result.reindexed).toBe(1);
+  });
+});
+
+describe('gbrain reindex — CLI registration regression', () => {
+  const REPO_ROOT = new URL('..', import.meta.url).pathname;
+  const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
+
+  test("'reindex' appears in CLI_ONLY set (not just 'reindex-code' / 'reindex-frontmatter')", () => {
+    // Regression guard: case 'reindex' lives in handleCliOnly's switch, so
+    // dispatch can only reach it when 'reindex' is in CLI_ONLY. Without
+    // this token, `gbrain reindex` exits with "Unknown command: reindex"
+    // before ever entering handleCliOnly.
+    const cliOnlyLine = cliSource.split('\n').find(l => l.includes('const CLI_ONLY = new Set('));
+    expect(cliOnlyLine).toBeDefined();
+    expect(cliOnlyLine!).toMatch(/'reindex',/);
+  });
+
+  test("subprocess `gbrain reindex --markdown --help` does not report 'Unknown command'", async () => {
+    const proc = Bun.spawn(
+      ['bun', 'run', 'src/cli.ts', 'reindex', '--markdown', '--help'],
+      {
+        cwd: REPO_ROOT,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: { ...process.env, DATABASE_URL: '' },
+      },
+    );
+    const stderr = await new Response(proc.stderr).text();
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    // Either prints help OR fails on something else (e.g. connect / args).
+    // The one outcome that MUST NOT happen is the dispatch-layer
+    // "Unknown command: reindex" exit-1 path. That's the bug this PR fixes.
+    expect(stderr + stdout).not.toContain('Unknown command: reindex');
   });
 });
