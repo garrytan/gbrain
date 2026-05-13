@@ -215,6 +215,10 @@ function git(repoPath: string, args: string[], configs: string[] = []): string {
   return execFileSync('git', buildGitInvocation(repoPath, args, configs), {
     encoding: 'utf-8',
     timeout: 30000,
+    // Large vault migrations can produce multi-megabyte name-status output.
+    // Node's default execFileSync maxBuffer is 1 MiB, which aborts sync before
+    // GBrain can process the manifest.
+    maxBuffer: 128 * 1024 * 1024,
   }).trim();
 }
 
