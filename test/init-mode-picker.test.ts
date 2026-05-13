@@ -13,6 +13,7 @@ import {
   parseModeInput,
   runModePicker,
 } from '../src/commands/init-mode-picker.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
@@ -54,23 +55,29 @@ describe('recommendModeFor — auto-suggestion heuristic', () => {
     expect(r.reason).toMatch(/No OpenAI/);
   });
 
-  test('Sonnet / unknown → balanced (safe default)', () => {
+  test('Sonnet / unknown → tokenmax (preserve-v0.31.x default)', () => {
     const r = recommendModeFor({ subagentModel: 'anthropic:claude-sonnet-4-6', hasOpenAIKey: true });
-    expect(r.mode).toBe('balanced');
-    expect(r.reason).toMatch(/Sweet-spot/);
+    expect(r.mode).toBe('tokenmax');
+    expect(r.reason).toMatch(/v0\.31\.x|preserve/i);
   });
 
-  test('Empty inputs → balanced (default)', () => {
+  test('Empty inputs → tokenmax (preserve-v0.31.x default)', () => {
     const r = recommendModeFor({});
-    expect(r.mode).toBe('balanced');
+    expect(r.mode).toBe('tokenmax');
   });
 
-  test('Opus beats Haiku when both are set (default trumps subagent)', () => {
+
+  test('Haiku subagent wins over Opus default (cost-sensitive takes precedence)', () => {
+    // Reordered in the install-picker DX pass: Haiku check fires BEFORE Opus
+    // because a user running a Haiku subagent loop is signalling cost
+    // sensitivity. Tokenmax over Haiku would silently dump 50-chunk payloads
+    // into a model that struggles past 5-10 chunks. The Haiku floor wins.
     const r = recommendModeFor({
       defaultModel: 'anthropic:claude-opus-4-7',
       subagentModel: 'anthropic:claude-haiku-4-5',
+      hasOpenAIKey: true,
     });
-    expect(r.mode).toBe('tokenmax');
+    expect(r.mode).toBe('conservative');
   });
 });
 
@@ -152,6 +159,30 @@ describe('parseModeInput — menu choice mapper', () => {
   });
 });
 
+describe('runModePicker non-TTY surfaces full matrix + [AGENT] directive', () => {
+  test('non-TTY output includes the cost matrix and the [AGENT] directive', async () => {
+    const originalLog = console.log;
+    const captured: string[] = [];
+    console.log = (msg: string) => { captured.push(String(msg)); };
+    try {
+      await runModePicker(engine);
+    } finally {
+      console.log = originalLog;
+    }
+    const out = captured.join('\n');
+    // Matrix corners + diagonal mid
+    expect(out).toContain('$40/mo');
+    expect(out).toContain('$300/mo');
+    expect(out).toContain('$1,000/mo');
+    // 25x spread framing
+    expect(out).toContain('25x corner-to-corner');
+    // Explicit agent directive — load-bearing for agent-platform install paths
+    expect(out).toContain('[AGENT]');
+    expect(out.toLowerCase()).toContain('show this matrix');
+    expect(out).toContain('INSTALL_FOR_AGENTS.md');
+  });
+});
+
 describe('runModePicker — non-TTY auto-select + idempotent', () => {
   test('non-TTY auto-selects + writes config + emits operator hint', async () => {
     // Bun test runs non-TTY by default.
@@ -202,10 +233,14 @@ describe('runModePicker — non-TTY auto-select + idempotent', () => {
     }
   });
 
-  test('Opus default model → picker auto-recommends tokenmax', async () => {
-    await engine.setConfig('models.default', 'anthropic:claude-opus-4-7');
-    const picked = await runModePicker(engine);
-    expect(picked).toBe('tokenmax');
+  test('Opus default model + OpenAI key → picker auto-recommends tokenmax', async () => {
+    // OPENAI_API_KEY must be present — the no-key short-circuit fires before
+    // the Opus check (gbrain can't do vector search without embeddings).
+    await withEnv({ OPENAI_API_KEY: 'sk-test-stub' }, async () => {
+      await engine.setConfig('models.default', 'anthropic:claude-opus-4-7');
+      const picked = await runModePicker(engine);
+      expect(picked).toBe('tokenmax');
+    });
   });
 
   test('Haiku subagent → picker auto-recommends conservative', async () => {

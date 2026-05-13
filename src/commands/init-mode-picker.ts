@@ -46,19 +46,20 @@ export interface ModePickerInputs {
  * Derive a smart recommendation from the inputs. Pure function so it's
  * trivially testable.
  *
- * Heuristic:
- *   - Opus / Frontier / large-context default model → tokenmax
- *   - Haiku / no API key / cost-sensitive subagent → conservative
- *   - Sonnet / mixed / unknown → balanced (the safe default)
+ * Heuristic (default-tokenmax bias — preserve the v0.31.x power-user
+ * shape per the v0.32.3 install-picker directive):
+ *   - Opus / Frontier model OR Sonnet / unknown → tokenmax (max-quality default)
+ *   - Haiku subagent → conservative (cost-sensitive setups)
+ *   - No OpenAI key configured → conservative (LLM expansion not possible
+ *     anyway, so tight budget makes more sense)
+ *
+ * Rationale: the previous "default to balanced unless Opus detected" logic
+ * silently downgraded users who were running Sonnet-tier work and expected
+ * the v0.31.x default (expand=true, limit=20) to carry forward. Tokenmax
+ * is the closest mode bundle to that prior default. Operators who want
+ * something tighter pick conservative or balanced explicitly.
  */
 export function recommendModeFor(inputs: ModePickerInputs): { mode: SearchMode; reason: string } {
-  const opus = /opus/i.test(inputs.defaultModel ?? '') || /opus/i.test(inputs.subagentModel ?? '');
-  if (opus) {
-    return {
-      mode: 'tokenmax',
-      reason: 'Opus-class model detected — quality ceiling worth the token cost.',
-    };
-  }
   const haiku = /haiku/i.test(inputs.subagentModel ?? '');
   if (haiku) {
     return {
@@ -72,9 +73,16 @@ export function recommendModeFor(inputs: ModePickerInputs): { mode: SearchMode; 
       reason: 'No OpenAI key configured — semantic cache still works, but no LLM expansion possible.',
     };
   }
+  const opus = /opus/i.test(inputs.defaultModel ?? '') || /opus/i.test(inputs.subagentModel ?? '');
+  if (opus) {
+    return {
+      mode: 'tokenmax',
+      reason: 'Opus-class model detected — quality ceiling worth the token cost.',
+    };
+  }
   return {
-    mode: DEFAULT_SEARCH_MODE,
-    reason: 'Sweet-spot defaults for Sonnet-tier work and mixed workloads.',
+    mode: 'tokenmax',
+    reason: 'Preserves the v0.31.x default retrieval shape (expand=on, generous result set). Pick conservative or balanced if cost-sensitive.',
   };
 }
 
@@ -201,13 +209,41 @@ export async function runModePicker(
     return rec.mode;
   }
 
-  // Non-TTY (pipe, redirect, container init): write the recommendation
-  // and emit a one-line operator hint. No prompt.
+  // Non-TTY (agent-driven install, CI, scripted init): print the FULL matrix
+  // and emit an explicit [AGENT] directive. The previous version printed
+  // 2 stderr lines that agents typically miss / don't relay to the human.
+  // Now: the agent sees the same matrix the human-TTY picker shows, plus
+  // a directive saying "show this to your operator and confirm before
+  // moving on." Default-applied mode is tokenmax (preserves v0.31.x shape).
   if (!process.stdin.isTTY) {
     try { await engine.setConfig(SEARCH_MODE_KEY, rec.mode); } catch { /* swallow */ }
     console.log('');
-    console.log(`[gbrain] search mode: ${rec.mode} (auto-selected — ${rec.reason})`);
-    console.log(`[gbrain] To change: gbrain config set search.mode <conservative|balanced|tokenmax>`);
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log(`[gbrain] search mode tentatively set to: ${rec.mode}`);
+    console.log(`[gbrain] Reason: ${rec.reason}`);
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log('');
+    console.log('[AGENT] Before continuing, SHOW this matrix to your operator and');
+    console.log('[AGENT] ask which mode they want. The default above preserves the');
+    console.log('[AGENT] v0.31.x retrieval shape. Run `gbrain config set search.mode');
+    console.log('[AGENT] <conservative|balanced|tokenmax>` if the operator picks');
+    console.log('[AGENT] differently. See INSTALL_FOR_AGENTS.md Step 3.5 for the');
+    console.log('[AGENT] full protocol.');
+    console.log('');
+    console.log('Per-query cost @ 10K queries/mo (search payload only, no cache savings):');
+    console.log('');
+    console.log('                    Haiku 4.5     Sonnet 4.6    Opus 4.7');
+    console.log('                    ($1/M input)  ($3/M input)  ($5/M input)');
+    console.log('   conservative     $40/mo        $120/mo       $200/mo');
+    console.log('   balanced         $100/mo       $300/mo       $500/mo');
+    console.log('   tokenmax         $200/mo       $600/mo       $1,000/mo');
+    console.log('');
+    console.log('   (scales linearly: ×10 for 100K queries/mo, ÷10 for 1K)');
+    console.log('   25x corner-to-corner spread. Natural diagonal pairings span ~4x.');
+    console.log('');
+    console.log('To change later: gbrain config set search.mode <mode>');
+    console.log('To see what is running: gbrain search modes');
+    console.log('');
     return rec.mode;
   }
 
