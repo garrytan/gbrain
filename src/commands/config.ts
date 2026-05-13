@@ -9,6 +9,25 @@ function redactUrl(url: string): string {
   );
 }
 
+function redactConfigValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(redactConfigValue);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, val]) => {
+        if (typeof val === 'string') {
+          if (/key|secret|token|password/i.test(key)) return [key, '***'];
+          if (val.includes('postgresql://')) return [key, redactUrl(val)];
+          return [key, val];
+        }
+        return [key, redactConfigValue(val)];
+      }),
+    );
+  }
+  return value;
+}
+
 export async function runConfig(engine: BrainEngine, args: string[]) {
   const action = args[0];
   const key = args[1];
@@ -26,7 +45,9 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         ? redactUrl(v)
         : typeof v === 'string' && (k.includes('key') || k.includes('secret'))
           ? '***'
-          : v;
+          : typeof v === 'object' && v !== null
+            ? JSON.stringify(redactConfigValue(v), null, 2).split('\n').join('\n    ')
+            : v;
       console.log(`  ${k}: ${display}`);
     }
     return;
