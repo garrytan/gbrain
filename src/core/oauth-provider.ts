@@ -170,8 +170,14 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     assertAllowedScopes(parseScopeString(client.scope));
 
     const clientId = generateToken('gbrain_cl_');
-    const clientSecret = generateToken('gbrain_cs_');
-    const secretHash = hashToken(clientSecret);
+    // RFC 7591 §2: clients registering with token_endpoint_auth_method "none"
+    // are public clients and MUST NOT receive a client_secret. Without this
+    // gate, the MCP SDK's clientAuth middleware (which checks the stored
+    // client.client_secret to decide whether to require one at /token) demands
+    // a secret on PKCE-only exchanges and rejects valid public-client flows.
+    const isPublicClient = client.token_endpoint_auth_method === 'none';
+    const clientSecret = isPublicClient ? undefined : generateToken('gbrain_cs_');
+    const secretHash = clientSecret ? hashToken(clientSecret) : null;
     const now = Math.floor(Date.now() / 1000);
 
     await this.sql`
@@ -188,7 +194,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     return {
       ...client,
       client_id: clientId,
-      client_secret: clientSecret,
+      ...(clientSecret ? { client_secret: clientSecret } : {}),
       client_id_issued_at: now,
     };
   }
