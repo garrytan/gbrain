@@ -64,4 +64,19 @@ describe('buildToolDefs', () => {
       expect(Array.isArray(def.inputSchema.required)).toBe(true);
     }
   });
+
+  test('every array property declares an items schema for strict tool validators', () => {
+    for (const def of buildToolDefs(operations)) {
+      for (const [paramName, paramSchema] of Object.entries(def.inputSchema.properties)) {
+        if (
+          paramSchema &&
+          typeof paramSchema === 'object' &&
+          'type' in paramSchema &&
+          paramSchema.type === 'array'
+        ) {
+          expect(paramSchema, `${def.name}.${paramName}`).toHaveProperty('items');
+        }
+      }
+    }
+  });
 });
