@@ -17,15 +17,23 @@
  * for those flags per Codex P1 #7.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import type { BrainEngine, SynthesisEvidenceInput } from '../engine.ts';
 import { runGather, renderPagesBlock, takesHitToTakeForPrompt } from './gather.ts';
 import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveModel } from '../model-config.ts';
+import { chat, isAvailable } from '../ai/gateway.ts';
 
-/** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
+/**
+ * v0.34: LLM client interface for think synthesis.
+ *
+ * Production callers go through the AI gateway (multi-provider). Tests inject
+ * a stub client via `opts.client` — the think pipeline prefers the injected
+ * client when present. The `Anthropic.Message` return type is preserved for
+ * test stub compatibility (the only callers of this interface are tests).
+ */
+import type Anthropic from '@anthropic-ai/sdk';
 export interface ThinkLLMClient {
   create(params: Anthropic.MessageCreateParamsNonStreaming, opts?: { signal?: AbortSignal }): Promise<Anthropic.Message>;
 }
@@ -221,35 +229,9 @@ export async function runThink(
   let response: ThinkResponse;
   if (opts.stubResponse) {
     response = opts.stubResponse;
-  } else {
-    if (!opts.client && !process.env.ANTHROPIC_API_KEY) {
-      warnings.push('NO_ANTHROPIC_API_KEY');
-      // Degrade gracefully: return the gather without synthesis. Better than throwing.
-      return {
-        question: opts.question,
-        answer: '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)',
-        citations: [],
-        gaps: ['no LLM available; gather succeeded but synthesis skipped'],
-        pagesGathered: gather.pages.length,
-        takesGathered: gather.takes.length,
-        graphHits: gather.graphSlugs.length,
-        modelUsed,
-        rounds: 0,
-        warnings,
-        diagnostics: {
-          pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
-          takesFromKeyword: gather.diagnostics.takesFromKeyword,
-          takesFromVector: gather.diagnostics.takesFromVector,
-          graphHits: gather.diagnostics.graphHits,
-        },
-      };
-    }
-    // Anthropic SDK exposes the create method via .messages — match the structural signature.
-    const realClient = new Anthropic();
-    const client: ThinkLLMClient = opts.client ?? {
-      create: (params, opts2) => realClient.messages.create(params, opts2),
-    };
-    const result = await client.create({
+  } else if (opts.client) {
+    // Test path: injected ThinkLLMClient (preserved for test backward compat).
+    const result = await opts.client.create({
       model: modelUsed,
       max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
       system: systemPrompt,
@@ -257,6 +239,57 @@ export async function runThink(
     });
     const block = result.content.find(b => b.type === 'text');
     const text = block && 'text' in block ? block.text : '';
+    const parsed = tryParseJSON(text);
+    if (!parsed || typeof parsed !== 'object') {
+      warnings.push('LLM_OUTPUT_NOT_JSON');
+      response = { answer: text, citations: [], gaps: [] };
+    } else {
+      const r = parsed as Partial<ThinkResponse>;
+      response = {
+        answer: typeof r.answer === 'string' ? r.answer : '',
+        citations: Array.isArray(r.citations) ? (r.citations as ThinkResponse['citations']) : [],
+        gaps: Array.isArray(r.gaps) ? (r.gaps as string[]).filter(g => typeof g === 'string') : [],
+      };
+    }
+  } else if (!isAvailable('chat')) {
+    // Production path: no provider has an API key for chat.
+    // Degrade gracefully — gather succeeded, synthesis skipped.
+    warnings.push('NO_LLM_API_KEY');
+    return {
+      question: opts.question,
+      answer: '(no LLM available — set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_GENERATIVE_AI_API_KEY)',
+      citations: [],
+      gaps: ['no LLM available; gather succeeded but synthesis skipped'],
+      pagesGathered: gather.pages.length,
+      takesGathered: gather.takes.length,
+      graphHits: gather.graphSlugs.length,
+      modelUsed,
+      rounds: 0,
+      warnings,
+      diagnostics: {
+        pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
+        takesFromKeyword: gather.diagnostics.takesFromKeyword,
+        takesFromVector: gather.diagnostics.takesFromVector,
+        graphHits: gather.diagnostics.graphHits,
+      },
+    };
+  } else {
+    // Production path: AI gateway (multi-provider) chat.
+    // Convert bare model names (e.g. claude-opus-4-7) to provider:modelId
+    // format expected by the gateway. Backward-compatible: bare names
+    // default to Anthropic.
+    const gatewayModel = modelUsed.includes(':')
+      ? modelUsed
+      : `anthropic:${modelUsed}`;
+
+    const result = await chat({
+      model: gatewayModel,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+      maxTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    });
+
+    const text = result.text;
     const parsed = tryParseJSON(text);
     if (!parsed || typeof parsed !== 'object') {
       warnings.push('LLM_OUTPUT_NOT_JSON');

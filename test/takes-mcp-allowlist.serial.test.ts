@@ -205,9 +205,11 @@ describe('per-token takes-holder allow-list — get_versions body channel', () =
 
 describe('think op — read-only on remote callers (Lane D landed)', () => {
   test('remote save/take is forced read-only via remote_persisted_blocked flag', async () => {
-    // Without ANTHROPIC_API_KEY, runThink returns gather-only result with NO_ANTHROPIC_API_KEY warning.
-    const origKey = process.env.ANTHROPIC_API_KEY;
+    // Without any provider API key, runThink returns gather-only result with NO_LLM_API_KEY warning.
+    const origAnthropic = process.env.ANTHROPIC_API_KEY;
+    const origOpenAI = process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
     try {
       const result = await dispatchToolCall(engine, 'think', { question: 'q', save: true, take: true }, {
         remote: true,
@@ -222,15 +224,18 @@ describe('think op — read-only on remote callers (Lane D landed)', () => {
       expect(env.remote_persisted_blocked).toBe(true);
       expect(env.saved_slug).toBeNull();
       // Without API key, gather succeeds but synthesis is skipped.
-      expect(env.warnings).toContain('NO_ANTHROPIC_API_KEY');
+      expect(env.warnings).toContain('NO_LLM_API_KEY');
     } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
+      if (origAnthropic) process.env.ANTHROPIC_API_KEY = origAnthropic;
+      if (origOpenAI) process.env.OPENAI_API_KEY = origOpenAI;
     }
   });
 
   test('local-CLI think runs full pipeline (gather-only without API key)', async () => {
-    const origKey = process.env.ANTHROPIC_API_KEY;
+    const origAnthropic = process.env.ANTHROPIC_API_KEY;
+    const origOpenAI = process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
     try {
       const result = await dispatchToolCall(engine, 'think', { question: 'q', save: true }, {
         remote: false,
@@ -241,9 +246,10 @@ describe('think op — read-only on remote callers (Lane D landed)', () => {
       };
       expect(env.remote_persisted_blocked).toBe(false);
       // Without API key, returns gather-only + warning. With key, would actually synthesize.
-      expect(env.warnings).toContain('NO_ANTHROPIC_API_KEY');
+      expect(env.warnings).toContain('NO_LLM_API_KEY');
     } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
+      if (origAnthropic) process.env.ANTHROPIC_API_KEY = origAnthropic;
+      if (origOpenAI) process.env.OPENAI_API_KEY = origOpenAI;
     }
   });
 });

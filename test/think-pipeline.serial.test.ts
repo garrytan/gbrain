@@ -205,16 +205,22 @@ describe('runThink (with stub client)', () => {
     expect(result.citations.length).toBeGreaterThanOrEqual(2);
   });
 
-  test('degrades gracefully without ANTHROPIC_API_KEY', async () => {
-    const origKey = process.env.ANTHROPIC_API_KEY;
+  test('degrades gracefully without any LLM API key configured', async () => {
+    const origAnthropic = process.env.ANTHROPIC_API_KEY;
+    const origOpenAI = process.env.OPENAI_API_KEY;
+    const origGoogle = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     try {
       const result = await runThink(engine, { question: 'no key test' });
-      expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
+      expect(result.warnings).toContain('NO_LLM_API_KEY');
       expect(result.answer).toContain('no LLM available');
       expect(result.rounds).toBe(0);
     } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
+      if (origAnthropic) process.env.ANTHROPIC_API_KEY = origAnthropic;
+      if (origOpenAI) process.env.OPENAI_API_KEY = origOpenAI;
+      if (origGoogle) process.env.GOOGLE_GENERATIVE_AI_API_KEY = origGoogle;
     }
   });
 

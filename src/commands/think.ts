@@ -38,8 +38,8 @@ Options:
 Without --save, the synthesis is printed to stdout and discarded. With --save,
 the synthesis page is persisted AND printed.
 
-Set ANTHROPIC_API_KEY in the environment to run real synthesis. Without it,
-the gather phase still runs and prints what would have been the input.
+Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or another provider's API key to run synthesis.
+Without a key, the gather phase still runs and prints what would have been the input.
 `);
     return;
   }
