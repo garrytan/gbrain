@@ -57,14 +57,14 @@ gbrain search stats             # cache hit rate + intent mix after some real us
 
 **v0.32.3 — named search modes.** `gbrain init` asks once which mode fits
 your workload. The cost spread depends on BOTH the mode AND your downstream
-model — 25x corner-to-corner. Per-query cost @ 100K queries/month (search
-payload only, no cache savings):
+model — 25x corner-to-corner. Per-query cost @ 10K queries/month (typical
+single-user volume; multiply by 10 for heavy / multi-user fleets):
 
 | Mode \ Downstream | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.7 (\$5/M) |
 |---|---|---|---|
-| `conservative` (~4K) | **\$400/mo** | \$1,200/mo | \$2,000/mo |
-| `balanced` (~10K) | \$1,000/mo | \$3,000/mo | \$5,000/mo |
-| `tokenmax` (~20K) | \$2,000/mo | \$6,000/mo | **\$10,000/mo** |
+| `conservative` (~4K) | **\$40/mo** | \$120/mo | \$200/mo |
+| `balanced` (~10K) | \$100/mo | \$300/mo | \$500/mo |
+| `tokenmax` (~20K) | \$200/mo | \$600/mo | **\$1,000/mo** |
 
 Natural pairings (corner-diagonal) span ~4x at realistic single-user
 volume. Auto-suggests based on your configured `models.tier.subagent`.

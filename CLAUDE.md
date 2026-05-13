@@ -733,21 +733,23 @@ project resolves through `src/core/search/mode.ts`.
 
 **Cost anchors (downstream agent input cost — gbrain itself is rounding error).**
 The corner-to-corner spread is 25x once you pair mode with downstream model.
-Chunks ~400 tokens avg. Per-query cost @ 100K queries/month, full search
-payload, no cache savings:
+Chunks ~400 tokens avg. Per-query cost @ 10K queries/month (typical
+single-user volume), full search payload, no cache savings:
 
 | Mode \ Downstream | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.7 (\$5/M) |
 |---|---|---|---|
-| conservative (~4K) | **\$400/mo** | \$1,200/mo | \$2,000/mo |
-| balanced (~10K) | \$1,000/mo | \$3,000/mo | \$5,000/mo |
-| tokenmax (~20K) | \$2,000/mo | \$6,000/mo | **\$10,000/mo** |
+| conservative (~4K) | **\$40/mo** | \$120/mo | \$200/mo |
+| balanced (~10K) | \$100/mo | \$300/mo | \$500/mo |
+| tokenmax (~20K) | \$200/mo | \$600/mo | **\$1,000/mo** |
 
-Natural pairings span ~4x. Mismatches (tokenmax+Haiku, conservative+Opus)
-waste capacity differently — too-big payload overwhelms a cheap model;
-too-small payload starves an expensive one.
+Scales linearly: multiply by 10 for 100K/mo (heavy power user / multi-user
+fleet); divide by 10 for 1K/mo (light usage). Natural pairings span ~4x.
+Mismatches (tokenmax+Haiku, conservative+Opus) waste capacity differently
+— too-big payload overwhelms a cheap model; too-small payload starves an
+expensive one.
 
 tokenmax adds ~\$1.50 per 1K queries in Haiku expansion calls on top of
-the matrix (\$150/mo @ 100K). Cache hits cut all numbers ~50%. **The cost
+the matrix (\$15/mo @ 10K). Cache hits cut all numbers ~50%. **The cost
 picker copy in `gbrain init` carries the same matrix verbatim** — update
 both when refreshing.
 

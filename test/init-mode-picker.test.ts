@@ -85,10 +85,18 @@ describe('MENU_TEXT cost-matrix anchors (must match CLAUDE.md + methodology doc)
 
   test('cost matrix lists every cell at the natural diagonal and corners', async () => {
     const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    // Four anchor cells: the two corners + the diagonal mids
-    expect(MODE_PICKER_MENU).toContain('$400/mo');     // conservative + Haiku
-    expect(MODE_PICKER_MENU).toContain('$3,000/mo');   // balanced + Sonnet (default natural)
-    expect(MODE_PICKER_MENU).toContain('$10,000/mo');  // tokenmax + Opus
+    // Three anchor cells from the natural diagonal at 10K/mo volume. Scales
+    // linearly; multiplying by 10 gives the 100K/mo numbers the methodology
+    // doc + CLAUDE.md cite ("multiply by 10 for 100K/mo" prose anchor).
+    expect(MODE_PICKER_MENU).toContain('$40/mo');     // conservative + Haiku
+    expect(MODE_PICKER_MENU).toContain('$300/mo');    // balanced + Sonnet (default natural)
+    expect(MODE_PICKER_MENU).toContain('$1,000/mo');  // tokenmax + Opus
+  });
+
+  test('volume frame is 10K queries/month with linear-scale callout', async () => {
+    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
+    expect(MODE_PICKER_MENU).toContain('10K queries/mo');
+    expect(MODE_PICKER_MENU).toContain('scales linearly');
   });
 
   test('all three downstream model rates are explicit', async () => {

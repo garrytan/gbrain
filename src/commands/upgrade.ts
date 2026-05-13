@@ -272,9 +272,10 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             console.log('[gbrain] expand=true and limit=20, same as v0.31.x.');
             console.log('[gbrain]');
             console.log('[gbrain] Rough cost anchors at Sonnet 4.6 downstream ($3/M input):');
-            console.log('[gbrain]   conservative  ~$0.012/query  ~$1,200/mo at 100K queries');
-            console.log('[gbrain]   balanced      ~$0.030/query  ~$3,000/mo at 100K queries');
-            console.log('[gbrain]   tokenmax      ~$0.060/query  ~$6,000/mo at 100K queries (+expansion)');
+            console.log('[gbrain]   conservative  ~$0.012/query  ~$120/mo at 10K queries');
+            console.log('[gbrain]   balanced      ~$0.030/query  ~$300/mo at 10K queries');
+            console.log('[gbrain]   tokenmax      ~$0.060/query  ~$600/mo at 10K queries (+expansion)');
+            console.log('[gbrain]   (scales linearly — multiply by 10 for 100K/mo)');
             console.log('[gbrain]');
             console.log('[gbrain] To pick a mode + unlock the tuning tools:');
             console.log('[gbrain]   gbrain search modes              # see what is running');
