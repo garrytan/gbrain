@@ -21,8 +21,10 @@ import { resolveModel } from '../core/model-config.ts';
 import type { ThinkLLMClient } from '../core/think/index.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { loadConfig } from '../core/config.ts';
 import type { PGLiteEngine } from '../core/pglite-engine.ts';
 import type { SearchResult } from '../core/types.ts';
+import type { AIGatewayConfig } from '../core/ai/types.ts';
 
 const HUGGINGFACE_URL = 'https://huggingface.co/datasets/xiaowu0162/longmemeval';
 
@@ -282,6 +284,29 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   let runStart = Date.now();
   let errorCount = 0;
 
+  // Build AI gateway config from user's ~/.gbrain/config.json + process.env.
+  // The in-memory benchmark brain doesn't load config by itself — we bridge it
+  // so hybrid search (vector path) can resolve embedding providers.
+  let gatewayConfig: AIGatewayConfig | undefined;
+  if (!opts.keywordOnly) {
+    const userConfig = loadConfig();
+    if (userConfig && userConfig.embedding_model) {
+      const envFromConfig: Record<string, string> = {};
+      if (userConfig.openai_api_key) envFromConfig.OPENAI_API_KEY = userConfig.openai_api_key;
+      if (userConfig.anthropic_api_key) envFromConfig.ANTHROPIC_API_KEY = userConfig.anthropic_api_key;
+      gatewayConfig = {
+        embedding_model: userConfig.embedding_model,
+        embedding_dimensions: userConfig.embedding_dimensions,
+        base_urls: userConfig.provider_base_urls,
+        env: { ...envFromConfig, ...process.env as Record<string, string | undefined> },
+      };
+      process.stderr.write(`[longmemeval] gateway configured: ${gatewayConfig.embedding_model} (${gatewayConfig.embedding_dimensions}d)\n`);
+    } else {
+      process.stderr.write(`[longmemeval] no embedding_model in config.json — falling back to keyword-only\n`);
+      opts.keywordOnly = true;
+    }
+  }
+
   await withBenchmarkBrain(async (engine) => {
     for (const q of questions) {
       const qStart = Date.now();
@@ -303,7 +328,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
         process.stderr.write(`[longmemeval] ${q.question_id} ${Date.now() - qStart}ms\n`);
       }
     }
-  });
+  }, gatewayConfig);
 
   progress.finish();
   emitter.close();
