@@ -319,6 +319,47 @@ describe('performSync dry-run never writes', () => {
     expect(bookmarkAfterDry).toBe(bookmarkAfterReal);
   });
 
+  test('source sync refreshes last_sync_at when HEAD is unchanged', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const sourceId = 'stale-source';
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ($1, $1, $2, '{}'::jsonb)`,
+      [sourceId, repoPath],
+    );
+
+    const first = await performSync(engine, {
+      repoPath,
+      sourceId,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(first.status).toBe('first_sync');
+
+    const staleIso = '2000-01-01T00:00:00.000Z';
+    await engine.executeRaw(
+      `UPDATE sources SET last_sync_at = $1 WHERE id = $2`,
+      [staleIso, sourceId],
+    );
+
+    const second = await performSync(engine, {
+      repoPath,
+      sourceId,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(second.status).toBe('up_to_date');
+
+    const rows = await engine.executeRaw<{ last_sync_at: string | Date | null }>(
+      `SELECT last_sync_at FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    expect(rows[0].last_sync_at).not.toBeNull();
+    expect(new Date(rows[0].last_sync_at!).getTime()).toBeGreaterThan(new Date(staleIso).getTime());
+  });
+
   test('full-sync (--full) dry-run does NOT write to DB or advance the bookmark', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     // Seed the bookmark so we hit the full-sync-with-bookmark path when --full is set.
