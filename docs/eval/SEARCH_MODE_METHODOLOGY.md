@@ -115,6 +115,55 @@ If the CI for a Δ includes 0 OR the Bonferroni-adjusted p-value exceeds 0.05, t
 
 Every metric the report prints has a plain-English entry in `docs/eval/METRIC_GLOSSARY.md`, auto-generated from `src/core/eval/metric-glossary.ts`. The CI guard at `scripts/check-eval-glossary-fresh.sh` regenerates and diffs against the committed file on every test run; a stale doc fails the build.
 
+## Cost anchors
+
+The mode-picker prompt at `gbrain init` and the CLAUDE.md `## Search Mode` table both surface these rough cost anchors. Working through the math so they're auditable:
+
+**Variables:**
+- `T` = avg tokens per search-result chunk. The recursive chunker targets 300 words / chunk → ~400 tokens (English, OpenAI tiktoken approx).
+- `N` = chunks delivered per query (capped by the mode's `searchLimit`).
+- `R` = downstream model input rate. Sonnet 4.6 = \$3/M. Opus 4.7 = \$5/M. Haiku 4.5 = \$1/M.
+- `Q` = queries per month.
+
+**Per-query input cost** (downstream agent reads the chunks):
+
+    cost_per_query = T × N × R
+
+| Mode | T (tokens) | N (chunks) | Sonnet (\$3/M) | Opus (\$5/M) | Haiku (\$1/M) |
+|---|---|---|---|---|---|
+| conservative (4K cap, 10 max) | ~400 | 10 (or fewer if budget hits) | \$0.012 | \$0.020 | \$0.004 |
+| balanced (12K cap, 25 max) | ~400 | ~25 | \$0.030 | \$0.050 | \$0.010 |
+| tokenmax (no cap, 50 max) | ~400 | ~50 | \$0.060 | \$0.100 | \$0.020 |
+
+**Monthly cost** (Q × per-query):
+
+| Mode @ Sonnet | 1K Q/mo | 10K Q/mo | 100K Q/mo |
+|---|---|---|---|
+| conservative | \$12 | \$120 | \$1,200 |
+| balanced | \$30 | \$300 | \$3,000 |
+| tokenmax | \$60 | \$600 | \$6,000 |
+
+| Mode @ Opus | 1K Q/mo | 10K Q/mo | 100K Q/mo |
+|---|---|---|---|
+| conservative | \$20 | \$200 | \$2,000 |
+| balanced | \$50 | \$500 | \$5,000 |
+| tokenmax | \$100 | \$1,000 | \$10,000 |
+
+**gbrain's own cost** on top:
+- Query embedding (text-embedding-3-large @ \$0.13/M tokens): ~\$0.00001 per query. Negligible at every scale.
+- Tokenmax Haiku expansion call (\$1/M input, \$5/M output, ~500 input + 200 output per call): ~\$0.0015 per query, or \$150/mo at 100K queries. Cache hits cut this in half.
+- Per-page indexing (one-time): bounded by your import volume, not query volume. Not modeled here.
+
+**Cache hit adjustment.** A warmed brain typically sees 30-50% cache hits on repeat-query traffic. Cache hits skip the downstream input cost entirely (the cached result was already in the agent's context once). So real-world costs run ~50-70% of the table above on a busy brain.
+
+**Why these numbers DRIFT from your actual bill:**
+- Your agent's system prompt + reasoning tokens add input that gbrain doesn't see.
+- Compaction reduces input over a long session.
+- Most agents make 1-5 searches per turn; cost-per-turn is what bills you, not cost-per-query.
+- The model price column drifts as providers reprice; pin the rate via `src/core/anthropic-pricing.ts` for a current snapshot.
+
+The picker copy + CLAUDE.md table are the canonical user-facing source. Update them in lockstep when the underlying chunker size or default `searchLimit` changes.
+
 ## Reproducibility footer
 
 Every release that publishes eval numbers includes a footer with:

@@ -108,22 +108,36 @@ async function resolveInputs(engine: BrainEngine): Promise<ModePickerInputs> {
 
 const MENU_TEXT = `
 Search mode preference
-─────────────────────
+──────────────────────
 GBrain ships a hybrid search engine with three named modes. Pick the one
-that matches your workload. You can change it later with:
+that matches your workload + budget tolerance.
 
-    gbrain config set search.mode <mode>
+The "cost" of search isn't gbrain itself — it's the downstream agent's
+input cost reading the retrieved chunks back into its context window.
+gbrain's own overhead is rounding-error (semantic cache is free; only
+tokenmax adds a Haiku expansion call at ~$1.50 per 1K queries).
 
-  1) conservative   tight 4K token budget per query, no LLM expansion,
-                    10 results max. Best for: Haiku-tier subagents,
-                    cost-sensitive setups, agents that search constantly.
+Numbers below assume Sonnet 4.6 downstream at $3/M input tokens. Opus
+4.7 is ~1.7x. Haiku 4.5 is ~0.33x. Chunks average ~400 tokens.
 
-  2) balanced       12K budget, no LLM expansion, 25 results.
+  1) conservative   4K-token cap, no LLM expansion, 10 chunks max.
+                    ~$0.012/query  ~$12/mo @ 1K  ~$1,200/mo @ 100K
+                    Best for: cost-sensitive agents, Haiku subagents,
+                    high-volume search loops, MCP servers w/ many users.
+
+  2) balanced       12K cap, no LLM expansion, 25 chunks max.
+                    ~$0.030/query  ~$30/mo @ 1K  ~$3,000/mo @ 100K
                     Best for: Sonnet-tier work, mixed workloads.
+                    (The middle path most users land on.)
 
-  3) tokenmax       no budget, LLM query expansion ON, 50 results.
-                    Best for: Opus/frontier models, high-quality retrieval
-                    where token cost is not the bottleneck.
+  3) tokenmax       no cap, LLM query expansion ON, 50 chunks.
+                    ~$0.060/query  ~$60/mo @ 1K  ~$6,000/mo @ 100K
+                    Best for: Opus/frontier models, max retrieval quality,
+                    low-volume high-stakes work.
+                    Adds ~$1.50 per 1K queries in Haiku expansion calls.
+
+You can change this any time with: gbrain config set search.mode <mode>
+Per-knob tuning + a recommendation engine ships at: gbrain search tune
 `;
 
 /**

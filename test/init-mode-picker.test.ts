@@ -74,6 +74,41 @@ describe('recommendModeFor — auto-suggestion heuristic', () => {
   });
 });
 
+describe('MENU_TEXT cost anchors (must match CLAUDE.md + methodology doc)', () => {
+  test('every mode lists its per-query cost', async () => {
+    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
+    // The canonical anchors. Updating these REQUIRES bumping CLAUDE.md
+    // ## Search Mode table + docs/eval/SEARCH_MODE_METHODOLOGY.md in lockstep.
+    expect(MODE_PICKER_MENU).toContain('$0.012/query');  // conservative
+    expect(MODE_PICKER_MENU).toContain('$0.030/query');  // balanced
+    expect(MODE_PICKER_MENU).toContain('$0.060/query');  // tokenmax
+  });
+
+  test('every mode lists its 100K-queries-per-month cost', async () => {
+    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
+    expect(MODE_PICKER_MENU).toContain('$1,200/mo @ 100K');
+    expect(MODE_PICKER_MENU).toContain('$3,000/mo @ 100K');
+    expect(MODE_PICKER_MENU).toContain('$6,000/mo @ 100K');
+  });
+
+  test('cost model assumption (Sonnet 4.6 @ $3/M) is documented', async () => {
+    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
+    expect(MODE_PICKER_MENU).toContain('Sonnet 4.6 downstream at $3/M');
+    expect(MODE_PICKER_MENU).toContain('1.7x');  // Opus 4.7 multiplier
+    expect(MODE_PICKER_MENU).toContain('0.33x'); // Haiku 4.5 multiplier
+  });
+
+  test('tokenmax expansion surcharge is named explicitly', async () => {
+    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
+    expect(MODE_PICKER_MENU).toContain('~$1.50 per 1K queries in Haiku expansion calls');
+  });
+
+  test('tune command is surfaced as the next step', async () => {
+    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
+    expect(MODE_PICKER_MENU).toContain('gbrain search tune');
+  });
+});
+
 describe('parseModeInput — menu choice mapper', () => {
   test('numeric 1/2/3 → conservative/balanced/tokenmax', () => {
     expect(parseModeInput('1')).toBe('conservative');

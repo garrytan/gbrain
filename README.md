@@ -56,12 +56,21 @@ gbrain search stats             # cache hit rate + intent mix after some real us
 ```
 
 **v0.32.3 — named search modes.** `gbrain init` asks once which mode fits
-your workload: `conservative` (4K token budget, no LLM expansion — cheapest),
-`balanced` (12K budget, no expansion — Sonnet-tier sweet spot), or `tokenmax`
-(no budget, expansion ON — for frontier models). Auto-suggests based on your
-configured `models.tier.subagent`. Non-TTY installs auto-pick `balanced` and
-print a hint pointing at `gbrain config set search.mode <m>`. Methodology +
-eval results live at [docs/eval/SEARCH_MODE_METHODOLOGY.md](docs/eval/SEARCH_MODE_METHODOLOGY.md).
+your workload. The cost numbers below are the downstream agent's input cost
+reading retrieved chunks (gbrain itself is rounding-error). Sonnet 4.6 @ \$3/M:
+
+| Mode | Per-query | @ 1K queries | @ 100K queries | Best for |
+|---|---|---|---|---|
+| `conservative` | ~\$0.012 | ~\$12/mo | ~\$1,200/mo | Haiku subagents, high-volume loops |
+| `balanced` | ~\$0.030 | ~\$30/mo | ~\$3,000/mo | Sonnet-tier mixed workloads (default) |
+| `tokenmax` | ~\$0.060 | ~\$60/mo | ~\$6,000/mo | Opus/frontier, max retrieval quality |
+
+Auto-suggests based on your configured `models.tier.subagent`. Non-TTY
+installs auto-pick `balanced` and print a hint pointing at
+`gbrain config set search.mode <m>`. After some real usage, run
+`gbrain search stats` for observability and `gbrain search tune` for
+data-driven recommendations. Methodology + eval results live at
+[docs/eval/SEARCH_MODE_METHODOLOGY.md](docs/eval/SEARCH_MODE_METHODOLOGY.md).
 
 **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
 postinstall hook on global installs, so schema migrations never run and the CLI

@@ -724,6 +724,20 @@ project resolves through `src/core/search/mode.ts`.
 | `expansion` (LLM multi-query) | false          | false      | **true**       |
 | `searchLimit` default         | 10             | 25         | 50             |
 
+**Cost anchors (downstream agent input cost — gbrain itself is rounding error).**
+Assumes Sonnet 4.6 @ \$3/M input. Opus 4.7 ~1.7×. Haiku 4.5 ~0.33×. Chunks ~400 tokens avg.
+
+| Mode | Per-query | @ 1K queries | @ 100K queries |
+|---|---|---|---|
+| conservative | ~\$0.012 | ~\$12/mo | ~\$1,200/mo |
+| balanced | ~\$0.030 | ~\$30/mo | ~\$3,000/mo |
+| tokenmax | ~\$0.060 | ~\$60/mo | ~\$6,000/mo |
+
+tokenmax adds ~\$1.50 per 1K queries in Haiku expansion calls on top
+(\$150/mo @ 100K). Cache hits cut these numbers roughly in half on a brain with
+repeat-query traffic. **The cost picker copy in `gbrain init` carries the same
+numbers verbatim** — update both when refreshing.
+
 **Resolution chain** (matches the v0.31.12 model-tier pattern at
 `src/core/model-config.ts:resolveModel`):
 
