@@ -42,6 +42,7 @@ import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
 import { hasCJK, escapeLikePattern } from './cjk.ts';
+import { getEmbeddingModelName } from './embedding.ts';
 
 type PGLiteDB = PGlite;
 
@@ -1188,6 +1189,8 @@ export class PGLiteEngine implements BrainEngine {
     const params: unknown[] = [];
     let paramIdx = 1;
 
+    const defaultEmbeddingModel = getEmbeddingModelName();
+
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
@@ -1220,7 +1223,7 @@ export class PGLiteEngine implements BrainEngine {
       if (embeddingImageStr) params.push(embeddingImageStr);
       params.push(
         pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
-        chunk.model || 'text-embedding-3-large', chunk.token_count || null,
+        chunk.model || defaultEmbeddingModel, chunk.token_count || null,
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
         parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
