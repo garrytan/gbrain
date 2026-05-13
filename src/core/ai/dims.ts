@@ -10,6 +10,7 @@
  */
 
 import type { Implementation } from './types.ts';
+import { AIConfigError } from './errors.ts';
 
 // Voyage hosted models that accept `output_dimension` (values:
 // 256 / 512 / 1024 / 2048). Per Voyage's API parameter docs as of 2026-05.
@@ -29,8 +30,21 @@ const VOYAGE_OUTPUT_DIMENSION_MODELS = new Set([
   'voyage-code-3',
 ]);
 
+// Voyage's flexible-dim endpoint only accepts these four discrete values.
+// Per Voyage's API docs (2026-05). Out-of-range requests are rejected with
+// HTTP 400 by the upstream — catching it locally produces a clearer error
+// with the valid-values hint. The most common way to hit this in
+// production: `embedding_model: voyage:voyage-4-large` configured without
+// `embedding_dimensions`, where the gateway falls back to
+// DEFAULT_EMBEDDING_DIMENSIONS=1536 (an OpenAI default, not a Voyage one).
+export const VOYAGE_VALID_OUTPUT_DIMS = [256, 512, 1024, 2048] as const;
+
 export function supportsVoyageOutputDimension(modelId: string): boolean {
   return VOYAGE_OUTPUT_DIMENSION_MODELS.has(modelId);
+}
+
+export function isValidVoyageOutputDim(dims: number): boolean {
+  return (VOYAGE_VALID_OUTPUT_DIMS as readonly number[]).includes(dims);
 }
 
 /**
@@ -71,6 +85,22 @@ export function dimsProviderOptions(
       // but it needs the SDK-supported field here so voyageCompatFetch can
       // translate it to `output_dimension` before the HTTP request is sent.
       if (supportsVoyageOutputDimension(modelId)) {
+        // Fail-loud at the embed boundary if the user configured a dim
+        // Voyage doesn't accept. The most common path here: a brain with
+        // `embedding_model: voyage:voyage-4-large` but no explicit
+        // `embedding_dimensions`, where the gateway falls back to the
+        // module default (1536). Without this guard, Voyage's HTTP 400 is
+        // the only signal — usually mis-attributed as a transient network
+        // error.
+        if (!isValidVoyageOutputDim(dims)) {
+          throw new AIConfigError(
+            `Voyage model "${modelId}" supports output_dimension only in ` +
+            `{${VOYAGE_VALID_OUTPUT_DIMS.join(', ')}}, got ${dims}.`,
+            `Set \`embedding_dimensions\` to one of ` +
+            `${VOYAGE_VALID_OUTPUT_DIMS.join('/')} in your gbrain config, or ` +
+            `switch to a fixed-dim Voyage model (e.g. voyage-3, voyage-3-lite).`,
+          );
+        }
         return { openaiCompatible: { dimensions: dims } };
       }
       // OpenAI text-embedding-3 family on the openai-compatible adapter
