@@ -25,6 +25,126 @@ stays unchanged. The skill files (latent-space layer) are where domain
 knowledge lives, and those are what we rewrite. When a development process
 proves repeatable, it graduates from a brain page to a skill file.
 
+## Context
+
+This section gives a new session everything it needs to implement this spec.
+
+### What is gbrain
+
+GBrain is a personal knowledge brain built as a CLI + MCP server. It stores
+markdown pages in a PGLite (embedded Postgres) database with vector embeddings
+for hybrid search. The AI agent interacts with the brain through MCP tools:
+`search`, `query`, `get_page`, `put_page`, `add_link`, `add_timeline_entry`,
+`get_backlinks`, `traverse_graph`, and others. The markdown repo (git) is the
+system of record; the database is a derived cache rebuilt by `gbrain sync &&
+gbrain extract all`.
+
+Architecture docs: `/workspaces/gbrain/docs/architecture/` (4 files:
+`system-of-record.md`, `brains-and-sources.md`, `infra-layer.md`,
+`topologies.md`). Design philosophy: `docs/ethos/THIN_HARNESS_FAT_SKILLS.md`.
+
+### How the agent learns to use the brain
+
+At devcontainer boot, `entrypoint.sh` (lines 149-183 in
+`/workspaces/practicespace-2/.devcontainer/entrypoint.sh`) concatenates skill
+files from `/usr/local/src/gbrain/skills/` into `~/.claude/CLAUDE.md`. Claude
+Code reads this file at the start of every conversation as system-level
+instructions. These instructions tell the agent WHEN to check the brain, WHAT
+to look for, HOW to write pages, and WHERE to file them.
+
+The gbrain CLI is installed from a pinned fork commit in the Dockerfile (Layer
+10, `/workspaces/practicespace-2/.devcontainer/Dockerfile` line 109). The MCP
+server is registered at boot: `claude mcp add -s user gbrain -- gbrain serve`
+(entrypoint line 144). Pages are exported to markdown every 2 minutes
+(entrypoint line 186).
+
+### What this spec changes
+
+This spec rewrites the SKILL FILES (the agent's behavioral instructions) to
+replace VC-domain entity detection with developer-domain entity detection. The
+gbrain CLI, MCP server, database schema, search architecture, and sync/rebuild
+contracts are all unchanged. Two narrow code-level changes extend existing
+type/regex patterns to recognize the new entity directories.
+
+The adaptation is at the "fat skills" layer, not the "thin harness" layer.
+
+### The two repos involved
+
+1. **`/workspaces/gbrain/`** (this repo) — the gbrain fork. Skill files live
+   here at `skills/`. Code files live at `src/core/`. This is where the domain
+   customization happens. Branch: `chapter37haptics/customized-domain`.
+
+2. **`/workspaces/practicespace-2/.devcontainer/`** — the devcontainer config.
+   `entrypoint.sh` controls which skill files get loaded into CLAUDE.md and
+   `Dockerfile` pins the gbrain commit. One edit needed here: drop 2 files
+   from the skill file array.
+
+### The user's workflow (why this matters)
+
+The user develops with Claude Code inside a devcontainer. The workflow:
+
+1. Write prompts/specs that Claude's `/goal` skill can use to achieve a goal
+2. Claude achieves the goal through a development session
+3. The brain captures decisions, debug trails, and patterns along the way
+4. The process gets solidified into a `processes/` brain page
+5. When a process proves repeatable (2-3 times), it graduates to a skill file
+6. A completely new Claude agent in a fresh devcontainer (built from the
+   Dockerfile) can read the brain and reproduce the process
+
+The brain is the institutional memory that survives across agent sessions and
+environments. The cross-environment reproducibility mechanism is the
+system-of-record contract: the brain repo (git) is the portable artifact.
+
+### What the agent watches for (after this spec is implemented)
+
+The signal-detector fires on every message and looks for:
+
+- **Projects** mentioned by name ("the auth service", "my-app") — check brain,
+  create/update project page if notable
+- **Technical decisions** ("we chose X because Y", "decided to", "tradeoff") —
+  create decision page with context, options, rationale
+- **Repeatable processes** ("to deploy, you need to", "the workflow is", "steps
+  to set up") — create process page with preconditions, steps, verification
+- **Reusable concepts** ("event sourcing works by", "the repository pattern",
+  "Docker needs this flag because") — create/update concept page
+- **Debug sessions** ("the bug was caused by", "root cause was") — add
+  structured timeline entry to the project page
+- **Original thinking** — the user's ideas, observations, frameworks — captured
+  verbatim, same as upstream
+
+### Existing PageType values (22 total, we add 2)
+
+```
+person | company | deal | yc | civic | project | concept | source | media |
+writing | analysis | guide | hardware | architecture | meeting | note |
+email | slack | calendar-event | code | image | synthesis
+```
+
+We add: `decision`, `process`. Total: 24. `project` and `concept` already
+exist. VC types stay in the infrastructure but the agent stops triggering on
+them.
+
+### Key architectural constraints to respect
+
+1. **FS-canonical contract.** Markdown repo is the system of record. The DB is
+   a derived cache. `put_page` writes to the DB, `gbrain export` materializes
+   as markdown, `gbrain sync` rebuilds from markdown. The rebuild invariant
+   must hold for all developer entity types.
+
+2. **Topology 1.** Single brain, single source, single machine (PGLite in a
+   devcontainer). Default resolution (`host` brain, `default` source) is
+   sufficient. The brain/source axis model still exists and `brain-routing.md`
+   stays loaded for awareness.
+
+3. **Delegation chain.** `quality.md` line 25 is the canonical Iron Law
+   definition. Every other file delegates to it. Fix quality.md first; every
+   downstream file inherits the fix.
+
+4. **No infrastructure changes.** The data pipeline (import/chunk/embed/search),
+   schema (10 tables), engine interface, MCP operations, and sync/rebuild
+   contracts are all untouched. The code changes (types.ts, markdown.ts,
+   link-extraction.ts) extend existing patterns, not alter them.
+
 ## Important Files
 
 GBrain's agent behavior is driven by skill files that get concatenated into
@@ -98,21 +218,6 @@ The agent reads all layers at boot (concatenated into CLAUDE.md). When any
 layer mentions "person or company" as a hard gate, developer entities are
 invisible to that layer. The customization must patch every hard gate across
 all layers.
-
-## Goal
-
-Customize gbrain from a VC/executive personal intelligence system to a developer
-knowledge base that documents development processes, architectural decisions, debug
-trails, and patterns. The brain should compound development knowledge the same way
-upstream gbrain compounds people/company knowledge.
-
-The key constraint: a new Claude agent in a fresh devcontainer (built from the
-Dockerfile at `/workspaces/practicespace-2/.devcontainer/Dockerfile`) should be
-able to read the brain and repeat a development process. The brain is institutional
-memory that survives across agent sessions and environments. The cross-environment
-reproducibility mechanism is the system-of-record contract: the brain repo (git)
-is the portable artifact, and `gbrain sync && gbrain extract all` rebuilds the
-DB from it in any fresh environment.
 
 ## Closed-Loop Criterion
 
@@ -567,21 +672,6 @@ Added to the change manifest:
 | NEW | `src/core/types.ts` | Add `decision` + `process` to `PageType` union and `ALL_PAGE_TYPES` | Tier 1 (compile-time break) |
 | UPDATED | entrypoint.sh | Drop 2 files (not 3) — keep brain-routing.md | Tier 1 |
 | UPDATED | `src/core/markdown.ts` `inferType()` | Moved from Tier 2 to Tier 1 — ordering matters for hybrid paths | Tier 1 |
-
-## What was missed and why
-
-The original analysis treated files as independent. The closed-loop audit
-revealed they form a delegation chain where a single entity-type mention in a
-canonical source (quality.md) propagates constraints across the entire system.
-
-Three rounds of analysis were needed:
-1. First pass: 3 write-side files (missed read path entirely)
-2. Codex second opinion: +2 read-side patches (missed delegation chain and code)
-3. Closed-loop audit: +1 skill patch + 2 code patches (complete)
-
-The lesson: when customizing a domain, trace the delegation chain, not just
-individual files. A "keep unchanged" file can be the root constraint that
-silently blocks the entire new domain.
 
 ## Reviews
 
