@@ -1,5 +1,21 @@
 # TODOS
 
+## MCP fix wave follow-ups (v0.34.0)
+
+- [ ] **v0.34.x: Source-scope `takes_*` ops (pre-existing leak surfaced during v0.34.0 adversarial review).** `takes_list`, `takes_search`, `takes_scorecard`, `takes_calibration` in `src/core/operations.ts:1248-1335` thread `ctx.takesHoldersAllowList` but never `ctx.sourceId`. An auth'd OAuth client scoped to `source_id='canon-a'` can call `takes_list --page_slug=foo` (slug in `canon-b`) and read takes attached to foreign-source pages. Pre-existing, not introduced by v0.34.0, but the wave was framed as "P0 source-isolation seal on the read path" and `takes_*` surfaces were missed. Fix: extend `TakesListOpts` in `src/core/engine.ts:186` with `sourceId?: string` + `sourceIds?: string[]`; thread `sourceScopeOpts(ctx)` at each op handler; engine `listTakes`/`searchTakes` filter via the `pages` JOIN.
+
+- [ ] **v0.34.x: Extend `sourceScopeOpts(ctx)` to the 14 read-side ops PR #861 didn't touch.** `get_page`, `get_tags`, `get_links`, `get_backlinks`, `get_timeline`, `list_files`, `get_file`, and the four `takes_*` ops (above) still use the v0.31.8-era `const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {}` pattern. NOT a leak (scalar `ctx.sourceId` IS threaded), but federated_read (#876, `ctx.auth?.allowedSources`) is silently dropped. A "WeCare L3 dept" client gets correct federated results from `search`/`query`/`list_pages`/`traverse_graph`/`find_experts` but only sees its scalar `source_id` for `get_page`/`get_tags`/etc. Fix: route all 14 sites through `sourceScopeOpts(ctx)`.
+
+- [ ] **v0.34.x: Migration v58 idempotency guard against `--force-retry` race with v62.** `gbrain apply-migrations --force-retry 58` after v62 has already run will re-install the FK with `ON DELETE SET NULL`, silently downgrading the v62 RESTRICT posture. Probability low (operator has to explicitly force-retry 58) but failure mode is invisible. Fix: v58 should probe `pg_constraint.confdeltype` before re-adding and refuse to clobber `'r'` (RESTRICT) with `'n'` (SET NULL).
+
+- [ ] **v0.34.x: `embedMultimodalOpenAICompat` batching + partial-failure handling.** `src/core/ai/gateway.ts:1180-1255` sends one HTTP request per input. Multi-input callers (10 images) get 10 sequential round-trips with no parallelism; a 401 on input #5 throws and discards inputs #1-#4's already-computed embeddings (wasted spend, no surfacing of the partial array). Voyage's existing path batches. Fix: batch via the provider's `input: [...]` array shape; on partial failure, return successful embeddings + failed-index array.
+
+- [ ] **v0.34.x: Doctor check `oauth_orphan_source_id`** — surfaces OAuth clients whose source_id was nulled by the v58 D10 silent-widen path (`GBRAIN_ACCEPT_SILENT_WIDEN=1`). Closes the observability gap from v0.34.0's D4 decision. Sibling to the `rls_event_trigger` check pattern in `src/commands/doctor.ts`.
+
+- [ ] **v0.34.x: `gbrain sources purge` FK error UX.** Post-v0.34, deleting a source is refused if any oauth_client references it (v62 ON DELETE RESTRICT). The CLI currently surfaces the raw Postgres FK violation. Fix: pre-check via `SELECT client_id, client_name FROM oauth_clients WHERE source_id = $1`, print "N OAuth clients reference this source: ... Revoke first via `gbrain auth revoke-client <id>`." Mirrors `assessDestructiveImpact` in destructive-guard.ts (v0.26.5).
+
+- [ ] **v0.34.x: `hybrid.ts:223` explicit-pick refactor.** The SearchOpts rebuild manually picks fields from HybridSearchOpts. This is the bug shape that caused the original v0.34.0 P0 leak — a new SearchOpts field is silently dropped if not manually added here. The wave added `sourceId` + `sourceIds` to the pick; future fields will keep hitting this footgun. Fix: refactor to spread + TypeScript `Pick<>` helper that narrows HybridSearchOpts → SearchOpts type-safely.
+
 ## functional-area-resolver follow-ups (v0.32.3.0)
 
 - [ ] **v0.33.x: Dogfood `functional-area-resolver` on gbrain's own `skills/RESOLVER.md`** when it crosses ~12KB (currently 8KB). Apply the pattern to the Operational section first (largest). Filed during v0.32.3.0 CEO review.
