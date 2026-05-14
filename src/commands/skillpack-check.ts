@@ -16,30 +16,54 @@
  *   2 — Could not determine (missing binary / crashed).
  */
 
-import { execFileSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import { VERSION } from '../version.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 
 /**
  * Resolve the gbrain binary + args for spawning subcommands from
- * within skillpack-check. Handles three install cases:
- *   - Running the compiled binary (argv[1] ends in /gbrain): re-exec it.
- *   - Running via `bun run src/cli.ts` (argv[1] is a .ts file): prefix with `bun run`.
- *   - Anything else: fall back to `which gbrain` on $PATH.
+ * within skillpack-check. Mirrors `resolveGbrainCliPath()` in autopilot.ts:
+ * try the PATH shim first (canonical for installed builds, and the only path
+ * that survives Bun --compile — where `process.argv[1]` becomes the
+ * in-bundle pseudo-path `/$bunfs/root/gbrain` that doesn't exist on disk),
+ * then exec/argv fallbacks for direct-invocation and .ts dev mode.
  */
-function gbrainSpawn(): { cmd: string; prefix: string[] } {
-  const arg1 = process.argv[1] ?? '';
-  if (arg1.endsWith('/gbrain') || arg1.endsWith('\\gbrain.exe')) {
-    return { cmd: arg1, prefix: [] };
-  }
-  if (arg1.endsWith('.ts') || arg1.endsWith('.mjs') || arg1.endsWith('.js')) {
-    return { cmd: 'bun', prefix: ['run', arg1] };
-  }
-  const execPath = process.execPath ?? '';
+export function gbrainSpawn(opts?: {
+  argv?: readonly string[];
+  execPath?: string;
+  whichResolver?: () => string | null;
+}): { cmd: string; prefix: string[] } {
+  const argv = opts?.argv ?? process.argv;
+  const execPath = opts?.execPath ?? process.execPath ?? '';
+  const whichResolver = opts?.whichResolver ?? defaultWhichResolver;
+
+  const which = whichResolver();
+  if (which) return { cmd: which, prefix: [] };
+
   if (execPath.endsWith('/gbrain') || execPath.endsWith('\\gbrain.exe')) {
     return { cmd: execPath, prefix: [] };
   }
+
+  const arg1 = argv[1] ?? '';
+  if (!arg1.startsWith('/$bunfs/')) {
+    if (arg1.endsWith('/gbrain') || arg1.endsWith('\\gbrain.exe')) {
+      return { cmd: arg1, prefix: [] };
+    }
+    if (arg1.endsWith('.ts') || arg1.endsWith('.mjs') || arg1.endsWith('.js')) {
+      return { cmd: 'bun', prefix: ['run', arg1] };
+    }
+  }
+
   return { cmd: 'gbrain', prefix: [] };
+}
+
+function defaultWhichResolver(): string | null {
+  try {
+    const out = execSync('which gbrain', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
 }
 
 interface DoctorCheck {
