@@ -432,7 +432,7 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   federated_read          TEXT[] NOT NULL DEFAULT '{}',
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- v0.34.0 (#861, D13 + #876): source_id is the write-source scope;
+-- v0.34.1 (#861, D13 + #876): source_id is the write-source scope;
 -- federated_read is the read-source array. Migrations v58-v63 land both
 -- columns on upgrade; fresh installs include them inline above.
 CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id

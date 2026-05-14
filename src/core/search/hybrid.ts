@@ -280,7 +280,7 @@ export async function hybridSearch(
     // PR #618 callers compiling while the new names are the public surface.
     afterDate: opts?.since ?? opts?.afterDate,
     beforeDate: opts?.until ?? opts?.beforeDate,
-    // v0.34.0 (#861, D9 — P0 leak seal): thread source-scoping through so the
+    // v0.34.1 (#861, D9 — P0 leak seal): thread source-scoping through so the
     // inner engine.searchKeyword / engine.searchVector calls apply the
     // WHERE source_id filter at SQL level. Pre-fix, this explicit pick
     // silently DROPPED these fields and every authenticated MCP client

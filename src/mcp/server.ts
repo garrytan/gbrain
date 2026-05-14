@@ -62,7 +62,7 @@ export async function startMcpServer(engine: BrainEngine) {
       .catch(() => {})
       .finally(() => process.exit(code));
   };
-  // v0.34.0 (#870): when MCP_STDIO=1, the wrapping gateway (OpenClaw's
+  // v0.34.1 (#870): when MCP_STDIO=1, the wrapping gateway (OpenClaw's
   // bundle-mcp layer, others) often pipes the JSON-RPC handshake then
   // closes its stdin half. Treating that as a permanent disconnect kills
   // the server before the first tool call arrives. Signal handlers and

@@ -1016,7 +1016,7 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
     );
   }
 
-  // v0.34.0 (#875): route by recipe.implementation so openai-compat
+  // v0.34.1 (#875): route by recipe.implementation so openai-compat
   // providers (LiteLLM, Anyscale, vLLM, etc.) reach the standard
   // /embeddings endpoint with multimodal content arrays. The Voyage
   // recipe is `openai-compat` per tier but uses its own /multimodalembeddings
@@ -1138,7 +1138,7 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
 void MULTIMODAL_MAX_IMAGE_BYTES;
 
 /**
- * v0.34.0 (#875): multimodal embedding via the standard OpenAI-compatible
+ * v0.34.1 (#875): multimodal embedding via the standard OpenAI-compatible
  * `/embeddings` endpoint. Many providers fronted by LiteLLM (Anyscale, vLLM,
  * native OpenAI fed multimodal models) accept content arrays where each
  * element is either `{type: "input_text", text: "..."}` or

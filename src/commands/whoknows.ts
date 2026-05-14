@@ -53,7 +53,7 @@ export interface WhoknowsOpts {
    */
   types?: PageType[];
   /**
-   * v0.34.0 (#861, D3 — P0 leak seal): scope expert candidates to a
+   * v0.34.1 (#861, D3 — P0 leak seal): scope expert candidates to a
    * single source. The op-handler at operations.ts:find_experts threads
    * `ctx.sourceId` here so an authenticated MCP client scoped to src-A
    * cannot surface people pages from src-B in the rankings. Pre-fix, the
@@ -62,7 +62,7 @@ export interface WhoknowsOpts {
    */
   sourceId?: string;
   /**
-   * v0.34.0 (#876, D9): federated read — scope candidates to ANY of these
+   * v0.34.1 (#876, D9): federated read — scope candidates to ANY of these
    * source ids. Threaded from `ctx.auth?.allowedSources` via
    * `sourceScopeOpts` in operations.ts. Array wins over scalar `sourceId`.
    */
@@ -180,7 +180,7 @@ export async function findExperts(
   // 1. Hybrid search with SQL-level types filter (v0.33 typeFilter parameter).
   //    Disable salience + recency boosts in hybridSearch — we apply our own
   //    locked formula on top of the raw relevance score.
-  //    v0.34.0 (#861, D3): thread source-scope so an authenticated MCP
+  //    v0.34.1 (#861, D3): thread source-scope so an authenticated MCP
   //    client only ranks experts within its accessible sources.
   const results: SearchResult[] = await hybridSearch(engine, opts.topic, {
     types,

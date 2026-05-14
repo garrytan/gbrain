@@ -32,7 +32,7 @@ async function runCli(args: string[]): Promise<{
   stderr: string;
   exit: number;
 }> {
-  // v0.34.0 (#876): set GBRAIN_HOME to a fresh tempdir so the test isn't
+  // v0.34.1 (#876): set GBRAIN_HOME to a fresh tempdir so the test isn't
   // sensitive to the developer's local ~/.gbrain/config.json. Pre-fix this
   // test would silently inherit the user's database_url and try to connect
   // to a real Postgres + run migrations, which both extends runtime past
@@ -64,7 +64,7 @@ async function runCli(args: string[]): Promise<{
 }
 
 describe('gbrain book-mirror — CLI registration', () => {
-  // v0.34.0 (#876): migrations v58-v63 added oauth_clients.source_id +
+  // v0.34.1 (#876): migrations v58-v63 added oauth_clients.source_id +
   // federated_read FK plumbing. The cold-spawned subprocess's initSchema
   // chain now takes ~1s longer end-to-end; bump these tests' timeout to
   // 30s so the test-harness budget covers Bun cold-start + PGLite init +

@@ -442,7 +442,7 @@ describe('runServe stdio lifecycle', () => {
     expect(h.logs.some(l => l.includes('cleanup error: synthetic disconnect failure'))).toBe(true);
   });
 
-  // v0.34.0 (#870): OpenClaw gateway / bundle-mcp wrappers pipe the
+  // v0.34.1 (#870): OpenClaw gateway / bundle-mcp wrappers pipe the
   // JSON-RPC handshake on stdin then close their stdin half. Without
   // MCP_STDIO=1 the server treats that as a permanent disconnect and
   // exits before handling tools/call. The guard skips the stdin 'end' /

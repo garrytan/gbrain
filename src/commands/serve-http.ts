@@ -164,7 +164,7 @@ interface ServeHttpOptions {
   logFullParams?: boolean;
   /**
    * Network interface(s) to bind. Defaults to `127.0.0.1` (loopback only) in
-   * v0.34.0+ — gbrain's primary use case is a personal-knowledge brain on a
+   * v0.34.1+ — gbrain's primary use case is a personal-knowledge brain on a
    * laptop, and the pre-v0.34 default of `0.0.0.0` made it one accidental
    * `--http` invocation away from publishing the brain to a LAN.
    *
@@ -179,7 +179,7 @@ interface ServeHttpOptions {
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
-  // v0.34.0 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
+  // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
   // gbrain's primary use case is a personal-knowledge brain on a laptop;
   // the pre-v0.34 default exposed brains on every interface. Server
   // operators who need remote access pass `--bind 0.0.0.0` (or a specific
@@ -197,7 +197,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   if (publicUrl && options.bind === undefined) {
     console.error(
-      '[serve-http] WARNING: --public-url is set but --bind is not. Default bind changed to 127.0.0.1 in v0.34.0; remote clients reaching the public URL will be refused. Pass --bind 0.0.0.0 to accept all interfaces.',
+      '[serve-http] WARNING: --public-url is set but --bind is not. Default bind changed to 127.0.0.1 in v0.34.1; remote clients reaching the public URL will be refused. Pass --bind 0.0.0.0 to accept all interfaces.',
     );
   }
 
@@ -953,7 +953,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // ToolResult and we read isError + _meta to pick the right branch.
       const tokenAllowList = (authInfo as AuthInfo & { takesHoldersAllowList?: string[] }).takesHoldersAllowList
         ?? ['world'];
-      // v0.34.0 (#861, D13): AuthInfo.sourceId is now a real typed field
+      // v0.34.1 (#861, D13): AuthInfo.sourceId is now a real typed field
       // populated from oauth_clients.source_id (migration v58 backfilled
       // NULL → 'default'). Pre-fix this site cast through AuthInfo and
       // fell back to GBRAIN_SOURCE env / 'default' — the silent-fallback

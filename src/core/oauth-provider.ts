@@ -139,7 +139,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     `;
     if (rows.length === 0) return undefined;
     const r = rows[0];
-    // v0.34.0 (#909): public clients (token_endpoint_auth_method='none')
+    // v0.34.1 (#909): public clients (token_endpoint_auth_method='none')
     // have client_secret_hash = NULL. Normalize SQL NULL to JS undefined
     // so SDK middleware that checks `client.client_secret === undefined`
     // (not `=== null`) correctly identifies the client as public and
@@ -176,7 +176,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     assertAllowedScopes(parseScopeString(client.scope));
 
     const clientId = generateToken('gbrain_cl_');
-    // v0.34.0 (#909): RFC 7591 §2 — clients that authenticate at the token
+    // v0.34.1 (#909): RFC 7591 §2 — clients that authenticate at the token
     // endpoint via PKCE alone declare `token_endpoint_auth_method: "none"`.
     // For those clients the authorization server MUST NOT issue a client
     // secret. Pre-fix, unconditional secret generation made the MCP SDK's
@@ -194,7 +194,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     const secretHash = clientSecret ? hashToken(clientSecret) : null;
     const now = Math.floor(Date.now() / 1000);
 
-    // v0.34.0 (#861, D2 + D13 + #876): DCR clients get source_id='default'
+    // v0.34.1 (#861, D2 + D13 + #876): DCR clients get source_id='default'
     // (matches legacy fallback) and federated_read=['default'] (read scope
     // == write scope). Operators who need narrower / wider scope rescope
     // via the CLI later. Pre-v58/v59 brain falls through to the legacy
@@ -481,10 +481,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // Try OAuth tokens first. JOIN oauth_clients in the same query so
     // verifyAccessToken returns client_name AND source_id in AuthInfo —
     // eliminates the separate per-request lookup at serve-http.ts that
-    // was the N+1 hot path (see PR #586 review D14=B; v0.34.0 #861 D2
+    // was the N+1 hot path (see PR #586 review D14=B; v0.34.1 #861 D2
     // adds the source_id thread on the same JOIN).
     //
-    // v0.34.0 (#861): the JOIN guards on a c.source_id column that
+    // v0.34.1 (#861): the JOIN guards on a c.source_id column that
     // migration v58 adds. Pre-v58 brains throw a "column does not exist"
     // error here — caught at the boundary via isUndefinedColumnError so
     // unmigrated brains degrade to "no source scope" rather than refusing
@@ -499,7 +499,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
       `;
     } catch (err) {
-      // v0.34.0: pre-v58 brain → source_id column missing. Pre-v59 brain →
+      // v0.34.1: pre-v58 brain → source_id column missing. Pre-v59 brain →
       // federated_read column missing. Both classes degrade to legacy
       // projection so auth keeps working until the operator runs
       // apply-migrations. Probe both column names so partial-upgrade brains
@@ -540,7 +540,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       if (expiresAt === undefined || expiresAt < now) {
         throw new Error('Token expired');
       }
-      // v0.34.0 (#876): federated_read normalization. SELECT returns
+      // v0.34.1 (#876): federated_read normalization. SELECT returns
       // either a JS array (Postgres / PGLite text[] driver mapping) or
       // undefined when the legacy projection ran (pre-v59 brain). Empty
       // array vs undefined matters: empty array = explicit no-federated-
@@ -556,11 +556,11 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         scopes: (row.scopes as string[]) || [],
         expiresAt,
         resource: row.resource ? new URL(row.resource as string) : undefined,
-        // v0.34.0 (#861, D2): source-isolation scope from oauth_clients.
+        // v0.34.1 (#861, D2): source-isolation scope from oauth_clients.
         // Undefined when the row predates v58 or when the brain itself
         // predates v58 (fell through to the legacy projection above).
         sourceId: (row.source_id as string | null) ?? undefined,
-        // v0.34.0 (#876): federated read scope. sourceScopeOpts in
+        // v0.34.1 (#876): federated read scope. sourceScopeOpts in
         // operations.ts prefers this array over scalar sourceId when set
         // and non-empty.
         allowedSources,
@@ -587,7 +587,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         clientName: name,
         scopes: ['read', 'write', 'admin'],
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
-        // v0.34.0 (#861, D13): legacy bearer tokens default to 'default'
+        // v0.34.1 (#861, D13): legacy bearer tokens default to 'default'
         // source — matches the pre-v0.34 effective behavior where the
         // serve-http transport fell back to GBRAIN_SOURCE/'default' for
         // any caller without explicit scope. Operators who want a
@@ -725,7 +725,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const secretHash = hashToken(clientSecret);
     const now = Math.floor(Date.now() / 1000);
 
-    // v0.34.0 (#861 + #876): persist source_id AND federated_read so
+    // v0.34.1 (#861 + #876): persist source_id AND federated_read so
     // verifyAccessToken can populate both AuthInfo fields. Defaults:
     //   source_id = 'default' (matches v58 backfill)
     //   federated_read = [source_id] when omitted (a non-federated client

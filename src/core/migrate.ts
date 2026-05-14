@@ -2883,7 +2883,7 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 58,
     name: 'oauth_clients_source_id_fk',
-    // v0.34.0 (#861 + D4 + D10 + D13 — P0 source-isolation leak seal).
+    // v0.34.1 (#861 + D4 + D10 + D13 — P0 source-isolation leak seal).
     //
     // Adds oauth_clients.source_id, validates ALL existing rows can map to a
     // real source row, backfills NULL → 'default', and installs the FK with
@@ -2908,7 +2908,7 @@ export const MIGRATIONS: Migration[] = [
     // since 0.3; no engine branch needed.
     idempotent: true,
     sql: `
-      -- v0.34.0 (#861 + D2 + D13 — P0 source-isolation leak seal).
+      -- v0.34.1 (#861 + D2 + D13 — P0 source-isolation leak seal).
       --
       -- This migration is intentionally lean: oauth_clients.source_id did
       -- NOT exist pre-v58, so the only state we inherit from upgrade is
@@ -2963,7 +2963,7 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 59,
     name: 'oauth_clients_federated_read_column',
-    // v0.34.0 (#876): add federated_read TEXT[] for the read-side
+    // v0.34.1 (#876): add federated_read TEXT[] for the read-side
     // federation feature. source_id (v58) is the WRITE-authority axis;
     // federated_read is the READ-scope axis. A client can write to ONE
     // source while reading from N (a "WeCare L3 dept" client writes to
@@ -2980,7 +2980,7 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 60,
     name: 'oauth_clients_federated_read_backfill',
-    // v0.34.0 (#876, F5 — codex outside-voice fix). Backfill federated_read
+    // v0.34.1 (#876, F5 — codex outside-voice fix). Backfill federated_read
     // with explicit CASE so source_id IS NULL doesn't produce an ambiguous
     // array containing NULL. Three cases:
     //   - source_id IS NULL → '{}' (empty read scope; legacy unscoped
@@ -3004,7 +3004,7 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 61,
     name: 'oauth_clients_federated_read_validate',
-    // v0.34.0 (#876): post-backfill validation. Every client with a
+    // v0.34.1 (#876): post-backfill validation. Every client with a
     // non-NULL source_id should now have its source_id reflected in
     // federated_read. Fail loud if backfill missed a row — points at a
     // logic bug in v60's WHERE clause.
@@ -3026,7 +3026,7 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 62,
     name: 'oauth_clients_source_id_fk_restrict',
-    // v0.34.0 (#876): flip the source_id FK from ON DELETE SET NULL (v58
+    // v0.34.1 (#876): flip the source_id FK from ON DELETE SET NULL (v58
     // posture) to ON DELETE RESTRICT now that federated_read provides
     // the alternative scope-loss path. Pre-fix, deleting a source could
     // silently widen any oauth_client to super-reader (source_id → NULL).
@@ -3051,7 +3051,7 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 63,
     name: 'oauth_clients_federated_read_gin_index',
-    // v0.34.0 (#876): GIN index for array-containment lookups
+    // v0.34.1 (#876): GIN index for array-containment lookups
     // (`WHERE p.source_id = ANY(federated_read)` and similar). The five
     // read-side ops fall back to scalar sourceId when no auth is set, so
     // this index only matters under load on federated-scoped clients.

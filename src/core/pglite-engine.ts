@@ -640,7 +640,7 @@ export class PGLiteEngine implements BrainEngine {
       params.push(escaped);
       where.push(`p.slug LIKE $${params.length} ESCAPE '\\'`);
     }
-    // v0.31.12 + v0.34.0 (#876, D9): scope to a single source OR an array
+    // v0.31.12 + v0.34.1 (#876, D9): scope to a single source OR an array
     // of sources. Array form wins (federated subsumes scalar).
     if (filters?.sourceIds && filters.sourceIds.length > 0) {
       params.push(filters.sourceIds);
@@ -792,7 +792,7 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.beforeDate);
       extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
-    // v0.34.0 (#861 — P0 leak seal): source-isolation. Array wins over scalar.
+    // v0.34.1 (#861 — P0 leak seal): source-isolation. Array wins over scalar.
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       params.push(opts.sourceIds);
       extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
@@ -898,7 +898,7 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.beforeDate);
       extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
-    // v0.34.0 (#861 — P0 leak seal): source-isolation on the CJK fallback path.
+    // v0.34.1 (#861 — P0 leak seal): source-isolation on the CJK fallback path.
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       params.push(opts.sourceIds);
       extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
@@ -1026,7 +1026,7 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.beforeDate);
       extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
-    // v0.34.0 (#861 — P0 leak seal): source-isolation for the chunk-grain
+    // v0.34.1 (#861 — P0 leak seal): source-isolation for the chunk-grain
     // anchor primitive. Layer 7 two-pass walks from these anchors so a
     // foreign-source anchor would let the walk leak into foreign neighbors.
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
@@ -1113,7 +1113,7 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.beforeDate);
       extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
-    // v0.34.0 (#861, F2 — P0 leak seal): source-isolation in the INNER CTE
+    // v0.34.1 (#861, F2 — P0 leak seal): source-isolation in the INNER CTE
     // so HNSW candidate pool narrows before re-rank. Mirrors postgres-engine
     // placement decision (codex flagged this during plan review).
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
@@ -1561,7 +1561,7 @@ export class PGLiteEngine implements BrainEngine {
     depth: number = 5,
     opts?: { sourceId?: string; sourceIds?: string[] },
   ): Promise<GraphNode[]> {
-    // v0.34.0 (#861 — P0 leak seal): source-scope filters at seed, step, and
+    // v0.34.1 (#861 — P0 leak seal): source-scope filters at seed, step, and
     // aggregation subquery. Mirrors postgres-engine.traverseGraph placement.
     const params: unknown[] = [slug, depth];
     const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;
@@ -1637,7 +1637,7 @@ export class PGLiteEngine implements BrainEngine {
     const params: unknown[] = [slug, depth];
     if (linkType !== null) params.push(linkType);
 
-    // v0.34.0 (#861 — P0 leak seal): source-scope filters at seed + step +
+    // v0.34.1 (#861 — P0 leak seal): source-scope filters at seed + step +
     // final SELECT joins (for the 'both' branch's pf + pt). Mirrors
     // postgres-engine.traversePaths placement.
     const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;

@@ -1,5 +1,5 @@
 /**
- * v0.34.0 (#861 — P0 source-isolation leak seal) E2E regression.
+ * v0.34.1 (#861 — P0 source-isolation leak seal) E2E regression.
  *
  * The wave's IRON RULE: every read-side op must filter by source_id when
  * the caller supplies it via SearchOpts/PageFilters/TraverseOpts. Pre-fix,
@@ -86,7 +86,7 @@ beforeEach(async () => {
   }], { sourceId: 'src-b' });
 });
 
-describe('v0.34.0 source-isolation regression (#861)', () => {
+describe('v0.34.1 source-isolation regression (#861)', () => {
   test('searchKeyword with sourceId=default excludes src-b rows', async () => {
     const results = await engine.searchKeyword('widgets', { sourceId: 'default' });
     // Should find Alice from source-A only (mentions "widgets"). src-b's

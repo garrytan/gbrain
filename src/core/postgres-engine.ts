@@ -685,7 +685,7 @@ export class PostgresEngine implements BrainEngine {
     const slugCondition = slugPrefix
       ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sql``;
-    // v0.31.12 + v0.34.0 (#876, D9): scope to a single source OR an array
+    // v0.31.12 + v0.34.1 (#876, D9): scope to a single source OR an array
     // of sources. When BOTH are set, the array wins (federated semantics
     // subsume the scalar case). When neither is set, no filter applies.
     const sourceCondition = filters?.sourceIds && filters.sourceIds.length > 0
@@ -832,7 +832,7 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.beforeDate);
       beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
-    // v0.34.0 (#861 — P0 leak seal): source-isolation filter. When the
+    // v0.34.1 (#861 — P0 leak seal): source-isolation filter. When the
     // caller's auth scope is set, narrow the inner CTE candidate set so
     // an authenticated MCP client cannot see foreign-source pages via
     // keyword search. Array form wins over scalar (federated subsumes
@@ -983,7 +983,7 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.beforeDate);
       beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
-    // v0.34.0 (#861 — P0 leak seal): source-isolation. Anchor primitive
+    // v0.34.1 (#861 — P0 leak seal): source-isolation. Anchor primitive
     // for two-pass retrieval, so cross-source anchors would let the walk
     // discover foreign-source neighbors. Filter at chunk-rank time.
     let sourceClause = '';
@@ -1104,7 +1104,7 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.beforeDate);
       beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
-    // v0.34.0 (#861, F2 — P0 leak seal): source-isolation in the INNER CTE
+    // v0.34.1 (#861, F2 — P0 leak seal): source-isolation in the INNER CTE
     // specifically. Pushing the filter inside narrows the HNSW candidate set
     // before re-rank; pushing it to the outer SELECT would force HNSW to
     // over-fetch then post-filter, wasting candidate slots. Codex flagged
@@ -1569,7 +1569,7 @@ export class PostgresEngine implements BrainEngine {
     opts?: { sourceId?: string; sourceIds?: string[] },
   ): Promise<GraphNode[]> {
     const sql = this.sql;
-    // v0.34.0 (#861 — P0 leak seal): scope visited nodes to the caller's
+    // v0.34.1 (#861 — P0 leak seal): scope visited nodes to the caller's
     // source(s). Without this, the walk follows edges into pages from
     // foreign sources, leaking topology + page metadata. The filter
     // applies at BOTH the seed (root must be in scope) AND the recursive
@@ -1645,7 +1645,7 @@ export class PostgresEngine implements BrainEngine {
     const direction = opts?.direction ?? 'out';
     const linkType = opts?.linkType ?? null;
     const linkTypeMatches = linkType !== null;
-    // v0.34.0 (#861 — P0 leak seal): source-scope filter fragments. Applied
+    // v0.34.1 (#861 — P0 leak seal): source-scope filter fragments. Applied
     // at seed (root must be in scope) AND at every recursive step (neighbor
     // must be in scope) AND in the SELECT join (final edges respect scope).
     // The 'both' branch needs filters on BOTH endpoint joins.

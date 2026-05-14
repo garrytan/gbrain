@@ -67,7 +67,7 @@ interface AuthResult {
   /** v0.28: per-token allow-list for takes.holder. Default ['world'] when permissions row absent. */
   takesHoldersAllowList?: string[];
   /**
-   * v0.34.0 (#861, D13): source-isolation scope for the auth'd request.
+   * v0.34.1 (#861, D13): source-isolation scope for the auth'd request.
    * Legacy bearer tokens here default to 'default' to match the v0.33
    * effective behavior (the now-removed serve-http.ts fallback chain).
    * Operators migrate to the full OAuth transport (gbrain serve --http)
@@ -188,7 +188,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         tokenId: rowId,
         tokenName: rowName,
         takesHoldersAllowList: allowList,
-        // v0.34.0 (#861, D13): legacy bearer tokens default to 'default'
+        // v0.34.1 (#861, D13): legacy bearer tokens default to 'default'
         // source. Preserves the pre-v0.34 effective behavior of the
         // serve-http fallback chain that was removed for OAuth clients
         // (migration v58 backfills oauth_clients.source_id). This path
@@ -342,7 +342,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         const args: Record<string, unknown> = params?.arguments ?? {};
         // v0.28: thread per-token takes-holder allow-list so takes_list /
         // takes_search / query (when it returns takes) can server-side filter.
-        // v0.34.0 (#861): thread source-isolation scope. Legacy access_tokens
+        // v0.34.1 (#861): thread source-isolation scope. Legacy access_tokens
         // path defaults to 'default' per AuthResult.sourceId above.
         const result = await dispatchToolCall(engine, toolName, args, {
           remote: true,

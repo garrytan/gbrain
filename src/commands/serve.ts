@@ -56,7 +56,7 @@ export interface ServeOptions {
   // tick fell through to the cached `process.ppid` and the watchdog
   // never fired, while still claiming to be installed.
   probeWatchdog?: () => boolean;
-  // v0.34.0 (#870): test seam for the MCP_STDIO=1 piped-stdin guard.
+  // v0.34.1 (#870): test seam for the MCP_STDIO=1 piped-stdin guard.
   // When true, runServe skips the stdin 'end'/'close' shutdown hooks
   // because the wrapping gateway (OpenClaw bundle-mcp, others) pipes the
   // JSON-RPC handshake and closes stdin immediately. Signal handlers and
@@ -97,7 +97,7 @@ export async function runServe(
     // when set so the posture change is visible in stderr.
     const logFullParams = args.includes('--log-full-params');
 
-    // v0.34.0 (#864, D11): `--bind HOST` lets operators choose the network
+    // v0.34.1 (#864, D11): `--bind HOST` lets operators choose the network
     // interface to listen on. When unset, runServeHttp defaults to 127.0.0.1
     // (loopback) — server operators who need remote access pass
     // `--bind 0.0.0.0` (or a specific interface IP). `bind` is intentionally
@@ -218,7 +218,7 @@ function installStdioLifecycle(
   // Skip when stdin is a TTY: interactive `gbrain serve` use shouldn't
   // terminate just because the user hasn't typed anything. Signal /
   // watchdog paths still cover that case if needed.
-  // v0.34.0 (#870): when MCP_STDIO=1, the wrapping gateway pipes the
+  // v0.34.1 (#870): when MCP_STDIO=1, the wrapping gateway pipes the
   // JSON-RPC handshake then closes its stdin half. Treating that as a
   // permanent disconnect kills the server before the first tool call.
   // Signal handlers (SIGTERM/SIGINT/SIGHUP), transport.onclose, and the

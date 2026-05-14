@@ -230,7 +230,7 @@ export interface AuthInfo {
   scopes: string[];
   expiresAt?: number;
   /**
-   * v0.34.0 (#861, D2): the source the calling OAuth client is scoped
+   * v0.34.1 (#861, D2): the source the calling OAuth client is scoped
    * to (write authority). Sourced from `oauth_clients.source_id` at
    * token-verification time. The HTTP transport ALSO threads this
    * value into `OperationContext.sourceId` at the same site so op
@@ -238,7 +238,7 @@ export interface AuthInfo {
    * dual-write decision — identity surface symmetric with
    * `allowedSources` below).
    *
-   * Undefined for legacy bearer tokens that predate v0.34.0 and for
+   * Undefined for legacy bearer tokens that predate v0.34.1 and for
    * clients that haven't been scoped yet. Migration v58 backfills
    * NULL → 'default' for pre-existing rows so this field is populated
    * on the upgrade path; brand-new public-client registrations may
@@ -247,7 +247,7 @@ export interface AuthInfo {
    */
   sourceId?: string;
   /**
-   * v0.34.0 (#876): array of source ids this OAuth client may READ
+   * v0.34.1 (#876): array of source ids this OAuth client may READ
    * from (federation). Sourced from `oauth_clients.federated_read`.
    * Independent of `sourceId` (write authority): a "WeCare L3 dept"
    * client can write to `source_id='dept-x'` while reading the union
@@ -377,7 +377,7 @@ export interface OperationContext {
 }
 
 /**
- * v0.34.0 (#861, D9 — P0 leak seal): resolve the source-scope filter for a
+ * v0.34.1 (#861, D9 — P0 leak seal): resolve the source-scope filter for a
  * read-side op handler. Returns an opts fragment ready to spread into the
  * engine call.
  *
@@ -994,7 +994,7 @@ const list_pages: Operation = {
     const sort = rawSort && (LIST_PAGES_SORT_VALUES as readonly string[]).includes(rawSort)
       ? (rawSort as ListPagesSort)
       : undefined;
-    // v0.34.0 (#861 — P0 leak seal): thread the auth'd client's source scope
+    // v0.34.1 (#861 — P0 leak seal): thread the auth'd client's source scope
     // into the listPages filter so an OAuth client scoped to src-A cannot
     // enumerate src-B pages. Pre-fix, ctx.sourceId / ctx.auth?.allowedSources
     // were ignored at this op handler and the engine returned every source's
@@ -1034,7 +1034,7 @@ const search: Operation = {
   handler: async (ctx, p) => {
     const startedAt = Date.now();
     const queryText = p.query as string;
-    // v0.34.0 (#861 — P0 leak seal): thread caller's source scope into
+    // v0.34.1 (#861 — P0 leak seal): thread caller's source scope into
     // searchKeyword. Pre-fix this op silently returned cross-source hits
     // for any auth'd OAuth client.
     const raw = await ctx.engine.searchKeyword(queryText, {
@@ -1146,7 +1146,7 @@ const query: Operation = {
       const [vec] = await embedMultimodal([
         { kind: 'image_base64', data: imageData, mime: imageMime },
       ]);
-      // v0.34.0 (#861 F2 — 6th leak surface): the image path bypasses
+      // v0.34.1 (#861 F2 — 6th leak surface): the image path bypasses
       // hybridSearch and calls searchVector directly, so it needs its
       // own thread of the source scope. Pre-fix, this branch leaked
       // image pages across sources independent of the text path's fix.
@@ -1190,7 +1190,7 @@ const query: Operation = {
       useCache: typeof p.use_cache === 'boolean' ? (p.use_cache as boolean) : undefined,
       intentWeighting: typeof p.intent_weighting === 'boolean' ? (p.intent_weighting as boolean) : undefined,
       onMeta: (m) => { capturedMeta = m; },
-      // v0.34.0 (#861 — P0 leak seal): thread caller's source scope. The
+      // v0.34.1 (#861 — P0 leak seal): thread caller's source scope. The
       // hybridSearch internal searchOpts rebuild (hybrid.ts:223) was
       // dropping these fields pre-fix even when callers passed them.
       ...sourceScopeOpts(ctx),
@@ -1552,7 +1552,7 @@ const traverse_graph: Operation = {
     const depth = Math.max(1, Math.min(requestedDepth, TRAVERSE_DEPTH_CAP));
     const linkType = p.link_type as string | undefined;
     const direction = p.direction as 'in' | 'out' | 'both' | undefined;
-    // v0.34.0 (#861 — P0 leak seal): thread caller's source scope so graph
+    // v0.34.1 (#861 — P0 leak seal): thread caller's source scope so graph
     // walks stay within the auth'd client's accessible sources. Pre-fix,
     // traverseGraph / traversePaths happily followed edges into pages from
     // foreign sources, leaking topology + page metadata via the graph op.
@@ -2332,7 +2332,7 @@ const find_experts: Operation = {
     if (!topic.trim()) {
       throw new OperationError('invalid_params', '`topic` is required and must be a non-empty string.');
     }
-    // v0.34.0 (#861, D3 — 5th leak surface): find_experts (whoknows) was
+    // v0.34.1 (#861, D3 — 5th leak surface): find_experts (whoknows) was
     // authored against v0.33 after PR #861 was drafted, so the source-scope
     // thread was missing entirely. The op calls findExperts → hybridSearch
     // internally; without the thread an auth'd src-A whoknows query would

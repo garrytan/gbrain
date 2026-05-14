@@ -598,7 +598,7 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   federated_read          TEXT[] NOT NULL DEFAULT '{}',
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- v0.34.0 (#861, D13 + #876): source_id is the OAuth client's write-source
+-- v0.34.1 (#861, D13 + #876): source_id is the OAuth client's write-source
 -- scope; federated_read is its read-source array (a federated client can
 -- read sources beyond its source_id). Migration v58 adds source_id;
 -- v59-v63 add federated_read + GIN index + flip FK to RESTRICT. Fresh

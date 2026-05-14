@@ -197,7 +197,7 @@ export interface PageFilters {
    */
   sourceId?: string;
   /**
-   * v0.34.0 (#876, D9): filter to ANY of these sources (federated read).
+   * v0.34.1 (#876, D9): filter to ANY of these sources (federated read).
    * Engine applies `WHERE p.source_id = ANY($N::text[])` when array is set.
    * Caller precedence: if BOTH `sourceId` and `sourceIds` are set, the array
    * wins (the federated semantics subsume the single-source case via an
@@ -467,7 +467,7 @@ export interface SearchOpts {
    */
   sourceId?: string;
   /**
-   * v0.34.0 (#876, D9): filter to ANY of these sources (federated read).
+   * v0.34.1 (#876, D9): filter to ANY of these sources (federated read).
    * Engine applies `WHERE p.source_id = ANY($N::text[])` when the array
    * is set. Caller precedence: if BOTH `sourceId` and `sourceIds` are
    * provided, the array wins (the federated semantics subsume the

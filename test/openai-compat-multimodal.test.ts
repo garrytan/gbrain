@@ -1,4 +1,4 @@
-// v0.34.0 (#875): multimodal embedding for openai-compatible recipes via
+// v0.34.1 (#875): multimodal embedding for openai-compatible recipes via
 // LiteLLM (or any other openai-compatible proxy). Sibling to
 // voyage-multimodal.test.ts; covers the new embedMultimodalOpenAICompat
 // path including D12 dim validation.

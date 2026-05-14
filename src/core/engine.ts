@@ -630,7 +630,7 @@ export interface BrainEngine {
     minSimilarity?: number,
   ): Promise<{ slug: string; similarity: number } | null>;
   /**
-   * v0.34.0 (#861 — P0 leak seal): `opts.sourceId` / `opts.sourceIds`
+   * v0.34.1 (#861 — P0 leak seal): `opts.sourceId` / `opts.sourceIds`
    * constrain visited nodes to a single source or array of sources.
    * Pre-fix, the walk ignored source scope and an authenticated MCP
    * client could enumerate cross-source topology + page metadata via
@@ -648,7 +648,7 @@ export interface BrainEngine {
    * - linkType: per-edge filter, only follows matching edges (per-edge semantics)
    * - direction: 'in' (follow to->from), 'out' (follow from->to), 'both'
    * - depth: max depth from root (default 5)
-   * - sourceId/sourceIds: v0.34.0 source-isolation filter, see traverseGraph
+   * - sourceId/sourceIds: v0.34.1 source-isolation filter, see traverseGraph
    * Uses cycle prevention (visited array in recursive CTE).
    */
   traversePaths(

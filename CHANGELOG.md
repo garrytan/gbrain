@@ -2,13 +2,13 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.34.0.0] - 2026-05-14
+## [0.34.1.0] - 2026-05-14
 
 **MCP hardening wave: stricter source isolation on the read path, PKCE
 DCR works, loopback-by-default, and federated read scopes for shared
 brains. Six community PRs land as one release.**
 
-The v0.34.0 wave consolidates six community PRs into a single ship.
+The v0.34.1 wave consolidates six community PRs into a single ship.
 Source-isolation tightening is the centerpiece — an authenticated OAuth
 client scoped to one source no longer sees rows from neighboring sources
 through the read path. The wave also seals smaller papercuts that have
@@ -79,7 +79,7 @@ time.
 chain adds two columns to `oauth_clients` and an index, plus a FK flip
 once federated_read is in place.
 
-### To take advantage of v0.34.0
+### To take advantage of v0.34.1
 
 `gbrain upgrade` should do this automatically. If it didn't, or if
 `gbrain doctor` warns about a partial migration:

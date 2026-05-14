@@ -30,7 +30,7 @@ export const litellmProxy: Recipe = {
       // LiteLLM's batch capacity is determined by the backend it proxies;
       // no static cap to declare here. v0.32 (#779).
       no_batch_cap: true,
-      // v0.34.0 (#875): LiteLLM can forward to multimodal providers (OpenAI,
+      // v0.34.1 (#875): LiteLLM can forward to multimodal providers (OpenAI,
       // Gemini, Voyage etc.). embedMultimodal routes openai-compatible
       // recipes through embedMultimodalOpenAICompat() — same /embeddings
       // endpoint as text, with content arrays carrying image_base64
