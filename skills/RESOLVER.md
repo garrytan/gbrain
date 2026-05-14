@@ -2,6 +2,12 @@
 
 This is the dispatcher. Skills are the implementation. **Read the skill file before acting.** If two skills could match, read both. They are designed to chain (e.g., ingest then enrich for each entity).
 
+This resolver is also the first authority for brain-native jarvOS/OpenClaw work:
+memory, ontology, filing, ingestion, citations, reports, and durable provenance
+decisions start here. OpenClaw/local-runtime policy stays in the host exception
+map at `~/clawd/skills/RESOLVER.md` after this resolver determines the request
+is host-bound.
+
 ## Always-on (every message)
 
 | Trigger | Skill |
@@ -24,6 +30,15 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "validate frontmatter", "check frontmatter", "fix frontmatter", "frontmatter audit", "brain lint" | `skills/frontmatter-guard/SKILL.md` |
 | "what search mode", "is my cache hot", "tune my retrieval", "compare search modes", "clear search overrides" | `gbrain search modes/stats/tune` directly. See `skills/conventions/search-modes.md` |
 | "eval results", "search benchmark", "haters-immune methodology", "regression check on retrieval" | `gbrain eval run-all` / `gbrain eval compare`. See `docs/eval/SEARCH_MODE_METHODOLOGY.md` |
+
+## jarvOS / OpenClaw bridge
+
+| Signal | Route |
+|--------|-------|
+| Brain-native jarvOS/OpenClaw memory, ontology, people, companies, concepts, beliefs, predictions, source-backed citations, or durable provenance decisions | `skills/brain-ops/SKILL.md`; use `skills/repo-architecture/SKILL.md` when the main question is where a new brain page belongs. |
+| Durable note filing, journal-link provenance, daily capsule provenance, or note-to-journal backlink requirements | First decide the brain/file provenance route here with `skills/repo-architecture/SKILL.md` and `skills/brain-ops/SKILL.md`; if the destination is Andrew's local vault journal, hand implementation to `~/clawd/jarvos-secondbrain/bridge/provenance/README.md`. |
+| OpenClaw runtime policy, Paperclip execution gates, local cron/model/OAuth/update behavior, or host-only output workflows | Use the local exception map at `~/clawd/skills/RESOLVER.md`; do not duplicate those rules in GBrain. |
+| Local resolver reconciliation, resolver compression, or dispatcher hygiene | `skills/functional-area-resolver/SKILL.md` for GBrain resolver shape; host-specific exception pruning stays in `~/clawd/skills/RESOLVER.md`. |
 
 ## Content & media ingestion
 
@@ -107,6 +122,7 @@ These apply to ALL brain-writing skills:
 - `skills/conventions/brain-first.md` — check brain before external APIs
 - `skills/conventions/brain-routing.md` — which brain (DB) and which source (repo) to target; cross-brain federation is latent-space only
 - `skills/conventions/subagent-routing.md` — when to use Minions vs inline work
+- `~/clawd/skills/RESOLVER.md` — OpenClaw-local exception map for host-bound work after GBrain routing
 - `skills/ask-user/SKILL.md` — choice-gate pattern for human input at decision points
 - `skills/_brain-filing-rules.md` — where files go
 - `skills/_output-rules.md` — output quality standards
@@ -124,4 +140,3 @@ These apply to ALL brain-writing skills:
 | "verify this academic claim", "check this study", "academic verify", "validate citation", "is this study real" | `skills/academic-verify/SKILL.md` |
 | "make pdf from brain", "brain pdf", "convert brain page to pdf", "publish this page as pdf", "export brain page" | `skills/brain-pdf/SKILL.md` |
 | "voice note", "ingest this voice memo", "transcribe and file", "voice note ingest", "save this audio note" | `skills/voice-note-ingest/SKILL.md` |
-

@@ -40,6 +40,13 @@ describe("RESOLVER.md", () => {
     expect(resolverContent).toContain("_brain-filing-rules.md");
   });
 
+  test("declares jarvOS/OpenClaw bridge authority", () => {
+    expect(resolverContent).toContain("first authority for brain-native jarvOS/OpenClaw work");
+    expect(resolverContent).toContain("## jarvOS / OpenClaw bridge");
+    expect(resolverContent).toContain("~/clawd/skills/RESOLVER.md");
+    expect(resolverContent).toContain("~/clawd/jarvos-secondbrain/bridge/provenance/README.md");
+  });
+
   test("every manifest skill is reachable from resolver", () => {
     // Delegates to checkResolvable — the shared function handles all validation
     const report = checkResolvable(SKILLS_DIR);
