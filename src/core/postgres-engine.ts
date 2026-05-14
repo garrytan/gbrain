@@ -1271,16 +1271,27 @@ export class PostgresEngine implements BrainEngine {
     return Number((row as { count?: number } | undefined)?.count ?? 0);
   }
 
-  async listStaleChunks(): Promise<StaleChunkRow[]> {
+  async listStaleChunks(opts?: {
+    batchSize?: number;
+    afterPageId?: number;
+    afterChunkIndex?: number;
+  }): Promise<StaleChunkRow[]> {
     const sql = this.sql;
+    const limit = opts?.batchSize ?? 2000;
+    const afterPid = opts?.afterPageId ?? 0;
+    const afterIdx = opts?.afterChunkIndex ?? -1;
+    // Cursor-paginated: keyset pagination on (page_id, chunk_index).
+    // The partial index idx_chunks_embedding_null makes the WHERE fast;
+    // LIMIT keeps each round-trip well within statement_timeout.
     const rows = await sql`
       SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-             cc.model, cc.token_count, p.source_id
+             cc.model, cc.token_count, p.source_id, cc.page_id
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       WHERE cc.embedding IS NULL
-      ORDER BY p.id, cc.chunk_index
-      LIMIT 100000
+        AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
+      ORDER BY cc.page_id, cc.chunk_index
+      LIMIT ${limit}
     `;
     return rows as unknown as StaleChunkRow[];
   }

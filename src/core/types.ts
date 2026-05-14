@@ -340,6 +340,8 @@ export interface StaleChunkRow {
   token_count: number | null;
   /** v0.31.12: source_id so embed --stale can thread it through getChunks/upsertChunks. */
   source_id: string;
+  /** v0.33.3: page_id for cursor pagination in listStaleChunks. */
+  page_id: number;
 }
 
 export interface ChunkInput {

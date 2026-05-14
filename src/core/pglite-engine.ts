@@ -1279,15 +1279,24 @@ export class PGLiteEngine implements BrainEngine {
     return Number(count);
   }
 
-  async listStaleChunks(): Promise<StaleChunkRow[]> {
+  async listStaleChunks(opts?: {
+    batchSize?: number;
+    afterPageId?: number;
+    afterChunkIndex?: number;
+  }): Promise<StaleChunkRow[]> {
+    const limit = opts?.batchSize ?? 2000;
+    const afterPid = opts?.afterPageId ?? 0;
+    const afterIdx = opts?.afterChunkIndex ?? -1;
     const { rows } = await this.db.query(
       `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-              cc.model, cc.token_count, p.source_id
+              cc.model, cc.token_count, p.source_id, cc.page_id
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
         WHERE cc.embedding IS NULL
-        ORDER BY p.id, cc.chunk_index
-        LIMIT 100000`,
+          AND (cc.page_id, cc.chunk_index) > ($1, $2)
+        ORDER BY cc.page_id, cc.chunk_index
+        LIMIT $3`,
+      [afterPid, afterIdx, limit],
     );
     return rows as unknown as StaleChunkRow[];
   }

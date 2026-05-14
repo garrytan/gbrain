@@ -2880,6 +2880,24 @@ export const MIGRATIONS: Migration[] = [
         ON search_telemetry (date DESC);
     `,
   },
+  {
+    version: 58,
+    name: 'embed_stale_partial_index',
+    // v0.33.3: partial index for `embedding IS NULL` on content_chunks.
+    //
+    // The `embed --stale` command scans for chunks missing embeddings.
+    // Without this index, the query does a full table scan of 300K+ rows
+    // to find the ~48K NULLs, taking >2 min and hitting Supabase's
+    // statement_timeout. With the partial index, the scan is instant.
+    //
+    // Also used by countStaleChunks() for the pre-flight check.
+    idempotent: true,
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_chunks_embedding_null
+        ON content_chunks (page_id, chunk_index)
+        WHERE embedding IS NULL;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
