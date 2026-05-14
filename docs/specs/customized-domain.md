@@ -65,9 +65,9 @@ and writes to the brain.
 
 | File | Role | Domain-specific? |
 |------|------|-----------------|
-| `src/core/types.ts` | `PageType` union type. Compile-time gate: types not in the union cannot be assigned. | YES — missing developer types (decision, debug-trail, pattern, process, tool, goal, environment) |
-| `src/core/markdown.ts` `inferType()` | Maps directory paths to `PageType`. Determines what type a page gets when imported. | YES — missing developer directory mappings |
-| `src/core/link-extraction.ts` | `DIR_PATTERN` regex for auto-link. Determines which directory references create graph edges. | YES — missing developer directories |
+| `src/core/types.ts` | `PageType` union type. Compile-time gate: types not in the union cannot be assigned. | YES — missing `decision` and `process` (`project` and `concept` already exist) |
+| `src/core/markdown.ts` `inferType()` | Maps directory paths to `PageType`. Determines what type a page gets when imported. | YES — missing `decisions/` and `processes/` mappings |
+| `src/core/link-extraction.ts` | `DIR_PATTERN` regex for auto-link. Determines which directory references create graph edges. | YES — missing `decisions` and `processes` (`projects` and `concepts` already in regex) |
 
 ### How the layers compose
 
@@ -129,45 +129,55 @@ potential break point where developer knowledge gets lost.
 6. ENRICH   - on subsequent interactions, agent updates existing pages
 ```
 
-## Developer Entity Types
+## Developer Entity Types (narrowed scope, v3)
 
-Replacing the upstream VC taxonomy (people/, companies/, deals/, meetings/):
+4 entity types replace the upstream VC taxonomy (people/, companies/, deals/).
+VC types remain in the infrastructure (PageType union, DIR_PATTERN) but the
+agent's behavioral layer (skill files) stops triggering on them.
 
-| Directory | Type | Example | Description |
-|-----------|------|---------|-------------|
-| `projects/` | project | `projects/my-app.md` | Hub pages for active codebases. Sub-pages for project-specific decisions and debug trails |
-| `decisions/` | decision | `decisions/chose-postgres-over-sqlite.md` | ADR-style technical decisions with rationale. Cross-project |
-| `debug-trails/` | debug-trail | `debug-trails/auth-jwt-rotation-cache-bug.md` | Bugs investigated, root causes, fixes applied |
-| `patterns/` | pattern | `patterns/repository-pattern.md` | Reusable dev patterns and practices |
-| `processes/` | process | `processes/deploy-to-production.md` | Step-by-step workflows: deploy, test, setup |
-| `tools/` | tool | `tools/docker-compose.md` | Tool config, gotchas, setup knowledge |
-| `goals/` | goal | `goals/migrate-to-nextjs.md` | Target outcomes per project, links to /goal skill |
-| `environments/` | environment | `environments/devcontainer-v2.md` | Devcontainer/Dockerfile fingerprint, toolchain versions |
-| `concepts/` | concept | `concepts/event-sourcing.md` | Kept from upstream. Works for dev concepts |
-| `meetings/` | meeting | `meetings/2026-05-14-sprint-retro.md` | Kept from upstream. Meetings still happen |
+| Directory | Type | Example | Absorbs | Already in PageType? |
+|-----------|------|---------|---------|---------------------|
+| `projects/` | project | `projects/my-app.md` | goals, environments, debug-trails (as sections/timeline) | YES |
+| `decisions/` | decision | `decisions/chose-postgres-over-sqlite.md` | ADR-style technical decisions with rationale | NO (new) |
+| `processes/` | process | `processes/deploy-to-production.md` | Repeatable workflows; graduates to skill files | NO (new) |
+| `concepts/` | concept | `concepts/event-sourcing.md` | tools, patterns, reusable mental models | YES |
 
-### Hybrid taxonomy (Option A)
+New PageType additions: **2** (`decision`, `process`).
+DIR_PATTERN additions: **2** (`decisions`, `processes`).
 
-Project-specific knowledge nests under the project hub:
+### VC-to-developer entity mapping
+
+| VC domain | Developer domain | Structural role |
+|-----------|-----------------|-----------------|
+| `people/` | `projects/` | Primary entity everything orbits around |
+| `companies/` | `concepts/` | Context entities that primary entities link to |
+| `deals/` | `decisions/` | Point-in-time choices that connect entities |
+| `meetings/` | (dropped) | Events where entities interact |
+| (no analog) | `processes/` | Repeatable procedures that graduate to skill files |
+
+### Directory structure
+
 ```
 brain/
 +-- projects/
-|   +-- my-app.md                  <- hub page
-|   +-- my-app/
-|   |   +-- decisions/             <- project-specific decisions
-|   |   +-- debug-trails/          <- project-specific debug trails
-+-- patterns/                      <- cross-project (transferable)
-+-- tools/                         <- cross-project
-+-- processes/                     <- cross-project
-+-- decisions/                     <- cross-project decisions
-+-- goals/
-+-- environments/
-+-- concepts/
-+-- meetings/
+|   +-- my-app.md                  <- hub page (goals, env, debug as sections)
++-- decisions/                     <- cross-project ADRs
++-- processes/                     <- repeatable workflows
++-- concepts/                      <- reusable knowledge (tools, patterns, models)
 ```
 
-Filing test: does this knowledge transfer to the next project? If yes, file at
-the top level. If no, file under the project.
+Filing test: "Is this a reusable concept? -> concepts/. A step-by-step
+procedure? -> processes/. A technical choice with rationale? -> decisions/.
+Everything else is a section on the project page."
+
+### Notability criteria for concepts/ (junk-drawer prevention)
+
+concepts/ absorbs tools and patterns. To prevent it from becoming a dumping
+ground, a concept must be: reusable (applies to more than one project),
+cross-project (not tied to a single codebase), stable (won't change next
+week), and non-procedural (if it's a series of steps, it's a process, not
+a concept). Example: "event sourcing" is a concept. "How to set up Docker
+for this project" is a process or a project section.
 
 ### Brain-to-skill promotion pipeline
 
@@ -249,7 +259,7 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 | # | File | Loop Phase | Reason |
 |---|------|-----------|--------|
 | 1 | `skills/RESOLVER.md` | DETECT | Every trigger is VC-specific. Replace with developer triggers |
-| 2 | `skills/signal-detector/SKILL.md` | DETECT + WRITE | Entity detection list (line 70) defines what gets captured. Currently: people, companies, media. Must become: projects, tools, decisions, patterns, processes |
+| 2 | `skills/signal-detector/SKILL.md` | DETECT + WRITE | Entity detection list (line 70) defines what gets captured. Currently: people, companies, media. Must become: projects, decisions, processes, concepts |
 | 3 | `skills/_brain-filing-rules.md` | WRITE + STORE | Entire taxonomy, misfiling table, notability gate, dream-cycle paths |
 
 #### Skill files to PATCH (3)
@@ -257,15 +267,15 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 | # | File | Sections to change | Loop Phase | What changes |
 |---|------|-------------------|-----------|--------------|
 | 4 | `skills/brain-ops/SKILL.md` | Frontmatter `writes_to`, Phase 2 trigger (line 69) + detect (line 71), Iron Law scope (line 49), Phase 4 enrichment triggers (lines 111-112), anti-patterns (line 146). 8 sites total. | ALL | Replace "person or company" with developer entity list at every hard-gate mention |
-| 5 | `skills/conventions/brain-first.md` | Header (line 1), entity conventions table (lines 57-64): add 8 rows for developer dirs, replace 4 VC-only rows, remove `deals/` and `yc/` | RETRIEVE | Agent needs slug-construction guidance for all developer directories |
-| 6 | `skills/conventions/quality.md` | Iron Law (line 25): generalize to "any entity with a brain page". Notability Gate (lines 34-36): add criteria for projects, decisions, tools, patterns, processes, debug-trails, goals, environments. Example (line 40): replace VC example | WRITE | Root of the delegation chain. All other files inherit from this |
+| 5 | `skills/conventions/brain-first.md` | Header (line 1), entity conventions table (lines 57-64): add `decisions/` and `processes/` rows, replace VC-only rows (`deals/`, `yc/`), keep `projects/` and `concepts/` | RETRIEVE | Agent needs slug-construction guidance for developer directories |
+| 6 | `skills/conventions/quality.md` | Iron Law (line 25): generalize to "any entity with a brain page". Notability Gate (lines 34-36): add criteria for projects, decisions, processes, concepts (with junk-drawer prevention for concepts/). Example (line 40): replace VC example | WRITE | Root of the delegation chain. All other files inherit from this |
 
 #### Code/config files to PATCH (2)
 
 | # | File | What changes | Loop Phase |
 |---|------|-------------|-----------|
-| 7 | `src/core/link-extraction.ts` | Add `decisions\|debug-trails\|patterns\|processes\|tools\|goals\|environments` to `DIR_PATTERN` regex at line 46 | STORE (auto-link) |
-| 8 | `skills/_brain-filing-rules.json` | Add developer `kind` entries + update `dream_synthesize_paths.globs` array | STORE (dream cycle) |
+| 7 | `src/core/link-extraction.ts` | Add `decisions\|processes` to `DIR_PATTERN` regex at line 46 (`projects` and `concepts` already present) | STORE (auto-link) |
+| 8 | `skills/_brain-filing-rules.json` | Add `decision` and `process` kind entries + update `dream_synthesize_paths.globs` for `decisions/` and `processes/` | STORE (dream cycle) |
 
 #### Entrypoint edit (1)
 
@@ -283,8 +293,8 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 
 | File | Change | Priority |
 |------|--------|----------|
-| `src/core/types.ts` `PageType` union | Add decision, debug-trail, pattern, process, tool, goal, environment to the type union + `ALL_PAGE_TYPES`. Compile-time break without this | **HIGH (Tier 1)** |
-| `src/core/markdown.ts` `inferType()` | Add developer directory-to-type mappings. Ordering: longest prefix first (decisions/ before projects/) for hybrid paths | **HIGH (Tier 1)** |
+| `src/core/types.ts` `PageType` union | Add `decision` and `process` to the type union + `ALL_PAGE_TYPES`. Compile-time break without this | **HIGH (Tier 1)** |
+| `src/core/markdown.ts` `inferType()` | Add `decisions/` and `processes/` directory mappings. Ordering: check `decisions/` before `projects/` for nested paths | **HIGH (Tier 1)** |
 | `src/commands/doctor.ts` graph_coverage | Expand `type IN (...)` clause to include developer types | Low |
 | `brain-ops/SKILL.md` Phase 2.5 | Add developer relationship types (uses, depends_on, decided_in) as examples | Low |
 
@@ -321,9 +331,11 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 10. **entrypoint.sh** (drop 2 irrelevant files, keep brain-routing.md)
 11. Tier 2 code changes (doctor.ts) if time allows
 
-## Process page template (for developer entities)
+## Page Templates
 
-Every process page should include these sections to support reproducibility:
+### Process page
+
+Repeatable workflows. Graduates to skill files after 2-3 successful reuses.
 
 ```markdown
 ---
@@ -361,6 +373,98 @@ tags: [deploy, production, ci]
 ## Timeline
 - **YYYY-MM-DD** | Source - What happened, who ran it, what changed
 ```
+
+### Decision page
+
+ADR-style technical decisions with rationale. Cross-project.
+
+```markdown
+---
+type: decision
+title: Chose Postgres Over SQLite
+tags: [database, architecture]
+---
+
+# Chose Postgres Over SQLite
+
+> One-line summary of what was decided and why.
+
+## Context
+- What prompted this decision
+
+## Options Considered
+- Option A: description, pros, cons
+- Option B: description, pros, cons
+
+## Decision
+- What was chosen and why
+
+## Consequences
+- What changes as a result
+- What trade-offs were accepted
+
+---
+
+## Timeline
+- **YYYY-MM-DD** | Source - When decided, by whom, in what context
+```
+
+### Project page
+
+Hub page for an active codebase. Goals, environments, and debug trails
+live as sections and structured timeline entries, not separate pages.
+
+```markdown
+---
+type: project
+title: My App
+tags: [active, web]
+---
+
+# My App
+
+> One-paragraph summary: what it is, what stage, what matters now.
+
+## Architecture
+- High-level structure, key components
+
+## Current Goals
+- What we're working toward right now
+
+## Environment
+- Runtime: Node 22, Bun 1.3
+- Deploy: devcontainer on Codespaces
+- Key config: any non-obvious setup
+
+## Open Threads
+- Active items, blockers, next steps
+
+## Decisions
+- [Chose Postgres](decisions/chose-postgres-over-sqlite.md)
+- [API-first architecture](decisions/api-first.md)
+
+---
+
+## Timeline
+- **YYYY-MM-DD** | Source - What happened
+```
+
+### Structured debug-trail timeline entries
+
+Debug trails are timeline entries on project pages, not separate pages.
+Use this structured format so they stay machine-parseable for retrieval:
+
+```markdown
+- **YYYY-MM-DD** | Debug — **Symptom:** auth returning 401 after deploy.
+  **Root cause:** JWT secret rotated but old key cached in Redis (TTL 24h).
+  **Fix:** added cache invalidation on secret rotation + reduced TTL to 1h.
+  **Refs:** [decisions/jwt-rotation-policy](decisions/jwt-rotation-policy.md)
+  [Source: User, debug session, YYYY-MM-DD]
+```
+
+Fields: Symptom (what was observed), Root cause (why it happened), Fix (what
+was done), Refs (links to related decisions/concepts). All on one timeline
+entry so `gbrain search "JWT cache bug"` finds it.
 
 ## Architecture Compliance
 
@@ -422,10 +526,9 @@ type-based. Developer pages get identical search treatment. No conflict there.
 However, Codex found a compile-time break the spec missed:
 
 **`src/core/types.ts` PageType union.** The union type does NOT include
-`decision`, `debug-trail`, `pattern`, `process`, `tool`, `goal`, or
-`environment`. Adding these to `inferType()` in `markdown.ts` without updating
-the `PageType` union in `types.ts` is a TypeScript compile error. This is a
-Tier 1 blocker, not Tier 2.
+`decision` or `process`. (`project` and `concept` already exist.) Adding
+these to `inferType()` in `markdown.ts` without updating the `PageType`
+union in `types.ts` is a TypeScript compile error. Tier 1 blocker.
 
 **`inferType()` ordering for hybrid paths.** The hybrid taxonomy nests
 `projects/my-app/decisions/` under `projects/`. If `inferType` checks
@@ -461,7 +564,7 @@ Added to the change manifest:
 
 | # | File | What changes | Tier |
 |---|------|-------------|------|
-| NEW | `src/core/types.ts` | Add developer types to `PageType` union and `ALL_PAGE_TYPES` | Tier 1 (compile-time break) |
+| NEW | `src/core/types.ts` | Add `decision` + `process` to `PageType` union and `ALL_PAGE_TYPES` | Tier 1 (compile-time break) |
 | UPDATED | entrypoint.sh | Drop 2 files (not 3) — keep brain-routing.md | Tier 1 |
 | UPDATED | `src/core/markdown.ts` `inferType()` | Moved from Tier 2 to Tier 1 — ordering matters for hybrid paths | Tier 1 |
 
@@ -479,3 +582,88 @@ Three rounds of analysis were needed:
 The lesson: when customizing a domain, trace the delegation chain, not just
 individual files. A "keep unchanged" file can be the root constraint that
 silently blocks the entire new domain.
+
+## Reviews
+
+### Codex review 1: Retrieval gap (Round 2)
+
+**Question:** Will changing 3 write-side files be sufficient for reliable retrieval?
+
+**Verdict:** No. Two read-side files need patches.
+
+- `brain-ops/SKILL.md` Phase 3: "person, company, or topic" biases trigger
+  behavior toward VC entities. Developer question types must be explicit.
+- `brain-first.md` entity conventions table: acts as a behavioral filter even
+  though it's not a hard technical gate. Agent constructs slugs from this table.
+
+**Impact on spec:** Added 2 read-side patches to the change manifest (Round 2).
+
+### Codex review 2: Architecture compliance (Round 3 follow-up)
+
+**Question:** Does the spec adhere to gbrain's architecture docs?
+
+**Verdict:** Not fully compliant as written. 4 issues found:
+
+1. `system-of-record.md` — spec framed "STORE = lands in PGLite" which
+   contradicts the FS-canonical contract (markdown is system of record, DB is
+   derived cache).
+2. `brains-and-sources.md` — spec said `--brain` and `--source` are
+   "irrelevant" which is too strong even for Topology 1. Dropping
+   `brain-routing.md` removes source-axis awareness.
+3. `infra-layer.md` — `types.ts` PageType union missing developer types
+   (compile-time break). `inferType()` ordering matters for hybrid paths.
+4. `topologies.md` — cross-environment reproducibility goal conflicts with
+   "no cross-machine concerns" claim.
+
+**Impact on spec:** Added `types.ts` to Tier 1. Promoted `markdown.ts` from
+Tier 2 to Tier 1. Changed entrypoint from "drop 3" to "drop 2" (kept
+brain-routing.md). Added explicit FS-canonical framing and rebuild contract.
+
+### Codex review 3: Infrastructure impact
+
+**Question:** Does the spec make changes to gbrain's infrastructure layer?
+
+**Verdict:** Narrow infrastructure touches, no architectural changes.
+
+| Area | Changed? |
+|------|----------|
+| Data pipeline (import/chunk/embed/search) | Lightly. `inferType` and `DIR_PATTERN` change classification during import. No changes to chunking, embedding, search, or RRF. |
+| Schema (tables/columns/indexes) | No |
+| Engine interface (BrainEngine methods) | No |
+| MCP server / operations contract | No |
+| Sync, migrations, rebuild contract | No |
+
+File classification:
+- `types.ts` PageType — infrastructure-adjacent (compile-time type contract)
+- `markdown.ts` inferType — infrastructure (parser routing metadata), narrow
+- `link-extraction.ts` DIR_PATTERN — infrastructure (link extraction), narrow
+- `_brain-filing-rules.json` — skills layer (agent config), not infra
+
+**Conclusion:** The 3 code changes extend existing infrastructure patterns
+(adding values to a union, paths to a regex, mappings to a switch) rather
+than altering pipeline architecture, schema, engine, MCP, or rebuild
+contracts. The deterministic foundation stays untouched.
+
+### Codex review 4: Narrowed entity scope soundness
+
+**Question:** Is narrowing from 10 entity types to 4 (projects, decisions,
+processes, concepts) sound?
+
+**Verdict:** Mostly sound. Two caveats.
+
+1. The narrowing is correct for the stated goal (fresh devcontainer
+   reproducibility). `project + decision + process + concept` is a good
+   minimal basis for developer operational memory.
+2. All merges are correct: debug-trails into project timeline (if entries
+   are structured), tools into concepts (usage knowledge fits; project-
+   specific config stays on project pages), patterns into concepts.
+3. Medium risk of concepts/ becoming a junk drawer. Mitigate with strict
+   notability criteria: reusable, cross-project, stable, non-procedural.
+4. Low-medium closed-loop break risk. Main concern: debug trails buried
+   in long project pages may degrade retrieval quality. Mitigate with a
+   structured debug-entry template for project timeline sections so
+   root-cause investigations stay machine-parseable.
+
+**Impact on spec:** Narrowed scope accepted. Added structured debug-trail
+timeline entry format to the project page template. Added concepts/
+notability criteria to quality.md patch requirements.
