@@ -37,58 +37,89 @@ export interface EntityRef {
 export type LinkResolutionType = 'qualified' | 'unqualified';
 
 /**
- * Directory prefix whitelist. These are the top-level slug dirs the extractor
- * recognizes as entity references. Upstream canonical + our extensions:
- *   - Gbrain canonical: people, companies, meetings, concepts, deal, civic, project, source, media, yc, projects
- *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
- *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
+ * Default directory prefix whitelist. These are the top-level slug dirs the
+ * extractor recognizes as entity references by default.
+ *
+ * Sites with custom directory layouts (numbered dirs like `03-ventures`,
+ * shorthand wikilink aliases like `venture/`, domain-specific dirs) should
+ * extend via the `auto_link.extra_dirs` config key — see {@link buildDirPattern}
+ * and {@link getAutoLinkExtraDirs}. The defaults below are not modified.
  */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+export const DEFAULT_ENTITY_DIRS = [
+  'people', 'companies', 'meetings', 'concepts', 'deal', 'civic', 'project',
+  'projects', 'source', 'media', 'yc', 'tech', 'finance', 'personal',
+  'openclaw', 'entities',
+] as const;
+
+/** Escape a directory name for safe inclusion in a regex alternation. */
+function escapeDirForRegex(dir: string): string {
+  return dir.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
+}
 
 /**
- * Match `[Name](path)` markdown links pointing to entity directories.
- * Accepts both filesystem-relative format (`[Name](../people/slug.md)`)
- * AND engine-slug format (`[Name](people/slug)`).
+ * Build the directory-prefix alternation that the entity-ref regexes consume.
+ * Optional `extraDirs` extends the default whitelist (does not replace it).
  *
- * Captures: name, slug (dir/name, possibly deeper).
- *
- * The regex permits an optional `../` prefix (any number) and an optional
- * `.md` suffix so the same function works for both filesystem and DB content.
+ * @example buildDirPattern(['03-ventures', 'venture', '06-people'])
+ *          → '(?:people|companies|...|03\\-ventures|venture|06\\-people)'
  */
-const ENTITY_REF_RE = new RegExp(
-  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${DIR_PATTERN}\\/[^)\\s]+?)(?:\\.md)?\\)`,
-  'g',
-);
+export function buildDirPattern(extraDirs: readonly string[] = []): string {
+  const seen = new Set<string>();
+  const all: string[] = [];
+  for (const d of [...DEFAULT_ENTITY_DIRS, ...extraDirs]) {
+    if (!d || seen.has(d)) continue;
+    seen.add(d);
+    all.push(escapeDirForRegex(d));
+  }
+  return `(?:${all.join('|')})`;
+}
+
+/** Build all three entity-reference regex variants from an optional extras list. */
+export function buildEntityRegexes(extraDirs: readonly string[] = []): {
+  entityRefRe: RegExp;
+  wikilinkRe: RegExp;
+  qualifiedWikilinkRe: RegExp;
+} {
+  const dir = buildDirPattern(extraDirs);
+  return {
+    entityRefRe: new RegExp(
+      `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${dir}\\/[^)\\s]+?)(?:\\.md)?\\)`,
+      'g',
+    ),
+    wikilinkRe: new RegExp(
+      `\\[\\[(${dir}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+      'g',
+    ),
+    qualifiedWikilinkRe: new RegExp(
+      `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${dir}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+      'g',
+    ),
+  };
+}
+
+// Default dir pattern + regexes built from canonical dirs only. Module-level
+// constants preserved for backward compat with any direct importer. Callers
+// that need site-specific extras go through buildEntityRegexes instead.
+const DIR_PATTERN = buildDirPattern();
+const { entityRefRe: ENTITY_REF_RE, wikilinkRe: WIKILINK_RE, qualifiedWikilinkRe: QUALIFIED_WIKILINK_RE } = buildEntityRegexes();
 
 /**
- * Match Obsidian-style `[[path]]` or `[[path|Display Text]]` wikilinks.
- * Captures: slug (dir/...), displayName (optional).
- *
- * Same dir whitelist as ENTITY_REF_RE. Strips trailing `.md`, strips section
- * anchors (`#heading`), skips external URLs. Wiki KBs use this format almost
- * exclusively so missing it leaves the graph empty.
+ * Read the `auto_link.extra_dirs` config from the engine. Supports either a
+ * JSON array string (`["03-ventures","venture"]`) or comma-separated
+ * (`03-ventures,venture`). Returns `[]` on any read or parse error so the
+ * default whitelist still applies.
  */
-const WIKILINK_RE = new RegExp(
-  `\\[\\[(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
-  'g',
-);
-
-/**
- * v0.17.0: qualified wikilink `[[source-id:dir/slug]]` or
- * `[[source-id:dir/slug|Display Text]]`. The source-id segment pins the
- * target to a specific sources(id) row, overriding the local-first
- * fallback used by unqualified `[[slug]]` references.
- *
- * Captures: sourceId, slug (dir/...), displayName (optional).
- *
- * Matched BEFORE WIKILINK_RE so `[[wiki:topics/ai]]` isn't mis-parsed by
- * the unqualified regex (the source prefix would not satisfy DIR_PATTERN
- * anyway, but the two-pass approach keeps intent crystal-clear).
- */
-const QUALIFIED_WIKILINK_RE = new RegExp(
-  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
-  'g',
-);
+export async function getAutoLinkExtraDirs(engine: BrainEngine): Promise<readonly string[]> {
+  try {
+    const raw = await engine.getConfig('auto_link.extra_dirs');
+    if (!raw) return [];
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('[')) return JSON.parse(trimmed);
+    return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
@@ -226,16 +257,27 @@ export function extractCodeRefs(content: string): CodeRef[] {
  * here; caller dedups). Slugs appearing inside fenced or inline code blocks
  * are excluded — those are typically code samples, not real entity references.
  */
-export function extractEntityRefs(content: string): EntityRef[] {
+export function extractEntityRefs(content: string, extraDirs?: readonly string[]): EntityRef[] {
   const stripped = stripCodeBlocks(content);
   const refs: EntityRef[] = [];
   let match: RegExpExecArray | null;
+
+  // Build the regex bundle. When extraDirs is supplied we build fresh from
+  // an extended dir whitelist; otherwise we clone the module-level regex
+  // sources (so the per-call /g state doesn't bleed between callers).
+  const bundle = extraDirs && extraDirs.length > 0
+    ? buildEntityRegexes(extraDirs)
+    : {
+        entityRefRe: new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags),
+        wikilinkRe: new RegExp(WIKILINK_RE.source, WIKILINK_RE.flags),
+        qualifiedWikilinkRe: new RegExp(QUALIFIED_WIKILINK_RE.source, QUALIFIED_WIKILINK_RE.flags),
+      };
 
   // 1. Markdown links: [Name](path)
   //    Markdown links have no source-qualification syntax — they're
   //    always unqualified. Omit sourceId so the shape stays compatible
   //    with pre-v0.17 consumers doing strict equality.
-  const mdPattern = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
+  const mdPattern = bundle.entityRefRe;
   while ((match = mdPattern.exec(stripped)) !== null) {
     const name = match[1];
     const fullPath = match[2];
@@ -248,7 +290,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
   //     Must run BEFORE the unqualified pass or we'd double-emit. We also
   //     mask out the matched spans so pass 2b can't grab them.
   const qualifiedRanges: Array<[number, number]> = [];
-  const qualPattern = new RegExp(QUALIFIED_WIKILINK_RE.source, QUALIFIED_WIKILINK_RE.flags);
+  const qualPattern = bundle.qualifiedWikilinkRe;
   while ((match = qualPattern.exec(stripped)) !== null) {
     const sourceId = match[1];
     let slug = match[2].trim();
@@ -264,7 +306,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
   // 2b. Unqualified Obsidian wikilinks: [[path]] or [[path|Display Text]]
   //     Same shape rule: omit sourceId when unqualified.
   const unmasked = maskRanges(stripped, qualifiedRanges);
-  const wikiPattern = new RegExp(WIKILINK_RE.source, WIKILINK_RE.flags);
+  const wikiPattern = bundle.wikilinkRe;
   while ((match = wikiPattern.exec(unmasked)) !== null) {
     let slug = match[1].trim();
     if (!slug) continue;
@@ -361,11 +403,12 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
+  extraDirs?: readonly string[],
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
   // 1. Markdown entity refs.
-  for (const ref of extractEntityRefs(content)) {
+  for (const ref of extractEntityRefs(content, extraDirs)) {
     const idx = content.indexOf(ref.name);
     // Wider context window (240 chars vs original 80) catches verbs that
     // appear at sentence-or-paragraph distance from the slug — common in
@@ -381,11 +424,13 @@ export async function extractPageLinks(
   }
 
   // 2. Bare slug references (e.g. "see people/alice-chen for context").
-  // Limited to the same entity directories ENTITY_REF_RE covers.
+  // Limited to the same entity directories ENTITY_REF_RE covers (plus any
+  // configured extras).
   // Code blocks are stripped first — slugs in code samples are not real refs.
   const strippedContent = stripCodeBlocks(content);
+  const bareDirPattern = extraDirs && extraDirs.length > 0 ? buildDirPattern(extraDirs) : DIR_PATTERN;
   const bareRe = new RegExp(
-    `\\b(${DIR_PATTERN}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
+    `\\b(${bareDirPattern}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
     'g',
   );
   let m: RegExpExecArray | null;

@@ -23,7 +23,7 @@ import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import {
   extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
-  extractFrontmatterLinks,
+  extractFrontmatterLinks, getAutoLinkExtraDirs,
   type UnresolvedFrontmatterRef,
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
@@ -768,6 +768,12 @@ async function extractLinksFromDB(
   opts?: { includeFrontmatter?: boolean },
 ): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[] }> {
   const includeFrontmatter = opts?.includeFrontmatter ?? false;
+  // v0.33.3 BH-carry: pull site-specific extra dir prefixes from config
+  // (auto_link.extra_dirs). Sites with numbered dirs ("03-ventures") or
+  // shorthand wikilink aliases ("venture/", "person/") set this so the
+  // extractor recognizes their links. Default behavior unchanged when
+  // unset. See src/core/link-extraction.ts buildEntityRegexes.
+  const extraDirs = await getAutoLinkExtraDirs(engine);
   // Batch resolver: pg_trgm + exact only, NO search fallback. Dodges the
   // N-thousand API call trap on 46K-page brains. Resolver has a per-run
   // cache so duplicate names (same person appearing on many pages) resolve
@@ -833,7 +839,7 @@ async function extractLinksFromDB(
     // user-invoked `gbrain extract links` stays outgoing-only.
     const activeResolver = includeFrontmatter ? resolver : nullResolver;
     const extracted = await extractPageLinks(
-      slug, fullContent, page.frontmatter, page.type, activeResolver,
+      slug, fullContent, page.frontmatter, page.type, activeResolver, extraDirs,
     );
     unresolved.push(...extracted.unresolved);
 
