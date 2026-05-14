@@ -39,6 +39,14 @@ export interface EmbeddingTouchpoint {
    */
   max_batch_tokens?: number;
   /**
+   * Maximum tokens for a single embedding input. This is separate from
+   * max_batch_tokens: some local embedding servers accept tiny batches but
+   * still reject one oversized string because it exceeds the model context.
+   * The gateway applies `safety_factor * max_input_tokens * chars_per_token`
+   * as a per-item character cap before dispatching to the provider.
+   */
+  max_input_tokens?: number;
+  /**
    * Expected character density for this provider's tokenizer (chars per
    * token). OpenAI tiktoken averages ~4 on English text; Voyage averages
    * ~1 on mixed content (code/JSON/CJK). Defaults to 4 if omitted.
