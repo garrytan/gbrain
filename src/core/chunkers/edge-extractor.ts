@@ -37,20 +37,31 @@ import type { SupportedCodeLanguage } from './code.ts';
 
 export interface ExtractedEdge {
   /**
-   * Byte offset of the call site in the source. The caller resolves this
-   * to a from_chunk_id by finding the chunk whose (startLine, endLine)
-   * brackets the offset — matches how Layer 6 A3 emits one chunk per
-   * nested method, so each call site falls inside exactly one chunk.
+   * Byte offset of the call site (or import/reference site) in the source.
+   * The caller resolves this to a from_chunk_id by finding the chunk whose
+   * (startLine, endLine) brackets the offset — matches how Layer 6 A3
+   * emits one chunk per nested method, so each call site falls inside
+   * exactly one chunk.
    */
   callSiteByteOffset: number;
   /**
-   * The callee token. When v0.34 W1 receiver-type resolution lands a match,
-   * this is the qualified form `Class::method` or `module::function`. When
-   * the receiver couldn't be resolved within WALK_DEPTH_CAP ancestor hops,
-   * this is the bare token (`method`) — pre-v0.34 behavior.
+   * The callee/imported/referenced token. When v0.34 W1 receiver-type
+   * resolution lands a match, this is the qualified form `Class::method`
+   * or `module::function`. When the receiver couldn't be resolved within
+   * WALK_DEPTH_CAP ancestor hops, this is the bare token (`method`).
+   * For `imports` edges this is the imported symbol qualified as
+   * `module::symbol` (e.g. `react::useState`). For `references` edges
+   * this is the referenced type name.
    */
   toSymbol: string;
-  edgeType: 'calls';
+  /**
+   * v0.34 W2 — three edge kinds. `calls` is the v0.20 baseline; `imports`
+   * captures `import { x } from 'y'` and `from x import y` statements;
+   * `references` captures type-position mentions (TS function args, return
+   * types). Per D18 only JS/TS/TSX + Python emit imports; only TS emits
+   * references (Python's type hints are too sparse to be useful for v0.34).
+   */
+  edgeType: 'calls' | 'imports' | 'references';
 }
 
 /**
@@ -332,6 +343,185 @@ export function extractCallEdges(tree: any, language: SupportedCodeLanguage): Ex
     for (const child of node.namedChildren) stack.push(child);
   }
   return out;
+}
+
+/**
+ * v0.34 W2 — Walk the tree and collect every import statement.
+ * Emits one `imports` edge per imported symbol with `toSymbol` set to
+ * `module::symbol`. Eligible languages: JS/TS/TSX (`import { x } from 'y'`,
+ * `import * as foo from 'bar'`, `import('foo')` dynamic imports) and Python
+ * (`from x import y`, `import y`). Other languages return [].
+ *
+ * Per D18 from eng review — only JS/TS/TSX + Python at depth. Ruby/Go/Rust/
+ * Java skip imports for v0.34.
+ */
+export function extractImportEdges(tree: any, language: SupportedCodeLanguage): ExtractedEdge[] {
+  const out: ExtractedEdge[] = [];
+  if (
+    language !== 'typescript' &&
+    language !== 'tsx' &&
+    language !== 'javascript' &&
+    language !== 'python'
+  ) {
+    return out;
+  }
+
+  const root = tree.rootNode;
+  if (!root) return out;
+
+  for (const stmt of root.namedChildren ?? []) {
+    // ───── JS/TS imports ─────
+    if (
+      (language === 'typescript' || language === 'tsx' || language === 'javascript') &&
+      stmt.type === 'import_statement'
+    ) {
+      const sourceNode = stmt.childForFieldName('source');
+      const source = (sourceNode?.text ?? '').replace(/^['"`]|['"`]$/g, '');
+      if (!source) continue;
+      // Parse the named imports / default / namespace import out of the
+      // statement text. Tree-sitter exposes import_clause + named_imports
+      // children but the structure varies by grammar version; text-pattern
+      // matching is more reliable.
+      const stmtText = (stmt.text ?? '') as string;
+      // Named imports: `import { a, b as c } from 'pkg'`
+      const namedMatch = stmtText.match(/import\s*(?:type\s+)?\{([^}]+)\}\s*from/);
+      if (namedMatch && namedMatch[1]) {
+        const names = namedMatch[1]
+          .split(',')
+          .map((s) => s.trim().split(/\s+as\s+/)[0]!.trim())
+          .filter((s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s));
+        for (const name of names) {
+          out.push({
+            callSiteByteOffset: stmt.startIndex,
+            toSymbol: `${source}::${name}`,
+            edgeType: 'imports',
+          });
+        }
+      }
+      // Default import: `import foo from 'pkg'`
+      const defaultMatch = stmtText.match(/import\s+([A-Za-z_][A-Za-z0-9_]*)\s+from/);
+      if (defaultMatch) {
+        out.push({
+          callSiteByteOffset: stmt.startIndex,
+          toSymbol: `${source}::default`,
+          edgeType: 'imports',
+        });
+      }
+      // Namespace import: `import * as foo from 'pkg'`
+      const nsMatch = stmtText.match(/import\s*\*\s*as\s+([A-Za-z_][A-Za-z0-9_]*)/);
+      if (nsMatch) {
+        out.push({
+          callSiteByteOffset: stmt.startIndex,
+          toSymbol: `${source}::*`,
+          edgeType: 'imports',
+        });
+      }
+      // Side-effect import: `import 'foo';` — record the module itself.
+      if (!namedMatch && !defaultMatch && !nsMatch) {
+        out.push({
+          callSiteByteOffset: stmt.startIndex,
+          toSymbol: `${source}::*`,
+          edgeType: 'imports',
+        });
+      }
+    }
+    // ───── Python imports ─────
+    if (language === 'python') {
+      if (stmt.type === 'import_from_statement') {
+        const moduleNode = stmt.childForFieldName('module_name');
+        const module = moduleNode?.text;
+        if (!module) continue;
+        // The import_from_statement has name fields for each imported symbol.
+        const text = (stmt.text ?? '') as string;
+        // `from pkg import a, b as c`
+        const m = text.match(/from\s+\S+\s+import\s+(.+)$/m);
+        if (m && m[1]) {
+          const names = m[1]
+            .split(',')
+            .map((s) => s.trim().split(/\s+as\s+/)[0]!.trim())
+            .filter((s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s));
+          for (const name of names) {
+            out.push({
+              callSiteByteOffset: stmt.startIndex,
+              toSymbol: `${module}::${name}`,
+              edgeType: 'imports',
+            });
+          }
+        }
+      }
+      if (stmt.type === 'import_statement') {
+        // `import pkg` / `import pkg.sub`
+        const text = (stmt.text ?? '') as string;
+        const m = text.match(/import\s+([A-Za-z_][A-Za-z0-9_.]*)/);
+        if (m && m[1]) {
+          out.push({
+            callSiteByteOffset: stmt.startIndex,
+            toSymbol: `${m[1]}::*`,
+            edgeType: 'imports',
+          });
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * v0.34 W2 — Walk the tree and collect every type-position reference
+ * (TS-only for v0.34). Emits one `references` edge per type identifier
+ * appearing in a function signature, return annotation, generic argument,
+ * or type alias body.
+ *
+ * Honest scope: this catches `function f(x: SomeType)` and
+ * `function f(): SomeType` and `type Alias = SomeType`. It does NOT catch
+ * conditional types, mapped types, or template-literal types — those are
+ * v0.35.
+ */
+export function extractReferenceEdges(tree: any, language: SupportedCodeLanguage): ExtractedEdge[] {
+  const out: ExtractedEdge[] = [];
+  if (language !== 'typescript' && language !== 'tsx') return out;
+
+  const root = tree.rootNode;
+  if (!root) return out;
+
+  // Walk every node looking for `type_annotation` / `type_identifier`
+  // contexts. A type_identifier node text IS the referenced type name.
+  const stack: any[] = [root];
+  const seen = new Set<string>(); // dedup per file: same type referenced N times → one edge per offset
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    if (node.type === 'type_identifier' || node.type === 'predefined_type') {
+      const text = (node.text ?? '') as string;
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(text) && text.length > 1) {
+        const key = `${node.startIndex}:${text}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push({
+            callSiteByteOffset: node.startIndex,
+            toSymbol: text,
+            edgeType: 'references',
+          });
+        }
+      }
+    }
+    for (const child of node.namedChildren ?? []) stack.push(child);
+  }
+  return out;
+}
+
+/**
+ * v0.34 W2 — Combined extractor: returns the union of call edges, import
+ * edges, and reference edges. Consumers (code.ts) call this instead of
+ * extractCallEdges directly.
+ */
+export function extractAllEdges(tree: any, language: SupportedCodeLanguage): ExtractedEdge[] {
+  return [
+    ...extractCallEdges(tree, language),
+    ...extractImportEdges(tree, language),
+    ...extractReferenceEdges(tree, language),
+  ];
 }
 
 /**
