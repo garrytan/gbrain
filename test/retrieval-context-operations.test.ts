@@ -48,6 +48,9 @@ describe('agentic retrieval context operations', () => {
     }];
     const engine = {
       searchKeyword: async () => searchResults,
+      getPageProjection: async () => ({
+        content_hash: 'page-hash-1',
+      }),
       listNoteSectionEntries: async () => [{
         scope_id: 'workspace:default',
         page_slug: 'concepts/retrieval',
@@ -76,6 +79,7 @@ describe('agentic retrieval context operations', () => {
     expect(result.required_reads[0].selector_id).toBe('section:workspace:default:concepts/retrieval#compiled-truth');
     expect(result.required_reads[0].line_start).toBe(1);
     expect(result.required_reads[0].line_end).toBe(4);
+    expect(result.required_reads[0].content_hash).toBe('page-hash-1');
 
     const output = formatResult('retrieve_context', result);
     expect(output).toContain('Answerable from probe: no');
@@ -90,10 +94,18 @@ describe('agentic retrieval context operations', () => {
     if (!op) throw new Error('read_context operation is missing');
 
     const engine = {
-      getPage: async () => ({
+      getPageLineSpanProjection: async () => ({
+        id: 1,
+        slug: 'concepts/retrieval',
+        type: 'concept',
         title: 'Retrieval',
-        compiled_truth: 'Alpha Canonical evidence Omega',
-        timeline: '',
+        frontmatter: {},
+        content_hash: 'page-hash-1',
+        created_at: new Date('2026-05-07T00:00:00.000Z'),
+        updated_at: new Date('2026-05-07T00:00:00.000Z'),
+        text: 'Alpha Canonical evidence Omega',
+        line_start: 1,
+        line_end: 1,
       }),
     };
 

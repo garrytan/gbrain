@@ -5,6 +5,7 @@ import { join } from 'path';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
 
 const originalEnv = { ...process.env };
+const PGLITE_MIGRATION_TEST_TIMEOUT_MS = 45_000;
 let tempHome = '';
 
 function makeVector(...values: number[]): Float32Array {
@@ -95,30 +96,41 @@ describe('migrate', () => {
     });
 
     const source = new SQLiteEngine();
-    await source.connect({ engine: 'sqlite', database_path: sourcePath });
-    await source.initSchema();
-    await source.putPage('systems/compiler.md', {
-      type: 'system',
-      title: 'Compiler',
-      compiled_truth: 'Compiler system overview.',
-    });
-    await source.updatePageEmbedding('systems/compiler.md', embedding);
-
-    await runMigrateEngine(source, ['--to', 'pglite', '--path', targetPath]);
-    await source.disconnect();
-
     const target = new PGLiteEngine();
-    await target.connect({ engine: 'pglite', database_path: targetPath });
-    await target.initSchema();
+    let sourceConnected = false;
+    let targetConnected = false;
 
-    const embeddings = await target.getPageEmbeddings('system');
-    expect(embeddings).toHaveLength(1);
-    expect(embeddings[0]?.slug).toBe('systems/compiler.md');
-    expect(embeddings[0]?.embedding).not.toBeNull();
-    expect(Array.from(embeddings[0]!.embedding!.slice(0, 3))).toEqual([1, 2, 3]);
+    try {
+      await source.connect({ engine: 'sqlite', database_path: sourcePath });
+      sourceConnected = true;
+      await source.initSchema();
+      await source.putPage('systems/compiler.md', {
+        type: 'system',
+        title: 'Compiler',
+        compiled_truth: 'Compiler system overview.',
+      });
+      await source.updatePageEmbedding('systems/compiler.md', embedding);
 
-    await target.disconnect();
-  });
+      await runMigrateEngine(source, ['--to', 'pglite', '--path', targetPath]);
+      await source.disconnect();
+      sourceConnected = false;
+
+      await target.connect({ engine: 'pglite', database_path: targetPath });
+      targetConnected = true;
+      await target.initSchema();
+
+      const embeddings = await target.getPageEmbeddings('system');
+      expect(embeddings).toHaveLength(1);
+      expect(embeddings[0]?.slug).toBe('systems/compiler.md');
+      expect(embeddings[0]?.embedding).not.toBeNull();
+      expect(Array.from(embeddings[0]!.embedding!.slice(0, 3))).toEqual([1, 2, 3]);
+    } finally {
+      await Promise.all([
+        targetConnected ? target.disconnect() : Promise.resolve(),
+        sourceConnected ? source.disconnect() : Promise.resolve(),
+      ]);
+    }
+  }, PGLITE_MIGRATION_TEST_TIMEOUT_MS);
 
   // Integration tests for actual migration execution require DATABASE_URL
   // and are covered in the E2E suite (test/e2e/mechanical.test.ts)

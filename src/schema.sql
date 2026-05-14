@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index   INTEGER NOT NULL,
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
+  chunk_content_hash TEXT NOT NULL DEFAULT '',
   embedding     vector(768),
   model         TEXT    NOT NULL DEFAULT 'nomic-embed-text',
   token_count   INTEGER,
@@ -305,6 +306,52 @@ CREATE INDEX IF NOT EXISTS idx_context_atlas_scope_generated
   ON context_atlas_entries(scope_id, generated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_context_atlas_scope_kind
   ON context_atlas_entries(scope_id, kind);
+
+-- ============================================================
+-- derived_jobs / derived_index_state: durable derived refresh outbox
+-- ============================================================
+CREATE TABLE IF NOT EXISTS derived_jobs (
+  id                  TEXT PRIMARY KEY,
+  scope_id            TEXT NOT NULL,
+  slug                TEXT NOT NULL,
+  artifact_kind       TEXT NOT NULL CHECK (artifact_kind IN ('page_chunks', 'note_manifest', 'note_sections', 'context_map', 'context_atlas')),
+  target_content_hash TEXT NOT NULL,
+  manifest_path       TEXT,
+  derived_parameters  JSONB NOT NULL DEFAULT '{}',
+  status              TEXT NOT NULL CHECK (status IN ('pending', 'running', 'failed', 'superseded')),
+  attempts            INTEGER NOT NULL DEFAULT 0,
+  last_error          TEXT,
+  lease_owner         TEXT,
+  lease_expires_at    TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_derived_jobs_pending
+  ON derived_jobs(status, updated_at ASC)
+  WHERE status = 'pending';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_derived_jobs_active_slug_artifact
+  ON derived_jobs(scope_id, slug, artifact_kind)
+  WHERE status IN ('pending', 'running');
+CREATE INDEX IF NOT EXISTS idx_derived_jobs_scope_slug
+  ON derived_jobs(scope_id, slug, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS derived_index_state (
+  scope_id               TEXT NOT NULL,
+  slug                   TEXT NOT NULL,
+  artifact_kind          TEXT NOT NULL CHECK (artifact_kind IN ('page_chunks', 'note_manifest', 'note_sections', 'context_map', 'context_atlas')),
+  target_content_hash    TEXT NOT NULL,
+  indexed_content_hash   TEXT,
+  status                 TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'failed')),
+  extractor_version      TEXT NOT NULL,
+  derived_schema_version TEXT NOT NULL,
+  last_error             TEXT,
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (scope_id, slug, artifact_kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_derived_index_state_status
+  ON derived_index_state(scope_id, status, updated_at DESC);
 
 -- ============================================================
 -- memory_realms: control-plane realms for memory access policy

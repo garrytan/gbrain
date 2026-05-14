@@ -267,6 +267,7 @@ async function bestReadSelectorForSearchResult(
     const charStart = matchingSection.match!.index > 0
       ? Math.max(0, matchingSection.match!.index - SEARCH_HIT_CONTEXT_CHARS)
       : undefined;
+    const projection = await engine.getPageProjection(result.slug);
     return normalizeRetrievalSelector({
       kind: 'section',
       scope_id: matchingSection.section.scope_id,
@@ -277,7 +278,7 @@ async function bestReadSelectorForSearchResult(
       line_end: matchingSection.section.line_end,
       char_start: charStart,
       source_refs: matchingSection.section.source_refs,
-      content_hash: matchingSection.section.content_hash,
+      content_hash: projection?.content_hash,
       freshness: result.stale ? 'stale' : 'current',
     });
   }

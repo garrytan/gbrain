@@ -1,12 +1,22 @@
 import { readFileSync, statSync, lstatSync } from 'fs';
 import type { BrainEngine } from './engine.ts';
+import {
+  canonicalDerivedTags,
+  canonicalDerivedParameters,
+  DERIVED_SCHEMA_VERSION,
+  PAGE_DERIVED_ARTIFACTS,
+} from './derived-jobs.ts';
 import { buildFrontmatterSearchText, parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { estimateTokenCount } from './embedding.ts';
-import { buildNoteManifestEntry, DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './services/note-manifest-service.ts';
-import { buildNoteSectionEntries } from './services/note-section-service.ts';
+import {
+  buildNoteManifestEntry,
+  DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+  NOTE_MANIFEST_EXTRACTOR_VERSION,
+} from './services/note-manifest-service.ts';
+import { buildNoteSectionEntries, NOTE_SECTION_EXTRACTOR_VERSION } from './services/note-section-service.ts';
 import { pathToSlug, slugifyPath } from './sync.ts';
-import type { ChunkInput } from './types.ts';
+import type { ChunkInput, DerivedArtifactKind, DerivedIndexState, Page } from './types.ts';
 import { importContentHash, validateSlug } from './utils.ts';
 
 export interface ImportResult {
@@ -14,9 +24,47 @@ export interface ImportResult {
   status: 'imported' | 'skipped' | 'error';
   chunks: number;
   error?: string;
+  deferred_derived?: boolean;
+  content_hash?: string;
 }
 
 export const MAX_MARKDOWN_IMPORT_BYTES = 5_000_000; // 5MB
+
+export interface ImportFromContentOptions {
+  path?: string;
+  deferDerived?: boolean;
+}
+
+export interface RefreshDerivedStorageOptions {
+  path?: string;
+  expectedContentHash?: string | null;
+  leaseOwner?: string;
+  leaseArtifactKind?: DerivedArtifactKind;
+  signal?: AbortSignal;
+}
+
+const PAGE_CHUNKS_EXTRACTOR_VERSION = 'recursive-chunks-v1';
+const PAGE_DERIVED_EXTRACTOR_VERSIONS: Record<DerivedArtifactKind, string> = {
+  page_chunks: PAGE_CHUNKS_EXTRACTOR_VERSION,
+  note_manifest: NOTE_MANIFEST_EXTRACTOR_VERSION,
+  note_sections: NOTE_SECTION_EXTRACTOR_VERSION,
+  context_map: 'context-map-v1',
+  context_atlas: 'context-atlas-v1',
+};
+const DERIVED_REFRESH_TARGET_CHANGED_ERROR =
+  'Skipped derived refresh because derived target changed before the background job ran.';
+
+class DerivedRefreshTargetChangedError extends Error {
+  constructor() {
+    super(DERIVED_REFRESH_TARGET_CHANGED_ERROR);
+  }
+}
+
+class DerivedRefreshAbortedError extends Error {
+  constructor() {
+    super('Skipped derived refresh because the worker was stopped before completion.');
+  }
+}
 
 /**
  * Import content from a string. Core pipeline:
@@ -28,7 +76,7 @@ export async function importFromContent(
   engine: BrainEngine,
   slug: string,
   content: string,
-  options?: { path?: string },
+  options?: ImportFromContentOptions,
 ): Promise<ImportResult> {
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_MARKDOWN_IMPORT_BYTES) {
@@ -45,40 +93,52 @@ export async function importFromContent(
   const hash = importContentHash(parsed);
 
   const manifestPath = options?.path ?? `${validateSlug(slug)}.md`;
+  const deferDerived = options?.deferDerived === true;
   const existing = await engine.getPage(slug);
   if (existing?.content_hash === hash) {
-    const existingManifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, slug);
-    if (existingManifest?.path === manifestPath || !canRefreshDerivedStorage(existing)) {
-      return { slug, status: 'skipped', chunks: 0 };
+    if (!canRefreshDerivedStorage(existing)) {
+      return { slug, status: 'skipped', chunks: 0, content_hash: hash };
+    }
+    const derivedStorageCurrent = await isPageDerivedStorageCurrent(engine, existing, manifestPath);
+    if (derivedStorageCurrent) {
+      return { slug, status: 'skipped', chunks: 0, content_hash: hash };
+    }
+
+    if (deferDerived) {
+      await engine.transaction(async (tx) => {
+        const current = await tx.getPageForUpdate(slug);
+        if (!current || current.content_hash !== hash || !canRefreshDerivedStorage(current)) return;
+        await invalidatePageDerivedStorage(tx, current, manifestPath);
+      });
+      return {
+        slug,
+        status: 'skipped',
+        chunks: 0,
+        deferred_derived: true,
+        content_hash: hash,
+      };
     }
 
     await engine.transaction(async (tx) => {
+      const current = await tx.getPageForUpdate(slug);
+      if (!current || current.content_hash !== hash || !canRefreshDerivedStorage(current)) return;
       const tags = await tx.getTags(slug);
-      const manifest = await tx.upsertNoteManifestEntry(buildNoteManifestEntry({
-        page_id: existing.id,
-        slug: existing.slug,
-        path: manifestPath,
+      await enqueuePageDerivedRefresh(tx, current, manifestPath, tags);
+      await replacePageDerivedStorage(
+        tx,
+        current,
         tags,
-        content_hash: hash,
-        page: existing,
-      }));
-      await tx.replaceNoteSectionEntries(
-        manifest.scope_id,
-        manifest.slug,
-        buildNoteSectionEntries({
-          scope_id: manifest.scope_id,
-          page_id: existing.id,
-          page_slug: existing.slug,
-          page_path: manifest.path,
-          page: existing,
-          manifest,
-        }),
+        manifestPath,
+        undefined,
+        new Set(PAGE_DERIVED_ARTIFACTS),
       );
     });
-    return { slug, status: 'skipped', chunks: 0 };
+    return { slug, status: 'skipped', chunks: 0, content_hash: hash };
   }
 
-  const chunks = buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter);
+  const chunks = deferDerived
+    ? []
+    : buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter);
 
   // Transaction wraps all DB writes
   await engine.transaction(async (tx) => {
@@ -103,45 +163,314 @@ export async function importFromContent(
       await tx.addTag(slug, tag);
     }
 
-    await tx.deleteChunks(slug);
-    await tx.upsertChunks(slug, chunks);
-    const manifest = await tx.upsertNoteManifestEntry(buildNoteManifestEntry({
-      page_id: storedPage.id,
-      slug: storedPage.slug,
-      path: manifestPath,
-      tags: parsed.tags,
-      content_hash: hash,
-      page: {
-        type: storedPage.type,
-        title: storedPage.title,
-        compiled_truth: storedPage.compiled_truth,
-        timeline: storedPage.timeline,
-        frontmatter: storedPage.frontmatter,
-        content_hash: storedPage.content_hash,
-      },
-    }));
-    await tx.replaceNoteSectionEntries(
-      manifest.scope_id,
-      manifest.slug,
-      buildNoteSectionEntries({
-        scope_id: manifest.scope_id,
-        page_id: storedPage.id,
-        page_slug: storedPage.slug,
-        page_path: manifest.path,
-        page: {
-          type: storedPage.type,
-          title: storedPage.title,
-          compiled_truth: storedPage.compiled_truth,
-          timeline: storedPage.timeline,
-          frontmatter: storedPage.frontmatter,
-          content_hash: storedPage.content_hash,
-        },
-        manifest,
-      }),
-    );
+    if (deferDerived) {
+      await invalidatePageDerivedStorage(tx, storedPage, manifestPath);
+    } else {
+      await enqueuePageDerivedRefresh(tx, storedPage, manifestPath, parsed.tags);
+      await replacePageDerivedStorage(
+        tx,
+        storedPage,
+        parsed.tags,
+        manifestPath,
+        chunks,
+        new Set(PAGE_DERIVED_ARTIFACTS),
+      );
+    }
   });
 
-  return { slug, status: 'imported', chunks: chunks.length };
+  return {
+    slug,
+    status: 'imported',
+    chunks: chunks.length,
+    ...(deferDerived ? { deferred_derived: true } : {}),
+    content_hash: hash,
+  };
+}
+
+export async function refreshDerivedStorageForPage(
+  engine: BrainEngine,
+  slug: string,
+  options: RefreshDerivedStorageOptions = {},
+): Promise<ImportResult> {
+  const normalizedSlug = validateSlug(slug);
+  const manifestPath = options.path ?? `${normalizedSlug}.md`;
+  let chunkCount = 0;
+  let contentHash: string | undefined;
+  let skipError: string | undefined;
+
+  try {
+    assertDerivedRefreshNotAborted(options.signal);
+    await engine.transaction(async (tx) => {
+      const page = await tx.getPageForUpdate(normalizedSlug);
+      if (!page) {
+        throw new Error(`Cannot refresh derived storage for missing page: ${normalizedSlug}`);
+      }
+      contentHash = page.content_hash;
+
+      if (
+        options.expectedContentHash !== undefined
+        && options.expectedContentHash !== null
+        && page.content_hash !== options.expectedContentHash
+      ) {
+        chunkCount = -1;
+        skipError = 'Skipped derived refresh because content hash changed before the background job ran.';
+        return;
+      }
+
+      const tags = await tx.getTags(normalizedSlug);
+      const targetState = await getPageDerivedRefreshTargetState(tx, page, manifestPath, tags);
+      if (!targetState.current) {
+        chunkCount = -1;
+        skipError = DERIVED_REFRESH_TARGET_CHANGED_ERROR;
+        return;
+      }
+
+      assertDerivedRefreshNotAborted(options.signal);
+      chunkCount = await replacePageDerivedStorage(
+        tx,
+        page,
+        tags,
+        manifestPath,
+        undefined,
+        targetState.activeArtifactKinds,
+        options.leaseOwner,
+        options.leaseArtifactKind,
+        options.signal,
+      );
+    });
+  } catch (error) {
+    if (!(error instanceof DerivedRefreshTargetChangedError) && !(error instanceof DerivedRefreshAbortedError)) {
+      throw error;
+    }
+    chunkCount = -1;
+    skipError = error.message;
+  }
+
+  if (chunkCount === -1) {
+    return {
+      slug: normalizedSlug,
+      status: 'skipped',
+      chunks: 0,
+      deferred_derived: false,
+      content_hash: contentHash,
+      error: skipError ?? 'Skipped derived refresh because derived target changed before the background job ran.',
+    };
+  }
+
+  return {
+    slug: normalizedSlug,
+    status: 'imported',
+    chunks: chunkCount,
+    deferred_derived: false,
+    content_hash: contentHash,
+  };
+}
+
+async function replacePageDerivedStorage(
+  engine: BrainEngine,
+  page: Page,
+  tags: string[],
+  manifestPath: string,
+  chunks = buildPageChunks(page.compiled_truth, page.timeline, page.frontmatter),
+  activeArtifactKinds?: ReadonlySet<DerivedArtifactKind>,
+  leaseOwner?: string,
+  leaseArtifactKind?: DerivedArtifactKind,
+  signal?: AbortSignal,
+): Promise<number> {
+  assertDerivedRefreshNotAborted(signal);
+  await engine.deleteChunks(page.slug);
+  assertDerivedRefreshNotAborted(signal);
+  await engine.upsertChunks(page.slug, chunks);
+  assertDerivedRefreshNotAborted(signal);
+  const manifest = await engine.upsertNoteManifestEntry(buildNoteManifestEntry({
+    page_id: page.id,
+    slug: page.slug,
+    path: manifestPath,
+    tags,
+    content_hash: page.content_hash,
+    page,
+  }));
+  assertDerivedRefreshNotAborted(signal);
+  await engine.replaceNoteSectionEntries(
+    manifest.scope_id,
+    manifest.slug,
+    buildNoteSectionEntries({
+      scope_id: manifest.scope_id,
+      page_id: page.id,
+      page_slug: page.slug,
+      page_path: manifest.path,
+      page,
+      manifest,
+    }),
+  );
+  assertDerivedRefreshNotAborted(signal);
+  if (!await markPageDerivedStorageReady(
+    engine,
+    page,
+    manifestPath,
+    tags,
+    activeArtifactKinds,
+    leaseOwner,
+    leaseArtifactKind,
+  )) {
+    throw new DerivedRefreshTargetChangedError();
+  }
+  return chunks.length;
+}
+
+function assertDerivedRefreshNotAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) {
+    throw new DerivedRefreshAbortedError();
+  }
+}
+
+async function invalidatePageDerivedStorage(
+  engine: BrainEngine,
+  page: Page,
+  manifestPath: string,
+): Promise<void> {
+  await engine.deleteChunks(page.slug);
+  await engine.deleteNoteSectionEntries(DEFAULT_NOTE_MANIFEST_SCOPE_ID, page.slug);
+  await engine.deleteNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, page.slug);
+  if (page.content_hash) {
+    await enqueuePageDerivedRefresh(engine, page, manifestPath, await engine.getTags(page.slug));
+  }
+}
+
+async function enqueuePageDerivedRefresh(
+  engine: BrainEngine,
+  page: Page,
+  manifestPath: string,
+  tags: string[] = [],
+): Promise<void> {
+  for (const artifactKind of PAGE_DERIVED_ARTIFACTS) {
+    await engine.enqueueDerivedJob({
+      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      slug: page.slug,
+      artifact_kind: artifactKind,
+      target_content_hash: page.content_hash ?? '',
+      manifest_path: manifestPath,
+      derived_parameters: pageDerivedParameters(artifactKind, manifestPath, tags),
+    });
+  }
+}
+
+async function markPageDerivedStorageReady(
+  engine: BrainEngine,
+  page: Page,
+  manifestPath: string,
+  tags: string[] = [],
+  activeArtifactKinds?: ReadonlySet<DerivedArtifactKind>,
+  leaseOwner?: string,
+  leaseArtifactKind?: DerivedArtifactKind,
+): Promise<boolean> {
+  if (!page.content_hash) return true;
+  for (const artifactKind of PAGE_DERIVED_ARTIFACTS) {
+    const artifactLeaseOwner = leaseArtifactKind === artifactKind ? leaseOwner : undefined;
+    const state = await engine.markDerivedIndexReady({
+      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      slug: page.slug,
+      artifact_kind: artifactKind,
+      target_content_hash: page.content_hash,
+      indexed_content_hash: page.content_hash,
+      manifest_path: manifestPath,
+      derived_parameters: pageDerivedParameters(artifactKind, manifestPath, tags),
+      extractor_version: PAGE_DERIVED_EXTRACTOR_VERSIONS[artifactKind],
+      derived_schema_version: DERIVED_SCHEMA_VERSION,
+      lease_owner: artifactLeaseOwner,
+      require_active_job: activeArtifactKinds?.has(artifactKind) === true,
+    });
+    if (!isReadyDerivedIndexState(state, page, artifactKind)) return false;
+  }
+  return true;
+}
+
+async function getPageDerivedRefreshTargetState(
+  engine: BrainEngine,
+  page: Page,
+  manifestPath: string,
+  tags: string[] = [],
+): Promise<{ current: boolean; activeArtifactKinds: ReadonlySet<DerivedArtifactKind> }> {
+  const activeArtifactKinds = new Set<DerivedArtifactKind>();
+  if (!page.content_hash) return { current: true, activeArtifactKinds };
+  for (const artifactKind of PAGE_DERIVED_ARTIFACTS) {
+    const activeJobs = (await engine.listDerivedJobs({
+      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      slug: page.slug,
+      artifact_kind: artifactKind,
+    })).filter((job) => job.status === 'pending' || job.status === 'running');
+    if (activeJobs.length === 0) continue;
+    activeArtifactKinds.add(artifactKind);
+
+    const targetParameters = pageDerivedParameters(artifactKind, manifestPath, tags);
+    const expectedParameters = canonicalDerivedParameters(targetParameters);
+    const hasMatchingTarget = activeJobs.some((job) => (
+      job.target_content_hash === page.content_hash
+      && job.manifest_path === manifestPath
+      && canonicalDerivedParameters(job.derived_parameters) === expectedParameters
+    ));
+    if (!hasMatchingTarget) return { current: false, activeArtifactKinds };
+  }
+  return { current: true, activeArtifactKinds };
+}
+
+async function isPageDerivedStorageCurrent(
+  engine: BrainEngine,
+  page: Page,
+  manifestPath: string,
+): Promise<boolean> {
+  if (!page.content_hash) return true;
+  const existingManifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, page.slug);
+  if (existingManifest?.path !== manifestPath) return false;
+
+  for (const artifactKind of PAGE_DERIVED_ARTIFACTS) {
+    const targetParameters = pageDerivedParameters(artifactKind, manifestPath);
+    const state = await engine.getDerivedIndexState(
+      DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      page.slug,
+      artifactKind,
+    );
+    if (
+      state?.status !== 'ready'
+      || state.target_content_hash !== page.content_hash
+      || state.indexed_content_hash !== page.content_hash
+      || state.extractor_version !== targetParameters.extractor_version
+      || state.derived_schema_version !== targetParameters.derived_schema_version
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function pageDerivedParameters(
+  artifactKind: DerivedArtifactKind,
+  manifestPath: string,
+  tags: string[] = [],
+): Record<string, unknown> {
+  const parameters: Record<string, unknown> = {
+    manifest_path: manifestPath,
+    extractor_version: PAGE_DERIVED_EXTRACTOR_VERSIONS[artifactKind],
+    derived_schema_version: DERIVED_SCHEMA_VERSION,
+  };
+  if (artifactKind === 'note_manifest') {
+    parameters.tags = canonicalDerivedTags(tags);
+  }
+  return parameters;
+}
+
+function isReadyDerivedIndexState(
+  state: DerivedIndexState,
+  page: Page,
+  artifactKind: DerivedArtifactKind,
+): boolean {
+  if (!page.content_hash) return true;
+  const targetParameters = pageDerivedParameters(artifactKind, '');
+  return state.status === 'ready'
+    && state.target_content_hash === page.content_hash
+    && state.indexed_content_hash === page.content_hash
+    && state.extractor_version === targetParameters.extractor_version
+    && state.derived_schema_version === targetParameters.derived_schema_version;
 }
 
 function canRefreshDerivedStorage(page: unknown): page is {
@@ -174,7 +503,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  options?: { noEmbed?: boolean; slugPrefix?: string },
+  options?: { noEmbed?: boolean; slugPrefix?: string; deferDerived?: boolean },
 ): Promise<ImportResult> {
   const lstat = lstatSync(filePath);
   if (lstat.isSymbolicLink()) {
@@ -201,7 +530,10 @@ export async function importFromFile(
     };
   }
 
-  return importFromContent(engine, expectedSlug, content, { path: relativePath });
+  return importFromContent(engine, expectedSlug, content, {
+    path: relativePath,
+    deferDerived: options?.deferDerived,
+  });
 }
 
 function hasExplicitFrontmatterSlug(content: string): boolean {

@@ -63,6 +63,57 @@ export interface PageInput {
   content_hash?: string;
 }
 
+export type PageWindowField = 'compiled_truth' | 'timeline';
+
+export interface PageTextWindowRequest {
+  char_start?: number;
+  char_limit: number;
+}
+
+export interface PageTextWindow {
+  text: string;
+  char_start: number;
+  total_chars: number;
+  returned_chars: number;
+  next_char_start: number | null;
+  has_more: boolean;
+}
+
+export interface PageProjection {
+  id: number;
+  slug: string;
+  type: PageType;
+  title: string;
+  frontmatter: Record<string, unknown>;
+  content_hash?: string;
+  created_at: Date;
+  updated_at: Date;
+  content_windows: Partial<Record<PageWindowField, PageTextWindow>>;
+}
+
+export interface PageProjectionOptions {
+  windows?: Partial<Record<PageWindowField, PageTextWindowRequest>>;
+}
+
+export interface PageLineSpanProjectionOptions {
+  line_start: number;
+  line_end: number;
+}
+
+export interface PageLineSpanProjection {
+  id: number;
+  slug: string;
+  type: PageType;
+  title: string;
+  frontmatter: Record<string, unknown>;
+  content_hash?: string;
+  created_at: Date;
+  updated_at: Date;
+  text: string;
+  line_start: number;
+  line_end: number;
+}
+
 export interface PageFilters {
   type?: PageType;
   tag?: string;
@@ -168,6 +219,92 @@ export interface NoteSectionFilters {
   scope_id?: string;
   page_slug?: string;
   section_id?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export type DerivedArtifactKind =
+  | 'page_chunks'
+  | 'note_manifest'
+  | 'note_sections'
+  | 'context_map'
+  | 'context_atlas';
+
+export type DerivedJobStatus = 'pending' | 'running' | 'failed' | 'superseded';
+export type DerivedIndexStatus = 'pending' | 'ready' | 'failed';
+
+export interface DerivedJob {
+  id: string;
+  scope_id: string;
+  slug: string;
+  artifact_kind: DerivedArtifactKind;
+  target_content_hash: string;
+  manifest_path: string | null;
+  derived_parameters: Record<string, unknown>;
+  status: DerivedJobStatus;
+  attempts: number;
+  last_error: string | null;
+  lease_owner: string | null;
+  lease_expires_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface DerivedJobInput {
+  scope_id: string;
+  slug: string;
+  artifact_kind: DerivedArtifactKind;
+  target_content_hash: string;
+  manifest_path?: string | null;
+  derived_parameters?: Record<string, unknown>;
+  extractor_version?: string;
+  derived_schema_version?: string;
+}
+
+export interface DerivedJobLeaseInput {
+  lease_owner: string;
+  lease_duration_ms?: number;
+}
+
+export interface DerivedJobFailureInput {
+  id: string;
+  error: string;
+  lease_owner?: string;
+  max_attempts?: number;
+}
+
+export interface DerivedJobLeaseReleaseInput {
+  id: string;
+  lease_owner: string;
+}
+
+export interface DerivedJobFilters {
+  scope_id?: string;
+  slug?: string;
+  artifact_kind?: DerivedArtifactKind;
+  status?: DerivedJobStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface DerivedIndexState {
+  scope_id: string;
+  slug: string;
+  artifact_kind: DerivedArtifactKind;
+  target_content_hash: string;
+  indexed_content_hash: string | null;
+  status: DerivedIndexStatus;
+  extractor_version: string;
+  derived_schema_version: string;
+  last_error: string | null;
+  updated_at: Date;
+}
+
+export interface DerivedIndexStateFilters {
+  scope_id?: string;
+  slug?: string;
+  artifact_kind?: DerivedArtifactKind;
+  status?: DerivedIndexStatus;
   limit?: number;
   offset?: number;
 }
@@ -1898,6 +2035,23 @@ export interface ContextConflict {
   source_refs: string[];
 }
 
+export type RetrievalSelectorWarningCode =
+  | 'stale_selector'
+  | 'stale_continuation'
+  | 'derived_pending'
+  | 'derived_failed';
+
+export interface RetrievalSelectorWarning {
+  code: RetrievalSelectorWarningCode;
+  severity: 'warning';
+  selector_id: string;
+  selector: RetrievalSelector;
+  slug?: string;
+  expected_content_hash: string;
+  current_content_hash: string | null;
+  message: string;
+}
+
 export interface ReadContextInput {
   query?: string;
   selectors?: RetrievalSelector[];
@@ -1917,6 +2071,7 @@ export interface ReadContextResult {
   evidence_claims: ContextEvidenceClaim[];
   conflicts: ContextConflict[];
   warnings: string[];
+  selector_warnings?: RetrievalSelectorWarning[];
   unread_required: RetrievalSelector[];
   continuations: RetrievalSelector[];
   scope_gate?: ScopeGateDecisionResult;
@@ -2110,6 +2265,7 @@ export interface Chunk {
   chunk_index: number;
   chunk_text: string;
   chunk_source: ChunkSource;
+  chunk_content_hash: string;
   embedding: Float32Array | null;
   model: string;
   token_count: number | null;
@@ -2135,6 +2291,11 @@ export interface SearchResult {
   chunk_source: ChunkSource;
   score: number;
   stale: boolean;
+  derived_artifact_kind?: DerivedArtifactKind;
+  derived_status?: DerivedIndexStatus;
+  derived_target_content_hash?: string | null;
+  derived_indexed_content_hash?: string | null;
+  derived_warning?: string;
 }
 
 export interface SearchOpts {

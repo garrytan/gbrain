@@ -5,6 +5,8 @@ import type {
   NoteManifestEntry,
   NoteManifestHeading,
   NoteSectionEntry,
+  DerivedIndexState,
+  DerivedJob,
   ContextMapEntry,
   ContextAtlasEntry,
   MemoryCandidateEntry,
@@ -66,6 +68,10 @@ export function contentHash(compiledTruth: string, timeline: string): string {
   return createHash('sha256').update(compiledTruth + '\n---\n' + timeline).digest('hex');
 }
 
+export function chunkContentHash(chunkText: string, chunkSource: string): string {
+  return createHash('md5').update(`${chunkSource}\n${chunkText}`).digest('hex');
+}
+
 /**
  * Hash contract for markdown imports and re-import idempotency.
  */
@@ -121,6 +127,7 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     chunk_index: row.chunk_index as number,
     chunk_text: row.chunk_text as string,
     chunk_source: row.chunk_source as Chunk['chunk_source'],
+    chunk_content_hash: String(row.chunk_content_hash ?? ''),
     embedding: includeEmbedding && row.embedding ? row.embedding as Float32Array : null,
     model: row.model as string,
     token_count: row.token_count as number | null,
@@ -128,16 +135,72 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
   };
 }
 
-export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
+export function rowToSearchResult(row: Record<string, unknown>, query?: string): SearchResult {
   return {
     slug: row.slug as string,
     page_id: row.page_id as number,
     title: row.title as string,
     type: row.type as PageType,
-    chunk_text: row.chunk_text as string,
+    chunk_text: query
+      ? boundedSearchSnippet(String(row.chunk_text ?? ''), query)
+      : row.chunk_text as string,
     chunk_source: row.chunk_source as SearchResult['chunk_source'],
     score: Number(row.score),
     stale: Boolean(row.stale),
+    ...searchResultDerivedFields(row),
+  };
+}
+
+export function boundedSearchSnippet(text: string, query: string, maxChars = 320): string {
+  if (text.length <= maxChars) return text;
+  const terms = query
+    .split(/[^\p{L}\p{N}_+.-]+/u)
+    .map((term) => term.trim().toLowerCase())
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
+  const lower = text.toLowerCase();
+  const firstMatch = terms
+    .map((term) => lower.indexOf(term))
+    .filter((idx) => idx >= 0)
+    .sort((left, right) => left - right)[0] ?? 0;
+  const start = Math.max(0, firstMatch - Math.floor(maxChars / 3));
+  const end = Math.min(text.length, start + maxChars);
+  const prefix = start > 0 ? '...' : '';
+  const suffix = end < text.length ? '...' : '';
+  return `${prefix}${text.slice(start, end)}${suffix}`;
+}
+
+export function searchResultDerivedFields(row: Record<string, unknown>): Pick<
+  SearchResult,
+  | 'derived_artifact_kind'
+  | 'derived_status'
+  | 'derived_target_content_hash'
+  | 'derived_indexed_content_hash'
+  | 'derived_warning'
+> {
+  if (row.derived_status == null || row.derived_artifact_kind == null) return {};
+
+  const artifactKind = String(row.derived_artifact_kind) as SearchResult['derived_artifact_kind'];
+  const status = String(row.derived_status) as SearchResult['derived_status'];
+  const targetContentHash = row.derived_target_content_hash == null
+    ? null
+    : String(row.derived_target_content_hash);
+  const indexedContentHash = row.derived_indexed_content_hash == null
+    ? null
+    : String(row.derived_indexed_content_hash);
+  const staleReady = status === 'ready'
+    && targetContentHash !== null
+    && indexedContentHash !== targetContentHash;
+  const warning = status !== 'ready' || staleReady
+    ? `${artifactKind} derived index is ${status}; canonical page-level match returned until derived data is current.`
+    : undefined;
+
+  return {
+    derived_artifact_kind: artifactKind,
+    derived_status: status,
+    derived_target_content_hash: targetContentHash,
+    derived_indexed_content_hash: indexedContentHash,
+    ...(warning ? { derived_warning: warning } : {}),
   };
 }
 
@@ -183,6 +246,40 @@ export function rowToNoteSectionEntry(row: Record<string, unknown>): NoteSection
     content_hash: row.content_hash as string,
     extractor_version: row.extractor_version as string,
     last_indexed_at: new Date(row.last_indexed_at as string),
+  };
+}
+
+export function rowToDerivedJob(row: Record<string, unknown>): DerivedJob {
+  return {
+    id: row.id as string,
+    scope_id: row.scope_id as string,
+    slug: row.slug as string,
+    artifact_kind: row.artifact_kind as DerivedJob['artifact_kind'],
+    target_content_hash: row.target_content_hash as string,
+    manifest_path: row.manifest_path == null ? null : String(row.manifest_path),
+    derived_parameters: parseJsonObject(row.derived_parameters),
+    status: row.status as DerivedJob['status'],
+    attempts: Number(row.attempts),
+    last_error: row.last_error == null ? null : String(row.last_error),
+    lease_owner: row.lease_owner == null ? null : String(row.lease_owner),
+    lease_expires_at: row.lease_expires_at == null ? null : new Date(row.lease_expires_at as string),
+    created_at: new Date(row.created_at as string),
+    updated_at: new Date(row.updated_at as string),
+  };
+}
+
+export function rowToDerivedIndexState(row: Record<string, unknown>): DerivedIndexState {
+  return {
+    scope_id: row.scope_id as string,
+    slug: row.slug as string,
+    artifact_kind: row.artifact_kind as DerivedIndexState['artifact_kind'],
+    target_content_hash: row.target_content_hash as string,
+    indexed_content_hash: row.indexed_content_hash == null ? null : String(row.indexed_content_hash),
+    status: row.status as DerivedIndexState['status'],
+    extractor_version: row.extractor_version as string,
+    derived_schema_version: row.derived_schema_version as string,
+    last_error: row.last_error == null ? null : String(row.last_error),
+    updated_at: new Date(row.updated_at as string),
   };
 }
 

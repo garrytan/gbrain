@@ -8,7 +8,12 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSyn
 import { basename, dirname, join, relative, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import type { MBrainConfig } from './config.ts';
-import { importFromContent, importFromFile, MAX_MARKDOWN_IMPORT_BYTES } from './import-file.ts';
+import {
+  importFromContent,
+  importFromFile,
+  MAX_MARKDOWN_IMPORT_BYTES,
+} from './import-file.ts';
+import { canonicalDerivedTags, DERIVED_SCHEMA_VERSION } from './derived-jobs.ts';
 import { parseMarkdown, serializeMarkdown } from './markdown.ts';
 import { slugifyPath } from './sync.ts';
 import {
@@ -52,6 +57,7 @@ import { selectPersonalWriteTarget } from './services/personal-write-target-serv
 import { getPrecisionLookupRoute } from './services/precision-lookup-route-service.ts';
 import { evaluateScopeGate } from './services/scope-gate-service.ts';
 import { readContext } from './services/read-context-service.ts';
+import { scalarLength, sliceScalars } from './text-offsets.ts';
 import { planRetrievalRequest } from './services/retrieval-request-planner-service.ts';
 import { retrieveContext } from './services/retrieve-context-service.ts';
 import { selectRetrievalRoute } from './services/retrieval-route-selector-service.ts';
@@ -67,7 +73,11 @@ import {
   getStructuralContextMapEntry,
   listStructuralContextMapEntries,
 } from './services/context-map-service.ts';
-import { DEFAULT_NOTE_MANIFEST_SCOPE_ID, rebuildNoteManifestEntries } from './services/note-manifest-service.ts';
+import {
+  DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+  NOTE_MANIFEST_EXTRACTOR_VERSION,
+  rebuildNoteManifestEntries,
+} from './services/note-manifest-service.ts';
 import { findStructuralPath, getStructuralNeighbors, type StructuralNodeId } from './services/note-structural-graph-service.ts';
 import { rebuildNoteSectionEntries } from './services/note-section-service.ts';
 import { buildTaskResumeCard } from './services/task-memory-service.ts';
@@ -95,6 +105,7 @@ import type {
   RetrievalTrace,
   RetrievalTraceWriteOutcome,
   ScopeGatePolicy,
+  PageProjection,
 } from './types.ts';
 import { importContentHash, validateSlug } from './utils.ts';
 
@@ -1667,10 +1678,84 @@ const get_page: Operation = {
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
+    content_char_limit: { type: 'number', description: 'Optional max characters per content field. Use continuation selectors for the rest.' },
+    compiled_truth_char_start: { type: 'number', description: 'Optional compiled_truth character offset for paged reads.' },
+    timeline_char_start: { type: 'number', description: 'Optional timeline character offset for paged reads.' },
+    content_hash: { type: 'string', description: 'Optional page content hash expected by continuation reads. Stale continuations return a structured stale_continuation result.' },
+    full_content: { type: 'boolean', description: 'When true, ignore MCP/default content windowing and return full page content.' },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
+    const contentCharLimit = p.full_content === true
+      ? undefined
+      : parsePositiveIntegerParam(p.content_char_limit, 'content_char_limit');
+    const compiledTruthCharStart = parseNonNegativeIntegerParam(p.compiled_truth_char_start, 'compiled_truth_char_start') ?? 0;
+    const timelineCharStart = parseNonNegativeIntegerParam(p.timeline_char_start, 'timeline_char_start') ?? 0;
+    const expectedContentHash = parseOptionalStringParam(p.content_hash, 'content_hash');
+    if (expectedContentHash !== undefined && expectedContentHash.trim().length === 0) {
+      throw new OperationError('invalid_params', 'content_hash must be a non-empty string');
+    }
+
+    if (contentCharLimit !== undefined) {
+      let projection = await ctx.engine.getPageProjection(slug, {
+        windows: {
+          compiled_truth: { char_start: compiledTruthCharStart, char_limit: contentCharLimit },
+          timeline: { char_start: timelineCharStart, char_limit: contentCharLimit },
+        },
+      });
+      let resolved_slug: string | undefined;
+
+      if (!projection && fuzzy) {
+        const candidates = await ctx.engine.resolveSlugs(slug);
+        if (candidates.length === 1) {
+          projection = await ctx.engine.getPageProjection(candidates[0], {
+            windows: {
+              compiled_truth: { char_start: compiledTruthCharStart, char_limit: contentCharLimit },
+              timeline: { char_start: timelineCharStart, char_limit: contentCharLimit },
+            },
+          });
+          resolved_slug = candidates[0];
+        } else if (candidates.length > 1) {
+          return { error: 'ambiguous_slug', candidates };
+        }
+      }
+
+      if (!projection) {
+        if (expectedContentHash) {
+          return staleContinuationResult({
+            code: getPageStaleCode(compiledTruthCharStart, timelineCharStart),
+            slug,
+            requestedSlug: slug,
+            resolvedSlug: resolved_slug,
+            expectedContentHash,
+            actualContentHash: undefined,
+          });
+        }
+        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug or use fuzzy: true');
+      }
+
+      if (expectedContentHash && projection.content_hash !== expectedContentHash) {
+        return staleContinuationResult({
+          code: getPageStaleCode(compiledTruthCharStart, timelineCharStart),
+          slug: projection.slug,
+          requestedSlug: slug,
+          resolvedSlug: resolved_slug,
+          expectedContentHash,
+          actualContentHash: projection.content_hash,
+        });
+      }
+
+      const tags = await ctx.engine.getTags(projection.slug);
+      return applyGetPageProjectionWindow({
+        projection,
+        tags,
+        resolvedSlug: resolved_slug,
+        contentCharLimit,
+        compiledTruthCharStart,
+        timelineCharStart,
+      });
+    }
 
     let page = await ctx.engine.getPage(slug);
     let resolved_slug: string | undefined;
@@ -1686,14 +1771,241 @@ const get_page: Operation = {
     }
 
     if (!page) {
+      if (expectedContentHash) {
+        return staleContinuationResult({
+          code: getPageStaleCode(compiledTruthCharStart, timelineCharStart),
+          slug,
+          requestedSlug: slug,
+          resolvedSlug: resolved_slug,
+          expectedContentHash,
+          actualContentHash: undefined,
+        });
+      }
       throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug or use fuzzy: true');
     }
 
+    if (expectedContentHash && page.content_hash !== expectedContentHash) {
+      return staleContinuationResult({
+        code: getPageStaleCode(compiledTruthCharStart, timelineCharStart),
+        slug: page.slug,
+        requestedSlug: slug,
+        resolvedSlug: resolved_slug,
+        expectedContentHash,
+        actualContentHash: page.content_hash,
+      });
+    }
+
     const tags = await ctx.engine.getTags(page.slug);
-    return { ...page, tags, ...(resolved_slug ? { resolved_slug } : {}) };
+    return applyGetPageWindow({
+      page: { ...page, tags, ...(resolved_slug ? { resolved_slug } : {}) },
+      contentCharLimit,
+      compiledTruthCharStart,
+      timelineCharStart,
+    });
   },
   cliHints: { name: 'get', positional: ['slug'] },
 };
+
+function parseNonNegativeIntegerParam(value: unknown, name: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new OperationError('invalid_params', `${name} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function getPageStaleCode(
+  compiledTruthCharStart: number,
+  timelineCharStart: number,
+): 'stale_selector' | 'stale_continuation' {
+  return compiledTruthCharStart > 0 || timelineCharStart > 0
+    ? 'stale_continuation'
+    : 'stale_selector';
+}
+
+function staleContinuationResult(input: {
+  code: 'stale_selector' | 'stale_continuation';
+  slug: string;
+  requestedSlug: string;
+  resolvedSlug?: string;
+  expectedContentHash: string;
+  actualContentHash?: string;
+}) {
+  const warning = {
+    code: input.code,
+    severity: 'warning',
+    slug: input.slug,
+    expected_content_hash: input.expectedContentHash,
+    current_content_hash: input.actualContentHash ?? null,
+    message: 'The page changed after this content_hash was issued. Start a fresh get_page/read_context window from the current content_hash.',
+  };
+  return {
+    status: 'stale',
+    error: input.code,
+    warning,
+    slug: input.slug,
+    ...(input.resolvedSlug ? { resolved_slug: input.resolvedSlug } : {}),
+    ...(input.requestedSlug !== input.slug ? { requested_slug: input.requestedSlug } : {}),
+    expected_content_hash: input.expectedContentHash,
+    actual_content_hash: input.actualContentHash ?? null,
+    hint: 'The page changed after this continuation selector was issued. Start a new get_page/read_context window from the current content_hash.',
+  };
+}
+
+function applyGetPageProjectionWindow(input: {
+  projection: PageProjection;
+  tags: string[];
+  resolvedSlug?: string;
+  contentCharLimit: number;
+  compiledTruthCharStart: number;
+  timelineCharStart: number;
+}) {
+  const { projection, tags, resolvedSlug, contentCharLimit, compiledTruthCharStart, timelineCharStart } = input;
+  const compiledTruthWindow = contentWindowForProjectionField({
+    slug: projection.slug,
+    kind: 'compiled_truth',
+    contentHash: projection.content_hash,
+    window: projection.content_windows.compiled_truth,
+  });
+  const timelineWindow = contentWindowForProjectionField({
+    slug: projection.slug,
+    kind: 'timeline_range',
+    contentHash: projection.content_hash,
+    window: projection.content_windows.timeline,
+  });
+
+  return {
+    id: projection.id,
+    slug: projection.slug,
+    type: projection.type,
+    title: projection.title,
+    compiled_truth: compiledTruthWindow.text,
+    timeline: timelineWindow.text,
+    frontmatter: projection.frontmatter,
+    content_hash: projection.content_hash,
+    created_at: projection.created_at,
+    updated_at: projection.updated_at,
+    tags,
+    ...(resolvedSlug ? { resolved_slug: resolvedSlug } : {}),
+    content_window: {
+      truncated: compiledTruthWindow.has_more || timelineWindow.has_more
+        || compiledTruthCharStart > 0
+        || timelineCharStart > 0,
+      char_limit: contentCharLimit,
+      compiled_truth: compiledTruthWindow,
+      timeline: timelineWindow,
+    },
+  };
+}
+
+function applyGetPageWindow(input: {
+  page: Record<string, any>;
+  contentCharLimit?: number;
+  compiledTruthCharStart: number;
+  timelineCharStart: number;
+}) {
+  const { page, contentCharLimit, compiledTruthCharStart, timelineCharStart } = input;
+  if (contentCharLimit === undefined) return page;
+
+  const compiledTruth = page.compiled_truth ?? '';
+  const timeline = page.timeline ?? '';
+  const compiledTruthWindow = contentWindowForField({
+    slug: page.slug,
+    kind: 'compiled_truth',
+    text: compiledTruth,
+    charStart: compiledTruthCharStart,
+    charLimit: contentCharLimit,
+    contentHash: page.content_hash,
+  });
+  const timelineWindow = contentWindowForField({
+    slug: page.slug,
+    kind: 'timeline_range',
+    text: timeline,
+    charStart: timelineCharStart,
+    charLimit: contentCharLimit,
+    contentHash: page.content_hash,
+  });
+
+  return {
+    ...page,
+    compiled_truth: compiledTruthWindow.text,
+    timeline: timelineWindow.text,
+    content_window: {
+      truncated: compiledTruthWindow.has_more || timelineWindow.has_more
+        || compiledTruthCharStart > 0
+        || timelineCharStart > 0,
+      char_limit: contentCharLimit,
+      compiled_truth: compiledTruthWindow,
+      timeline: timelineWindow,
+    },
+  };
+}
+
+function contentWindowForProjectionField(input: {
+  slug: string;
+  kind: 'compiled_truth' | 'timeline_range';
+  contentHash?: string;
+  window?: PageProjection['content_windows']['compiled_truth'];
+}) {
+  const window = input.window ?? {
+    text: '',
+    char_start: 0,
+    returned_chars: 0,
+    total_chars: 0,
+    next_char_start: null,
+    has_more: false,
+  };
+  return {
+    text: window.text,
+    char_start: window.char_start,
+    returned_chars: window.returned_chars,
+    total_chars: window.total_chars,
+    has_more: window.has_more,
+    ...(window.has_more
+      ? {
+        continuation_selector: {
+          kind: input.kind,
+          slug: input.slug,
+          char_start: window.next_char_start ?? window.char_start + window.returned_chars,
+          ...(input.contentHash ? { content_hash: input.contentHash } : {}),
+        },
+      }
+      : {}),
+  };
+}
+
+function contentWindowForField(input: {
+  slug: string;
+  kind: 'compiled_truth' | 'timeline_range';
+  text: string;
+  charStart: number;
+  charLimit: number;
+  contentHash?: string;
+}) {
+  const totalChars = scalarLength(input.text);
+  const start = Math.min(input.charStart, totalChars);
+  const end = Math.min(start + input.charLimit, totalChars);
+  const text = sliceScalars(input.text, start, end);
+  const returnedChars = scalarLength(text);
+  const hasMore = end < totalChars;
+  return {
+    text,
+    char_start: start,
+    returned_chars: returnedChars,
+    total_chars: totalChars,
+    has_more: hasMore,
+    ...(hasMore
+      ? {
+        continuation_selector: {
+          kind: input.kind,
+          slug: input.slug,
+          char_start: end,
+          ...(input.contentHash ? { content_hash: input.contentHash } : {}),
+        },
+      }
+      : {}),
+  };
+}
 
 const SOURCE_ATTRIBUTION_RE = /\[Source:\s*([^\]\n]*)\]/g;
 
@@ -2200,11 +2512,18 @@ async function assertPutPageMemoryWriteAllowed(
   }
 }
 
-function putPageOperationResult(result: { slug: string; status: string; chunks: number; error?: string }) {
+function putPageOperationResult(result: {
+  slug: string;
+  status: string;
+  chunks: number;
+  error?: string;
+  deferred_derived?: boolean;
+}) {
   return {
     slug: result.slug,
     status: result.status === 'imported' ? 'created_or_updated' : result.status,
     chunks: result.chunks,
+    ...(result.deferred_derived ? { derived_storage: 'scheduled' } : {}),
     ...(result.error ? { error: result.error } : {}),
   };
 }
@@ -2239,11 +2558,13 @@ const put_page: Operation = {
     scope_id: { type: 'string', description: 'Optional audit scope id. Defaults to workspace:default.' },
     source_refs: { type: 'array', items: { type: 'string' }, description: 'Optional non-empty audit provenance references.' },
     metadata: { type: 'object', description: 'Optional audit metadata object.' },
+    defer_derived: { type: 'boolean', description: 'Commit the canonical page immediately and refresh chunks, manifest, and section indexes after the MCP response.' },
   },
   mutating: true,
   handler: async (ctx, p) => {
     const slug = putPageSlug(p.slug);
     const content = putPageContent(p.content);
+    const deferDerived = p.defer_derived === true;
     assertWritableSlugQuality(slug);
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
     const markdownTarget = await resolvePutPageMarkdownTarget(ctx.engine, slug, p.repo);
@@ -2387,9 +2708,10 @@ const put_page: Operation = {
             }
             return importFromFile(tx, markdownTarget.filePath, markdownTarget.relativePath, {
               slugPrefix: markdownTarget.slugPrefix,
+              deferDerived,
             });
           })()
-          : importFromContent(tx, slug, content));
+          : importFromContent(tx, slug, content, { deferDerived }));
         if (result.status === 'imported') {
           const finalPage = await tx.getPage(slug);
           if (!finalPage?.content_hash) {
@@ -2554,6 +2876,39 @@ const query: Operation = {
 
 // --- Tags ---
 
+async function mutateTagAndEnqueueManifestRefresh(
+  engine: BrainEngine,
+  slug: string,
+  tag: string,
+  mutate: (tx: BrainEngine, slug: string, tag: string) => Promise<void>,
+): Promise<void> {
+  const normalizedSlug = validateSlug(slug);
+  await engine.transaction(async (tx) => {
+    const page = await tx.getPageForUpdate(normalizedSlug);
+    if (!page) return;
+
+    await mutate(tx, normalizedSlug, tag);
+    if (!page.content_hash) return;
+    const tags = await tx.getTags(normalizedSlug);
+    const existingManifest = await tx.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, normalizedSlug);
+    const manifestPath = existingManifest?.path ?? `${normalizedSlug}.md`;
+    await tx.deleteNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, normalizedSlug);
+    await tx.enqueueDerivedJob({
+      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      slug: normalizedSlug,
+      artifact_kind: 'note_manifest',
+      target_content_hash: page.content_hash,
+      manifest_path: manifestPath,
+      derived_parameters: {
+        manifest_path: manifestPath,
+        tags: canonicalDerivedTags(tags),
+        extractor_version: NOTE_MANIFEST_EXTRACTOR_VERSION,
+        derived_schema_version: DERIVED_SCHEMA_VERSION,
+      },
+    });
+  });
+}
+
 const add_tag: Operation = {
   name: 'add_tag',
   description: 'Add tag to page',
@@ -2564,8 +2919,13 @@ const add_tag: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'add_tag', slug: p.slug, tag: p.tag };
-    await ctx.engine.addTag(p.slug as string, p.tag as string);
-    return { status: 'ok' };
+    await mutateTagAndEnqueueManifestRefresh(
+      ctx.engine,
+      p.slug as string,
+      p.tag as string,
+      (tx, slug, tag) => tx.addTag(slug, tag),
+    );
+    return { status: 'ok', derived_storage: 'scheduled' };
   },
   cliHints: { name: 'tag', positional: ['slug', 'tag'] },
 };
@@ -2580,8 +2940,13 @@ const remove_tag: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'remove_tag', slug: p.slug, tag: p.tag };
-    await ctx.engine.removeTag(p.slug as string, p.tag as string);
-    return { status: 'ok' };
+    await mutateTagAndEnqueueManifestRefresh(
+      ctx.engine,
+      p.slug as string,
+      p.tag as string,
+      (tx, slug, tag) => tx.removeTag(slug, tag),
+    );
+    return { status: 'ok', derived_storage: 'scheduled' };
   },
   cliHints: { name: 'untag', positional: ['slug', 'tag'] },
 };

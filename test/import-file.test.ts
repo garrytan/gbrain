@@ -46,6 +46,47 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
           });
         });
       }
+      if (prop === 'enqueueDerivedJob') {
+        return overrides.enqueueDerivedJob || ((input: Record<string, unknown>) => {
+          calls.push({ method: 'enqueueDerivedJob', args: [input] });
+          return Promise.resolve({
+            id: `job-${String(input.artifact_kind)}`,
+            scope_id: input.scope_id,
+            slug: input.slug,
+            artifact_kind: input.artifact_kind,
+            target_content_hash: input.target_content_hash,
+            manifest_path: input.manifest_path ?? null,
+            derived_parameters: input.derived_parameters ?? {},
+            status: 'pending',
+            attempts: 0,
+            last_error: null,
+            lease_owner: null,
+            lease_expires_at: null,
+            created_at: new Date(),
+            updated_at: new Date(),
+          });
+        });
+      }
+      if (prop === 'listDerivedJobs') return overrides.listDerivedJobs || (() => Promise.resolve([]));
+      if (prop === 'getDerivedIndexState') return overrides.getDerivedIndexState || (() => Promise.resolve(null));
+      if (prop === 'listDerivedIndexStates') return overrides.listDerivedIndexStates || (() => Promise.resolve([]));
+      if (prop === 'markDerivedIndexReady') {
+        return overrides.markDerivedIndexReady || ((input: Record<string, unknown>) => {
+          calls.push({ method: 'markDerivedIndexReady', args: [input] });
+          return Promise.resolve({
+            scope_id: input.scope_id,
+            slug: input.slug,
+            artifact_kind: input.artifact_kind,
+            target_content_hash: input.target_content_hash,
+            indexed_content_hash: input.indexed_content_hash,
+            status: 'ready',
+            extractor_version: input.extractor_version ?? 'test-extractor',
+            derived_schema_version: input.derived_schema_version ?? 'test-schema',
+            last_error: null,
+            updated_at: new Date(),
+          });
+        });
+      }
       // transaction: just call the fn with the same engine (no real DB transaction in tests)
       if (prop === 'transaction') return async (fn: (tx: BrainEngine) => Promise<any>) => fn(engine);
       return track(prop);
@@ -342,6 +383,51 @@ Same content.
     const calls = (engine as any)._calls;
     const putCall = calls.find((c: any) => c.method === 'putPage');
     expect(putCall).toBeUndefined();
+  });
+
+  test('unchanged non-deferred refresh re-reads the locked page before replacing derived storage', async () => {
+    const content = `---
+type: concept
+title: Unchanged Race
+---
+
+Same content.
+`;
+    const { parseMarkdown } = await import('../src/core/markdown.ts');
+    const { importContentHash } = await import('../src/core/utils.ts');
+    const parsed = parseMarkdown(content, 'concepts/unchanged-race.md');
+    const hash = importContentHash(parsed);
+    const existing = {
+      id: 1,
+      slug: 'concepts/unchanged-race',
+      type: parsed.type,
+      title: parsed.title,
+      compiled_truth: parsed.compiled_truth,
+      timeline: parsed.timeline,
+      frontmatter: parsed.frontmatter,
+      content_hash: hash,
+    };
+
+    let lockedRead = false;
+    const engine = mockEngine({
+      getPage: () => Promise.resolve(existing),
+      getNoteManifestEntry: () => Promise.resolve(null),
+      getPageForUpdate: () => {
+        lockedRead = true;
+        return Promise.resolve({
+          ...existing,
+          content_hash: 'newer-content-hash',
+        });
+      },
+    });
+
+    const result = await importFromContent(engine, 'concepts/unchanged-race', content);
+
+    expect(result.status).toBe('skipped');
+    expect(lockedRead).toBe(true);
+    const calls = (engine as any)._calls;
+    expect(calls.find((c: any) => c.method === 'enqueueDerivedJob')).toBeUndefined();
+    expect(calls.find((c: any) => c.method === 'upsertChunks')).toBeUndefined();
   });
 
   test('reconciles tags: removes old, adds new', async () => {

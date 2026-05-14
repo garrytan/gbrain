@@ -9,6 +9,9 @@ import {
   runImportService,
 } from '../src/core/services/import-service.ts';
 import { runImport } from '../src/commands/import.ts';
+import { importFromContent } from '../src/core/import-file.ts';
+import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from '../src/core/services/note-manifest-service.ts';
 
 const tempDirs: string[] = [];
 type ImportServiceDeps = NonNullable<Parameters<typeof runImportService>[2]>;
@@ -58,6 +61,63 @@ function wait(ms: number) {
 
 function runGit(cwd: string, ...args: string[]) {
   execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' });
+}
+
+const stagedContent = [
+  '---',
+  'type: concept',
+  'title: Staged Durable Derived',
+  'tags: [imported]',
+  '---',
+  '# Staged Durable Derived',
+  'Staged imports should commit canonical content without inline derived rows.',
+  '',
+  '## Section',
+  'The section index is rebuilt by durable derived jobs.',
+  '',
+  '---',
+  '',
+  '- **2026-05-12** | Staged import evidence.',
+].join('\n');
+
+async function withSQLiteEngine<T>(run: (engine: SQLiteEngine) => Promise<T>): Promise<T> {
+  const dir = makeTempDir('mbrain-import-service-db-');
+  const engine = new SQLiteEngine();
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    await engine.initSchema();
+    return await run(engine);
+  } finally {
+    await engine.disconnect();
+  }
+}
+
+const silentLogger = {
+  log: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+};
+
+async function withSQLiteImportConfig<T>(run: () => Promise<T>): Promise<T> {
+  const configDir = makeTempDir('mbrain-import-service-config-');
+  writeFileSync(join(configDir, 'config.json'), JSON.stringify({
+    engine: 'sqlite',
+    database_path: join(configDir, 'unused.db'),
+    offline: true,
+    embedding_provider: 'none',
+    query_rewrite_provider: 'heuristic',
+  }));
+  const previousConfigDir = process.env.MBRAIN_CONFIG_DIR;
+  process.env.MBRAIN_CONFIG_DIR = configDir;
+  try {
+    return await run();
+  } finally {
+    if (previousConfigDir === undefined) {
+      delete process.env.MBRAIN_CONFIG_DIR;
+    } else {
+      process.env.MBRAIN_CONFIG_DIR = previousConfigDir;
+    }
+  }
 }
 
 describe('import service', () => {
@@ -356,6 +416,117 @@ describe('import service', () => {
     expect(commitOrder).toEqual(['a.md', 'b.md', 'c.md']);
   });
 
+  test('runImportService staged commit enqueues durable derived jobs for changed content', async () => {
+    await withSQLiteImportConfig(async () => {
+      await withSQLiteEngine(async (engine) => {
+        const rootDir = makeTempDir('mbrain-import-staged-derived-');
+        mkdirSync(join(rootDir, 'concepts'), { recursive: true });
+        writeFileSync(join(rootDir, 'concepts', 'staged-derived.md'), stagedContent);
+
+        const summary = await runImportService(engine, {
+          rootDir,
+          workers: 2,
+          fresh: true,
+          updateSyncMetadata: false,
+          logger: silentLogger,
+        });
+
+        expect(summary.imported).toBe(1);
+        expect(summary.chunksCreated).toBe(0);
+        expect(await engine.getPage('concepts/staged-derived')).not.toBeNull();
+        expect(await engine.getChunks('concepts/staged-derived')).toHaveLength(0);
+        expect(await engine.getNoteManifestEntry(
+          DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+          'concepts/staged-derived',
+        )).toBeNull();
+
+        const jobs = await (engine as any).listDerivedJobs({
+          scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+          slug: 'concepts/staged-derived',
+          status: 'pending',
+        });
+        expect(jobs.map((job: any) => job.artifact_kind).sort()).toEqual([
+          'note_manifest',
+          'note_sections',
+          'page_chunks',
+        ]);
+        expect(await (engine as any).getDerivedIndexState(
+          DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+          'concepts/staged-derived',
+          'note_manifest',
+        )).toMatchObject({
+          status: 'pending',
+          indexed_content_hash: null,
+        });
+      });
+    });
+  });
+
+  test('runImportService staged unchanged commit checks derived freshness', async () => {
+    await withSQLiteImportConfig(async () => {
+      await withSQLiteEngine(async (engine) => {
+        const rootDir = makeTempDir('mbrain-import-staged-derived-stale-');
+        mkdirSync(join(rootDir, 'concepts'), { recursive: true });
+        writeFileSync(join(rootDir, 'concepts', 'staged-derived-stale.md'), stagedContent);
+        await importFromContent(engine, 'concepts/staged-derived-stale', stagedContent, {
+          path: 'concepts/staged-derived-stale.md',
+        });
+        (engine as any).database.run(
+          `UPDATE derived_index_state
+           SET extractor_version = 'phase2-structural-v0'
+           WHERE scope_id = ? AND slug = ? AND artifact_kind = 'note_manifest'`,
+          [DEFAULT_NOTE_MANIFEST_SCOPE_ID, 'concepts/staged-derived-stale'],
+        );
+
+        const summary = await runImportService(engine, {
+          rootDir,
+          workers: 2,
+          fresh: true,
+          updateSyncMetadata: false,
+          logger: silentLogger,
+        });
+
+        expect(summary.imported).toBe(0);
+        expect(summary.skipped).toBe(1);
+        expect(summary.chunksCreated).toBe(0);
+        expect(await engine.getChunks('concepts/staged-derived-stale')).toHaveLength(0);
+        expect(await engine.getNoteManifestEntry(
+          DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+          'concepts/staged-derived-stale',
+        )).toBeNull();
+
+        const jobs = await (engine as any).listDerivedJobs({
+          scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+          slug: 'concepts/staged-derived-stale',
+          status: 'pending',
+        });
+        expect(jobs.map((job: any) => job.artifact_kind).sort()).toEqual([
+          'note_manifest',
+          'note_sections',
+          'page_chunks',
+        ]);
+        expect(jobs.every((job: any) => job.manifest_path === 'concepts/staged-derived-stale.md')).toBe(true);
+        expect(await (engine as any).getDerivedIndexState(
+          DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+          'concepts/staged-derived-stale',
+          'note_manifest',
+        )).toMatchObject({
+          status: 'pending',
+          indexed_content_hash: null,
+        });
+      });
+    });
+  });
+
+  test('staged prepare path does not precompute page chunks before deferred commit', () => {
+    const source = readFileSync(
+      new URL('../src/core/services/import-service.ts', import.meta.url),
+      'utf-8',
+    );
+
+    expect(source).not.toContain('buildPageChunks');
+  });
+
   test('runImportService isolates staged prepare failures and continues committing later files in order', async () => {
     const rootDir = makeTempDir('mbrain-import-staged-prepare-error-');
     for (const name of ['a.md', 'b.md', 'c.md', 'd.md']) {
@@ -506,6 +677,37 @@ describe('import service', () => {
       listNoteManifestEntries: async () => [],
       deleteNoteManifestEntry: async () => undefined,
       replaceNoteSectionEntries: async () => [],
+      enqueueDerivedJob: async (input: Record<string, unknown>) => ({
+        id: `job-${String(input.artifact_kind)}`,
+        scope_id: input.scope_id,
+        slug: input.slug,
+        artifact_kind: input.artifact_kind,
+        target_content_hash: input.target_content_hash,
+        manifest_path: input.manifest_path ?? null,
+        derived_parameters: input.derived_parameters ?? {},
+        status: 'pending',
+        attempts: 0,
+        last_error: null,
+        lease_owner: null,
+        lease_expires_at: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      }),
+      listDerivedJobs: async () => [],
+      getDerivedIndexState: async () => null,
+      listDerivedIndexStates: async () => [],
+      markDerivedIndexReady: async (input: Record<string, unknown>) => ({
+        scope_id: input.scope_id,
+        slug: input.slug,
+        artifact_kind: input.artifact_kind,
+        target_content_hash: input.target_content_hash,
+        indexed_content_hash: input.indexed_content_hash,
+        status: 'ready',
+        extractor_version: input.extractor_version ?? 'test-extractor',
+        derived_schema_version: input.derived_schema_version ?? 'test-schema',
+        last_error: null,
+        updated_at: new Date(),
+      }),
       updateSlug: async () => undefined,
       rewriteLinks: async () => undefined,
       getConfig: async () => null,

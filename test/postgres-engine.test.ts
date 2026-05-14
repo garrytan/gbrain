@@ -10,11 +10,13 @@ type SqlCall =
 
 function createSqlMock(opts?: {
   unsafeResult?: Record<string, unknown>[];
+  unsafeResults?: Record<string, unknown>[][];
   unsafeError?: Error;
   previousTimeout?: string;
 }) {
   const calls: SqlCall[] = [];
   const previousTimeout = opts?.previousTimeout ?? '1min';
+  let unsafeResultIndex = 0;
 
   const reserved: any = async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = Array.from(strings).join('<??>');
@@ -33,6 +35,9 @@ function createSqlMock(opts?: {
   reserved.unsafe = async (query: string, values?: unknown[]) => {
     calls.push({ target: 'reserved', kind: 'unsafe', query, values });
     if (opts?.unsafeError) throw opts.unsafeError;
+    if (opts?.unsafeResults) {
+      return opts.unsafeResults[unsafeResultIndex++] ?? [];
+    }
     return opts?.unsafeResult ?? [];
   };
 
@@ -113,6 +118,10 @@ describe('PostgresEngine search wiring', () => {
         chunk_source: 'compiled_truth',
         score: 0.8,
         stale: false,
+        derived_artifact_kind: 'page_chunks',
+        derived_status: 'pending',
+        derived_target_content_hash: 'hash-pending',
+        derived_indexed_content_hash: null,
       }],
     });
 
@@ -125,6 +134,12 @@ describe('PostgresEngine search wiring', () => {
     });
 
     expect(results.map((entry: any) => entry.slug)).toEqual(['people/alice']);
+    expect(results[0]).toMatchObject({
+      derived_artifact_kind: 'page_chunks',
+      derived_status: 'pending',
+      derived_target_content_hash: 'hash-pending',
+      derived_indexed_content_hash: null,
+    });
     expect(calls).toEqual([
       { target: 'root', kind: 'reserve' },
       expect.objectContaining({ target: 'reserved', kind: 'tag' }),
@@ -144,6 +159,12 @@ describe('PostgresEngine search wiring', () => {
     );
     expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
       'AND p.slug != ALL($3::text[])',
+    );
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
+      'LEFT JOIN content_chunks cc ON cc.page_id = p.id',
+    );
+    expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
+      'LEFT JOIN derived_index_state dis',
     );
     expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).values).toEqual([
       'keyword',
@@ -207,16 +228,20 @@ describe('PostgresEngine search wiring', () => {
   test('searchVector uses a reserved connection, preserves the previous timeout, and passes type/exclude filters', async () => {
     const { sql, calls } = createSqlMock({
       previousTimeout: '45s',
-      unsafeResult: [{
-        slug: 'projects/apollo',
-        page_id: 2,
-        title: 'Apollo',
-        type: 'project',
-        chunk_text: 'vector result',
-        chunk_source: 'compiled_truth',
-        score: 0.9,
-        stale: false,
-      }],
+      unsafeResults: [
+        [{
+          slug: 'projects/apollo',
+          page_id: 2,
+          title: 'Apollo',
+          type: 'project',
+          chunk_text: 'vector result',
+          chunk_source: 'compiled_truth',
+          score: 0.9,
+          stale: false,
+        }],
+        [],
+        [],
+      ],
     });
 
     const engine = new PostgresEngine() as any;
@@ -249,10 +274,30 @@ describe('PostgresEngine search wiring', () => {
       ['projects/apollo'],
       7,
     ]);
-    expect((calls[4] as Extract<SqlCall, { kind: 'tag' }>).text).toContain(
+    expect((calls[4] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
+      'FROM derived_index_state',
+    );
+    expect((calls[4] as Extract<SqlCall, { kind: 'unsafe' }>).values).toEqual([
+      'workspace:default',
+      'page_chunks',
+      'pending',
+      20,
+      0,
+    ]);
+    expect((calls[5] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain(
+      'FROM derived_index_state',
+    );
+    expect((calls[5] as Extract<SqlCall, { kind: 'unsafe' }>).values).toEqual([
+      'workspace:default',
+      'page_chunks',
+      'failed',
+      20,
+      0,
+    ]);
+    expect((calls[6] as Extract<SqlCall, { kind: 'tag' }>).text).toContain(
       "set_config('statement_timeout', <??>, false)",
     );
-    expect((calls[4] as Extract<SqlCall, { kind: 'tag' }>).values).toEqual(['45s']);
-    expect(calls[5]).toEqual({ target: 'reserved', kind: 'release' });
+    expect((calls[6] as Extract<SqlCall, { kind: 'tag' }>).values).toEqual(['45s']);
+    expect(calls[7]).toEqual({ target: 'reserved', kind: 'release' });
   });
 });
