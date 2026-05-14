@@ -194,16 +194,37 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     const secretHash = clientSecret ? hashToken(clientSecret) : null;
     const now = Math.floor(Date.now() / 1000);
 
-    await this.sql`
-      INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                  grant_types, scope, token_endpoint_auth_method,
-                                  client_id_issued_at)
-      VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
-              ${pgArray((client.redirect_uris || []).map(String))},
-              ${pgArray(client.grant_types || ['client_credentials'])},
-              ${client.scope || ''}, ${authMethod},
-              ${now})
-    `;
+    // v0.34.0 (#861, D2 + D13): DCR clients get source_id='default' (matches
+    // legacy fallback). Operators who need narrower scope re-register via
+    // the CLI with `--source <id>`. Pre-v55 brain falls through to the
+    // legacy projection (no source_id column yet).
+    try {
+      await this.sql`
+        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                    grant_types, scope, token_endpoint_auth_method,
+                                    client_id_issued_at, source_id)
+        VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                ${pgArray((client.redirect_uris || []).map(String))},
+                ${pgArray(client.grant_types || ['client_credentials'])},
+                ${client.scope || ''}, ${authMethod},
+                ${now}, ${'default'})
+      `;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'source_id')) {
+        await this.sql`
+          INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                      grant_types, scope, token_endpoint_auth_method,
+                                      client_id_issued_at)
+          VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                  ${pgArray((client.redirect_uris || []).map(String))},
+                  ${pgArray(client.grant_types || ['client_credentials'])},
+                  ${client.scope || ''}, ${authMethod},
+                  ${now})
+        `;
+      } else {
+        throw err;
+      }
+    }
 
     // Public clients: omit `client_secret` entirely from the response so
     // the wire payload matches RFC 7591 §3.2.1 ("if the client is a
@@ -429,15 +450,38 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const now = Math.floor(Date.now() / 1000);
 
     // Try OAuth tokens first. JOIN oauth_clients in the same query so
-    // verifyAccessToken returns client_name in AuthInfo — eliminates the
-    // separate per-request lookup at serve-http.ts that was the N+1 hot
-    // path (see PR #586 review D14=B).
-    const oauthRows = await this.sql`
-      SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
-      FROM oauth_tokens t
-      LEFT JOIN oauth_clients c ON c.client_id = t.client_id
-      WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
-    `;
+    // verifyAccessToken returns client_name AND source_id in AuthInfo —
+    // eliminates the separate per-request lookup at serve-http.ts that
+    // was the N+1 hot path (see PR #586 review D14=B; v0.34.0 #861 D2
+    // adds the source_id thread on the same JOIN).
+    //
+    // v0.34.0 (#861): the JOIN guards on a c.source_id column that
+    // migration v55 adds. Pre-v55 brains throw a "column does not exist"
+    // error here — caught at the boundary via isUndefinedColumnError so
+    // unmigrated brains degrade to "no source scope" rather than refusing
+    // every token verification.
+    let oauthRows: Record<string, unknown>[];
+    try {
+      oauthRows = await this.sql`
+        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.source_id
+        FROM oauth_tokens t
+        LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+        WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+      `;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'source_id')) {
+        // Pre-v55 brain — source_id column not yet added. Fall through to
+        // the legacy projection so auth keeps working until apply-migrations.
+        oauthRows = await this.sql`
+          SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
+          FROM oauth_tokens t
+          LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+          WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+        `;
+      } else {
+        throw err;
+      }
+    }
 
     if (oauthRows.length > 0) {
       const row = oauthRows[0];
@@ -455,6 +499,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         scopes: (row.scopes as string[]) || [],
         expiresAt,
         resource: row.resource ? new URL(row.resource as string) : undefined,
+        // v0.34.0 (#861, D2): source-isolation scope from oauth_clients.
+        // Undefined when the row predates v55 or when the brain itself
+        // predates v55 (fell through to the legacy projection above).
+        sourceId: (row.source_id as string | null) ?? undefined,
       } as AuthInfo;
     }
 
@@ -478,6 +526,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         clientName: name,
         scopes: ['read', 'write', 'admin'],
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
+        // v0.34.0 (#861, D13): legacy bearer tokens default to 'default'
+        // source — matches the pre-v0.34 effective behavior where the
+        // serve-http transport fell back to GBRAIN_SOURCE/'default' for
+        // any caller without explicit scope. Operators who want a
+        // narrower scope for legacy tokens migrate to OAuth.
+        sourceId: 'default',
       } as AuthInfo;
     }
 
@@ -596,6 +650,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     grantTypes: string[],
     scopes: string,
     redirectUris: string[] = [],
+    sourceId: string = 'default',
   ): Promise<{ clientId: string; clientSecret: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
@@ -608,12 +663,33 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const secretHash = hashToken(clientSecret);
     const now = Math.floor(Date.now() / 1000);
 
-    await this.sql`
-      INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                  grant_types, scope, client_id_issued_at)
-      VALUES (${clientId}, ${secretHash}, ${name},
-              ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now})
-    `;
+    // v0.34.0 (#861, D2): persist source_id alongside the registration so
+    // verifyAccessToken can populate AuthInfo.sourceId on every request.
+    // Defaults to 'default' (matches migration v55 backfill). Pre-v55
+    // brains throw a "column does not exist" error here — caught at
+    // boundary so manual registration falls back to the legacy projection.
+    try {
+      await this.sql`
+        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                    grant_types, scope, client_id_issued_at, source_id)
+        VALUES (${clientId}, ${secretHash}, ${name},
+                ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now}, ${sourceId})
+      `;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'source_id')) {
+        // Pre-v55 brain — source_id column doesn't exist yet. Apply the
+        // pre-v0.34 projection so registration still works until the
+        // operator runs `gbrain apply-migrations`.
+        await this.sql`
+          INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                      grant_types, scope, client_id_issued_at)
+          VALUES (${clientId}, ${secretHash}, ${name},
+                  ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now})
+        `;
+      } else {
+        throw err;
+      }
+    }
 
     return { clientId, clientSecret };
   }

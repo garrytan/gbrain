@@ -329,26 +329,32 @@ async function revokeClient(clientId: string) {
 }
 
 async function registerClient(name: string, args: string[]) {
-  if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S]'); process.exit(1); }
+  if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE]'); process.exit(1); }
   const grantsIdx = args.indexOf('--grant-types');
   const scopesIdx = args.indexOf('--scopes');
+  const sourceIdx = args.indexOf('--source');
   const grantTypes = grantsIdx >= 0 && args[grantsIdx + 1]
     ? args[grantsIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
     : ['client_credentials'];
   const scopes = scopesIdx >= 0 && args[scopesIdx + 1] ? args[scopesIdx + 1] : 'read';
+  // v0.34.0 (#861, D2): --source flag scopes the OAuth client to a single
+  // source. Defaults to 'default' to match migration v55's backfill so
+  // operators upgrading without changing flags see no behavior change.
+  const sourceId = sourceIdx >= 0 && args[sourceIdx + 1] ? args[sourceIdx + 1] : 'default';
 
   try {
     await withConfiguredSql(async (sql) => {
       const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
       const provider = new GBrainOAuthProvider({ sql });
       const { clientId, clientSecret } = await provider.registerClientManual(
-        name, grantTypes, scopes, [],
+        name, grantTypes, scopes, [], sourceId,
       );
       console.log(`OAuth client registered: "${name}"\n`);
       console.log(`  Client ID:     ${clientId}`);
       console.log(`  Client Secret: ${clientSecret}\n`);
       console.log(`  Grant types: ${grantTypes.join(', ')}`);
-      console.log(`  Scopes:      ${scopes}\n`);
+      console.log(`  Scopes:      ${scopes}`);
+      console.log(`  Source:      ${sourceId}\n`);
       console.log('Save the client secret — it will not be shown again.');
       console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
     });

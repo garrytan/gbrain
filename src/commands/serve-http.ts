@@ -953,9 +953,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // ToolResult and we read isError + _meta to pick the right branch.
       const tokenAllowList = (authInfo as AuthInfo & { takesHoldersAllowList?: string[] }).takesHoldersAllowList
         ?? ['world'];
-      const tokenSourceId = (authInfo as AuthInfo & { sourceId?: string }).sourceId
-        ?? process.env.GBRAIN_SOURCE
-        ?? 'default';
+      // v0.34.0 (#861, D13): AuthInfo.sourceId is now a real typed field
+      // populated from oauth_clients.source_id (migration v55 backfilled
+      // NULL → 'default'). Pre-fix this site cast through AuthInfo and
+      // fell back to GBRAIN_SOURCE env / 'default' — the silent-fallback
+      // path codex flagged in plan review. Post-v55, every OAuth client
+      // has source_id set; legacy bearer tokens default to 'default' in
+      // verifyAccessToken. The env-fallback is gone.
+      const tokenSourceId = authInfo.sourceId ?? 'default';
 
       let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {

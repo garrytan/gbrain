@@ -629,18 +629,31 @@ export interface BrainEngine {
     dirPrefix?: string,
     minSimilarity?: number,
   ): Promise<{ slug: string; similarity: number } | null>;
-  traverseGraph(slug: string, depth?: number): Promise<GraphNode[]>;
+  /**
+   * v0.34.0 (#861 — P0 leak seal): `opts.sourceId` / `opts.sourceIds`
+   * constrain visited nodes to a single source or array of sources.
+   * Pre-fix, the walk ignored source scope and an authenticated MCP
+   * client could enumerate cross-source topology + page metadata via
+   * the graph op. MCP-bound callers MUST pass the auth'd scope; local
+   * CLI callers omit it for the historical unscoped behavior.
+   */
+  traverseGraph(
+    slug: string,
+    depth?: number,
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<GraphNode[]>;
   /**
    * Edge-based graph traversal with optional type and direction filters.
    * Returns a list of edges (GraphPath[]) instead of nodes. Supports:
    * - linkType: per-edge filter, only follows matching edges (per-edge semantics)
    * - direction: 'in' (follow to->from), 'out' (follow from->to), 'both'
    * - depth: max depth from root (default 5)
+   * - sourceId/sourceIds: v0.34.0 source-isolation filter, see traverseGraph
    * Uses cycle prevention (visited array in recursive CTE).
    */
   traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' },
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
   ): Promise<GraphPath[]>;
   /**
    * For a list of slugs, return how many inbound links each has.

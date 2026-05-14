@@ -196,6 +196,15 @@ export interface PageFilters {
    * operations to a single source.
    */
   sourceId?: string;
+  /**
+   * v0.34.0 (#876, D9): filter to ANY of these sources (federated read).
+   * Engine applies `WHERE p.source_id = ANY($N::text[])` when array is set.
+   * Caller precedence: if BOTH `sourceId` and `sourceIds` are set, the array
+   * wins (the federated semantics subsume the single-source case via an
+   * array of length 1). When neither is set, no filter applies — the
+   * pre-v0.34 unscoped behavior is preserved for local CLI callers.
+   */
+  sourceIds?: string[];
 }
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */
@@ -457,6 +466,18 @@ export interface SearchOpts {
    * undefined to search all sources.
    */
   sourceId?: string;
+  /**
+   * v0.34.0 (#876, D9): filter to ANY of these sources (federated read).
+   * Engine applies `WHERE p.source_id = ANY($N::text[])` when the array
+   * is set. Caller precedence: if BOTH `sourceId` and `sourceIds` are
+   * provided, the array wins (the federated semantics subsume the
+   * single-source case). When neither is set, no filter applies — the
+   * pre-v0.34 unscoped behavior is preserved for local CLI callers.
+   *
+   * The op-handler layer resolves: `ctx.auth?.allowedSources` (federated
+   * client) → `sourceIds`; otherwise `ctx.sourceId` (scalar) → `sourceId`.
+   */
+  sourceIds?: string[];
   /**
    * v0.27.1: target column for vector search. 'embedding' (default) hits
    * the brain's primary text-embedding column. 'embedding_image' targets

@@ -229,6 +229,36 @@ export interface AuthInfo {
   clientName?: string;
   scopes: string[];
   expiresAt?: number;
+  /**
+   * v0.34.0 (#861, D2): the source the calling OAuth client is scoped
+   * to (write authority). Sourced from `oauth_clients.source_id` at
+   * token-verification time. The HTTP transport ALSO threads this
+   * value into `OperationContext.sourceId` at the same site so op
+   * handlers can consume it via the canonical `ctx.sourceId` (D2
+   * dual-write decision — identity surface symmetric with
+   * `allowedSources` below).
+   *
+   * Undefined for legacy bearer tokens that predate v0.34.0 and for
+   * clients that haven't been scoped yet. Migration v55 backfills
+   * NULL → 'default' for pre-existing rows so this field is populated
+   * on the upgrade path; brand-new public-client registrations may
+   * still leave it null until an operator explicitly scopes via
+   * `gbrain auth scope-client`.
+   */
+  sourceId?: string;
+  /**
+   * v0.34.0 (#876): array of source ids this OAuth client may READ
+   * from (federation). Sourced from `oauth_clients.federated_read`.
+   * Independent of `sourceId` (write authority): a "WeCare L3 dept"
+   * client can write to `source_id='dept-x'` while reading the union
+   * of `['dept-x', 'wecare-parent', 'shared']`.
+   *
+   * Empty array `[]` means "no federated reads beyond `sourceId`".
+   * Undefined means "the post-v55 backfill hasn't populated this row
+   * yet" — engines fall back to scalar `sourceId` filtering in that
+   * case (back-compat).
+   */
+  allowedSources?: string[];
 }
 
 export interface OperationContext {
@@ -344,6 +374,38 @@ export interface OperationContext {
    * sourceId here is purely additive context for the new ops.
    */
   sourceId?: string;
+}
+
+/**
+ * v0.34.0 (#861, D9 — P0 leak seal): resolve the source-scope filter for a
+ * read-side op handler. Returns an opts fragment ready to spread into the
+ * engine call.
+ *
+ * Precedence:
+ *  1. `ctx.auth?.allowedSources` (federated read, #876) → emits
+ *     `{sourceIds: [...]}`. Federated semantics subsume the scalar case.
+ *  2. `ctx.sourceId` (scalar) → emits `{sourceId: '...'}`.
+ *  3. Neither set → emits `{}`. Local CLI callers (and tests that don't
+ *     populate ctx) keep the pre-v0.34 unscoped behavior.
+ *
+ * Both fields default to the engine's "no filter" behavior individually,
+ * so unset values are safe — the engine sees the same shape it did
+ * pre-v0.34. The leak this guards against is an authenticated MCP client
+ * whose ctx.sourceId IS set but whose engine call was constructed without
+ * threading it (operations.ts:968/1076/1092/935/1469/1471/2241 pre-fix).
+ *
+ * Helper rather than inline so every read-side handler routes through the
+ * same precedence ladder — drift between sites is the bug class.
+ */
+export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
+  const allowed = ctx.auth?.allowedSources;
+  // Treat an empty `allowedSources: []` as "no federated read scope" — the
+  // op-handler defers to scalar `ctx.sourceId` below. An attacker-controlled
+  // value of `[]` MUST NOT widen scope to "all sources" by being interpreted
+  // as "no filter."
+  if (allowed && allowed.length > 0) return { sourceIds: allowed };
+  if (ctx.sourceId) return { sourceId: ctx.sourceId };
+  return {};
 }
 
 export interface Operation {
@@ -932,6 +994,12 @@ const list_pages: Operation = {
     const sort = rawSort && (LIST_PAGES_SORT_VALUES as readonly string[]).includes(rawSort)
       ? (rawSort as ListPagesSort)
       : undefined;
+    // v0.34.0 (#861 — P0 leak seal): thread the auth'd client's source scope
+    // into the listPages filter so an OAuth client scoped to src-A cannot
+    // enumerate src-B pages. Pre-fix, ctx.sourceId / ctx.auth?.allowedSources
+    // were ignored at this op handler and the engine returned every source's
+    // pages indiscriminately.
+    const scope = sourceScopeOpts(ctx);
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
@@ -939,6 +1007,7 @@ const list_pages: Operation = {
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
+      ...scope,
     });
     return pages.map(pg => ({
       slug: pg.slug,
@@ -965,9 +1034,13 @@ const search: Operation = {
   handler: async (ctx, p) => {
     const startedAt = Date.now();
     const queryText = p.query as string;
+    // v0.34.0 (#861 — P0 leak seal): thread caller's source scope into
+    // searchKeyword. Pre-fix this op silently returned cross-source hits
+    // for any auth'd OAuth client.
     const raw = await ctx.engine.searchKeyword(queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
+      ...sourceScopeOpts(ctx),
     });
     const results = dedupResults(raw);
     const latency_ms = Date.now() - startedAt;
@@ -1073,10 +1146,15 @@ const query: Operation = {
       const [vec] = await embedMultimodal([
         { kind: 'image_base64', data: imageData, mime: imageMime },
       ]);
+      // v0.34.0 (#861 F2 — 6th leak surface): the image path bypasses
+      // hybridSearch and calls searchVector directly, so it needs its
+      // own thread of the source scope. Pre-fix, this branch leaked
+      // image pages across sources independent of the text path's fix.
       const results = await ctx.engine.searchVector(vec, {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
+        ...sourceScopeOpts(ctx),
       });
       return results;
     }
@@ -1105,6 +1183,10 @@ const query: Operation = {
       since: typeof p.since === 'string' ? p.since : undefined,
       until: typeof p.until === 'string' ? p.until : undefined,
       onMeta: (m) => { capturedMeta = m; },
+      // v0.34.0 (#861 — P0 leak seal): thread caller's source scope. The
+      // hybridSearch internal searchOpts rebuild (hybrid.ts:223) was
+      // dropping these fields pre-fix even when callers passed them.
+      ...sourceScopeOpts(ctx),
     });
     const latency_ms = Date.now() - startedAt;
 
@@ -1463,12 +1545,17 @@ const traverse_graph: Operation = {
     const depth = Math.max(1, Math.min(requestedDepth, TRAVERSE_DEPTH_CAP));
     const linkType = p.link_type as string | undefined;
     const direction = p.direction as 'in' | 'out' | 'both' | undefined;
+    // v0.34.0 (#861 — P0 leak seal): thread caller's source scope so graph
+    // walks stay within the auth'd client's accessible sources. Pre-fix,
+    // traverseGraph / traversePaths happily followed edges into pages from
+    // foreign sources, leaking topology + page metadata via the graph op.
+    const scope = sourceScopeOpts(ctx);
     // Backward compat: when neither link_type nor direction is provided, return
     // the legacy GraphNode[] shape. Once either is set, switch to GraphPath[].
     if (linkType === undefined && direction === undefined) {
-      return ctx.engine.traverseGraph(slug, depth);
+      return ctx.engine.traverseGraph(slug, depth, scope);
     }
-    return ctx.engine.traversePaths(slug, { depth, linkType, direction });
+    return ctx.engine.traversePaths(slug, { depth, linkType, direction, ...scope });
   },
   scope: 'read',
   cliHints: { name: 'graph', positional: ['slug'] },
@@ -2232,16 +2319,22 @@ const find_experts: Operation = {
       description: 'Include factor breakdown per result (expertise, recency, salience).',
     },
   },
-  handler: async (_ctx, p) => {
+  handler: async (ctx, p) => {
     const { findExperts } = await import('../commands/whoknows.ts');
     const topic = typeof p.topic === 'string' ? p.topic : '';
     if (!topic.trim()) {
       throw new OperationError('invalid_params', '`topic` is required and must be a non-empty string.');
     }
-    return findExperts(_ctx.engine, {
+    // v0.34.0 (#861, D3 — 5th leak surface): find_experts (whoknows) was
+    // authored against v0.33 after PR #861 was drafted, so the source-scope
+    // thread was missing entirely. The op calls findExperts → hybridSearch
+    // internally; without the thread an auth'd src-A whoknows query would
+    // surface src-B people in the rankings.
+    return findExperts(ctx.engine, {
       topic,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       explain: p.explain === true,
+      ...sourceScopeOpts(ctx),
     });
   },
   cliHints: { name: 'whoknows', positional: ['topic'] },

@@ -424,8 +424,15 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   client_secret_expires_at BIGINT,
   token_ttl               INTEGER,
   deleted_at              TIMESTAMPTZ,
+  source_id               TEXT REFERENCES sources(id) ON DELETE SET NULL,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- v0.34.0 (#861, D13): source_id = OAuth client write-source scope.
+-- Migration v55 adds column + FK + backfill (NULL→'default') on upgrade
+-- brains; fresh installs land in post-migration shape via the inline
+-- column above.
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
+  ON oauth_clients(source_id) WHERE source_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
   token_hash   TEXT PRIMARY KEY,
