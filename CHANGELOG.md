@@ -2,6 +2,78 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.34.0.0] - 2026-05-14
+
+**Recursive code intelligence ships. Plan-mode subagents get one-call blast and flow.**
+**`code_blast` and `code_flow` walk callers and callees with depth grouping, cycle detection, and sink tagging.**
+
+The v0.34 wave builds on v0.33.3's foundation (MCP-exposed code-callers/callees/def/refs) to deliver the actual plan-mode payoff: recursive walks that replace 10-grep chains with one structured response. An agent editing a function can now ask "what calls this?" and get every transitive caller grouped by depth, with truncation flags and cycle detection. An agent tracing a request can ask "what does this lead to?" and get the chain to its terminal sinks (HTTP call, DB write, file I/O, process exec).
+
+This release also densifies the call graph beneath the new ops. Pre-v0.34 the extractor emitted bare callee tokens (`render`, `find`, `m`) and the call graph aliased same-named methods across classes. v0.34 ships receiver-type resolution for the 3 MUST patterns (`import { x }`, `this/self.m`, `new C().m`) in JS/TS/TSX + Python, plus new `imports` and `references` edge types that turn the calls-only graph into a real dependency map.
+
+### What ships in v0.34.0.0
+
+- `code_blast(symbol, depth=5, max_nodes=200)` MCP op — recursive callers grouped by depth, with `confidence`, `cycles_detected`, `truncation`, `freshness`, `did_you_mean`, `candidates`, and `supported` fields per the response envelope.
+- `code_flow(entry_point, depth=8, max_nodes=200)` MCP op — recursive callees from an entry point, with `terminal_nodes: [{symbol, sink_kind}]` where `sink_kind ∈ db_call | http_call | file_io | process_exec | unknown`.
+- `code_traversal_cache_clear(source_id?, all_sources=false)` admin op with the v0.26.5 destructive-guard pattern.
+- W1: receiver-type resolution at extraction time (3 MUST patterns; JS/TS/TSX + Python). Depth-32 walker cap.
+- W2: new `imports` and `references` edge types. JS/TS/TSX + Python get imports; TS gets type-position references. Ruby/Go/Rust/Java stay at calls-only — honest coverage in the response shape.
+- W3b: `code_traversal_cache` table (schema migration v56) with D3 generation-counter invalidation.
+- W6: `gbrain edges-backfill` CLI — operator escape hatch for the symbol-resolution backfill. Resumable via `edges_backfilled_at` watermark.
+- W7: `src/core/eval-capture-graph.ts` — pure-function metrics (node-set Jaccard, depth-group stability, truncation-match, Adjusted Rand Index) for replay-driven regression checks on code-intel ops.
+- STEP 0: `OperationContext.sourceId` promoted to TypeScript-REQUIRED. Mirrors v0.26.9 `remote` REQUIRED pattern.
+
+### Slip handling — deferred to v0.34.1
+
+The plan's explicit slip-handling clause for clusters fired at ship time. v0.34.0.0 ships the foundation + structural payoff (recursive walks) without the W4–5 Leiden cluster pipeline. Reason: the cluster ship gate requires validating ≤0.03 clusters/node on real brain data, and the eval gate requires a baseline-vs-with-code-intel comparison on a populated brain. Neither was available at ship time.
+
+Deferred to v0.34.1:
+- W4–5: Leiden clusters (schema v57, leiden module, cluster naming, recompute_code_clusters cycle phase, `code_clusters_list` + `code_cluster_get` MCP ops, `gbrain clusters` CLI, ship-gate ratio check).
+- W6: `gbrain wiki` zero-LLM aggregator (depends on clusters).
+- W7 wiring: `eval-capture.ts` `tool` field + `result_shape` payload, `eval-replay.ts` dispatch on tool.
+- W1 `.scm` pattern-file rewrite of the receiver-type walker.
+- W3 stdio rate limiter at `src/mcp/dispatch.ts` (D10).
+- W3 CLI thin-shims (`gbrain blast`, `gbrain flow`).
+- D2 autopilot 60s sub-loop for `resolve_symbol_edges`.
+
+## To take advantage of v0.34.0.0
+
+`gbrain upgrade` runs `gbrain apply-migrations` automatically. v0.34.0.0 ships migration v56 (`code_traversal_cache_v0_34`). Most users won't need to do anything else.
+
+To exercise the new W1/W2 edge shapes on an existing brain:
+
+1. **Run the symbol-resolution backfill manually (one-time on first run after upgrade):**
+   ```bash
+   gbrain edges-backfill --all-sources
+   ```
+   Resumable. Ctrl-C is safe. Re-runs are idempotent.
+
+2. **Verify code-intelligence coverage:**
+   ```bash
+   gbrain doctor --json | jq '.checks.code_intel_coverage'
+   ```
+
+3. **Try the new recursive ops:**
+   ```bash
+   gbrain call code_blast --symbol performSync
+   gbrain call code_flow --entry_point runCycle
+   ```
+
+4. **Run the v0.34.0.0 eval gate (optional — measures retrieval-quality delta):**
+   ```bash
+   # Pre-v0.34 baseline (3 runs for noise floor)
+   for i in 1 2 3; do gbrain eval code-retrieval --baseline --save /tmp/v034-baseline-$i.json; done
+   # With code-intel
+   gbrain eval code-retrieval --with-code-intel --save /tmp/v034.json
+   gbrain eval code-retrieval --compare /tmp/v034-baseline-1.json /tmp/v034.json
+   ```
+   Pass criterion: precision@5 +10pp OR top-1 stability +15pp on ≥15/30 questions above the 3-run noise floor.
+
+5. **If anything fails or surprises you**, file an issue: https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
 ## [0.33.2.0] - 2026-05-12
 
 **Code intelligence ships to agents. Plan-mode subagents stop falling through to grep.**
