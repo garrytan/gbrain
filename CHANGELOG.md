@@ -2,6 +2,50 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.32.4.1] - 2026-05-13
+
+**`extract_facts` is callable again from HTTP MCP. Every gbrain tool schema is now structurally guarded against the same regression.**
+
+Hot-fix follow-up to v0.32.4. The `extract_facts` operation declared its `entity_hints` parameter as `type: 'array'` but forgot to specify what the array contains. JSON Schema requires arrays to declare their `items` shape, and both the OpenAI and Anthropic function-calling APIs reject malformed tool schemas at request time. The visible failure was an HTTP 400 from the chat provider (not from gbrain itself) the moment a Hermes / Claude Desktop / ChatGPT MCP client loaded the gbrain HTTP MCP and tried to use any tool — because the malformed `extract_facts` schema poisoned the entire `tools[]` array submitted to the provider:
+
+```
+Invalid schema for function 'mcp_gbrain_extract_facts':
+  In context=('properties', 'entity_hints'), array schema missing items.
+```
+
+### What changed
+
+- `src/core/operations.ts:2459` — added `items: { type: 'string' }` to `entity_hints`. Matches the handler signature (`p.entity_hints as string[]`) and the existing-good pattern at line 1755 (`pages_updated`).
+- `test/mcp-tool-defs.test.ts` — new structural-guard test walks every emitted MCP tool def and asserts that any property with `type: 'array'` declares `items`. The guard runs at the schema-output layer (post-`buildToolDefs`), not just at the op-definition layer, so a future regression at either layer fails the unit suite.
+
+### To take advantage of v0.32.4.1
+
+`gbrain upgrade` should do this automatically. There are no migrations.
+
+1. **Run the orchestrator manually if doctor warns about a partial migration:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the fix on the HTTP MCP path:**
+   ```bash
+   gbrain doctor --json | jq '.status'
+   # Then in your MCP client (Hermes / Claude Desktop / etc.), call any gbrain tool.
+   # No more HTTP 400 from the chat provider on tools[].
+   ```
+3. **If a remote gbrain HTTP MCP is involved (e.g. Tailscale-hosted),** restart it so the corrected schema is emitted on the next `tools/list`:
+   ```bash
+   # On the host running `gbrain serve --http`:
+   pkill -f 'gbrain serve --http' && gbrain serve --http &
+   ```
+
+### Itemized changes
+
+#### Bug fix
+- `mcp_gbrain_extract_facts`: array property `entity_hints` now declares `items: { type: 'string' }`. Restores HTTP MCP callability under OpenAI + Anthropic function-calling APIs.
+
+#### Tests
+- `test/mcp-tool-defs.test.ts` gains a structural guard pinning every array property in every emitted MCP tool def to declare `items`. The bug class (array-without-items in a tool schema) can no longer recur silently.
+
 ## [0.32.4] - 2026-05-11
 
 **`gbrain doctor` now catches the silent failure mode where sync hasn't run in days.**

@@ -64,4 +64,22 @@ describe('buildToolDefs', () => {
       expect(Array.isArray(def.inputSchema.required)).toBe(true);
     }
   });
+
+  // Anthropic + OpenAI tool-definition validators reject array properties that
+  // omit `items`. extract_facts.entity_hints regressed here in v0.31 and broke
+  // every Hermes session that loaded the gbrain HTTP MCP (HTTP 400 from the
+  // chat provider, not gbrain). Pin all array params at the schema-output level
+  // so the failure mode can't recur silently.
+  test('every array property in the emitted schema declares items', () => {
+    const offenders: string[] = [];
+    for (const def of buildToolDefs(operations)) {
+      for (const [paramName, schema] of Object.entries(def.inputSchema.properties)) {
+        const s = schema as { type?: string; items?: unknown };
+        if (s.type === 'array' && !s.items) {
+          offenders.push(`${def.name}.${paramName}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
 });
