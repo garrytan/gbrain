@@ -408,11 +408,17 @@ export class MinionSupervisor {
         return;
       }
 
+      // Clean exits (crashCount=0) restart immediately with no backoff.
       // crashCount - 1 is the retry-attempt index (0-based exponent for backoff math).
       // On first crash: crashCount=1, backoff exponent=0 → 1s.
       // After stable-run reset: crashCount=1 again → 1s fresh cycle.
       // Test-only: _backoffFloorMs short-circuits to a fixed tiny value so integration
       // tests can exercise crash loops in < 1s without waiting for the real curve.
+      if (this.crashCount === 0) {
+        // Clean exit — restart immediately, no backoff
+        this.emit('backoff', { ms: 0, crash_count: 0 });
+        continue;
+      }
       const backoff = this.opts._backoffFloorMs !== undefined
         ? this.opts._backoffFloorMs
         : calculateBackoffMs(this.crashCount - 1);
@@ -513,11 +519,17 @@ export class MinionSupervisor {
           return;
         }
 
+        // Classify exit: code=0 is a clean exit (e.g. watchdog RSS drain),
+        // not a crash. Only increment crashCount for actual failures (code≠0).
         // Stable-run reset: if the worker ran > 5min before crashing, we forgive
         // prior crash history and treat this as the first crash of a new cycle
         // (crashCount = 1, so backoff math uses retry-index 0 = 1s).
         const runDuration = Date.now() - this.lastStartTime;
-        if (runDuration > 5 * 60 * 1000) {
+        if (code === 0) {
+          // Clean exit (watchdog drain, graceful stop). Don't count as crash.
+          // Reset crash counter since the worker was healthy.
+          this.crashCount = 0;
+        } else if (runDuration > 5 * 60 * 1000) {
           this.crashCount = 1;
         } else {
           this.crashCount++;
