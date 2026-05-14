@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.33.3.1] - 2026-05-14
+## [0.33.2.1] - 2026-05-14
 
 **Doc-only: name the fork-PR escape hatch so AI-authored PRs don't drop their CI secrets.**
 
