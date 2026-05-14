@@ -145,6 +145,20 @@ describe('subagent handler happy path', () => {
     expect(parseInt(msgs[0]!.count, 10)).toBe(2); // user seed + assistant
   });
 
+  test('claude-cli provider: runs without ANTHROPIC_API_KEY for no-tool prompts (optional e2e)', async () => {
+    if (process.env.GBRAIN_RUN_CLAUDE_CLI_E2E !== '1') {
+      expect(true).toBe(true);
+      return;
+    }
+    const handler = makeSubagentHandler({ engine, toolRegistry: [], provider: 'claude-cli' });
+    const ctx = await makeCtx({ prompt: 'Reply with exactly: CLI_OK', model: 'claude-sonnet-4-5' });
+
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.result).toContain('CLI_OK');
+    expect(result.turns_count).toBe(1);
+  });
+
   test('single tool_use turn: tool executes, two-phase row goes complete', async () => {
     const tool = makeEchoTool();
     const client = new FakeMessagesClient([

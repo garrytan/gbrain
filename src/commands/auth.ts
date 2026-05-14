@@ -15,7 +15,7 @@
  * which only hits the remote URL and doesn't need a local DB).
  */
 import postgres from 'postgres';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, createHmac, randomBytes } from 'crypto';
 
 function getDatabaseUrl(requireDb: boolean): string | undefined {
   const url = process.env.DATABASE_URL || process.env.GBRAIN_DATABASE_URL;
@@ -32,6 +32,43 @@ function hashToken(token: string): string {
 
 function generateToken(): string {
   return 'gbrain_' + randomBytes(32).toString('hex');
+}
+
+function signJwtHs256(payload: Record<string, unknown>, secret: string): string {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const h = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const p = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const input = `${h}.${p}`;
+  const s = createHmac('sha256', secret).update(input).digest('base64url');
+  return `${input}.${s}`;
+}
+
+function jwtTtlSeconds(): number {
+  const raw = process.env.GBRAIN_JWT_TTL_SECONDS;
+  if (!raw) return 60 * 60 * 24 * 90;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 60 * 60 * 24 * 90;
+}
+
+async function createJwt(name: string) {
+  if (!name) { console.error('Usage: auth create <name>'); process.exit(1); }
+  const secret = process.env.GBRAIN_JWT_SECRET;
+  if (!secret) {
+    console.error('GBRAIN_JWT_SECRET is required for JWT creation.');
+    process.exit(1);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const ttl = jwtTtlSeconds();
+  const jti = randomBytes(16).toString('hex');
+  const payload: Record<string, unknown> = { sub: name, name, jti, iat: now, exp: now + ttl };
+  if (process.env.GBRAIN_JWT_ISSUER) payload.iss = process.env.GBRAIN_JWT_ISSUER;
+  if (process.env.GBRAIN_JWT_AUDIENCE) payload.aud = process.env.GBRAIN_JWT_AUDIENCE;
+
+  const token = signJwtHs256(payload, secret);
+  console.log(`JWT created for "${name}":\n`);
+  console.log(`  ${token}\n`);
+  console.log(`Expires at: ${new Date((now + ttl) * 1000).toISOString()}`);
+  console.log('Stateless JWT mode: revoke/list do not track this token unless you also use legacy tokens.');
 }
 
 async function create(name: string) {
@@ -59,6 +96,10 @@ async function create(name: string) {
   } finally {
     await sql.end();
   }
+}
+
+async function createLegacy(name: string) {
+  await create(name);
 }
 
 async function list() {
@@ -233,7 +274,13 @@ async function test(url: string, token: string) {
 export async function runAuth(args: string[]): Promise<void> {
   const [cmd, ...rest] = args;
   switch (cmd) {
-    case 'create': await create(rest[0]); return;
+    case 'create': {
+      if (process.env.GBRAIN_JWT_SECRET) await createJwt(rest[0]);
+      else await createLegacy(rest[0]);
+      return;
+    }
+    case 'create-jwt': await createJwt(rest[0]); return;
+    case 'create-legacy': await createLegacy(rest[0]); return;
     case 'list': await list(); return;
     case 'revoke': await revoke(rest[0]); return;
     case 'test': {
@@ -247,7 +294,9 @@ export async function runAuth(args: string[]): Promise<void> {
       console.log(`GBrain Token Management
 
 Usage:
-  gbrain auth create <name>           Create a new access token
+  gbrain auth create <name>           Create JWT if GBRAIN_JWT_SECRET is set, else legacy token
+  gbrain auth create-jwt <name>       Force-create a JWT access token
+  gbrain auth create-legacy <name>    Force-create a DB-backed legacy token
   gbrain auth list                    List all tokens
   gbrain auth revoke <name>           Revoke a token
   gbrain auth test <url> --token <t>  Smoke-test a remote MCP server

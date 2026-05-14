@@ -24,7 +24,7 @@
  * client registration (see SECURITY.md).
  */
 
-import { createHash } from 'crypto';
+import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { operations } from '../core/operations.ts';
@@ -62,6 +62,57 @@ interface AuthResult {
   ok: boolean;
   tokenId?: string;
   tokenName?: string;
+}
+
+interface JwtClaims {
+  sub?: string;
+  jti?: string;
+  name?: string;
+  exp?: number;
+  nbf?: number;
+  iat?: number;
+  iss?: string;
+  aud?: string;
+}
+
+function b64urlToBuffer(input: string): Buffer {
+  const pad = input.length % 4;
+  const normalized = input.replace(/-/g, '+').replace(/_/g, '/') + (pad ? '='.repeat(4 - pad) : '');
+  return Buffer.from(normalized, 'base64');
+}
+
+function verifyJwtHs256(token: string, secret: string): JwtClaims | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const [h, p, s] = parts;
+  if (!h || !p || !s) return null;
+
+  try {
+    const header = JSON.parse(b64urlToBuffer(h).toString('utf8')) as { alg?: string; typ?: string };
+    if (header.alg !== 'HS256') return null;
+
+    const signingInput = `${h}.${p}`;
+    const expectedSig = createHmac('sha256', secret)
+      .update(signingInput)
+      .digest('base64url');
+    const actual = Buffer.from(s);
+    const expected = Buffer.from(expectedSig);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
+
+    const claims = JSON.parse(b64urlToBuffer(p).toString('utf8')) as JwtClaims;
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof claims.nbf === 'number' && now < claims.nbf) return null;
+    if (typeof claims.exp === 'number' && now >= claims.exp) return null;
+
+    const expectedIss = process.env.GBRAIN_JWT_ISSUER;
+    if (expectedIss && claims.iss !== expectedIss) return null;
+    const expectedAud = process.env.GBRAIN_JWT_AUDIENCE;
+    if (expectedAud && claims.aud !== expectedAud) return null;
+
+    return claims;
+  } catch {
+    return null;
+  }
 }
 
 /** Read up to `cap` bytes off req.body. Returns null if cap exceeded. */
@@ -160,6 +211,19 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   async function validateToken(authHeader: string | null): Promise<AuthResult> {
     if (!authHeader?.startsWith('Bearer ')) return { ok: false };
     const token = authHeader.slice(7);
+
+    // Preferred path: JWT (stateless auth)
+    const jwtSecret = process.env.GBRAIN_JWT_SECRET;
+    if (jwtSecret) {
+      const claims = verifyJwtHs256(token, jwtSecret);
+      if (claims) {
+        const id = claims.jti || claims.sub;
+        if (!id) return { ok: false };
+        return { ok: true, tokenId: id, tokenName: claims.name || claims.sub || 'jwt' };
+      }
+    }
+
+    // Compatibility path: legacy DB-backed bearer tokens.
     const hash = hashToken(token);
     try {
       const [row] = await sql`

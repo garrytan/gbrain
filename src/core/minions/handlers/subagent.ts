@@ -25,6 +25,8 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { MinionJobContext, MinionJob } from '../types.ts';
 import type {
   ContentBlock,
@@ -55,6 +57,8 @@ const DEFAULT_RATE_KEY = 'anthropic:messages';
 const DEFAULT_MAX_CONCURRENT = Number(process.env.GBRAIN_ANTHROPIC_MAX_INFLIGHT ?? '8');
 const DEFAULT_LEASE_TTL_MS = 120_000;
 const DEFAULT_SYSTEM = 'You are a helpful assistant running as a gbrain subagent.';
+const DEFAULT_SUBAGENT_PROVIDER = process.env.GBRAIN_SUBAGENT_PROVIDER ?? 'anthropic-sdk';
+const execFileAsync = promisify(execFile);
 
 // ── Injectable surfaces (for tests) ─────────────────────────
 
@@ -91,6 +95,8 @@ export interface SubagentDeps {
    * the caller's subagentId at dispatch time.
    */
   toolRegistry?: ToolDef[];
+  /** Provider override: anthropic-sdk (default) or claude-cli. */
+  provider?: 'anthropic-sdk' | 'claude-cli';
 }
 
 // ── Types for internal state ────────────────────────────────
@@ -132,7 +138,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
   // right object; JS method-call semantics preserve `this` at the call
   // site (subagent.ts invokes client.create(...) with client === sdk.messages).
   const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic());
-  const client: MessagesClient = deps.client ?? makeAnthropic().messages;
+  const provider = deps.provider ?? (DEFAULT_SUBAGENT_PROVIDER === 'claude-cli' ? 'claude-cli' : 'anthropic-sdk');
+  const client: MessagesClient | undefined = deps.client ?? (provider === 'anthropic-sdk' ? makeAnthropic().messages : undefined);
   const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
   const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;
   const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
@@ -345,7 +352,20 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         };
 
         const combinedSignal = mergeSignals(ctx.signal, ctx.shutdownSignal);
-        assistantMsg = await client.create(params, { signal: combinedSignal });
+        if (provider === 'claude-cli') {
+          if (toolDefs.length > 0) {
+            throw new Error('GBRAIN_SUBAGENT_PROVIDER=claude-cli does not support tool_use turns yet; use anthropic-sdk provider for tool-enabled subagents.');
+          }
+          assistantMsg = await callClaudeCliAsAnthropicMessage({
+            model,
+            systemPrompt,
+            messages: anthroMessages,
+            signal: combinedSignal,
+          });
+        } else {
+          if (!client) throw new Error('anthropic-sdk provider selected but no Messages client is available');
+          assistantMsg = await client.create(params, { signal: combinedSignal });
+        }
       } catch (err) {
         // Release lease eagerly on error so we don't starve capacity.
         await releaseLease(engine, lease.leaseId!).catch(() => {});
@@ -660,6 +680,69 @@ async function persistToolExecFailed(
 }
 
 // ── Internal: helpers ───────────────────────────────────────
+
+async function callClaudeCliAsAnthropicMessage(args: {
+  model: string;
+  systemPrompt: string;
+  messages: Anthropic.MessageParam[];
+  signal?: AbortSignal;
+}): Promise<Anthropic.Message> {
+  const prompt = renderConversationForClaudeCli(args.systemPrompt, args.messages);
+  const { stdout } = await execFileAsync(
+    'claude',
+    ['-p', prompt, '--output-format', 'text', '--model', args.model],
+    { maxBuffer: 2 * 1024 * 1024, signal: args.signal },
+  );
+  const text = (stdout ?? '').trim();
+  return {
+    id: `claude-cli-${Date.now()}`,
+    type: 'message',
+    role: 'assistant',
+    model: args.model,
+    content: [{ type: 'text', text }],
+    stop_reason: 'end_turn',
+    stop_sequence: null,
+    usage: {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    },
+  } as unknown as Anthropic.Message;
+}
+
+function renderConversationForClaudeCli(systemPrompt: string, messages: Anthropic.MessageParam[]): string {
+  const lines: string[] = [
+    `System: ${systemPrompt}`,
+    '',
+    'Return ONLY the assistant response text. Do not include role labels.',
+    '',
+  ];
+
+  for (const msg of messages) {
+    const role = msg.role === 'assistant' ? 'Assistant' : 'User';
+    lines.push(`${role}: ${flattenMessageContent(msg.content)}`);
+  }
+
+  lines.push('', 'Assistant:');
+  return lines.join('\n');
+}
+
+function flattenMessageContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const block of content) {
+      if (!block || typeof block !== 'object') continue;
+      const b = block as Record<string, unknown>;
+      if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text);
+      else if (b.type === 'tool_result' && typeof b.content === 'string') parts.push(`[tool_result] ${b.content}`);
+      else parts.push(JSON.stringify(b));
+    }
+    return parts.join('\n');
+  }
+  return String(content ?? '');
+}
 
 function asStringIfNotObject(value: unknown): string {
   if (typeof value === 'string') return value;

@@ -29,6 +29,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
@@ -41,6 +43,7 @@ import type { Page, PageType } from '../types.ts';
 // Slug regex from validatePageSlug — kept in sync.
 // Used for the orchestrator-written summary index slug.
 const SUMMARY_SLUG_RE = /^[a-z0-9][a-z0-9\-]*(\/[a-z0-9][a-z0-9\-]*)*$/;
+const execFileAsync = promisify(execFile);
 
 // ── Public entry ──────────────────────────────────────────────────────
 
@@ -341,9 +344,57 @@ export interface JudgeClient {
 }
 
 function makeHaikuClient(): JudgeClient | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  const client = new Anthropic();
-  return { create: client.messages.create.bind(client.messages) };
+  if (process.env.ANTHROPIC_API_KEY) {
+    const client = new Anthropic();
+    return { create: client.messages.create.bind(client.messages) };
+  }
+
+  // Fallback: Claude CLI OAuth session (no ANTHROPIC_API_KEY required).
+  return {
+    create: async (params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message> => {
+      const prompt = buildClaudeCliJudgePrompt(params);
+      const { stdout } = await execFileAsync('claude', ['-p', '--output-format', 'text', prompt], {
+        timeout: 120000,
+        maxBuffer: 1024 * 1024,
+      });
+      return {
+        id: 'cli-judge',
+        type: 'message',
+        role: 'assistant',
+        model: String(params.model),
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 0, output_tokens: 0 },
+        content: [{ type: 'text', text: stdout.trim() }],
+      } as unknown as Anthropic.Message;
+    },
+  };
+}
+
+function buildClaudeCliJudgePrompt(params: Anthropic.MessageCreateParamsNonStreaming): string {
+  const system = typeof params.system === 'string'
+    ? params.system
+    : Array.isArray(params.system)
+      ? params.system
+          .map((b: any) => (b && typeof b.text === 'string' ? b.text : ''))
+          .join('\n')
+      : '';
+
+  const userParts = (params.messages || [])
+    .filter((m: any) => m && m.role === 'user')
+    .map((m: any) => {
+      if (typeof m.content === 'string') return m.content;
+      if (Array.isArray(m.content)) {
+        return m.content
+          .map((c: any) => (c && typeof c.text === 'string' ? c.text : ''))
+          .join('\n');
+      }
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n\n');
+
+  return `${system}\n\n${userParts}\n\nReturn ONLY the JSON object, no markdown fence.`.trim();
 }
 
 interface VerdictResult {

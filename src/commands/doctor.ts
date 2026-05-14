@@ -3,7 +3,7 @@ import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
-import { findRepoRoot } from '../core/repo-root.ts';
+import { autoDetectSkillsDir, findRepoRoot } from '../core/repo-root.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
@@ -59,9 +59,10 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // --- Filesystem checks (always run, no DB needed) ---
 
   // 1. Resolver health
+  const detectedSkills = autoDetectSkillsDir();
   const repoRoot = findRepoRoot();
-  if (repoRoot) {
-    const skillsDir = join(repoRoot, 'skills');
+  if (detectedSkills.dir) {
+    const skillsDir = detectedSkills.dir;
 
     // --fix: run auto-repair BEFORE checkResolvable so the post-fix scan
     // reflects the new state. Auto-fix only targets DRY violations today;
@@ -94,15 +95,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       };
       checks.push(check);
     }
-  } else {
-    checks.push({ name: 'resolver_health', status: 'warn', message: 'Could not find skills directory' });
-  }
 
-  // 2. Skill conformance
-  if (repoRoot) {
-    const skillsDir = join(repoRoot, 'skills');
+    // 2. Skill conformance
     const conformanceResult = checkSkillConformance(skillsDir);
     checks.push(conformanceResult);
+  } else {
+    checks.push({ name: 'resolver_health', status: 'warn', message: 'Could not find skills directory' });
   }
 
   // 3. Half-migrated Minions detection (filesystem-only).

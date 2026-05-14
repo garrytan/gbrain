@@ -14,7 +14,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { createHash } from 'crypto';
+import { createHash, createHmac } from 'crypto';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
 
@@ -41,6 +41,14 @@ function makeSqlTag(handler: SqlHandler) {
 
 function hash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function makeJwt(secret: string, claims: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  const input = `${header}.${payload}`;
+  const sig = createHmac('sha256', secret).update(input).digest('base64url');
+  return `${input}.${sig}`;
 }
 
 interface FakeEngineConfig {
@@ -168,6 +176,23 @@ describe('http-transport: auth', () => {
     expect(body.result.tools).toBeArray();
     expect(body.result.tools.length).toBeGreaterThan(0);
     expect(body.jsonrpc).toBe('2.0');
+  });
+
+  test('1b. valid JWT → 200 (hybrid auth path)', async () => {
+    const secret = 'test-jwt-secret';
+    process.env.GBRAIN_JWT_SECRET = secret;
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const jwt = makeJwt(secret, { sub: 'jwt-client', jti: 'jwt-1', name: 'jwt-test', iat: now, exp: now + 300 });
+      const r = await fetch(`${srv.url}/mcp`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+        body: rpc('tools/list'),
+      });
+      expect(r.status).toBe(200);
+    } finally {
+      delete process.env.GBRAIN_JWT_SECRET;
+    }
   });
 
   test('2. missing Authorization header → 401', async () => {
