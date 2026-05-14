@@ -1148,3 +1148,106 @@ describe('F12 dcrDisabled constructor option', () => {
     expect(result.clientSecret).toStartWith('gbrain_cs_');
   });
 });
+
+// ---------------------------------------------------------------------------
+// v0.34.0 (#909) — PKCE public-client DCR (RFC 7591 §3.2.1)
+// ---------------------------------------------------------------------------
+//
+// Per RFC 7591 §3.2.1, when a DCR client declares
+// `token_endpoint_auth_method: "none"` (PKCE-only public clients like Claude
+// Code, Cursor), the authorization server MUST NOT issue a client_secret.
+// Pre-fix, unconditional secret generation made the MCP SDK's clientAuth
+// middleware reject valid public-client flows on /token.
+
+describe('PKCE DCR public-client gate (#909)', () => {
+  test("registerClient with token_endpoint_auth_method='none' omits client_secret", async () => {
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'public-pkce-client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'none',
+    });
+    expect(result.client_id).toStartWith('gbrain_cl_');
+    // RFC 7591 §3.2.1: public clients get NO client_secret in the response.
+    expect(result.client_secret).toBeUndefined();
+    expect(result.token_endpoint_auth_method).toBe('none');
+  });
+
+  test('default auth_method (omitted) still issues a client_secret', async () => {
+    // Regression guard: confidential clients (the existing default) must
+    // keep their secret-issuing behavior unchanged.
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'confidential-default',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      // token_endpoint_auth_method omitted; falls back to 'client_secret_post'
+    });
+    expect(result.client_id).toStartWith('gbrain_cl_');
+    expect(result.client_secret).toStartWith('gbrain_cs_');
+  });
+
+  test('explicit client_secret_post still issues a client_secret', async () => {
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'confidential-explicit',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'client_secret_post',
+    });
+    expect(result.client_id).toStartWith('gbrain_cl_');
+    expect(result.client_secret).toStartWith('gbrain_cs_');
+  });
+
+  test('getClient on a public client returns client_secret=undefined (NULL normalized)', async () => {
+    // The SDK's clientAuth middleware checks `client.client_secret === undefined`
+    // (not `=== null`) to decide whether to enforce secret comparison on /token.
+    // Without normalization, Postgres NULL would reach the SDK as JS null and
+    // the secret check would mis-fire on every public client.
+    const reg = await provider.clientsStore.registerClient!({
+      client_name: 'public-getclient-norm',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'none',
+    });
+    const stored = await provider.clientsStore.getClient(reg.client_id);
+    expect(stored).toBeDefined();
+    expect(stored!.client_secret).toBeUndefined();
+    expect(stored!.token_endpoint_auth_method).toBe('none');
+  });
+
+  test('PKCE flow end-to-end: public client /authorize then /token, no secret needed', async () => {
+    // Full F7 regression #15: public client completes auth_code → token
+    // exchange without ever presenting a client_secret.
+    const reg = await provider.clientsStore.registerClient!({
+      client_name: 'pkce-roundtrip',
+      redirect_uris: ['http://localhost:3000/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'none',
+    });
+
+    // Re-fetch via getClient to mirror what the SDK middleware sees.
+    const client = (await provider.clientsStore.getClient(reg.client_id))!;
+    expect(client.client_secret).toBeUndefined();
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+    await provider.authorize(client, {
+      codeChallenge: 'test-challenge-value',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['read'],
+    }, mockRes);
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    expect(code).toMatch(/^gbrain_code_/);
+
+    // Exchange the code — public client; no secret on the wire.
+    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    expect(tokens.access_token).toStartWith('gbrain_at_');
+    // SDK normalizes token_type per RFC 6750 §6.1.1 (case-insensitive);
+    // implementations may emit "bearer" lowercase.
+    expect(String(tokens.token_type).toLowerCase()).toBe('bearer');
+  });
+});

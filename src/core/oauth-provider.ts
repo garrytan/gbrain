@@ -139,9 +139,15 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     `;
     if (rows.length === 0) return undefined;
     const r = rows[0];
+    // v0.34.0 (#909): public clients (token_endpoint_auth_method='none')
+    // have client_secret_hash = NULL. Normalize SQL NULL to JS undefined
+    // so SDK middleware that checks `client.client_secret === undefined`
+    // (not `=== null`) correctly identifies the client as public and
+    // skips the secret-comparison branch on /token.
+    const rawSecret = r.client_secret_hash;
     return {
       client_id: r.client_id as string,
-      client_secret: r.client_secret_hash as string | undefined,
+      client_secret: rawSecret == null ? undefined : (rawSecret as string),
       client_name: r.client_name as string,
       redirect_uris: (r.redirect_uris as string[]) || [],
       grant_types: (r.grant_types as string[]) || ['client_credentials'],
@@ -170,8 +176,22 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     assertAllowedScopes(parseScopeString(client.scope));
 
     const clientId = generateToken('gbrain_cl_');
-    const clientSecret = generateToken('gbrain_cs_');
-    const secretHash = hashToken(clientSecret);
+    // v0.34.0 (#909): RFC 7591 §2 — clients that authenticate at the token
+    // endpoint via PKCE alone declare `token_endpoint_auth_method: "none"`.
+    // For those clients the authorization server MUST NOT issue a client
+    // secret. Pre-fix, unconditional secret generation made the MCP SDK's
+    // clientAuth middleware check `client.client_secret` on every request,
+    // rejecting valid public-client (Claude Code, Cursor) flows.
+    //
+    // We persist secret_hash = NULL for public clients so `getClient` and
+    // the SDK's clientAuth path can detect them via `client_secret_hash IS
+    // NULL` and skip the secret comparison. Confidential clients (default
+    // `client_secret_post` and explicit `client_secret_basic`) still mint
+    // a secret as before.
+    const authMethod = client.token_endpoint_auth_method || 'client_secret_post';
+    const isPublicClient = authMethod === 'none';
+    const clientSecret = isPublicClient ? undefined : generateToken('gbrain_cs_');
+    const secretHash = clientSecret ? hashToken(clientSecret) : null;
     const now = Math.floor(Date.now() / 1000);
 
     await this.sql`
@@ -181,16 +201,22 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
               ${pgArray((client.redirect_uris || []).map(String))},
               ${pgArray(client.grant_types || ['client_credentials'])},
-              ${client.scope || ''}, ${client.token_endpoint_auth_method || 'client_secret_post'},
+              ${client.scope || ''}, ${authMethod},
               ${now})
     `;
 
-    return {
+    // Public clients: omit `client_secret` entirely from the response so
+    // the wire payload matches RFC 7591 §3.2.1 ("if the client is a
+    // public client, the authorization server MUST NOT issue a client
+    // secret"). Confidential clients return the freshly-generated secret
+    // exactly once — same shape as before.
+    const response: OAuthClientInformationFull = {
       ...client,
       client_id: clientId,
-      client_secret: clientSecret,
       client_id_issued_at: now,
     };
+    if (clientSecret) response.client_secret = clientSecret;
+    return response;
   }
 }
 
