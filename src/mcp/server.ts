@@ -62,8 +62,15 @@ export async function startMcpServer(engine: BrainEngine) {
       .catch(() => {})
       .finally(() => process.exit(code));
   };
-  process.stdin.on('end', () => shutdown('stdin end'));
-  process.stdin.on('close', () => shutdown('stdin close'));
+  // v0.34.0 (#870): when MCP_STDIO=1, the wrapping gateway (OpenClaw's
+  // bundle-mcp layer, others) often pipes the JSON-RPC handshake then
+  // closes its stdin half. Treating that as a permanent disconnect kills
+  // the server before the first tool call arrives. Signal handlers and
+  // transport.onclose still cover the legitimate shutdown paths.
+  if (process.env.MCP_STDIO !== '1') {
+    process.stdin.on('end', () => shutdown('stdin end'));
+    process.stdin.on('close', () => shutdown('stdin close'));
+  }
   // @ts-ignore — SDK exposes onclose on transport
   transport.onclose = () => shutdown('transport close');
   process.on('SIGTERM', () => shutdown('SIGTERM'));

@@ -56,6 +56,13 @@ export interface ServeOptions {
   // tick fell through to the cached `process.ppid` and the watchdog
   // never fired, while still claiming to be installed.
   probeWatchdog?: () => boolean;
+  // v0.34.0 (#870): test seam for the MCP_STDIO=1 piped-stdin guard.
+  // When true, runServe skips the stdin 'end'/'close' shutdown hooks
+  // because the wrapping gateway (OpenClaw bundle-mcp, others) pipes the
+  // JSON-RPC handshake and closes stdin immediately. Signal handlers and
+  // transport.onclose still cover legitimate shutdown.
+  // Defaults to `process.env.MCP_STDIO === '1'` when omitted.
+  mcpStdio?: boolean;
 }
 
 export async function runServe(
@@ -201,7 +208,15 @@ function installStdioLifecycle(
   // Skip when stdin is a TTY: interactive `gbrain serve` use shouldn't
   // terminate just because the user hasn't typed anything. Signal /
   // watchdog paths still cover that case if needed.
-  if (!deps.stdin.isTTY) {
+  // v0.34.0 (#870): when MCP_STDIO=1, the wrapping gateway pipes the
+  // JSON-RPC handshake then closes its stdin half. Treating that as a
+  // permanent disconnect kills the server before the first tool call.
+  // Signal handlers (SIGTERM/SIGINT/SIGHUP), transport.onclose, and the
+  // parent-process watchdog below still cover legitimate shutdown paths.
+  // `mcpStdio` is the injectable form; default reads the env once at
+  // install time so tests stay isolated (no process.env mutation).
+  const mcpStdioMode = opts.mcpStdio ?? (process.env.MCP_STDIO === '1');
+  if (!deps.stdin.isTTY && !mcpStdioMode) {
     deps.stdin.once('end', () => beginShutdown('stdin-end'));
     deps.stdin.once('close', () => beginShutdown('stdin-close'));
   }
