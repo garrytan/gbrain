@@ -364,7 +364,6 @@ async function embedAllStale(
   onProgress?: (done: number, total: number, embedded: number) => void,
 ) {
   // Pre-flight: 0 stale chunks → nothing to do, no further DB reads.
-  // Cheapest possible exit on the autopilot common case.
   const staleCount = await engine.countStaleChunks();
   if (staleCount === 0) {
     if (dryRun) {
@@ -375,91 +374,135 @@ async function embedAllStale(
     return;
   }
 
-  // Pull only the stale chunks (no embedding column).
-  const staleRows = await engine.listStaleChunks();
-  // v0.31.12: group by composite key (source_id::slug) so same-slug pages
-  // in different sources are embedded independently with correct source_id.
-  const byKey = new Map<string, typeof staleRows>();
-  for (const row of staleRows) {
-    const key = `${row.source_id}::${row.slug}`;
-    const list = byKey.get(key);
-    if (list) list.push(row);
-    else byKey.set(key, [row]);
-  }
-
-  const keys = Array.from(byKey.keys());
-  const totalStaleChunks = staleRows.length;
-  result.total_chunks += totalStaleChunks;
-  // skipped is "chunks we considered and skipped due to having an embedding".
-  // We never considered the non-stale chunks here, so leave skipped at 0.
-  // Callers reading EmbedResult who care about coverage should call
-  // engine.getStats() / engine.getHealth() afterward.
-
   if (dryRun) {
-    result.would_embed += totalStaleChunks;
-    result.pages_processed += keys.length;
-    if (onProgress) {
-      // Emit a single tick to satisfy the contract (CLI progress reporters
-      // expect at least one start/finish pair).
-      onProgress(keys.length, keys.length, 0);
-    }
-    console.log(`[dry-run] Would embed ${totalStaleChunks} chunks across ${keys.length} pages`);
+    result.would_embed += staleCount;
+    result.total_chunks += staleCount;
+    if (onProgress) onProgress(1, 1, 0);
+    console.log(`[dry-run] Would embed ${staleCount} stale chunks`);
     return;
   }
 
+  // v0.33.3: cursor-paginated stale loading. Instead of pulling all 48K+
+  // rows in one query (which times out on Supabase's 2-min pooler timeout),
+  // we page through 2000 rows at a time via keyset pagination on
+  // (page_id, chunk_index). Each query finishes in <1s.
+  const PAGE_SIZE = 2000;
   const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
-  let processed = 0;
+  let totalProcessedPages = 0;
+  let afterPageId = 0;
+  let afterChunkIndex = -1;
+  let totalChunksLoaded = 0;
 
-  async function embedOneKey(key: string) {
-    const stale = byKey.get(key)!;
-    // v0.31.12: extract source_id + slug from the stale row so getChunks
-    // and upsertChunks target the correct (source_id, slug) row. Pre-fix,
-    // both calls defaulted to source_id='default', silently discarding
-    // embeddings for every non-default source (e.g. media-corpus).
-    const sourceId = stale[0]?.source_id ?? 'default';
-    const slug = stale[0].slug;
-    try {
-      const embeddings = await embedBatch(stale.map(c => c.chunk_text));
-      // CRITICAL: passing ONLY the stale indices to upsertChunks would
-      // delete every non-stale chunk on the same page (the != ALL filter
-      // wipes any chunk_index NOT in the input). To preserve them, we
-      // re-fetch existing chunks for this page and merge. Bounded by the
-      // stale slug count, not by total slugs — autopilot common case
-      // is 0 stale (pre-flight short-circuit, never reaches this path).
-      const existing = await engine.getChunks(slug, { sourceId });
-      const staleIdxToEmbedding = new Map<number, Float32Array>();
-      for (let j = 0; j < stale.length; j++) {
-        staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const batch = await engine.listStaleChunks({
+      batchSize: PAGE_SIZE,
+      afterPageId,
+      afterChunkIndex,
+    });
+    if (batch.length === 0) break;
+    totalChunksLoaded += batch.length;
+
+    // Advance cursor to last row in this batch.
+    const last = batch[batch.length - 1];
+    afterPageId = last.page_id;
+    afterChunkIndex = last.chunk_index;
+
+    // Group by composite key (source_id::slug).
+    const byKey = new Map<string, typeof batch>();
+    for (const row of batch) {
+      const key = `${row.source_id}::${row.slug}`;
+      const list = byKey.get(key);
+      if (list) list.push(row);
+      else byKey.set(key, [row]);
+    }
+
+    const keys = Array.from(byKey.keys());
+    result.total_chunks += batch.length;
+
+    let nextIdx = 0;
+    async function embedOneKey(key: string) {
+      const stale = byKey.get(key)!;
+      const sourceId = stale[0]?.source_id ?? 'default';
+      const slug = stale[0].slug;
+      try {
+        const embeddings = await embedBatchWithBackoff(stale.map(c => c.chunk_text));
+        // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
+        const existing = await engine.getChunks(slug, { sourceId });
+        const staleIdxToEmbedding = new Map<number, Float32Array>();
+        for (let j = 0; j < stale.length; j++) {
+          staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
+        }
+        const merged: ChunkInput[] = existing.map(c => ({
+          chunk_index: c.chunk_index,
+          chunk_text: c.chunk_text,
+          chunk_source: c.chunk_source,
+          embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
+          token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
+        }));
+        await engine.upsertChunks(slug, merged, { sourceId });
+        result.embedded += stale.length;
+      } catch (e: unknown) {
+        console.error(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
       }
-      const merged: ChunkInput[] = existing.map(c => ({
-        chunk_index: c.chunk_index,
-        chunk_text: c.chunk_text,
-        chunk_source: c.chunk_source,
-        // For stale chunks: pass the new embedding.
-        // For non-stale chunks: pass undefined → COALESCE preserves existing embedding.
-        embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
-        token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
-      }));
-      await engine.upsertChunks(slug, merged, { sourceId });
-      result.embedded += stale.length;
+      totalProcessedPages++;
+      result.pages_processed++;
+      // Use staleCount as the estimated total for progress (not exact after
+      // pagination starts, but directionally correct).
+      onProgress?.(totalProcessedPages, Math.ceil(staleCount / PAGE_SIZE) * keys.length, result.embedded);
+    }
+
+    async function worker() {
+      while (nextIdx < keys.length) {
+        const idx = nextIdx++;
+        await embedOneKey(keys[idx]);
+      }
+    }
+
+    const numWorkers = Math.min(CONCURRENCY, keys.length);
+    await Promise.all(Array.from({ length: numWorkers }, () => worker()));
+
+    // If we got fewer rows than PAGE_SIZE, we've reached the end.
+    if (batch.length < PAGE_SIZE) break;
+  }
+
+  console.log(`Embedded ${result.embedded} chunks across ${totalProcessedPages} pages`);
+}
+
+/**
+ * v0.33.3: rate-limit-aware embedBatch wrapper.
+ *
+ * The OpenAI SDK has built-in retry with exponential backoff, but its
+ * backoff window (max ~4s) is too short for TPM (tokens-per-minute)
+ * rate limits on large pages (~90K tokens).  This wrapper catches
+ * 429-shaped errors, parses the retry delay from the error message
+ * (e.g. "Please try again in 248ms"), and sleeps before retrying.
+ *
+ * Up to MAX_RATE_LIMIT_RETRIES attempts with the parsed delay
+ * (or a 60s fallback when the message can't be parsed).
+ */
+const MAX_RATE_LIMIT_RETRIES = 5;
+
+async function embedBatchWithBackoff(texts: string[]): Promise<Float32Array[]> {
+  for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
+    try {
+      return await embedBatch(texts);
     } catch (e: unknown) {
-      console.error(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      const isRateLimit = msg.includes('Rate limit') || msg.includes('429') || msg.includes('rate_limit');
+      if (!isRateLimit || attempt === MAX_RATE_LIMIT_RETRIES) throw e;
+
+      // Parse "Please try again in 248ms" or "try again in 1.5s".
+      let delayMs = 60_000; // conservative fallback
+      const msMatch = msg.match(/try again in (\d+)ms/i);
+      const secMatch = msg.match(/try again in ([\d.]+)s/i);
+      if (msMatch) delayMs = parseInt(msMatch[1], 10) + 500; // pad 500ms
+      else if (secMatch) delayMs = Math.ceil(parseFloat(secMatch[1]) * 1000) + 500;
+
+      console.error(`  [rate-limit] attempt ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES}, waiting ${delayMs}ms...`);
+      await new Promise(r => setTimeout(r, delayMs));
     }
-    processed++;
-    result.pages_processed++;
-    onProgress?.(processed, keys.length, result.embedded);
   }
-
-  let nextIdx = 0;
-  async function worker() {
-    while (nextIdx < keys.length) {
-      const idx = nextIdx++;
-      await embedOneKey(keys[idx]);
-    }
-  }
-
-  const numWorkers = Math.min(CONCURRENCY, keys.length);
-  await Promise.all(Array.from({ length: numWorkers }, () => worker()));
-
-  console.log(`Embedded ${result.embedded} chunks across ${keys.length} pages`);
+  // Unreachable, but TypeScript needs it.
+  return embedBatch(texts);
 }

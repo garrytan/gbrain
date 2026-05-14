@@ -539,14 +539,22 @@ export interface BrainEngine {
    */
   countStaleChunks(): Promise<number>;
   /**
-   * Return every chunk where embedded_at IS NULL, with the metadata needed
+   * Return every chunk where embedding IS NULL, with the metadata needed
    * to call embedBatch + upsertChunks. The `embedding` column is omitted
    * by design — stale rows have NULL embeddings, so shipping them wastes
    * wire bytes for no gain. Caller groups by slug, embeds, and re-upserts.
    *
-   * Bounded by an internal LIMIT of 100000 to mirror listPages.
+   * v0.33.3: cursor-paginated — yields up to `batchSize` rows per call
+   * (default 2000) to stay within Supabase's statement_timeout. Pass the
+   * last row's `(page_id, chunk_index)` as `afterPageId`/`afterChunkIndex`
+   * to fetch the next page.  When fewer than `batchSize` rows come back,
+   * the caller has reached the end.
    */
-  listStaleChunks(): Promise<StaleChunkRow[]>;
+  listStaleChunks(opts?: {
+    batchSize?: number;
+    afterPageId?: number;
+    afterChunkIndex?: number;
+  }): Promise<StaleChunkRow[]>;
   /**
    * Delete every chunk for a page. Internal page-id lookup is sourceId-scoped
    * when `opts.sourceId` is given; otherwise the bare-slug subquery returns
