@@ -1757,6 +1757,108 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     fmHb();
   }
 
+  // 11a-ter. Timeline health (v0.26.0). Validates that timeline sections
+  // in people/ pages use canonical format, are reverse chronological,
+  // and have no duplicates. Filesystem-only check.
+  progress.heartbeat('timeline_health');
+  try {
+    const peopleDir = join(repoRoot, 'people');
+    if (existsSync(peopleDir)) {
+      const CANONICAL_ENTRY = /^- \*\*(\d{4}[-\/]\d{2}[-\/]?\d{0,2})\*\* \|/;
+      const BAD_FORMAT_ENTRY = /^- (\d{4}-\d{2}-\d{2}) [—\-]/;
+      
+      let totalPages = 0;
+      let orderIssues = 0;
+      let dupeIssues = 0;
+      let formatIssues = 0;
+      let separatorIssues = 0;
+      const sampleIssues: string[] = [];
+      
+      const peopleFiles = readdirSync(peopleDir).filter((f: string) => f.endsWith('.md'));
+      
+      for (const file of peopleFiles) {
+        const content = readFileSync(join(peopleDir, file), 'utf-8');
+        const timelineIdx = content.indexOf('## Timeline');
+        if (timelineIdx < 0) continue;
+        
+        totalPages++;
+        
+        // Check: timeline below --- separator
+        const frontmatterEnd = content.indexOf('---', content.indexOf('---') + 3);
+        const contentAfterFm = content.slice(frontmatterEnd + 3);
+        const beforeTimeline = contentAfterFm.slice(0, contentAfterFm.indexOf('## Timeline'));
+        if (!beforeTimeline.includes('\n---\n')) {
+          separatorIssues++;
+        }
+        
+        // Extract timeline entries
+        const timelineStart = content.indexOf('\n', timelineIdx) + 1;
+        const nextSection = content.indexOf('\n## ', timelineStart);
+        const nextSep = content.indexOf('\n---', timelineStart);
+        const timelineEnd = Math.min(
+          nextSection > 0 ? nextSection : Infinity,
+          nextSep > 0 ? nextSep : Infinity,
+          content.length
+        );
+        const entries = content.slice(timelineStart, timelineEnd)
+          .split('\n').filter((l: string) => l.trim().startsWith('- '));
+        
+        if (entries.length === 0) continue;
+        
+        // Check format
+        for (const entry of entries) {
+          if (BAD_FORMAT_ENTRY.test(entry)) formatIssues++;
+        }
+        
+        // Check order
+        const dates: string[] = [];
+        for (const entry of entries) {
+          const m = entry.match(/(\d{4}[-\/]\d{2}[-\/]?\d{0,2})/);
+          if (m) dates.push(m[1].replace(/\//g, '-'));
+        }
+        for (let i = 1; i < dates.length; i++) {
+          if (dates[i] > dates[i-1]) { orderIssues++; break; }
+        }
+        
+        // Check dupes
+        const seen = new Set<string>();
+        for (const entry of entries) {
+          const key = entry.slice(0, 80);
+          if (seen.has(key)) { dupeIssues++; break; }
+          seen.add(key);
+        }
+      }
+      
+      const totalIssues = orderIssues + dupeIssues + formatIssues + separatorIssues;
+      
+      if (totalIssues === 0) {
+        checks.push({
+          name: 'timeline_health',
+          status: 'ok',
+          message: `${totalPages} people pages with timelines, all healthy`,
+        });
+      } else {
+        const parts: string[] = [];
+        if (orderIssues) parts.push(`${orderIssues} not reverse-chron`);
+        if (dupeIssues) parts.push(`${dupeIssues} with duplicates`);
+        if (formatIssues) parts.push(`${formatIssues} non-canonical format`);
+        if (separatorIssues) parts.push(`${separatorIssues} timeline above separator`);
+        
+        checks.push({
+          name: 'timeline_health',
+          status: 'warn',
+          message: `${totalIssues} timeline issue(s) across ${totalPages} page(s). ${parts.join(', ')}. Fix: node scripts/timeline-lint.mjs --fix`,
+        });
+      }
+    }
+  } catch (e) {
+    checks.push({
+      name: 'timeline_health',
+      status: 'warn',
+      message: `Timeline check failed: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
   // 11a-bis. Eval-capture health (v0.25.0). Capture is a fire-and-forget
   // side-effect that logs failures to a persistent table so this check
   // can see drops cross-process (the MCP server captures; `gbrain doctor`
