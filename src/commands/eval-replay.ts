@@ -38,6 +38,10 @@ interface ReplayOpts {
   json?: boolean;
   verbose?: boolean;
   topRegressions?: number;
+  /** v0.32.3 — search-lite mode to replay under. */
+  mode?: 'conservative' | 'balanced' | 'tokenmax';
+  /** v0.32.3 [CDX-13] — force the per-call limit to a constant across modes. */
+  compareLimit?: number;
 }
 
 interface RowResult {
@@ -95,6 +99,20 @@ function parseArgs(args: string[]): ReplayOpts {
       case '--top-regressions':
         if (!next) break;
         opts.topRegressions = parseInt(next, 10);
+        i++;
+        break;
+      case '--mode':
+        if (!next) break;
+        if (next === 'conservative' || next === 'balanced' || next === 'tokenmax') {
+          opts.mode = next;
+        } else {
+          throw new Error(`--mode must be one of conservative|balanced|tokenmax (got: ${next})`);
+        }
+        i++;
+        break;
+      case '--compare-limit':
+        if (!next) break;
+        opts.compareLimit = parseInt(next, 10);
         i++;
         break;
     }
@@ -205,12 +223,15 @@ function jaccardSlugs(a: string[], b: string[]): number {
   return union === 0 ? 1.0 : intersection / union;
 }
 
-async function replayRow(engine: BrainEngine, row: CapturedRow): Promise<RowResult> {
+async function replayRow(engine: BrainEngine, row: CapturedRow, opts: ReplayOpts = {}): Promise<RowResult> {
   const captured_slugs = row.retrieved_slugs ?? [];
   const startedAt = Date.now();
 
   // Default replay limit matches hybridSearch's default (20).
-  const limit = Math.max(captured_slugs.length, 20);
+  // v0.32.3 [CDX-13]: --compare-limit forces a constant K across modes so
+  // Jaccard@k actually measures quality drift, not K-drift. When set, it
+  // overrides the captured K and the mode's default searchLimit.
+  const limit = opts.compareLimit ?? Math.max(captured_slugs.length, 20);
 
   // search → bare keyword path. query → hybrid path (vector + keyword + RRF).
   // detail and expansion are threaded in from the captured row so the same
@@ -380,8 +401,14 @@ export async function runEvalReplay(engine: BrainEngine, args: string[]): Promis
   const capped = opts.limit && opts.limit > 0 ? rows.slice(0, opts.limit) : rows;
   if (!opts.json) {
     console.error(
-      `Replaying ${capped.length}${capped.length < rows.length ? ` of ${rows.length}` : ''} captured queries…`,
+      `Replaying ${capped.length}${capped.length < rows.length ? ` of ${rows.length}` : ''} captured queries${opts.mode ? ` under mode=${opts.mode}` : ''}${opts.compareLimit ? ` (compare-limit=${opts.compareLimit})` : ''}…`,
     );
+  }
+
+  // v0.32.3: thread --mode into the engine's config so hybridSearch resolves
+  // it through the standard chain. Set once before the replay loop runs.
+  if (opts.mode) {
+    try { await engine.setConfig('search.mode', opts.mode); } catch { /* swallow */ }
   }
 
   const results: RowResult[] = [];
@@ -402,7 +429,7 @@ export async function runEvalReplay(engine: BrainEngine, args: string[]): Promis
       });
       continue;
     }
-    const r = await replayRow(engine, row);
+    const r = await replayRow(engine, row, opts);
     results.push(r);
     if (!opts.json && results.length % 25 === 0) {
       process.stderr.write(`  ...${results.length}/${capped.length}\n`);

@@ -407,7 +407,99 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // 6. Sync freshness check
   checks.push(await checkSyncFreshness(engine));
 
+  // 7. v0.32.3 search-lite mode + per-key drift surface.
+  checks.push(await checkSearchMode(engine));
+
+  // 8. v0.32.3 eval_drift: retrieval-affecting files changed since last
+  // eval run? Non-blocking — surfaces as ok + hint.
+  checks.push(await checkEvalDrift(engine));
+
   return computeDoctorReport(checks);
+}
+
+/**
+ * v0.32.3 [CDX-20]: surface mode + per-key override drift.
+ *
+ * Status stays `ok` (never warns; never docks health score). If
+ * search.mode is unset → suggest picking one. If overrides contradict
+ * the mode (e.g. mode=conservative but cache.enabled=false), say so in
+ * the message and paste a `gbrain search modes --reset` fix command.
+ */
+export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
+  try {
+    const mode = await engine.getConfig('search.mode');
+    const overrides = await engine.listConfigKeys('search.');
+    // Exclude search.mode itself + the upgrade-notice state key from the
+    // override roster — they aren't knobs.
+    const overrideKeys = overrides.filter(k => k !== 'search.mode' && k !== 'search.mode_upgrade_notice_shown');
+
+    if (!mode) {
+      return {
+        name: 'search_mode',
+        status: 'ok',
+        message: 'search.mode is unset (using balanced fallback). Run `gbrain search modes` to see what is running and pick a mode explicitly.',
+      };
+    }
+
+    if (overrideKeys.length === 0) {
+      return {
+        name: 'search_mode',
+        status: 'ok',
+        message: `Mode: ${mode} (no per-key overrides — mode bundle is canonical).`,
+      };
+    }
+
+    return {
+      name: 'search_mode',
+      status: 'ok',
+      message: `Mode: ${mode} with ${overrideKeys.length} per-key override(s) (${overrideKeys.join(', ')}). To consolidate to the pure mode bundle: gbrain search modes --reset`,
+    };
+  } catch (e) {
+    return {
+      name: 'search_mode',
+      status: 'ok',
+      message: `Could not read search mode config (${(e as Error).message ?? 'unknown'}).`,
+    };
+  }
+}
+
+/**
+ * v0.32.3 [CDX-6]: surface when retrieval-affecting files have changed
+ * since the most recent published eval. Curated watch-list in
+ * src/core/eval/drift-watch.ts; additions to that list require a
+ * CHANGELOG line.
+ *
+ * Status stays `ok` — operator-facing reminder, not a hard gate.
+ */
+export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
+  try {
+    const { watchedFilesDrifted } = await import('../core/eval/drift-watch.ts');
+    // Working tree vs HEAD (uncommitted retrieval changes). The fuller
+    // version (vs the commit of the last published eval) is wired when
+    // eval_results lands; today we just probe for uncommitted retrieval
+    // changes so the operator sees them before re-running evals.
+    const repoRoot = process.cwd();
+    const drifted = watchedFilesDrifted(repoRoot);
+    if (drifted.length === 0) {
+      return {
+        name: 'eval_drift',
+        status: 'ok',
+        message: 'No retrieval-affecting files changed in working tree.',
+      };
+    }
+    const summary = drifted.slice(0, 3).join(', ') + (drifted.length > 3 ? ', …' : '');
+    return {
+      name: 'eval_drift',
+      status: 'ok',
+      message: `${drifted.length} retrieval-affecting file(s) changed since HEAD: ${summary}. Re-run \`gbrain eval run-all\` after committing these changes.`,
+    };
+  } catch (e) {
+    return {
+      name: 'eval_drift',
+      status: 'ok',
+      message: `Could not probe retrieval drift (${(e as Error).message ?? 'unknown'}).`,
+    };
+  }
 }
 
 /**
@@ -2319,6 +2411,15 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   if (engine !== null) {
     progress.heartbeat('sync_freshness');
     checks.push(await checkSyncFreshness(engine));
+  }
+
+  // v0.32.3 search-lite — mode + eval_drift surfaces. Status stays 'ok' per
+  // [CDX-20]; hint lives in `message`.
+  if (engine !== null) {
+    progress.heartbeat('search_mode');
+    checks.push(await checkSearchMode(engine));
+    progress.heartbeat('eval_drift');
+    checks.push(await checkEvalDrift(engine));
   }
 
   progress.finish();

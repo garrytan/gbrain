@@ -2,7 +2,7 @@
  * v0.34 W3b — code_traversal_cache module tests.
  *
  * Hermetic PGLite test suite covering:
- *  - cache hit returns memoized response (after migration v56)
+ *  - cache hit returns memoized response (after migration v59)
  *  - cache miss triggers compute
  *  - D3: cluster_generation bump invalidates cached rows
  *  - clearTraversalCache: source-scoped clear deletes the right rows

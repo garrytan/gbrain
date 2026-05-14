@@ -101,7 +101,7 @@ export async function getCachedTraversal<T>(
       cluster_generation: row.cluster_generation,
     };
   } catch {
-    // Cache table missing on a pre-v56 brain — fall through as miss.
+    // Cache table missing on a pre-v59 brain — fall through as miss.
     return null;
   }
 }

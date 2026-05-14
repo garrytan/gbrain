@@ -3148,6 +3148,23 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
+  async unsetConfig(key: string): Promise<number> {
+    const sql = this.sql;
+    const result = await sql`DELETE FROM config WHERE key = ${key}` as unknown as { count: number };
+    return result.count ?? 0;
+  }
+
+  async listConfigKeys(prefix: string): Promise<string[]> {
+    const sql = this.sql;
+    // LIKE-escape literal % and _ so a config key with those chars resolves correctly.
+    const escaped = prefix.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+    const pattern = `${escaped}%`;
+    const rows = await sql<{ key: string }[]>`
+      SELECT key FROM config WHERE key LIKE ${pattern} ESCAPE '\\' ORDER BY key
+    `;
+    return rows.map(r => r.key);
+  }
+
   // Migration support
   async runMigration(_version: number, sqlStr: string): Promise<void> {
     const conn = this.sql;

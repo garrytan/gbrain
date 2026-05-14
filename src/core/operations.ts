@@ -10,7 +10,7 @@ import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
-import { hybridSearch } from './search/hybrid.ts';
+import { hybridSearch, hybridSearchCached } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
@@ -1108,6 +1108,9 @@ const query: Operation = {
     // search). When the param is the literal '__all__', force-allow
     // cross-source mode (matches SearchOpts.sourceId contract).
     let capturedMeta: HybridSearchMeta | null = null;
+    // v0.34 (Codex finding #2): thread ctx.sourceId so multi-source brains
+    // get source-scoped retrieval. Explicit `source_id` param wins over
+    // ctx.sourceId; literal `__all__` opts out (cross-source).
     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
     const resolvedSourceId =
       sourceIdParam !== undefined
@@ -1115,7 +1118,10 @@ const query: Operation = {
           ? undefined
           : sourceIdParam
         : ctx.sourceId;
-    const results = await hybridSearch(ctx.engine, queryText, {
+    // v0.32.x search-lite: route through hybridSearchCached so semantic cache
+    // + token budget + intent weighting fire automatically. Plain hybridSearch
+    // remains the bare API for callers that opt out.
+    const results = await hybridSearchCached(ctx.engine, queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
       expansion: expand,
@@ -1131,6 +1137,10 @@ const query: Operation = {
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
       since: typeof p.since === 'string' ? p.since : undefined,
       until: typeof p.until === 'string' ? p.until : undefined,
+      // v0.32.x search-lite: token budget + cache opt-outs.
+      tokenBudget: typeof p.token_budget === 'number' ? (p.token_budget as number) : undefined,
+      useCache: typeof p.use_cache === 'boolean' ? (p.use_cache as boolean) : undefined,
+      intentWeighting: typeof p.intent_weighting === 'boolean' ? (p.intent_weighting as boolean) : undefined,
       onMeta: (m) => { capturedMeta = m; },
     });
     const latency_ms = Date.now() - startedAt;
