@@ -110,8 +110,8 @@ describe('E2E synthesize — empty corpus', () => {
   }, 30_000);
 });
 
-describe('E2E synthesize — no API key skip path', () => {
-  test('without ANTHROPIC_API_KEY, every transcript verdict is "no key" and zero pages written', async () => {
+describe('E2E synthesize — missing provider route skip path', () => {
+  test('without a configured judge provider, transcript verdict reports route/auth failure and zero pages written', async () => {
     const rig = await setupRig();
     try {
       await rig.engine.setConfig('dream.synthesize.enabled', 'true');
@@ -131,7 +131,7 @@ describe('E2E synthesize — no API key skip path', () => {
         const verdicts = (result.details as { verdicts: Array<{ worth: boolean; reasons: string[] }> }).verdicts;
         expect(verdicts).toHaveLength(1);
         expect(verdicts[0].worth).toBe(false);
-        expect(verdicts[0].reasons[0]).toMatch(/ANTHROPIC_API_KEY/);
+        expect(verdicts[0].reasons[0]).toMatch(/judge route\/auth unavailable|AI gateway is not configured/);
       });
     } finally {
       await rig.cleanup();
@@ -341,10 +341,10 @@ describe('E2E synthesize — round-trip self-consumption guard (v0.23.2)', () =>
 
         expect(result.status).toBe('ok');
         // File was discovered — verdict array has the entry, even though
-        // the no-key path makes it worth=false.
+        // the missing-route path makes it worth=false.
         const verdicts = (result.details as { verdicts: Array<{ worth: boolean; reasons: string[] }> }).verdicts;
         expect(verdicts).toHaveLength(1);
-        expect(verdicts[0].reasons[0]).toMatch(/ANTHROPIC_API_KEY/);
+        expect(verdicts[0].reasons[0]).toMatch(/judge route\/auth unavailable|AI gateway is not configured/);
         // Loud warning fired at phase entry so the operator never wonders
         // why the guard quietly let dream output through.
         expect(stderr).toMatch(/\[dream\] WARNING: --unsafe-bypass-dream-guard set/);

@@ -18,7 +18,7 @@ import {
   isDreamOutput,
   DREAM_OUTPUT_MARKER_RE,
 } from '../src/core/cycle/transcript-discovery.ts';
-import { judgeSignificance, renderPageToMarkdown, type JudgeClient } from '../src/core/cycle/synthesize.ts';
+import { judgeSignificance, renderPageToMarkdown, type JudgeChatTransport } from '../src/core/cycle/synthesize.ts';
 
 let tmpDir: string;
 
@@ -305,33 +305,58 @@ describe('judgeSignificance', () => {
     };
   }
 
-  function mockClient(captured: { model?: string }): JudgeClient {
-    return {
-      create: async (p: any) => {
-        captured.model = p.model;
-        return { content: [{ type: 'text', text: '{"worth_processing": true, "reasons": ["test"]}' }] } as any;
-      },
+  function mockChat(captured: { model?: string }): JudgeChatTransport {
+    return async (p) => {
+      captured.model = p.model;
+      return {
+        text: '{"worth_processing": true, "reasons": ["test"]}',
+        blocks: [{ type: 'text', text: '{"worth_processing": true, "reasons": ["test"]}' }],
+        stopReason: 'end',
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+        },
+        model: p.model ?? 'anthropic:claude-haiku-4-5-20251001',
+        providerId: 'test',
+      };
     };
   }
 
-  test('passes verdict_model override to client.create', async () => {
+  test('passes verdict_model override to gateway.chat', async () => {
     const captured: { model?: string } = {};
-    await judgeSignificance(mockClient(captured), makeTranscript(), 'claude-sonnet-4-6');
-    expect(captured.model).toBe('claude-sonnet-4-6');
+    await judgeSignificance(makeTranscript(), 'openai-codex:gpt-5.5', mockChat(captured));
+    expect(captured.model).toBe('openai-codex:gpt-5.5');
   });
 
-  test('defaults to claude-haiku-4-5-20251001 when model omitted', async () => {
+  test('defaults to Anthropic-prefixed claude-haiku-4-5-20251001 when model omitted', async () => {
     const captured: { model?: string } = {};
-    await judgeSignificance(mockClient(captured), makeTranscript());
-    expect(captured.model).toBe('claude-haiku-4-5-20251001');
+    await judgeSignificance(makeTranscript(), undefined, mockChat(captured));
+    expect(captured.model).toBe('anthropic:claude-haiku-4-5-20251001');
   });
 
   test('returns worth_processing=false when judge returns unparseable text', async () => {
-    const client: JudgeClient = {
-      create: async () => ({ content: [{ type: 'text', text: 'no json here' }] } as any),
-    };
-    const r = await judgeSignificance(client, makeTranscript());
+    const chat: JudgeChatTransport = async () => ({
+      text: 'no json here',
+      blocks: [{ type: 'text', text: 'no json here' }],
+      stopReason: 'end',
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'test:model',
+      providerId: 'test',
+    });
+    const r = await judgeSignificance(makeTranscript(), undefined, chat);
     expect(r.worth_processing).toBe(false);
-    expect(r.reasons[0]).toContain('unparseable');
+    expect(r.reasons[0]).toContain('verdict unparseable');
+  });
+
+  test('returns non-cacheable config verdict when provider route is unavailable', async () => {
+    const chat: JudgeChatTransport = async () => {
+      throw new Error('missing auth');
+    };
+    const r = await judgeSignificance(makeTranscript(), 'openai-codex:gpt-5.5', chat);
+    expect(r.worth_processing).toBe(false);
+    expect(r.cacheable).toBe(false);
+    expect(r.reasons[0]).toContain('judge failed');
   });
 });

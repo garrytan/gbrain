@@ -84,22 +84,20 @@ export class MinionQueue {
         `(pass {allowProtectedSubmit: true} as the 4th arg to MinionQueue.add)`,
       );
     }
-    // v0.31.12 subagent runtime enforcement (Layer 1 of 3 — Codex F1+F2 in
-    // plan review). The subagent loop in handlers/subagent.ts uses Anthropic's
-    // Messages API with prompt caching on system + tools. Routing it elsewhere
-    // silently breaks. Reject non-Anthropic data.model at the queue boundary
-    // so the job never enters waiting state.
+    // Subagent runtime enforcement: the handler routes through gateway.chat()
+    // and requires a chat provider that supports stable tool-loop replay.
+    // Reject unsupported data.model at the queue boundary so the job never
+    // enters waiting state.
     if (jobName === 'subagent' && data && typeof data === 'object') {
       const submittedModel = (data as { model?: unknown }).model;
       if (typeof submittedModel === 'string' && submittedModel.length > 0) {
         // Lazy import to avoid pulling model-config (which imports engine types)
         // into the queue module's eager-load surface.
-        const { isAnthropicProvider } = await import('../model-config.ts');
-        if (!isAnthropicProvider(submittedModel)) {
+        const { supportsSubagentLoopProvider } = await import('../model-config.ts');
+        if (!supportsSubagentLoopProvider(submittedModel)) {
           throw new Error(
-            `subagent job rejected: data.model "${submittedModel}" is non-Anthropic. ` +
-            `The subagent loop is Anthropic-only (Messages API + prompt caching). ` +
-            `Pass an Anthropic model id (e.g. claude-sonnet-4-6) or omit data.model ` +
+            `subagent job rejected: data.model "${submittedModel}" does not support the subagent tool loop. ` +
+            `Pass a chat model whose provider supports subagent tools (e.g. openai-codex:gpt-5.5 or anthropic:claude-sonnet-4-6), or omit data.model ` +
             `to use the configured default.`,
           );
         }

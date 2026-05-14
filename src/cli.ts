@@ -1296,6 +1296,10 @@ function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   if (process.env.OLLAMA_BASE_URL) envBaseUrls['ollama'] = process.env.OLLAMA_BASE_URL;
   if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
   if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
+  if (process.env.GBRAIN_CODEX_BASE_URL) envBaseUrls['openai-codex'] = process.env.GBRAIN_CODEX_BASE_URL;
+  if (process.env.HERMES_CODEX_BASE_URL && !envBaseUrls['openai-codex']) {
+    envBaseUrls['openai-codex'] = process.env.HERMES_CODEX_BASE_URL;
+  }
 
   return {
     embedding_model: c.embedding_model,

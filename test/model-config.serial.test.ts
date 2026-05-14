@@ -9,6 +9,7 @@ import {
   DEFAULT_ALIASES,
   TIER_DEFAULTS,
   isAnthropicProvider,
+  supportsSubagentLoopProvider,
   _resetDeprecationWarningsForTest,
 } from '../src/core/model-config.ts';
 
@@ -175,26 +176,25 @@ describe('resolveModel — v0.31.12 tier system', () => {
     expect(m).toBe(TIER_DEFAULTS.reasoning);
   });
 
-  test('tier.subagent falls back to TIER_DEFAULTS.subagent when models.default is non-Anthropic', async () => {
-    stub.set('models.default', 'openai:gpt-5.5');
+  test('tier.subagent accepts supported non-Anthropic providers from models.default', async () => {
+    stub.set('models.default', 'openai-codex:gpt-5.5');
     const m = await resolveModel(stub as never, {
       tier: 'subagent',
       fallback: 'sonnet',
     });
-    expect(m).toBe(TIER_DEFAULTS.subagent);
-    expect(stderrCapture).toContain('tier.subagent');
-    expect(stderrCapture).toContain('non-Anthropic');
-    expect(stderrCapture).toContain('models.default');
+    expect(m).toBe('openai-codex:gpt-5.5');
+    expect(stderrCapture).toBe('');
   });
 
-  test('tier.subagent falls back when explicitly set to non-Anthropic', async () => {
-    stub.set('models.tier.subagent', 'openai:gpt-5.5');
+  test('tier.subagent falls back when explicitly set to unsupported provider', async () => {
+    stub.set('models.tier.subagent', 'voyage:voyage-3');
     const m = await resolveModel(stub as never, {
       tier: 'subagent',
       fallback: 'sonnet',
     });
     expect(m).toBe(TIER_DEFAULTS.subagent);
     expect(stderrCapture).toContain('models.tier.subagent');
+    expect(stderrCapture).toContain('unsupported provider');
   });
 
   test('tier.subagent accepts explicit Anthropic override', async () => {
@@ -213,6 +213,13 @@ describe('resolveModel — v0.31.12 tier system', () => {
     expect(isAnthropicProvider('openai:gpt-5.5')).toBe(false);
     expect(isAnthropicProvider('gemini-3-pro')).toBe(false);
     expect(isAnthropicProvider('')).toBe(false);
+  });
+
+  test('supportsSubagentLoopProvider accepts Codex and Anthropic, rejects embedding-only providers', () => {
+    expect(supportsSubagentLoopProvider('openai-codex:gpt-5.5')).toBe(true);
+    expect(supportsSubagentLoopProvider('anthropic:claude-sonnet-4-6')).toBe(true);
+    expect(supportsSubagentLoopProvider('claude-opus-4-7')).toBe(true);
+    expect(supportsSubagentLoopProvider('voyage:voyage-3')).toBe(false);
   });
 
   test('alias-chain conflict: forward + reverse for same id (Codex F6)', async () => {

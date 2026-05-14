@@ -26,7 +26,6 @@
  *   - Daily token budget cap (cooldown bounds spend at v1 scale).
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -38,6 +37,8 @@ import { discoverTranscripts, type DiscoveredTranscript } from './transcript-dis
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
+import { chat, type ChatOpts, type ChatResult } from '../ai/gateway.ts';
+import { AIConfigError, AIServiceError } from '../ai/errors.ts';
 
 // Slug regex from validatePageSlug — kept in sync.
 // Used for the orchestrator-written summary index slug.
@@ -293,10 +294,9 @@ export async function runPhaseSynthesize(
       return ok('no transcripts to process', { transcripts_processed: 0, pages_written: 0 });
     }
 
-    // Significance verdicts (cached in dream_verdicts; Haiku on miss).
+    // Significance verdicts (cached in dream_verdicts; gateway utility model on miss).
     const worthProcessing: DiscoveredTranscript[] = [];
     const verdicts: Array<{ filePath: string; worth: boolean; reasons: string[]; cached: boolean }> = [];
-    const haiku = makeHaikuClient(); // null if no API key
     for (const t of transcripts) {
       const cached = await engine.getDreamVerdict(t.filePath, t.contentHash);
       if (cached) {
@@ -304,13 +304,10 @@ export async function runPhaseSynthesize(
         if (cached.worth_processing) worthProcessing.push(t);
         continue;
       }
-      if (!haiku) {
-        // No API key — can't judge. Skip with explicit reason; don't crash phase.
-        verdicts.push({ filePath: t.filePath, worth: false, reasons: ['no ANTHROPIC_API_KEY for significance judge'], cached: false });
-        continue;
+      const verdict = await judgeSignificance(t, config.verdictModel);
+      if (verdict.cacheable !== false) {
+        await engine.putDreamVerdict(t.filePath, t.contentHash, verdict);
       }
-      const verdict = await judgeSignificance(haiku, t, config.verdictModel);
-      await engine.putDreamVerdict(t.filePath, t.contentHash, verdict);
       verdicts.push({ filePath: t.filePath, worth: verdict.worth_processing, reasons: verdict.reasons, cached: false });
       if (verdict.worth_processing) worthProcessing.push(t);
     }
@@ -633,27 +630,21 @@ async function loadAllowedSlugPrefixes(): Promise<string[]> {
   return [];
 }
 
-// ── Significance judge (Haiku) ───────────────────────────────────────
-
-export interface JudgeClient {
-  create: (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>;
-}
-
-function makeHaikuClient(): JudgeClient | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  const client = new Anthropic();
-  return { create: client.messages.create.bind(client.messages) };
-}
+// ── Significance judge ───────────────────────────────────────────────
 
 interface VerdictResult {
   worth_processing: boolean;
   reasons: string[];
+  /** Provider/config errors are not cached; model verdicts and parse failures are. */
+  cacheable?: boolean;
 }
 
+export type JudgeChatTransport = (opts: ChatOpts) => Promise<ChatResult>;
+
 export async function judgeSignificance(
-  client: JudgeClient,
   t: DiscoveredTranscript,
   verdictModel = 'claude-haiku-4-5-20251001',
+  chatTransport: JudgeChatTransport = chat,
 ): Promise<VerdictResult> {
   // Truncate the transcript at 8K chars for cost control. Haiku's verdict
   // doesn't need the full body; the opening + closing sections are usually
@@ -679,30 +670,47 @@ NOT WORTH PROCESSING (return worth_processing=false):
 Respond as JSON: {"worth_processing": <bool>, "reasons": ["<short>", "<short>"]}.
 Two reasons max, one phrase each.`;
 
-  const msg = await client.create({
-    model: verdictModel,
-    max_tokens: 200,
-    system: sys,
-    messages: [{ role: 'user', content: `Transcript ${t.basename}:\n\n${trimmed}` }],
-  });
-
-  for (const block of msg.content) {
-    if (block.type === 'text') {
-      const text = block.text.trim();
-      const m = /\{[\s\S]*\}/.exec(text);
-      if (!m) continue;
-      try {
-        const parsed = JSON.parse(m[0]) as { worth_processing?: unknown; reasons?: unknown };
-        const worth = parsed.worth_processing === true;
-        const reasons = Array.isArray(parsed.reasons)
-          ? parsed.reasons.filter((r): r is string => typeof r === 'string').slice(0, 4)
-          : [];
-        return { worth_processing: worth, reasons };
-      } catch { /* fall through */ }
-    }
+  let result: ChatResult;
+  try {
+    result = await chatTransport({
+      model: verdictModel.includes(':') ? verdictModel : `anthropic:${verdictModel}`,
+      system: sys,
+      messages: [{ role: 'user', content: `Transcript ${t.basename}:\n\n${trimmed}` }],
+      maxTokens: 200,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const prefix = err instanceof AIConfigError
+      ? 'judge route/auth unavailable'
+      : err instanceof AIServiceError
+      ? 'judge provider call failed'
+      : 'judge failed';
+    return {
+      worth_processing: false,
+      reasons: [`${prefix}: ${msg}`],
+      cacheable: false,
+    };
   }
+
+  const textBlocks = result.blocks
+    .filter((block): block is { type: 'text'; text: string } => block.type === 'text');
+
+  for (const block of textBlocks) {
+    const text = block.text.trim();
+    const m = /\{[\s\S]*\}/.exec(text);
+    if (!m) continue;
+    try {
+      const parsed = JSON.parse(m[0]) as { worth_processing?: unknown; reasons?: unknown };
+      const worth = parsed.worth_processing === true;
+      const reasons = Array.isArray(parsed.reasons)
+        ? parsed.reasons.filter((r): r is string => typeof r === 'string').slice(0, 4)
+        : [];
+      return { worth_processing: worth, reasons };
+    } catch { /* fall through */ }
+  }
+
   // Couldn't parse — default to NOT processing (cheap fallback).
-  return { worth_processing: false, reasons: ['judge response unparseable'] };
+  return { worth_processing: false, reasons: ['judge verdict unparseable'] };
 }
 
 // ── Subagent prompt ──────────────────────────────────────────────────
