@@ -793,3 +793,35 @@ processes, concepts) sound?
 **Impact on spec:** Narrowed scope accepted. Added structured debug-trail
 timeline entry format to the project page template. Added concepts/
 notability criteria to quality.md patch requirements.
+
+## Spec Update Rules
+
+These rules apply to any session that modifies this spec.
+
+1. **Commit and push after every spec update.** Each version gets its own
+   commit with a `vN:` prefix in the message summarizing what changed.
+   Never batch multiple rounds of changes into one commit.
+
+2. **Get a Codex second opinion before finalizing decisions.** Use
+   `/gstack-codex` to validate significant decisions (entity scope changes,
+   architecture compliance, MECE boundaries). Add the verdict to the Reviews
+   section. Do not finalize a decision based on a single model's analysis.
+
+3. **Check architecture compliance after structural changes.** Any change to
+   entity types, filing rules, or code-level patterns must be verified against
+   `docs/architecture/` (system-of-record, brains-and-sources, infra-layer,
+   topologies). Document findings in the Architecture Compliance section.
+
+4. **Add every Codex review to the Reviews section.** Each review gets a
+   subsection with: the question asked, the verdict, and the impact on the
+   spec. Reviews are numbered sequentially (Codex review 1, 2, 3...).
+
+5. **Verify MECE when entity types change.** Any addition, removal, or rename
+   of entity types requires a pairwise overlap check. Every pair must have a
+   hard boundary (not a judgment call). Document the boundaries in the MECE
+   boundaries table.
+
+6. **Update the Context section when decisions change.** The Context section
+   is what a new session reads first. If a decision changes the entity types,
+   the workflow, the file counts, or the architectural constraints, the
+   Context section must be updated in the same commit.
