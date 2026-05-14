@@ -97,8 +97,18 @@ export async function runServe(
     // when set so the posture change is visible in stderr.
     const logFullParams = args.includes('--log-full-params');
 
+    // v0.34.0 (#864, D11): `--bind HOST` lets operators choose the network
+    // interface to listen on. When unset, runServeHttp defaults to 127.0.0.1
+    // (loopback) — server operators who need remote access pass
+    // `--bind 0.0.0.0` (or a specific interface IP). `bind` is intentionally
+    // left undefined here when the flag is absent so the WARN-on-public-url
+    // path in serve-http can distinguish "operator chose loopback explicitly"
+    // from "operator didn't set the flag at all."
+    const bindIdx = args.indexOf('--bind');
+    const bind = bindIdx >= 0 ? args[bindIdx + 1] : undefined;
+
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams });
+    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams, bind });
     return;
   }
 

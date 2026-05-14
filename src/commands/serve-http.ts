@@ -162,15 +162,42 @@ interface ServeHttpOptions {
    * at startup so the privacy posture change is visible.
    */
   logFullParams?: boolean;
+  /**
+   * Network interface(s) to bind. Defaults to `127.0.0.1` (loopback only) in
+   * v0.34.0+ — gbrain's primary use case is a personal-knowledge brain on a
+   * laptop, and the pre-v0.34 default of `0.0.0.0` made it one accidental
+   * `--http` invocation away from publishing the brain to a LAN.
+   *
+   * Server operators who DO want to accept remote connections pass
+   * `--bind 0.0.0.0` (or a specific interface IP). When `--public-url` is
+   * set but `--bind` is unset, a stderr WARN fires at startup recommending
+   * the explicit flag — defaulting to loopback while declaring a public URL
+   * is almost always a misconfiguration.
+   */
+  bind?: string;
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
+  // v0.34.0 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
+  // gbrain's primary use case is a personal-knowledge brain on a laptop;
+  // the pre-v0.34 default exposed brains on every interface. Server
+  // operators who need remote access pass `--bind 0.0.0.0` (or a specific
+  // interface). Declaring `--public-url` without `--bind` is almost always
+  // a misconfiguration; we WARN to stderr at startup in that case rather
+  // than silently binding loopback only.
+  const bind = options.bind ?? '127.0.0.1';
   const config = loadConfig() || { engine: 'pglite' as const };
 
   if (logFullParams) {
     console.error(
       '[serve-http] WARNING: --log-full-params writes raw request payloads to mcp_request_log + SSE feed. Disable for shared dashboards or production.',
+    );
+  }
+
+  if (publicUrl && options.bind === undefined) {
+    console.error(
+      '[serve-http] WARNING: --public-url is set but --bind is not. Default bind changed to 127.0.0.1 in v0.34.0; remote clients reaching the public URL will be refused. Pass --bind 0.0.0.0 to accept all interfaces.',
     );
   }
 
@@ -1058,12 +1085,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
 
-  app.listen(port, () => {
+  app.listen(port, bind, () => {
     console.error(`
 ╔══════════════════════════════════════════════════════╗
 ║  GBrain MCP Server v${VERSION.padEnd(37)}║
 ╠══════════════════════════════════════════════════════╣
 ║  Port:      ${String(port).padEnd(40)}║
+║  Bind:      ${bind.padEnd(40)}║
 ║  Engine:    ${(config.engine || 'pglite').padEnd(40)}║
 ║  Issuer:    ${issuerUrl.origin.padEnd(40)}║
 ║  Clients:   ${String((clientCount[0] as any).count).padEnd(40)}║
