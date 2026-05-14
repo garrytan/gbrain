@@ -371,6 +371,60 @@ describe('http-transport: CORS', () => {
       expect(r.headers.get('access-control-allow-origin')).toBeNull();
     } finally { srv.stop(); }
   });
+
+  // --------------------------------------------------------------------
+  // CORS preflight (OPTIONS) — default-deny on Methods + Headers too.
+  //
+  // Pre-fix: corsPreflightHeaders unconditionally returned Allow-Methods
+  // + Allow-Headers even for non-allowlisted origins. The actual request
+  // was still blocked (no Allow-Origin → browser refuses), but the
+  // preflight leaked the API surface to any caller probing OPTIONS.
+  // These tests pin the consolidated default-deny posture: zero
+  // permission headers unless the Origin is allowlisted.
+  // --------------------------------------------------------------------
+
+  test('12a. OPTIONS, no GBRAIN_HTTP_CORS_ORIGIN → no Allow-Methods/Headers leak', async () => {
+    const srv = await startTest({});
+    try {
+      const r = await fetch(`${srv.url}/mcp`, {
+        method: 'OPTIONS',
+        headers: { 'Origin': 'https://evil.example' },
+      });
+      expect(r.headers.get('access-control-allow-origin')).toBeNull();
+      expect(r.headers.get('access-control-allow-methods')).toBeNull();
+      expect(r.headers.get('access-control-allow-headers')).toBeNull();
+    } finally { srv.stop(); }
+  });
+
+  test('12b. OPTIONS, env set + matching Origin → full preflight headers', async () => {
+    const srv = await startTest({ corsOrigin: 'https://claude.ai' });
+    try {
+      const r = await fetch(`${srv.url}/mcp`, {
+        method: 'OPTIONS',
+        headers: { 'Origin': 'https://claude.ai' },
+      });
+      expect(r.headers.get('access-control-allow-origin')).toBe('https://claude.ai');
+      expect(r.headers.get('access-control-allow-methods')).toContain('POST');
+      expect(r.headers.get('access-control-allow-headers')).toContain('Authorization');
+      expect(r.headers.get('vary')).toBe('Origin');
+    } finally { srv.stop(); }
+  });
+
+  test('12c. OPTIONS, env set + non-matching Origin → no Allow-Methods/Headers leak', async () => {
+    const srv = await startTest({ corsOrigin: 'https://claude.ai' });
+    try {
+      const r = await fetch(`${srv.url}/mcp`, {
+        method: 'OPTIONS',
+        headers: { 'Origin': 'https://evil.example' },
+      });
+      expect(r.headers.get('access-control-allow-origin')).toBeNull();
+      expect(r.headers.get('access-control-allow-methods')).toBeNull();
+      expect(r.headers.get('access-control-allow-headers')).toBeNull();
+      // Vary: Origin is still emitted so cached preflights stay cache-correct
+      // when the same path is re-fetched from an allowlisted origin.
+      expect(r.headers.get('vary')).toBe('Origin');
+    } finally { srv.stop(); }
+  });
 });
 
 // --------------------------------------------------------------------------
