@@ -162,10 +162,22 @@ interface ServeHttpOptions {
    * at startup so the privacy posture change is visible.
    */
   logFullParams?: boolean;
+  /**
+   * Host the HTTP server binds to. Defaults to '0.0.0.0' (all interfaces) to
+   * preserve prior behavior for users behind a reverse proxy / cloud LB.
+   *
+   * Set to '127.0.0.1' (or '::1') for a loopback-only deployment where the
+   * brain is consumed by on-host agents (cron jobs, local Codex sessions,
+   * desktop clients tunneling through SSH) and must not be reachable from
+   * any other interface. Reverse-proxy / tunnel users keep the default and
+   * front the server with TLS + auth at the proxy.
+   */
+  bind?: string;
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
+  const bind = options.bind ?? '0.0.0.0';
   const config = loadConfig() || { engine: 'pglite' as const };
 
   if (logFullParams) {
@@ -1058,11 +1070,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
 
-  app.listen(port, () => {
+  app.listen(port, bind, () => {
     console.error(`
 ╔══════════════════════════════════════════════════════╗
 ║  GBrain MCP Server v${VERSION.padEnd(37)}║
 ╠══════════════════════════════════════════════════════╣
+║  Bind:      ${`${bind}:${port}`.padEnd(40)}║
 ║  Port:      ${String(port).padEnd(40)}║
 ║  Engine:    ${(config.engine || 'pglite').padEnd(40)}║
 ║  Issuer:    ${issuerUrl.origin.padEnd(40)}║
