@@ -3248,6 +3248,24 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
+  async unsetConfig(key: string): Promise<number> {
+    const { affectedRows } = await this.db.query(
+      'DELETE FROM config WHERE key = $1',
+      [key],
+    ) as { affectedRows?: number };
+    return affectedRows ?? 0;
+  }
+
+  async listConfigKeys(prefix: string): Promise<string[]> {
+    // LIKE-escape the prefix so a user-supplied % or _ doesn't act as a wildcard.
+    const escaped = prefix.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+    const { rows } = await this.db.query(
+      `SELECT key FROM config WHERE key LIKE $1 || '%' ESCAPE '\\' ORDER BY key`,
+      [escaped],
+    );
+    return (rows as { key: string }[]).map(r => r.key);
+  }
+
   // Migration support
   async runMigration(_version: number, sql: string): Promise<void> {
     await this.db.exec(sql);

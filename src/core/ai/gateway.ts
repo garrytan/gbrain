@@ -139,6 +139,24 @@ const DEFAULT_SAFETY_FACTOR = 0.8;
  */
 const MAX_VOYAGE_RESPONSE_BYTES = 256 * 1024 * 1024;
 
+/**
+ * Tagged error class for the OOM-defense caps in voyageCompatFetch. The
+ * inbound response-rewriter at the bottom of voyageCompatFetch is wrapped
+ * in a try/catch that silently falls back to the original response on parse
+ * failure — that's correct for "Voyage returned something I can't reshape,
+ * let the SDK handle it" but WRONG for OOM caps where letting the response
+ * through could blow up the worker. The catch checks `instanceof
+ * VoyageResponseTooLargeError` and rethrows in that case.
+ *
+ * Exported for tests; not part of the public surface.
+ */
+export class VoyageResponseTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'VoyageResponseTooLargeError';
+  }
+}
+
 // ---- Unified auth resolution (D12=A) ----
 //
 // Pre-v0.32, openai-compatible auth was duplicated across instantiateEmbedding,
@@ -592,7 +610,7 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
   if (contentLengthHeader) {
     const len = parseInt(contentLengthHeader, 10);
     if (Number.isFinite(len) && len > MAX_VOYAGE_RESPONSE_BYTES) {
-      throw new Error(
+      throw new VoyageResponseTooLargeError(
         `Voyage response Content-Length=${len} exceeds ${MAX_VOYAGE_RESPONSE_BYTES} bytes — ` +
         `likely compromised endpoint or misconfiguration`,
       );
@@ -617,7 +635,7 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
           // base64 → bytes ratio).
           const estDecoded = Math.ceil(item.embedding.length * 0.75);
           if (estDecoded > MAX_VOYAGE_RESPONSE_BYTES) {
-            throw new Error(
+            throw new VoyageResponseTooLargeError(
               `Voyage embedding base64 exceeds ${MAX_VOYAGE_RESPONSE_BYTES} bytes ` +
               `(estimated ${estDecoded} bytes from ${item.embedding.length} base64 chars)`,
             );
@@ -646,7 +664,14 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
       statusText: resp.statusText,
       headers: resp.headers,
     });
-  } catch {
+  } catch (err) {
+    // OOM-cap throws MUST propagate. The catch is here for "Voyage returned
+    // JSON I can't reshape" (parse error, unexpected schema) — falling back
+    // to the original response is correct in that case. Letting the
+    // too-large response through here would defeat the entire purpose of
+    // Layer 2 (the per-embedding cap that fires when Content-Length wasn't
+    // available to Layer 1).
+    if (err instanceof VoyageResponseTooLargeError) throw err;
     // If parsing/transformation fails, fall back to the original response.
     return resp;
   }

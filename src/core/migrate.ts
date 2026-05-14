@@ -2706,13 +2706,189 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 55,
+    name: 'query_cache_search_lite',
+    // v0.32.x (search-lite, originally claimed v52 in PR #897; renumbered
+    // to v55 on merge with master to sit after eval_contradictions_cache (v52),
+    // eval_contradictions_runs (v53), cjk_wave (v54)).
+    //
+    // Semantic query cache. Cache search results keyed by query embedding
+    // similarity so a near-duplicate query reuses the previous result set
+    // instead of re-running keyword + vector + RRF + dedup. Cache lookup:
+    // `embedding <=> $1 < 0.08` (cosine distance, similarity >= 0.92) using HNSW.
+    //
+    // Schema:
+    //   id            — SHA-256(query_text + source_id) for diagnostics.
+    //   query_text    — the raw query for debug + cache-stats output.
+    //   source_id     — scope by source so multi-source brains don't bleed.
+    //   embedding     — the query embedding. Same dim as content_chunks.
+    //   results       — JSONB array of SearchResult rows.
+    //   meta          — JSONB; what hybridSearch actually did (intent,
+    //                   vector_enabled, etc.) so cached responses can
+    //                   surface the same debug info as fresh ones.
+    //   ttl_seconds   — per-row TTL. Default 3600. Stale rows are skipped
+    //                   at read time and pruned by `gbrain cache prune`.
+    //   created_at    — TTL anchor.
+    //   hit_count     — instrumentation; bumped on each lookup-hit.
+    //   last_hit_at   — instrumentation.
+    //
+    // Schema is engine-agnostic: HALFVEC when available (matches the facts
+    // table from v45 for consistency), otherwise VECTOR. Embedding dim is
+    // resolved from `config.embedding_dimensions` at migration time so
+    // non-OpenAI brains work — same approach as v45.
+    sql: '',
+    handler: async (engine: BrainEngine) => {
+      // Step 1: resolve embedding dim from config table (same pattern as v45).
+      let embeddingDim = 1536;
+      try {
+        const dimRows = await engine.executeRaw<{ value: string }>(
+          `SELECT value FROM config WHERE key = 'embedding_dimensions'`,
+        );
+        if (dimRows.length > 0) {
+          const parsed = parseInt(dimRows[0].value, 10);
+          if (Number.isFinite(parsed) && parsed > 0 && parsed <= 4096) {
+            embeddingDim = parsed;
+          }
+        }
+      } catch {
+        // No config row yet — fall back to default.
+      }
+
+      // Step 2: pgvector version probe for HALFVEC. Same logic as v45.
+      // We deliberately mirror v45's facts table approach for consistency.
+      let useHalfvec = false;
+      if (engine.kind === 'postgres') {
+        try {
+          const vrows = await engine.executeRaw<{ extversion: string }>(
+            `SELECT extversion FROM pg_extension WHERE extname = 'vector'`,
+          );
+          if (vrows.length > 0) {
+            const v = vrows[0].extversion;
+            const parts = v.split('.');
+            const major = parseInt(parts[0] ?? '0', 10);
+            const minor = parseInt(parts[1] ?? '0', 10);
+            if (major > 0 || (major === 0 && minor >= 7)) {
+              useHalfvec = true;
+            }
+          }
+        } catch {
+          // Probe failed — fall back to VECTOR.
+        }
+      } else {
+        useHalfvec = true;
+      }
+
+      const vecType = useHalfvec ? 'HALFVEC' : 'VECTOR';
+      const opclass = useHalfvec ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+
+      const ddl = `
+        CREATE TABLE IF NOT EXISTS query_cache (
+          id            TEXT        PRIMARY KEY,
+          query_text    TEXT        NOT NULL,
+          source_id     TEXT        NOT NULL DEFAULT 'default',
+          embedding     ${vecType}(${embeddingDim}),
+          results       JSONB       NOT NULL DEFAULT '[]'::jsonb,
+          meta          JSONB       NOT NULL DEFAULT '{}'::jsonb,
+          ttl_seconds   INTEGER     NOT NULL DEFAULT 3600,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+          hit_count     INTEGER     NOT NULL DEFAULT 0,
+          last_hit_at   TIMESTAMPTZ
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_query_cache_source_created
+          ON query_cache(source_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_query_cache_embedding_hnsw
+          ON query_cache USING hnsw (embedding ${opclass})
+          WHERE embedding IS NOT NULL;
+      `;
+
+      await engine.runMigration(55, ddl);
+    },
+  },
+  {
+    version: 56,
+    name: 'query_cache_knobs_hash',
+    // v0.32.3 search-lite mode cache contamination hotfix [CDX-4].
+    //
+    // PR #897's query_cache keyed rows on (id, source_id, query_text) only.
+    // The `id` is sha256(source_id::query_text). A tokenmax search
+    // (expansion=on, limit=50) populates a row that a subsequent
+    // conservative call (no-expansion, limit=10) reads back, serving
+    // expanded-and-oversized results to a budget-tight context.
+    //
+    // Fix: extend the row key with a knobs_hash derived from the resolved
+    // search mode bundle. Lookup filters `WHERE knobs_hash = $1 AND
+    // embedding similarity < threshold`. Existing rows have NULL
+    // knobs_hash and are treated as misses (silently re-populated with
+    // the correct hash on first hit — no orphan data, no destructive
+    // migration).
+    //
+    // The PRIMARY KEY stays the existing `id` column (the SHA-256 of
+    // (source_id, query_text, knobs_hash) — the cache code re-derives
+    // it on every write, so a tokenmax write and a conservative write
+    // produce distinct `id` values and live as separate rows).
+    //
+    // Engine-agnostic; idempotent.
+    idempotent: true,
+    sql: `
+      ALTER TABLE query_cache ADD COLUMN IF NOT EXISTS knobs_hash TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_query_cache_source_knobs_created
+        ON query_cache(source_id, knobs_hash, created_at DESC);
+    `,
+  },
+  {
+    version: 57,
+    name: 'search_telemetry_rollup',
+    // v0.32.3 search-lite: per-day rollup of search-call shape.
+    //
+    // Powers `gbrain search stats [--days N]` and `gbrain search tune` so an
+    // operator (or an agent calling tune) can reason about hit rate, intent
+    // mix, budget pressure, and result-volume averages WITHOUT pulling
+    // per-call rows.
+    //
+    // Schema math per [CDX-17]: sums + counts only, NOT averages. Read-time
+    // derives averages so concurrent ON CONFLICT writes from multiple gbrain
+    // processes accumulate correctly.
+    //
+    // Date-bucketed cache hit/miss per [CDX-18] — query_cache.hit_count is
+    // a LIFETIME counter and can't be sliced by --days. The telemetry table
+    // is the truth for windowed hit rate.
+    //
+    // PK is (date, mode, intent) so the rollup never grows past
+    // 365 days × 3 modes × 4 intents = ~4380 rows/year. Acceptable.
+    //
+    // Engine-agnostic; idempotent.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS search_telemetry (
+        date                TEXT         NOT NULL,
+        mode                TEXT         NOT NULL,
+        intent              TEXT         NOT NULL,
+        count               INTEGER      NOT NULL DEFAULT 0,
+        sum_results         INTEGER      NOT NULL DEFAULT 0,
+        sum_tokens          INTEGER      NOT NULL DEFAULT 0,
+        sum_budget_dropped  INTEGER      NOT NULL DEFAULT 0,
+        cache_hit           INTEGER      NOT NULL DEFAULT 0,
+        cache_miss          INTEGER      NOT NULL DEFAULT 0,
+        first_seen          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        last_seen           TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        PRIMARY KEY (date, mode, intent)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_search_telemetry_date
+        ON search_telemetry (date DESC);
+    `,
+  },
+  {
+    version: 58,
     name: 'oauth_clients_source_id_fk',
     // v0.34.0 (#861 + D4 + D10 + D13 — P0 source-isolation leak seal).
     //
     // Adds oauth_clients.source_id, validates ALL existing rows can map to a
     // real source row, backfills NULL → 'default', and installs the FK with
     // ON DELETE SET NULL. PR #861's original migration claimed v47-v51; we
-    // re-number to v55 because the branch already shipped through v54.
+    // re-number to v58 because the branch already shipped through v54.
     //
     // D10 (codex outside-voice push-back): fail loud when stale source_id
     // rows exist instead of silently widening to NULL. Pre-fix this column
@@ -2735,7 +2911,7 @@ export const MIGRATIONS: Migration[] = [
       -- v0.34.0 (#861 + D2 + D13 — P0 source-isolation leak seal).
       --
       -- This migration is intentionally lean: oauth_clients.source_id did
-      -- NOT exist pre-v55, so the only state we inherit from upgrade is
+      -- NOT exist pre-v58, so the only state we inherit from upgrade is
       -- "rows with NULL source_id." Backfill those to 'default' (D13:
       -- preserves the pre-v0.34 effective fallback behavior verbatim) and
       -- install the FK with ON DELETE SET NULL.
@@ -2761,7 +2937,7 @@ export const MIGRATIONS: Migration[] = [
       --    install schemas (src/core/pglite-schema.ts, src/schema.sql) now
       --    include the FK inline on the CREATE TABLE, so this DO block
       --    skips on fresh installs and only fires on upgrade brains where
-      --    oauth_clients was created pre-v55 without the FK. ON DELETE SET
+      --    oauth_clients was created pre-v58 without the FK. ON DELETE SET
       --    NULL matches the original PR #861 posture; #876 later flips to
       --    RESTRICT once federated_read provides the alternative
       --    scope-recovery path.
@@ -2785,16 +2961,16 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 56,
+    version: 59,
     name: 'oauth_clients_federated_read_column',
     // v0.34.0 (#876): add federated_read TEXT[] for the read-side
-    // federation feature. source_id (v55) is the WRITE-authority axis;
+    // federation feature. source_id (v58) is the WRITE-authority axis;
     // federated_read is the READ-scope axis. A client can write to ONE
     // source while reading from N (a "WeCare L3 dept" client writes to
     // dept-x and reads dept-x + parent canon + shared canon).
     //
     // Default '{}' (empty array) on column add — pre-existing rows get
-    // backfilled in v57 with an explicit CASE so the array reflects the
+    // backfilled in v60 with an explicit CASE so the array reflects the
     // client's current scope rather than the column default.
     idempotent: true,
     sql: `
@@ -2802,13 +2978,13 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 57,
+    version: 60,
     name: 'oauth_clients_federated_read_backfill',
     // v0.34.0 (#876, F5 — codex outside-voice fix). Backfill federated_read
     // with explicit CASE so source_id IS NULL doesn't produce an ambiguous
     // array containing NULL. Three cases:
     //   - source_id IS NULL → '{}' (empty read scope; legacy unscoped
-    //     clients lost their implicit fallback in v55 backfill to 'default',
+    //     clients lost their implicit fallback in v58 backfill to 'default',
     //     so this branch fires only when an operator explicitly NULL'd
     //     source_id after migration).
     //   - source_id IS NOT NULL → ARRAY[source_id] (read scope matches
@@ -2826,12 +3002,12 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 58,
+    version: 61,
     name: 'oauth_clients_federated_read_validate',
     // v0.34.0 (#876): post-backfill validation. Every client with a
     // non-NULL source_id should now have its source_id reflected in
     // federated_read. Fail loud if backfill missed a row — points at a
-    // logic bug in v57's WHERE clause.
+    // logic bug in v60's WHERE clause.
     idempotent: true,
     sql: `
       DO $$
@@ -2842,15 +3018,15 @@ export const MIGRATIONS: Migration[] = [
           WHERE source_id IS NOT NULL
             AND NOT (source_id = ANY(federated_read));
         IF bad_count > 0 THEN
-          RAISE EXCEPTION 'oauth_clients has % rows where source_id is not in federated_read after v57 backfill. This is a bug in v57 — re-run gbrain apply-migrations --force-retry 57.', bad_count;
+          RAISE EXCEPTION 'oauth_clients has % rows where source_id is not in federated_read after v60 backfill. This is a bug in v60 — re-run gbrain apply-migrations --force-retry 60.', bad_count;
         END IF;
       END $$;
     `,
   },
   {
-    version: 59,
+    version: 62,
     name: 'oauth_clients_source_id_fk_restrict',
-    // v0.34.0 (#876): flip the source_id FK from ON DELETE SET NULL (v55
+    // v0.34.0 (#876): flip the source_id FK from ON DELETE SET NULL (v58
     // posture) to ON DELETE RESTRICT now that federated_read provides
     // the alternative scope-loss path. Pre-fix, deleting a source could
     // silently widen any oauth_client to super-reader (source_id → NULL).
@@ -2873,7 +3049,7 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 60,
+    version: 63,
     name: 'oauth_clients_federated_read_gin_index',
     // v0.34.0 (#876): GIN index for array-containment lookups
     // (`WHERE p.source_id = ANY(federated_read)` and similar). The five
@@ -3030,19 +3206,6 @@ async function runMigrationSQL(
           await tx.runMigration(m.version, "SET LOCAL statement_timeout = '600000'");
         } catch {
           // Non-fatal: PGLite or older Postgres versions may not support this
-        }
-      }
-      // v0.34.0 (#861 D10): expose the GBRAIN_ACCEPT_SILENT_WIDEN env
-      // toggle to SQL via a session-local GUC so migration v55's pre-clean
-      // can read it via current_setting('gbrain.accept_silent_widen').
-      // Set per-transaction (SET LOCAL) so it never leaks to other
-      // migrations or pooled connections. Tracked under the gbrain.* prefix
-      // which Postgres permits for custom session-level variables.
-      if (process.env.GBRAIN_ACCEPT_SILENT_WIDEN === '1') {
-        try {
-          await tx.runMigration(m.version, "SET LOCAL gbrain.accept_silent_widen = '1'");
-        } catch {
-          // Non-fatal — migration v55's DO block falls back to '0' on read failure.
         }
       }
       await tx.runMigration(m.version, sql);

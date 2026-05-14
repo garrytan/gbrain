@@ -75,7 +75,7 @@ time.
 
 ### The migration block
 
-`gbrain upgrade` applies migrations v55-v60 automatically. The migration
+`gbrain upgrade` applies migrations v58-v63 automatically. The migration
 chain adds two columns to `oauth_clients` and an index, plus a FK flip
 once federated_read is in place.
 
@@ -138,7 +138,7 @@ once federated_read is in place.
   `opts.sourceIds` so graph walks respect the caller's scope.
 - `src/core/oauth-provider.ts:verifyAccessToken` JOINs
   `oauth_clients.source_id` + `federated_read` and surfaces both on the
-  returned `AuthInfo`. Pre-v55 / pre-v56 brains degrade gracefully via
+  returned `AuthInfo`. Pre-v58 / pre-v59 brains degrade gracefully via
   `isUndefinedColumnError` fallback.
 - `src/commands/serve-http.ts` drops the `(authInfo as AuthInfo &
   {sourceId?: string}).sourceId ?? env ?? 'default'` cast chain. The
@@ -147,20 +147,20 @@ once federated_read is in place.
   threads `sourceId: 'default'` through DispatchOpts so legacy tokens
   stay source-scoped.
 
-**Migration chain v55-v60 (six new migrations on top of v54):**
-- v55 (`oauth_clients_source_id_fk`) — ALTER TABLE ... ADD COLUMN
+**Migration chain v58-v63 (six new migrations on top of v54):**
+- v58 (`oauth_clients_source_id_fk`) — ALTER TABLE ... ADD COLUMN
   source_id TEXT, backfill NULL→'default', install FK with
   ON DELETE SET NULL.
-- v56 (`oauth_clients_federated_read_column`) — ALTER TABLE ... ADD
+- v59 (`oauth_clients_federated_read_column`) — ALTER TABLE ... ADD
   COLUMN federated_read TEXT[] NOT NULL DEFAULT '{}'.
-- v57 (`oauth_clients_federated_read_backfill`) — explicit CASE backfill
+- v60 (`oauth_clients_federated_read_backfill`) — explicit CASE backfill
   so `source_id IS NULL` produces `'{}'` not an array-containing-NULL.
-- v58 (`oauth_clients_federated_read_validate`) — fail-loud check that
+- v61 (`oauth_clients_federated_read_validate`) — fail-loud check that
   every row's source_id is in its federated_read array post-backfill.
-- v59 (`oauth_clients_source_id_fk_restrict`) — flip FK to
+- v62 (`oauth_clients_source_id_fk_restrict`) — flip FK to
   ON DELETE RESTRICT now that federated_read provides the alternative
   scope-loss path. Source delete is refused if any client references it.
-- v60 (`oauth_clients_federated_read_gin_index`) — GIN index for the
+- v63 (`oauth_clients_federated_read_gin_index`) — GIN index for the
   array-containment queries the read paths run.
 
 **OAuth + auth surface:**
@@ -221,7 +221,7 @@ once federated_read is in place.
   real Postgres connection and hang past the default 5s test timeout.
 
 **Test results: 6045 unit tests pass / 0 fail. typecheck clean. PGLite
-initSchema runs the v55-v60 chain in ~786ms total.**
+initSchema runs the v58-v63 chain in ~786ms total.**
 
 ### For contributors
 
@@ -231,8 +231,9 @@ initSchema runs the v55-v60 chain in ~786ms total.**
   missed: a 6th source-isolation leak surface (the `query` image path
   in `operations.ts:1071-1082`), a 5th read-side op missing from #861's
   thread (`find_experts`), and migration-numbering collisions on
-  v47-v53 that would have wedged on cherry-pick (the branch already had
-  v55-v54). The wave's migration chain renumbers to v55-v60.
+  v47-v53 that would have wedged on cherry-pick (the branch had grown
+  to v57 by ship time after master shipped its own v55-v57 search-lite
+  migrations). The wave's migration chain renumbers to v58-v63.
 - The single PR carries `Co-Authored-By:` for the six external
   contributors. PRs originated against earlier base branches and the
   diffs were re-implemented on the collector branch rather than merged
@@ -240,6 +241,78 @@ initSchema runs the v55-v60 chain in ~786ms total.**
 
 Contributed by @Hansen1018 (#870), @ding-modding (#909), @DukeDawg
 (#864), @toilalesondev (#861 + #876), @yoelgal (#875).
+## [0.33.2.1] - 2026-05-14
+
+**Doc-only: name the fork-PR escape hatch so AI-authored PRs don't drop their CI secrets.**
+
+PRs from `garrytan-agents` (the AI-authored PR account) live in a fork. GitHub's `pull_request` event doesn't ship base-repo secrets to forks by default, so any CI job that needs `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` quietly fails with empty-env auth errors regardless of what's set on the base repo. CLAUDE.md now documents the move-branch-to-base-repo workflow as the narrow-scope alternative to adding the account as a collaborator (which would broaden secret distribution to every PR from that account) or flipping the repo-wide fork-secret toggle (which would broaden it to every fork PR).
+
+### Itemized changes
+
+- `CLAUDE.md` gets a new `## Checking out PRs from garrytan-agents` section between "Community PR wave process" and "Skill routing". Four-step recipe: `gh pr checkout <N>` → `git push origin HEAD:<branch>` → `gh pr close <N>` → `gh pr create --base master --head <branch>`, preserving the original title and body verbatim. Closes the friction Garry hit landing #962 / Voyage 2048-dim fixup PRs from the agent account.
+- `llms-full.txt` regenerated by `bun run build:llms` so the committed doc bundle matches the live CLAUDE.md. Pinned by `test/build-llms.test.ts` in CI shard 1.
+
+## [0.33.1.1] - 2026-05-13
+
+**Voyage 2048-dim brains finally produce 2048-dim vectors. Fail-loud on every Voyage misconfiguration.**
+
+Voyage-backed brains configured for high-dimensional embeddings (2048 wide for richer recall on long-form content) were silently producing 1024-dim vectors on every embed call. The dimension instruction was being routed through a wire-key that the AI SDK's openai-compatible adapter doesn't recognize, so it got dropped before the HTTP request was built. Voyage returned its default 1024-dim, the gateway dimension check threw, and brains failed to ingest. This release lands the upstream fix from @100yenadmin and stacks three Voyage-adjacent correctness follow-ups that adversarial Codex review caught during PR review.
+
+### What you can now do
+
+**Run Voyage brains at 2048 dims and actually get 2048 dims.** `embedding_model: voyage:voyage-4-large` + `embedding_dimensions: 2048` now routes through the SDK-supported `dimensions` field, which the existing `voyageCompatFetch` shim rewrites to Voyage's `output_dimension` on the wire. New wire-level test asserts the actual outbound HTTP body contains `output_dimension: 2048`. Same fix covers voyage-3-large, voyage-3.5, voyage-3.5-lite, voyage-4, voyage-4-lite, voyage-code-3.
+
+**Get caught at config time, not first-embed.** `gbrain models doctor` now runs an `embedding_config` probe before any token-spending chat/expansion probes. If your brain is set to a Voyage flexible-dim model with `embedding_dimensions` outside `{256, 512, 1024, 2048}` (the most common trip: leaving `embedding_dimensions` unset, which falls back to the OpenAI default of 1536), doctor surfaces it with a paste-ready `gbrain config set` fix. The runtime `dimsProviderOptions` validator throws an `AIConfigError` at the embed boundary with the same fix hint, so even if you skipped doctor you get a clear message naming the valid values instead of an opaque Voyage HTTP 400.
+
+**voyage-4-nano stays in its lane.** Voyage's `voyage-4-nano` is an open-weight variant listed separately by Voyage as fixed 1024-dim — it doesn't accept `output_dimension`. Dropped from the flexible-dim allowlist; recipe docstring tightened to name the seven hosted flexible-dim models explicitly so the "all v4 variants are flexible" claim doesn't lead the next contributor to re-add nano. A negative regression test pins the contract.
+
+**Voyage OOM cap is now actually effective.** `voyageCompatFetch`'s 256 MB per-response cap (the defense-in-depth check that fires when Content-Length is missing on chunked encoding) was being silently swallowed by the surrounding parse-error try/catch — a malicious or misbehaving Voyage endpoint returning a multi-gigabyte response could have OOMed the worker. Now wrapped in a tagged `VoyageResponseTooLargeError` class that the catch rethrows on `instanceof`, so the cap fails loud instead of returning the oversized response into the AI SDK's JSON parser.
+
+### Why this matters
+
+Voyage is the gbrain-recommended embedding provider for users who want pgvector-native, high-quality embeddings without depending on OpenAI. The 2048-dim bug was a structural footgun: every first-time Voyage user hitting it without obvious cause. Eva (@100yenadmin) caught and fixed the root cause; the follow-up wave plugs the three adjacent correctness gaps that pre-empted future Voyage users hitting similar opaque failures.
+
+## To take advantage of v0.33.1.1
+
+`gbrain upgrade` should do this automatically. If you're already on Voyage:
+
+1. **Verify your dim config is valid:**
+   ```bash
+   gbrain models doctor
+   ```
+   You should see a new `embedding_config` line; if it reports `config` status, follow the paste-ready fix.
+2. **No reindex required** if you were already on a Voyage flexible-dim model with the correct `embedding_dimensions` (the bug surfaced as fail-loud at embed time, so existing brains didn't silently get wrong-width vectors — they failed to embed).
+3. **If `gbrain doctor` warns about anything,** file an issue at https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - your `embedding_model` + `embedding_dimensions` config values
+
+### Itemized changes
+
+#### Fixed
+
+- **Voyage 2048-dim embeddings (closes #866).** `src/core/ai/dims.ts` `dimsProviderOptions` now returns `{ openaiCompatible: { dimensions: N } }` (SDK-supported) instead of `{ openaiCompatible: { output_dimension: N } }` (Voyage wire-key the SDK silently dropped). Existing `voyageCompatFetch` in `src/core/ai/gateway.ts:541` translates `dimensions → output_dimension` before the HTTP body is sent. Contributed by @100yenadmin (PR #866, re-landed in #962 due to `maintainerCanModify` cross-fork push limitation — authorship preserved on the original commit).
+
+- **Voyage OOM-cap rethrow.** `src/core/ai/gateway.ts:619` Layer 2 base64 cap was throwing a generic `Error` that the surrounding `catch {}` swallowed, then returning the original (oversized) response to the AI SDK. New `VoyageResponseTooLargeError` tagged class is now thrown at both cap sites (Content-Length Layer 1 at `:595` and per-embedding Layer 2 at `:619`) and rethrown from the inbound try/catch via `instanceof` check. Parse-error fall-back behavior preserved for non-OOM errors. Codex P3 follow-up.
+
+- **Voyage flexible-dim runtime validation.** `dimsProviderOptions` now throws `AIConfigError` with a paste-ready fix hint when a Voyage flexible-dim model is configured with anything outside `{256, 512, 1024, 2048}`. Most common trigger: `embedding_model: voyage:voyage-4-large` without `embedding_dimensions` (falls back to default 1536 — not Voyage-accepted). Codex P3 follow-up.
+
+#### Changed
+
+- **voyage-4-nano dropped from `VOYAGE_OUTPUT_DIMENSION_MODELS`.** Open-weight model, fixed-dim 1024 per Voyage docs; doesn't accept `output_dimension`. Recipe docstring at `src/core/ai/recipes/voyage.ts:7-16` tightened so the "all v4 variants" claim doesn't lead future contributors to re-add it. Negative regression test in `test/ai/gateway.test.ts` pins the contract.
+
+- **`gbrain models doctor` runs an `embedding_config` probe first** (zero tokens, local-only). Surfaces Voyage flexible-dim mismatches before any chat/expansion probes spend money. New `config` probe status + `fix` hint rendered in both human and JSON output. New `embedding_config` touchpoint label appears alongside `chat` / `expansion`.
+
+#### Tests
+
+- New wire-level test (`test/ai/gateway.test.ts`): stubs `globalThis.fetch` and asserts the outbound Voyage request body contains `output_dimension: 2048` + `encoding_format: base64`. Catches the exact regression class that motivated #866.
+- Two new behavioral tests for the OOM-cap rethrow (Content-Length over cap + oversized base64 string both propagate).
+- Six new tests for the flexible-dim runtime validator (1536 + 3072 rejected, all valid sizes accepted, `voyage-3-lite` / `voyage-4-nano` bypass validator, fix-hint contents).
+- Source-shape regression assertion in `test/voyage-response-cap.test.ts` pins the `instanceof VoyageResponseTooLargeError ⇒ throw err` line.
+
+#### For contributors
+
+- New tagged error class `VoyageResponseTooLargeError` is exported from `src/core/ai/gateway.ts` (test-only seam; not part of the public AI SDK surface).
+- New exports from `src/core/ai/dims.ts`: `VOYAGE_VALID_OUTPUT_DIMS` (`[256, 512, 1024, 2048] as const`) and `isValidVoyageOutputDim(dims: number)`. Reuse these if you add a Voyage-adjacent probe or doctor check; do NOT inline the magic numbers.
 
 ## [0.33.1.0] - 2026-05-10
 

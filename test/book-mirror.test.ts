@@ -64,7 +64,7 @@ async function runCli(args: string[]): Promise<{
 }
 
 describe('gbrain book-mirror — CLI registration', () => {
-  // v0.34.0 (#876): migrations v55-v60 added oauth_clients.source_id +
+  // v0.34.0 (#876): migrations v58-v63 added oauth_clients.source_id +
   // federated_read FK plumbing. The cold-spawned subprocess's initSchema
   // chain now takes ~1s longer end-to-end; bump these tests' timeout to
   // 30s so the test-harness budget covers Bun cold-start + PGLite init +

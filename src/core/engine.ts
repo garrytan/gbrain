@@ -1160,6 +1160,18 @@ export interface BrainEngine {
   // Config
   getConfig(key: string): Promise<string | null>;
   setConfig(key: string, value: string): Promise<void>;
+  /**
+   * v0.32.3 — delete a config row. Returns the number of rows deleted (0 or 1).
+   * No-op when the key doesn't exist. Used by `gbrain config unset` and by
+   * `gbrain search modes --reset`. Engine-agnostic.
+   */
+  unsetConfig(key: string): Promise<number>;
+  /**
+   * v0.32.3 — list config keys matching a literal prefix (e.g. "search.").
+   * Used by `gbrain config unset --pattern` and the search-modes --reset path.
+   * Does NOT support glob/regex on purpose — the caller knows the prefix.
+   */
+  listConfigKeys(prefix: string): Promise<string[]>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;
