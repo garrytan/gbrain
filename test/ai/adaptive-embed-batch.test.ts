@@ -147,6 +147,12 @@ describe('isTokenLimitError (pure helper)', () => {
     expect(isTokenLimitError(new Error('Batch contains too many tokens'))).toBe(true);
   });
 
+  test('matches local embedding context-length variants', () => {
+    expect(isTokenLimitError(new Error('input length 621 exceeds maximum context length 512'))).toBe(true);
+    expect(isTokenLimitError(new Error('context length exceeded for embedding input'))).toBe(true);
+    expect(isTokenLimitError(new Error('input too long for model context'))).toBe(true);
+  });
+
   test('does not match unrelated errors', () => {
     expect(isTokenLimitError(new Error('Connection refused'))).toBe(false);
     expect(isTokenLimitError(new Error('Invalid API key'))).toBe(false);
@@ -270,6 +276,47 @@ describe('embed() OpenAI fast path (no max_batch_tokens)', () => {
     await embed(['x', 'y']);
     expect(openaiStub).toHaveBeenCalledTimes(1);
     expect(__getShrinkStateForTests('voyage')).toBeUndefined();
+  });
+});
+
+describe('embed() per-input provider cap', () => {
+  beforeEach(() => resetGateway());
+  afterEach(() => __setEmbedTransportForTests(null));
+
+  test('ollama truncates oversized single inputs before local transport', async () => {
+    configureGateway({
+      embedding_model: 'ollama:mxbai-embed-large',
+      embedding_dimensions: 1024,
+      env: {},
+    });
+
+    let observed = '';
+    const stub = mock(async ({ values }: { values: string[] }) => {
+      observed = values[0] ?? '';
+      return fakeEmbeddings(values, 1024);
+    });
+    __setEmbedTransportForTests(stub as any);
+
+    await embed(['x'.repeat(5000)]);
+
+    expect(stub).toHaveBeenCalledTimes(1);
+    expect(observed.length).toBe(384);
+  });
+
+  test('openai keeps the legacy MAX_CHARS cap', async () => {
+    configureOpenAI();
+
+    let observed = '';
+    const stub = mock(async ({ values }: { values: string[] }) => {
+      observed = values[0] ?? '';
+      return fakeEmbeddings(values, 1536);
+    });
+    __setEmbedTransportForTests(stub as any);
+
+    await embed(['x'.repeat(9000)]);
+
+    expect(stub).toHaveBeenCalledTimes(1);
+    expect(observed.length).toBe(8000);
   });
 });
 

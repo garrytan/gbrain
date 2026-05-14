@@ -17,6 +17,13 @@ export const ollama: Recipe = {
       default_dims: 768, // nomic-embed-text native dim
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-04-20',
+      // Local Ollama embedding models can reject a single oversized input
+      // even when batch size is 1 (mxbai/all-minilm commonly run with a
+      // 512-token context). Keep imports moving by bounding each item before
+      // it reaches the local server; page content is still stored losslessly.
+      max_input_tokens: 512,
+      chars_per_token: 1,
+      safety_factor: 0.75,
       // Ollama's batch capacity depends on the locally loaded model + the
       // OLLAMA_NUM_PARALLEL config; no static cap to declare. v0.32 (#779).
       no_batch_cap: true,

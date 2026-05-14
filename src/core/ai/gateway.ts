@@ -747,14 +747,15 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
 const MIN_SUB_BATCH = 1;
 
 /**
- * Embed many texts. Truncates to MAX_CHARS, then dispatches based on whether
- * the recipe declares a per-batch token budget.
+ * Embed many texts. Truncates each item to the recipe's per-input cap (or the
+ * legacy MAX_CHARS ceiling), then dispatches based on whether the recipe
+ * declares a per-batch token budget.
  *
  * Flow:
  * ```
  * embed(texts)
  *   ├─ resolve recipe + model
- *   ├─ truncate each text to MAX_CHARS (8000)
+ *   ├─ truncate each text to the recipe's per-input cap, else MAX_CHARS (8000)
  *   ├─ read recipe.touchpoints.embedding.{max_batch_tokens, chars_per_token, safety_factor}
  *   │
  *   ├─ if max_batch_tokens declared (Voyage path):
@@ -790,13 +791,13 @@ export async function embed(texts: string[]): Promise<Float32Array[]> {
 
   const cfg = requireConfig();
   const { model, recipe, modelId } = await resolveEmbeddingProvider(getEmbeddingModel());
-  const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
   const providerOpts = dimsProviderOptions(recipe.implementation, modelId, cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS);
   const expected = cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
 
   const embedding = recipe.touchpoints?.embedding;
   const maxBatchTokens = embedding?.max_batch_tokens;
   const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
+  const truncated = texts.map(t => truncateEmbeddingInput(t ?? '', embedding, charsPerToken));
 
   // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
   // ride the fast path: one embedMany call, no recursion safety net.
@@ -852,6 +853,20 @@ export function splitByTokenBudget(
   return batches;
 }
 
+function truncateEmbeddingInput(
+  text: string,
+  embedding: Recipe['touchpoints']['embedding'],
+  charsPerToken: number,
+): string {
+  const ratio = charsPerToken > 0 ? charsPerToken : DEFAULT_CHARS_PER_TOKEN;
+  const declaredInputTokens = embedding?.max_input_tokens;
+  const perInputChars = declaredInputTokens && declaredInputTokens > 0
+    ? Math.floor(declaredInputTokens * effectiveInputSafetyFactor(embedding) * ratio)
+    : MAX_CHARS;
+  const limit = Math.max(1, Math.min(MAX_CHARS, perInputChars));
+  return text.slice(0, limit);
+}
+
 /**
  * Returns true if the error looks like a provider batch-token-limit error.
  *
@@ -862,7 +877,10 @@ export function isTokenLimitError(err: unknown): boolean {
   return (
     /max.*allowed.*tokens.*batch/i.test(msg) ||
     /batch.*too.*many.*tokens/i.test(msg) ||
-    /token.*limit.*exceeded/i.test(msg)
+    /token.*limit.*exceeded/i.test(msg) ||
+    /exceeds?.*context.*length/i.test(msg) ||
+    /context.*length.*exceeds?/i.test(msg) ||
+    /input.*too.*long/i.test(msg)
   );
 }
 
@@ -874,6 +892,10 @@ function effectiveSafetyFactor(recipe: Recipe): number {
   const declared = recipe.touchpoints?.embedding?.safety_factor ?? DEFAULT_SAFETY_FACTOR;
   const entry = _shrinkState.get(recipe.id);
   return entry?.factor ?? declared;
+}
+
+function effectiveInputSafetyFactor(embedding: Recipe['touchpoints']['embedding']): number {
+  return embedding?.safety_factor ?? DEFAULT_SAFETY_FACTOR;
 }
 
 /** Tighten the recipe's effective safety factor on a token-limit miss. */
