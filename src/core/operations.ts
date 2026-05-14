@@ -344,10 +344,14 @@ export interface OperationContext {
    * Every facts read/write filter starts with `WHERE source_id = $X`
    * so the trust boundary is part of the index path, not a callback.
    *
-   * Pre-v0.31 callers (pages/links/etc.) keep working without change —
-   * sourceId here is purely additive context for the new ops.
+   * v0.34 D4 — REQUIRED at the TypeScript level. Mirrors v0.26.9 `remote`
+   * REQUIRED pattern that closed the HTTP RCE class. Every transport
+   * (CLI / stdio MCP / HTTP MCP / subagent dispatcher) MUST populate
+   * this field; `buildOperationContext` auto-fills 'default' for callers
+   * who don't pass an explicit sourceId, so the type contract is
+   * satisfied even on single-source brains.
    */
-  sourceId?: string;
+  sourceId: string;
 }
 
 export interface Operation {

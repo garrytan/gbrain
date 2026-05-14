@@ -513,7 +513,11 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
     // confinement (e.g., cwd-locked file_upload).
     remote: false,
     cliOpts: getCliOptions(),
-    ...(sourceId ? { sourceId } : {}),
+    // v0.34 D4: sourceId is REQUIRED at the type level. Fall back to 'default'
+    // when resolveSourceId returned undefined (fresh pre-init brain, no sources
+    // table). Matches dispatch.ts's auto-fill so the contract holds across
+    // every transport.
+    sourceId: sourceId ?? 'default',
   };
 }
 

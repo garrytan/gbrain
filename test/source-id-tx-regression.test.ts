@@ -487,6 +487,7 @@ function makeCtx(eng: PGLiteEngine, overrides: Partial<OperationContext> = {}): 
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
     remote: false,
+    sourceId: 'default',
     ...overrides,
   };
 }
