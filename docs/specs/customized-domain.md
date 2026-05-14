@@ -1,5 +1,104 @@
 # Spec: GBrain Customized Domain (VC to Developer)
 
+## Intro
+
+GBrain is a personal knowledge brain that teaches AI agents to persist and
+retrieve structured knowledge. Out of the box, it is built for a VC/executive
+use case: tracking people (founders, investors, colleagues), companies
+(portfolio, prospects, competitors), deals (funding rounds, term sheets), and
+meetings (board meetings, 1:1s, pitch sessions). The enrichment pipeline fires
+on every person or company mention, building dossier-style pages with career
+history, beliefs, motivations, relationship context, and a reverse-chronological
+timeline of interactions.
+
+We want to adapt gbrain to a **developer use case**: documenting development
+processes, architectural decisions, debug trails, coding patterns, tool
+knowledge, and project context. Instead of compounding knowledge about people
+and companies, the brain should compound knowledge about how software gets
+built. The agent should capture technical decisions as they happen, record
+root causes when bugs are debugged, and solidify repeatable processes so that
+a completely new Claude agent in a fresh devcontainer can reproduce them.
+
+The adaptation follows the "thin harness, fat skills" methodology from
+`docs/ethos/THIN_HARNESS_FAT_SKILLS.md`: the gbrain CLI (deterministic layer)
+stays unchanged. The skill files (latent-space layer) are where domain
+knowledge lives, and those are what we rewrite. When a development process
+proves repeatable, it graduates from a brain page to a skill file.
+
+## Important Files
+
+GBrain's agent behavior is driven by skill files that get concatenated into
+`~/.claude/CLAUDE.md` at devcontainer boot (see `entrypoint.sh` lines 149-183).
+These files form a layered instruction set that controls how the agent reads
+and writes to the brain.
+
+### Layer 1: Routing (which skill handles which intent)
+
+| File | Role | Domain-specific? |
+|------|------|-----------------|
+| `skills/RESOLVER.md` | Trigger-to-skill routing table. When user says X, load skill Y. | YES — every trigger is VC-oriented ("investor updates", "donations", "who is") |
+
+### Layer 2: Always-on behaviors (fire on every message)
+
+| File | Role | Domain-specific? |
+|------|------|-----------------|
+| `skills/signal-detector/SKILL.md` | Ambient capture: detects entities and original thinking on every inbound message. Defines WHAT the agent looks for. | YES — detection list is people, companies, media. Writes to people/, companies/, concepts/ |
+| `skills/brain-ops/SKILL.md` | The read-enrich-write loop engine. Defines WHEN the agent checks the brain, WHEN it writes back, and WHEN it enriches. Touches all 6 loop phases. | PARTIALLY — the loop mechanics are domain-agnostic but entity triggers say "person or company" at 8 hard-gate sites |
+
+### Layer 3: Conventions (cross-cutting rules for all brain writes)
+
+| File | Role | Domain-specific? |
+|------|------|-----------------|
+| `skills/conventions/quality.md` | Canonical Iron Law definition (back-linking), citation format, notability gate, source precedence. Every other file delegates here. | PARTIALLY — Iron Law scoped to "person or company" (line 25). Notability gate has criteria only for people/companies/concepts |
+| `skills/conventions/brain-first.md` | Lookup chain (search -> query -> get_page -> external APIs). Entity conventions table maps directories to types. | PARTIALLY — table lists people/, companies/, deals/, meetings/, projects/, yc/. Agent constructs slugs from this |
+| `skills/conventions/brain-routing.md` | Which brain (DB) and which source (repo) to target. Multi-brain federation rules. | NO — domain-agnostic routing. Relevant even in single-brain Topology 1 for source-axis awareness |
+| `skills/_brain-filing-rules.md` | Where to file new pages. Decision protocol, misfiling table, dream-cycle synthesis paths. | YES — entire taxonomy is VC-oriented (people/, companies/, deals/) |
+| `skills/_brain-filing-rules.json` | Machine-readable companion. `kind` entries and `dream_synthesize_paths.globs` array. | YES — missing developer entity kinds |
+
+### Layer 4: Output quality (how brain pages should read)
+
+| File | Role | Domain-specific? |
+|------|------|-----------------|
+| `skills/_output-rules.md` | Deterministic links, no slop, exact phrasing preservation, title quality. | NO — rules are genuinely domain-neutral |
+
+### Layer 5: Code (enforces behavior regardless of skill instructions)
+
+| File | Role | Domain-specific? |
+|------|------|-----------------|
+| `src/core/types.ts` | `PageType` union type. Compile-time gate: types not in the union cannot be assigned. | YES — missing developer types (decision, debug-trail, pattern, process, tool, goal, environment) |
+| `src/core/markdown.ts` `inferType()` | Maps directory paths to `PageType`. Determines what type a page gets when imported. | YES — missing developer directory mappings |
+| `src/core/link-extraction.ts` | `DIR_PATTERN` regex for auto-link. Determines which directory references create graph edges. | YES — missing developer directories |
+
+### How the layers compose
+
+```
+User message arrives
+  |
+  v
+Layer 1 (RESOLVER) -----> routes to the right skill
+  |
+  v
+Layer 2 (signal-detector) -> DETECTS entities worth capturing
+Layer 2 (brain-ops) -------> READ brain, ENRICH pages, WRITE back
+  |
+  v
+Layer 3 (quality.md) ------> HOW to write (citations, back-links)
+Layer 3 (brain-first.md) --> HOW to read (lookup chain, slug construction)
+Layer 3 (brain-routing.md) > WHICH brain/source to target
+Layer 3 (filing-rules) ----> WHERE to file (directory taxonomy)
+  |
+  v
+Layer 4 (output-rules) ----> page quality standards
+  |
+  v
+Layer 5 (code) ------------> enforces types, auto-link, type inference
+```
+
+The agent reads all layers at boot (concatenated into CLAUDE.md). When any
+layer mentions "person or company" as a hard gate, developer entities are
+invisible to that layer. The customization must patch every hard gate across
+all layers.
+
 ## Goal
 
 Customize gbrain from a VC/executive personal intelligence system to a developer
@@ -10,7 +109,10 @@ upstream gbrain compounds people/company knowledge.
 The key constraint: a new Claude agent in a fresh devcontainer (built from the
 Dockerfile at `/workspaces/practicespace-2/.devcontainer/Dockerfile`) should be
 able to read the brain and repeat a development process. The brain is institutional
-memory that survives across agent sessions and environments.
+memory that survives across agent sessions and environments. The cross-environment
+reproducibility mechanism is the system-of-record contract: the brain repo (git)
+is the portable artifact, and `gbrain sync && gbrain extract all` rebuilds the
+DB from it in any fresh environment.
 
 ## Closed-Loop Criterion
 
@@ -169,7 +271,7 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 
 | # | File | What changes |
 |---|------|-------------|
-| 9 | `/workspaces/practicespace-2/.devcontainer/entrypoint.sh` | Lines 154-165: drop 3 files from the array (brain-routing.md, subagent-routing.md, ask-user/SKILL.md). Result: 7 files loaded instead of 10 |
+| 9 | `/workspaces/practicespace-2/.devcontainer/entrypoint.sh` | Lines 154-165: drop 2 files from the array (subagent-routing.md, ask-user/SKILL.md). Keep brain-routing.md for source-axis awareness. Result: 8 files loaded instead of 10 |
 
 #### Unchanged (1)
 
@@ -181,7 +283,8 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 
 | File | Change | Priority |
 |------|--------|----------|
-| `src/core/markdown.ts` `inferType()` | Add developer directory-to-type mappings so pages get correct `PageType` instead of falling through to `concept` | Medium |
+| `src/core/types.ts` `PageType` union | Add decision, debug-trail, pattern, process, tool, goal, environment to the type union + `ALL_PAGE_TYPES`. Compile-time break without this | **HIGH (Tier 1)** |
+| `src/core/markdown.ts` `inferType()` | Add developer directory-to-type mappings. Ordering: longest prefix first (decisions/ before projects/) for hybrid paths | **HIGH (Tier 1)** |
 | `src/commands/doctor.ts` graph_coverage | Expand `type IN (...)` clause to include developer types | Low |
 | `brain-ops/SKILL.md` Phase 2.5 | Add developer relationship types (uses, depends_on, decided_in) as examples | Low |
 
@@ -199,10 +302,10 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 |----------|-------|-------|
 | Full rewrite | 3 | RESOLVER.md, signal-detector/SKILL.md, _brain-filing-rules.md |
 | Skill file patch | 3 | brain-ops/SKILL.md, brain-first.md, quality.md |
-| Code/config patch | 2 | link-extraction.ts, _brain-filing-rules.json |
+| Code/config patch | 4 | types.ts, markdown.ts, link-extraction.ts, _brain-filing-rules.json |
 | Entrypoint edit | 1 | entrypoint.sh |
-| Unchanged | 1 | _output-rules.md |
-| **Total** | **10** | |
+| Unchanged | 2 | _output-rules.md, brain-routing.md |
+| **Total** | **13** | |
 
 ## Execution Order
 
@@ -213,8 +316,10 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 5. **RESOLVER.md** (routing table)
 6. **brain-first.md** (retrieval conventions)
 7. **link-extraction.ts** (auto-link code)
-8. **entrypoint.sh** (drop 3 irrelevant files)
-9. Tier 2 code changes (markdown.ts, doctor.ts) if time allows
+8. **types.ts** (PageType union — compile-time prerequisite for markdown.ts)
+9. **markdown.ts** `inferType()` (longest-prefix ordering for hybrid paths)
+10. **entrypoint.sh** (drop 2 irrelevant files, keep brain-routing.md)
+11. Tier 2 code changes (doctor.ts) if time allows
 
 ## Process page template (for developer entities)
 
@@ -256,6 +361,109 @@ tags: [deploy, production, ci]
 ## Timeline
 - **YYYY-MM-DD** | Source - What happened, who ran it, what changed
 ```
+
+## Architecture Compliance
+
+Audited against `/workspaces/gbrain/docs/architecture/` (4 docs).
+
+### system-of-record.md — REQUIRES FIXES
+
+The FS-canonical contract says: markdown repo is the system of record, PGLite
+is a derived cache. `gbrain sync && gbrain extract all` rebuilds the DB from
+scratch. This spec's closed-loop diagram says "STORE = page lands in PGLite"
+which is misleading. The correct flow is:
+
+```
+agent calls put_page -> markdown written to brain repo -> sync imports to DB -> extract rebuilds graph
+```
+
+The spec must NOT frame the DB as the primary store. All developer knowledge
+follows the same FS-canonical contract as upstream: markdown is canonical,
+DB is derived. The `put_page` MCP tool writes to the DB, but `gbrain export`
+materializes pages as markdown (entrypoint.sh line 186 runs this every 2min),
+and `gbrain sync` rebuilds from markdown. The rebuild invariant must hold:
+wipe the DB, re-import from the brain repo, and all developer knowledge
+(decisions, patterns, processes, etc.) regenerates identically.
+
+Callout: the process page template's `---` separator before `## Timeline` must
+be placed immediately before the heading to satisfy `markdown.ts`'s sentinel
+detection (`<!-- timeline -->`, `--- timeline ---`, or `---` immediately before
+`## Timeline`/`## History`). The template in this spec follows that convention.
+
+**Action:** Update the closed-loop diagram phase 3 from "STORE - page lands in
+PGLite" to "STORE - page materializes as markdown, DB rebuilt from repo."
+
+### brains-and-sources.md — REQUIRES CLARIFICATION
+
+This spec targets Topology 1: single brain, single source, single machine
+(PGLite in a devcontainer). The developer directory taxonomy replaces the
+default source's directory structure, not the brain or source axis. No new
+brains or sources are created.
+
+Codex flagged: even in Topology 1, the two-axis resolution contract still
+exists. Saying `--brain` and `--source` are "irrelevant" is too strong.
+The correct framing: the default resolution (`host` brain, `default` source)
+handles this setup correctly without explicit flags. The axes exist but the
+defaults are sufficient.
+
+Codex also flagged: dropping `brain-routing.md` from the entrypoint removes
+agent awareness of the source/brain axis entirely. Even for a single-brain
+setup, the agent should understand the axis model in case the user adds a
+second source later. **Decision: keep brain-routing.md in the entrypoint
+but deprioritize it (no changes needed to its content).** This changes the
+entrypoint from "drop 3 files" to "drop 2 files" (subagent-routing.md and
+ask-user/SKILL.md only).
+
+### infra-layer.md — REQUIRES ADDITIONAL CODE CHANGES
+
+Search architecture (tsvector + pgvector + RRF) is content-based, not
+type-based. Developer pages get identical search treatment. No conflict there.
+
+However, Codex found a compile-time break the spec missed:
+
+**`src/core/types.ts` PageType union.** The union type does NOT include
+`decision`, `debug-trail`, `pattern`, `process`, `tool`, `goal`, or
+`environment`. Adding these to `inferType()` in `markdown.ts` without updating
+the `PageType` union in `types.ts` is a TypeScript compile error. This is a
+Tier 1 blocker, not Tier 2.
+
+**`inferType()` ordering for hybrid paths.** The hybrid taxonomy nests
+`projects/my-app/decisions/` under `projects/`. If `inferType` checks
+`/projects/` before `/decisions/`, nested decision pages get typed as
+`project` instead of `decision`. The check order must be: longest prefix
+match first (decisions before projects).
+
+**Link relationship heuristics.** Adding directories to `DIR_PATTERN` enables
+auto-link to CREATE edges, but `inferLinkType` classifies all developer
+relationships as `mentions` (the default fallback). Functionally degraded
+graph behavior, acceptable for v1 but should be noted as a known limitation,
+not claimed as compliant.
+
+### topologies.md — REQUIRES RECONCILIATION
+
+Topology 1 (single brain on one machine). The devcontainer's entrypoint runs
+`gbrain init` (PGLite) + `gbrain serve` (stdio MCP).
+
+Codex flagged a contradiction: the spec's goal says "a new Claude agent in a
+fresh devcontainer should be able to read the brain and repeat a development
+process." That is a cross-environment portability claim. But the architecture
+section says "no cross-machine concerns apply." These conflict.
+
+The bridge is the system-of-record contract: the brain repo (git) is the
+portable artifact. A fresh devcontainer runs `gbrain sync --repo ~/brain &&
+gbrain extract all` and the DB rebuilds from the repo. The spec should state
+this explicitly as the cross-environment reproducibility mechanism, rather
+than claiming no cross-machine concerns exist.
+
+### Changes required by architecture audit
+
+Added to the change manifest:
+
+| # | File | What changes | Tier |
+|---|------|-------------|------|
+| NEW | `src/core/types.ts` | Add developer types to `PageType` union and `ALL_PAGE_TYPES` | Tier 1 (compile-time break) |
+| UPDATED | entrypoint.sh | Drop 2 files (not 3) — keep brain-routing.md | Tier 1 |
+| UPDATED | `src/core/markdown.ts` `inferType()` | Moved from Tier 2 to Tier 1 — ordering matters for hybrid paths | Tier 1 |
 
 ## What was missed and why
 
