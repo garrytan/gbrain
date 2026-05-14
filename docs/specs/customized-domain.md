@@ -68,16 +68,16 @@ type/regex patterns to recognize the new entity directories.
 
 The adaptation is at the "fat skills" layer, not the "thin harness" layer.
 
-### The two repos involved
+### This repo
 
-1. **`/workspaces/gbrain/`** (this repo) — the gbrain fork. Skill files live
-   here at `skills/`. Code files live at `src/core/`. This is where the domain
-   customization happens. Branch: `chapter37haptics/customized-domain`.
+**`/workspaces/gbrain/`** — the gbrain fork. Skill files live here at `skills/`.
+Code files live at `src/core/`. This is where the domain customization happens.
+Branch: `chapter37haptics/customized-domain`.
 
-2. **`/workspaces/practicespace-2/.devcontainer/`** — the devcontainer config.
-   `entrypoint.sh` controls which skill files get loaded into CLAUDE.md and
-   `Dockerfile` pins the gbrain commit. One edit needed here: drop 2 files
-   from the skill file array.
+The devcontainer config lives at `/workspaces/practicespace-2/.devcontainer/`
+(separate repo, out of scope for this spec). Its `entrypoint.sh` controls which
+skill files get loaded into CLAUDE.md and its `Dockerfile` pins the gbrain
+commit. Changes to those files are a follow-up after this spec lands.
 
 ### The user's workflow (why this matters)
 
@@ -85,8 +85,8 @@ The user develops with Claude Code inside a devcontainer. The workflow:
 
 1. Write prompts/specs that Claude's `/goal` skill can use to achieve a goal
 2. Claude achieves the goal through a development session
-3. The brain captures decisions, debug trails, and patterns along the way
-4. The process gets solidified into a `processes/` brain page
+3. The brain captures the goal execution arc: decisions, debug trails, patterns
+4. Reusable knowledge gets promoted out of the goal page into decisions/, processes/, concepts/
 5. When a process proves repeatable (2-3 times), it graduates to a skill file
 6. A completely new Claude agent in a fresh devcontainer (built from the
    Dockerfile) can read the brain and reproduce the process
@@ -99,20 +99,21 @@ system-of-record contract: the brain repo (git) is the portable artifact.
 
 The signal-detector fires on every message and looks for:
 
-- **Projects** mentioned by name ("the auth service", "my-app") — check brain,
-  create/update project page if notable
+- **Goals** being worked on ("set up JWT auth", "migrate to Postgres") — check
+  brain, create/update goal page capturing the execution arc
 - **Technical decisions** ("we chose X because Y", "decided to", "tradeoff") —
-  create decision page with context, options, rationale
+  create decision page if it should govern future goals, or log on the goal page
+  if it's local to this execution
 - **Repeatable processes** ("to deploy, you need to", "the workflow is", "steps
   to set up") — create process page with preconditions, steps, verification
 - **Reusable concepts** ("event sourcing works by", "the repository pattern",
   "Docker needs this flag because") — create/update concept page
 - **Debug sessions** ("the bug was caused by", "root cause was") — add
-  structured timeline entry to the project page
+  structured timeline entry to the goal page
 - **Original thinking** — the user's ideas, observations, frameworks — captured
   verbatim, same as upstream
 
-### Existing PageType values (22 total, we add 2)
+### Existing PageType values (22 total, we add 3)
 
 ```
 person | company | deal | yc | civic | project | concept | source | media |
@@ -120,9 +121,8 @@ writing | analysis | guide | hardware | architecture | meeting | note |
 email | slack | calendar-event | code | image | synthesis
 ```
 
-We add: `decision`, `process`. Total: 24. `project` and `concept` already
-exist. VC types stay in the infrastructure but the agent stops triggering on
-them.
+We add: `goal`, `decision`, `process`. Total: 25. `concept` already exists.
+VC types stay in the infrastructure but the agent stops triggering on them.
 
 ### Key architectural constraints to respect
 
@@ -144,6 +144,17 @@ them.
    schema (10 tables), engine interface, MCP operations, and sync/rebuild
    contracts are all untouched. The code changes (types.ts, markdown.ts,
    link-extraction.ts) extend existing patterns, not alter them.
+
+### After implementation
+
+- **Upstream tests should pass.** We only add to type unions and regex patterns,
+  never remove or change existing values. `bun test` and `bun run test:e2e`
+  should pass unchanged. If anything breaks, it means a code change was more
+  invasive than the spec intended.
+- **End-to-end verification.** After all files are changed, test the closed
+  loop: say something like "we chose Postgres because of pgvector support" in
+  a conversation, then in a separate query ask "why did we choose Postgres?"
+  and verify the brain returns the decision page.
 
 ## Important Files
 
@@ -185,9 +196,9 @@ and writes to the brain.
 
 | File | Role | Domain-specific? |
 |------|------|-----------------|
-| `src/core/types.ts` | `PageType` union type. Compile-time gate: types not in the union cannot be assigned. | YES — missing `decision` and `process` (`project` and `concept` already exist) |
-| `src/core/markdown.ts` `inferType()` | Maps directory paths to `PageType`. Determines what type a page gets when imported. | YES — missing `decisions/` and `processes/` mappings |
-| `src/core/link-extraction.ts` | `DIR_PATTERN` regex for auto-link. Determines which directory references create graph edges. | YES — missing `decisions` and `processes` (`projects` and `concepts` already in regex) |
+| `src/core/types.ts` | `PageType` union type. Compile-time gate: types not in the union cannot be assigned. | YES — missing `goal`, `decision`, and `process` (`concept` already exists) |
+| `src/core/markdown.ts` `inferType()` | Maps directory paths to `PageType`. Determines what type a page gets when imported. | YES — missing `goals/`, `decisions/`, and `processes/` mappings |
+| `src/core/link-extraction.ts` | `DIR_PATTERN` regex for auto-link. Determines which directory references create graph edges. | YES — missing `goals`, `decisions`, and `processes` (`concepts` already in regex) |
 
 ### How the layers compose
 
@@ -234,27 +245,31 @@ potential break point where developer knowledge gets lost.
 6. ENRICH   - on subsequent interactions, agent updates existing pages
 ```
 
-## Developer Entity Types (narrowed scope, v3)
+## Developer Entity Types (v4)
 
 4 entity types replace the upstream VC taxonomy (people/, companies/, deals/).
 VC types remain in the infrastructure (PageType union, DIR_PATTERN) but the
 agent's behavioral layer (skill files) stops triggering on them.
 
-| Directory | Type | Example | Absorbs | Already in PageType? |
-|-----------|------|---------|---------|---------------------|
-| `projects/` | project | `projects/my-app.md` | goals, environments, debug-trails (as sections/timeline) | YES |
-| `decisions/` | decision | `decisions/chose-postgres-over-sqlite.md` | ADR-style technical decisions with rationale | NO (new) |
-| `processes/` | process | `processes/deploy-to-production.md` | Repeatable workflows; graduates to skill files | NO (new) |
-| `concepts/` | concept | `concepts/event-sourcing.md` | tools, patterns, reusable mental models | YES |
+The primary development unit is a `/goal` invocation, not a long-lived project.
+`goals/` captures execution episodes (what was attempted, what happened, what
+was learned). Reusable artifacts get promoted out to their own directories.
 
-New PageType additions: **2** (`decision`, `process`).
-DIR_PATTERN additions: **2** (`decisions`, `processes`).
+| Directory | Type | Example | What goes here | Already in PageType? |
+|-----------|------|---------|---------------|---------------------|
+| `goals/` | goal | `goals/setup-jwt-auth.md` | One /goal execution arc: attempts, debug trails, local decisions, environment state | NO (new) |
+| `decisions/` | decision | `decisions/chose-postgres-over-sqlite.md` | Durable choices that govern future work beyond one goal | NO (new) |
+| `processes/` | process | `processes/deploy-to-production.md` | Canonical reproducible procedures (no session narrative); graduates to skill files | NO (new) |
+| `concepts/` | concept | `concepts/event-sourcing.md` | Context-free reusable understanding: tools, patterns, mental models | YES |
+
+New PageType additions: **3** (`goal`, `decision`, `process`).
+DIR_PATTERN additions: **3** (`goals`, `decisions`, `processes`).
 
 ### VC-to-developer entity mapping
 
 | VC domain | Developer domain | Structural role |
 |-----------|-----------------|-----------------|
-| `people/` | `projects/` | Primary entity everything orbits around |
+| `people/` | `goals/` | Primary entity everything orbits around |
 | `companies/` | `concepts/` | Context entities that primary entities link to |
 | `deals/` | `decisions/` | Point-in-time choices that connect entities |
 | `meetings/` | (dropped) | Events where entities interact |
@@ -264,25 +279,39 @@ DIR_PATTERN additions: **2** (`decisions`, `processes`).
 
 ```
 brain/
-+-- projects/
-|   +-- my-app.md                  <- hub page (goals, env, debug as sections)
-+-- decisions/                     <- cross-project ADRs
-+-- processes/                     <- repeatable workflows
++-- goals/                         <- one page per /goal execution
++-- decisions/                     <- durable cross-goal ADRs
++-- processes/                     <- canonical repeatable workflows
 +-- concepts/                      <- reusable knowledge (tools, patterns, models)
 ```
 
-Filing test: "Is this a reusable concept? -> concepts/. A step-by-step
-procedure? -> processes/. A technical choice with rationale? -> decisions/.
-Everything else is a section on the project page."
+### MECE boundaries (hard rules, not judgment calls)
+
+Every pair of entity types has a hard boundary:
+
+| Pair | Boundary |
+|------|----------|
+| goals/ vs decisions/ | goals: what happened in one execution run. decisions: durable choice meant to govern future goals |
+| goals/ vs processes/ | goals: narrative + debug trail. processes: canonical reproducible procedure (no session story) |
+| goals/ vs concepts/ | goals: applied, context-bound. concepts: context-free reusable understanding |
+| decisions/ vs processes/ | decisions: what/why we chose. processes: how to execute |
+| decisions/ vs concepts/ | decisions: committed policy for a scope. concepts: explanatory model, no commitment |
+| processes/ vs concepts/ | processes: stepwise action. concepts: theory/pattern vocabulary |
+
+**Operational rule:** Capture everything in `goals/` first. Promote out only
+when reusable:
+- `decision` — if it should constrain other goals
+- `process` — if it's reproducible and handoff-worthy
+- `concept` — if it generalizes beyond the specific case
 
 ### Notability criteria for concepts/ (junk-drawer prevention)
 
 concepts/ absorbs tools and patterns. To prevent it from becoming a dumping
-ground, a concept must be: reusable (applies to more than one project),
-cross-project (not tied to a single codebase), stable (won't change next
+ground, a concept must be: reusable (applies to more than one goal),
+cross-goal (not tied to a single execution), stable (won't change next
 week), and non-procedural (if it's a series of steps, it's a process, not
 a concept). Example: "event sourcing" is a concept. "How to set up Docker
-for this project" is a process or a project section.
+for this goal" is a process or a goal section.
 
 ### Brain-to-skill promotion pipeline
 
@@ -364,7 +393,7 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 | # | File | Loop Phase | Reason |
 |---|------|-----------|--------|
 | 1 | `skills/RESOLVER.md` | DETECT | Every trigger is VC-specific. Replace with developer triggers |
-| 2 | `skills/signal-detector/SKILL.md` | DETECT + WRITE | Entity detection list (line 70) defines what gets captured. Currently: people, companies, media. Must become: projects, decisions, processes, concepts |
+| 2 | `skills/signal-detector/SKILL.md` | DETECT + WRITE | Entity detection list (line 70) defines what gets captured. Currently: people, companies, media. Must become: goals, decisions, processes, concepts |
 | 3 | `skills/_brain-filing-rules.md` | WRITE + STORE | Entire taxonomy, misfiling table, notability gate, dream-cycle paths |
 
 #### Skill files to PATCH (3)
@@ -372,21 +401,15 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 | # | File | Sections to change | Loop Phase | What changes |
 |---|------|-------------------|-----------|--------------|
 | 4 | `skills/brain-ops/SKILL.md` | Frontmatter `writes_to`, Phase 2 trigger (line 69) + detect (line 71), Iron Law scope (line 49), Phase 4 enrichment triggers (lines 111-112), anti-patterns (line 146). 8 sites total. | ALL | Replace "person or company" with developer entity list at every hard-gate mention |
-| 5 | `skills/conventions/brain-first.md` | Header (line 1), entity conventions table (lines 57-64): add `decisions/` and `processes/` rows, replace VC-only rows (`deals/`, `yc/`), keep `projects/` and `concepts/` | RETRIEVE | Agent needs slug-construction guidance for developer directories |
-| 6 | `skills/conventions/quality.md` | Iron Law (line 25): generalize to "any entity with a brain page". Notability Gate (lines 34-36): add criteria for projects, decisions, processes, concepts (with junk-drawer prevention for concepts/). Example (line 40): replace VC example | WRITE | Root of the delegation chain. All other files inherit from this |
+| 5 | `skills/conventions/brain-first.md` | Header (line 1), entity conventions table (lines 57-64): add `goals/`, `decisions/`, `processes/` rows, replace VC-only rows (`deals/`, `yc/`), keep `concepts/` | RETRIEVE | Agent needs slug-construction guidance for developer directories |
+| 6 | `skills/conventions/quality.md` | Iron Law (line 25): generalize to "any entity with a brain page". Notability Gate (lines 34-36): add criteria for goals, decisions, processes, concepts (with junk-drawer prevention for concepts/). Example (line 40): replace VC example | WRITE | Root of the delegation chain. All other files inherit from this |
 
 #### Code/config files to PATCH (2)
 
 | # | File | What changes | Loop Phase |
 |---|------|-------------|-----------|
-| 7 | `src/core/link-extraction.ts` | Add `decisions\|processes` to `DIR_PATTERN` regex at line 46 (`projects` and `concepts` already present) | STORE (auto-link) |
-| 8 | `skills/_brain-filing-rules.json` | Add `decision` and `process` kind entries + update `dream_synthesize_paths.globs` for `decisions/` and `processes/` | STORE (dream cycle) |
-
-#### Entrypoint edit (1)
-
-| # | File | What changes |
-|---|------|-------------|
-| 9 | `/workspaces/practicespace-2/.devcontainer/entrypoint.sh` | Lines 154-165: drop 2 files from the array (subagent-routing.md, ask-user/SKILL.md). Keep brain-routing.md for source-axis awareness. Result: 8 files loaded instead of 10 |
+| 7 | `src/core/link-extraction.ts` | Add `goals\|decisions\|processes` to `DIR_PATTERN` regex at line 46 (`concepts` already present) | STORE (auto-link) |
+| 8 | `skills/_brain-filing-rules.json` | Add `goal`, `decision`, and `process` kind entries + update `dream_synthesize_paths.globs` for `goals/`, `decisions/`, and `processes/` | STORE (dream cycle) |
 
 #### Unchanged (1)
 
@@ -398,8 +421,8 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 
 | File | Change | Priority |
 |------|--------|----------|
-| `src/core/types.ts` `PageType` union | Add `decision` and `process` to the type union + `ALL_PAGE_TYPES`. Compile-time break without this | **HIGH (Tier 1)** |
-| `src/core/markdown.ts` `inferType()` | Add `decisions/` and `processes/` directory mappings. Ordering: check `decisions/` before `projects/` for nested paths | **HIGH (Tier 1)** |
+| `src/core/types.ts` `PageType` union | Add `goal`, `decision`, and `process` to the type union + `ALL_PAGE_TYPES`. Compile-time break without this | **HIGH (Tier 1)** |
+| `src/core/markdown.ts` `inferType()` | Add `goals/`, `decisions/`, and `processes/` directory mappings | **HIGH (Tier 1)** |
 | `src/commands/doctor.ts` graph_coverage | Expand `type IN (...)` clause to include developer types | Low |
 | `brain-ops/SKILL.md` Phase 2.5 | Add developer relationship types (uses, depends_on, decided_in) as examples | Low |
 
@@ -418,9 +441,8 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 | Full rewrite | 3 | RESOLVER.md, signal-detector/SKILL.md, _brain-filing-rules.md |
 | Skill file patch | 3 | brain-ops/SKILL.md, brain-first.md, quality.md |
 | Code/config patch | 4 | types.ts, markdown.ts, link-extraction.ts, _brain-filing-rules.json |
-| Entrypoint edit | 1 | entrypoint.sh |
 | Unchanged | 2 | _output-rules.md, brain-routing.md |
-| **Total** | **13** | |
+| **Total** | **12** | |
 
 ## Execution Order
 
@@ -433,8 +455,7 @@ Fix quality.md first. Every file that delegates to it inherits the fix.
 7. **link-extraction.ts** (auto-link code)
 8. **types.ts** (PageType union — compile-time prerequisite for markdown.ts)
 9. **markdown.ts** `inferType()` (longest-prefix ordering for hybrid paths)
-10. **entrypoint.sh** (drop 2 irrelevant files, keep brain-routing.md)
-11. Tier 2 code changes (doctor.ts) if time allows
+10. Tier 2 code changes (doctor.ts) if time allows
 
 ## Page Templates
 
@@ -514,49 +535,49 @@ tags: [database, architecture]
 - **YYYY-MM-DD** | Source - When decided, by whom, in what context
 ```
 
-### Project page
+### Goal page
 
-Hub page for an active codebase. Goals, environments, and debug trails
-live as sections and structured timeline entries, not separate pages.
+One page per `/goal` execution. Captures the full development arc: what was
+attempted, what happened, decisions made locally, debug trails, and what was
+learned. The primary authoring unit.
 
 ```markdown
 ---
-type: project
-title: My App
-tags: [active, web]
+type: goal
+title: Set Up JWT Auth
+tags: [auth, security]
 ---
 
-# My App
+# Set Up JWT Auth
 
-> One-paragraph summary: what it is, what stage, what matters now.
+> One-paragraph summary: what the goal was, whether it succeeded, key outcome.
 
-## Architecture
-- High-level structure, key components
-
-## Current Goals
-- What we're working toward right now
+## Approach
+- What was attempted, in what order
 
 ## Environment
-- Runtime: Node 22, Bun 1.3
-- Deploy: devcontainer on Codespaces
-- Key config: any non-obvious setup
+- Runtime, tools, config relevant to this execution
 
-## Open Threads
-- Active items, blockers, next steps
+## Local Decisions
+- Choices made during this goal that don't govern future goals
+- (Durable choices get promoted to decisions/)
 
-## Decisions
-- [Chose Postgres](decisions/chose-postgres-over-sqlite.md)
-- [API-first architecture](decisions/api-first.md)
+## What Was Learned
+- Insights that might transfer to other goals
+- (Reusable knowledge gets promoted to concepts/)
+
+## Resulting Process
+- If this produced a repeatable workflow, link: [processes/deploy-jwt](processes/deploy-jwt.md)
 
 ---
 
 ## Timeline
-- **YYYY-MM-DD** | Source - What happened
+- **YYYY-MM-DD** | Source - What happened during the execution
 ```
 
 ### Structured debug-trail timeline entries
 
-Debug trails are timeline entries on project pages, not separate pages.
+Debug trails are timeline entries on goal pages, not separate pages.
 Use this structured format so they stay machine-parseable for retrieval:
 
 ```markdown
@@ -570,6 +591,21 @@ Use this structured format so they stay machine-parseable for retrieval:
 Fields: Symptom (what was observed), Root cause (why it happened), Fix (what
 was done), Refs (links to related decisions/concepts). All on one timeline
 entry so `gbrain search "JWT cache bug"` finds it.
+
+### Codex review 5: goals/ vs projects/ for MECE
+
+**Question:** Should we keep projects/ with disambiguation rules, or replace
+with goals/ to match the user's /goal-driven workflow?
+
+**Verdict:** Replace projects/ with goals/. goals/ is cleanly ME with the other
+3 types because it's a context-bound execution episode, while the other 3 are
+reusable artifacts. projects/ had HIGH overlap with all 3 (a decision could be
+a project section OR a standalone page). goals/ eliminates that overlap because
+the filing rule becomes: capture in goals/ first, promote out when reusable.
+
+**Impact on spec:** Replaced projects/ with goals/ throughout. New PageType
+additions: 3 (goal, decision, process) instead of 2. DIR_PATTERN additions: 3
+instead of 2. Added MECE boundary table with hard rules for all 6 pairs.
 
 ## Architecture Compliance
 
@@ -669,8 +705,8 @@ Added to the change manifest:
 
 | # | File | What changes | Tier |
 |---|------|-------------|------|
-| NEW | `src/core/types.ts` | Add `decision` + `process` to `PageType` union and `ALL_PAGE_TYPES` | Tier 1 (compile-time break) |
-| UPDATED | entrypoint.sh | Drop 2 files (not 3) — keep brain-routing.md | Tier 1 |
+| NEW | `src/core/types.ts` | Add `goal` + `decision` + `process` to `PageType` union and `ALL_PAGE_TYPES` | Tier 1 (compile-time break) |
+| NOTE | entrypoint.sh (out of scope) | Drop 2 files from array — follow-up in devcontainer repo | N/A |
 | UPDATED | `src/core/markdown.ts` `inferType()` | Moved from Tier 2 to Tier 1 — ordering matters for hybrid paths | Tier 1 |
 
 ## Reviews
