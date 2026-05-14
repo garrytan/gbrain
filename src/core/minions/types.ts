@@ -502,19 +502,21 @@ export interface ToolDef {
 }
 
 /**
- * Anthropic content-block subset we persist in subagent_messages.content_blocks.
- * This is structural — we don't gatekeep on unknown block types (future SDK
- * additions pass through). Use the string-literal discriminant on 'type'.
+ * Provider-neutral content-block subset persisted in
+ * subagent_messages.content_blocks. Legacy Anthropic block names are still
+ * accepted for replay across upgrades.
  */
 export type ContentBlock =
   | { type: 'text'; text: string; [k: string]: unknown }
+  | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown; [k: string]: unknown }
+  | { type: 'tool-result'; toolCallId: string; toolName: string; output: unknown; isError?: boolean; [k: string]: unknown }
   | { type: 'tool_use'; id: string; name: string; input: unknown; [k: string]: unknown }
   | { type: 'tool_result'; tool_use_id: string; content: unknown; is_error?: boolean; [k: string]: unknown }
   | { type: string; [k: string]: unknown };
 
 /** Stop reason reported to the caller when the subagent loop terminates. */
 export type SubagentStopReason =
-  | 'end_turn'    // Anthropic says end_turn and last message has no tool_use
+  | 'end_turn'    // provider ended and last message has no tool call
   | 'max_turns'   // hit max_turns budget before end_turn
   | 'refusal'     // detected via stop_reason + content shape
   | 'error';      // unrecoverable (empty response retry exhausted, etc.)

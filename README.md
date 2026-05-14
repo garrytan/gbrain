@@ -780,6 +780,10 @@ ADMIN
                                         Power-user override:
                                           gbrain config set models.default opus
                                           gbrain config set models.tier.deep opus
+                                        Codex OAuth for dream synthesis:
+                                          gbrain config set models.tier.utility openai-codex:gpt-5.5
+                                          gbrain config set models.tier.reasoning openai-codex:gpt-5.5
+                                          gbrain config set models.tier.subagent openai-codex:gpt-5.5
   gbrain models doctor                  1-token reachability probe for each configured
                                         chat/expansion model + a zero-token embedding_config
                                         probe (catches Voyage flexible-dim misconfigs before

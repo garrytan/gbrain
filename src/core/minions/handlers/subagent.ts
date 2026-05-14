@@ -24,7 +24,7 @@
  * as P2 items in the plan file.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
 import type { MinionJobContext, MinionJob } from '../types.ts';
 import { UnrecoverableError } from '../types.ts';
 import type {
@@ -47,7 +47,15 @@ import {
   logSubagentSubmission,
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
-import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import { resolveModel, supportsSubagentLoopProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import {
+  chat as gatewayChat,
+  type ChatBlock,
+  type ChatMessage,
+  type ChatOpts,
+  type ChatResult,
+  type ChatToolDef,
+} from '../../ai/gateway.ts';
 
 // ── Defaults ────────────────────────────────────────────────
 
@@ -68,10 +76,14 @@ export interface MessagesClient {
   create(params: Anthropic.MessageCreateParamsNonStreaming, opts?: { signal?: AbortSignal }): Promise<Anthropic.Message>;
 }
 
+export type SubagentChatTransport = (opts: ChatOpts) => Promise<ChatResult>;
+
 export interface SubagentDeps {
   /** Engine for DB-backed ops (tools + message persistence + rate leases). */
   engine: BrainEngine;
-  /** Anthropic client. Defaults to the SDK-constructed client. */
+  /** Provider-neutral chat transport. Defaults to gateway.chat(). */
+  chat?: SubagentChatTransport;
+  /** Anthropic-shaped test compatibility client. Production defaults do not construct this. */
   client?: MessagesClient;
   /**
    * Anthropic SDK constructor. Defaults to `() => new Anthropic()`.
@@ -82,7 +94,7 @@ export interface SubagentDeps {
   makeAnthropic?: () => Anthropic;
   /** Config (MCP, brain, etc.). Defaults to loadConfig(). */
   config?: GBrainConfig;
-  /** Rate-lease key. Defaults to `anthropic:messages`. */
+  /** Rate-lease key. Defaults to a provider-aware key derived from the resolved model. */
   rateLeaseKey?: string;
   /** Max concurrent inflight calls on that key. Defaults to GBRAIN_ANTHROPIC_MAX_INFLIGHT or 8. */
   maxConcurrent?: number;
@@ -123,20 +135,18 @@ interface PersistedToolExec {
 /**
  * Build a subagent handler bound to a specific engine. `registerBuiltin
  * Handlers` wires this up as `worker.register('subagent', handler)` at
- * worker startup. Always registered — `ANTHROPIC_API_KEY` is the natural
- * cost gate and `PROTECTED_JOB_NAMES` gates submission.
+ * worker startup. Always registered — provider auth is resolved by
+ * gateway.chat() and `PROTECTED_JOB_NAMES` gates submission.
  */
 export function makeSubagentHandler(deps: SubagentDeps) {
   const engine = deps.engine;
-  // sdk.messages IS the MessagesClient-shaped object. The v0.16.0 bug was
-  // casting new Anthropic() (top level) to MessagesClient, but .create()
-  // lives at sdk.messages.create. Assigning sdk.messages directly gets the
-  // right object; JS method-call semantics preserve `this` at the call
-  // site (subagent.ts invokes client.create(...) with client === sdk.messages).
-  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic());
-  const client: MessagesClient = deps.client ?? makeAnthropic().messages;
+  const chatTransport: SubagentChatTransport = deps.chat
+    ?? (deps.client
+      ? anthropicClientToChatTransport(deps.client)
+      : deps.makeAnthropic
+      ? anthropicClientToChatTransport(deps.makeAnthropic().messages)
+      : gatewayChat);
   const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
-  const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;
   const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
   const leaseTtlMs = deps.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
 
@@ -146,17 +156,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       throw new Error('subagent job data.prompt is required (string)');
     }
 
-    // v0.31.12 subagent runtime enforcement (Layer 2 of 3 — see plan/Codex F1+F2+F13).
-    // - If `data.model` is set and non-Anthropic, reject (Layer 1 fallback if the
-    //   submit-time guard in MinionQueue.add didn't fire — defense in depth).
-    // - Otherwise route through resolveModel with tier=subagent. The resolver
-    //   warns + falls back to TIER_DEFAULTS.subagent if models.default or
-    //   models.tier.subagent resolved to non-Anthropic.
-    if (data.model && !isAnthropicProvider(data.model)) {
+    if (data.model && !supportsSubagentLoopProvider(data.model)) {
       throw new Error(
-        `subagent job rejected: data.model "${data.model}" is non-Anthropic. ` +
-        `The subagent loop is Anthropic-only (Messages API + prompt caching). ` +
-        `Pass an Anthropic model id (e.g. claude-sonnet-4-6) or omit data.model to use the configured default.`,
+        `subagent job rejected: data.model "${data.model}" does not support the subagent tool loop. ` +
+        `Pass a supported chat model (e.g. openai-codex:gpt-5.5 or anthropic:claude-sonnet-4-6) or omit data.model to use the configured default.`,
       );
     }
     const model = data.model
@@ -165,6 +168,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         configKey: 'models.subagent',
         fallback: TIER_DEFAULTS.subagent,
       });
+    const rateLeaseKey = deps.rateLeaseKey ?? rateLeaseKeyForModel(model);
     const maxTurns = data.max_turns ?? DEFAULT_MAX_TURNS;
     const systemPrompt = data.system ?? DEFAULT_SYSTEM;
 
@@ -199,9 +203,11 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     const priorTools = await loadPriorTools(engine, ctx.id);
     const priorToolByUseId = new Map(priorTools.map(t => [t.tool_use_id, t]));
 
-    // Rebuild the Anthropic messages array from persisted rows.
-    const anthroMessages: Anthropic.MessageParam[] = priorMessages.length > 0
-      ? priorMessages.map(m => ({ role: m.role, content: m.content_blocks as any }))
+    // Rebuild provider-neutral chat messages from persisted rows. The
+    // conversion accepts both legacy Anthropic block names and new gateway
+    // block names so crash replay survives upgrades.
+    const chatMessages: ChatMessage[] = priorMessages.length > 0
+      ? priorMessages.map(persistedToChatMessage)
       : [{ role: 'user', content: data.prompt }];
 
     // If we had no prior messages, persist the seed user message.
@@ -240,28 +246,27 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // a consistent conversation.
     const last = priorMessages[priorMessages.length - 1];
     if (last && last.role === 'assistant') {
-      const pendingToolUses = last.content_blocks.filter(
-        (b): b is { type: 'tool_use'; id: string; name: string; input: unknown } & Record<string, unknown> =>
-          b.type === 'tool_use',
-      );
+      const pendingToolUses = toolUsesFromContentBlocks(last.content_blocks);
       if (pendingToolUses.length > 0) {
         const synthesizedResults: ContentBlock[] = [];
         for (const use of pendingToolUses) {
           const prior = priorToolByUseId.get(use.id);
           if (prior?.status === 'complete') {
             synthesizedResults.push({
-              type: 'tool_result',
-              tool_use_id: use.id,
-              content: asStringIfNotObject(prior.output),
+              type: 'tool-result',
+              toolCallId: use.id,
+              toolName: use.name,
+              output: asStringIfNotObject(prior.output),
             } as ContentBlock);
             continue;
           }
           if (prior?.status === 'failed') {
             synthesizedResults.push({
-              type: 'tool_result',
-              tool_use_id: use.id,
-              content: prior.error ?? 'tool failed',
-              is_error: true,
+              type: 'tool-result',
+              toolCallId: use.id,
+              toolName: use.name,
+              output: prior.error ?? 'tool failed',
+              isError: true,
             } as ContentBlock);
             continue;
           }
@@ -273,8 +278,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
               `tool "${use.name}" is not in the registry for this subagent`,
             );
             synthesizedResults.push({
-              type: 'tool_result', tool_use_id: use.id,
-              content: `tool "${use.name}" is not available`, is_error: true,
+              type: 'tool-result', toolCallId: use.id, toolName: use.name,
+              output: `tool "${use.name}" is not available`, isError: true,
             } as ContentBlock);
             continue;
           }
@@ -288,15 +293,15 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             });
             await persistToolExecComplete(engine, ctx.id, use.id, output);
             synthesizedResults.push({
-              type: 'tool_result', tool_use_id: use.id,
-              content: asStringIfNotObject(output),
+              type: 'tool-result', toolCallId: use.id, toolName: use.name,
+              output: asStringIfNotObject(output),
             } as ContentBlock);
           } catch (e) {
             const errText = e instanceof Error ? (e.stack ?? e.message) : String(e);
             await persistToolExecFailed(engine, ctx.id, last.message_idx, use.id, use.name, use.input, errText);
             synthesizedResults.push({
-              type: 'tool_result', tool_use_id: use.id,
-              content: errText, is_error: true,
+              type: 'tool-result', toolCallId: use.id, toolName: use.name,
+              output: errText, isError: true,
             } as ContentBlock);
           }
         }
@@ -308,7 +313,16 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           content_blocks: synthesizedResults,
           tokens_in: null, tokens_out: null, tokens_cache_read: null, tokens_cache_create: null, model: null,
         });
-        anthroMessages.push({ role: 'user', content: synthesizedResults as any });
+        chatMessages.push(persistedToChatMessage({
+          message_idx: userIdx,
+          role: 'user',
+          content_blocks: synthesizedResults,
+          tokens_in: null,
+          tokens_out: null,
+          tokens_cache_read: null,
+          tokens_cache_create: null,
+          model: null,
+        }));
       }
     }
 
@@ -334,7 +348,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         throw new RateLeaseUnavailableError(rateLeaseKey, lease.activeCount, lease.maxConcurrent);
       }
 
-      let assistantMsg: Anthropic.Message;
+      let assistantMsg: ChatResult;
       const turnIdx = assistantTurns;
       const t0 = Date.now();
       logSubagentHeartbeat({ job_id: ctx.id, event: 'llm_call_started', turn_idx: turnIdx });
@@ -343,32 +357,17 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       // covers the whole request. A mid-call renewal loop would add
       // complexity; for v0.15 we lean on the 120s TTL + abort-on-signal.
       try {
-        const params: Anthropic.MessageCreateParamsNonStreaming = {
+        const params: ChatOpts = {
           model,
-          max_tokens: 4096,
-          system: [
-            { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
-          ] as any,
-          messages: anthroMessages,
-          ...(toolDefs.length > 0
-            ? {
-                tools: toolDefs.map((t, i) => {
-                  const def: any = {
-                    name: t.name,
-                    description: t.description,
-                    input_schema: t.input_schema,
-                  };
-                  // Cache only the last tool def — Anthropic treats cache_control
-                  // as "cache everything up to and including this block".
-                  if (i === toolDefs.length - 1) def.cache_control = { type: 'ephemeral' };
-                  return def;
-                }),
-              }
-            : {}),
+          maxTokens: 4096,
+          system: systemPrompt,
+          messages: chatMessages,
+          tools: toolDefs.length > 0 ? toolDefs.map(toolDefToChatToolDef) : undefined,
+          cacheSystem: true,
         };
 
         const combinedSignal = mergeSignals(ctx.signal, ctx.shutdownSignal);
-        assistantMsg = await client.create(params, { signal: combinedSignal });
+        assistantMsg = await chatTransport({ ...params, abortSignal: combinedSignal });
       } catch (err) {
         // Release lease eagerly on error so we don't starve capacity.
         await releaseLease(engine, lease.leaseId!).catch(() => {});
@@ -389,10 +388,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       await releaseLease(engine, lease.leaseId!).catch(() => {});
 
       const ms = Date.now() - t0;
-      const inTokens = assistantMsg.usage?.input_tokens ?? 0;
-      const outTokens = assistantMsg.usage?.output_tokens ?? 0;
-      const cacheRead = (assistantMsg.usage as any)?.cache_read_input_tokens ?? 0;
-      const cacheCreate = (assistantMsg.usage as any)?.cache_creation_input_tokens ?? 0;
+      const inTokens = assistantMsg.usage.input_tokens;
+      const outTokens = assistantMsg.usage.output_tokens;
+      const cacheRead = assistantMsg.usage.cache_read_tokens;
+      const cacheCreate = assistantMsg.usage.cache_creation_tokens;
 
       tokenTotals.in += inTokens;
       tokenTotals.out += outTokens;
@@ -414,7 +413,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         cache_read: cacheRead,
       });
 
-      const blocks = assistantMsg.content as ContentBlock[];
+      const blocks = chatBlocksToContentBlocks(assistantMsg.blocks);
 
       // 3. Persist the assistant message BEFORE tool dispatch so replay
       //    sees a consistent state.
@@ -427,16 +426,13 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         tokens_out: outTokens,
         tokens_cache_read: cacheRead,
         tokens_cache_create: cacheCreate,
-        model,
+        model: assistantMsg.model || model,
       });
-      anthroMessages.push({ role: 'assistant', content: blocks as any });
+      chatMessages.push({ role: 'assistant', content: assistantMsg.blocks });
       assistantTurns++;
 
       // 4. Collect tool_use blocks. If none, we're done.
-      const toolUses = blocks.filter(
-        (b): b is { type: 'tool_use'; id: string; name: string; input: unknown } & Record<string, unknown> =>
-          b.type === 'tool_use',
-      );
+      const toolUses = toolUsesFromContentBlocks(blocks);
       if (toolUses.length === 0) {
         stopReason = 'end_turn';
         // Concatenate text blocks as the final answer.
@@ -464,10 +460,11 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             `tool "${toolName}" is not in the registry for this subagent`,
           );
           toolResults.push({
-            type: 'tool_result',
-            tool_use_id: use.id,
-            content: `tool "${toolName}" is not available`,
-            is_error: true,
+            type: 'tool-result',
+            toolCallId: use.id,
+            toolName,
+            output: `tool "${toolName}" is not available`,
+            isError: true,
           } as ContentBlock);
           logSubagentHeartbeat({
             job_id: ctx.id,
@@ -484,18 +481,20 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         const prior = priorToolByUseId.get(use.id);
         if (prior && prior.status === 'complete') {
           toolResults.push({
-            type: 'tool_result',
-            tool_use_id: use.id,
-            content: asStringIfNotObject(prior.output),
+            type: 'tool-result',
+            toolCallId: use.id,
+            toolName,
+            output: asStringIfNotObject(prior.output),
           } as ContentBlock);
           continue;
         }
         if (prior && prior.status === 'failed') {
           toolResults.push({
-            type: 'tool_result',
-            tool_use_id: use.id,
-            content: prior.error ?? 'tool failed',
-            is_error: true,
+            type: 'tool-result',
+            toolCallId: use.id,
+            toolName,
+            output: prior.error ?? 'tool failed',
+            isError: true,
           } as ContentBlock);
           continue;
         }
@@ -525,9 +524,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             ms_elapsed: Date.now() - toolStart,
           });
           toolResults.push({
-            type: 'tool_result',
-            tool_use_id: use.id,
-            content: asStringIfNotObject(output),
+            type: 'tool-result',
+            toolCallId: use.id,
+            toolName,
+            output: asStringIfNotObject(output),
           } as ContentBlock);
         } catch (e) {
           const errText = e instanceof Error
@@ -543,10 +543,11 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             error: errText,
           });
           toolResults.push({
-            type: 'tool_result',
-            tool_use_id: use.id,
-            content: errText,
-            is_error: true,
+            type: 'tool-result',
+            toolCallId: use.id,
+            toolName,
+            output: errText,
+            isError: true,
           } as ContentBlock);
         }
       }
@@ -564,7 +565,16 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         tokens_cache_create: null,
         model: null,
       });
-      anthroMessages.push({ role: 'user', content: toolResults as any });
+      chatMessages.push(persistedToChatMessage({
+        message_idx: userIdx,
+        role: 'user',
+        content_blocks: toolResults,
+        tokens_in: null,
+        tokens_out: null,
+        tokens_cache_read: null,
+        tokens_cache_create: null,
+        model: null,
+      }));
     }
 
     return {
@@ -696,6 +706,208 @@ async function persistToolExecFailed(
 }
 
 // ── Internal: helpers ───────────────────────────────────────
+
+interface NormalizedToolUse {
+  id: string;
+  name: string;
+  input: unknown;
+}
+
+function providerPrefix(model: string): string {
+  const trimmed = model.trim();
+  const colon = trimmed.indexOf(':');
+  if (colon > 0) return trimmed.slice(0, colon).toLowerCase();
+  if (trimmed.toLowerCase().startsWith('claude-')) return 'anthropic';
+  return 'unknown';
+}
+
+function rateLeaseKeyForModel(model: string): string {
+  const provider = providerPrefix(model);
+  if (provider === 'anthropic') return DEFAULT_RATE_KEY;
+  if (provider === 'openai-codex') return 'openai-codex:responses';
+  return `${provider}:chat`;
+}
+
+function toolDefToChatToolDef(t: ToolDef): ChatToolDef {
+  return {
+    name: t.name,
+    description: t.description,
+    inputSchema: t.input_schema,
+  };
+}
+
+function contentBlockToChatBlock(block: ContentBlock): ChatBlock | null {
+  if (block.type === 'text' && typeof block.text === 'string') {
+    return { type: 'text', text: block.text };
+  }
+  if (block.type === 'tool-call') {
+    const b = block as ContentBlock & { toolCallId?: unknown; toolName?: unknown; input?: unknown };
+    if (typeof b.toolCallId === 'string' && typeof b.toolName === 'string') {
+      return { type: 'tool-call', toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
+    }
+  }
+  if (block.type === 'tool_use') {
+    const b = block as ContentBlock & { id?: unknown; name?: unknown; input?: unknown };
+    if (typeof b.id === 'string' && typeof b.name === 'string') {
+      return { type: 'tool-call', toolCallId: b.id, toolName: b.name, input: b.input };
+    }
+  }
+  if (block.type === 'tool-result') {
+    const b = block as ContentBlock & {
+      toolCallId?: unknown;
+      toolName?: unknown;
+      output?: unknown;
+      isError?: unknown;
+    };
+    if (typeof b.toolCallId === 'string') {
+      return {
+        type: 'tool-result',
+        toolCallId: b.toolCallId,
+        toolName: typeof b.toolName === 'string' ? b.toolName : '',
+        output: b.output,
+        isError: b.isError === true,
+      };
+    }
+  }
+  if (block.type === 'tool_result') {
+    const b = block as ContentBlock & {
+      tool_use_id?: unknown;
+      name?: unknown;
+      content?: unknown;
+      is_error?: unknown;
+    };
+    if (typeof b.tool_use_id === 'string') {
+      return {
+        type: 'tool-result',
+        toolCallId: b.tool_use_id,
+        toolName: typeof b.name === 'string' ? b.name : '',
+        output: b.content,
+        isError: b.is_error === true,
+      };
+    }
+  }
+  return null;
+}
+
+function persistedToChatMessage(m: PersistedMessage): ChatMessage {
+  const blocks = m.content_blocks
+    .map(contentBlockToChatBlock)
+    .filter((b): b is ChatBlock => b !== null);
+  return {
+    role: m.role,
+    content: blocks.length === 1 && blocks[0].type === 'text' ? blocks[0].text : blocks,
+  };
+}
+
+function chatBlocksToContentBlocks(blocks: ChatBlock[]): ContentBlock[] {
+  return blocks.map(block => {
+    if (block.type === 'text') return { type: 'text', text: block.text } as ContentBlock;
+    if (block.type === 'tool-call') {
+      return {
+        type: 'tool-call',
+        toolCallId: block.toolCallId,
+        toolName: block.toolName,
+        input: block.input,
+      } as ContentBlock;
+    }
+    return {
+      type: 'tool-result',
+      toolCallId: block.toolCallId,
+      toolName: block.toolName,
+      output: block.output,
+      isError: block.isError === true,
+    } as ContentBlock;
+  });
+}
+
+function toolUsesFromContentBlocks(blocks: ContentBlock[]): NormalizedToolUse[] {
+  const out: NormalizedToolUse[] = [];
+  for (const block of blocks) {
+    const converted = contentBlockToChatBlock(block);
+    if (converted?.type === 'tool-call') {
+      out.push({ id: converted.toolCallId, name: converted.toolName, input: converted.input });
+    }
+  }
+  return out;
+}
+
+function chatMessageToAnthropicParam(message: ChatMessage): Anthropic.MessageParam {
+  if (typeof message.content === 'string') {
+    return { role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content };
+  }
+  const content = message.content.map(block => {
+    if (block.type === 'text') return { type: 'text', text: block.text };
+    if (block.type === 'tool-call') {
+      return { type: 'tool_use', id: block.toolCallId, name: block.toolName, input: block.input };
+    }
+    return {
+      type: 'tool_result',
+      tool_use_id: block.toolCallId,
+      content: asStringIfNotObject(block.output),
+      is_error: block.isError === true,
+    };
+  });
+  return { role: message.role === 'assistant' ? 'assistant' : 'user', content: content as any };
+}
+
+function anthropicStopReason(stopReason: Anthropic.Message['stop_reason']): ChatResult['stopReason'] {
+  const normalized = stopReason as string | null;
+  if (normalized === 'tool_use') return 'tool_calls';
+  if (normalized === 'max_tokens') return 'length';
+  if (normalized === 'refusal') return 'refusal';
+  return 'end';
+}
+
+function anthropicClientToChatTransport(client: MessagesClient): SubagentChatTransport {
+  return async (opts: ChatOpts): Promise<ChatResult> => {
+    const model = opts.model?.startsWith('anthropic:')
+      ? opts.model.slice('anthropic:'.length)
+      : opts.model ?? DEFAULT_MODEL;
+    const msg = await client.create({
+      model,
+      max_tokens: opts.maxTokens ?? 4096,
+      system: [
+        { type: 'text', text: opts.system ?? DEFAULT_SYSTEM, cache_control: { type: 'ephemeral' } },
+      ] as any,
+      messages: opts.messages.map(chatMessageToAnthropicParam),
+      ...(opts.tools && opts.tools.length > 0
+        ? {
+            tools: opts.tools.map((t, i) => {
+              const def: any = {
+                name: t.name,
+                description: t.description,
+                input_schema: t.inputSchema,
+              };
+              if (i === opts.tools!.length - 1) def.cache_control = { type: 'ephemeral' };
+              return def;
+            }),
+          }
+        : {}),
+    }, { signal: opts.abortSignal });
+
+    const blocks: ChatBlock[] = [];
+    for (const block of msg.content as ContentBlock[]) {
+      const converted = contentBlockToChatBlock(block);
+      if (converted) blocks.push(converted);
+    }
+    return {
+      text: blocks
+        .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+        .map(b => b.text)
+        .join(''),
+      blocks,
+      stopReason: anthropicStopReason(msg.stop_reason),
+      usage: {
+        input_tokens: msg.usage?.input_tokens ?? 0,
+        output_tokens: msg.usage?.output_tokens ?? 0,
+        cache_read_tokens: (msg.usage as any)?.cache_read_input_tokens ?? 0,
+        cache_creation_tokens: (msg.usage as any)?.cache_creation_input_tokens ?? 0,
+      },
+      model: `anthropic:${model}`,
+      providerId: 'anthropic',
+    };
+  };
+}
 
 function asStringIfNotObject(value: unknown): string {
   if (typeof value === 'string') return value;

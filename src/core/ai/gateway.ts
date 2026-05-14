@@ -40,6 +40,8 @@ import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { codexResponsesChat } from './codex-responses.ts';
+import { hasCodexAuthCandidate } from './codex-oauth.ts';
 
 const MAX_CHARS = 8000;
 const DEFAULT_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
@@ -525,6 +527,10 @@ export function isAvailable(touchpoint: TouchpointKind): boolean {
       touchpointConfig.models.length === 0 &&
       (recipe.id === 'litellm' || isUserProvided)
     ) return false;
+
+    if (recipe.id === 'openai-codex') {
+      return hasCodexAuthCandidate(_config!.env);
+    }
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
     const required = recipe.auth_env?.required ?? [];
@@ -1420,6 +1426,16 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }
 
   const modelStr = opts.model ?? getChatModel();
+  const { parsed, recipe: directRecipe } = resolveRecipe(modelStr);
+  assertTouchpoint(directRecipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
+  if (directRecipe.id === 'openai-codex') {
+    try {
+      return await codexResponsesChat(requireConfig(), parsed.modelId, opts);
+    } catch (err) {
+      throw normalizeAIError(err, `chat(${directRecipe.id}:${parsed.modelId})`);
+    }
+  }
+
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
 
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;

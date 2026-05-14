@@ -20,9 +20,11 @@ import { minimax } from './minimax.ts';
 import { dashscope } from './dashscope.ts';
 import { zhipu } from './zhipu.ts';
 import { azureOpenAI } from './azure-openai.ts';
+import { openaiCodex } from './openai-codex.ts';
 
 const ALL: Recipe[] = [
   openai,
+  openaiCodex,
   google,
   anthropic,
   ollama,

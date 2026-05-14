@@ -165,17 +165,23 @@ describe('queue.add trusted-submit gate for subagent', () => {
     expect(ok.name).toBe('subagent_aggregator');
   });
 
-  test('v0.31.12: subagent with non-Anthropic data.model is rejected at submit time (Layer 1)', async () => {
-    // Codex F1 in v0.31.12 plan review: the subagent loop is Anthropic Messages
-    // API + prompt caching. A job submitted with `data.model = openai:gpt-5.5`
-    // would silently fail at runtime with a confusing provider error. The
-    // submit-time guard rejects BEFORE the job enters the queue.
+  test('subagent with unsupported data.model is rejected at submit time', async () => {
     await expect(
-      queue.add('subagent', { prompt: 'hi', model: 'openai:gpt-5.5' }, {}, { allowProtectedSubmit: true }),
-    ).rejects.toThrow(/non-Anthropic/i);
+      queue.add('subagent', { prompt: 'hi', model: 'voyage:voyage-3' }, {}, { allowProtectedSubmit: true }),
+    ).rejects.toThrow(/subagent tool loop/i);
   });
 
-  test('v0.31.12: subagent with Anthropic data.model still succeeds', async () => {
+  test('subagent with supported Codex data.model succeeds', async () => {
+    const job = await queue.add(
+      'subagent',
+      { prompt: 'hi', model: 'openai-codex:gpt-5.5' },
+      {},
+      { allowProtectedSubmit: true },
+    );
+    expect(job.name).toBe('subagent');
+  });
+
+  test('subagent with Anthropic data.model still succeeds', async () => {
     const job = await queue.add(
       'subagent',
       { prompt: 'hi', model: 'anthropic:claude-opus-4-7' },
@@ -185,7 +191,7 @@ describe('queue.add trusted-submit gate for subagent', () => {
     expect(job.name).toBe('subagent');
   });
 
-  test('v0.31.12: subagent with bare claude- model id passes (provider-prefix optional)', async () => {
+  test('subagent with bare claude- model id passes (provider-prefix optional)', async () => {
     // isAnthropicProvider accepts both `anthropic:claude-foo` and bare `claude-foo`.
     const job = await queue.add(
       'subagent',

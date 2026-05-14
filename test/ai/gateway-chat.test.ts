@@ -29,8 +29,8 @@ import { AIConfigError } from '../../src/core/ai/errors.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 
 describe('chat touchpoint — recipe registry', () => {
-  test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
-    const expected = ['anthropic', 'openai', 'google', 'deepseek', 'groq', 'together'];
+  test('all chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
+    const expected = ['anthropic', 'openai', 'openai-codex', 'google', 'deepseek', 'groq', 'together'];
     for (const id of expected) {
       const r = getRecipe(id);
       expect(r, `recipe missing: ${id}`).toBeDefined();

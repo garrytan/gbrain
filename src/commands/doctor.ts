@@ -396,12 +396,9 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     checks.push({ name: 'queue_health', status: 'ok', message: 'PGLite — no queue to check' });
   }
 
-  // v0.31.12 subagent runtime enforcement (Layer 3 of 3 — Codex F13).
-  // The subagent loop is Anthropic-only. If models.tier.subagent or
-  // models.default is explicitly set to a non-Anthropic provider, warn here
-  // so the user sees it at the next `gbrain doctor` run instead of at the
-  // next subagent job submission. (Layers 1+2 also enforce — this is the
-  // surfacing layer.)
+  // Subagent provider check. If models.tier.subagent or models.default is
+  // explicitly set to a provider that cannot drive the provider-neutral tool
+  // loop, warn here so the user sees it before the next subagent job.
   checks.push(await checkSubagentProvider(engine));
 
   // 6. Sync freshness check
@@ -503,42 +500,38 @@ export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
 }
 
 /**
- * v0.31.12 — surface a warn when models.tier.subagent or models.default
- * resolves to a non-Anthropic provider. The subagent loop in
- * src/core/minions/handlers/subagent.ts uses Anthropic Messages API with
- * prompt caching on system + tools; non-Anthropic providers would break
- * the loop at runtime. This check makes the configuration drift visible
- * before a job is submitted.
+ * Surface a warn when models.tier.subagent or models.default resolves to a
+ * provider that cannot drive the provider-neutral subagent tool loop.
  */
 async function checkSubagentProvider(engine: BrainEngine): Promise<Check> {
   try {
-    const { isAnthropicProvider } = await import('../core/model-config.ts');
+    const { supportsSubagentLoopProvider } = await import('../core/model-config.ts');
     const tierSubagent = await engine.getConfig('models.tier.subagent');
     const modelsDefault = await engine.getConfig('models.default');
 
     // Tier-explicit override loses fail-loud since the user clearly meant it.
-    if (tierSubagent && !isAnthropicProvider(tierSubagent)) {
+    if (tierSubagent && !supportsSubagentLoopProvider(tierSubagent)) {
       return {
         name: 'subagent_provider',
         status: 'warn',
         message:
-          `models.tier.subagent is "${tierSubagent}" but the subagent loop is Anthropic-only. ` +
+          `models.tier.subagent is "${tierSubagent}" but that provider does not support the subagent tool loop. ` +
           `Runtime will fall back to claude-sonnet-4-6. Fix: ` +
-          `\`gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6\`.`,
+          `\`gbrain config set models.tier.subagent openai-codex:gpt-5.5\` or another supported chat model.`,
       };
     }
-    // models.default sneaking subagent into a non-Anthropic provider.
-    if (!tierSubagent && modelsDefault && !isAnthropicProvider(modelsDefault)) {
+    // models.default sneaking subagent into an unsupported provider.
+    if (!tierSubagent && modelsDefault && !supportsSubagentLoopProvider(modelsDefault)) {
       return {
         name: 'subagent_provider',
         status: 'warn',
         message:
-          `models.default is "${modelsDefault}" which would route subagent jobs to a non-Anthropic provider. ` +
+          `models.default is "${modelsDefault}" which would route subagent jobs to an unsupported provider. ` +
           `Runtime falls back to claude-sonnet-4-6 for subagent only. ` +
-          `Fix: \`gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6\` to lock it in.`,
+          `Fix: \`gbrain config set models.tier.subagent openai-codex:gpt-5.5\` or another supported chat model.`,
       };
     }
-    return { name: 'subagent_provider', status: 'ok', message: 'Subagent tier resolves to Anthropic' };
+    return { name: 'subagent_provider', status: 'ok', message: 'Subagent tier resolves to a supported chat provider' };
   } catch (e) {
     return {
       name: 'subagent_provider',
@@ -2246,11 +2239,9 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   }
 
-  // 11.4 subagent_provider (v0.31.12 — Codex F13 layer 3 of 3). Surfaces a
-  // warn when models.tier.subagent or models.default points at a non-Anthropic
-  // provider. Layers 1 (queue.ts submit-time) and 2 (handler runtime) also
-  // enforce; this is the surfacing layer so users see the config drift before
-  // a job is submitted.
+  // 11.4 subagent_provider. Surfaces a warn when models.tier.subagent or
+  // models.default points at a provider that cannot drive the subagent tool
+  // loop. Queue submit-time and handler runtime also enforce this.
   progress.heartbeat('subagent_provider');
   checks.push(await checkSubagentProvider(engine));
 

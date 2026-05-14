@@ -19,10 +19,10 @@ quality. Total cost drops 70-80%.
 
 | Task Type | Recommended Model | Why |
 |-----------|------------------|-----|
-| Main session / complex instructions | Opus-class (default) | Best reasoning and instruction following |
+| Main session / complex instructions | Opus-class or Codex OAuth model | Best reasoning and instruction following |
 | Research / synthesis / analysis | DeepSeek V3 or equivalent | 25-40x cheaper, strong on exploratory work |
 | Structured output / long context | Large context model (Qwen, Gemini) | 200K+ context, reliable JSON output |
-| Fast lightweight sub-agents | Fast inference model (Groq) | 500 tok/s, cheap, good for quick tasks |
+| Fast lightweight sub-agents | Fast inference model (Groq) or `openai-codex:gpt-5.5` | Cheap or subscription-backed, good for quick tasks |
 | Deep reasoning (use sparingly) | Reasoning model (DeepSeek-R1, o3) | Best for hard problems, expensive |
 | Entity detection (signal detector) | Sonnet-class | Fast, cheap, sufficient quality for detection |
 
@@ -44,7 +44,7 @@ on_every_message(text):
     3. FACTS: New info about existing entities -> update timeline
     4. CITATIONS: Every fact needs [Source: ...] attribution
     5. Sync changes to brain repo`,
-    model: "sonnet-class",  // fast + cheap
+   model: "sonnet-class",  // fast + cheap; use openai-codex:gpt-5.5 when configured
     timeout: 120s
   })
 ```
@@ -106,8 +106,8 @@ which are 10-40x cheaper than the main session model.
 ## How to Verify
 
 1. **Spawn a signal detector and check the model.** Send a message and verify
-   the sub-agent was spawned on Sonnet-class, not Opus. Check the model field
-   in the sub-agent config or logs.
+   the sub-agent was spawned on the intended tool-loop model. Check the model
+   field in the sub-agent config or logs.
 
 2. **Check cost per day.** After running for a day with sub-agent routing,
    compare total API costs against the previous day without routing. You
