@@ -156,14 +156,15 @@ function formatText(report: ModelsReport): string {
 
 // ── Doctor (probe) mode ────────────────────────────────────────────
 
-type ProbeStatus = 'ok' | 'model_not_found' | 'auth' | 'rate_limit' | 'network' | 'unknown';
+type ProbeStatus = 'ok' | 'model_not_found' | 'auth' | 'rate_limit' | 'network' | 'config' | 'unknown';
 
 interface ProbeResult {
   model: string;
-  touchpoint: 'chat' | 'expansion';
+  touchpoint: 'chat' | 'expansion' | 'embedding_config';
   status: ProbeStatus;
   message: string;
   elapsed_ms: number;
+  fix?: string;
 }
 
 function classifyError(err: unknown): { status: ProbeStatus; message: string } {
@@ -182,6 +183,67 @@ function classifyError(err: unknown): { status: ProbeStatus; message: string } {
     return { status: 'network', message: msg };
   }
   return { status: 'unknown', message: msg };
+}
+
+/**
+ * Validate the configured embedding model + dims combo without spending tokens.
+ * Catches the bug class where a brain configured for Voyage with a missing or
+ * out-of-allowlist `embedding_dimensions` value would fail at first-embed with
+ * an opaque HTTP 400. Runs purely against local config + recipe metadata —
+ * zero network I/O.
+ */
+async function probeEmbeddingConfig(): Promise<ProbeResult> {
+  const start = Date.now();
+  const { getEmbeddingModel, getEmbeddingDimensions } = await import('../core/ai/gateway.ts');
+  const { parseModelId } = await import('../core/ai/model-resolver.ts');
+  const { supportsVoyageOutputDimension, isValidVoyageOutputDim, VOYAGE_VALID_OUTPUT_DIMS } =
+    await import('../core/ai/dims.ts');
+
+  const modelStr = getEmbeddingModel();
+  const dims = getEmbeddingDimensions();
+
+  try {
+    const { providerId, modelId } = parseModelId(modelStr);
+
+    // Voyage flexible-dim check — the bug class that motivated this probe.
+    if (providerId === 'voyage' && supportsVoyageOutputDimension(modelId)) {
+      if (!isValidVoyageOutputDim(dims)) {
+        return {
+          model: modelStr,
+          touchpoint: 'embedding_config',
+          status: 'config',
+          message:
+            `embedding_dimensions=${dims} is not a valid Voyage output_dimension ` +
+            `for "${modelId}" (allowed: ${VOYAGE_VALID_OUTPUT_DIMS.join('/')}).`,
+          fix:
+            `gbrain config set embedding_dimensions <${VOYAGE_VALID_OUTPUT_DIMS.join('|')}>, ` +
+            `or switch to a fixed-dim Voyage model (e.g. voyage-3, voyage-3-lite).`,
+          elapsed_ms: Date.now() - start,
+        };
+      }
+    }
+
+    return {
+      model: modelStr,
+      touchpoint: 'embedding_config',
+      status: 'ok',
+      message: `embedding_dimensions=${dims} ok for ${modelStr}`,
+      elapsed_ms: Date.now() - start,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const fix = err && typeof err === 'object' && 'fix' in err
+      ? (err as { fix?: string }).fix
+      : undefined;
+    return {
+      model: modelStr,
+      touchpoint: 'embedding_config',
+      status: 'config',
+      message: msg,
+      fix,
+      elapsed_ms: Date.now() - start,
+    };
+  }
 }
 
 async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): Promise<ProbeResult> {
@@ -260,6 +322,12 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
   const expansionModel = getExpansionModel();
 
   const results: ProbeResult[] = [];
+
+  // Config-only probe runs first: zero tokens, catches the bug class where a
+  // brain misconfigured for Voyage with the wrong embedding_dimensions would
+  // 400 on first embed. Fast feedback before we spend a single token.
+  results.push(await probeEmbeddingConfig());
+
   for (const [modelStr, touchpoint] of [[chatModel, 'chat'], [expansionModel, 'expansion']] as const) {
     if (shouldSkipProvider(modelStr, skip)) {
       if (!json) process.stderr.write(`[skip] ${touchpoint}: ${modelStr} (provider in --skip)\n`);
@@ -284,9 +352,10 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
     process.stdout.write('Model reachability probe:\n');
     for (const r of results) {
       const icon = r.status === 'ok' ? '✔' : '✘';
-      process.stdout.write(`  ${icon} ${r.touchpoint.padEnd(10)} ${r.model.padEnd(50)} ${r.status} (${r.elapsed_ms}ms)\n`);
+      process.stdout.write(`  ${icon} ${r.touchpoint.padEnd(17)} ${r.model.padEnd(50)} ${r.status} (${r.elapsed_ms}ms)\n`);
       if (r.status !== 'ok') {
         process.stdout.write(`      ${r.message}\n`);
+        if (r.fix) process.stdout.write(`      fix: ${r.fix}\n`);
       }
     }
     process.stdout.write(`\nSummary: ${report.summary.ok}/${report.summary.total} reachable.\n`);

@@ -501,6 +501,32 @@ export interface SearchOpts {
    * Boundary semantics: end-of-day for plain YYYY-MM-DD.
    */
   until?: string;
+  /**
+   * v0.32.x (search-lite): cap the cumulative token cost of returned results.
+   * Applied AFTER all scoring, ranking, dedup, and boosts — the budget is the
+   * LAST stage of the pipeline. Token counting uses a char/4 heuristic (no
+   * tokenizer dep). When undefined or <= 0, this is a no-op (pre-v0.32
+   * behavior).
+   *
+   * Use cases: keep an agent's search payload under its context window;
+   * cap an MCP tool response to fit a router budget; emit a deterministic
+   * upper bound on result size.
+   */
+  tokenBudget?: number;
+  /**
+   * v0.32.x (search-lite): enable/disable the semantic query cache for this
+   * call. When undefined, the cache decision falls back to global config
+   * (search.cache.enabled, default true). Set to `false` to force a fresh
+   * search; set to `true` to opt in even when global config has it off.
+   */
+  useCache?: boolean;
+  /**
+   * v0.32.x (search-lite): force enable/disable the zero-LLM intent
+   * classifier weight adjustments. Defaults to enabled. Set to `false` to
+   * pin the legacy (pre-search-lite) weighting — useful when callers want
+   * deterministic behavior independent of query phrasing.
+   */
+  intentWeighting?: boolean;
 }
 
 /**
@@ -803,6 +829,45 @@ export interface HybridSearchMeta {
   detail_resolved: 'low' | 'medium' | 'high' | null;
   /** True iff multi-query expansion (Haiku) actually fired and produced variants. */
   expansion_applied: boolean;
+  /**
+   * v0.32.x (search-lite): the intent the zero-LLM classifier inferred for
+   * this query. Surfaced for debugging — agents and the `gbrain query`
+   * command can show "intent: temporal" alongside results to make the
+   * weighting decision auditable.
+   */
+  intent?: 'entity' | 'temporal' | 'event' | 'general';
+  /**
+   * v0.32.x (search-lite): token budget enforcement metadata. Omitted when
+   * no budget was applied (backward-compatible with pre-search-lite
+   * consumers).
+   */
+  token_budget?: {
+    budget: number;
+    used: number;
+    kept: number;
+    dropped: number;
+  };
+  /**
+   * v0.32.x (search-lite): cache hit/miss tracking. Omitted when the
+   * semantic query cache wasn't consulted (cache disabled, vector search
+   * unavailable, etc.).
+   */
+  cache?: {
+    /** 'hit' when results came from the cache; 'miss' when search ran fresh. */
+    status: 'hit' | 'miss' | 'disabled';
+    /** Similarity of the cached query's embedding (0..1). Only set on hit. */
+    similarity?: number;
+    /** Age of the cached entry in seconds. Only set on hit. */
+    age_seconds?: number;
+  };
+  /**
+   * v0.32.3 (search-lite mode): the active search mode for this call.
+   * 'conservative' | 'balanced' | 'tokenmax'. Resolved from
+   * config.search.mode with per-call + per-key overrides applied. Surfaced
+   * so observability sees what mode actually ran (which can differ from
+   * the operator's `config.search.mode` setting if per-call overrides win).
+   */
+  mode?: 'conservative' | 'balanced' | 'tokenmax';
 }
 
 // Config

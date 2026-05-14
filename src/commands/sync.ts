@@ -211,10 +211,21 @@ export function buildGitInvocation(repoPath: string, args: string[], configs: st
   return [...cfg, '-C', repoPath, ...args];
 }
 
+/**
+ * Shell out to git with a generous maxBuffer.
+ *
+ * Node's default maxBuffer is 1 MiB.  `git diff --name-status -M` on a
+ * 60–100K file repo easily exceeds that, causing an ENOBUFS crash that
+ * kills the sync process with no error message in the log.
+ *
+ * 100 MiB is generous but still bounded — a 100K-file diff with long
+ * paths tops out around 10–20 MiB in practice.
+ */
 function git(repoPath: string, args: string[], configs: string[] = []): string {
   return execFileSync('git', buildGitInvocation(repoPath, args, configs), {
     encoding: 'utf-8',
     timeout: 30000,
+    maxBuffer: 100 * 1024 * 1024,
   }).trim();
 }
 

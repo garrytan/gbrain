@@ -23,7 +23,15 @@ start here.
 2. Install: `bun install`
 3. Init the brain: `gbrain init` (defaults to PGLite, zero-config). For 1000+ files or
    multi-machine sync, init suggests Postgres + pgvector via Supabase.
-4. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full 9-step flow
+4. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
+   default but printed a 9-cell cost matrix (mode × downstream model)
+   preceded by `[AGENT]` markers. You MUST relay the matrix to the operator
+   and confirm their choice before continuing. Cost spread between corners
+   is 25x — silent acceptance is the wrong default. See
+   [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) Step 3.5 for the
+   exact ask-the-user protocol. Same banner fires on `gbrain post-upgrade`
+   for existing users (search modes were added in v0.32.3).
+5. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full 9-step flow
    (API keys, identity, cron, verification).
 
 ## Read this order
@@ -192,16 +200,17 @@ strict behavior when unset.
 - `docs/eval-capture.md` (v0.25.0) — stable NDJSON schema reference for gbrain-evals consumers.
 - `test/public-exports.test.ts` (v0.25.0 / R2) — runtime contract test. Imports each of the 17 public subpaths via package name and pins a canary symbol per module. Paired with `scripts/check-exports-count.sh`.
 - `src/core/embedding.ts` — OpenAI text-embedding-3-large, batch, retry, backoff. **v0.28.7:** `BATCH_SIZE` reverted 50→100 — the original Voyage safety guard halved OpenAI throughput on every page. Per-recipe pre-split + recursive halving + adaptive shrink-on-miss now live in the gateway, so the outer paginator goes back to its original purpose: progress-callback granularity, not batch protection.
+- `src/core/ai/dims.ts` (v0.33.1.1, PR #962 + #866) — per-provider `providerOptions` resolver for embed-time dimension passthrough. The single source of truth for "which provider needs which knob to produce `vector(N)`". Exports `dimsProviderOptions(implementation, modelId, dims)` (called by `embed()` in `gateway.ts`), `VOYAGE_OUTPUT_DIMENSION_MODELS` (private const — the 7 hosted Voyage models that accept `output_dimension`: `voyage-4-large`, `voyage-4`, `voyage-4-lite`, `voyage-3-large`, `voyage-3.5`, `voyage-3.5-lite`, `voyage-code-3` — nano deliberately excluded), `VOYAGE_VALID_OUTPUT_DIMS = [256, 512, 1024, 2048] as const`, `supportsVoyageOutputDimension(modelId)`, and `isValidVoyageOutputDim(dims)`. **Voyage path uses the SDK-supported `dimensions` field** (`{ openaiCompatible: { dimensions: N } }`), NOT Voyage's `output_dimension` wire-key — the existing `voyageCompatFetch` shim in `gateway.ts:541` translates `dimensions → output_dimension` before the HTTP body is built. The reverse (sending `output_dimension` from here) was the v0.33.1.0 bug class: the AI SDK's openai-compatible adapter doesn't recognize the wire-key so it was silently dropped, Voyage returned its default 1024-dim, and the gateway dimension check threw on every embed call. Runtime guard: when a Voyage flexible-dim model is configured with `dims` outside `VOYAGE_VALID_OUTPUT_DIMS`, throws `AIConfigError` with a paste-ready `gbrain config set embedding_dimensions <256|512|1024|2048>` hint at the embed boundary — fail-loud instead of opaque Voyage HTTP 400. Most common trigger: `embedding_model: voyage:voyage-4-large` configured without `embedding_dimensions` (falls back to `DEFAULT_EMBEDDING_DIMENSIONS=1536`, an OpenAI default not a Voyage one). Eva (@100yenadmin) shipped the wire-key fix in #866; Codex P3 follow-up landed the validator + valid-dims allowlist in #962.
 - `src/core/ai/types.ts` — provider/recipe types. **v0.28.7 (#680):** `EmbeddingTouchpoint` extended with optional `chars_per_token` (default 4 chars/token, matching OpenAI tiktoken on English) and `safety_factor` (default 0.8, budget-utilization ceiling). Both consulted only when `max_batch_tokens` is also set. Voyage declares `chars_per_token=1` + `safety_factor=0.5` to handle dense payloads (CJK/JSON/base64) that overshoot tiktoken. The pre-split budget is `max_batch_tokens × safety_factor / chars_per_token`. **v0.28.11 (#719):** `EmbeddingTouchpoint.multimodal_models?: string[]` model-level allow-list for recipes that mix text-only + multimodal models under one touchpoint (Voyage's 12 models share `supports_multimodal: true` but only `voyage-multimodal-3` accepts `/multimodalembeddings`). When omitted, recipe-level `supports_multimodal` is sufficient. `AIGatewayConfig.embedding_multimodal_model?: string` lets `embedMultimodal()` route to a different model than `embedding_model` — brains using OpenAI for text can use Voyage for images without flipping the primary embedding pipeline.
-- `src/core/ai/gateway.ts` — unified seam for every AI call. **v0.28.7 (#680):** module-scoped `_embedTransport` defaulting to AI SDK `embedMany`, with `__setEmbedTransportForTests(fn)` test seam so tests drive the public `embed()` function with a stubbed transport instead of probing private helpers. `splitByTokenBudget` and `isTokenLimitError` are now exported `@internal` — pure functions reused directly by the test file. Module-level `_shrinkState: Map<recipeId, {factor, consecutiveSuccesses}>` halves the recipe's effective `safety_factor` on token-limit miss (floor 0.05) and heals back ×1.5 toward the ceiling after `SHRINK_HEAL_AFTER=10` consecutive successes. `configureGateway()` walks every registered recipe at construction time and emits a once-per-process stderr warning for any embedding touchpoint missing `max_batch_tokens` (excluding the canonical OpenAI fast-path recipe). `resetGateway()` clears `_shrinkState`, the warned-set, and restores the real transport. ASCII flow diagram embedded in the `embed()` JSDoc covers the routing decision, recursion + halving, and shrinkState lifecycle. **v0.28.11 (#719):** `embedMultimodal()` reads `cfg.embedding_multimodal_model` first (falls back to `cfg.embedding_model` for single-model setups). After the existing recipe-level `supports_multimodal` fast-fail, validates the resolved model against `touchpoint.multimodal_models` when declared — closes the Voyage-text-only-model-into-multimodal-endpoint footgun before any HTTP call (Codex F1 from PR review). New `getMultimodalModel()` accessor mirrors `getEmbeddingModel` / `getChatModel` so doctor and integration tests can read the gateway state.
-- `src/core/ai/recipes/voyage.ts` — Voyage AI openai-compatible recipe. **v0.28.7 (#680):** declares `chars_per_token=1` + `safety_factor=0.5` so the gateway pre-splits Voyage batches at a 60K-character budget (50% of 120K-token cap with the dense-tokenizer ratio). Closes the v0.27 backfill loop where ~26% of the corpus stayed un-embedded because tiktoken-grounded budgeting silently undercounted Voyage's actual token usage. **v0.28.11 (#719):** declares `multimodal_models: ['voyage-multimodal-3']` so the gateway rejects text-only Voyage models pointed at the multimodal endpoint with a clear `AIConfigError` instead of waiting for Voyage's HTTP 400.
+- `src/core/ai/gateway.ts` — unified seam for every AI call. **v0.28.7 (#680):** module-scoped `_embedTransport` defaulting to AI SDK `embedMany`, with `__setEmbedTransportForTests(fn)` test seam so tests drive the public `embed()` function with a stubbed transport instead of probing private helpers. `splitByTokenBudget` and `isTokenLimitError` are now exported `@internal` — pure functions reused directly by the test file. Module-level `_shrinkState: Map<recipeId, {factor, consecutiveSuccesses}>` halves the recipe's effective `safety_factor` on token-limit miss (floor 0.05) and heals back ×1.5 toward the ceiling after `SHRINK_HEAL_AFTER=10` consecutive successes. `configureGateway()` walks every registered recipe at construction time and emits a once-per-process stderr warning for any embedding touchpoint missing `max_batch_tokens` (excluding the canonical OpenAI fast-path recipe). `resetGateway()` clears `_shrinkState`, the warned-set, and restores the real transport. ASCII flow diagram embedded in the `embed()` JSDoc covers the routing decision, recursion + halving, and shrinkState lifecycle. **v0.28.11 (#719):** `embedMultimodal()` reads `cfg.embedding_multimodal_model` first (falls back to `cfg.embedding_model` for single-model setups). After the existing recipe-level `supports_multimodal` fast-fail, validates the resolved model against `touchpoint.multimodal_models` when declared — closes the Voyage-text-only-model-into-multimodal-endpoint footgun before any HTTP call (Codex F1 from PR review). New `getMultimodalModel()` accessor mirrors `getEmbeddingModel` / `getChatModel` so doctor and integration tests can read the gateway state. **v0.33.1.1 (#962, Codex P3 follow-up):** new exported `VoyageResponseTooLargeError` tagged class at the top of the file. `voyageCompatFetch`'s two OOM-defense caps (Layer 1 Content-Length check at `:595`, Layer 2 per-embedding base64 cap at `:619`) now throw `VoyageResponseTooLargeError` instead of a generic `Error`. The inbound response-rewriter's surrounding try/catch (which intentionally swallows parse failures so misshaped Voyage responses fall through to the SDK's JSON parser) checks `instanceof VoyageResponseTooLargeError` and rethrows. Pre-fix, the Layer 2 throw was silently swallowed and the oversized response returned to the AI SDK anyway — Layer 2 was theatrical. Source-shape regression assertion in `test/voyage-response-cap.test.ts` pins the `instanceof ⇒ throw err` line.
+- `src/core/ai/recipes/voyage.ts` — Voyage AI openai-compatible recipe. **v0.28.7 (#680):** declares `chars_per_token=1` + `safety_factor=0.5` so the gateway pre-splits Voyage batches at a 60K-character budget (50% of 120K-token cap with the dense-tokenizer ratio). Closes the v0.27 backfill loop where ~26% of the corpus stayed un-embedded because tiktoken-grounded budgeting silently undercounted Voyage's actual token usage. **v0.28.11 (#719):** declares `multimodal_models: ['voyage-multimodal-3']` so the gateway rejects text-only Voyage models pointed at the multimodal endpoint with a clear `AIConfigError` instead of waiting for Voyage's HTTP 400. **v0.33.1.1 (#962, fixup):** recipe docstring at `:7-16` tightened to name the seven hosted flexible-dim models that accept `output_dimension` explicitly (`voyage-4-large`, `voyage-4`, `voyage-4-lite`, `voyage-3-large`, `voyage-3.5`, `voyage-3.5-lite`, `voyage-code-3`) and call out that `voyage-4-nano` is the open-weight variant listed separately by Voyage as fixed 1024-dim — does NOT accept the parameter. The "all v4 variants are flexible" misread is what caused the original PR to include nano in `VOYAGE_OUTPUT_DIMENSION_MODELS`; the negative regression assertion in `test/ai/gateway.test.ts` (`dimsProviderOptions` returns `undefined` for `voyage-4-nano`) pins the contract.
 - `src/core/ai/recipes/anthropic.ts` — Anthropic recipe (chat + expansion touchpoints). **v0.31.12:** chat and expansion `models:` lists drop the v0.31.6 phantom `claude-sonnet-4-6-20250929` date suffix — canonical id is `claude-sonnet-4-6`. The wrong-direction alias `claude-sonnet-4-6 → claude-sonnet-4-6-20250929` is removed; a reverse alias `claude-sonnet-4-6-20250929 → claude-sonnet-4-6` keeps stale user configs working (rescues `facts.extraction_model` and `models.dream.synthesize` set by v0.31.6 installs). Recipe-shape regression pinned by `test/anthropic-model-ids.test.ts` (6 cases, verbatim cherry-pick of PR #830 plus the reverse-alias rescue case).
 - `src/core/anthropic-pricing.ts` — Single source of truth for Anthropic model pricing (per-MTok input/output). **v0.31.12:** Opus 4.7 corrected from `$15/$75` to `$5/$25` (the old number was from Opus 4 generation, never refreshed when 4.7 shipped); Opus 4.6 also corrected. Consumed by `src/core/budget-meter.ts` and `src/core/cross-modal-eval/runner.ts` — the cross-modal estimator now reads `ANTHROPIC_PRICING` for Anthropic models instead of duplicating the table, killing the v0.31.6 drift bug class.
 - `src/core/model-config.ts` — Model-string resolution (the seam every internal LLM call walks through). **v0.31.12:** four-tier system (`ModelTier = 'utility' | 'reasoning' | 'deep' | 'subagent'`) with `TIER_DEFAULTS` (utility→haiku-4-5, reasoning→sonnet-4-6, deep→opus-4-7, subagent→sonnet-4-6) and `tier?: ModelTier` on `ResolveModelOpts`. Resolution chain is now 8 steps: cliFlag → deprecated key → config key → `models.default` → `models.tier.<tier>` → env var → `TIER_DEFAULTS[tier]` → caller fallback. Two new exports — `isAnthropicProvider(modelString)` checks `provider:model` prefix OR `claude-` bare-id pattern, and `enforceSubagentAnthropic()` is the layer-2 runtime guard: when `tier === 'subagent'` resolves to a non-Anthropic provider, it emits a once-per-`(source, model)` stderr warn AND falls back to `TIER_DEFAULTS.subagent` instead of letting the Anthropic Messages API tool-loop attempt to run on OpenAI/Gemini. `_resetDeprecationWarningsForTest()` now also clears `_subagentTierWarningsEmitted` so tests re-emit.
 - `src/core/ai/model-resolver.ts` — Recipe-touchpoint validator. **v0.31.12:** `assertTouchpoint(recipe, touchpoint, modelId, extendedModels?)` gains an optional 4th `extendedModels: ReadonlySet<string>` argument. When the modelId is in that set, the native-recipe allowlist throw is bypassed — the user explicitly opted into this model via config so we let provider rejection surface as `model_not_found` at HTTP call time (and `gbrain models doctor` catches it earlier). Default code paths with hardcoded model strings MUST NOT pass `extendedModels` — typos in source code still fail fast. Replaces the earlier plan to soften the validator wholesale (Codex F4/F5 in plan review flagged that as too broad — it would have removed the fail-fast contract for chat + expand + embed all three).
 - `src/core/ai/gateway.ts` extension (v0.31.12) — new module-scoped `_extendedModels: Map<providerId, Set<modelId>>` registry feeds `assertTouchpoint`'s 4th-arg path. New `reconfigureGatewayWithEngine(engine)` async function is called from `cli.ts` after `engine.connect()` (and before every command except `CLI_ONLY` no-DB commands) — re-resolves expansion + chat defaults through `resolveModel()` so `models.tier.*` and `models.default` overrides apply to expansion + chat both. `DEFAULT_CHAT_MODEL` corrected to `anthropic:claude-sonnet-4-6` (was the v0.31.6 phantom `-20250929`). New `__setChatTransportForTests` seam mirrors `__setEmbedTransportForTests` so tests drive `chat()` with a stubbed transport.
 - `src/core/minions/queue.ts` extension (v0.31.12) — `MinionQueue.add()` now rejects `subagent` jobs whose `data.model` resolves through `isAnthropicProvider()` to a non-Anthropic provider. Lazy-imports `model-config.ts` to avoid pulling engine types into queue's eager-load surface. Layer 1 of the three-layer subagent provider enforcement (Codex F1+F2 in plan review). Layers 2 + 3 live in `src/core/model-config.ts` (`enforceSubagentAnthropic` runtime fallback) and `src/commands/doctor.ts` (`subagent_provider` check). Pinned by 3 cases in `test/agent-cli.test.ts`.
-- `src/commands/models.ts` (v0.31.12) — `gbrain models [--json]` read-only routing dashboard: prints tier defaults (`utility`/`reasoning`/`deep`/`subagent`), the resolved value for each (re-walking the resolution chain to attribute properly), every per-task override (11 `PER_TASK_KEYS` entries — `models.dream.synthesize`, `models.dream.patterns`, `models.drift`, `models.auto_think`, `models.think`, `models.subagent`, `facts.extraction_model`, `models.eval.longmemeval`, `models.expansion`, `models.chat`, `models.dream.synthesize_verdict`), the alias map (defaults + user overrides), and a source-of-truth column showing `default` / `config: <key>` / `env: <VAR>`. `gbrain models doctor [--skip=<provider>] [--json]` fires a 1-token `gateway.chat()` probe against each configured chat + expansion model and classifies failures into `{model_not_found, auth, rate_limit, network, unknown}` — the structural fix for the v0.31.6 silent-no-op bug class. Wired into `cli.ts` dispatch table + `CLI_ONLY` set.
+- `src/commands/models.ts` (v0.31.12) — `gbrain models [--json]` read-only routing dashboard: prints tier defaults (`utility`/`reasoning`/`deep`/`subagent`), the resolved value for each (re-walking the resolution chain to attribute properly), every per-task override (11 `PER_TASK_KEYS` entries — `models.dream.synthesize`, `models.dream.patterns`, `models.drift`, `models.auto_think`, `models.think`, `models.subagent`, `facts.extraction_model`, `models.eval.longmemeval`, `models.expansion`, `models.chat`, `models.dream.synthesize_verdict`), the alias map (defaults + user overrides), and a source-of-truth column showing `default` / `config: <key>` / `env: <VAR>`. `gbrain models doctor [--skip=<provider>] [--json]` fires a 1-token `gateway.chat()` probe against each configured chat + expansion model and classifies failures into `{model_not_found, auth, rate_limit, network, unknown}` — the structural fix for the v0.31.6 silent-no-op bug class. Wired into `cli.ts` dispatch table + `CLI_ONLY` set. **v0.33.1.1 (#962, Codex P3 follow-up):** doctor gains a zero-token `embedding_config` probe that runs FIRST, before any chat/expansion probes spend money. `probeEmbeddingConfig()` reads `getEmbeddingModel()` + `getEmbeddingDimensions()` from the gateway, parses the model id, and (for Voyage flexible-dim models) checks `isValidVoyageOutputDim(dims)` against `VOYAGE_VALID_OUTPUT_DIMS`. New `ProbeStatus` variant `'config'` and optional `fix?: string` field on `ProbeResult` — surfaced in both human output (paste-ready `gbrain config set ...` line under the bad probe) and JSON output. New touchpoint label `'embedding_config'` joins `'chat'` and `'expansion'` in the probe-row taxonomy. Closes the Voyage flexible-dim bug class at config time, not first-embed.
 - `src/commands/doctor.ts` extension (v0.31.12) — new `subagent_provider` check (layer 3 of 3 — Codex F13). Warns when `models.tier.subagent` is explicitly set to a non-Anthropic provider (fail-loud since the user clearly meant it — message names the bad value and prints the paste-ready fix command `gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6`); also warns when `models.default` would sneak `subagent` into a non-Anthropic provider via tier inheritance. OK status when subagent tier resolves to Anthropic. Tests cover all three paths in `test/doctor.test.ts`.
 - `src/core/check-resolvable.ts` — Resolver validation: reachability, MECE overlap, DRY checks, structured fix objects. v0.14.1: `CROSS_CUTTING_PATTERNS.conventions` is an array (notability gate accepts both `conventions/quality.md` and `_brain-filing-rules.md`). New `extractDelegationTargets()` parses `> **Convention:**`, `> **Filing rule:**`, and inline backtick references. DRY suppression is proximity-based via `DRY_PROXIMITY_LINES = 40`.
 - `src/core/repo-root.ts` — Shared `findRepoRoot(startDir?)` (v0.16.4): walks up from `startDir` (default `process.cwd()`) looking for `skills/RESOLVER.md`. Zero-dependency module imported by both `doctor.ts` and `check-resolvable.ts`. Parameterized `startDir` makes tests hermetic. **v0.31.7:** read-path / write-path split. `autoDetectSkillsDir` (shared, read+write-safe) gains tier-0 `$GBRAIN_SKILLS_DIR` explicit operator override (Docker mounts, CI, monorepo subdirs) ahead of the existing 4-tier chain. New `autoDetectSkillsDirReadOnly` wraps it with a tier-5 install-path fallback that walks up from `fileURLToPath(import.meta.url)` and gates on `isGbrainRepoRoot` so unrelated repos can't false-positive. Read-path callers (`doctor`, `check-resolvable`, `routing-eval`) use the read-only variant; write-path callers (`skillpack install`, `skillify scaffold`, `post-install-advisory`) deliberately stay on the shared function so `gbrain skillpack install` from `~` cannot silently retarget the bundled gbrain repo's `skills/` instead of the user's actual workspace. Two new `SkillsDirSource` variants: `'env_explicit'`, `'install_path'`. New `AUTO_DETECT_HINT_READ_ONLY` documents the extra tier. The D6 `--fix` safety gate in `doctor.ts` + `check-resolvable.ts` refuses auto-repair when `detected.source === 'install_path'` so `gbrain doctor --fix` from `~` cannot silently rewrite the bundled install tree.
@@ -449,6 +458,12 @@ Key commands added in v0.32.7 (CJK fix wave):
 - `gbrain doctor` learns a new `slug_fallback_audit` check: surfaces info-severity entries from `~/.gbrain/audit/slug-fallback-YYYY-Www.jsonl` (last 7 days) as an `ok` count when CJK / emoji / exotic-script filenames imported via the frontmatter-slug fallback path.
 - `gbrain search "<CJK substring>"` on PGLite brains now uses an `ILIKE`-based fallback with bigram-frequency-count ranking when the query contains Han / Hiragana / Katakana / Hangul Syllables. ASCII queries continue through `websearch_to_tsquery('english')` unchanged. Postgres-side CJK FTS still requires an extension (pgroonga / zhparser) — see v0.33+ TODO.
 - `gbrain upgrade` post-upgrade flow now prints a cost estimate before re-embedding: `[chunker-bump] Will re-embed ~N markdown pages via <provider:model>, est. ~$X.XX, ~Ymin. Press Ctrl-C within 10s to abort.` Sourced from real SQL counts + char totals; TTY-only wait (non-TTY auto-proceeds for CI / cron). Env overrides: `GBRAIN_NO_REEMBED=1` bails out entirely with a doctor-warning marker; `GBRAIN_REEMBED_GRACE_SECONDS=0` skips the wait.
+
+Key commands added in v0.33.1.1 (Voyage 2048-dim correctness wave):
+- `gbrain models doctor` learns a new zero-token `embedding_config` probe that runs FIRST, before any chat/expansion probes spend money. Catches Voyage flexible-dim misconfigs at config time, not first-embed: `embedding_model: voyage:voyage-4-large` with `embedding_dimensions` outside `{256, 512, 1024, 2048}` (most commonly: `embedding_dimensions` left unset, falling back to the OpenAI default 1536 which Voyage rejects with an opaque HTTP 400). Surfaces a paste-ready `gbrain config set embedding_dimensions <256|512|1024|2048>` fix in both human and JSON output. New probe status `'config'` joins `{ok, model_not_found, auth, rate_limit, network, unknown}`; new touchpoint label `'embedding_config'` joins `'chat'` and `'expansion'`.
+- Voyage 2048-dim brains now actually embed at 2048 dims. `embedding_model: voyage:voyage-4-large` + `embedding_dimensions: 2048` routes through the SDK-supported `dimensions` field, which `voyageCompatFetch` translates to Voyage's `output_dimension` on the wire. Same fix covers `voyage-3-large`, `voyage-3.5`, `voyage-3.5-lite`, `voyage-4`, `voyage-4-lite`, `voyage-code-3`. `voyage-4-nano` (open-weight, fixed 1024-dim) intentionally NOT in the flexible-dim allowlist — sending `output_dimension` to nano's endpoint produces an error.
+- Runtime validator: `dimsProviderOptions()` throws `AIConfigError` at the embed boundary with a paste-ready fix hint when a Voyage flexible-dim model is configured with an invalid dim — fail-loud even if you skipped `gbrain models doctor`.
+- `VoyageResponseTooLargeError` (new tagged class exported from `src/core/ai/gateway.ts`): the 256 MB per-response cap inside `voyageCompatFetch` was previously throwing a generic `Error` that the surrounding parse-error try/catch silently swallowed, returning the oversized response to the AI SDK anyway. Now thrown at both cap sites (Content-Length Layer 1, per-embedding base64 Layer 2) and rethrown from the catch via `instanceof` check — the cap is now actually effective.
 
 Key commands added in v0.31.12 (model tier system + routing CLI):
 - `gbrain models [--json]` — read-only routing dashboard. Prints the four tier defaults (`utility`/`reasoning`/`deep`/`subagent`), the resolved value for each (after re-walking `models.default` → `models.tier.<tier>` → env → `TIER_DEFAULTS`), every per-task override (`models.dream.synthesize`, `models.dream.patterns`, `models.drift`, `models.auto_think`, `models.think`, `models.subagent`, `facts.extraction_model`, `models.eval.longmemeval`, `models.expansion`, `models.chat`, `models.dream.synthesize_verdict`), the alias map (defaults + user overrides), and a source-of-truth column (`default` / `config: <key>` / `env: <VAR>`).
@@ -807,6 +822,100 @@ permission to run them — see the "run without asking" rule above.
 
 Never leave `gbrain-test-pg` running. If you find a stale one from a previous run,
 stop and remove it before starting a new one.
+
+## Search Mode (v0.32.3)
+
+GBrain ships three named search modes that bundle the search-lite knobs from
+PR #897 into a single config key. Pick one at install time; the rest of the
+project resolves through `src/core/search/mode.ts`.
+
+| Knob                          | `conservative` | `balanced` | `tokenmax`     |
+|-------------------------------|----------------|------------|----------------|
+| `cache.enabled`               | true           | true       | true           |
+| `cache.similarity_threshold`  | 0.92           | 0.92       | 0.92           |
+| `cache.ttl_seconds`           | 3600           | 3600       | 3600           |
+| `intentWeighting`             | true           | true       | true           |
+| `tokenBudget`                 | **4000**       | **12000**  | **off**        |
+| `expansion` (LLM multi-query) | false          | false      | **true**       |
+| `searchLimit` default         | 10             | 25         | 50             |
+
+**Cost anchors (downstream agent input cost — gbrain itself is rounding error).**
+The corner-to-corner spread is 25x once you pair mode with downstream model.
+Chunks ~400 tokens avg. Per-query cost @ 10K queries/month (typical
+single-user volume), full search payload, no cache savings:
+
+| Mode \ Downstream | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.7 (\$5/M) |
+|---|---|---|---|
+| conservative (~4K) | **\$40/mo** | \$120/mo | \$200/mo |
+| balanced (~10K) | \$100/mo | \$300/mo | \$500/mo |
+| tokenmax (~20K) | \$200/mo | \$600/mo | **\$1,000/mo** |
+
+Scales linearly: multiply by 10 for 100K/mo (heavy power user / multi-user
+fleet); divide by 10 for 1K/mo (light usage). Natural pairings span ~4x.
+Mismatches (tokenmax+Haiku, conservative+Opus) waste capacity differently
+— too-big payload overwhelms a cheap model; too-small payload starves an
+expensive one.
+
+tokenmax adds ~\$1.50 per 1K queries in Haiku expansion calls on top of
+the matrix (\$15/mo @ 10K). Cache hits cut all numbers ~50%. **The cost
+picker copy in `gbrain init` carries the same matrix verbatim** — update
+both when refreshing.
+
+**Per-query math vs real-world spend.** The matrix above is what an
+isolated benchmark would measure. Real agent loops with disciplined
+Anthropic prompt caching see 50-80% discount on top (cache hits skip
+downstream entirely). The realistic-scale anchor in
+`docs/eval/SEARCH_MODE_METHODOLOGY.md` walks the natural pairings at
+single-power-user volume (~860 turns/mo): tokenmax+Opus ~\$700/mo,
+balanced+Sonnet ~\$430/mo, conservative+Haiku ~\$170/mo. Setups WITHOUT
+cache-aware prompt layout (frequent prefix churn) see the per-query
+matrix dominate — mode + model choice matters more there.
+
+**Resolution chain** (matches the v0.31.12 model-tier pattern at
+`src/core/model-config.ts:resolveModel`):
+
+    per-call SearchOpts → per-key config (search.cache.enabled, …) →
+      MODE_BUNDLES[search.mode] → MODE_BUNDLES.balanced (fallback)
+
+Mode resolution lives in **bare `hybridSearch`** (NOT just the cached wrapper)
+per `[CDX-5+6]` in `~/.claude/plans/lets-take-a-look-validated-parrot.md` — so
+`gbrain eval replay` and `gbrain eval longmemeval` test the same mode-affected
+behavior as the production `query` op.
+
+**Cache-key contamination hotfix `[CDX-4]`:** migration v56 added a
+`knobs_hash` column to `query_cache`. The lookup filter is now
+`WHERE source_id = $ AND knobs_hash = $ AND embedding similarity < $` so a
+tokenmax write (expansion=on, limit=50) can't be served to a conservative
+read.
+
+**Three CLI surfaces:**
+
+    gbrain search modes              # what is running, with per-knob attribution
+    gbrain search modes --reset      # clear search.* overrides (mode bundle wins)
+    gbrain search stats [--days N]   # cache hit rate, intent mix, budget drops
+    gbrain search tune [--apply]     # data-driven recommendations
+
+The install picker fires inside `gbrain init` AFTER `engine.initSchema()`
+(non-TTY auto-selects). The upgrade banner fires once via `runPostUpgrade`
+in `src/commands/upgrade.ts`, gated by `search.mode_upgrade_notice_shown`.
+
+## Eval discipline (v0.32.3)
+
+Every metric printed by any `gbrain eval *` or `gbrain search stats` command
+resolves through `src/core/eval/metric-glossary.ts` so industry terms
+(`P@k`, `nDCG@k`, `MRR`, `Jaccard@k`) carry a plain-English line in human
+output and a `_meta.metric_glossary` block in JSON output (one block per
+response per `[CDX-25]`, NOT sibling `_gloss` fields).
+
+The full methodology — datasets, sample selection, pre-registered
+expectations, threats to validity, paired-bootstrap + Bonferroni p-value
+discipline `[CDX-14]` — lives in `docs/eval/SEARCH_MODE_METHODOLOGY.md`.
+Auto-regenerated `docs/eval/METRIC_GLOSSARY.md` is CI-guarded against
+drift (`scripts/check-eval-glossary-fresh.sh`).
+
+Per-run records land at `<repo>/.gbrain-evals/eval-results.jsonl` per
+`[CDX-23]`. The user's personal `~/.gbrain` brain is NEVER touched —
+audit trail lives in the source repo's git history.
 
 ## Skills
 
@@ -1616,6 +1725,63 @@ Read `~/gbrain/docs/GBRAIN_RECOMMENDED_SCHEMA.md` and set up the MECE directory
 structure (people/, companies/, concepts/, etc.) inside the user's brain repo,
 NOT inside ~/gbrain.
 
+## Step 3.5: Confirm search mode with the user (DO NOT SKIP)
+
+`gbrain init` auto-applied a default search mode (`tokenmax` unless your subagent
+tier is Haiku-class or no OpenAI key is configured). The init output included the
+cost matrix below preceded by `[AGENT]` markers. You must NOT silently accept the
+default. Stop and ask the operator.
+
+**Present this matrix verbatim:**
+
+```
+Per-query cost @ 10K queries/mo (typical single-user volume):
+
+                  Haiku 4.5     Sonnet 4.6    Opus 4.7
+                  ($1/M)        ($3/M)        ($5/M)
+  conservative    $40/mo        $120/mo       $200/mo
+  balanced        $100/mo       $300/mo       $500/mo
+  tokenmax        $200/mo       $600/mo       $1,000/mo
+
+(scales linearly: ×10 for 100K/mo, ÷10 for 1K. 25x corner-to-corner spread.
+ Natural diagonal pairings — cheap/cheap → frontier/frontier — span ~4x.)
+```
+
+**Ask the operator (paraphrase if needed):**
+
+> Your gbrain just installed with search mode `<auto-applied default>`. This is
+> a one-time setup decision that controls retrieval payload size. Which mode
+> do you want?
+>
+>   1) conservative — tight 4K budget, no LLM expansion, 10 chunks max.
+>      Best for Haiku subagents, cost-sensitive setups, high-volume loops.
+>
+>   2) balanced — 12K budget, no expansion, 25 chunks. Sonnet-tier sweet spot.
+>
+>   3) tokenmax (recommended default — preserves v0.31.x retrieval shape) —
+>      no budget, LLM expansion ON, 50 chunks. Best for Opus/frontier models.
+>
+> Cost depends on BOTH the mode AND the downstream model you run. See the
+> matrix above for the 9-cell breakdown.
+
+If the operator picks a non-default mode, run:
+```bash
+gbrain config set search.mode <mode>
+```
+
+If they pick tokenmax AND want to preserve the literal v0.31.x default
+(limit=20 instead of tokenmax's 50), also run:
+```bash
+gbrain config set search.searchLimit 20
+```
+
+Verify the choice with `gbrain search modes` before continuing.
+
+**Why this matters:** the cost spread between corners of the matrix is 25x.
+An agent that silently accepts the default and starts running queries against
+a user who didn't expect tokenmax-class context loads can rack up surprise
+spend. Confirm before continuing.
+
 ## Step 4: Import and Index
 
 ```bash
@@ -1714,6 +1880,15 @@ Then read `~/gbrain/skills/migrations/v<NEW_VERSION>.md` (and any intermediate
 versions you skipped) and run any backfill or verification steps it lists. Skipping
 this is how features ship in the binary but stay dormant in the user's brain.
 
+**v0.32.3 search modes (one-time upgrade prompt):** if the user's brain was
+created before v0.32.3, `gbrain post-upgrade` prints a banner including the
+9-cell cost matrix (mode × downstream model) preceded by `[AGENT]` markers.
+**Do NOT silently move past the banner.** Present the matrix to the operator
+verbatim, ask which mode they want (recommended default: `tokenmax` to preserve
+v0.31.x retrieval shape), then run `gbrain config set search.mode <mode>`. See
+Step 3.5 above for the full ask-the-user protocol — the upgrade path uses the
+same matrix and same default.
+
 For v0.12.0+ specifically: if your brain was created before v0.12.0, run
 `gbrain extract links --source db && gbrain extract timeline --source db` to
 backfill the new graph layer (see Step 4.5 above).
@@ -1755,6 +1930,8 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Research", "track", "extract from email", "investor updates", "donations" | `skills/data-research/SKILL.md` |
 | Share a brain page as a link | `skills/publish/SKILL.md` |
 | "validate frontmatter", "check frontmatter", "fix frontmatter", "frontmatter audit", "brain lint" | `skills/frontmatter-guard/SKILL.md` |
+| "what search mode", "is my cache hot", "tune my retrieval", "compare search modes", "clear search overrides" | `gbrain search modes/stats/tune` directly. See `skills/conventions/search-modes.md` |
+| "eval results", "search benchmark", "haters-immune methodology", "regression check on retrieval" | `gbrain eval run-all` / `gbrain eval compare`. See `docs/eval/SEARCH_MODE_METHODOLOGY.md` |
 
 ## Content & media ingestion
 
@@ -1912,9 +2089,31 @@ the full doc map, use `llms.txt` at the same URL root.
 ```bash
 git clone https://github.com/garrytan/gbrain.git && cd gbrain && bun install && bun link
 gbrain init                     # local brain, ready in 2 seconds
+                                # picks a search mode (conservative / balanced / tokenmax)
 gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
+gbrain search modes             # see the active search mode + per-knob attribution
+gbrain search stats             # cache hit rate + intent mix after some real usage
 ```
+
+**v0.32.3 — named search modes.** `gbrain init` asks once which mode fits
+your workload. The cost spread depends on BOTH the mode AND your downstream
+model — 25x corner-to-corner. Per-query cost @ 10K queries/month (typical
+single-user volume; multiply by 10 for heavy / multi-user fleets):
+
+| Mode \ Downstream | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.7 (\$5/M) |
+|---|---|---|---|
+| `conservative` (~4K) | **\$40/mo** | \$120/mo | \$200/mo |
+| `balanced` (~10K) | \$100/mo | \$300/mo | \$500/mo |
+| `tokenmax` (~20K) | \$200/mo | \$600/mo | **\$1,000/mo** |
+
+Natural pairings (corner-diagonal) span ~4x at realistic single-user
+volume. Auto-suggests based on your configured `models.tier.subagent`.
+Non-TTY installs auto-pick `balanced` and print a hint pointing at
+`gbrain config set search.mode <m>`. After some real usage, run
+`gbrain search stats` for observability and `gbrain search tune` for
+data-driven recommendations. Methodology + eval results live at
+[docs/eval/SEARCH_MODE_METHODOLOGY.md](docs/eval/SEARCH_MODE_METHODOLOGY.md).
 
 **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
 postinstall hook on global installs, so schema migrations never run and the CLI
@@ -2623,8 +2822,10 @@ ADMIN
                                           gbrain config set models.default opus
                                           gbrain config set models.tier.deep opus
   gbrain models doctor                  1-token reachability probe for each configured
-                                        chat/expansion model. Catches `model_not_found`
-                                        before the next agent run silently degrades.
+                                        chat/expansion model + a zero-token embedding_config
+                                        probe (catches Voyage flexible-dim misconfigs before
+                                        first embed). Catches `model_not_found` before the
+                                        next agent run silently degrades.
                                         [--skip=<provider>] [--json]
   gbrain serve                          MCP server (stdio)
   gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard

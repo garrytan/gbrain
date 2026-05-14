@@ -48,9 +48,31 @@ the full doc map, use `llms.txt` at the same URL root.
 ```bash
 git clone https://github.com/garrytan/gbrain.git && cd gbrain && bun install && bun link
 gbrain init                     # local brain, ready in 2 seconds
+                                # picks a search mode (conservative / balanced / tokenmax)
 gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
+gbrain search modes             # see the active search mode + per-knob attribution
+gbrain search stats             # cache hit rate + intent mix after some real usage
 ```
+
+**v0.32.3 — named search modes.** `gbrain init` asks once which mode fits
+your workload. The cost spread depends on BOTH the mode AND your downstream
+model — 25x corner-to-corner. Per-query cost @ 10K queries/month (typical
+single-user volume; multiply by 10 for heavy / multi-user fleets):
+
+| Mode \ Downstream | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.7 (\$5/M) |
+|---|---|---|---|
+| `conservative` (~4K) | **\$40/mo** | \$120/mo | \$200/mo |
+| `balanced` (~10K) | \$100/mo | \$300/mo | \$500/mo |
+| `tokenmax` (~20K) | \$200/mo | \$600/mo | **\$1,000/mo** |
+
+Natural pairings (corner-diagonal) span ~4x at realistic single-user
+volume. Auto-suggests based on your configured `models.tier.subagent`.
+Non-TTY installs auto-pick `balanced` and print a hint pointing at
+`gbrain config set search.mode <m>`. After some real usage, run
+`gbrain search stats` for observability and `gbrain search tune` for
+data-driven recommendations. Methodology + eval results live at
+[docs/eval/SEARCH_MODE_METHODOLOGY.md](docs/eval/SEARCH_MODE_METHODOLOGY.md).
 
 **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
 postinstall hook on global installs, so schema migrations never run and the CLI
@@ -759,8 +781,10 @@ ADMIN
                                           gbrain config set models.default opus
                                           gbrain config set models.tier.deep opus
   gbrain models doctor                  1-token reachability probe for each configured
-                                        chat/expansion model. Catches `model_not_found`
-                                        before the next agent run silently degrades.
+                                        chat/expansion model + a zero-token embedding_config
+                                        probe (catches Voyage flexible-dim misconfigs before
+                                        first embed). Catches `model_not_found` before the
+                                        next agent run silently degrades.
                                         [--skip=<provider>] [--json]
   gbrain serve                          MCP server (stdio)
   gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard
