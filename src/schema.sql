@@ -424,15 +424,17 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   client_secret_expires_at BIGINT,
   token_ttl               INTEGER,
   deleted_at              TIMESTAMPTZ,
-  source_id               TEXT REFERENCES sources(id) ON DELETE SET NULL,
+  source_id               TEXT REFERENCES sources(id) ON DELETE RESTRICT,
+  federated_read          TEXT[] NOT NULL DEFAULT '{}',
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- v0.34.0 (#861, D13): source_id = OAuth client write-source scope.
--- Migration v55 adds column + FK + backfill (NULL→'default') on upgrade
--- brains; fresh installs land in post-migration shape via the inline
--- column above.
+-- v0.34.0 (#861, D13 + #876): source_id is the write-source scope;
+-- federated_read is the read-source array. Migrations v55-v60 land both
+-- columns on upgrade; fresh installs include them inline above.
 CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
   ON oauth_clients(source_id) WHERE source_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_federated_read
+  ON oauth_clients USING GIN (federated_read);
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
   token_hash   TEXT PRIMARY KEY,

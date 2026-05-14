@@ -235,4 +235,33 @@ describe('v0.34.0 source-isolation regression (#861)', () => {
     expect(sources.has('default')).toBe(true);
     expect(sources.has('src-b')).toBe(true);
   });
+
+  test('#876 federated_read empty array means no federated reads', async () => {
+    // sourceScopeOpts treats allowedSources: [] (explicit empty) as "no
+    // federated scope" and falls back to scalar sourceId. An empty array
+    // MUST NOT widen scope to "all sources" — that's the silent-widen
+    // footgun. Verify the precedence ladder is correct.
+    const { operations } = await import('../../src/core/operations.ts');
+    const searchOp = operations.find(o => o.name === 'search');
+    const ctx = {
+      engine,
+      config: { engine: 'pglite' as const },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      dryRun: false,
+      remote: true,
+      sourceId: 'default',
+      auth: {
+        token: 'test',
+        clientId: 'test',
+        scopes: ['read'],
+        sourceId: 'default',
+        allowedSources: [], // explicit empty — must NOT widen scope
+      },
+    };
+    const result = await searchOp!.handler(ctx as any, { query: 'Important context' });
+    const rows = result as Array<{ source_id?: string }>;
+    for (const r of rows) {
+      expect(r.source_id).toBe('default');
+    }
+  });
 });

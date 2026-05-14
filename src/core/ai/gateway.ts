@@ -1142,7 +1142,7 @@ async function embedMultimodalOpenAICompat(
   // OPENAI_API_KEY) both work via the same code path. Throws AIConfigError
   // when required env is missing.
   const authResult = recipe.resolveAuth
-    ? recipe.resolveAuth(cfg.env, 'embedding')
+    ? recipe.resolveAuth(cfg.env)
     : defaultResolveAuth(recipe, cfg.env, 'embedding');
   const baseUrl = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
   if (!baseUrl) {

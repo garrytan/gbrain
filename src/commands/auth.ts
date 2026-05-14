@@ -329,10 +329,14 @@ async function revokeClient(clientId: string) {
 }
 
 async function registerClient(name: string, args: string[]) {
-  if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE]'); process.exit(1); }
+  if (!name) {
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...]');
+    process.exit(1);
+  }
   const grantsIdx = args.indexOf('--grant-types');
   const scopesIdx = args.indexOf('--scopes');
   const sourceIdx = args.indexOf('--source');
+  const federatedIdx = args.indexOf('--federated-read');
   const grantTypes = grantsIdx >= 0 && args[grantsIdx + 1]
     ? args[grantsIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
     : ['client_credentials'];
@@ -341,20 +345,28 @@ async function registerClient(name: string, args: string[]) {
   // source. Defaults to 'default' to match migration v55's backfill so
   // operators upgrading without changing flags see no behavior change.
   const sourceId = sourceIdx >= 0 && args[sourceIdx + 1] ? args[sourceIdx + 1] : 'default';
+  // v0.34.0 (#876): --federated-read accepts a comma-separated source list
+  // for federated read scope. When omitted, federated_read defaults to
+  // [sourceId] (read scope == write scope, the v0.33 default).
+  const federatedRead = federatedIdx >= 0 && args[federatedIdx + 1]
+    ? args[federatedIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
+    : undefined;
 
   try {
     await withConfiguredSql(async (sql) => {
       const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
       const provider = new GBrainOAuthProvider({ sql });
       const { clientId, clientSecret } = await provider.registerClientManual(
-        name, grantTypes, scopes, [], sourceId,
+        name, grantTypes, scopes, [], sourceId, federatedRead,
       );
+      const effectiveFederated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
       console.log(`OAuth client registered: "${name}"\n`);
-      console.log(`  Client ID:     ${clientId}`);
-      console.log(`  Client Secret: ${clientSecret}\n`);
-      console.log(`  Grant types: ${grantTypes.join(', ')}`);
-      console.log(`  Scopes:      ${scopes}`);
-      console.log(`  Source:      ${sourceId}\n`);
+      console.log(`  Client ID:        ${clientId}`);
+      console.log(`  Client Secret:    ${clientSecret}\n`);
+      console.log(`  Grant types:      ${grantTypes.join(', ')}`);
+      console.log(`  Scopes:           ${scopes}`);
+      console.log(`  Write source:     ${sourceId}`);
+      console.log(`  Federated reads:  ${effectiveFederated.join(', ')}\n`);
       console.log('Save the client secret — it will not be shown again.');
       console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
     });

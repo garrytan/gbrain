@@ -194,23 +194,52 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     const secretHash = clientSecret ? hashToken(clientSecret) : null;
     const now = Math.floor(Date.now() / 1000);
 
-    // v0.34.0 (#861, D2 + D13): DCR clients get source_id='default' (matches
-    // legacy fallback). Operators who need narrower scope re-register via
-    // the CLI with `--source <id>`. Pre-v55 brain falls through to the
-    // legacy projection (no source_id column yet).
+    // v0.34.0 (#861, D2 + D13 + #876): DCR clients get source_id='default'
+    // (matches legacy fallback) and federated_read=['default'] (read scope
+    // == write scope). Operators who need narrower / wider scope rescope
+    // via the CLI later. Pre-v55/v56 brain falls through to the legacy
+    // projection (no source_id / federated_read column yet).
     try {
       await this.sql`
         INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
                                     grant_types, scope, token_endpoint_auth_method,
-                                    client_id_issued_at, source_id)
+                                    client_id_issued_at, source_id, federated_read)
         VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                 ${pgArray((client.redirect_uris || []).map(String))},
                 ${pgArray(client.grant_types || ['client_credentials'])},
                 ${client.scope || ''}, ${authMethod},
-                ${now}, ${'default'})
+                ${now}, ${'default'}, ${pgArray(['default'])})
       `;
     } catch (err) {
-      if (isUndefinedColumnError(err, 'source_id')) {
+      if (isUndefinedColumnError(err, 'federated_read')) {
+        try {
+          await this.sql`
+            INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                        grant_types, scope, token_endpoint_auth_method,
+                                        client_id_issued_at, source_id)
+            VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                    ${pgArray((client.redirect_uris || []).map(String))},
+                    ${pgArray(client.grant_types || ['client_credentials'])},
+                    ${client.scope || ''}, ${authMethod},
+                    ${now}, ${'default'})
+          `;
+        } catch (err2) {
+          if (isUndefinedColumnError(err2, 'source_id')) {
+            await this.sql`
+              INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                          grant_types, scope, token_endpoint_auth_method,
+                                          client_id_issued_at)
+              VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                      ${pgArray((client.redirect_uris || []).map(String))},
+                      ${pgArray(client.grant_types || ['client_credentials'])},
+                      ${client.scope || ''}, ${authMethod},
+                      ${now})
+            `;
+          } else {
+            throw err2;
+          }
+        }
+      } else if (isUndefinedColumnError(err, 'source_id')) {
         await this.sql`
           INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
                                       grant_types, scope, token_endpoint_auth_method,
@@ -463,21 +492,40 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     let oauthRows: Record<string, unknown>[];
     try {
       oauthRows = await this.sql`
-        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.source_id
+        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
+               c.source_id, c.federated_read
         FROM oauth_tokens t
         LEFT JOIN oauth_clients c ON c.client_id = t.client_id
         WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
       `;
     } catch (err) {
-      if (isUndefinedColumnError(err, 'source_id')) {
-        // Pre-v55 brain — source_id column not yet added. Fall through to
-        // the legacy projection so auth keeps working until apply-migrations.
-        oauthRows = await this.sql`
-          SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
-          FROM oauth_tokens t
-          LEFT JOIN oauth_clients c ON c.client_id = t.client_id
-          WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
-        `;
+      // v0.34.0: pre-v55 brain → source_id column missing. Pre-v56 brain →
+      // federated_read column missing. Both classes degrade to legacy
+      // projection so auth keeps working until the operator runs
+      // apply-migrations. Probe both column names so partial-upgrade brains
+      // (v55 applied but v56 didn't yet) also fall through cleanly.
+      if (isUndefinedColumnError(err, 'source_id') || isUndefinedColumnError(err, 'federated_read')) {
+        // Try the v55-only projection first (source_id but no federated_read).
+        try {
+          oauthRows = await this.sql`
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.source_id
+            FROM oauth_tokens t
+            LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+            WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+          `;
+        } catch (err2) {
+          if (isUndefinedColumnError(err2, 'source_id')) {
+            // Truly pre-v55: no source_id either. Pre-v0.34 projection.
+            oauthRows = await this.sql`
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
+              FROM oauth_tokens t
+              LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+              WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+            `;
+          } else {
+            throw err2;
+          }
+        }
       } else {
         throw err;
       }
@@ -492,6 +540,15 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       if (expiresAt === undefined || expiresAt < now) {
         throw new Error('Token expired');
       }
+      // v0.34.0 (#876): federated_read normalization. SELECT returns
+      // either a JS array (Postgres / PGLite text[] driver mapping) or
+      // undefined when the legacy projection ran (pre-v56 brain). Empty
+      // array vs undefined matters: empty array = explicit no-federated-
+      // read; undefined = column missing on this brain.
+      const federatedRaw = row.federated_read;
+      const allowedSources = Array.isArray(federatedRaw)
+        ? (federatedRaw as string[])
+        : undefined;
       return {
         token,
         clientId: row.client_id as string,
@@ -503,6 +560,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // Undefined when the row predates v55 or when the brain itself
         // predates v55 (fell through to the legacy projection above).
         sourceId: (row.source_id as string | null) ?? undefined,
+        // v0.34.0 (#876): federated read scope. sourceScopeOpts in
+        // operations.ts prefers this array over scalar sourceId when set
+        // and non-empty.
+        allowedSources,
       } as AuthInfo;
     }
 
@@ -651,6 +712,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     scopes: string,
     redirectUris: string[] = [],
     sourceId: string = 'default',
+    federatedRead?: string[],
   ): Promise<{ clientId: string; clientSecret: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
@@ -663,23 +725,46 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const secretHash = hashToken(clientSecret);
     const now = Math.floor(Date.now() / 1000);
 
-    // v0.34.0 (#861, D2): persist source_id alongside the registration so
-    // verifyAccessToken can populate AuthInfo.sourceId on every request.
-    // Defaults to 'default' (matches migration v55 backfill). Pre-v55
-    // brains throw a "column does not exist" error here — caught at
-    // boundary so manual registration falls back to the legacy projection.
+    // v0.34.0 (#861 + #876): persist source_id AND federated_read so
+    // verifyAccessToken can populate both AuthInfo fields. Defaults:
+    //   source_id = 'default' (matches v55 backfill)
+    //   federated_read = [source_id] when omitted (a non-federated client
+    //                    has read scope == write scope, the v0.33 default)
+    const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
     try {
       await this.sql`
         INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                    grant_types, scope, client_id_issued_at, source_id)
+                                    grant_types, scope, client_id_issued_at,
+                                    source_id, federated_read)
         VALUES (${clientId}, ${secretHash}, ${name},
-                ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now}, ${sourceId})
+                ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now},
+                ${sourceId}, ${pgArray(federated)})
       `;
     } catch (err) {
-      if (isUndefinedColumnError(err, 'source_id')) {
-        // Pre-v55 brain — source_id column doesn't exist yet. Apply the
-        // pre-v0.34 projection so registration still works until the
-        // operator runs `gbrain apply-migrations`.
+      // Pre-v55 / pre-v56 brain: column missing. Fall back through both
+      // projections so registration still works until apply-migrations.
+      if (isUndefinedColumnError(err, 'federated_read')) {
+        // v55-only brain: source_id but no federated_read.
+        try {
+          await this.sql`
+            INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                        grant_types, scope, client_id_issued_at, source_id)
+            VALUES (${clientId}, ${secretHash}, ${name},
+                    ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now}, ${sourceId})
+          `;
+        } catch (err2) {
+          if (isUndefinedColumnError(err2, 'source_id')) {
+            await this.sql`
+              INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                          grant_types, scope, client_id_issued_at)
+              VALUES (${clientId}, ${secretHash}, ${name},
+                      ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now})
+            `;
+          } else {
+            throw err2;
+          }
+        }
+      } else if (isUndefinedColumnError(err, 'source_id')) {
         await this.sql`
           INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
                                       grant_types, scope, client_id_issued_at)

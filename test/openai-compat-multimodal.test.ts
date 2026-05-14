@@ -52,10 +52,10 @@ describe('embedMultimodal — openai-compat routing (#875)', () => {
     configureLitellm();
     let capturedUrl = '';
     let capturedBody: any = null;
-    let capturedAuth: string | null = null;
+    let capturedAuth = '';
     fetchHandler = async (url, init) => {
       capturedUrl = url;
-      capturedAuth = (init.headers as Record<string, string>).Authorization ?? null;
+      capturedAuth = (init.headers as Record<string, string>).Authorization ?? '';
       capturedBody = JSON.parse(init.body as string);
       return okResponse(1024, 1);
     };
