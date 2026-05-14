@@ -30,6 +30,13 @@ export const litellmProxy: Recipe = {
       // LiteLLM's batch capacity is determined by the backend it proxies;
       // no static cap to declare here. v0.32 (#779).
       no_batch_cap: true,
+      // v0.33: multimodal embedding support. The proxy forwards to whichever
+      // backend model the user configured; we declare the touchpoint as
+      // multimodal-capable and let the user's model choice (e.g. Google's
+      // gemini-embedding-2-preview) determine whether multimodal actually
+      // works. multimodal_models is empty because this recipe has no static
+      // model list — the user supplies their model at init time.
+      supports_multimodal: true,
     },
   },
   setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',

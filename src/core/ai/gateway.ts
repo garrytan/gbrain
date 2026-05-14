@@ -1016,11 +1016,18 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
     );
   }
 
-  // Voyage-specific HTTP path. When v0.28 lands additional providers, branch
-  // on recipe.id and route to each provider's multimodal endpoint.
+  // Route based on implementation. Voyage uses its own /multimodalembeddings
+  // endpoint; openai-compatible providers (LiteLLM, Together, etc.) use the
+  // standard /embeddings endpoint with multimodal content arrays.
+  if (recipe.implementation === 'openai-compatible') {
+    return await embedMultimodalOpenAICompat(inputs, recipe, parsed.modelId, cfg);
+  }
+
+  // Voyage-specific path (existing behavior, preserved for back-compat).
   if (recipe.id !== 'voyage') {
     throw new AIConfigError(
-      `Multimodal embedding for recipe ${recipe.id} is not implemented yet (v0.27.1 ships Voyage only).`,
+      `Multimodal embedding for recipe ${recipe.id} is not implemented yet.`,
+      `Supported: openai-compatible providers (LiteLLM, etc.) and Voyage.`,
     );
   }
 
@@ -1123,6 +1130,113 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
   }
 
   return allEmbeddings;
+}
+
+/**
+ * v0.33: multimodal embedding via the standard OpenAI-compatible /embeddings
+ * endpoint. Providers like OpenRouter (via LiteLLM) accept multimodal content
+ * arrays in the `input` field — text strings and image data-URLs side by side.
+ *
+ * Request shape (OpenAI-compatible):
+ *   POST {baseURL}/embeddings
+ *   { "model": "...", "input": ["text", {"type":"image_url","image_url":{"url":"data:..."}}] }
+ *
+ * Response shape:
+ *   { "data": [{ "embedding": [0.1, ...], "index": 0 }, ...] }
+ */
+async function embedMultimodalOpenAICompat(
+  inputs: MultimodalInput[],
+  recipe: Recipe,
+  modelId: string,
+  cfg: AIGatewayConfig,
+): Promise<Float32Array[]> {
+  const auth = applyResolveAuth(recipe, cfg, 'embedding');
+  const compat = applyOpenAICompatConfig(recipe, cfg);
+  const expected = cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
+
+  // Build OpenAI-format content array: text as strings, images as data-URLs.
+  const content: Array<string | { type: string; image_url: { url: string } }> = inputs.map(input => {
+    if (input.kind === 'image_base64') {
+      return {
+        type: 'image_url' as const,
+        image_url: { url: `data:${input.mime};base64,${input.data}` },
+      };
+    }
+    return '';
+  });
+
+  const body: Record<string, unknown> = {
+    model: modelId,
+    input: content,
+  };
+
+  // Pass dimensions for Matryoshka-capable models (e.g. OpenAI text-embedding-3,
+  // Google gemini-embedding). Voyage compat uses output_dimension, handled by
+  // dimsProviderOptions. For models that don't support dims, this is a no-op.
+  const providerOpts = dimsProviderOptions(recipe.implementation, modelId, expected);
+  if (providerOpts?.openaiCompatible?.dimensions) {
+    body.dimensions = providerOpts.openaiCompatible.dimensions;
+  }
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (auth.apiKey) {
+    headers['Authorization'] = `Bearer ${auth.apiKey}`;
+  } else if (auth.headers) {
+    Object.assign(headers, auth.headers);
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${compat.baseURL}/embeddings`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`);
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    if (res.status === 401 || res.status === 403) {
+      throw new AIConfigError(
+        `${recipe.name} multimodal returned ${res.status}: ${text || 'auth failed'}.`,
+        recipe.setup_hint,
+      );
+    }
+    throw new AITransientError(
+      `${recipe.name} multimodal returned ${res.status}: ${text || 'transient error'}.`,
+    );
+  }
+
+  let parsedBody: { data?: Array<{ embedding: number[] }> };
+  try {
+    parsedBody = (await res.json()) as { data?: Array<{ embedding: number[] }> };
+  } catch (err) {
+    throw new AITransientError(
+      `${recipe.name} multimodal returned malformed JSON: ${err instanceof Error ? err.message : String(err)}.`,
+    );
+  }
+
+  if (!parsedBody.data || !Array.isArray(parsedBody.data) || parsedBody.data.length !== inputs.length) {
+    throw new AITransientError(
+      `${recipe.name} multimodal returned unexpected payload shape ` +
+      `(expected ${inputs.length} embeddings, got ${parsedBody.data?.length ?? 0}).`,
+    );
+  }
+
+  const results: Float32Array[] = [];
+  for (const row of parsedBody.data) {
+    if (!Array.isArray(row.embedding) || row.embedding.length !== expected) {
+      throw new AIConfigError(
+        `${recipe.name} multimodal returned ${row.embedding?.length ?? 0}-dim vector; expected ${expected}.`,
+        `Check embedding_dimensions config or model compatibility.`,
+      );
+    }
+    results.push(new Float32Array(row.embedding));
+  }
+
+  return results;
 }
 
 // Documentation pointer: callers must size-check before calling. Voyage caps
