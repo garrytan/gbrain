@@ -585,16 +585,20 @@ describe('v0.31.8 op-handler ctx.sourceId threading', () => {
     expect(rows[0].to_source).toBe('testsrc');
   });
 
-  test('get_links handler scopes to ctx.sourceId; back-compat cross-source view preserved (D16)', async () => {
+  test('get_links handler scopes to ctx.sourceId; default source view (v0.34 STEP 0)', async () => {
     const op = getOp('get_links');
     const scoped = await op.handler(makeCtx(engine, { sourceId: 'testsrc' }), { slug: TAG_SLUG }) as Array<{ to_slug: string }>;
-    const cross  = await op.handler(makeCtx(engine), { slug: TAG_SLUG }) as Array<{ to_slug: string }>;
-    // testsrc has the link from add_link test above. default has none.
+    const defaultCtx = await op.handler(makeCtx(engine), { slug: TAG_SLUG }) as Array<{ to_slug: string }>;
+    // testsrc has the link from add_link test above; the default-source view
+    // has none.
     expect(scoped.length).toBeGreaterThanOrEqual(1);
-    // Cross-source view sees at least the same edges (and would see default's
-    // if we'd seeded any). Under the two-branch back-compat path, this is the
-    // pre-v0.31.8 semantic — no source filter on the engine join.
-    expect(cross.length).toBeGreaterThanOrEqual(scoped.length);
+    // v0.34 STEP 0 (D4): OperationContext.sourceId is REQUIRED. makeCtx with
+    // no override falls back to 'default'. The pre-v0.34 back-compat
+    // "ctx.sourceId undefined → cross-source view" is gone by design —
+    // it's the exact cross-source-bleed bug class STEP 0 closed. Cross-
+    // source visibility is now an explicit caller decision (e.g. a sources
+    // admin running an explicit "all-sources" probe).
+    expect(defaultCtx.length).toBeLessThanOrEqual(scoped.length);
   });
 
   test('delete_page handler scopes to ctx.sourceId (soft-delete only the testsrc row)', async () => {
