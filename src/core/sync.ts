@@ -208,6 +208,19 @@ function matchesAnyGlob(path: string, patterns?: string[]): boolean {
   return patterns.some((pattern) => globToRegex(pattern).test(normalized));
 }
 
+export function matchesPathFilters(
+  path: string,
+  filters: { include?: string[]; exclude?: string[] } = {},
+): boolean {
+  if (filters.exclude && filters.exclude.length > 0 && matchesAnyGlob(path, filters.exclude)) {
+    return false;
+  }
+  if (filters.include && filters.include.length > 0) {
+    return matchesAnyGlob(path, filters.include);
+  }
+  return true;
+}
+
 /**
  * Filter a file path to determine if it should be synced to GBrain.
  * Strategy-aware: 'markdown' (default) = .md/.mdx only, 'code' = code files only, 'auto' = both.
@@ -231,8 +244,7 @@ export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
   // Skip ops/ directory
   if (path.startsWith('ops/')) return false;
 
-  if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return false;
-  if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return false;
+  if (!matchesPathFilters(path, opts)) return false;
 
   return true;
 }

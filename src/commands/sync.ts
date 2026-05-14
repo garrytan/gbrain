@@ -30,6 +30,7 @@ import { tryAcquireDbLock, SYNC_LOCK_ID } from '../core/db-lock.ts';
 import { loadStorageConfig } from '../core/storage-config.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
+import { loadCodeIndexConfig } from '../core/code-index-config.ts';
 
 export interface SyncResult {
   status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures';
@@ -76,12 +77,19 @@ function estimateSyncAllCost(sources: Array<{ local_path: string | null; config:
     let sourceTokens = 0;
     let sourceFiles = 0;
     try {
+      const codeIndexConfig = (cfg.strategy ?? 'markdown') === 'code'
+        ? loadCodeIndexConfig(src.local_path)
+        : null;
       // v0.31.2: cost preview routed through collectSyncableFiles
       // (single hardened walker; see import.ts). Previously
       // walkSyncableFiles used statSync (followed symlinks). New walker
       // uses lstat + inode-cycle + max-depth so the preview matches
       // what the real sync will actually walk.
-      const files = collectSyncableFiles(src.local_path, { strategy: cfg.strategy ?? 'markdown' });
+      const files = collectSyncableFiles(src.local_path, {
+        strategy: cfg.strategy ?? 'markdown',
+        include: codeIndexConfig?.include,
+        exclude: codeIndexConfig?.exclude,
+      });
       for (const fullPath of files) {
         try {
           const stat = statSync(fullPath);
@@ -542,6 +550,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     return result;
   }
 
+  const codeIndexConfig = opts.strategy === 'code' ? loadCodeIndexConfig(repoPath) : null;
+
   // Diff using git diff (net result, not per-commit)
   const diffOutput = git(repoPath, ['diff', '--name-status', '-M', `${lastCommit}..${headCommit}`]);
   const manifest = buildSyncManifest(diffOutput);
@@ -553,7 +563,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
 
   // Filter to syncable files (strategy-aware)
-  const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
+  const syncOpts = opts.strategy ? {
+    strategy: opts.strategy,
+    include: codeIndexConfig?.include,
+    exclude: codeIndexConfig?.exclude,
+  } : undefined;
   const filtered: SyncManifest = {
     added: manifest.added.filter(p => isSyncable(p, syncOpts)),
     modified: manifest.modified.filter(p => isSyncable(p, syncOpts)),
@@ -585,6 +599,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   const totalChanges = filtered.added.length + filtered.modified.length +
     filtered.deleted.length + filtered.renamed.length;
+
+  if (opts.strategy === 'code') {
+    console.log(
+      `Code import filters: ${codeIndexConfig?.include.length ?? 0} include globs, ` +
+      `${codeIndexConfig?.exclude.length ?? 0} exclude globs`,
+    );
+    console.log(`Found ${totalChanges} code files after filtering`);
+  }
 
   // Dry run
   if (opts.dryRun) {
@@ -1014,7 +1036,19 @@ async function performFullSync(
   // code --dry-run` always reported zero files even when ~1500 code
   // files were waiting.
   if (opts.dryRun) {
-    const allFiles = collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown' });
+    const codeIndexConfig = opts.strategy === 'code' ? loadCodeIndexConfig(repoPath) : null;
+    const allFiles = collectSyncableFiles(repoPath, {
+      strategy: opts.strategy ?? 'markdown',
+      include: codeIndexConfig?.include,
+      exclude: codeIndexConfig?.exclude,
+    });
+    if (opts.strategy === 'code') {
+      console.log(
+        `Code import filters: ${codeIndexConfig?.include.length ?? 0} include globs, ` +
+        `${codeIndexConfig?.exclude.length ?? 0} exclude globs`,
+      );
+      console.log(`Found ${allFiles.length} code files after filtering`);
+    }
     console.log(
       `Full-sync dry run (strategy=${opts.strategy ?? 'markdown'}): ` +
       `${allFiles.length} file(s) would be imported ` +

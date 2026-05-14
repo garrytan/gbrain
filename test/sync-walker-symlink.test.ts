@@ -161,4 +161,27 @@ describe('collectSyncableFiles symlink + cycle hardening', () => {
       ]);
     });
   });
+
+  test('8. code_index include/exclude filters apply before file collection', async () => {
+    await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: undefined }, () => {
+      mkdirSync(join(tmp, 'src'), { recursive: true });
+      mkdirSync(join(tmp, 'build/generated'), { recursive: true });
+      mkdirSync(join(tmp, 'keyboard/lang/en/dictionary'), { recursive: true });
+      writeFileSync(join(tmp, 'src/keep.kt'), 'class Keep\n');
+      writeFileSync(join(tmp, 'src/keep.kts'), 'println("keep")\n');
+      writeFileSync(join(tmp, 'build/generated/skip.kt'), 'class Skip\n');
+      writeFileSync(join(tmp, 'keyboard/lang/en/dictionary/skip.kt'), 'class Skip\n');
+
+      const files = collectSyncableFiles(tmp, {
+        strategy: 'code',
+        include: ['**/*.kt', '**/*.kts'],
+        exclude: ['**/build/**', 'keyboard/**/dictionary/**'],
+      });
+
+      expect(files.map(f => f.replace(tmp, '')).sort()).toEqual([
+        '/src/keep.kt',
+        '/src/keep.kts',
+      ]);
+    });
+  });
 });
