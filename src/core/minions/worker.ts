@@ -22,6 +22,33 @@ import { calculateBackoff } from './backoff.ts';
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
+import { readFileSync } from 'fs';
+
+/**
+ * Read accurate RSS from /proc/self/status (RssAnon + RssShmem).
+ *
+ * `process.memoryUsage().rss` returns VmRSS which includes file-backed mmap'd
+ * pages (e.g. git packfiles). On a 96K-page brain repo, git operations can
+ * inflate VmRSS to 7GB+ while actual heap usage is ~100MB. The kernel reclaims
+ * file-backed pages under memory pressure — they're cache, not real usage.
+ *
+ * RssAnon = anonymous pages (heap, stack, anonymous mmap). This is the memory
+ * the process actually allocated and would cause OOM if it grew unbounded.
+ * RssShmem = shared anonymous pages (IPC, tmpfs). Usually 0 for workers.
+ *
+ * Falls back to process.memoryUsage().rss on non-Linux or read errors.
+ */
+function getAccurateRss(): number {
+  try {
+    const status = readFileSync('/proc/self/status', 'utf8');
+    const anonKb = parseInt(status.match(/RssAnon:\s+(\d+)/)?.[1] ?? '0', 10);
+    const shmemKb = parseInt(status.match(/RssShmem:\s+(\d+)/)?.[1] ?? '0', 10);
+    if (anonKb > 0) return (anonKb + shmemKb) * 1024; // return bytes
+  } catch {
+    // Non-Linux or /proc unavailable
+  }
+  return process.memoryUsage().rss;
+}
 
 /** Reason payload emitted with `'unhealthy'` when self-health-check trips.
  *  CLI layer (jobs.ts:work) subscribes and decides whether to call process.exit. */
@@ -93,7 +120,7 @@ export class MinionWorker extends EventEmitter {
       maxStalledCount: opts?.maxStalledCount ?? 1,
       pollInterval: opts?.pollInterval ?? 5000,
       maxRssMb: opts?.maxRssMb ?? 0,
-      getRss: opts?.getRss ?? (() => process.memoryUsage().rss),
+      getRss: opts?.getRss ?? getAccurateRss,
       rssCheckInterval: opts?.rssCheckInterval ?? 60000,
       healthCheckInterval: opts?.healthCheckInterval ?? 60000,
       stallWarnAfterMs: opts?.stallWarnAfterMs ?? 5 * 60_000,
