@@ -47,6 +47,10 @@ test/fixtures/pglite-snapshot.version
 .omc/
 
 # Launchd log outputs (kos-patrol / enrich-sweep / notion-poller)
+# Plus rotated *.archive.gz siblings so manual log rotation stays out of git.
 skills/kos-jarvis/kos-patrol/patrol.std*.log
+skills/kos-jarvis/kos-patrol/patrol.std*.log.*.archive.gz
 skills/kos-jarvis/enrich-sweep/sweep.std*.log
+skills/kos-jarvis/enrich-sweep/sweep.std*.log.*.archive.gz
 workers/notion-poller/poller.std*.log
+workers/notion-poller/poller.std*.log.*.archive.gz

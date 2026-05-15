@@ -667,17 +667,58 @@ doesn't provide. Re-run inside the repo with `bun test --bail
 
 **Scope**: 15-30 min, may surface fork-side env mismatch.
 
-### [ ] ai.gateway "google recipe missing max_batch_tokens" NOTICE (added 2026-05-15)
+### [x] ai.gateway "google recipe missing max_batch_tokens" NOTICE — DONE 2026-05-15 (fork-local + upstream PR pending)
 
-Every `gbrain query` / `kos-compat-api` request prints
-`[ai.gateway] recipe "google" declares an embedding touchpoint without
-max_batch_tokens; recursion is the only safety net for batch caps`.
-This is an upstream recipe-definition gap (not fork's), but the noise
-clutters logs and recursion-as-fallback is fragile. Worth filing
-upstream and/or providing the knob in our fork-side recipe override
-(if we even have one — check first).
+`src/core/ai/recipes/google.ts` now declares `max_batch_tokens: 20_000`
++ `chars_per_token: 2` (CJK-aware density on mixed Notion corpora);
+`safety_factor` left at gateway default 0.8 → pre-split at ~8 000
+chars/batch. Manual `kos-compat-api /ingest` smoke confirmed the
+warning no longer surfaces and embedding round-trips at 0.99+ cosine
+on the new chunk. 34/34 `recipes-contract` + `gateway` tests pass.
 
-**Scope**: 20 min to locate recipe def + ~50 LoC upstream PR.
+Fork-local patch doc at
+[`docs/UPSTREAM-PATCHES/v034-google-recipe-max-batch-tokens.md`](../../docs/UPSTREAM-PATCHES/v034-google-recipe-max-batch-tokens.md).
+Upstream PR `upstream-fix/google-recipe-max-batch-tokens` to be cut
+from `upstream/master` (HEAD `24881f60` v0.34.4) next; on merge the
+next sync auto-drops the local diff (additive field change, clean
+text merge).
+
+**Diagnostic correction** — the original P2 framing suggested this
+was just log noise. A 2026-05-15 morning probe initially read the
+notion-poller stderr's 117 394 historical `ingest 500` lines as an
+active fire; ingest_log + a manual `/ingest` probe disproved that.
+The actual 500s in stderr date from the v0.21 PGLite-lock-deadlock
+era (Path 3 root-caused 2026-04-29). 38 MB stderr rotated to
+`.archive.gz` and `.gitignore` extended so future rotations stay
+out of git.
+
+### [ ] (facts:absorb) Sub-process facts:absorb writer has no DB connection (added 2026-05-15)
+
+While verifying the max_batch fix, every `kos-compat-api /ingest`
+response output still carries:
+`[facts:absorb] failed to log gateway_error for sources/<slug>: No
+database connection: connect() has not been called. Fix: Run gbrain
+init --supabase or gbrain init --url <connection_string>`.
+
+Source: `src/core/facts/absorb-log.ts:76`. The writer runs inside a
+`gbrain sync` sub-process spawned by `kos-compat-api`; that
+sub-process inherits env but `BrainDb.connect()` is never called on
+its path. Ingest itself succeeds (page lands, chunks embed, sync
+returns 0), so this is **log-only** today — but it means
+`ingest_log.source_type='facts:absorb'` rows for `gateway_error`
+events from compat-api never land. `gbrain doctor`'s
+facts_extraction_health check (`src/commands/doctor.ts:1894+`) reads
+from that table, so detection windows are blind to compat-api
+embedding errors.
+
+Either (a) ensure the sub-process initializes the DB connection
+before facts:absorb fires, or (b) treat compat-api spawned sync as a
+"detached" context and skip facts:absorb logging there with an
+explicit guard. Filed for upstream-side decision — fork can't fix it
+without `src/core/facts/` edits.
+
+**Scope**: 30-60 min to locate the init gap + decide (a) vs (b);
+upstream PR after.
 
 ---
 

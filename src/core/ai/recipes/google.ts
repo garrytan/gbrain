@@ -14,6 +14,13 @@ export const google: Recipe = {
       models: ['gemini-embedding-001'],
       default_dims: 768,
       dims_options: [768, 1536, 3072],
+      // Per-text cap is 2048 tokens; per-request total ~20k tokens before
+      // Google starts 429-ing. chars_per_token: 2 reflects CJK density on
+      // mixed Notion/source corpora (English averages 4, CJK closer to 1.5);
+      // safety_factor stays at the gateway default (0.8) so pre-split lands
+      // at ~8 000 chars per batch — well under Gemini's effective cap.
+      max_batch_tokens: 20_000,
+      chars_per_token: 2,
       cost_per_1m_tokens_usd: 0.15,
       price_last_verified: '2026-04-20',
     },
