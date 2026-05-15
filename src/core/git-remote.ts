@@ -26,10 +26,14 @@ import { isInternalUrl } from './url-safety.ts';
  * - protocol.ext.allow=never: no external helpers (`git-remote-foo`)
  * - --no-recurse-submodules: .gitmodules cannot become a second fetch surface
  */
-export const GIT_SSRF_FLAGS = [
+export const GIT_SSRF_CONFIG_FLAGS = [
   '-c', 'http.followRedirects=false',
   '-c', 'protocol.file.allow=never',
   '-c', 'protocol.ext.allow=never',
+] as const;
+
+export const GIT_SSRF_FLAGS = [
+  ...GIT_SSRF_CONFIG_FLAGS,
   '--no-recurse-submodules',
 ] as const;
 
@@ -179,7 +183,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
 
 /** Pull a repo with --ff-only and the same SSRF-defensive flags as cloneRepo. */
 export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): void {
-  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', '--ff-only'];
+  const args: string[] = ['-C', repoPath, ...GIT_SSRF_CONFIG_FLAGS, 'pull', '--ff-only', '--no-recurse-submodules'];
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
