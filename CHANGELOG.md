@@ -14,6 +14,8 @@ All notable changes to GBrain will be documented in this file.
 - Added `gbrain frontmatter slug <path>` and `gbrain frontmatter abi-version`
   subcommands so external producers can source slug computation from one
   place instead of porting `slugifyPath()`. See `docs/guides/producer-tools.md`.
+- Added `gbrain extract-links` CLI for producer-side edge promotion,
+  bypassing sync's git-diff gate.
 
 ## [0.32.0] - 2026-05-10
 

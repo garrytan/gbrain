@@ -232,3 +232,97 @@ unavailable.
 If you see a high count of `icloud_placeholder_skipped` events, open Finder
 and select "Download Now" on the relevant folder to materialize the files
 before running linkify again.
+
+---
+
+## extract-links — promoting wikilinks into graph edges
+
+`gbrain extract-links` is the final step in the producer pipeline. It reads
+wikilinks from a markdown file (or a batch of files) and calls `engine.addLink`
+to promote those links into the graph database, bypassing sync's git-diff gate.
+This means edges are available immediately after `extract-links` runs — you
+do not have to wait for the next sync cycle.
+
+### The producer pipeline
+
+```
+produce → stamp → linkify → extract-links
+```
+
+Each step's contract:
+
+| Step | Responsibility |
+|------|---------------|
+| `produce` | Writes the markdown file. This is the caller's domain — gbrain has no opinion on how the file is authored. |
+| `stamp` | Populates frontmatter via `gbrain frontmatter --file/--dir`. Sets `slug`, `updated_at`, and related fields. |
+| `linkify` | Auto-links bare person mentions into Obsidian wikilinks (`[[people/alice-smith]]`). Rewrites the file in place. |
+| `extract-links` | Reads the (now-linkified) wikilinks and promotes them into graph edges via `engine.addLink`. |
+
+**Order matters.** Run `linkify` first; `extract-links` second. `extract-links`
+reads the `[[people/...]]` wikilinks that `linkify` just inserted. Running
+them in the wrong order means the new person links are not yet present in the
+file when `extract-links` reads it.
+
+### CLI surface
+
+```bash
+# Extract edges from a single file.
+gbrain extract-links --path <file>
+
+# Batch mode — process all matching files under <dir> modified since <ts>.
+gbrain extract-links --dir <dir> --since <ISO8601> [--filename-prefix <prefix>]
+
+# Dry-run — emit would_create_edge diagnostics, no DB writes.
+gbrain extract-links --path <file> --dry-run
+gbrain extract-links --dir <dir> --dry-run
+
+# Diagnostics format (same modes as linkify).
+gbrain extract-links --path <file> --json-diagnostics
+gbrain extract-links --path <file> --verbose-diagnostics
+
+# ABI probe.
+gbrain extract-links abi-version   # emits: 1
+
+# Help.
+gbrain extract-links --help
+```
+
+`--filename-prefix` restricts the batch to files whose basename starts with the
+given string (e.g. `2026-05-`).
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 2 | Usage error (bad flags, missing arguments) |
+| 3 | Engine unavailable — gbrain cannot reach its database; retry later |
+
+### Additive-only contract
+
+`extract-links` calls `engine.addLink`, which is implemented as an upsert.
+Running `extract-links` twice on the same file produces no duplicate edges.
+Producers can safely call it on every run without tracking whether they have
+already processed a given file.
+
+### Producer integration example (bash)
+
+```bash
+# Full producer pipeline — run linkify FIRST, extract-links SECOND.
+gbrain linkify --in-place "$BRIEFING_PATH" 2>>"$LOG"
+case $? in
+  0) ;;
+  3) echo "[$(date)] linkify: engine unavailable" >>"$LOG" ;;
+  *) echo "[$(date)] linkify: failed" >>"$LOG" ;;
+esac
+
+gbrain extract-links --path "$BRIEFING_PATH" 2>>"$LOG"
+case $? in
+  0) ;;
+  3) echo "[$(date)] extract-links: engine unavailable" >>"$LOG" ;;
+  *) echo "[$(date)] extract-links: failed" >>"$LOG" ;;
+esac
+```
+
+The `2>>"$LOG"` redirect captures stderr diagnostics into the log without
+affecting `$?`. This is the same pattern recommended for `linkify` above.
