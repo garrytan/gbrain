@@ -79,8 +79,9 @@ describe('extractLinksForSlugs on non-canonical filenames', () => {
 });
 
 describe('extractForSlugs on non-canonical filenames', () => {
-  // Reuses the same fixture brain created by the outer describe's beforeAll.
-  // We use a fresh PGLiteEngine per describe so FK seeds don't conflict.
+  // Uses an independent fixture brain in a separate tmpDir (the outer describe's
+  // PGLiteEngine cannot be reused — extractForSlugs needs its own engine instance
+  // via runExtractCore). We use a fresh PGLiteEngine per describe so FK seeds don't conflict.
   let tmpDir2: string;
   let engine2: PGLiteEngine;
 
@@ -136,6 +137,6 @@ describe('extractForSlugs on non-canonical filenames', () => {
       jsonMode: true,
       slugs: ['briefings/webex-digest-foo'],
     });
-    expect(result.links_created).toBeGreaterThanOrEqual(1);
+    expect(result.links_created).toBe(1);
   });
 });
