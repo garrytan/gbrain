@@ -31,6 +31,10 @@ import {
   QUERY_DESCRIPTION,
   SEARCH_DESCRIPTION,
   FIND_CONTRADICTIONS_DESCRIPTION,
+  CODE_CALLERS_DESCRIPTION,
+  CODE_CALLEES_DESCRIPTION,
+  CODE_DEF_DESCRIPTION,
+  CODE_REFS_DESCRIPTION,
 } from './operations-descriptions.ts';
 
 // --- Types ---
@@ -1056,6 +1060,11 @@ const query: Operation = {
       description:
         "v0.29.1 — filter to effective_date <= this. Same format as `since`. Replaces deprecated `beforeDate`. YYYY-MM-DD lands at end-of-day.",
     },
+    source_id: {
+      type: 'string',
+      description:
+        "v0.34: scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile). Pass '__all__' to force cross-source search in multi-source brains.",
+    },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
@@ -1088,7 +1097,20 @@ const query: Operation = {
     // v0.25.0 — capture meta side-channel. hybridSearch's return contract
     // stays SearchResult[] (Cathedral II callers depend on that); meta
     // arrives via callback so eval capture can record what actually ran.
+    //
+    // v0.34 (Codex finding #2): thread ctx.sourceId so multi-source brains
+    // get source-scoped retrieval. Explicit `source_id` param wins over
+    // ctx.sourceId for callers that want to override (per-call multi-source
+    // search). When the param is the literal '__all__', force-allow
+    // cross-source mode (matches SearchOpts.sourceId contract).
     let capturedMeta: HybridSearchMeta | null = null;
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const resolvedSourceId =
+      sourceIdParam !== undefined
+        ? sourceIdParam === '__all__'
+          ? undefined
+          : sourceIdParam
+        : ctx.sourceId;
     // v0.32.x search-lite: route the query op through hybridSearchCached so
     // semantic cache + token budget + intent weighting fire automatically.
     // Plain hybridSearch remains the bare API for callers that opt out.
@@ -1102,6 +1124,7 @@ const query: Operation = {
       symbolKind: (p.symbol_kind as string) || undefined,
       nearSymbol: (p.near_symbol as string) || undefined,
       walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
+      sourceId: resolvedSourceId,
       // v0.29.1 — agent-explicit recency + salience. Omitted = heuristic defaults.
       salience: p.salience as 'off' | 'on' | 'strong' | undefined,
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
@@ -2791,6 +2814,122 @@ function parseSinceParam(raw: unknown): Date | null {
   return null;
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// v0.34 Cathedral III — code-intelligence ops (MCP-exposed).
+//
+// Pre-v0.34 code-callers / code-callees / code-def / code-refs lived only in
+// the CLI_ONLY set at cli.ts:30 — agents calling gbrain via MCP couldn't reach
+// them and fell through to text search. These wrappers expose the existing
+// engine + library functions to the MCP surface with resolver-grade
+// descriptions (operations-descriptions.ts) so agents route to them
+// automatically during plan-mode.
+//
+// All four are scope:'read'. Source-scoped via ctx.sourceId when set.
+// Both `source_id` and `all_sources` are params so per-call overrides work.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const code_callers: Operation = {
+  name: 'code_callers',
+  description: CODE_CALLERS_DESCRIPTION,
+  params: {
+    symbol: { type: 'string', required: true, description: 'Symbol to find callers of (bare or qualified name).' },
+    limit: { type: 'number', description: 'Max edges returned. Default 100.' },
+    source_id: { type: 'string', description: "Scope to a single source. Defaults to ctx.sourceId; pass '__all__' to force cross-source." },
+    all_sources: { type: 'boolean', description: 'Force cross-source search (equivalent to source_id=__all__).' },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const symbol = p.symbol as string;
+    const limit = (p.limit as number) ?? 100;
+    const allSourcesParam = p.all_sources === true;
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const allSources = allSourcesParam || sourceIdParam === '__all__';
+    const sourceId = allSources
+      ? undefined
+      : sourceIdParam !== undefined
+        ? sourceIdParam
+        : ctx.sourceId;
+    const edges = await ctx.engine.getCallersOf(symbol, {
+      limit,
+      allSources,
+      sourceId,
+    });
+    return { symbol, count: edges.length, callers: edges };
+  },
+  cliHints: { name: 'code_callers', hidden: true },
+};
+
+const code_callees: Operation = {
+  name: 'code_callees',
+  description: CODE_CALLEES_DESCRIPTION,
+  params: {
+    symbol: { type: 'string', required: true, description: 'Symbol to find callees of (bare or qualified name).' },
+    limit: { type: 'number', description: 'Max edges returned. Default 100.' },
+    source_id: { type: 'string', description: "Scope to a single source. Defaults to ctx.sourceId; pass '__all__' to force cross-source." },
+    all_sources: { type: 'boolean', description: 'Force cross-source search.' },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const symbol = p.symbol as string;
+    const limit = (p.limit as number) ?? 100;
+    const allSourcesParam = p.all_sources === true;
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const allSources = allSourcesParam || sourceIdParam === '__all__';
+    const sourceId = allSources
+      ? undefined
+      : sourceIdParam !== undefined
+        ? sourceIdParam
+        : ctx.sourceId;
+    const edges = await ctx.engine.getCalleesOf(symbol, {
+      limit,
+      allSources,
+      sourceId,
+    });
+    return { symbol, count: edges.length, callees: edges };
+  },
+  cliHints: { name: 'code_callees', hidden: true },
+};
+
+const code_def: Operation = {
+  name: 'code_def',
+  description: CODE_DEF_DESCRIPTION,
+  params: {
+    symbol: { type: 'string', required: true, description: 'Symbol name (bare token; e.g., parseMarkdown, BrainEngine).' },
+    limit: { type: 'number', description: 'Max definition sites returned. Default 20.' },
+    lang: { type: 'string', description: "Filter by content_chunks.language (e.g. 'typescript', 'python')." },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const { findCodeDef } = await import('../commands/code-def.ts');
+    const defs = await findCodeDef(ctx.engine, p.symbol as string, {
+      limit: (p.limit as number) ?? 20,
+      language: (p.lang as string) || undefined,
+    });
+    return { symbol: p.symbol as string, count: defs.length, defs };
+  },
+  cliHints: { name: 'code_def', hidden: true },
+};
+
+const code_refs: Operation = {
+  name: 'code_refs',
+  description: CODE_REFS_DESCRIPTION,
+  params: {
+    symbol: { type: 'string', required: true, description: 'Symbol to find references to.' },
+    limit: { type: 'number', description: 'Max references returned. Default 50.' },
+    lang: { type: 'string', description: "Filter by content_chunks.language." },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const { findCodeRefs } = await import('../commands/code-refs.ts');
+    const refs = await findCodeRefs(ctx.engine, p.symbol as string, {
+      limit: (p.limit as number) ?? 50,
+      language: (p.lang as string) || undefined,
+    });
+    return { symbol: p.symbol as string, count: refs.length, refs };
+  },
+  cliHints: { name: 'code_refs', hidden: true },
+};
+
 // --- Exports ---
 
 export const operations: Operation[] = [
@@ -2839,6 +2978,8 @@ export const operations: Operation[] = [
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing
   find_experts,
+  // v0.33.3: Cathedral III code-intelligence (MCP-exposed; were CLI_ONLY pre-v0.33.3)
+  code_callers, code_callees, code_def, code_refs,
 ];
 
 export const operationsByName = Object.fromEntries(

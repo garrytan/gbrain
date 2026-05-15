@@ -1520,6 +1520,36 @@ Never merge external PRs directly into master. Instead, use the "fix wave" workf
 - Never auto-merge PRs that remove YC references or "neutralize" the founder perspective.
 - Preserve contributor attribution in commit messages.
 
+## Checking out PRs from garrytan-agents
+
+`garrytan-agents` is the AI-authored PR account and is NOT a collaborator on
+this repo. Its PRs live in a fork, so GitHub Actions triggered by
+`pull_request` events on those PRs do not receive base-repo secrets. Any CI
+job that needs `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or similar will fail
+with empty-env auth errors, regardless of what's set on the base repo. This
+is a GitHub security default, not a config bug.
+
+When the user says "check out <PR link>" and the PR is from `garrytan-agents`
+(or any other non-collaborator fork), move the branch into the base repo
+before running CI:
+
+1. `gh pr checkout <N>` — pull down the fork's branch. Note the PR number and
+   head branch name (`gh pr view <N> --json headRefName --jq .headRefName`).
+2. `git push origin HEAD:<branch-name>` — push the same branch to the base
+   repo (origin points at `garrytan/gbrain`, not the fork). This is the move
+   that gives CI access to secrets.
+3. `gh pr close <N> --comment "moving to base-repo branch for secret access"`
+   — close the fork PR so the queue stays clean.
+4. `gh pr create --base master --head <branch-name>` — open the replacement
+   PR from the base-repo branch. **Preserve the original PR's title and body
+   verbatim** (`gh pr view <N> --json title,body`); contributor attribution
+   moves to a `Co-Authored-By:` trailer if needed.
+
+Why this over alternatives: adding `garrytan-agents` as a collaborator, or
+flipping the repo-wide "send secrets to fork PRs" toggle, both broaden
+secret distribution to every fork PR from that account or any fork. Moving
+the branch keeps secret scope tight to just the one PR being shipped.
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill
