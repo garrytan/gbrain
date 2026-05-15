@@ -3028,6 +3028,221 @@ the manual oauth_clients bootstrap.
 
 ---
 
+## 6.25 v0.34.4 follow-up session (2026-05-15)
+
+Same-day follow-up to the v0.34.4 sync (§6.24). Goal: close the 3 P1
+evaluations queued in `TODO.md` plus a misframed P2 about a "fire" that
+turned out not to be one. Net session output: 7 commits on fork master
++ 2 upstream PRs filed; **8 TODO items closed, 1 new latent bug
+filed**.
+
+### Diagnostic correction (the non-fire)
+
+Session opened with a triage misread: `workers/notion-poller/poller.
+stderr.log` showed 117 394 `ingest failed: ingest 500` lines, mostly
+recent-looking. Initial framing was "P0 fire — every Notion ingest is
+500-ing on a `[ai.gateway] recipe \"google\" missing max_batch_tokens`
+warning". The file is a never-rotated 38 MB accumulated log;
+`ingest_log` table showed 235 successful `git_sync` events in the last
+24 h and 0 failures; the most-recent 500 in stderr was from
+2026-05-15T00:00 — and a manual `kos-compat-api /ingest` probe
+succeeded end-to-end (HTTP 200, embedded: true). The 500s in stderr
+dated from the v0.21 PGLite-lock-deadlock era — Path 3 closed that
+root cause on 2026-04-29 (§6.18). Mitigation: rotated the 38 MB
+stderr to `.archive.gz` and extended `.gitignore` so future rotations
+stay out of git.
+
+Lesson recorded for future triage: when a log file accumulates
+without rotation, recency of *content* in the file does not imply
+recency of the *writes* — check `stat -f%Sm` plus DB-side state.
+
+### Upstream PRs filed
+
+Both follow the PR #627 "branch from upstream/master, no fork-local
+content" pattern.
+
+- **[garrytan/gbrain#1016](https://github.com/garrytan/gbrain/pull/1016)** —
+  declare `max_batch_tokens` on the google embedding recipe.
+  `src/core/ai/recipes/google.ts` was the only first-party embedding
+  recipe still missing the field after v0.32 #779 added the
+  once-per-process startup warning. Three field additions
+  (`max_batch_tokens: 20_000`, `chars_per_token: 2`, `safety_factor`
+  default 0.8 → pre-split at ~8 000 chars/batch). Two regression
+  tests that pinned google as the canary "real provider with no cap
+  declared" (`no-batch-cap-suppression.serial.test.ts`,
+  `adaptive-embed-batch.test.ts`) updated to assert the stronger
+  invariant: no first-party recipe warns. `bun test test/ai/` 144/144
+  green. Fork master carries the same edits as a fork-local patch
+  pending merge (`af2a8064` + `0232e425` test backport).
+
+- **[garrytan/gbrain#1017](https://github.com/garrytan/gbrain/pull/1017)** —
+  extend `applyForwardReferenceBootstrap` to cover the v0.34.1
+  `oauth_clients.{source_id, federated_read}` columns. Same shape as
+  the prior PR #627 + upstream fixwave #682+#741 (mcp_request_log
+  v0.26.3 columns): probe `information_schema` for the table + each
+  column, ALTER TABLE ADD COLUMN IF NOT EXISTS when the table exists
+  but the columns don't. Mirrored across PostgresEngine and
+  PGLiteEngine. Field repro is the §6.24 manual ALTER block.
+  `REQUIRED_BOOTSTRAP_COVERAGE` gains two entries.
+  `bun test test/schema-bootstrap-coverage.test.ts test/bootstrap.
+  test.ts` 11/11 green (50 expect() calls vs 48 pre-patch).
+
+Both PRs cut from `/private/tmp/gbrain-upstream-prs` worktree at
+`upstream/master` HEAD `24881f60`. Branches pushed to
+`ChenyqThu/jarvis-knowledge-os-v2` origin and PRs opened against
+`garrytan/gbrain` master.
+
+### CJK keyword-only eval (15-query probe)
+
+Tightens the fork's operating-assumption wording. Probed `gbrain
+search` (tsvector keyword-only path) at schema v66:
+
+| Pattern | Sample | Result |
+|---|---|---|
+| English single/multi word | `Lucien`, `Omada`, `Notion`, `Postgres` | 10-18 hits, 0.3-0.5 scores |
+| Mixed CJK+space | `AI 网关` | 8 hits via Latin fragment, low CJK weight |
+| 2-3 char CJK | `知识管理`, `知识库` | 2-3 hits via body-fragment containment |
+| 4-char CJK compound | `向量检索`, `嵌入模型`, `云控制器`, `万兆网卡` | **0 hits** every time |
+| 2-char CJK names | `拉勾`, `猫人` | 0 hits |
+
+v0.32.7's CJK fixes landed downstream of where they would have helped
+pure-keyword retrieval here. tsvector `'simple'` config still treats
+Han runs as a single non-tokenizable blob; matches only fire when the
+query string is a literal substring of the body (weak scoring even
+then). **The 4-char compound CJK shape — the modal operator query on
+this brain — still goes 0/N on keyword.** Vector path remains the
+only reliable retrieval for compound CJK queries.
+
+CLAUDE.md updated to tighten the prior "vector-only for CJK" claim
+to "compound CJK (4+ Han chars without whitespace) requires vector".
+No routing behavior change; the hybrid budget-save the original probe
+was scoping is still not viable on the modal workload.
+
+### Overlap-matrix verdict (no retirements)
+
+Compared the three upstream features v0.31.6 / v0.32.2 / v0.33.0
+shipped between v0.31.2 and v0.34.4 against the three fork pieces the
+sync TODO flagged as "potentially redundant":
+
+| Upstream | Real surface | Fork piece | Verdict |
+|---|---|---|---|
+| v0.31.6 extract-facts-during-sync | per-page real-time fact extraction | concept-synthesis (never wired) | Different problem domains. concept-synthesis was cross-page multi-month recurrence clustering. |
+| v0.32.2 facts-fence | `## Facts` intra-page system-of-record | digest-to-memory writes `[knowledge-os]` summary to OpenClaw MEMORY.md | Different surfaces; intra-brain vs cross-system. |
+| v0.33.0 "morning pulse" | `gbrain recall --pulse / --since-last-run / --pending` (PR title misleading; queries facts table for time-windowed recall) | kos-patrol daily 08:07 cron audit | Same cadence, totally different output shape. |
+
+**No retirements warranted.** M2-A.pilot decision (b) — keep
+concept-synthesis ad-hoc, don't wire — survives the re-look. Side
+benefit identified: upstream's `extract-facts-during-sync` would give
+the fork's brain a real-time per-page fact index for free, but is
+currently blocked here by the same sub-process DB-connection gap as
+the `[facts:absorb]` latent bug filed below.
+
+### M2-B verdict: don't touch kos-compat-api
+
+Sized the "translator shim" hypothesis (M2-B option a) against actual
+surfaces. Upstream `serve-http.ts` is 1116 LoC (OAuth 2.1 + MCP
+JSON-RPC + admin dashboard); fork `kos-compat-api.ts` is 661 LoC
+(bearer auth, KOS-v1 contract). Of the 5 endpoints, only `/query` +
+`/status` have direct MCP equivalents (~110 LoC). `/ingest` (250 LoC,
+writes filesystem + git commit + spawns sync) and `/digest` (reads
+kos-patrol JSON output) are inherently fork-side; `/health` is
+trivial. A translator adds back ~80-150 LoC. **Realistic net change:
+0 to -50 LoC**, in exchange for one extra subprocess + OAuth-client
+management + second port + cross-process MTTR cost. Not worth it.
+Option (b) — migrate external systems — rejected because Notion
+Knowledge Agent and OpenClaw feishu cron are hard-coded against
+`kos.chenge.ink/<endpoint>`.
+
+### M2-C verdict: archive-crawler covers Phase 5 Email only
+
+Read `skills/archive-crawler/SKILL.md` source-format enum: `local |
+dropbox | backblaze | gmail-takeout | mbox | pst`. Calendar is NOT
+in the enum (it's a stream of events, not an archive of files).
+
+- **Phase 5 Email** → upstream-driven. `.mbox` and `gmail-takeout`
+  are first-class. When the work moves to active, "build fork-local
+  email skill" reduces to `gbrain.yml` config + path allow-list +
+  per-mbox manifest review. ~3-4 days off the original 1-week fork
+  plan; 0 new fork skill dirs.
+- **Phase 4 Calendar** → stays fork-local. Needs OAuth Google
+  Calendar client (workers/calendar-poller/) or `.ics` parse step.
+
+Both phases still gate on the original
+[`docs/JARVIS-NEXT-STEPS.md`](JARVIS-NEXT-STEPS.md) Phase 1-3
+finishing first; M2-C implementation is out of milestone scope.
+
+### Mechanical cleanup also closed
+
+- **48 chunker_version legacy sync_failures ack'd**. `gbrain sync
+  --skip-failed --no-pull` once on the host:
+  `Acknowledged 48 pre-existing failure(s)`.
+  `~/.gbrain/sync-failures.jsonl` open=48 → 0. Schema is at v66 now
+  so the failure mode (v54 migration didn't add `chunker_version`
+  column to the v45 brain in time) can't reproduce.
+
+- **bun test 30-min hang root-caused**. `bun test --bail` ran 616
+  tests across 37 files in 45 s before bailing on
+  `test/think-pipeline.serial.test.ts`. The `beforeAll` hook (`new
+  PGLiteEngine() + connect({}) + initSchema() + seed`) exceeded
+  bun's default 5 s hook timeout (6 538 ms observed). Same family as
+  PGLite #223 cold-start hang documented under §6.20; env-coupled,
+  not a code defect. Practical mitigation: `bun test --bail` or
+  per-file invocation. `--reporter=verbose` (recommended in the
+  original TODO) doesn't exist in bun 1.3 — accepted values are
+  `junit` and `dots`.
+
+- **kos-lint retire already shipped**. Probing for the formal pilot
+  found it had landed 2026-05-10 (`9e3cd0f`); kos-patrol Phase 2 is
+  now a no-op with a docblock mapping each of the 6 original checks
+  to its replacement. Checks 5+6 (weak-links + evidence-gap)
+  remained unrehomed; verdict is to defer the ~150 LoC `kos-quality`
+  shim until a brain-quality question arises that those checks
+  uniquely answer.
+
+### New latent bug filed
+
+While verifying the max_batch_tokens fix, every `kos-compat-api
+/ingest` response output still carries:
+
+```
+[facts:absorb] failed to log gateway_error for sources/<slug>:
+No database connection: connect() has not been called.
+```
+
+Source: `src/core/facts/absorb-log.ts:76`. The writer runs inside a
+`gbrain sync` sub-process spawned by `kos-compat-api`; that
+sub-process inherits env but `BrainDb.connect()` is never called on
+its path. **Log-only today** (page lands, chunks embed, sync returns
+0), but it means `ingest_log.source_type='facts:absorb'` rows for
+`gateway_error` events from compat-api never land, so
+`gbrain doctor`'s `facts_extraction_health` check
+(`src/commands/doctor.ts:1894+`) is blind to compat-api embedding
+errors. Either (a) ensure the sub-process initializes the DB
+connection before facts:absorb fires, or (b) treat compat-api spawned
+sync as a "detached" context and skip facts:absorb logging there with
+an explicit guard. Filed for upstream-side decision; fork can't fix
+without `src/core/facts/` edits.
+
+### Session commit set
+
+```
+bedd1e42 docs(todo): close #8 M2-C
+99acb2f4 docs(todo): close #7 M2-B
+352b98ba docs(todo): close #6 kos-lint
+9a9f7d5a docs(todo): close #5 overlap-matrix
+21223328 docs(todo): close #3 CJK + #4 sync_failures + bun-test
+0232e425 test(ai): backport upstream PR-1016 test edits
+af2a8064 fix(ai-gateway): declare max_batch_tokens on google
+```
+
+Net fork-master delta: 7 commits, mostly TODO-state hygiene, plus
+the google.ts hardening and its test backport. Upstream PRs #1016 +
+#1017 await garrytan review. **Active fork dirs unchanged** — no
+retirements from this session. End-to-end session wall-time: ~3 h
+including the diagnostic-correction detour and 8 TODO writeups.
+
+---
+
 ## 7. Known gaps (see `skills/kos-jarvis/TODO.md` for live tracker)
 
 - **P0 resolved 2026-04-22**: notion-poller PGLite deadlock — Path B landed in v0.17 sync (see §6.7). `scripts/minions-wrap/notion-poller.sh` deleted; plist now direct-bun invocation of `workers/notion-poller/run.ts`. First live cycle: 78 s / 9 pages ingested / 0 lock timeouts.

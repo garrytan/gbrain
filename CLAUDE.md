@@ -34,10 +34,16 @@ working on this codebase, before touching anything else:
   `GBRAIN_EMBEDDING_DIMENSIONS=1536`. **Don't reintroduce
   `OPENAI_BASE_URL` or `OPENAI_API_KEY=stub` to plists** — it would
   silently route around the native gateway.
-- **Chinese-first knowledge base.** Pure tsvector keyword search has no
-  CJK tokenizer. Always ensure vector search is live (kos-compat-api
-  reachable, `GOOGLE_GENERATIVE_AI_API_KEY` env set) before declaring
-  queries broken.
+- **Chinese-first knowledge base.** Postgres tsvector has no CJK
+  tokenizer, so **compound CJK queries (4+ Han characters without
+  whitespace)** cannot be served by keyword search and require the
+  vector path. English queries and 2-3 char standalone CJK terms
+  match fine via body-fragment containment (see §6.25 for the
+  2026-05-15 15-query probe). Operationally: always ensure vector
+  search is live (kos-compat-api reachable,
+  `GOOGLE_GENERATIVE_AI_API_KEY` env set) before declaring queries
+  broken — the modal operator query on this brain is a compound CJK
+  phrase that depends on it.
 - **9 KOS page kinds coexist with GBrain's 20-dir MECE.** KOS `kind`
   frontmatter (source/entity/concept/project/decision/synthesis/comparison/
   protocol/timeline) is preserved on every page; it drives kos-jarvis
