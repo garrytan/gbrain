@@ -18,6 +18,7 @@ import { readFileSync, statSync, existsSync } from 'node:fs';
 import { dirname, basename, join, isAbsolute, relative, resolve, sep } from 'node:path';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
+import type { BrainEngine } from '../core/engine.ts';
 import { pathToSlug } from '../core/sync.ts';
 import { enumerateFilteredSince } from '../core/file-enum.ts';
 import {
@@ -244,7 +245,17 @@ function diagnosticToLine(d: ExtractLinksDiagnostic): string {
 // Main handler
 // ---------------------------------------------------------------------------
 
-export async function runExtractLinks(args: string[]): Promise<number> {
+/**
+ * Injectable options for runExtractLinks. When `engine` is provided, the
+ * config/createEngine/connect path is skipped (used by integration tests).
+ * When `repoPath` is provided, getDefaultSourcePath is also skipped.
+ */
+export interface RunExtractLinksOpts {
+  engine?: BrainEngine;
+  repoPath?: string;
+}
+
+export async function runExtractLinks(args: string[], opts?: RunExtractLinksOpts): Promise<number> {
   if (args.length === 0) { printHelp(); return 2; }
   const first = args[0];
   if (first === '--help' || first === '-h') { printHelp(); return 0; }
@@ -256,25 +267,34 @@ export async function runExtractLinks(args: string[]): Promise<number> {
     return 2;
   }
 
-  // Engine connection (exit 3 on failure — "retry later" semantic)
-  let engine: Awaited<ReturnType<typeof createEngine>>;
-  try {
-    const cfg = loadConfig();
-    if (!cfg) {
-      process.stderr.write('extract-links: no gbrain config — run `gbrain init` first\n');
+  // Engine connection: use injected engine (tests) or connect via config (CLI)
+  let engine: BrainEngine;
+  let ownsEngine = false;
+  if (opts?.engine) {
+    engine = opts.engine;
+  } else {
+    ownsEngine = true;
+    try {
+      const cfg = loadConfig();
+      if (!cfg) {
+        process.stderr.write('extract-links: no gbrain config — run `gbrain init` first\n');
+        return 3;
+      }
+      const engineConfig = toEngineConfig(cfg);
+      engine = await createEngine(engineConfig);
+      await engine.connect(engineConfig);
+    } catch (e) {
+      process.stderr.write(`extract-links: engine unavailable: ${e instanceof Error ? e.message : String(e)}\n`);
       return 3;
     }
-    const engineConfig = toEngineConfig(cfg);
-    engine = await createEngine(engineConfig);
-    await engine.connect(engineConfig);
-  } catch (e) {
-    process.stderr.write(`extract-links: engine unavailable: ${e instanceof Error ? e.message : String(e)}\n`);
-    return 3;
   }
 
   try {
-    // Resolve repoPath from the brain's configured source
-    const repoPath = await getDefaultSourcePath(engine);
+    // Resolve repoPath: use injected value (tests) or query the brain's source
+    let repoPath: string | null | undefined = opts?.repoPath ?? null;
+    if (!repoPath) {
+      repoPath = await getDefaultSourcePath(engine);
+    }
     if (!repoPath) {
       process.stderr.write(
         'extract-links: no brain directory configured. ' +
@@ -324,7 +344,7 @@ export async function runExtractLinks(args: string[]): Promise<number> {
     }
 
     // Compute slugs for valid files
-    const slugs = validFiles.map(f => pathToSlug(relative(repoPath, f)));
+    const slugs = validFiles.map(f => pathToSlug(relative(repoPath as string, f)));
 
     if (slugs.length === 0) {
       emitDiagnostics(allDiagnostics, { filesProcessed: 0, edgesCreated: 0, dryRun: parsed.dryRun }, parsed);
@@ -368,6 +388,6 @@ export async function runExtractLinks(args: string[]): Promise<number> {
     );
     return 0;
   } finally {
-    await engine.disconnect();
+    if (ownsEngine) await engine.disconnect();
   }
 }
