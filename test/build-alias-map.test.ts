@@ -66,6 +66,23 @@ describe('buildAliasMap', () => {
     ]);
     const { aliasMap } = await buildAliasMap(engine as never, baseCfg);
     expect(aliasMap.get("o'brien")).toEqual(new Set(['people/obrien-foo']));
-    expect(aliasMap.get("o’brien")).toEqual(new Set(['people/obrien-foo']));
+    expect(aliasMap.get("o'brien")).toEqual(new Set(['people/obrien-foo']));
+  });
+
+  test('auto-stub WITH linkable: true is included (regression: polarity rule)', async () => {
+    const engine = mockEngine([
+      { slug: 'people/cself-aseva', type: 'person', frontmatter: { name: 'Cooper Self', domain: 'aseva.com', linkable: true }, isAutoStub: true },
+    ], 0);
+    const { aliasMap } = await buildAliasMap(engine as never, baseCfg);
+    expect(aliasMap.get('cooper')).toEqual(new Set(['people/cself-aseva']));
+    expect(aliasMap.get('self')).toEqual(new Set(['people/cself-aseva']));
+  });
+
+  test('non-stub WITH linkable: false is excluded', async () => {
+    const engine = mockEngine([
+      { slug: 'people/excluded-aseva', type: 'person', frontmatter: { name: 'Excluded Person', domain: 'aseva.com', linkable: false }, isAutoStub: false },
+    ], 0);
+    const { aliasMap } = await buildAliasMap(engine as never, baseCfg);
+    expect(aliasMap.size).toBe(0);
   });
 });

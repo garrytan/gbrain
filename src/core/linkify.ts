@@ -139,11 +139,14 @@ export async function buildAliasMap(
   }
 
   for (const row of rows) {
-    // Auto-stub pages are excluded unless they opted in via linkable: true in
-    // frontmatter. The SQL filter (queryPersonsForLinkify) enforces this at
-    // the DB layer; we also skip them here as a defense-in-depth guard in case
-    // a mock or future caller bypasses the SQL filter.
-    if (row.isAutoStub) continue;
+    // Apply the same auto-stub polarity rule the SQL filter enforces. The mock
+    // engine in tests bypasses the SQL filter, so this is load-bearing — not
+    // pure defense. Rule: auto-stub pages excluded unless linkable: true;
+    // any page with linkable: false (string or bool) excluded regardless.
+    const linkable = (row.frontmatter ?? {}).linkable;
+    const isOptedOut = linkable === 'false' || linkable === false;
+    if (isOptedOut) continue;
+    if (row.isAutoStub && linkable !== 'true' && linkable !== true) continue;
     const fm = row.frontmatter ?? {};
     const name = typeof fm.name === 'string' ? fm.name.trim() : '';
     if (!name) {
