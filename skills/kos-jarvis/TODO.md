@@ -245,23 +245,39 @@ report 文件 / DB 写入痕迹)。决定:
 
 **Scope**: 1 h research + 30 min decision write。
 
-### [ ] kos-lint 退役 pilot test
+### [x] kos-lint 退役 pilot test — DONE 2026-05-10 (mechanical retire, formal pilot procedure short-circuited by smoke-test evidence)
 
-**Why**: PLAN §5.4 把 `kos-lint` 列为 PILOT RETIRE。6 个 check 中
-4 个 (frontmatter / dead-links / orphans / dup-id) 被上游
-`gbrain doctor` + `frontmatter-guard` + `gbrain orphans` 覆盖;
-2 个 KOS-unique (weak links / evidence gap) 可抽到一个 ~150 LOC 的
-`kos-quality` 小 shim。
+The PLAN §6 four-step pilot procedure was short-circuited by the
+2026-05-04 service smoke (above in Done section): kos-patrol stderr
+showed `[2] kos-lint JSON parse failed; exit=3` for the live runner,
+and patrol still reported 0 WARN — i.e. **production was already
+operating without kos-lint** because the runner was naturally broken.
+Strongest possible PILOT-RETIRE evidence, no baseline-vs-control run
+needed.
 
-**What**: 跑 PLAN §6 写的 4 步 pilot procedure,产出
-`~/brain/.agent/reports/kos-lint-pilot-decision.md`,naming retire /
-partial / abort + evidence。
+**Action taken (commit `9e3cd0f`, 2026-05-10)**:
+- `skills/kos-jarvis/kos-lint/` moved to `skills/kos-jarvis/_archived/kos-lint/`
+- `kos-patrol/run.ts` Phase 2 turned into a no-op (`return { rows: 0,
+  findings: [], errors: 0, warns: 0 }`) with docblock listing where
+  each of the 6 checks now lives:
+  - check 1 (frontmatter) → upstream `frontmatter-guard` skill + `gbrain doctor`
+  - check 2 (duplicate id) → `gbrain doctor` schema integrity
+  - check 3 (dead links) → upstream BrainWriter linkValidator (sync gate)
+  - check 4 (orphans) → `gbrain orphans` + dream-cycle phase
+  - checks 5+6 (weak links, evidence gap) → **not yet rehomed**;
+    future `kos-quality` ~150 LoC shim if Lucien wants them back
 
-**Acceptance**: 决定文件落地;若决定 retire,`kos-quality` 抽出 +
-`kos-patrol` Phase 2 改调用 + 老 `kos-lint/` 归档。
+**Deferred (no current need)**: the ~150 LoC `kos-quality` shim for
+checks 5+6 (weak links + evidence gap). Five days post-retire,
+`kos-patrol` still reports 0 ERROR / 0 WARN daily and no operator
+has missed the two KOS-unique checks. If a specific brain-quality
+question arises that those checks were uniquely suited to answer,
+re-open and build kos-quality; until then it would be premature
+abstraction.
 
-**Scope**: 1 h pilot run + 2-3 h 抽 shim (若 retire) + 30 min cron
-rewire。Total 4 h。
+**Verdict**: M1 milestone item closes. Active fork dirs unchanged
+since the retire commit already landed; just need this TODO entry
+in the right state.
 
 ### [ ] Archive frontmatter-ref-fix + slug-normalize
 
