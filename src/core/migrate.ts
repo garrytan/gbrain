@@ -2705,6 +2705,95 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 59,
+    name: 'code_traversal_cache_v0_34',
+    // v0.34 W3b — memoization layer for code_blast / code_flow.
+    // (Originally claimed v56; renumbered to v59 on merge with master which
+    // landed query_cache_search_lite=v55, drift_watch=v56, search_telemetry=v57.)
+    //
+    // Recursive caller/callee walks on a dense (calls + imports + references)
+    // graph can fan out to 200+ nodes per call. During a plan-mode agent
+    // session that calls code_blast 5-15 times, we want hits to return
+    // <200ms instead of re-walking the same graph.
+    //
+    // The cache is correctness-safe under concurrent sync via REPEATABLE
+    // READ + xmin_max — the traversal-cache module wraps each walk in
+    // `BEGIN ISOLATION LEVEL REPEATABLE READ` and captures the snapshot's
+    // xmin_max alongside the response. On read, if the current snapshot
+    // doesn't dominate the cached snapshot, the cache misses.
+    //
+    // D3 — cluster_generation: monotonically incrementing counter bumped
+    // once per recompute_code_clusters phase. Cache rows carrying a stale
+    // generation naturally miss on next read, so cluster-renaming-mid-cycle
+    // doesn't return stale cluster names from cached blast/flow responses.
+    sql: `
+      CREATE TABLE IF NOT EXISTS code_traversal_cache (
+        id SERIAL PRIMARY KEY,
+        symbol_qualified TEXT NOT NULL,
+        depth INT NOT NULL,
+        source_id TEXT NOT NULL,
+        response_json JSONB NOT NULL,
+        max_chunk_updated_at TIMESTAMPTZ NOT NULL,
+        xmin_max BIGINT NOT NULL,
+        cluster_generation BIGINT NOT NULL DEFAULT 0,
+        computed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS code_traversal_cache_key_idx
+        ON code_traversal_cache (symbol_qualified, depth, source_id);
+      CREATE INDEX IF NOT EXISTS code_traversal_cache_source_idx
+        ON code_traversal_cache (source_id);
+    `,
+  },
+  {
+    version: 58,
+    name: 'edges_backfilled_at_v0_33_2',
+    // v0.33.2 W0c — resumable symbol-resolution backfill watermark.
+    // (Originally claimed v55; renumbered to v58 on merge with master which
+    // landed query_cache_search_lite=v55, drift_watch=v56, search_telemetry=v57.)
+    //
+    // The within-file two-pass resolver (src/core/chunkers/symbol-resolver.ts)
+    // walks every content_chunks row that has unresolved edges
+    // (rows in code_edges_symbol whose to_symbol_qualified has not been
+    // matched against same-file symbol_name_qualified yet) and writes the
+    // resolution outcome to code_edges_symbol.edge_metadata. On a 96K-chunk
+    // brain that is a 5-15 minute backfill the first time it runs.
+    //
+    // `edges_backfilled_at` is the resume watermark. Backfill runs in
+    // 200-chunk batches; on batch success the column is set to NOW() for
+    // every chunk in the batch. Resume picks up chunks where the watermark
+    // is NULL or older than EDGE_EXTRACTOR_VERSION_TS (a constant bumped
+    // when the extractor's shape changes). Crashes lose at most one batch.
+    //
+    // Composite + partial indexes for the lookup hot path (D11 from eng
+    // review):
+    //   - idx_code_edges_symbol_resolver (source_id, to_symbol_qualified)
+    //     — every code_edges_symbol row is unresolved by construction
+    //     (the table has no to_chunk_id column; that lives on code_edges_chunk).
+    //     This composite index supports the resolver's per-source lookups.
+    //   - idx_content_chunks_symbol_lookup (page_id, symbol_name_qualified)
+    //     WHERE symbol_name_qualified IS NOT NULL — file-batched lookup
+    //     used by both the resolver and the cluster recompute phase (W4-5).
+    //   - idx_content_chunks_edges_backfill (edges_backfilled_at)
+    //     WHERE edges_backfilled_at IS NULL — find unresumed rows quickly.
+    //
+    // Idempotent: IF NOT EXISTS on column + indexes. Backfill itself runs
+    // separately via the resolve_symbol_edges cycle phase.
+    sql: `
+      ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS edges_backfilled_at TIMESTAMPTZ;
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_resolver
+        ON code_edges_symbol (source_id, to_symbol_qualified);
+
+      CREATE INDEX IF NOT EXISTS idx_content_chunks_symbol_lookup
+        ON content_chunks (page_id, symbol_name_qualified)
+        WHERE symbol_name_qualified IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_content_chunks_edges_backfill
+        ON content_chunks (edges_backfilled_at)
+        WHERE edges_backfilled_at IS NULL;
+    `,
+  },
+  {
     version: 55,
     name: 'query_cache_search_lite',
     // v0.32.x (search-lite, originally claimed v52 in PR #897; renumbered
@@ -2881,63 +2970,14 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 58,
-    name: 'edges_backfilled_at_v0_33_3',
-    // v0.33.3 W0c — resumable symbol-resolution backfill watermark.
-    // (Originally claimed v55; renumbered to v58 on merge with master's
-    // v55/v56/v57 search-lite migrations.)
-    //
-    // The within-file two-pass resolver (src/core/chunkers/symbol-resolver.ts)
-    // walks every content_chunks row that has unresolved edges
-    // (rows in code_edges_symbol whose to_symbol_qualified has not been
-    // matched against same-file symbol_name_qualified yet) and writes the
-    // resolution outcome to code_edges_symbol.edge_metadata. On a 96K-chunk
-    // brain that is a 5-15 minute backfill the first time it runs.
-    //
-    // `edges_backfilled_at` is the resume watermark. Backfill runs in
-    // 200-chunk batches; on batch success the column is set to NOW() for
-    // every chunk in the batch. Resume picks up chunks where the watermark
-    // is NULL or older than EDGE_EXTRACTOR_VERSION_TS (a constant bumped
-    // when the extractor's shape changes). Crashes lose at most one batch.
-    //
-    // Composite + partial indexes for the lookup hot path (D11 from eng
-    // review):
-    //   - idx_code_edges_symbol_resolver (source_id, to_symbol_qualified)
-    //     — every code_edges_symbol row is unresolved by construction
-    //     (the table has no to_chunk_id column; that lives on code_edges_chunk).
-    //     This composite index supports the resolver's per-source lookups.
-    //   - idx_content_chunks_symbol_lookup (page_id, symbol_name_qualified)
-    //     WHERE symbol_name_qualified IS NOT NULL — file-batched lookup
-    //     used by both the resolver and the cluster recompute phase (W4-5).
-    //   - idx_content_chunks_edges_backfill (edges_backfilled_at)
-    //     WHERE edges_backfilled_at IS NULL — find unresumed rows quickly.
-    //
-    // Idempotent: IF NOT EXISTS on column + indexes. Backfill itself runs
-    // separately via the resolve_symbol_edges cycle phase.
-    sql: `
-      ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS edges_backfilled_at TIMESTAMPTZ;
-
-      CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_resolver
-        ON code_edges_symbol (source_id, to_symbol_qualified);
-
-      CREATE INDEX IF NOT EXISTS idx_content_chunks_symbol_lookup
-        ON content_chunks (page_id, symbol_name_qualified)
-        WHERE symbol_name_qualified IS NOT NULL;
-
-      CREATE INDEX IF NOT EXISTS idx_content_chunks_edges_backfill
-        ON content_chunks (edges_backfilled_at)
-        WHERE edges_backfilled_at IS NULL;
-    `,
-  },
-  {
-    version: 59,
+    version: 60,
     name: 'oauth_clients_source_id_fk',
     // v0.34.1 (#861 + D4 + D10 + D13 — P0 source-isolation leak seal).
     //
     // Adds oauth_clients.source_id, validates ALL existing rows can map to a
     // real source row, backfills NULL → 'default', and installs the FK with
     // ON DELETE SET NULL. PR #861's original migration claimed v47-v51; we
-    // re-number to v59 because the branch already shipped through v54.
+    // re-number to v60 because the branch already shipped through v54.
     //
     // D10 (codex outside-voice push-back): fail loud when stale source_id
     // rows exist instead of silently widening to NULL. Pre-fix this column
@@ -2960,7 +3000,7 @@ export const MIGRATIONS: Migration[] = [
       -- v0.34.1 (#861 + D2 + D13 — P0 source-isolation leak seal).
       --
       -- This migration is intentionally lean: oauth_clients.source_id did
-      -- NOT exist pre-v59, so the only state we inherit from upgrade is
+      -- NOT exist pre-v60, so the only state we inherit from upgrade is
       -- "rows with NULL source_id." Backfill those to 'default' (D13:
       -- preserves the pre-v0.34 effective fallback behavior verbatim) and
       -- install the FK with ON DELETE SET NULL.
@@ -2986,7 +3026,7 @@ export const MIGRATIONS: Migration[] = [
       --    install schemas (src/core/pglite-schema.ts, src/schema.sql) now
       --    include the FK inline on the CREATE TABLE, so this DO block
       --    skips on fresh installs and only fires on upgrade brains where
-      --    oauth_clients was created pre-v59 without the FK. ON DELETE SET
+      --    oauth_clients was created pre-v60 without the FK. ON DELETE SET
       --    NULL matches the original PR #861 posture; #876 later flips to
       --    RESTRICT once federated_read provides the alternative
       --    scope-recovery path.
@@ -3010,16 +3050,16 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 60,
+    version: 61,
     name: 'oauth_clients_federated_read_column',
     // v0.34.1 (#876): add federated_read TEXT[] for the read-side
-    // federation feature. source_id (v59) is the WRITE-authority axis;
+    // federation feature. source_id (v60) is the WRITE-authority axis;
     // federated_read is the READ-scope axis. A client can write to ONE
     // source while reading from N (a "WeCare L3 dept" client writes to
     // dept-x and reads dept-x + parent canon + shared canon).
     //
     // Default '{}' (empty array) on column add — pre-existing rows get
-    // backfilled in v61 with an explicit CASE so the array reflects the
+    // backfilled in v62 with an explicit CASE so the array reflects the
     // client's current scope rather than the column default.
     idempotent: true,
     sql: `
@@ -3027,13 +3067,13 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 61,
+    version: 62,
     name: 'oauth_clients_federated_read_backfill',
     // v0.34.1 (#876, F5 — codex outside-voice fix). Backfill federated_read
     // with explicit CASE so source_id IS NULL doesn't produce an ambiguous
     // array containing NULL. Three cases:
     //   - source_id IS NULL → '{}' (empty read scope; legacy unscoped
-    //     clients lost their implicit fallback in v59 backfill to 'default',
+    //     clients lost their implicit fallback in v60 backfill to 'default',
     //     so this branch fires only when an operator explicitly NULL'd
     //     source_id after migration).
     //   - source_id IS NOT NULL → ARRAY[source_id] (read scope matches
@@ -3051,12 +3091,12 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 62,
+    version: 63,
     name: 'oauth_clients_federated_read_validate',
     // v0.34.1 (#876): post-backfill validation. Every client with a
     // non-NULL source_id should now have its source_id reflected in
     // federated_read. Fail loud if backfill missed a row — points at a
-    // logic bug in v61's WHERE clause.
+    // logic bug in v62's WHERE clause.
     idempotent: true,
     sql: `
       DO $$
@@ -3067,15 +3107,15 @@ export const MIGRATIONS: Migration[] = [
           WHERE source_id IS NOT NULL
             AND NOT (source_id = ANY(federated_read));
         IF bad_count > 0 THEN
-          RAISE EXCEPTION 'oauth_clients has % rows where source_id is not in federated_read after v61 backfill. This is a bug in v61 — re-run gbrain apply-migrations --force-retry 61.', bad_count;
+          RAISE EXCEPTION 'oauth_clients has % rows where source_id is not in federated_read after v62 backfill. This is a bug in v62 — re-run gbrain apply-migrations --force-retry 62.', bad_count;
         END IF;
       END $$;
     `,
   },
   {
-    version: 63,
+    version: 64,
     name: 'oauth_clients_source_id_fk_restrict',
-    // v0.34.1 (#876): flip the source_id FK from ON DELETE SET NULL (v59
+    // v0.34.1 (#876): flip the source_id FK from ON DELETE SET NULL (v60
     // posture) to ON DELETE RESTRICT now that federated_read provides
     // the alternative scope-loss path. Pre-fix, deleting a source could
     // silently widen any oauth_client to super-reader (source_id → NULL).
@@ -3098,7 +3138,7 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 64,
+    version: 65,
     name: 'oauth_clients_federated_read_gin_index',
     // v0.34.1 (#876): GIN index for array-containment lookups
     // (`WHERE p.source_id = ANY(federated_read)` and similar). The five

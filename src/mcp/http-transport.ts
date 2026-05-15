@@ -191,7 +191,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // v0.34.1 (#861, D13): legacy bearer tokens default to 'default'
         // source. Preserves the pre-v0.34 effective behavior of the
         // serve-http fallback chain that was removed for OAuth clients
-        // (migration v59 backfills oauth_clients.source_id). This path
+        // (migration v60 backfills oauth_clients.source_id). This path
         // is for the older v0.22.7 access_tokens transport.
         sourceId: 'default',
       };

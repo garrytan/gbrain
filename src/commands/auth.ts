@@ -342,7 +342,7 @@ async function registerClient(name: string, args: string[]) {
     : ['client_credentials'];
   const scopes = scopesIdx >= 0 && args[scopesIdx + 1] ? args[scopesIdx + 1] : 'read';
   // v0.34.1 (#861, D2): --source flag scopes the OAuth client to a single
-  // source. Defaults to 'default' to match migration v59's backfill so
+  // source. Defaults to 'default' to match migration v60's backfill so
   // operators upgrading without changing flags see no behavior change.
   const sourceId = sourceIdx >= 0 && args[sourceIdx + 1] ? args[sourceIdx + 1] : 'default';
   // v0.34.1 (#876): --federated-read accepts a comma-separated source list

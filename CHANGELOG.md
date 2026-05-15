@@ -75,7 +75,7 @@ time.
 
 ### The migration block
 
-`gbrain upgrade` applies migrations v59-v64 automatically. The migration
+`gbrain upgrade` applies migrations v60-v65 automatically. The migration
 chain adds two columns to `oauth_clients` and an index, plus a FK flip
 once federated_read is in place.
 
@@ -138,7 +138,7 @@ once federated_read is in place.
   `opts.sourceIds` so graph walks respect the caller's scope.
 - `src/core/oauth-provider.ts:verifyAccessToken` JOINs
   `oauth_clients.source_id` + `federated_read` and surfaces both on the
-  returned `AuthInfo`. Pre-v59 / pre-v60 brains degrade gracefully via
+  returned `AuthInfo`. Pre-v60 / pre-v61 brains degrade gracefully via
   `isUndefinedColumnError` fallback.
 - `src/commands/serve-http.ts` drops the `(authInfo as AuthInfo &
   {sourceId?: string}).sourceId ?? env ?? 'default'` cast chain. The
@@ -147,20 +147,20 @@ once federated_read is in place.
   threads `sourceId: 'default'` through DispatchOpts so legacy tokens
   stay source-scoped.
 
-**Migration chain v59-v64 (six new migrations on top of v54):**
-- v59 (`oauth_clients_source_id_fk`) — ALTER TABLE ... ADD COLUMN
+**Migration chain v60-v65 (six new migrations on top of v54):**
+- v60 (`oauth_clients_source_id_fk`) — ALTER TABLE ... ADD COLUMN
   source_id TEXT, backfill NULL→'default', install FK with
   ON DELETE SET NULL.
-- v60 (`oauth_clients_federated_read_column`) — ALTER TABLE ... ADD
+- v61 (`oauth_clients_federated_read_column`) — ALTER TABLE ... ADD
   COLUMN federated_read TEXT[] NOT NULL DEFAULT '{}'.
-- v61 (`oauth_clients_federated_read_backfill`) — explicit CASE backfill
+- v62 (`oauth_clients_federated_read_backfill`) — explicit CASE backfill
   so `source_id IS NULL` produces `'{}'` not an array-containing-NULL.
-- v62 (`oauth_clients_federated_read_validate`) — fail-loud check that
+- v63 (`oauth_clients_federated_read_validate`) — fail-loud check that
   every row's source_id is in its federated_read array post-backfill.
-- v63 (`oauth_clients_source_id_fk_restrict`) — flip FK to
+- v64 (`oauth_clients_source_id_fk_restrict`) — flip FK to
   ON DELETE RESTRICT now that federated_read provides the alternative
   scope-loss path. Source delete is refused if any client references it.
-- v64 (`oauth_clients_federated_read_gin_index`) — GIN index for the
+- v65 (`oauth_clients_federated_read_gin_index`) — GIN index for the
   array-containment queries the read paths run.
 
 **OAuth + auth surface:**
@@ -221,7 +221,7 @@ once federated_read is in place.
   real Postgres connection and hang past the default 5s test timeout.
 
 **Test results: 6045 unit tests pass / 0 fail. typecheck clean. PGLite
-initSchema runs the v59-v64 chain in ~786ms total.**
+initSchema runs the v60-v65 chain in ~786ms total.**
 
 ### For contributors
 
@@ -233,7 +233,7 @@ initSchema runs the v59-v64 chain in ~786ms total.**
   thread (`find_experts`), and migration-numbering collisions on
   v47-v53 that would have wedged on cherry-pick (the branch had grown
   to v57 by ship time after master shipped its own v55-v57 search-lite
-  migrations). The wave's migration chain renumbers to v59-v64.
+  migrations). The wave's migration chain renumbers to v60-v65.
 - The single PR carries `Co-Authored-By:` for the six external
   contributors. PRs originated against earlier base branches and the
   diffs were re-implemented on the collector branch rather than merged
@@ -241,6 +241,78 @@ initSchema runs the v59-v64 chain in ~786ms total.**
 
 Contributed by @Hansen1018 (#870), @ding-modding (#909), @DukeDawg
 (#864), @toilalesondev (#861 + #876), @yoelgal (#875).
+## [0.34.0.0] - 2026-05-14
+
+**Recursive code intelligence ships. Plan-mode subagents get one-call blast and flow.**
+**`code_blast` and `code_flow` walk callers and callees with depth grouping, cycle detection, and sink tagging.**
+
+The v0.34 wave builds on v0.33.3's foundation (MCP-exposed code-callers/callees/def/refs) to deliver the actual plan-mode payoff: recursive walks that replace 10-grep chains with one structured response. An agent editing a function can now ask "what calls this?" and get every transitive caller grouped by depth, with truncation flags and cycle detection. An agent tracing a request can ask "what does this lead to?" and get the chain to its terminal sinks (HTTP call, DB write, file I/O, process exec).
+
+This release also densifies the call graph beneath the new ops. Pre-v0.34 the extractor emitted bare callee tokens (`render`, `find`, `m`) and the call graph aliased same-named methods across classes. v0.34 ships receiver-type resolution for the 3 MUST patterns (`import { x }`, `this/self.m`, `new C().m`) in JS/TS/TSX + Python, plus new `imports` and `references` edge types that turn the calls-only graph into a real dependency map.
+
+### What ships in v0.34.0.0
+
+- `code_blast(symbol, depth=5, max_nodes=200)` MCP op — recursive callers grouped by depth, with `confidence`, `cycles_detected`, `truncation`, `freshness`, `did_you_mean`, `candidates`, and `supported` fields per the response envelope.
+- `code_flow(entry_point, depth=8, max_nodes=200)` MCP op — recursive callees from an entry point, with `terminal_nodes: [{symbol, sink_kind}]` where `sink_kind ∈ db_call | http_call | file_io | process_exec | unknown`.
+- `code_traversal_cache_clear(source_id?, all_sources=false)` admin op with the v0.26.5 destructive-guard pattern.
+- W1: receiver-type resolution at extraction time (3 MUST patterns; JS/TS/TSX + Python). Depth-32 walker cap.
+- W2: new `imports` and `references` edge types. JS/TS/TSX + Python get imports; TS gets type-position references. Ruby/Go/Rust/Java stay at calls-only — honest coverage in the response shape.
+- W3b: `code_traversal_cache` table (schema migration v56) with D3 generation-counter invalidation.
+- W6: `gbrain edges-backfill` CLI — operator escape hatch for the symbol-resolution backfill. Resumable via `edges_backfilled_at` watermark.
+- W7: `src/core/eval-capture-graph.ts` — pure-function metrics (node-set Jaccard, depth-group stability, truncation-match, Adjusted Rand Index) for replay-driven regression checks on code-intel ops.
+- STEP 0: `OperationContext.sourceId` promoted to TypeScript-REQUIRED. Mirrors v0.26.9 `remote` REQUIRED pattern.
+
+### Slip handling — deferred to v0.34.1
+
+The plan's explicit slip-handling clause for clusters fired at ship time. v0.34.0.0 ships the foundation + structural payoff (recursive walks) without the W4–5 Leiden cluster pipeline. Reason: the cluster ship gate requires validating ≤0.03 clusters/node on real brain data, and the eval gate requires a baseline-vs-with-code-intel comparison on a populated brain. Neither was available at ship time.
+
+Deferred to v0.34.1:
+- W4–5: Leiden clusters (schema v57, leiden module, cluster naming, recompute_code_clusters cycle phase, `code_clusters_list` + `code_cluster_get` MCP ops, `gbrain clusters` CLI, ship-gate ratio check).
+- W6: `gbrain wiki` zero-LLM aggregator (depends on clusters).
+- W7 wiring: `eval-capture.ts` `tool` field + `result_shape` payload, `eval-replay.ts` dispatch on tool.
+- W1 `.scm` pattern-file rewrite of the receiver-type walker.
+- W3 stdio rate limiter at `src/mcp/dispatch.ts` (D10).
+- W3 CLI thin-shims (`gbrain blast`, `gbrain flow`).
+- D2 autopilot 60s sub-loop for `resolve_symbol_edges`.
+
+## To take advantage of v0.34.0.0
+
+`gbrain upgrade` runs `gbrain apply-migrations` automatically. v0.34.0.0 ships migration v56 (`code_traversal_cache_v0_34`). Most users won't need to do anything else.
+
+To exercise the new W1/W2 edge shapes on an existing brain:
+
+1. **Run the symbol-resolution backfill manually (one-time on first run after upgrade):**
+   ```bash
+   gbrain edges-backfill --all-sources
+   ```
+   Resumable. Ctrl-C is safe. Re-runs are idempotent.
+
+2. **Verify code-intelligence coverage:**
+   ```bash
+   gbrain doctor --json | jq '.checks.code_intel_coverage'
+   ```
+
+3. **Try the new recursive ops:**
+   ```bash
+   gbrain call code_blast --symbol performSync
+   gbrain call code_flow --entry_point runCycle
+   ```
+
+4. **Run the v0.34.0.0 eval gate (optional — measures retrieval-quality delta):**
+   ```bash
+   # Pre-v0.34 baseline (3 runs for noise floor)
+   for i in 1 2 3; do gbrain eval code-retrieval --baseline --save /tmp/v034-baseline-$i.json; done
+   # With code-intel
+   gbrain eval code-retrieval --with-code-intel --save /tmp/v034.json
+   gbrain eval code-retrieval --compare /tmp/v034-baseline-1.json /tmp/v034.json
+   ```
+   Pass criterion: precision@5 +10pp OR top-1 stability +15pp on ≥15/30 questions above the 3-run noise floor.
+
+5. **If anything fails or surprises you**, file an issue: https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
 ## [0.33.3.0] - 2026-05-12
 
 **Code intelligence ships to agents. Plan-mode subagents stop falling through to grep.**
@@ -259,6 +331,15 @@ PRs from `garrytan-agents` (the AI-authored PR account) live in a fork. GitHub's
 
 - `CLAUDE.md` gets a new `## Checking out PRs from garrytan-agents` section between "Community PR wave process" and "Skill routing". Four-step recipe: `gh pr checkout <N>` → `git push origin HEAD:<branch>` → `gh pr close <N>` → `gh pr create --base master --head <branch>`, preserving the original title and body verbatim. Closes the friction Garry hit landing #962 / Voyage 2048-dim fixup PRs from the agent account.
 - `llms-full.txt` regenerated by `bun run build:llms` so the committed doc bundle matches the live CLAUDE.md. Pinned by `test/build-llms.test.ts` in CI shard 1.
+
+## [0.33.2.0] - 2026-05-12
+
+**Code intelligence ships to agents. Plan-mode subagents stop falling through to grep.**
+**`code_callers`, `code_callees`, `code_def`, `code_refs` are MCP-exposed with resolver-grade descriptions.**
+
+Pre-v0.33.2 the four code-intelligence commands from v0.20+ Cathedral II lived in `CLI_ONLY` at `cli.ts:30`. An agent running through MCP saw `query`/`search` but no structural retrieval, so it grepped, missed callers in string literals, shipped plans with broken call chains, and got caught in review. v0.33.2 closes that gap and lays the foundation work that v0.34 Cathedral III (recursive blast/flow + Leiden clusters + wiki) will build on top of.
+
+This release was scoped after Codex's outside-voice review caught two load-bearing premise gaps in the original v0.34 plan: the call graph stored bare callee tokens (not qualified names), and source routing was already broken in `query` and `two-pass.ts`. Both are fixed here before any user-facing recursive op ships.
 
 ## [0.33.1.1] - 2026-05-13
 
