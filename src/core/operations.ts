@@ -31,6 +31,10 @@ import {
   QUERY_DESCRIPTION,
   SEARCH_DESCRIPTION,
   FIND_CONTRADICTIONS_DESCRIPTION,
+  CODE_CALLERS_DESCRIPTION,
+  CODE_CALLEES_DESCRIPTION,
+  CODE_DEF_DESCRIPTION,
+  CODE_REFS_DESCRIPTION,
 } from './operations-descriptions.ts';
 
 // --- Types ---
@@ -340,10 +344,14 @@ export interface OperationContext {
    * Every facts read/write filter starts with `WHERE source_id = $X`
    * so the trust boundary is part of the index path, not a callback.
    *
-   * Pre-v0.31 callers (pages/links/etc.) keep working without change —
-   * sourceId here is purely additive context for the new ops.
+   * v0.34 D4 — REQUIRED at the TypeScript level. Mirrors v0.26.9 `remote`
+   * REQUIRED pattern that closed the HTTP RCE class. Every transport
+   * (CLI / stdio MCP / HTTP MCP / subagent dispatcher) MUST populate
+   * this field; `buildOperationContext` auto-fills 'default' for callers
+   * who don't pass an explicit sourceId, so the type contract is
+   * satisfied even on single-source brains.
    */
-  sourceId?: string;
+  sourceId: string;
 }
 
 export interface Operation {
@@ -1056,6 +1064,11 @@ const query: Operation = {
       description:
         "v0.29.1 — filter to effective_date <= this. Same format as `since`. Replaces deprecated `beforeDate`. YYYY-MM-DD lands at end-of-day.",
     },
+    source_id: {
+      type: 'string',
+      description:
+        "v0.34: scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile). Pass '__all__' to force cross-source search in multi-source brains.",
+    },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
@@ -1088,7 +1101,23 @@ const query: Operation = {
     // v0.25.0 — capture meta side-channel. hybridSearch's return contract
     // stays SearchResult[] (Cathedral II callers depend on that); meta
     // arrives via callback so eval capture can record what actually ran.
+    //
+    // v0.34 (Codex finding #2): thread ctx.sourceId so multi-source brains
+    // get source-scoped retrieval. Explicit `source_id` param wins over
+    // ctx.sourceId for callers that want to override (per-call multi-source
+    // search). When the param is the literal '__all__', force-allow
+    // cross-source mode (matches SearchOpts.sourceId contract).
     let capturedMeta: HybridSearchMeta | null = null;
+    // v0.34 (Codex finding #2): thread ctx.sourceId so multi-source brains
+    // get source-scoped retrieval. Explicit `source_id` param wins over
+    // ctx.sourceId; literal `__all__` opts out (cross-source).
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const resolvedSourceId =
+      sourceIdParam !== undefined
+        ? sourceIdParam === '__all__'
+          ? undefined
+          : sourceIdParam
+        : ctx.sourceId;
     // v0.32.x search-lite: route the query op through hybridSearchCached so
     // semantic cache + token budget + intent weighting fire automatically.
     // Plain hybridSearch remains the bare API for callers that opt out.
@@ -1102,6 +1131,7 @@ const query: Operation = {
       symbolKind: (p.symbol_kind as string) || undefined,
       nearSymbol: (p.near_symbol as string) || undefined,
       walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
+      sourceId: resolvedSourceId,
       // v0.29.1 — agent-explicit recency + salience. Omitted = heuristic defaults.
       salience: p.salience as 'off' | 'on' | 'strong' | undefined,
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
@@ -2791,6 +2821,216 @@ function parseSinceParam(raw: unknown): Date | null {
   return null;
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// v0.34 Cathedral III — code-intelligence ops (MCP-exposed).
+//
+// Pre-v0.34 code-callers / code-callees / code-def / code-refs lived only in
+// the CLI_ONLY set at cli.ts:30 — agents calling gbrain via MCP couldn't reach
+// them and fell through to text search. These wrappers expose the existing
+// engine + library functions to the MCP surface with resolver-grade
+// descriptions (operations-descriptions.ts) so agents route to them
+// automatically during plan-mode.
+//
+// All four are scope:'read'. Source-scoped via ctx.sourceId when set.
+// Both `source_id` and `all_sources` are params so per-call overrides work.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const code_callers: Operation = {
+  name: 'code_callers',
+  description: CODE_CALLERS_DESCRIPTION,
+  params: {
+    symbol: { type: 'string', required: true, description: 'Symbol to find callers of (bare or qualified name).' },
+    limit: { type: 'number', description: 'Max edges returned. Default 100.' },
+    source_id: { type: 'string', description: "Scope to a single source. Defaults to ctx.sourceId; pass '__all__' to force cross-source." },
+    all_sources: { type: 'boolean', description: 'Force cross-source search (equivalent to source_id=__all__).' },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const symbol = p.symbol as string;
+    const limit = (p.limit as number) ?? 100;
+    const allSourcesParam = p.all_sources === true;
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const allSources = allSourcesParam || sourceIdParam === '__all__';
+    const sourceId = allSources
+      ? undefined
+      : sourceIdParam !== undefined
+        ? sourceIdParam
+        : ctx.sourceId;
+    const edges = await ctx.engine.getCallersOf(symbol, {
+      limit,
+      allSources,
+      sourceId,
+    });
+    return { symbol, count: edges.length, callers: edges };
+  },
+  cliHints: { name: 'code_callers', hidden: true },
+};
+
+const code_callees: Operation = {
+  name: 'code_callees',
+  description: CODE_CALLEES_DESCRIPTION,
+  params: {
+    symbol: { type: 'string', required: true, description: 'Symbol to find callees of (bare or qualified name).' },
+    limit: { type: 'number', description: 'Max edges returned. Default 100.' },
+    source_id: { type: 'string', description: "Scope to a single source. Defaults to ctx.sourceId; pass '__all__' to force cross-source." },
+    all_sources: { type: 'boolean', description: 'Force cross-source search.' },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const symbol = p.symbol as string;
+    const limit = (p.limit as number) ?? 100;
+    const allSourcesParam = p.all_sources === true;
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const allSources = allSourcesParam || sourceIdParam === '__all__';
+    const sourceId = allSources
+      ? undefined
+      : sourceIdParam !== undefined
+        ? sourceIdParam
+        : ctx.sourceId;
+    const edges = await ctx.engine.getCalleesOf(symbol, {
+      limit,
+      allSources,
+      sourceId,
+    });
+    return { symbol, count: edges.length, callees: edges };
+  },
+  cliHints: { name: 'code_callees', hidden: true },
+};
+
+const code_def: Operation = {
+  name: 'code_def',
+  description: CODE_DEF_DESCRIPTION,
+  params: {
+    symbol: { type: 'string', required: true, description: 'Symbol name (bare token; e.g., parseMarkdown, BrainEngine).' },
+    limit: { type: 'number', description: 'Max definition sites returned. Default 20.' },
+    lang: { type: 'string', description: "Filter by content_chunks.language (e.g. 'typescript', 'python')." },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const { findCodeDef } = await import('../commands/code-def.ts');
+    const defs = await findCodeDef(ctx.engine, p.symbol as string, {
+      limit: (p.limit as number) ?? 20,
+      language: (p.lang as string) || undefined,
+    });
+    return { symbol: p.symbol as string, count: defs.length, defs };
+  },
+  cliHints: { name: 'code_def', hidden: true },
+};
+
+const code_refs: Operation = {
+  name: 'code_refs',
+  description: CODE_REFS_DESCRIPTION,
+  params: {
+    symbol: { type: 'string', required: true, description: 'Symbol to find references to.' },
+    limit: { type: 'number', description: 'Max references returned. Default 50.' },
+    lang: { type: 'string', description: "Filter by content_chunks.language." },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const { findCodeRefs } = await import('../commands/code-refs.ts');
+    const refs = await findCodeRefs(ctx.engine, p.symbol as string, {
+      limit: (p.limit as number) ?? 50,
+      language: (p.lang as string) || undefined,
+    });
+    return { symbol: p.symbol as string, count: refs.length, refs };
+  },
+  cliHints: { name: 'code_refs', hidden: true },
+};
+
+// --- v0.34 W3: recursive code_blast + code_flow ---
+
+const code_blast: Operation = {
+  name: 'code_blast',
+  description: 'BEFORE editing any function, run code_blast with the symbol name to surface every transitive caller grouped by depth (direct → 2-hop → 3-hop). Use this during plan-mode to size the change. Returns up to 200 nodes. Returns: {result, depth_groups?, truncation?, cycles_detected?, did_you_mean?, candidates?}. Example ok: {result:"ok", depth_groups:[{depth:1, nodes:[{symbol,chunk_id}], confidence:0.77}], truncation:"none"}.',
+  params: {
+    symbol: { type: 'string', required: true, description: 'Bare or qualified symbol name (e.g. "performSync" or "src/foo::performSync")' },
+    depth: { type: 'number', description: 'Hop cap (default 5, max 8)' },
+    max_nodes: { type: 'number', description: 'Result-set cap (default 200)' },
+    exact: { type: 'boolean', description: 'Skip bare-name disambiguation; treat symbol as exact qualified name' },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const { runRecursiveWalk } = await import('./code-intel/recursive-walk.ts');
+    const { getCachedOrCompute } = await import('./code-intel/traversal-cache.ts');
+    const symbol = p.symbol as string;
+    const depth = Math.min((p.depth as number) ?? 5, 8);
+    const max_nodes = Math.min((p.max_nodes as number) ?? 200, 200);
+    const exact = (p.exact as boolean) ?? false;
+    return getCachedOrCompute(
+      ctx.engine,
+      { symbol_qualified: symbol, depth, source_id: ctx.sourceId },
+      () => runRecursiveWalk(ctx.engine, symbol, {
+        direction: 'callers',
+        depth,
+        maxNodes: max_nodes,
+        sourceId: ctx.sourceId,
+        exact,
+      }),
+    );
+  },
+  cliHints: { name: 'code_blast', hidden: true },
+};
+
+const code_flow: Operation = {
+  name: 'code_flow',
+  description: 'When tracing how a request flows through the codebase from entry point to side effect (DB write, HTTP call, file I/O), run code_flow from the entry point. Returns ordered execution chain with terminal-node tags. Returns: same envelope as code_blast plus terminal_nodes: [{symbol, sink_kind}] where sink_kind ∈ "db_call"|"http_call"|"file_io"|"process_exec"|"unknown".',
+  params: {
+    entry_point: { type: 'string', required: true, description: 'Entry-point symbol name (bare or qualified)' },
+    depth: { type: 'number', description: 'Hop cap (default 8, max 12)' },
+    max_nodes: { type: 'number', description: 'Result-set cap (default 200)' },
+    exact: { type: 'boolean', description: 'Skip bare-name disambiguation' },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const { runRecursiveWalk } = await import('./code-intel/recursive-walk.ts');
+    const { getCachedOrCompute } = await import('./code-intel/traversal-cache.ts');
+    const symbol = p.entry_point as string;
+    const depth = Math.min((p.depth as number) ?? 8, 12);
+    const max_nodes = Math.min((p.max_nodes as number) ?? 200, 200);
+    const exact = (p.exact as boolean) ?? false;
+    return getCachedOrCompute(
+      ctx.engine,
+      { symbol_qualified: symbol + ':flow', depth, source_id: ctx.sourceId },
+      () => runRecursiveWalk(ctx.engine, symbol, {
+        direction: 'callees',
+        depth,
+        maxNodes: max_nodes,
+        sourceId: ctx.sourceId,
+        exact,
+      }),
+    );
+  },
+  cliHints: { name: 'code_flow', hidden: true },
+};
+
+// --- v0.34 W3b: code_traversal_cache admin op ---
+
+const code_traversal_cache_clear: Operation = {
+  name: 'code_traversal_cache_clear',
+  description: 'Clear cached code_blast / code_flow traversal results. Source-scoped by default; pass all_sources=true to wipe everything (D8 destructive-guard).',
+  params: {
+    source_id: { type: 'string', description: 'Source to clear. Required unless all_sources=true.' },
+    all_sources: { type: 'boolean', description: 'Wipe cache across every source. Explicit opt-out of source-scoping.' },
+  },
+  mutating: true,
+  scope: 'admin',
+  localOnly: true,
+  handler: async (ctx, p) => {
+    const { clearTraversalCache } = await import('./code-intel/traversal-cache.ts');
+    const sourceId = (p.source_id as string | undefined) ?? ctx.sourceId;
+    const allSources = (p.all_sources as boolean) ?? false;
+    if (ctx.dryRun) {
+      return { dry_run: true, action: 'code_traversal_cache_clear', source_id: sourceId, all_sources: allSources };
+    }
+    const deleted = await clearTraversalCache(ctx.engine, {
+      sourceId: allSources ? undefined : sourceId,
+      allSources,
+    });
+    return { deleted, source_id: allSources ? null : sourceId, all_sources: allSources };
+  },
+  cliHints: { name: 'code_traversal_cache_clear', hidden: true },
+};
+
 // --- Exports ---
 
 export const operations: Operation[] = [
@@ -2839,6 +3079,12 @@ export const operations: Operation[] = [
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing
   find_experts,
+  // v0.33.3: Cathedral III code-intelligence (MCP-exposed; were CLI_ONLY pre-v0.33.3)
+  code_callers, code_callees, code_def, code_refs,
+  // v0.34 W3: recursive code_blast + code_flow
+  code_blast, code_flow,
+  // v0.34 W3b: code_traversal_cache admin clear op
+  code_traversal_cache_clear,
 ];
 
 export const operationsByName = Object.fromEntries(
