@@ -196,4 +196,138 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
       await engine.disconnect();
     }
   }, 30000);
+
+  test('pre-v0.18 files shape: bootstrap adds source_id + page_id (closes #974)', async () => {
+    // Repro of #974: pre-v0.18 brains have `files` without source_id/page_id.
+    // PGLITE_SCHEMA_SQL declares idx_files_source_id and idx_files_page_id
+    // unguarded, so SCHEMA_SQL replay crashes with `column "page_id" does not exist`.
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const db = (engine as any).db;
+
+      await db.exec(`
+        DROP INDEX IF EXISTS idx_files_source_id;
+        DROP INDEX IF EXISTS idx_files_page_id;
+        ALTER TABLE files DROP COLUMN IF EXISTS source_id;
+        ALTER TABLE files DROP COLUMN IF EXISTS page_id;
+      `);
+
+      await (engine as any).applyForwardReferenceBootstrap();
+
+      const { rows: srcCol } = await db.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'files' AND column_name = 'source_id'
+      `);
+      expect(srcCol).toHaveLength(1);
+
+      const { rows: pageCol } = await db.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'files' AND column_name = 'page_id'
+      `);
+      expect(pageCol).toHaveLength(1);
+
+      // SCHEMA_SQL replay must now succeed (the actual bug surface).
+      const { PGLITE_SCHEMA_SQL } = await import('../src/core/pglite-schema.ts');
+      await db.exec(PGLITE_SCHEMA_SQL);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('pre-v60 oauth_clients shape: bootstrap adds source_id + federated_read (closes #1018)', async () => {
+    // Repro of #1018: brains at config.version=54 (pre-v60) have oauth_clients
+    // without source_id/federated_read. PGLITE_SCHEMA_SQL declares both
+    // idx_oauth_clients_source_id and idx_oauth_clients_federated_read
+    // unguarded, so SCHEMA_SQL replay crashes with `column "source_id" does not exist`.
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const db = (engine as any).db;
+
+      await db.exec(`
+        DROP INDEX IF EXISTS idx_oauth_clients_source_id;
+        DROP INDEX IF EXISTS idx_oauth_clients_federated_read;
+        ALTER TABLE oauth_clients DROP COLUMN IF EXISTS source_id;
+        ALTER TABLE oauth_clients DROP COLUMN IF EXISTS federated_read;
+      `);
+
+      await (engine as any).applyForwardReferenceBootstrap();
+
+      const { rows: srcCol } = await db.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'oauth_clients' AND column_name = 'source_id'
+      `);
+      expect(srcCol).toHaveLength(1);
+
+      const { rows: frCol } = await db.query(`
+        SELECT column_name, data_type FROM information_schema.columns
+        WHERE table_name = 'oauth_clients' AND column_name = 'federated_read'
+      `);
+      expect(frCol).toHaveLength(1);
+      // Must be array type (TEXT[]) per src/schema.sql:428.
+      expect(frCol[0].data_type).toBe('ARRAY');
+
+      // SCHEMA_SQL replay must now succeed (the actual #1018 bug surface).
+      const { PGLITE_SCHEMA_SQL } = await import('../src/core/pglite-schema.ts');
+      await db.exec(PGLITE_SCHEMA_SQL);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('absent oauth_clients table (very old brain): bootstrap no-ops the oauth branch', async () => {
+    // Defense-in-depth: brains created before v0.26's OAuth introduction
+    // have no oauth_clients table at all. The probe must detect this and
+    // skip the ALTER (which would otherwise crash with `relation does not exist`).
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const db = (engine as any).db;
+
+      // Drop the entire oauth_clients table to simulate a pre-v0.26 brain.
+      // CASCADE drops dependent oauth_tokens.client_id FK rows too.
+      await db.exec(`DROP TABLE IF EXISTS oauth_clients CASCADE;`);
+
+      // Bootstrap must not throw — the oauth_clients_exists probe catches absence.
+      await (engine as any).applyForwardReferenceBootstrap();
+
+      // The table is genuinely gone (bootstrap doesn't recreate it; SCHEMA_SQL
+      // replay on the next initSchema() does that).
+      const { rows } = await db.query(`
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'oauth_clients'
+      `);
+      expect(rows).toHaveLength(0);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('absent files table (very old brain): bootstrap no-ops the files branch', async () => {
+    // Same defense-in-depth as the oauth_clients case. files table existed
+    // since pre-v0.13 in practice, but the probe should still gate cleanly.
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const db = (engine as any).db;
+
+      await db.exec(`DROP TABLE IF EXISTS files CASCADE;`);
+
+      // Bootstrap must not throw.
+      await (engine as any).applyForwardReferenceBootstrap();
+
+      const { rows } = await db.query(`
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'files'
+      `);
+      expect(rows).toHaveLength(0);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
 });

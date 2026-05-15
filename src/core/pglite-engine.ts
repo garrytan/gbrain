@@ -288,7 +288,19 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema='public' AND table_name='ingest_log') AS ingest_log_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='ingest_log' AND column_name='source_id') AS ingest_log_source_id_exists
+                WHERE table_schema='public' AND table_name='ingest_log' AND column_name='source_id') AS ingest_log_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='files') AS files_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='files' AND column_name='source_id') AS files_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='files' AND column_name='page_id') AS files_page_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='oauth_clients') AS oauth_clients_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='source_id') AS oauth_clients_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='federated_read') AS oauth_clients_federated_read_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -309,6 +321,12 @@ export class PGLiteEngine implements BrainEngine {
       subagent_provider_id_exists: boolean;
       ingest_log_exists: boolean;
       ingest_log_source_id_exists: boolean;
+      files_exists: boolean;
+      files_source_id_exists: boolean;
+      files_page_id_exists: boolean;
+      oauth_clients_exists: boolean;
+      oauth_clients_source_id_exists: boolean;
+      oauth_clients_federated_read_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -332,12 +350,28 @@ export class PGLiteEngine implements BrainEngine {
     // references source_id. Old brains have ingest_log without source_id;
     // bootstrap adds the column before SCHEMA_SQL replay creates the index.
     const needsIngestLogSourceId = probe.ingest_log_exists && !probe.ingest_log_source_id_exists;
+    // v0.18.0 Step 7: files gained source_id + page_id. PGLITE_SCHEMA_SQL
+    // declares idx_files_page_id and idx_files_source_id (mirrors
+    // src/schema.sql:498-499) without IF guard on columns; pre-v0.18.0
+    // brains wedge with `column "page_id" does not exist`. Closes #974
+    // and the column half of #820.
+    const needsFilesBootstrap = probe.files_exists
+      && (!probe.files_source_id_exists || !probe.files_page_id_exists);
+    // v0.34.1 (v60 + v61): oauth_clients gained source_id + federated_read.
+    // PGLITE_SCHEMA_SQL declares idx_oauth_clients_source_id +
+    // idx_oauth_clients_federated_read (mirrors src/schema.sql:434-437).
+    // Pre-v60 brains with the oauth_clients table wedge on SCHEMA_SQL
+    // replay. Closes #1018.
+    const needsOauthClientsBootstrap = probe.oauth_clients_exists
+      && (!probe.oauth_clients_source_id_exists || !probe.oauth_clients_federated_read_exists);
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsChunksEmbeddingImage
         && !needsMcpLogBootstrap && !needsSubagentProviderId
-        && !needsPagesRecency && !needsIngestLogSourceId) return;
+        && !needsPagesRecency && !needsIngestLogSourceId
+        && !needsFilesBootstrap
+        && !needsOauthClientsBootstrap) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -463,6 +497,48 @@ export class PGLiteEngine implements BrainEngine {
       // DEFAULT 'default' so the index can build cleanly.
       await this.db.exec(`
         ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS source_id TEXT NOT NULL DEFAULT 'default';
+      `);
+    }
+
+    if (needsFilesBootstrap) {
+      // v0.18.0 Step 7: files gained source_id + page_id. PGLITE_SCHEMA_SQL
+      // declares CREATE INDEX idx_files_page_id and idx_files_source_id
+      // (mirrors src/schema.sql:498-499) without IF guard on the column,
+      // so any pre-v0.18.0 brain wedges with `column "page_id" does not
+      // exist` before runMigrations gets a chance to add them. Closes #974
+      // and the column half of #820. NOT NULL DEFAULT 'default' on
+      // source_id mirrors schema.sql:480-481; page_id stays nullable per
+      // ON DELETE SET NULL semantics. Ordering: this block runs AFTER
+      // needsPagesBootstrap so sources(id) FK target exists.
+      await this.db.exec(`
+        ALTER TABLE files ADD COLUMN IF NOT EXISTS source_id TEXT NOT NULL DEFAULT 'default'
+          REFERENCES sources(id) ON DELETE CASCADE;
+        ALTER TABLE files ADD COLUMN IF NOT EXISTS page_id INTEGER
+          REFERENCES pages(id) ON DELETE SET NULL;
+      `);
+    }
+
+    if (needsOauthClientsBootstrap) {
+      // v0.34.1 (#861 + #876, v60 + v61): oauth_clients gained source_id
+      // (write-source scope) + federated_read (read-source array).
+      // PGLITE_SCHEMA_SQL declares idx_oauth_clients_source_id +
+      // idx_oauth_clients_federated_read (mirrors src/schema.sql:434-437).
+      // Pre-v60 brains with the oauth_clients table wedge on SCHEMA_SQL
+      // replay. Closes #1018.
+      //
+      // ON DELETE RESTRICT matches the current schema.sql:427 declaration
+      // and v64's final intent. v60's original migration used SET NULL
+      // but v64 tightened it; bootstrapping at the final state avoids a
+      // redundant subsequent ALTER and matches the schema-blob's
+      // source-of-truth posture.
+      //
+      // federated_read default '{}' (empty array) mirrors schema.sql:428;
+      // v62's backfill migration handles non-empty rows post-bootstrap.
+      await this.db.exec(`
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS source_id TEXT
+          REFERENCES sources(id) ON DELETE RESTRICT;
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS federated_read TEXT[]
+          NOT NULL DEFAULT '{}';
       `);
     }
   }
