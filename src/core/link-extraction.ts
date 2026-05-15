@@ -68,7 +68,7 @@ const ENTITY_REF_RE = new RegExp(
  * anchors (`#heading`), skips external URLs. Wiki KBs use this format almost
  * exclusively so missing it leaves the graph empty.
  */
-const WIKILINK_RE = new RegExp(
+export const WIKILINK_RE = new RegExp(
   `\\[\\[(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
@@ -85,7 +85,7 @@ const WIKILINK_RE = new RegExp(
  * the unqualified regex (the source prefix would not satisfy DIR_PATTERN
  * anyway, but the two-pass approach keeps intent crystal-clear).
  */
-const QUALIFIED_WIKILINK_RE = new RegExp(
+export const QUALIFIED_WIKILINK_RE = new RegExp(
   `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
@@ -96,7 +96,7 @@ const QUALIFIED_WIKILINK_RE = new RegExp(
  * for any caller that cares about positions; for our extractors this is just
  * defense-in-depth — slugs inside code are not real entity references.
  */
-function stripCodeBlocks(content: string): string {
+export function stripCodeBlocks(content: string): string {
   let out = '';
   let i = 0;
   while (i < content.length) {
