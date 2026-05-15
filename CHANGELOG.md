@@ -101,6 +101,7 @@ Twenty-six new test cases pin every new code path: 8 unit cases for `embedBatchW
 - `embedAllStale` accepts `sourceId` and creates a budget-bound `AbortController` threaded into the retry sleep, the per-key worker claim loop, and the gateway embed call.
 
 #### Fixed
+- `gbrain doctor` no longer warns about a missing whoknows fixture when run from a non-repo cwd (which is everyone).
 - `gbrain embed --stale --source X` silently dropped the `sourceId` argument and scanned the entire brain. Now correctly scoped end-to-end.
 - Existing test mocks omitted `source_id` and `page_id` on stale-row literals; TypeScript's structural typing accepted them but the runtime cursor needs both. Every mock fixed.
 - The wave-1 cherry-pick's `embedBatchWithBackoff` had three latent bugs (thundering herd, no wall-clock cap, SDK-retry stacking) and one silently-broken structural check (`e.status === 429` against wrapped errors). All addressed.

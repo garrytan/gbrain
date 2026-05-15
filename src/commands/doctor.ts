@@ -9,8 +9,9 @@ import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
-import { join } from 'path';
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
+import { fileURLToPath } from 'url';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 
 export interface Check {
   name: string;
@@ -86,6 +87,41 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
  * Tolerance matches migration v48: any value with abs(weight - on_grid) > 1e-3
  * is genuinely off-grid (the 0.05 grid is 5e-2; float32 noise is ~1e-7).
  */
+const WHOKNOWS_FIXTURE_RELATIVE_PATH = 'test/fixtures/whoknows-eval.jsonl';
+
+function isGbrainSourceRoot(dir: string): boolean {
+  return (
+    existsSync(join(dir, 'src', 'cli.ts')) &&
+    existsSync(join(dir, 'skills', 'RESOLVER.md'))
+  );
+}
+
+export function resolveWhoknowsFixturePath(
+  env: NodeJS.ProcessEnv = process.env,
+  moduleUrl: string = import.meta.url,
+): string | null {
+  if (env.GBRAIN_WHOKNOWS_FIXTURE_PATH) {
+    return isAbsolute(env.GBRAIN_WHOKNOWS_FIXTURE_PATH)
+      ? env.GBRAIN_WHOKNOWS_FIXTURE_PATH
+      : resolvePath(process.cwd(), env.GBRAIN_WHOKNOWS_FIXTURE_PATH);
+  }
+
+  try {
+    let dir = dirname(fileURLToPath(moduleUrl));
+    for (let i = 0; i < 10; i++) {
+      if (isGbrainSourceRoot(dir)) return join(dir, WHOKNOWS_FIXTURE_RELATIVE_PATH);
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // Some bundlers/runtimes may not expose a normal file: import URL.
+    // Doctor should surface an override hint instead of fabricating a path.
+  }
+
+  return null;
+}
+
 /**
  * v0.33: whoknows_health — verify the eval fixture is present at the
  * documented path. Lightweight; just checks file existence and row count,
@@ -98,15 +134,19 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
  */
 export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> {
   try {
-    const { existsSync, readFileSync, statSync } = await import('fs');
-    const path = await import('path');
-    const repoRoot = process.cwd();
-    const fixturePath = path.join(repoRoot, 'test/fixtures/whoknows-eval.jsonl');
+    const fixturePath = resolveWhoknowsFixturePath();
+    if (!fixturePath) {
+      return {
+        name: 'whoknows_health',
+        status: 'warn',
+        message: 'whoknows eval fixture path could not be resolved. Set GBRAIN_WHOKNOWS_FIXTURE_PATH to the absolute path for test/fixtures/whoknows-eval.jsonl.',
+      };
+    }
     if (!existsSync(fixturePath)) {
       return {
         name: 'whoknows_health',
         status: 'warn',
-        message: `whoknows eval fixture missing at test/fixtures/whoknows-eval.jsonl. Fix: hand-label 10 queries you'd actually run, format {query, expected_top_3_slugs, notes}.`,
+        message: `whoknows eval fixture missing at ${fixturePath}. Fix: hand-label 10 queries you'd actually run, format {query, expected_top_3_slugs, notes}.`,
       };
     }
     const stat = statSync(fixturePath);
