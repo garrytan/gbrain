@@ -503,27 +503,28 @@ async function runPhaseLint(brainDir: string, dryRun: boolean): Promise<PhaseRes
 
 async function runPhaseBacklinks(brainDir: string, dryRun: boolean): Promise<PhaseResult> {
   try {
-    // Library function path — the v0.15 backlinks.ts exports
-    // runBacklinksCore when --fix is requested.
+    // Maintenance cycles must not rewrite tracked brain pages with generated
+    // "Referenced in" timeline bullets. The graph extractor/auto-link path is
+    // the canonical link store during sync/dream/autopilot; the legacy
+    // filesystem fixer remains available explicitly via `gbrain check-backlinks
+    // fix` for users who truly want markdown backlinks materialized.
     const { runBacklinksCore } = await import('../commands/backlinks.ts');
     const result = await runBacklinksCore({
-      action: 'fix',
+      action: 'check',
       dir: brainDir,
       dryRun,
     });
     const gaps = result.gaps_found ?? 0;
     const added = result.fixed ?? 0;
-    const remaining = Math.max(0, gaps - added);
-    const status: PhaseStatus =
-      gaps === 0 || (!dryRun && remaining === 0) ? 'ok' : 'warn';
+    const status: PhaseStatus = 'ok';
     return {
       phase: 'backlinks',
       status,
       duration_ms: 0,
-      summary: dryRun
-        ? `${gaps} missing back-link(s) (dry-run)`
-        : `${added} back-link(s) added, ${remaining} remaining`,
-      details: { gaps, added, pages_affected: result.pages_affected, dryRun },
+      summary: gaps === 0
+        ? 'no missing back-links found'
+        : `${gaps} missing back-link(s) found (audit-only; run gbrain check-backlinks fix to materialize)`,
+      details: { gaps, added, pages_affected: result.pages_affected, dryRun, mode: 'audit-only' },
     };
   } catch (e) {
     return {
