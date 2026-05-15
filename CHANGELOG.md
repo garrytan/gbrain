@@ -2,6 +2,66 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.33.3.0] - 2026-05-14
+
+**ZeroEntropy in the box: zembed-1 embeddings + zerank-2 cross-encoder reranking, on by default for tokenmax mode.**
+
+ZeroEntropy ships two specialized small models that target the two weakest retrieval moments in a gbrain pipeline: `zembed-1` (a 32K-context embedding distilled from zerank-2 with flexible Matryoshka dims at 2560/1280/640/320/160/80/40) and `zerank-2` (a multilingual cross-encoder reranker, $0.025/1M tokens, ~50% cheaper than Cohere/Voyage rerankers). Both land as a new openai-compatible recipe alongside OpenAI/Voyage. The reranker is the bigger story: search had no reranker stage before this release. Hybrid search now ends with `RRF → dedup → reranker → token-budget` when reranker is enabled, with one configuration flip to opt in.
+
+### What you can now do
+
+**Switch to ZeroEntropy embeddings on either supported plane.** Set `embedding_model: zeroentropyai:zembed-1` and `embedding_dimensions: 2560` (or any of the 7 Matryoshka dims: 1280/640/320/160/80/40) in `~/.gbrain/config.json`, or export `GBRAIN_EMBEDDING_MODEL=zeroentropyai:zembed-1` + `GBRAIN_EMBEDDING_DIMENSIONS=2560`. The `gbrain config set` plane intentionally does NOT live-switch embedding models — they size the schema and must stay stable across engine connects. `gbrain models doctor` now probes the ZE config before spending any tokens, so an invalid `embedding_dimensions` value (the most common trip: leaving it unset and falling back to 1536, which ZE rejects) gets caught at install time with a paste-ready fix hint.
+
+**Get cross-encoder reranking on every tokenmax query, automatically.** `tokenmax` mode now defaults `search.reranker.enabled = true` with `zerank-2` as the model. The cost is ~$0.0003/query at 30-document topNIn (~12K tokens × $0.025/1M) — rounding error against the tier's existing $700/mo @ Opus pairing per the CLAUDE.md cost matrix. `balanced` and `conservative` modes default reranker off; opt in with `gbrain config set search.reranker.enabled true`. The reranker re-orders the top 30 deduped candidates by cross-encoder relevance and preserves the un-reranked long tail in its original RRF order, so recall is protected even when the reranker drops items.
+
+**Search keeps working when the reranker is flaky.** Every error class — auth, rate-limit, network, timeout, payload-too-large — fails open. The original RRF order passes through unchanged and the failure logs to `~/.gbrain/audit/rerank-failures-YYYY-Www.jsonl` (ISO-week rotation, mirrors the slug-fallback audit). `gbrain doctor` reads the audit and warns on any auth failure (config-time problem doctor's own probe should have caught) and on >=5 transient failures in the last 7 days. The check reads `search.reranker.enabled` first so "no events" means different things when reranker is on vs off (disabled = healthy by definition; enabled = healthy because nothing has failed yet).
+
+**Use asymmetric query/document encoding where the provider supports it.** ZE zembed-1 and Voyage v3+ models accept an `input_type: 'query' | 'document'` knob for asymmetric retrieval. Hybrid search's two query-side embed sites (`hybrid.ts:400` vector seed and `hybrid.ts:629` cache lookup) now call a new `embedQuery()` companion that threads `input_type: 'query'`. All ingest paths (sync, import, embed CLI) continue using `embed()` which defaults to document encoding. Symmetric providers (OpenAI text-3, DashScope, Zhipu) ignore the field — no behavior change. MiniMax embo-01's asymmetric quirk stays as it was; opting it into the new seam is a deferred follow-up.
+
+**Cache key versioning is bumped to v=2.** `KNOBS_HASH_VERSION` rolls 1 → 2 to fold the five new reranker fields (`reranker_enabled`, `reranker_model`, `reranker_top_n_in`, `reranker_top_n_out`, `reranker_timeout_ms`) into the `query_cache.knobs_hash` column. A tokenmax-with-reranker cache write can't be served to a reranker-off lookup. Mid-rolling-deploy operators should expect a temporary cache hit-rate dip and a brief doubling of cache rows for hot queries — v=1 rows TTL out within `cache.ttl_seconds` (default 3600s), then the hit rate recovers.
+
+### Itemized changes
+
+- `src/core/ai/recipes/zeroentropyai.ts` declares the new recipe with `implementation: 'openai-compatible'` (NOT the misspelled `'openai-compat'` the original plan draft had — pinned by F1 regression test). Both `touchpoints.embedding` (`zembed-1`, 7 Matryoshka dims) and `touchpoints.reranker` (`zerank-2` / `zerank-1` / `zerank-1-small`, 5MB payload cap) are declared.
+- `src/core/ai/gateway.ts` adds `zeroEntropyCompatFetch` — a fetch wrapper that rewrites the request URL from `/embeddings` to `/models/embed` (since ZE is NOT OpenAI-compatible at the wire level), injects `input_type` + explicit `encoding_format: 'float'`, and rewrites the response from `{results: [{embedding}]}` to `{data: [{embedding, index}]}` with `usage.prompt_tokens` added (Voyage's shim hit the same SDK schema requirement at `:655`). Layer 1 (Content-Length) + Layer 2 (per-embedding) OOM caps mirror Voyage's pattern via a new `ZeroEntropyResponseTooLargeError` class.
+- `gateway.rerank()` is the new native HTTP path — no AI-SDK reranking abstraction exists. Returns `RerankResult[]` sorted by `relevanceScore`; errors classify into `RerankError.reason` (`auth | rate_limit | network | timeout | payload_too_large | unknown`). 5-second default timeout (search hot path; long stalls degrade UX worse than fallthrough). Pre-flight payload guard rejects bodies over the recipe's `max_payload_bytes` cap so the caller can fail-open without an HTTP call. `_rerankTransport` test seam mirrors `_embedTransport`.
+- `gateway.embedQuery(text)` companion routes `inputType: 'query'` through `dimsProviderOptions()` (now a 4-arg signature; the 4th `inputType` param defaults to undefined for back-compat). `src/core/embedding.ts` re-exports it; `hybrid.ts` flips the two query-side embed call sites.
+- `src/core/search/rerank.ts` is the call-site abstraction. `applyReranker(query, results, opts)` slices the top `opts.topNIn` candidates, re-orders by reranker score, appends the un-reranked tail, and optionally truncates to `opts.topNOut`. `topNOut: null` is the explicit "don't truncate" signal — distinct from undefined which means "fall through to mode bundle" (per the CDX2-F16 null-vs-undefined contract).
+- `src/core/rerank-audit.ts` is the JSONL audit (failure-only — `logRerankSuccess` was deliberately dropped per CDX2-F22 to avoid hot-path I/O churn + query-volume leaks). Mirrors `src/core/audit-slug-fallback.ts` shape with ISO-week filename rotation.
+- `src/core/search/mode.ts` extends `ModeBundle`, `MODE_BUNDLES`, `SearchKeyOverrides`, `SearchPerCallOpts`, `loadOverridesFromConfig`, and `SEARCH_MODE_CONFIG_KEYS` with the five new reranker fields. `KNOBS_HASH_VERSION` bumps 1→2 (append-only convention per CDX2-F13). `loadOverridesFromConfig` parses `top_n_out` with the three-shape distinction (absent → undefined, `'null'`/`'none'`/`''` → null, positive integer → number).
+- `src/core/ai/types.ts` widens `TouchpointKind` with `'reranker'`, adds `RerankerTouchpoint` interface, and extends `Recipe.touchpoints` and `AIGatewayConfig` with the reranker fields. `src/core/ai/model-resolver.ts` widens `KnownTouchpointKey` and `getTouchpoint()` to thread reranker. `assertTouchpoint()` does NOT enforce allowlists for openai-compatible recipes (existing v0.31.12 behavior); `rerank()` and `probeRerankerConfig` do the allowlist check directly so a typo'd `search.reranker.model` surfaces at probe time, not first call.
+- `src/commands/models.ts` adds `probeRerankerConfig` (zero-network: model + touchpoint + allowlist) and `probeRerankerReachability` (1-token-equivalent: minimal rerank against real API). Both surface paste-ready `gbrain config set` fix hints. `ProbeResult.touchpoint` widens to include `'reranker_config'`.
+- `src/commands/doctor.ts` adds `checkRerankerHealth`. Reads `search.reranker.enabled` first; warns on any auth failure (singular signal) or >=5 transient failures (volume signal) in the last 7 days. Engine-agnostic (file-based + one config-key read).
+- New tests: `test/ai/zeroentropy-recipe.test.ts`, `test/ai/dims-zeroentropy.test.ts`, `test/search/rerank.test.ts`, `test/rerank-audit.test.ts` — 42 cases pinning recipe shape, dim allowlist, 4th-arg inputType plumbing, reranker fail-open across every error class, null-vs-undefined topNOut semantics, and the no-success-logging contract.
+- The plan that drove this release went through two Codex rounds (47 source-grounded findings across consult + adversarial challenge) before any code was written. Every must-fix landed; nine deferred bugs (the cache-wrapper double-embed, MiniMax embo-01 asymmetry, openai-compat allowlist gap, cache-hit limit/budget divergence) are documented in the plan file at `~/.claude/plans/system-instruction-you-are-working-linked-moonbeam.md`.
+
+## To take advantage of v0.33.3.0
+
+`gbrain upgrade` does NOT auto-switch your embedding or reranker model. ZeroEntropy is opt-in; you choose when to flip. To try it:
+
+1. **Get an API key:** `https://dashboard.zeroentropy.dev` → create key → `export ZEROENTROPY_API_KEY=...`
+2. **(Optional) Switch embedding to zembed-1.** Note: switching embedding models invalidates the vector index; you'll need to re-embed. Add to `~/.gbrain/config.json`:
+   ```json
+   {
+     "embedding_model": "zeroentropyai:zembed-1",
+     "embedding_dimensions": 2560
+   }
+   ```
+3. **(Optional) Enable reranker on a non-tokenmax mode:**
+   ```bash
+   gbrain config set search.reranker.enabled true
+   ```
+   Skip this step if you're already on `tokenmax` — reranker is on by default there.
+4. **Verify:**
+   ```bash
+   gbrain models doctor --json | jq '.probes[] | select(.touchpoint=="reranker_config" or .touchpoint=="embedding_config")'
+   ```
+   Both should report `status: "ok"`.
+5. **If anything fails,** please file an issue: https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain models doctor --json`
+   - contents of `~/.gbrain/audit/rerank-failures-*.jsonl` if present
+   - which step broke
+
 ## [0.33.2.1] - 2026-05-14
 
 **Doc-only: name the fork-PR escape hatch so AI-authored PRs don't drop their CI secrets.**
