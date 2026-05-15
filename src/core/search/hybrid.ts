@@ -280,6 +280,16 @@ export async function hybridSearch(
     // PR #618 callers compiling while the new names are the public surface.
     afterDate: opts?.since ?? opts?.afterDate,
     beforeDate: opts?.until ?? opts?.beforeDate,
+    // v0.34.1 (#861, D9 — P0 leak seal): thread source-scoping through so the
+    // inner engine.searchKeyword / engine.searchVector calls apply the
+    // WHERE source_id filter at SQL level. Pre-fix, this explicit pick
+    // silently DROPPED these fields and every authenticated MCP client
+    // could see pages from foreign sources via the hybrid search hot
+    // path. New SearchOpts fields scoped to source isolation MUST be
+    // added here too; the rebuild shape is intentional (HNSW inner-CTE
+    // ordering means we can't lazy-spread the full opts).
+    sourceId: opts?.sourceId,
+    sourceIds: opts?.sourceIds,
   };
   // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never

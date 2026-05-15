@@ -1049,11 +1049,18 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
     );
   }
 
-  // Voyage-specific HTTP path. When v0.28 lands additional providers, branch
-  // on recipe.id and route to each provider's multimodal endpoint.
+  // v0.34.1 (#875): route by recipe.implementation so openai-compat
+  // providers (LiteLLM, Anyscale, vLLM, etc.) reach the standard
+  // /embeddings endpoint with multimodal content arrays. The Voyage
+  // recipe is `openai-compat` per tier but uses its own /multimodalembeddings
+  // path, so we still branch on recipe.id for that one.
+  if (recipe.id !== 'voyage' && recipe.implementation === 'openai-compatible') {
+    return embedMultimodalOpenAICompat(inputs, recipe, parsed.modelId, cfg);
+  }
   if (recipe.id !== 'voyage') {
     throw new AIConfigError(
-      `Multimodal embedding for recipe ${recipe.id} is not implemented yet (v0.27.1 ships Voyage only).`,
+      `Multimodal embedding for recipe ${recipe.id} (${recipe.implementation}) is not implemented yet. ` +
+      `Today: voyage (own endpoint), openai-compatible recipes (standard /embeddings with content arrays).`,
     );
   }
 
@@ -1162,6 +1169,149 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
 // each input at MULTIMODAL_MAX_IMAGE_BYTES (20MB). importImageFile enforces
 // this and routes oversize files to sync_failures.jsonl.
 void MULTIMODAL_MAX_IMAGE_BYTES;
+
+/**
+ * v0.34.1 (#875): multimodal embedding via the standard OpenAI-compatible
+ * `/embeddings` endpoint. Many providers fronted by LiteLLM (Anyscale, vLLM,
+ * native OpenAI fed multimodal models) accept content arrays where each
+ * element is either `{type: "input_text", text: "..."}` or
+ * `{type: "image_url", image_url: {url: "data:..."}}` and return the same
+ * `{data: [{embedding: number[]}, ...]}` shape as text embeddings.
+ *
+ * Routing comes from gateway.embedMultimodal when the recipe's implementation
+ * is 'openai-compatible' and recipe.id is not 'voyage' (which has its own
+ * /multimodalembeddings path).
+ *
+ * D12 dim validation: the response is checked against the recipe's
+ * declared `default_dims` or the brain's `embedding_dimensions` config.
+ * Mismatch throws AIConfigError with a paste-ready hint pointing at the
+ * model picker — preferable to a silent corrupt-storage failure when the
+ * brain's vector(N) column rejects the row.
+ */
+async function embedMultimodalOpenAICompat(
+  inputs: MultimodalInput[],
+  recipe: Recipe,
+  modelId: string,
+  cfg: AIGatewayConfig,
+): Promise<Float32Array[]> {
+  // Auth resolution via the gateway's canonical helper so LiteLLM-style
+  // optional-auth recipes (Authorization: Bearer LITELLM_API_KEY) and
+  // hard-required-auth recipes (OpenAI Authorization: Bearer
+  // OPENAI_API_KEY) both work via the same code path. Throws AIConfigError
+  // when required env is missing.
+  const authResult = recipe.resolveAuth
+    ? recipe.resolveAuth(cfg.env)
+    : defaultResolveAuth(recipe, cfg.env, 'embedding');
+  const baseUrl = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
+  if (!baseUrl) {
+    throw new AIConfigError(
+      `${recipe.name} requires a base URL for multimodal embedding.`,
+      recipe.setup_hint,
+    );
+  }
+
+  // D12 — dim validation. Prefer recipe's declared default_dims when set;
+  // fall back to the brain's configured embedding_dimensions. If neither
+  // is known (LiteLLM recipe with default_dims=0 and no config override),
+  // we skip the dim check rather than fabricate an expected value — the
+  // engine's vector(N) column will reject mismatched rows at INSERT time
+  // with a clearer error than anything we could throw here.
+  const recipeDims = recipe.touchpoints.embedding?.default_dims ?? 0;
+  const expectedDims = recipeDims > 0
+    ? recipeDims
+    : (cfg.embedding_dimensions ?? 0);
+
+  // Send each input as one /embeddings request. Most providers cap the
+  // number of inputs per call at the text-embedding batch limit, but the
+  // multimodal content array varies per provider. Single-input requests
+  // are the safe lowest common denominator; LiteLLM's proxy backend
+  // batches internally if it can.
+  const allEmbeddings: Float32Array[] = [];
+  for (const input of inputs) {
+    const body = {
+      model: modelId,
+      input: [
+        {
+          // OpenAI's documented multimodal content shape. The data-URL
+          // form embeds the image bytes inline so the proxy doesn't need
+          // network access to fetch the image.
+          type: 'image_url',
+          image_url: { url: `data:${input.mime};base64,${input.data}` },
+        },
+      ],
+    };
+
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl}/embeddings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [authResult.headerName]: authResult.token,
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`);
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      if (res.status === 401 || res.status === 403) {
+        const requiredKey = recipe.auth_env?.required[0];
+        throw new AIConfigError(
+          `${recipe.name} multimodal returned ${res.status}: ${text || 'auth failed'}.`,
+          requiredKey
+            ? `Re-export ${requiredKey} or rotate the key at ${recipe.auth_env?.setup_url ?? recipe.setup_hint}.`
+            : recipe.setup_hint,
+        );
+      }
+      // Surface the upstream error verbatim — 400s here usually mean the
+      // proxied model doesn't support multimodal input. The error text is
+      // the user's best signal for picking a different model id.
+      throw new AITransientError(
+        `${recipe.name} multimodal returned ${res.status}: ${text || 'transient error'}.`,
+      );
+    }
+
+    let parsedBody: { data?: Array<{ embedding: number[] }> };
+    try {
+      parsedBody = (await res.json()) as { data?: Array<{ embedding: number[] }> };
+    } catch (err) {
+      throw new AITransientError(
+        `${recipe.name} multimodal returned malformed JSON: ${err instanceof Error ? err.message : String(err)}.`,
+      );
+    }
+    if (!parsedBody.data || !Array.isArray(parsedBody.data) || parsedBody.data.length < 1) {
+      throw new AITransientError(
+        `${recipe.name} multimodal returned no embeddings (expected 1).`,
+      );
+    }
+
+    const row = parsedBody.data[0];
+    if (!Array.isArray(row.embedding)) {
+      throw new AITransientError(
+        `${recipe.name} multimodal returned non-array embedding payload.`,
+      );
+    }
+    // D12 — dim validation. Throw EmbedDimensionMismatchError-shape error
+    // (AIConfigError with model id + observed + expected so the operator
+    // can diagnose and pick a compatible model OR adjust the brain's
+    // embedding_dimensions config). Skip the check when expectedDims=0
+    // (no recipe declaration AND no config override).
+    if (expectedDims > 0 && row.embedding.length !== expectedDims) {
+      throw new AIConfigError(
+        `${recipe.id}:${modelId} returned ${row.embedding.length}-dim vector; expected ${expectedDims}.`,
+        `The brain's embedding column is fixed at ${expectedDims} dims; this model is incompatible. ` +
+        `Either pick a model that returns ${expectedDims} dims, OR set --embedding-dimensions ${row.embedding.length} ` +
+        `and reinitialize the embedding column at the new width.`,
+      );
+    }
+    allEmbeddings.push(new Float32Array(row.embedding));
+  }
+
+  return allEmbeddings;
+}
 
 // ---- Expansion ----
 

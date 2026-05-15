@@ -720,50 +720,50 @@ describe('migrate — runner behavioral (v14 handler + v15 backfill)', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// v0.33.4 D6 — migration v60 (embed_stale_partial_index)
+// v0.33.4 D6 — migration v66 (embed_stale_partial_index)
 // Mirrors v14's CONCURRENTLY + invalid-remnant pattern for the
 // content_chunks partial index. Verifies both the source shape and the
 // actual schema state post-migration on PGLite.
 // ────────────────────────────────────────────────────────────────────────
 
-describe('migrate v60 — embed_stale_partial_index (D6)', () => {
-  const v60 = MIGRATIONS.find(m => m.version === 60);
+describe('migrate v66 — embed_stale_partial_index (D6)', () => {
+  const v66 = MIGRATIONS.find(m => m.version === 66);
 
-  test('v60 exists and uses a handler (engine-aware branching, mirrors v14)', () => {
-    expect(v60).toBeDefined();
-    expect(v60!.name).toBe('embed_stale_partial_index');
-    expect(typeof v60!.handler).toBe('function');
-    expect(v60!.sql).toBe('');
+  test('v66 exists and uses a handler (engine-aware branching, mirrors v14)', () => {
+    expect(v66).toBeDefined();
+    expect(v66!.name).toBe('embed_stale_partial_index');
+    expect(typeof v66!.handler).toBe('function');
+    expect(v66!.sql).toBe('');
   });
 
-  test('v60 handler source: CONCURRENTLY + invalid-index cleanup on Postgres branch', async () => {
+  test('v66 handler source: CONCURRENTLY + invalid-index cleanup on Postgres branch', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/core/migrate.ts', 'utf-8');
-    const v60Start = src.indexOf("name: 'embed_stale_partial_index'");
-    expect(v60Start).toBeGreaterThan(-1);
-    const v60Block = src.slice(v60Start, v60Start + 3000);
-    expect(v60Block).toContain('pg_index');
-    expect(v60Block).toContain('indisvalid');
-    expect(v60Block).toContain('DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding_null');
-    expect(v60Block).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_null');
+    const v66Start = src.indexOf("name: 'embed_stale_partial_index'");
+    expect(v66Start).toBeGreaterThan(-1);
+    const v66Block = src.slice(v66Start, v66Start + 3000);
+    expect(v66Block).toContain('pg_index');
+    expect(v66Block).toContain('indisvalid');
+    expect(v66Block).toContain('DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding_null');
+    expect(v66Block).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_null');
     // Partial index predicate must match the production query in
     // postgres-engine.ts / pglite-engine.ts: `WHERE embedding IS NULL`.
-    expect(v60Block).toContain('WHERE embedding IS NULL');
+    expect(v66Block).toContain('WHERE embedding IS NULL');
     // DROP IF EXISTS must precede CREATE IF NOT EXISTS so a failed prior
     // CONCURRENTLY build is cleaned before re-create.
-    const dropIdx = v60Block.indexOf('DROP INDEX CONCURRENTLY IF EXISTS');
-    const createIdx = v60Block.indexOf('CREATE INDEX CONCURRENTLY IF NOT EXISTS');
+    const dropIdx = v66Block.indexOf('DROP INDEX CONCURRENTLY IF EXISTS');
+    const createIdx = v66Block.indexOf('CREATE INDEX CONCURRENTLY IF NOT EXISTS');
     expect(dropIdx).toBeLessThan(createIdx);
     // Branches on engine.kind (handler-pattern from v14).
-    expect(v60Block).toContain('engine.kind');
+    expect(v66Block).toContain('engine.kind');
   });
 
-  test('v60 idempotent flag is true (re-run safety)', () => {
-    expect(v60!.idempotent).toBe(true);
+  test('v66 idempotent flag is true (re-run safety)', () => {
+    expect(v66!.idempotent).toBe(true);
   });
 });
 
-describe('migrate runner v60 — partial index materialized on PGLite', () => {
+describe('migrate runner v66 — partial index materialized on PGLite', () => {
   let engine: PGLiteEngine;
 
   beforeAll(async () => {
@@ -776,7 +776,7 @@ describe('migrate runner v60 — partial index materialized on PGLite', () => {
     await engine.disconnect();
   });
 
-  test('v60 created idx_chunks_embedding_null on PGLite via handler branch', async () => {
+  test('v66 created idx_chunks_embedding_null on PGLite via handler branch', async () => {
     const rows = await (engine as any).db.query(
       `SELECT indexname FROM pg_indexes WHERE indexname = 'idx_chunks_embedding_null'`
     );
