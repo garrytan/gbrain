@@ -58,6 +58,15 @@ export async function runFrontmatter(args: string[]): Promise<void> {
     await runFrontmatterInstallHook(rest);
     return;
   }
+  if (sub === 'slug') {
+    const path = rest[0];
+    if (path === undefined || path === '') {
+      process.stderr.write('Usage: gbrain frontmatter slug <rel-path>\n');
+      process.exit(2);
+    }
+    process.stdout.write(slugifyPath(path) + '\n');
+    return;
+  }
   console.error(`Unknown frontmatter subcommand: ${sub}\n`);
   printHelp();
   process.exitCode = 1;
