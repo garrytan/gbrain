@@ -281,7 +281,11 @@ describe('BrainRegistry — lazy init', () => {
     const isolatedHome = mkdtempSync(join(tmpdir(), 'brain-registry-home-'));
     track(isolatedHome);
     const savedHome = process.env.GBRAIN_HOME;
+    const savedGbrainDbUrl = process.env.GBRAIN_DATABASE_URL;
+    const savedDbUrl = process.env.DATABASE_URL;
     process.env.GBRAIN_HOME = isolatedHome;
+    delete process.env.GBRAIN_DATABASE_URL;
+    delete process.env.DATABASE_URL;
     try {
       const reg = new BrainRegistry([]);
       // Expect the host-init path to be attempted (it'll fail on missing
@@ -293,6 +297,10 @@ describe('BrainRegistry — lazy init', () => {
     } finally {
       if (savedHome !== undefined) process.env.GBRAIN_HOME = savedHome;
       else delete process.env.GBRAIN_HOME;
+      if (savedGbrainDbUrl !== undefined) process.env.GBRAIN_DATABASE_URL = savedGbrainDbUrl;
+      else delete process.env.GBRAIN_DATABASE_URL;
+      if (savedDbUrl !== undefined) process.env.DATABASE_URL = savedDbUrl;
+      else delete process.env.DATABASE_URL;
     }
   });
 });

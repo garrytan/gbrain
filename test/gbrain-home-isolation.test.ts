@@ -76,6 +76,10 @@ describe('GBRAIN_HOME write-side isolation', () => {
   test('saveConfig/loadConfig honor GBRAIN_HOME', async () => {
     const tmp = fresh();
     process.env.GBRAIN_HOME = tmp;
+    const savedGbrainDbUrl = process.env.GBRAIN_DATABASE_URL;
+    const savedDbUrl = process.env.DATABASE_URL;
+    delete process.env.GBRAIN_DATABASE_URL;
+    delete process.env.DATABASE_URL;
     try {
       const { saveConfig, loadConfig } = await import('../src/core/config.ts');
       const cfg = { engine: 'pglite' as const, database_path: join(tmp, '.gbrain', 'brain.pglite') };
@@ -89,6 +93,10 @@ describe('GBRAIN_HOME write-side isolation', () => {
       expect(loaded?.database_path).toBe(cfg.database_path);
     } finally {
       process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
+      if (savedGbrainDbUrl !== undefined) process.env.GBRAIN_DATABASE_URL = savedGbrainDbUrl;
+      else delete process.env.GBRAIN_DATABASE_URL;
+      if (savedDbUrl !== undefined) process.env.DATABASE_URL = savedDbUrl;
+      else delete process.env.DATABASE_URL;
       rmSync(tmp, { recursive: true, force: true });
     }
   });

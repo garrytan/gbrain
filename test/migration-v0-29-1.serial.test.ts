@@ -14,11 +14,17 @@ const opts = {
 describe('v0.29.1 migration', () => {
   let tmp: string;
   let oldGbrainHome: string | undefined;
+  let oldGbrainDbUrl: string | undefined;
+  let oldDbUrl: string | undefined;
 
   beforeEach(async () => {
     oldGbrainHome = process.env.GBRAIN_HOME;
+    oldGbrainDbUrl = process.env.GBRAIN_DATABASE_URL;
+    oldDbUrl = process.env.DATABASE_URL;
     tmp = mkdtempSync(join(tmpdir(), 'gbrain-v0291-'));
     process.env.GBRAIN_HOME = tmp;
+    delete process.env.GBRAIN_DATABASE_URL;
+    delete process.env.DATABASE_URL;
 
     const gbrainHome = join(tmp, '.gbrain');
     const dbPath = join(tmp, 'brain-db');
@@ -40,6 +46,10 @@ describe('v0.29.1 migration', () => {
   afterEach(() => {
     if (oldGbrainHome === undefined) delete process.env.GBRAIN_HOME;
     else process.env.GBRAIN_HOME = oldGbrainHome;
+    if (oldGbrainDbUrl !== undefined) process.env.GBRAIN_DATABASE_URL = oldGbrainDbUrl;
+    else delete process.env.GBRAIN_DATABASE_URL;
+    if (oldDbUrl !== undefined) process.env.DATABASE_URL = oldDbUrl;
+    else delete process.env.DATABASE_URL;
     rmSync(tmp, { recursive: true, force: true });
   });
 
