@@ -29,6 +29,7 @@ import {
 import { tryAcquireDbLock, SYNC_LOCK_ID } from '../core/db-lock.ts';
 import { loadStorageConfig } from '../core/storage-config.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
+import { sortNewestFirst } from '../core/sort-newest-first.ts';
 
 export interface SyncResult {
   status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures';
@@ -699,6 +700,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // gate `sync.last_commit` advancement and record recoverable errors.
   const failedFiles: Array<{ path: string; error: string; line?: number }> = [];
   const addsAndMods = [...filtered.added, ...filtered.modified];
+
+  // Sort newest-first so date-prefixed brain paths get embedded before older
+  // ones. See src/core/sort-newest-first.ts for the policy.
+  sortNewestFirst(addsAndMods);
 
   // v0.22.13 (PR #490 Q5): one source of truth for the concurrency decision.
   // engine.kind === 'pglite' → forced 1; explicit opts.concurrency wins;

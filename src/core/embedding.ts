@@ -25,7 +25,7 @@ export async function embed(text: string): Promise<Float32Array> {
 }
 
 /**
- * v0.33.2+: embed a single text on the QUERY side. For asymmetric providers
+ * v0.35.0.0+: embed a single text on the QUERY side. For asymmetric providers
  * (ZE zembed-1, Voyage v3+) this routes `input_type: 'query'` through the
  * embed seam so the provider returns query-side vectors. For symmetric
  * providers (OpenAI text-3, DashScope, Zhipu) the field is dropped — no

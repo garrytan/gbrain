@@ -1,5 +1,5 @@
 /**
- * v0.33.3.0 — embedQuery() routing tests.
+ * v0.35.0.0 — embedQuery() routing tests.
  *
  * Pins:
  *  - embedQuery returns a single Float32Array (not a batch).
@@ -148,7 +148,7 @@ describe('embedQuery — per-model filtering (CDX2-F6, end-to-end)', () => {
     }) as any);
     await embed(['doc']);
     // CDX2-F6 contract: legacy callers (no 4th-arg) preserve their existing
-    // behavior. The pre-v0.33.3.0 Voyage gateway never sent input_type;
+    // behavior. The pre-v0.35.0.0 Voyage gateway never sent input_type;
     // a regression here would break existing brains. The condition is
     // tested at the dimsProviderOptions layer too, but this end-to-end pin
     // catches a future refactor that might bypass the condition.

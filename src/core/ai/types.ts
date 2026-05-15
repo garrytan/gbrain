@@ -128,7 +128,7 @@ export interface ExpansionTouchpoint {
  * stricter signal that subagent.ts asserts.
  */
 /**
- * Reranker touchpoint (v0.33.2+): cross-encoder rerankers that take a query
+ * Reranker touchpoint (v0.35.0.0+): cross-encoder rerankers that take a query
  * + N documents and return a relevance-score-sorted index list. Slots into
  * `applyReranker()` in src/core/search/rerank.ts between RRF dedup and
  * token-budget enforcement.
@@ -278,7 +278,7 @@ export interface AIGatewayConfig {
   /** Default chat model for `gateway.chat()` callers (subagent default). */
   chat_model?: string;
   /**
-   * v0.33.2+: default reranker model for `gateway.rerank()` callers. As
+   * v0.35.0.0+: default reranker model for `gateway.rerank()` callers. As
    * `'provider:model'` (e.g. `'zeroentropyai:zerank-2'`). Resolved at
    * configure time and re-resolved by reconfigureGatewayWithEngine() when
    * mode-bundle or config-key overrides change.

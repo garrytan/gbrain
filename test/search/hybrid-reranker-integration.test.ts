@@ -1,5 +1,5 @@
 /**
- * v0.33.3.0 — hybridSearch ↔ applyReranker integration tests.
+ * v0.35.0.0 — hybridSearch ↔ applyReranker integration tests.
  *
  * Drives bare hybridSearch (NOT the cached wrapper — that adds an embed
  * call we don't want here) against PGLite with a stubbed rerankerFn so

@@ -36,7 +36,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
   });
 
   // The cell-by-cell assertion. The methodology doc cites these.
-  // v0.33.2+ extended with 5 reranker fields. tokenmax flips reranker on;
+  // v0.35.0.0+ extended with 5 reranker fields. tokenmax flips reranker on;
   // conservative + balanced keep it off until eval data backs a change.
   test('conservative bundle values are canonical', () => {
     expect(MODE_BUNDLES.conservative).toEqual({
@@ -264,7 +264,7 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
   });
 
   test('KNOBS_HASH_VERSION constant exposed for migrations to bump on schema change', () => {
-    // v0.33.2+ bumped 1→2 to fold reranker fields into the cache key.
+    // v0.35.0.0+ bumped 1→2 to fold reranker fields into the cache key.
     // CDX2-F14: a timeout change from 5s to 100ms changes search behavior
     // (more fail-opens) so stale cache rows must invalidate.
     expect(KNOBS_HASH_VERSION).toBe(2);

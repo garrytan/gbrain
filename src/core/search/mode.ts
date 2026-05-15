@@ -67,7 +67,7 @@ export interface ModeBundle {
    */
   searchLimit: number;
   /**
-   * v0.33.2+ — cross-encoder reranker. Off for conservative/balanced,
+   * v0.35.0.0+ — cross-encoder reranker. Off for conservative/balanced,
    * on for tokenmax. ZeroEntropy zerank-2 by default; can be overridden
    * via `search.reranker.model`. Slots between dedup and token-budget
    * enforcement in hybrid.ts; fail-open on any RerankError (audit-logged).
@@ -112,7 +112,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     tokenBudget: 4000,
     expansion: false,
     searchLimit: 10,
-    // v0.33.2+: reranker off — conservative is cost-sensitive; reranker
+    // v0.35.0.0+: reranker off — conservative is cost-sensitive; reranker
     // spend doesn't fit the tier's value prop.
     reranker_enabled: false,
     reranker_model: 'zeroentropyai:zerank-2',
@@ -177,7 +177,7 @@ export interface SearchKeyOverrides {
   tokenBudget?: number;
   expansion?: boolean;
   searchLimit?: number;
-  // v0.33.2+ reranker overrides
+  // v0.35.0.0+ reranker overrides
   reranker_enabled?: boolean;
   reranker_model?: string;
   reranker_top_n_in?: number;
@@ -203,7 +203,7 @@ export interface SearchPerCallOpts {
   tokenBudget?: number;
   expansion?: boolean;
   searchLimit?: number;
-  // v0.33.2+ reranker per-call overrides (same shape as SearchKeyOverrides).
+  // v0.35.0.0+ reranker per-call overrides (same shape as SearchKeyOverrides).
   reranker_enabled?: boolean;
   reranker_model?: string;
   reranker_top_n_in?: number;
@@ -315,7 +315,7 @@ export function attributeKnob<K extends keyof ModeBundle>(
  * reorder or add a knob without bumping a constant — a hash collision would
  * mean stale cache rows silently reading the wrong shape.
  */
-// v0.33.2+ bump 1→2: reranker fields participate in the cache key so a
+// v0.35.0.0+ bump 1→2: reranker fields participate in the cache key so a
 // tokenmax-with-reranker write can't be served to a reranker-off lookup.
 // CDX2-F13 convention: under a version bump, additions are APPEND-ONLY at
 // the end of `parts[]` — reordering existing fields would silently rebuild
@@ -401,7 +401,7 @@ export function loadOverridesFromConfig(
     if (Number.isFinite(n) && n > 0) out.searchLimit = n;
   }
 
-  // v0.33.2+ reranker overrides
+  // v0.35.0.0+ reranker overrides
   const re = get('search.reranker.enabled');
   if (re !== undefined) {
     out.reranker_enabled = re === '1' || re.toLowerCase() === 'true';
@@ -447,7 +447,7 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.tokenBudget',
   'search.expansion',
   'search.searchLimit',
-  // v0.33.2+ reranker keys
+  // v0.35.0.0+ reranker keys
   'search.reranker.enabled',
   'search.reranker.model',
   'search.reranker.top_n_in',

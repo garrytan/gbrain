@@ -281,6 +281,16 @@ export async function hybridSearch(
     // PR #618 callers compiling while the new names are the public surface.
     afterDate: opts?.since ?? opts?.afterDate,
     beforeDate: opts?.until ?? opts?.beforeDate,
+    // v0.34.1 (#861, D9 — P0 leak seal): thread source-scoping through so the
+    // inner engine.searchKeyword / engine.searchVector calls apply the
+    // WHERE source_id filter at SQL level. Pre-fix, this explicit pick
+    // silently DROPPED these fields and every authenticated MCP client
+    // could see pages from foreign sources via the hybrid search hot
+    // path. New SearchOpts fields scoped to source isolation MUST be
+    // added here too; the rebuild shape is intentional (HNSW inner-CTE
+    // ordering means we can't lazy-spread the full opts).
+    sourceId: opts?.sourceId,
+    sourceIds: opts?.sourceIds,
   };
   // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never
@@ -398,7 +408,7 @@ export async function hybridSearch(
   let vectorLists: SearchResult[][] = [];
   let queryEmbedding: Float32Array | null = null;
   try {
-    // v0.33.2+: query-side embedding. For asymmetric providers (ZE zembed-1,
+    // v0.35.0.0+: query-side embedding. For asymmetric providers (ZE zembed-1,
     // Voyage v3+) routes input_type='query' through the embed seam; symmetric
     // providers ignore the field — no behavior change.
     const embeddings = await Promise.all(queries.map(q => embedQuery(q)));
@@ -530,7 +540,7 @@ export async function hybridSearch(
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
-  // v0.33.2+: cross-encoder reranker. Slots between dedup and slice so the
+  // v0.35.0.0+: cross-encoder reranker. Slots between dedup and slice so the
   // reranker sees the full candidate pool (its own topNIn caps how many
   // get sent upstream). Fail-open: any error returns deduped unchanged.
   //
@@ -649,7 +659,7 @@ export async function hybridSearchCached(
     try {
       const { isAvailable } = await import('../ai/gateway.ts');
       if (isAvailable('embedding')) {
-        // v0.33.2+: query-side embedding (cache lookup path).
+        // v0.35.0.0+: query-side embedding (cache lookup path).
         queryEmbedding = await embedQuery(query);
       } else {
         cacheStatus = 'disabled';

@@ -47,7 +47,7 @@ export function isValidVoyageOutputDim(dims: number): boolean {
   return (VOYAGE_VALID_OUTPUT_DIMS as readonly number[]).includes(dims);
 }
 
-// v0.33.2+ ZeroEntropy zembed-1 flexible-dim allowlist. zembed-1 distills
+// v0.35.0.0+ ZeroEntropy zembed-1 flexible-dim allowlist. zembed-1 distills
 // from zerank-2 (Matryoshka-style); smaller dims trade quality for storage.
 // ZE rejects any other value with HTTP 400; catching it locally produces a
 // clearer error with the valid-values hint. Same failure mode as the Voyage
@@ -75,7 +75,7 @@ export function isValidZeroEntropyDim(dims: number): boolean {
  * adapter only forwards `dimensions`; gateway.ts translates that field to
  * Voyage's wire name in voyageCompatFetch.
  *
- * v0.33.2+ 4th param `inputType`: 'query' | 'document' for asymmetric
+ * v0.35.0.0+ 4th param `inputType`: 'query' | 'document' for asymmetric
  * providers (ZE zembed-1, Voyage v3+, MiniMax embo-01). When omitted, the
  * existing document-encoding behavior is preserved (no `input_type` field
  * emitted for symmetric providers; legacy hardcoded `type:'db'` for
@@ -132,7 +132,7 @@ export function dimsProviderOptions(
       // Voyage hosted flexible-dim models — accept `output_dimension`
       // (translated by voyageCompatFetch) AND `input_type: query|document`
       // for asymmetric retrieval. inputType is opt-in: when undefined,
-      // emit no field (preserves pre-v0.33.2 callers + existing tests).
+      // emit no field (preserves pre-v0.35.0.0 callers + existing tests).
       // When threaded explicitly by embedQuery()/embed(), it reaches Voyage.
       if (supportsVoyageOutputDimension(modelId)) {
         // Fail-loud at the embed boundary if the user configured a dim

@@ -1,5 +1,5 @@
 /**
- * v0.33.2+ dim validator + 4th-arg inputType plumbing tests.
+ * v0.35.0.0+ dim validator + 4th-arg inputType plumbing tests.
  *
  * Pins:
  *  - ZE valid dim allowlist (CDX1-F-equivalent for zembed-1)
@@ -108,7 +108,7 @@ describe('CDX2-F6: per-model inputType filtering', () => {
 
   test('Voyage models accept inputType when explicitly threaded', () => {
     // Voyage v4 + v3 accept input_type. inputType undefined → no field
-    // (back-compat for pre-v0.33.2 tests); inputType='query' → field present.
+    // (back-compat for pre-v0.35.0.0 tests); inputType='query' → field present.
     const optsDefault = dimsProviderOptions('openai-compatible', 'voyage-3-large', 1024);
     expect(optsDefault).toEqual({ openaiCompatible: { dimensions: 1024 } });
     expect(JSON.stringify(optsDefault)).not.toContain('input_type');

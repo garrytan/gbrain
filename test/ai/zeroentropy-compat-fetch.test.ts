@@ -1,5 +1,5 @@
 /**
- * v0.33.3.0 — structural source-shape assertions for zeroEntropyCompatFetch.
+ * v0.35.0.0 — structural source-shape assertions for zeroEntropyCompatFetch.
  *
  * Mirrors the test/voyage-response-cap.test.ts pattern: the shim is a
  * closed-over helper inside the embedding instantiation path and isn't

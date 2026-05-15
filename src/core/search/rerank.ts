@@ -1,5 +1,5 @@
 /**
- * v0.33.2+ — reranker call-site abstraction.
+ * v0.35.0.0+ — reranker call-site abstraction.
  *
  * Slots into hybridSearch after `dedupResults()` and before
  * `enforceTokenBudget()`. Takes the top `topNIn` candidates by current RRF

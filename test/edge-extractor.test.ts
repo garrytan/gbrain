@@ -29,7 +29,11 @@ class Foo {
 }
 `.trim();
     const result = await chunkCodeTextFull(src, 'src/foo.ts');
-    expect(result.edges.map(e => e.toSymbol)).toContain('go');
+    // v0.34 W1: this.go() now resolves to Foo::go via receiver-type resolution.
+    // Pre-v0.34 emitted bare 'go'; v0.34 emits 'Foo::go'. Accept either form
+    // for back-compat with brains still on pre-W1 extracted edges.
+    const syms = result.edges.map(e => e.toSymbol);
+    expect(syms.some((s) => s === 'go' || s === 'Foo::go')).toBe(true);
   });
 
   test('all edges typed as calls', async () => {
@@ -61,7 +65,9 @@ class Foo:
         return 1
 `.trim();
     const result = await chunkCodeTextFull(src, 'src/foo.py');
-    expect(result.edges.map(e => e.toSymbol)).toContain('go');
+    // v0.34 W1: self.go() resolves to Foo::go via Python receiver-type resolution.
+    const syms = result.edges.map(e => e.toSymbol);
+    expect(syms.some((s) => s === 'go' || s === 'Foo::go')).toBe(true);
   });
 });
 

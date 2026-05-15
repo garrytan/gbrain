@@ -11,7 +11,7 @@ for retrieval pipelines:
   $0.025/1M tokens (~50% cheaper than Cohere/Voyage rerankers).
   Plus `zerank-1` and `zerank-1-small` for legacy / open-source needs.
 
-Both land in gbrain v0.33.3.0 behind the openai-compatible recipe path,
+Both land in gbrain v0.35.0.0 behind the openai-compatible recipe path,
 alongside OpenAI and Voyage.
 
 ## Setup
@@ -77,7 +77,7 @@ surface as `status: "config"` with a paste-ready
 ## Reranker switch — zerank-2
 
 The reranker is the bigger story: gbrain had no cross-encoder reranker
-stage before v0.33.3.0. It slots between RRF dedup and token-budget
+stage before v0.35.0.0. It slots between RRF dedup and token-budget
 enforcement in hybrid search.
 
 ### Default-on with `tokenmax` mode
@@ -152,7 +152,7 @@ ignore the field — no behavior change.
 
 ## Cache key versioning
 
-v0.33.3.0 bumped `KNOBS_HASH_VERSION` 1 → 2 to fold reranker config into
+v0.35.0.0 bumped `KNOBS_HASH_VERSION` 1 → 2 to fold reranker config into
 the `query_cache.knobs_hash` column. During a rolling deploy:
 
 - Expect a temporary cache hit-rate dip (~1 hour at default

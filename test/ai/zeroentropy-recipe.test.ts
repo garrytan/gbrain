@@ -1,5 +1,5 @@
 /**
- * v0.33.2+ ZeroEntropy recipe shape tests. Pins the contracts Codex
+ * v0.35.0.0+ ZeroEntropy recipe shape tests. Pins the contracts Codex
  * Round 1 + 2 flagged in the plan-review wave:
  *
  *  - F1: implementation MUST be 'openai-compatible' (not the misspelled

@@ -414,7 +414,7 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // eval run? Non-blocking — surfaces as ok + hint.
   checks.push(await checkEvalDrift(engine));
 
-  // 9. v0.33.2+ reranker_health: surfaces rerank-audit failures from
+  // 9. v0.35.0.0+ reranker_health: surfaces rerank-audit failures from
   // ~/.gbrain/audit/rerank-failures-*.jsonl. Failure-only (no success
   // logging on the search hot path per CDX2-F22). Reads
   // search.reranker.enabled FIRST so absence-of-failures means different
@@ -425,7 +425,7 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
 }
 
 /**
- * v0.33.2+ reranker_health doctor check.
+ * v0.35.0.0+ reranker_health doctor check.
  *
  * Logic (post-CDX2 review):
  *   1) Read `search.reranker.enabled` first. When disabled and no
@@ -2505,7 +2505,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     checks.push(await checkSearchMode(engine));
     progress.heartbeat('eval_drift');
     checks.push(await checkEvalDrift(engine));
-    // v0.33.2+ reranker_health — read JSONL audit; warn on auth or volume.
+    // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
     progress.heartbeat('reranker_health');
     checks.push(await checkRerankerHealth(engine));
   }

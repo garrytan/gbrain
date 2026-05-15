@@ -1,5 +1,5 @@
 /**
- * v0.33.3.0 — ZeroEntropy live E2E tests.
+ * v0.35.0.0 — ZeroEntropy live E2E tests.
  *
  * Real HTTP round-trip against `api.zeroentropy.dev`. Gated on
  * `ZEROENTROPY_API_KEY` — when absent, every test skips gracefully so

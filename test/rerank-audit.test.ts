@@ -1,5 +1,5 @@
 /**
- * v0.33.2+ rerank-audit JSONL round-trip.
+ * v0.35.0.0+ rerank-audit JSONL round-trip.
  *
  * Pins:
  *  - logRerankFailure → readRecentRerankFailures round-trip

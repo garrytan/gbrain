@@ -1,5 +1,5 @@
 /**
- * v0.33.2+ — rerank-failure audit trail.
+ * v0.35.0.0+ — rerank-failure audit trail.
  *
  * Writes warn-severity rows to `~/.gbrain/audit/rerank-failures-YYYY-Www.jsonl`
  * (ISO-week rotation, mirrors slug-fallback-audit.ts). Fired when

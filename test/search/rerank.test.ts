@@ -1,5 +1,5 @@
 /**
- * v0.33.2+ applyReranker tests.
+ * v0.35.0.0+ applyReranker tests.
  *
  * Pins:
  *  - reorder by reranker score (the happy path)

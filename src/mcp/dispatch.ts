@@ -204,7 +204,11 @@ export function buildOperationContext(
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
     takesHoldersAllowList: opts.takesHoldersAllowList,
-    sourceId: opts.sourceId,
+    // v0.34 D4: sourceId is REQUIRED at the type level. Auto-fill 'default'
+    // for single-source brains and any caller who didn't resolve a sourceId.
+    // CLI / HTTP / stdio transports SHOULD pass an explicit sourceId via opts;
+    // this fallback covers code paths that historically passed undefined.
+    sourceId: opts.sourceId ?? 'default',
     auth: opts.auth,
   };
 }

@@ -269,7 +269,7 @@ async function probeEmbeddingConfig(): Promise<ProbeResult> {
 }
 
 /**
- * v0.33.2+: zero-network reranker config probe. Validates that the
+ * v0.35.0.0+: zero-network reranker config probe. Validates that the
  * configured reranker model resolves through the recipe registry, that the
  * recipe declares a `reranker` touchpoint, and that the model is in the
  * touchpoint's `models[]` allowlist.
@@ -345,7 +345,7 @@ async function probeRerankerConfig(): Promise<ProbeResult> {
 }
 
 /**
- * v0.33.2+: 1-token-equivalent reranker reachability probe. Sends a minimal
+ * v0.35.0.0+: 1-token-equivalent reranker reachability probe. Sends a minimal
  * `{query, documents: [doc]}` request to verify auth + URL. Uses the same
  * AbortController + 5s timeout pattern as probeModel.
  *
@@ -472,7 +472,7 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
   // brain misconfigured for Voyage with the wrong embedding_dimensions would
   // 400 on first embed. Fast feedback before we spend a single token.
   results.push(await probeEmbeddingConfig());
-  // v0.33.2+ reranker config probe — same zero-network model as embedding.
+  // v0.35.0.0+ reranker config probe — same zero-network model as embedding.
   results.push(await probeRerankerConfig());
 
   for (const [modelStr, touchpoint] of [[chatModel, 'chat'], [expansionModel, 'expansion']] as const) {
@@ -483,7 +483,7 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
     results.push(await probeModel(modelStr, touchpoint));
   }
 
-  // v0.33.2+: reranker reachability (only when configured + provider not in --skip).
+  // v0.35.0.0+: reranker reachability (only when configured + provider not in --skip).
   const { getRerankerModel } = await import('../core/ai/gateway.ts');
   const rerankerModel = getRerankerModel();
   if (rerankerModel && !shouldSkipProvider(rerankerModel, skip)) {

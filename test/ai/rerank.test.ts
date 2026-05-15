@@ -1,5 +1,5 @@
 /**
- * v0.33.3.0 — gateway.rerank() HTTP path tests.
+ * v0.35.0.0 — gateway.rerank() HTTP path tests.
  *
  * Drives the public `rerank()` function with a stubbed `_rerankTransport`
  * (the canonical test seam — same pattern as `__setEmbedTransportForTests`).

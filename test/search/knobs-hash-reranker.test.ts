@@ -1,5 +1,5 @@
 /**
- * v0.33.3.0 — knobsHash reranker-field participation tests.
+ * v0.35.0.0 — knobsHash reranker-field participation tests.
  *
  * Pins:
  *  - KNOBS_HASH_VERSION === 2 (bumped from 1; CDX1-F14).
