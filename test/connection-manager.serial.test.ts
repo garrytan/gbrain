@@ -35,33 +35,54 @@ describe('isSupabasePoolerUrl', () => {
 });
 
 describe('deriveDirectUrl', () => {
-  test('swaps pooler hostname + port for known shape', () => {
+  // Session Pooler (port 6543): returns null — supports DDL natively,
+  // no need for a separate direct connection (which would be IPv6-only).
+  test('returns null for Session Pooler (port 6543) — DDL-capable, avoids IPv6 direct', () => {
+    expect(
+      deriveDirectUrl('postgresql://postgres.abcxyz:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres')
+    ).toBeNull();
+  });
+
+  test('returns null for Session Pooler with unparseable user', () => {
+    expect(
+      deriveDirectUrl('postgresql://customuser:secret@some.pooler.supabase.com:6543/db')
+    ).toBeNull();
+  });
+
+  test('returns null for Session Pooler even with query string', () => {
+    expect(
+      deriveDirectUrl('postgresql://postgres.ref:p@aws.pooler.supabase.com:6543/db?prepare=false')
+    ).toBeNull();
+  });
+
+  // Transaction Pooler (port 5432 on pooler domain): must derive direct URL
+  // because it's stateless and cannot handle DDL.
+  test('swaps Transaction Pooler hostname + port to direct for known shape', () => {
     const direct = deriveDirectUrl(
-      'postgresql://postgres.abcxyz:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres'
+      'postgresql://postgres.abcxyz:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres'
     );
     expect(direct).toBeTruthy();
     expect(direct).toContain('db.abcxyz.supabase.co:5432');
     expect(direct).toContain(':secret@'); // creds preserved
   });
 
-  test('falls back to port-only swap when project-ref unparseable', () => {
+  test('falls back to host-only for Transaction Pooler with unparseable user', () => {
     const direct = deriveDirectUrl(
-      'postgresql://customuser:secret@some.pooler.supabase.com:6543/db'
+      'postgresql://customuser:secret@some.pooler.supabase.com:5432/db'
     );
     expect(direct).toBeTruthy();
     expect(direct).toContain(':5432');
-    expect(direct).toContain('some.pooler.supabase.com'); // host preserved
+  });
+
+  test('preserves query string for Transaction Pooler', () => {
+    const direct = deriveDirectUrl(
+      'postgresql://postgres.ref:p@aws.pooler.supabase.com:5432/db?prepare=false'
+    );
+    expect(direct).toContain('?prepare=false');
   });
 
   test('returns null for non-pooler URL', () => {
     expect(deriveDirectUrl('postgresql://u:p@localhost:5432/db')).toBeNull();
-  });
-
-  test('preserves query string', () => {
-    const direct = deriveDirectUrl(
-      'postgresql://postgres.ref:p@aws.pooler.supabase.com:6543/db?prepare=false'
-    );
-    expect(direct).toContain('?prepare=false');
   });
 });
 
@@ -148,9 +169,21 @@ describe('ConnectionManager — describeMode + dual-pool routing', () => {
     expect(cm.describeMode().mode).toBe('single (non-supabase)');
   });
 
-  test('Supabase pooler URL → dual mode (without kill-switch)', () => {
+  test('Session Pooler (port 6543) → single mode, no direct URL derived', () => {
+    // Session Pooler supports DDL natively; deriveDirectUrl returns null for
+    // port 6543 to avoid the IPv6-only db.<ref>.supabase.co:5432 direct URL.
     const cm = new ConnectionManager({
       url: 'postgresql://postgres.abc:p@aws.pooler.supabase.com:6543/db',
+    });
+    expect(cm.isSupabase()).toBe(true);
+    expect(cm.isDualPoolActive()).toBe(false); // single pool — Session Pooler handles DDL
+    expect(cm.resolveDirectUrl()).toBeNull();
+  });
+
+  test('Transaction Pooler (port 5432 on pooler host) → dual mode', () => {
+    // Transaction Pooler is stateless; DDL requires a direct connection.
+    const cm = new ConnectionManager({
+      url: 'postgresql://postgres.abc:p@aws.pooler.supabase.com:5432/db',
     });
     expect(cm.isSupabase()).toBe(true);
     expect(cm.isDualPoolActive()).toBe(true);
