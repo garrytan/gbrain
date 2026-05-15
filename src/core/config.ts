@@ -106,6 +106,26 @@ export interface GBrainConfig {
     oauth_client_id: string;
     oauth_client_secret?: string;
   };
+
+  /**
+   * v0.32+ — linkify defaults for `gbrain linkify`. All fields optional; the
+   * CLI applies sensible defaults when this section or any sub-field is absent.
+   * loadConfig() tolerates unknown JSON fields so no parsing change is needed.
+   *
+   * - default_domains: when multiple person candidates match an alias, prefer
+   *   the one whose frontmatter `domain` is in this list. If exactly one
+   *   candidate matches, link it; otherwise leave unlinked.
+   * - stopwords: alias keys (case-folded) to drop from the alias map (e.g.,
+   *   "will", "may"). A page whose only derived keys are stopwords is omitted
+   *   from the map and reported via startup diagnostics.
+   * - first_mention_only: reserved — link only the first occurrence per page.
+   *   v1 leaves this off; runLinkify wires it through to LinkifyConfig.
+   */
+  linkify?: {
+    default_domains?: string[];
+    stopwords?: string[];
+    first_mention_only?: boolean;
+  };
 }
 
 /**
