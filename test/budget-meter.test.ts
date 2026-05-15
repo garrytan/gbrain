@@ -33,12 +33,12 @@ describe('BudgetMeter', () => {
     expect(r.cumulativeCostUsd).toBe(r.estimatedCostUsd);
   });
 
-  test('cumulative cost denies the third submit when budget exhausted', () => {
+  test('cumulative cost denies the second submit when budget exhausted', () => {
     const meter = new BudgetMeter({ budgetUsd: 0.50, phase: 'auto_think', auditPath });
-    // opus is expensive: ~$0.15 input + $0.30 output per 1K-input + 4K-output call
-    const big = { modelId: 'claude-opus-4-7', estimatedInputTokens: 5000, maxOutputTokens: 4000, label: 'big' };
-    const r1 = meter.check(big); // ~$0.075 + $0.30 = $0.375
-    const r2 = meter.check(big); // cumulative would be $0.75 → exceeds $0.50 → DENY
+    // Opus 4.7: $5 in / $25 out per 1M. Per call: 5000×5/1M + 10000×25/1M = $0.025 + $0.25 = $0.275
+    const big = { modelId: 'claude-opus-4-7', estimatedInputTokens: 5000, maxOutputTokens: 10000, label: 'big' };
+    const r1 = meter.check(big); // $0.275 cumulative — allowed
+    const r2 = meter.check(big); // $0.55 cumulative — exceeds $0.50 → DENY
     expect(r1.allowed).toBe(true);
     expect(r2.allowed).toBe(false);
     expect(r2.reason).toContain('BUDGET_EXHAUSTED');

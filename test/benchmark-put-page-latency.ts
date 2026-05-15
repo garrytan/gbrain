@@ -44,6 +44,7 @@ async function main() {
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
     remote: false,
+    sourceId: 'default',
   };
 
   const putOp = operationsByName['put_page'];

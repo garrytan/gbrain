@@ -36,6 +36,7 @@ function buildCtx(): OperationContext {
     logger: console,
     dryRun: false,
     remote: false,
+    sourceId: 'default',
   };
 }
 

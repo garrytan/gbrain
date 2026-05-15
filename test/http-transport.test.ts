@@ -23,6 +23,12 @@ type SqlHandler = (query: string, values: unknown[]) => SqlResult | Promise<SqlR
 
 interface FakeEngine {
   kind: 'postgres';
+  // v0.31 wave: http-transport.ts now routes SQL through
+  // `sqlQueryForEngine(engine)` which calls `engine.executeRaw(sql, params)`.
+  // The mock intercepts `executeRaw` directly. The legacy `sql` template
+  // tag is preserved as a fallback for any code path we missed (none
+  // expected after the migration, but harmless if it sticks around).
+  executeRaw: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
   sql: ReturnType<typeof makeSqlTag>;
   audit: { token_name: string | null; operation: string; status: string; latency_ms: number }[];
 }
@@ -37,6 +43,17 @@ function makeSqlTag(handler: SqlHandler) {
     const result = handler(query.trim(), values);
     return Promise.resolve(result);
   };
+}
+
+/**
+ * Normalize a SQL string for pattern-matching: collapse whitespace,
+ * lowercase. Helps the mock's `executeRaw` match the queries that
+ * `sqlQueryForEngine` builds (multi-line, $1/$2/etc. placeholders) the
+ * same way the legacy template-tag mock matched the older single-line
+ * shapes.
+ */
+function normalizeSql(sql: string): string {
+  return sql.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 function hash(token: string): string {
@@ -61,35 +78,35 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
   const revokedTokens = cfg.revokedTokens ?? new Set();
   const audit: FakeEngine['audit'] = [];
 
-  const sql = makeSqlTag((query, values) => {
-    if (cfg.dbDown && query.startsWith('SELECT')) throw new Error('db down');
+  // Legacy template-tag handler. Preserved so any non-migrated call path
+  // still has a place to land (defense in depth). The new code path routes
+  // through executeRaw below.
+  const handle = (query: string, values: unknown[]): unknown[] => {
+    if (cfg.dbDown && query.toLowerCase().includes('select')) throw new Error('db down');
 
-    if (query === 'SELECT 1') {
-      // /health DB probe
+    if (query === 'SELECT 1' || normalizeSql(query) === 'select 1') {
       return [{ '?column?': 1 }];
     }
 
-    // v0.28: query now selects `permissions` too. Match either the legacy
-    // SELECT id, name shape OR the new SELECT id, name, permissions shape so
-    // older tests that haven't been updated still work; new tests can stash
-    // a `permissions` field on the validTokens row.
-    if (query.startsWith('SELECT id, name FROM access_tokens') ||
-        query.startsWith('SELECT id, name, permissions FROM access_tokens')) {
+    const norm = normalizeSql(query);
+
+    // SELECT id, name, permissions FROM access_tokens WHERE token_hash = $1 AND revoked_at IS NULL
+    if (norm.startsWith('select id, name from access_tokens') ||
+        norm.startsWith('select id, name, permissions from access_tokens')) {
       const tokenHash = values[0] as string;
       if (revokedTokens.has(tokenHash)) return [];
       const row = validTokens.get(tokenHash);
       if (!row) return [];
-      // Default permissions to {takes_holders: ['world']} (matches migration v33 default).
       const rowWithPerms = { ...row, permissions: row.permissions ?? { takes_holders: ['world'] } };
       return [rowWithPerms];
     }
 
-    if (query.startsWith('UPDATE access_tokens')) {
+    if (norm.startsWith('update access_tokens')) {
       // last_used_at debounce — succeed silently
       return [];
     }
 
-    if (query.startsWith('INSERT INTO mcp_request_log')) {
+    if (norm.startsWith('insert into mcp_request_log')) {
       audit.push({
         token_name: values[0] as string | null,
         operation: values[1] as string,
@@ -100,9 +117,24 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
     }
 
     return [];
-  });
+  };
 
-  return { kind: 'postgres', sql, audit };
+  const sql = makeSqlTag(handle);
+
+  // v0.31: sqlQueryForEngine + executeRawJsonb both call engine.executeRaw.
+  // The new SQL strings carry $N positional placeholders (not the legacy
+  // template-tag `?`), but the queries themselves match by their leading
+  // text. We normalize whitespace so multi-line SQL bodies match the same
+  // way single-line shapes did.
+  const executeRaw = async <T = Record<string, unknown>>(
+    rawSql: string,
+    params?: unknown[],
+  ): Promise<T[]> => {
+    const result = handle(rawSql, params ?? []);
+    return Promise.resolve(result as T[]);
+  };
+
+  return { kind: 'postgres', executeRaw, sql, audit };
 }
 
 interface TestServer {

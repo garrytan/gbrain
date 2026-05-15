@@ -719,6 +719,71 @@ describe('migrate — runner behavioral (v14 handler + v15 backfill)', () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────
+// v0.33.4 D6 — migration v66 (embed_stale_partial_index)
+// Mirrors v14's CONCURRENTLY + invalid-remnant pattern for the
+// content_chunks partial index. Verifies both the source shape and the
+// actual schema state post-migration on PGLite.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('migrate v66 — embed_stale_partial_index (D6)', () => {
+  const v66 = MIGRATIONS.find(m => m.version === 66);
+
+  test('v66 exists and uses a handler (engine-aware branching, mirrors v14)', () => {
+    expect(v66).toBeDefined();
+    expect(v66!.name).toBe('embed_stale_partial_index');
+    expect(typeof v66!.handler).toBe('function');
+    expect(v66!.sql).toBe('');
+  });
+
+  test('v66 handler source: CONCURRENTLY + invalid-index cleanup on Postgres branch', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    const v66Start = src.indexOf("name: 'embed_stale_partial_index'");
+    expect(v66Start).toBeGreaterThan(-1);
+    const v66Block = src.slice(v66Start, v66Start + 3000);
+    expect(v66Block).toContain('pg_index');
+    expect(v66Block).toContain('indisvalid');
+    expect(v66Block).toContain('DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding_null');
+    expect(v66Block).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_null');
+    // Partial index predicate must match the production query in
+    // postgres-engine.ts / pglite-engine.ts: `WHERE embedding IS NULL`.
+    expect(v66Block).toContain('WHERE embedding IS NULL');
+    // DROP IF EXISTS must precede CREATE IF NOT EXISTS so a failed prior
+    // CONCURRENTLY build is cleaned before re-create.
+    const dropIdx = v66Block.indexOf('DROP INDEX CONCURRENTLY IF EXISTS');
+    const createIdx = v66Block.indexOf('CREATE INDEX CONCURRENTLY IF NOT EXISTS');
+    expect(dropIdx).toBeLessThan(createIdx);
+    // Branches on engine.kind (handler-pattern from v14).
+    expect(v66Block).toContain('engine.kind');
+  });
+
+  test('v66 idempotent flag is true (re-run safety)', () => {
+    expect(v66!.idempotent).toBe(true);
+  });
+});
+
+describe('migrate runner v66 — partial index materialized on PGLite', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  test('v66 created idx_chunks_embedding_null on PGLite via handler branch', async () => {
+    const rows = await (engine as any).db.query(
+      `SELECT indexname FROM pg_indexes WHERE indexname = 'idx_chunks_embedding_null'`
+    );
+    expect(rows.rows.length).toBe(1);
+  });
+});
+
 describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate rows', () => {
   let engine: PGLiteEngine;
 
@@ -1203,6 +1268,164 @@ describe('migration v40 — pages_emotional_weight (v0.29)', () => {
 
   test('LATEST_VERSION caught up to 40', () => {
     expect(LATEST_VERSION).toBeGreaterThanOrEqual(40);
+  });
+});
+
+describe('migration v48 — takes_weight_round_to_grid (v0.32)', () => {
+  // v0.32 — Takes v2 wave. Renumbered from v46 → v48 after merging master's
+  // v0.31.3 wave (which claimed v46 with mcp_request_log_params_jsonb_normalize).
+  // Backfill the pre-v0.32 weight column to the 0.05 grid the engine layer
+  // (PR #795) enforces on insert. Cross-modal eval over 100K production
+  // takes flagged 0.74, 0.82-style values as false precision; this migration
+  // brings existing data to the grid that all new writes already match.
+  test('exists with the expected name', () => {
+    const v48 = MIGRATIONS.find(m => m.version === 48);
+    expect(v48).toBeDefined();
+    expect(v48?.name).toBe('takes_weight_round_to_grid');
+  });
+
+  test('uses transaction:false (codex review #2 — non-blocking, idempotent via WHERE)', () => {
+    // The original plan called this "mid-statement resume" — that was wrong.
+    // What transaction:false actually buys is freeing the migration runner
+    // from a long transaction so other gbrain processes can interleave.
+    const v48 = MIGRATIONS.find(m => m.version === 48);
+    expect(v48?.transaction).toBe(false);
+  });
+
+  test('UPDATE rounds weight to 0.05 grid', () => {
+    const v48 = MIGRATIONS.find(m => m.version === 48);
+    const sql = v48!.sql || '';
+    expect(sql).toContain('UPDATE takes');
+    expect(sql).toContain('ROUND(weight::numeric * 20) / 20');
+  });
+
+  test('WHERE uses tolerance comparison (REAL float32 noise vs 0.05 grid)', () => {
+    // Codex #2 idempotency correction + REAL/float32 implementation note:
+    // a naive `weight <> ROUND(...)` form fires every time because mixed
+    // REAL/NUMERIC comparison promotes weight to DOUBLE PRECISION first,
+    // surfacing ~1e-7 representation noise as inequality. The tolerance
+    // form (abs(...) > 0.001) catches genuinely off-grid values (the 0.05
+    // grid is 5e-2, far above 1e-3) while ignoring float32 round-trip noise.
+    const v48 = MIGRATIONS.find(m => m.version === 48);
+    const sql = v48!.sql || '';
+    expect(sql).toContain('WHERE');
+    expect(sql).toContain('abs(weight::numeric');
+    expect(sql).toContain('> 0.001');
+  });
+
+  test('IS NOT NULL guard (insurance against stale schema)', () => {
+    const v48 = MIGRATIONS.find(m => m.version === 48);
+    const sql = v48!.sql || '';
+    expect(sql).toContain('weight IS NOT NULL');
+  });
+
+  test('LATEST_VERSION caught up to 48', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(48);
+  });
+});
+
+describe('migration v49 — eval_takes_quality_runs (v0.32)', () => {
+  // v0.32 EXP-5 — Renumbered from v47 → v49 after merging master's v0.31.3 wave.
+  // DB-authoritative receipts table for `gbrain eval takes-quality`.
+  // Codex review #6 corrected the original two-phase split-brain plan: DB row
+  // is the source of truth (carries full receipt JSON), disk artifact is
+  // best-effort. The 4-sha unique key (corpus, prompt, models, rubric) makes
+  // re-running identical evals an `INSERT ... ON CONFLICT DO NOTHING` no-op.
+  test('exists with the expected name', () => {
+    const v49 = MIGRATIONS.find(m => m.version === 49);
+    expect(v49).toBeDefined();
+    expect(v49?.name).toBe('eval_takes_quality_runs');
+  });
+
+  test('creates the table with all 4 receipt sha columns + receipt_json JSONB', () => {
+    const v49 = MIGRATIONS.find(m => m.version === 49);
+    const sql = v49!.sql || '';
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS eval_takes_quality_runs');
+    expect(sql).toContain('receipt_sha8_corpus');
+    expect(sql).toContain('receipt_sha8_prompt');
+    expect(sql).toContain('receipt_sha8_models');
+    expect(sql).toContain('receipt_sha8_rubric');
+    expect(sql).toContain('receipt_json          JSONB');
+  });
+
+  test('has 4-sha UNIQUE constraint (idempotent re-runs)', () => {
+    const v49 = MIGRATIONS.find(m => m.version === 49);
+    const sql = v49!.sql || '';
+    expect(sql).toContain('UNIQUE (receipt_sha8_corpus, receipt_sha8_prompt, receipt_sha8_models, receipt_sha8_rubric)');
+  });
+
+  test('verdict column has CHECK constraint for the 3 verdict values', () => {
+    const v49 = MIGRATIONS.find(m => m.version === 49);
+    const sql = v49!.sql || '';
+    expect(sql).toContain("CHECK (verdict IN ('pass','fail','inconclusive'))");
+  });
+
+  test('trend index orders by (rubric_version, created_at DESC)', () => {
+    // Codex review #3 — trend mode segregates by rubric_version + reads
+    // ordered DESC. Index shape must match the query shape exactly.
+    const v49 = MIGRATIONS.find(m => m.version === 49);
+    const sql = v49!.sql || '';
+    expect(sql).toContain('eval_takes_quality_runs_trend_idx');
+    expect(sql).toContain('(rubric_version, created_at DESC)');
+  });
+
+  test('LATEST_VERSION caught up to 49', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(49);
+  });
+});
+
+describe('migration v51 — facts_fence_columns (v0.32.2)', () => {
+  // v0.32.2: facts become FS-canonical via the `## Facts` fence pattern
+  // (mirror of takes-fence). row_num + source_markdown_slug are the
+  // fence round-trip columns; the partial UNIQUE index enforces uniqueness
+  // only once row_num is assigned, leaving legacy NULL rows uncollided
+  // until the v0_32_2 orchestrator backfills them from entity-page fences.
+  test('exists with the expected name', () => {
+    const v51 = MIGRATIONS.find(m => m.version === 51);
+    expect(v51).toBeDefined();
+    expect(v51?.name).toBe('facts_fence_columns');
+  });
+
+  test('adds row_num + source_markdown_slug as ADD COLUMN IF NOT EXISTS', () => {
+    const v51 = MIGRATIONS.find(m => m.version === 51);
+    const sql = v51!.sql || '';
+    expect(sql).toContain('ALTER TABLE facts ADD COLUMN IF NOT EXISTS row_num');
+    expect(sql).toContain('ALTER TABLE facts ADD COLUMN IF NOT EXISTS source_markdown_slug');
+  });
+
+  test('row_num must be nullable (legacy v0.31 rows have no row_num until backfill)', () => {
+    const v51 = MIGRATIONS.find(m => m.version === 51);
+    const sql = v51!.sql || '';
+    // Both ALTERs land without `NOT NULL` — the orchestrator backfills before
+    // anything assumes presence. A future migration may tighten this once the
+    // backfill has run everywhere.
+    expect(sql).not.toMatch(/row_num\s+INTEGER\s+NOT NULL/);
+    expect(sql).not.toMatch(/source_markdown_slug\s+TEXT\s+NOT NULL/);
+  });
+
+  test('creates partial unique index keyed on (source_id, source_markdown_slug, row_num) WHERE row_num IS NOT NULL', () => {
+    const v51 = MIGRATIONS.find(m => m.version === 51);
+    const sql = v51!.sql || '';
+    expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_fence_key');
+    expect(sql).toContain('ON facts (source_id, source_markdown_slug, row_num)');
+    expect(sql).toContain('WHERE row_num IS NOT NULL');
+  });
+
+  test('partial WHERE clause is the Codex R2 collision guard for legacy NULL rows', () => {
+    // Without the partial clause, two pre-v51 rows with NULL row_num on the
+    // same (source_id, source_markdown_slug) coordinate would collide and
+    // the migration would fail loudly on any populated v0.31 brain. The
+    // partial index makes legacy rows invisible to uniqueness checks until
+    // the v0_32_2 orchestrator gives them a row_num.
+    const v51 = MIGRATIONS.find(m => m.version === 51);
+    const sql = v51!.sql || '';
+    const indexClause = sql.match(/CREATE UNIQUE INDEX[\s\S]*?;/);
+    expect(indexClause).toBeTruthy();
+    expect(indexClause![0]).toContain('WHERE row_num IS NOT NULL');
+  });
+
+  test('LATEST_VERSION caught up to 51', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(51);
   });
 });
 

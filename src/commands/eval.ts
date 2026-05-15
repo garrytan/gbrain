@@ -45,6 +45,37 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalCrossModal } = await import('./eval-cross-modal.ts');
     process.exit(await runEvalCrossModal(args.slice(1)));
   }
+  if (sub === 'code-retrieval') {
+    // v0.33.3 pre-w0 — code-retrieval baseline / gate harness. Needs a brain
+    // for the baseline (BaselineStrategy calls hybridSearch); --compare
+    // mode reads JSON only but the engine is already connected by this
+    // dispatcher.
+    const { runEvalCodeRetrieval } = await import('./eval-code-retrieval.ts');
+    return runEvalCodeRetrieval(engine, args.slice(1));
+  }
+  if (sub === 'whoknows') {
+    // v0.33 two-layer eval gate (ENG-D2): hand-labeled fixture =
+    // quality, eval_candidates replay = regression. Pass criteria
+    // baked in (>=80% top-3 hit rate; >=0.4 Jaccard with sparseness fallback).
+    const { runEvalWhoknows } = await import('./eval-whoknows.ts');
+    process.exit(await runEvalWhoknows(engine, args.slice(1)));
+  }
+  if (sub === 'suspected-contradictions') {
+    // v0.32.6 — contradiction probe. Engine connected (calls hybridSearch +
+    // the eval_contradictions_cache + _runs tables). Matches the `replay`
+    // dispatch pattern.
+    const { runEvalSuspectedContradictions } = await import('./eval-suspected-contradictions.ts');
+    return runEvalSuspectedContradictions(engine, args.slice(1));
+  }
+  // v0.32.3 search-lite — per-mode orchestrator + comparison report.
+  if (sub === 'run-all') {
+    const { runEvalRunAll } = await import('./eval-run-all.ts');
+    return runEvalRunAll(engine, args.slice(1));
+  }
+  if (sub === 'compare') {
+    const { runEvalCompare } = await import('./eval-compare.ts');
+    return runEvalCompare(args.slice(1));
+  }
 
   const opts = parseArgs(args);
 

@@ -282,7 +282,12 @@ describe('MinionSupervisor', () => {
       const outFile = join(tmpdir(), `gbrain-sup-env-${process.pid}-${Date.now()}.txt`);
       try { unlinkSync(outFile); } catch { /* may not exist */ }
 
-      const h = makeHarness('env-strip-outfile', `printf '%s\\n' "\${GBRAIN_ALLOW_SHELL_JOBS-UNSET}" > "$OUT_FILE" ; exit 0`);
+      // Worker writes env to OUT_FILE then exits 1. exit=1 is required (not
+      // exit=0) because post-D1/D2 (v0.33) clean exits don't count toward
+      // crashCount — the supervisor would respawn forever. The test's
+      // assertion is on the OUT_FILE contents (env plumbing), not the
+      // exit code, so any non-zero code that trips SUP_MAX_CRASHES=1 works.
+      const h = makeHarness('env-strip-outfile', `printf '%s\\n' "\${GBRAIN_ALLOW_SHELL_JOBS-UNSET}" > "$OUT_FILE" ; exit 1`);
 
       try {
         const sup = spawnSupervisor(h, {
@@ -308,7 +313,9 @@ describe('MinionSupervisor', () => {
       const outFile = join(tmpdir(), `gbrain-sup-env-ok-${process.pid}-${Date.now()}.txt`);
       try { unlinkSync(outFile); } catch { /* may not exist */ }
 
-      const h = makeHarness('env-pass-on-opt-in', `printf '%s\\n' "\${GBRAIN_ALLOW_SHELL_JOBS-UNSET}" > "$OUT_FILE" ; exit 0`);
+      // Worker exits 1 (not 0) so SUP_MAX_CRASHES=1 actually trips. See
+      // the comment on the env-strip test above for the v0.33 rationale.
+      const h = makeHarness('env-pass-on-opt-in', `printf '%s\\n' "\${GBRAIN_ALLOW_SHELL_JOBS-UNSET}" > "$OUT_FILE" ; exit 1`);
 
       try {
         const sup = spawnSupervisor(h, {
@@ -333,7 +340,9 @@ describe('MinionSupervisor', () => {
       const outFile = join(tmpdir(), `gbrain-sup-supervised-${process.pid}-${Date.now()}.txt`);
       try { unlinkSync(outFile); } catch { /* may not exist */ }
 
-      const h = makeHarness('supervised-env', `printf '%s\n' "\${GBRAIN_SUPERVISED-UNSET}" > "$OUT_FILE" ; exit 0`);
+      // exit 1 required post-D1/D2 to trip SUP_MAX_CRASHES=1; clean exits
+      // no longer count toward the crash limit.
+      const h = makeHarness('supervised-env', `printf '%s\n' "\${GBRAIN_SUPERVISED-UNSET}" > "$OUT_FILE" ; exit 1`);
 
       try {
         const sup = spawnSupervisor(h, {
@@ -372,7 +381,11 @@ describe('MinionSupervisor', () => {
     // window before max-crashes fires. We assert the basic completion path
     // and let CI's wall-clock detect any pathological CPU spike.
     it('completes a normal supervise lifecycle with healthInterval=0', async () => {
-      const h = makeHarness('health-interval-zero', 'exit 0');
+      // exit 1 (not exit 0) because post-D1/D2 (v0.33) clean exits don't
+      // count toward max_crashes — a code=0 worker would respawn forever.
+      // The test's purpose is regression coverage that healthInterval=0
+      // disables the timer; the exit code doesn't matter to that assertion.
+      const h = makeHarness('health-interval-zero', 'exit 1');
 
       try {
         const sup = spawnSupervisor(h, {
@@ -409,7 +422,8 @@ describe('MinionSupervisor', () => {
       // Worker logs its argv to OUT_FILE so the test can assert --max-rss 2048
       // landed there. spawnOnce in supervisor.ts builds:
       //   ['jobs', 'work', '--concurrency', '1', '--queue', 'default', '--max-rss', '2048']
-      const h = makeHarness('maxrss-default', `printf '%s\\n' "$*" > "$OUT_FILE" ; exit 0`);
+      // exit 1 required post-D1/D2: code=0 workers respawn forever.
+      const h = makeHarness('maxrss-default', `printf '%s\\n' "$*" > "$OUT_FILE" ; exit 1`);
 
       try {
         const sup = spawnSupervisor(h, {

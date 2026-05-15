@@ -47,6 +47,7 @@ import {
   logSubagentSubmission,
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
+import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
 
 // ── Defaults ────────────────────────────────────────────────
 
@@ -145,7 +146,25 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       throw new Error('subagent job data.prompt is required (string)');
     }
 
-    const model = data.model ?? DEFAULT_MODEL;
+    // v0.31.12 subagent runtime enforcement (Layer 2 of 3 — see plan/Codex F1+F2+F13).
+    // - If `data.model` is set and non-Anthropic, reject (Layer 1 fallback if the
+    //   submit-time guard in MinionQueue.add didn't fire — defense in depth).
+    // - Otherwise route through resolveModel with tier=subagent. The resolver
+    //   warns + falls back to TIER_DEFAULTS.subagent if models.default or
+    //   models.tier.subagent resolved to non-Anthropic.
+    if (data.model && !isAnthropicProvider(data.model)) {
+      throw new Error(
+        `subagent job rejected: data.model "${data.model}" is non-Anthropic. ` +
+        `The subagent loop is Anthropic-only (Messages API + prompt caching). ` +
+        `Pass an Anthropic model id (e.g. claude-sonnet-4-6) or omit data.model to use the configured default.`,
+      );
+    }
+    const model = data.model
+      ?? await resolveModel(engine, {
+        tier: 'subagent',
+        configKey: 'models.subagent',
+        fallback: TIER_DEFAULTS.subagent,
+      });
     const maxTurns = data.max_turns ?? DEFAULT_MAX_TURNS;
     const systemPrompt = data.system ?? DEFAULT_SYSTEM;
 

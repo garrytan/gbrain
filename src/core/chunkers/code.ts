@@ -673,8 +673,12 @@ export async function chunkCodeTextFull(
     // chunker throughput measurably.
     let rawEdges: import('./edge-extractor.ts').ExtractedEdge[] = [];
     try {
-      const { extractCallEdges } = await import('./edge-extractor.ts');
-      rawEdges = extractCallEdges(tree, language);
+      // v0.34 W2: switched to extractAllEdges so imports + references edges
+      // get emitted alongside calls. JS/TS/TSX + Python emit imports;
+      // TS only emits references. Other langs still get bare-token calls
+      // (v0.20 baseline).
+      const { extractAllEdges } = await import('./edge-extractor.ts');
+      rawEdges = extractAllEdges(tree, language);
     } catch {
       // Edge extraction is best-effort — failure here must not break
       // chunking. Syntactically invalid code or a grammar quirk should

@@ -134,6 +134,18 @@ async function resolveAIOptions(
       console.error(`Unknown provider: ${shorthand}. Run \`gbrain providers list\` to see known providers.`);
       process.exit(1);
     }
+    // v0.32 D8=A: recipes flagged user_provided_models (litellm, llama-server)
+    // refuse implicit "first model" pick with a setup hint pointing the user
+    // at the explicit form. The shorthand --model is meaningless for these
+    // recipes because there's no canonical first model.
+    if (recipe.touchpoints.embedding?.user_provided_models === true) {
+      console.error(
+        `Provider ${shorthand} requires you to specify the model + dimensions explicitly:\n` +
+        `  gbrain init --embedding-model ${shorthand}:<your-model-id> --embedding-dimensions <N>\n` +
+        (recipe.setup_hint ? `\nSetup: ${recipe.setup_hint}` : '')
+      );
+      process.exit(1);
+    }
     const firstModel = recipe.touchpoints.embedding?.models[0];
     if (!firstModel) {
       console.error(`Provider ${shorthand} has no embedding models listed. Use --embedding-model provider:model.`);
@@ -150,6 +162,20 @@ async function resolveAIOptions(
     const { getRecipe } = await import('../core/ai/recipes/index.ts');
     const providerId = out.embedding_model.split(':')[0];
     const recipe = getRecipe(providerId);
+    // v0.32: user_provided_models recipes (litellm, llama-server) have
+    // default_dims=0 and ship with `models: []` — there's no sensible
+    // fallback. Refuse explicitly here too. Without this, the verbose path
+    // `--embedding-model llama-server:foo` (no --embedding-dimensions) would
+    // fall through to configureGateway's default (1536), creating a
+    // wrong-width schema that explodes only at first embed.
+    if (recipe?.touchpoints.embedding?.user_provided_models === true) {
+      console.error(
+        `Provider ${providerId} requires --embedding-dimensions <N> when using --embedding-model ${out.embedding_model}.\n` +
+        `User-driven-model recipes (litellm, llama-server) have no default dimension.\n` +
+        (recipe.setup_hint ? `\nSetup: ${recipe.setup_hint}` : '')
+      );
+      process.exit(1);
+    }
     if (recipe?.touchpoints.embedding?.default_dims) {
       out.embedding_dimensions = recipe.touchpoints.embedding.default_dims;
     }
@@ -413,6 +439,12 @@ async function initPGLite(opts: {
     };
     saveConfig(config);
 
+    // v0.32.3 search-lite install-time mode picker. Runs AFTER initSchema so
+    // DB config writes are valid. Idempotent: skipped on re-init if already set.
+    // Non-TTY auto-selects; --json emits a structured event.
+    const { runModePicker } = await import('./init-mode-picker.ts');
+    await runModePicker(engine, { jsonOutput: opts.jsonOutput });
+
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
@@ -548,6 +580,11 @@ async function initPostgres(opts: {
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
 
+    // v0.32.3 search-lite install-time mode picker. Same shape as the
+    // PGLite path above — runs AFTER initSchema, idempotent on re-init.
+    const { runModePicker: runPostgresModePicker } = await import('./init-mode-picker.ts');
+    await runPostgresModePicker(engine, { jsonOutput: opts.jsonOutput });
+
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
@@ -633,6 +670,68 @@ function readLine(prompt: string): Promise<string> {
       process.stdin.pause();
       resolve(data);
     });
+    process.stdin.resume();
+  });
+}
+
+/**
+ * v0.32.3 [CDX-9]: readLine + EOF detection + default fallback + timeout.
+ *
+ * The legacy readLine hangs forever if stdin closes (EOF mid-prompt) or
+ * the user never types anything. The mode-picker plan calls out "TTY
+ * closes mid-prompt → defaults to balanced" as a failure path, but the
+ * raw helper can't implement that contract.
+ *
+ * This wrapper:
+ *   - Resolves to `defaultValue` if stdin emits 'end' before 'data'
+ *   - Resolves to `defaultValue` if `timeoutMs` elapses with no input
+ *   - Resolves to the typed value (trimmed) on normal data event
+ *
+ * `defaultValue` is returned VERBATIM when the user just hits Enter (empty
+ * data). That's the affordance that makes `Mode [balanced]: _` work.
+ *
+ * Non-TTY stdin (pipe, scripted init) returns defaultValue immediately
+ * without printing the prompt, so e2e tests don't hang.
+ */
+export function readLineSafe(
+  prompt: string,
+  defaultValue: string,
+  timeoutMs: number = 60_000,
+): Promise<string> {
+  return new Promise((resolve) => {
+    // Non-TTY (pipe, redirect, scripted init) → no prompt, no wait.
+    if (!process.stdin.isTTY) {
+      resolve(defaultValue);
+      return;
+    }
+
+    process.stdout.write(prompt);
+    process.stdin.setEncoding('utf-8');
+
+    let settled = false;
+    const finish = (value: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      process.stdin.removeListener('data', onData);
+      process.stdin.removeListener('end', onEnd);
+      try { process.stdin.pause(); } catch { /* swallow */ }
+      resolve(value);
+    };
+
+    const onData = (chunk: Buffer | string) => {
+      const raw = chunk.toString().trim();
+      finish(raw.length === 0 ? defaultValue : raw);
+    };
+    const onEnd = () => finish(defaultValue);
+
+    const timer = setTimeout(() => {
+      process.stdout.write(`\n[timeout after ${Math.round(timeoutMs / 1000)}s, using default: ${defaultValue}]\n`);
+      finish(defaultValue);
+    }, timeoutMs);
+
+    process.stdin.once('data', onData);
+    process.stdin.once('end', onEnd);
     process.stdin.resume();
   });
 }

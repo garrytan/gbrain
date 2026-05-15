@@ -68,6 +68,16 @@ The built-in HTTP transport ships with several layers of hardening on by
 default. All env vars below are optional; the defaults are intentionally
 conservative.
 
+### Bind address (v0.34: loopback by default)
+
+`gbrain serve --http` listens on `127.0.0.1` by default. Personal-laptop
+installs cannot accidentally publish the brain to the LAN. Self-hosted
+deployments that need remote access pass `--bind 0.0.0.0` (all
+interfaces) or `--bind <interface-ip>` (specific NIC). A stderr WARN
+fires when `--public-url` is set without `--bind` so the operator sees
+the binding before the first request — common cause of "ngrok forwards
+to me but the agent can't reach the upstream" misconfigurations.
+
 ### Postgres-only
 
 `gbrain serve --http` requires a Postgres engine. PGLite is local-only by
@@ -125,9 +135,11 @@ GBRAIN_HTTP_TRUST_PROXY=1 gbrain serve --http --port 8787
 **both** of these are true:
 
 1. gbrain is reachable only via a trusted reverse proxy (not directly
-   exposed to the internet on the configured port). The simplest
-   guarantee is to bind gbrain to `127.0.0.1` or a private interface
-   and have the proxy forward to it.
+   exposed to the internet on the configured port). As of v0.34
+   `gbrain serve --http` binds `127.0.0.1` by default, so the
+   reverse-proxy-only posture is the out-of-the-box shape; only
+   override with `--bind 0.0.0.0` (or a specific interface IP) when
+   gbrain itself needs to accept remote connections directly.
 2. The proxy strips any client-supplied `X-Forwarded-For` and `X-Real-IP`
    headers, then sets them itself. (nginx with `proxy_set_header
    X-Forwarded-For $remote_addr` does this; Cloudflare and most cloud

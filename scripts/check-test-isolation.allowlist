@@ -43,6 +43,7 @@ test/init-migrate-only.test.ts
 test/integrations.test.ts
 test/mcp-eval-capture.test.ts
 test/migrate.test.ts
+test/migration-orchestrator-v0_31_0.test.ts
 test/migration-resume.test.ts
 test/migrations-v0_11_0.test.ts
 test/migrations-v0_13_1.test.ts

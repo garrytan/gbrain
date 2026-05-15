@@ -47,6 +47,8 @@ describe('insertFact + listFactsByEntity', () => {
     expect(ours!.fact).toBe('alice example fact');
     expect(ours!.kind).toBe('fact');
     expect(ours!.visibility).toBe('private');
+    // v0.31.2: row mapper exposes notability; default 'medium' when caller omits.
+    expect(ours!.notability).toBe('medium');
     expect(ours!.confidence).toBe(1.0);
   });
 
@@ -58,6 +60,28 @@ describe('insertFact + listFactsByEntity', () => {
     const rows = await engine.listFactsByEntity('default', 'alice-test');
     const ours = rows.find(x => x.id === r.id);
     expect(ours?.kind).toBe('preference');
+  });
+
+  test('v0.31.2: notability round-trips for each tier (PR1 commit 4 contract pin)', async () => {
+    const tiers: Array<'high' | 'medium' | 'low'> = ['high', 'medium', 'low'];
+    for (const tier of tiers) {
+      const r = await engine.insertFact(
+        {
+          fact: `notability ${tier} test`,
+          kind: 'fact',
+          entity_slug: `notability-${tier}-pin`,
+          source: 'test',
+          notability: tier,
+        },
+        { source_id: 'default' },
+      );
+      const rows = await engine.listFactsByEntity('default', `notability-${tier}-pin`);
+      const ours = rows.find(x => x.id === r.id);
+      expect(ours).toBeDefined();
+      // The row mapper MUST expose notability; without this assertion, the
+      // codex P1 #4 regression (FactRow drops the column) reappears silently.
+      expect(ours!.notability).toBe(tier);
+    }
   });
 
   test('supersede path: superseding row marks old as expired_at + superseded_by', async () => {

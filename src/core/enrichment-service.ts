@@ -112,7 +112,7 @@ export async function enrichEntity(
   // 4. Add timeline entry
   let timelineAdded = false;
   try {
-    await engine.addTimelineEntry(slug, {
+    await engine.addTimelineEntry(slug, { // gbrain-allow-direct-insert: auto-timeline reconciliation triggered by entity reference in source markdown
       date: new Date().toISOString().split('T')[0] ?? '',
       summary: `Referenced in [${request.sourceSlug}](${request.sourceSlug}) — ${request.context}`,
       source: request.sourceSlug,
@@ -125,7 +125,7 @@ export async function enrichEntity(
   // 5. Add backlink from entity to source
   let backlinkCreated = false;
   try {
-    await engine.addLink(slug, request.sourceSlug, `Entity mention from ${request.sourceSlug}`);
+    await engine.addLink(slug, request.sourceSlug, `Entity mention from ${request.sourceSlug}`); // gbrain-allow-direct-insert: auto-link reconciliation triggered by entity reference in source markdown
     backlinkCreated = true;
   } catch {
     // Link might already exist

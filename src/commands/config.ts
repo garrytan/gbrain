@@ -11,8 +11,6 @@ function redactUrl(url: string): string {
 
 export async function runConfig(engine: BrainEngine, args: string[]) {
   const action = args[0];
-  const key = args[1];
-  const value = args[2];
 
   if (action === 'show') {
     const config = loadConfig();
@@ -32,6 +30,51 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     return;
   }
 
+  // v0.32.3 [CDX-7+8]: `unset` is required before `gbrain search modes
+  // --reset` can implement its contract. Two shapes:
+  //   gbrain config unset <key>             — single-key delete
+  //   gbrain config unset --pattern <pfx>   — prefix-bulk delete
+  if (action === 'unset') {
+    const flagIdx = args.indexOf('--pattern');
+    if (flagIdx !== -1) {
+      const prefix = args[flagIdx + 1];
+      if (!prefix || prefix.length === 0) {
+        console.error('Usage: gbrain config unset --pattern <prefix>');
+        process.exit(1);
+      }
+      const keys = await engine.listConfigKeys(prefix);
+      if (keys.length === 0) {
+        console.log(`No keys match prefix "${prefix}".`);
+        return;
+      }
+      let deleted = 0;
+      for (const k of keys) {
+        const n = await engine.unsetConfig(k);
+        if (n > 0) deleted += n;
+      }
+      console.log(`Unset ${deleted} key(s) matching "${prefix}":`);
+      for (const k of keys) console.log(`  - ${k}`);
+      return;
+    }
+
+    const key = args[1];
+    if (!key) {
+      console.error('Usage: gbrain config unset <key> | --pattern <prefix>');
+      process.exit(1);
+    }
+    const n = await engine.unsetConfig(key);
+    if (n > 0) {
+      console.log(`Unset ${key}`);
+    } else {
+      console.error(`Config key not found: ${key}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  const key = args[1];
+  const value = args[2];
+
   if (action === 'get' && key) {
     const val = await engine.getConfig(key);
     if (val !== null) {
@@ -44,7 +87,8 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     await engine.setConfig(key, value);
     console.log(`Set ${key} = ${value}`);
   } else {
-    console.error('Usage: gbrain config [show|get|set] <key> [value]');
+    console.error('Usage: gbrain config [show|get|set|unset] <key> [value]');
+    console.error('       gbrain config unset --pattern <prefix>');
     process.exit(1);
   }
 }

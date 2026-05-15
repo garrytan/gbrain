@@ -132,7 +132,13 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     console.log('Previous migration was to a different target. Starting fresh.');
     manifest = null;
   }
+  // v0.32.8 F8: manifest keys are now `${source_id}::${slug}` so multi-source
+  // migrations don't collide on same-slug-different-source pages. Pre-v0.32.8
+  // entries were bare slugs; we keep treating those as default-source for
+  // back-compat resume.
   const completedSet = new Set(manifest?.completed_slugs || []);
+  const makeManifestKey = (sourceId: string, slug: string): string =>
+    sourceId === 'default' ? slug : `${sourceId}::${slug}`;
   if (!manifest) {
     manifest = {
       completed_slugs: [],
@@ -144,7 +150,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   // Get all source pages
   const sourceStats = await sourceEngine.getStats();
   const allPages = await sourceEngine.listPages({ limit: 100000 });
-  const pagesToMigrate = allPages.filter(p => !completedSet.has(p.slug));
+  const pagesToMigrate = allPages.filter(p => !completedSet.has(makeManifestKey(p.source_id, p.slug)));
 
   console.log(`Migrating ${pagesToMigrate.length} pages (${allPages.length} total, ${completedSet.size} already done)...`);
 
@@ -153,7 +159,14 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
 
   let migrated = 0;
   for (const page of pagesToMigrate) {
-    // Copy page
+    // v0.32.8 F8: thread source_id end-to-end so multi-source pages migrate
+    // intact. Pre-fix: putPage / getTags / getTimeline / getRawData / getLinks
+    // all silently defaulted to source_id='default', so non-default-source
+    // tags / timeline / raw / links were either dropped or attached to the
+    // wrong row.
+    const sourceOpts = { sourceId: page.source_id };
+
+    // Copy page (preserve source_id)
     await targetEngine.putPage(page.slug, {
       type: page.type,
       title: page.title,
@@ -161,10 +174,10 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       timeline: page.timeline,
       frontmatter: page.frontmatter,
       content_hash: page.content_hash,
-    });
+    }, sourceOpts);
 
-    // Copy chunks with embeddings
-    const chunks = await sourceEngine.getChunksWithEmbeddings(page.slug);
+    // Copy chunks with embeddings.
+    const chunks = await sourceEngine.getChunksWithEmbeddings(page.slug, sourceOpts);
     if (chunks.length > 0) {
       await targetEngine.upsertChunks(page.slug, chunks.map(c => ({
         chunk_index: c.chunk_index,
@@ -173,52 +186,59 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
         embedding: c.embedding || undefined,
         model: c.model,
         token_count: c.token_count || undefined,
-      })));
+      })), sourceOpts);
     }
 
     // Copy tags
-    const tags = await sourceEngine.getTags(page.slug);
+    const tags = await sourceEngine.getTags(page.slug, sourceOpts);
     for (const tag of tags) {
-      await targetEngine.addTag(page.slug, tag);
+      await targetEngine.addTag(page.slug, tag, sourceOpts);
     }
 
     // Copy timeline
-    const timeline = await sourceEngine.getTimeline(page.slug);
+    const timeline = await sourceEngine.getTimeline(page.slug, sourceOpts);
     for (const entry of timeline) {
       await targetEngine.addTimelineEntry(page.slug, {
         date: entry.date,
         source: entry.source,
         summary: entry.summary,
         detail: entry.detail,
-      });
+      }, sourceOpts);
     }
 
     // Copy raw data
-    const rawData = await sourceEngine.getRawData(page.slug);
+    const rawData = await sourceEngine.getRawData(page.slug, undefined, sourceOpts);
     for (const rd of rawData) {
-      await targetEngine.putRawData(page.slug, rd.source, rd.data);
+      await targetEngine.putRawData(page.slug, rd.source, rd.data, sourceOpts);
     }
 
     // Copy versions
-    const versions = await sourceEngine.getVersions(page.slug);
+    const versions = await sourceEngine.getVersions(page.slug, sourceOpts);
     // Versions are snapshots, we recreate them on the target
     // (createVersion takes a snapshot of current state, which we just set)
 
-    // Track progress
-    manifest!.completed_slugs.push(page.slug);
+    // Track progress with composite key so multi-source resume is correct.
+    manifest!.completed_slugs.push(makeManifestKey(page.source_id, page.slug));
     saveManifest(manifest!);
     migrated++;
     progress.tick(1, page.slug);
   }
   progress.finish();
 
-  // Copy links (after all pages exist in target)
+  // Copy links (after all pages exist in target).
+  // v0.32.8 F8: thread source_id so cross-source links migrate correctly.
   console.log('Copying links...');
   progress.start('migrate.copy_links', allPages.length);
   for (const page of allPages) {
-    const links = await sourceEngine.getLinks(page.slug);
+    const sourceOpts = { sourceId: page.source_id };
+    const links = await sourceEngine.getLinks(page.slug, sourceOpts);
     for (const link of links) {
-      await targetEngine.addLink(link.from_slug, link.to_slug, link.context, link.link_type);
+      await targetEngine.addLink(
+        link.from_slug, link.to_slug,
+        link.context, link.link_type,
+        undefined, undefined, undefined,
+        { fromSourceId: page.source_id, toSourceId: page.source_id },
+      );
     }
     progress.tick(1);
   }

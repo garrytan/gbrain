@@ -5,12 +5,17 @@
  * Forward view of the A1 call graph. Matches `from_symbol_qualified`
  * in both code_edges_chunk + code_edges_symbol.
  *
+ * v0.34 W0b (Codex finding #7): pre-v0.34 default was inverted to
+ * cross-source whenever --source was omitted. See code-callers.ts for
+ * the full rationale. Same fix here.
+ *
  * Output: same JSON-on-non-TTY convention as code-callers / code-def /
  * code-refs.
  */
 
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
+import { resolveDefaultSource, SourceResolutionError } from '../core/sources-ops.ts';
 
 function parseFlag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -31,7 +36,7 @@ export async function runCodeCallees(engine: BrainEngine, args: string[]): Promi
       class: 'UsageError',
       code: 'code_callees_requires_symbol',
       message: 'code-callees requires a symbol name',
-      hint: 'gbrain code-callees <symbol> [--all-sources] [--limit N] [--json]',
+      hint: 'gbrain code-callees <symbol> [--source S | --all-sources] [--limit N] [--json]',
     });
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify({ error: err.envelope }));
@@ -42,12 +47,35 @@ export async function runCodeCallees(engine: BrainEngine, args: string[]): Promi
   }
   const limit = parseInt(parseFlag(args, '--limit') || '100', 10);
   const allSources = args.includes('--all-sources');
-  const sourceId = parseFlag(args, '--source');
+  let sourceId = parseFlag(args, '--source');
+
+  // v0.34 W0b: source-scoped default. Matches code-callers behavior.
+  if (!allSources && !sourceId) {
+    try {
+      sourceId = await resolveDefaultSource(engine);
+    } catch (e: unknown) {
+      if (e instanceof SourceResolutionError) {
+        const env = errorFor({
+          class: 'UsageError',
+          code: e.code,
+          message: e.message,
+          hint: 'pass --source <id> for one source, or --all-sources to search every source',
+        }).envelope;
+        if (shouldEmitJson(args)) {
+          console.log(JSON.stringify({ error: env }));
+        } else {
+          console.error(e.message);
+        }
+        process.exit(2);
+      }
+      throw e;
+    }
+  }
 
   try {
     const edges = await engine.getCalleesOf(sym, {
       limit,
-      allSources: allSources || !sourceId,
+      allSources,
       sourceId: sourceId ?? undefined,
     });
 

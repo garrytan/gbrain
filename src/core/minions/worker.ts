@@ -22,6 +22,69 @@ import { calculateBackoff } from './backoff.ts';
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
+import { readFileSync } from 'fs';
+
+/**
+ * Pure parser for /proc/self/status RSS fields. Returns bytes of
+ * RssAnon + RssShmem when either field is present, or null when the
+ * status text is from a kernel that doesn't expose those fields
+ * (kernels older than 4.5) or the values are malformed. Exported so
+ * the test suite can unit-test the field-presence + malformed-value
+ * edge cases without mocking the filesystem.
+ *
+ * M1 fix: field-presence check, not value-presence check. The earlier
+ * `if (anonKb > 0)` form conflated "field exists with value 0" with
+ * "field missing", which mis-routed to VmRSS fallback in the legitimate
+ * shmem-only worker case (RssAnon: 0 + RssShmem: 512).
+ */
+export function parseRssFromProcStatus(status: string): number | null {
+  const anonMatch = status.match(/^RssAnon:\s+(\d+)/m);
+  const shmemMatch = status.match(/^RssShmem:\s+(\d+)/m);
+  if (anonMatch === null && shmemMatch === null) {
+    return null;
+  }
+  const anonKb = parseInt(anonMatch?.[1] ?? '0', 10);
+  const shmemKb = parseInt(shmemMatch?.[1] ?? '0', 10);
+  if (isNaN(anonKb) || isNaN(shmemKb)) {
+    return null;
+  }
+  return (anonKb + shmemKb) * 1024; // bytes
+}
+
+/**
+ * Read accurate RSS from /proc/self/status (RssAnon + RssShmem).
+ *
+ * `process.memoryUsage().rss` returns VmRSS which includes file-backed mmap'd
+ * pages (e.g. git packfiles). On a 96K-page brain repo, git operations can
+ * inflate VmRSS to 7GB+ while actual heap usage is ~100MB. The kernel reclaims
+ * file-backed pages under memory pressure — they're cache, not real usage.
+ *
+ * RssAnon = anonymous pages (heap, stack, anonymous mmap). RssShmem = shared
+ * anonymous pages (IPC, tmpfs). Their sum is the non-file-backed resident
+ * memory used for **per-process leak detection** — exactly the metric a leak
+ * watchdog wants. It is NOT a full container-OOM metric: cgroup memory
+ * pressure includes page cache, so a sibling container holding the page
+ * cache hot can OOM us even at low anon+shmem. Use cgroup-aware monitoring
+ * for that scenario; this helper is for the worker's own leak guard.
+ *
+ * Falls back to process.memoryUsage().rss on non-Linux, missing /proc, or
+ * kernels older than 4.5 that don't expose RssAnon/RssShmem.
+ *
+ * `readStatus` is injectable for tests — production callers use the default,
+ * which reads `/proc/self/status`.
+ */
+export function getAccurateRss(
+  readStatus: () => string = () => readFileSync('/proc/self/status', 'utf8'),
+): number {
+  try {
+    const status = readStatus();
+    const parsed = parseRssFromProcStatus(status);
+    if (parsed !== null) return parsed;
+  } catch {
+    // Non-Linux or /proc unavailable
+  }
+  return process.memoryUsage().rss;
+}
 
 /** Reason payload emitted with `'unhealthy'` when self-health-check trips.
  *  CLI layer (jobs.ts:work) subscribes and decides whether to call process.exit. */
@@ -93,7 +156,7 @@ export class MinionWorker extends EventEmitter {
       maxStalledCount: opts?.maxStalledCount ?? 1,
       pollInterval: opts?.pollInterval ?? 5000,
       maxRssMb: opts?.maxRssMb ?? 0,
-      getRss: opts?.getRss ?? (() => process.memoryUsage().rss),
+      getRss: opts?.getRss ?? getAccurateRss,
       rssCheckInterval: opts?.rssCheckInterval ?? 60000,
       healthCheckInterval: opts?.healthCheckInterval ?? 60000,
       stallWarnAfterMs: opts?.stallWarnAfterMs ?? 5 * 60_000,

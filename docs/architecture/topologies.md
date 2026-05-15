@@ -120,10 +120,19 @@ at the remote host. `gbrain doctor` runs a dedicated thin-client check set
 
 ```bash
 gbrain init --supabase                         # or --pglite, doesn't matter
-gbrain serve --http --port 3001                # exposes /mcp + OAuth
+gbrain serve --http --port 3001 --bind 0.0.0.0 # v0.34: bind explicitly for remote access
+                                                # (defaults to 127.0.0.1 since v0.34)
 gbrain auth register-client neuromancer \
   --grant-types client_credentials \
   --scopes read,write,admin                    # admin needed for ping/doctor
+
+# v0.34: source-scoped client (write to one source, federate reads across
+# multiple sources). Omit both flags for a v0.33-compatible super-client.
+gbrain auth register-client neuromancer-dept \
+  --grant-types client_credentials \
+  --scopes read,write \
+  --source dept-x \
+  --federated-read dept-x,shared,parent-canon
 ```
 
 The `register-client` command prints a `client_id` and `client_secret`.

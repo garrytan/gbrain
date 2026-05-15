@@ -14,6 +14,7 @@ import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from './core/mcp-client.ts';
+import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { VERSION } from './version.ts';
 
 // Build CLI name -> operation lookup
@@ -26,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'remote']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -36,6 +37,8 @@ const CLI_ONLY_SELF_HELP = new Set([
   'skillpack', 'skillpack-check',
   'integrations', 'friction',
   'frontmatter', 'check-resolvable',
+  'models',
+  'cache',
 ]);
 
 async function main() {
@@ -157,7 +160,7 @@ async function main() {
   // Local engine path (unchanged behavior for local installs).
   const engine = await connectEngine();
   try {
-    const ctx = makeContext(engine, params);
+    const ctx = await makeContext(engine, params);
     const rawResult = await op.handler(ctx, params);
     // ENG-2 (renderer parity by data shape): JSON-round-trip the local-engine
     // path's return value so renderers see the same shape they'd see on the
@@ -321,7 +324,7 @@ async function runThinClientRouted(
 // command runs normally. Banner is observability, not load-bearing.
 // ============================================================================
 
-interface BrainIdentity {
+export interface BrainIdentity {
   version: string;
   engine: 'postgres' | 'pglite';
   page_count: number;
@@ -342,7 +345,7 @@ export function _clearIdentityCacheForTest(): void {
   identityCache.clear();
 }
 
-function bannerSuppressed(cliOpts: CliOptions): boolean {
+export function bannerSuppressed(cliOpts: CliOptions): boolean {
   if (cliOpts.quiet) return true;
   if (process.env.GBRAIN_NO_BANNER === '1') return true;
   // Non-TTY default is suppressed (clean pipes); explicit env-flag overrides.
@@ -391,6 +394,9 @@ async function printIdentityBannerBestEffort(
   const cached = identityCache.get(mcpUrl);
   if (cached && Date.now() - cached.cached_at_ms < IDENTITY_TTL_MS) {
     process.stderr.write(formatBanner(mcpUrl, cached.identity) + '\n');
+    // v0.31.11: detect remote-version drift, prompt user to upgrade.
+    // bannerIsSuppressed=false here — the early return above guaranteed it.
+    await maybePromptForUpgrade(cfg, cached.identity, cliOpts, false);
     return;
   }
 
@@ -400,6 +406,8 @@ async function printIdentityBannerBestEffort(
     const id = await fetchIdentity(cfg, signal);
     identityCache.set(mcpUrl, { identity: id, cached_at_ms: Date.now() });
     process.stderr.write(formatBanner(mcpUrl, id) + '\n');
+    // v0.31.11: detect remote-version drift, prompt user to upgrade.
+    await maybePromptForUpgrade(cfg, id, cliOpts, false);
   } catch {
     // Swallow. Banner suppressed; main command continues. The CDX-4
     // hardened callRemoteTool will surface the same error class on the
@@ -479,7 +487,24 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   return params;
 }
 
-function makeContext(engine: BrainEngine, params: Record<string, unknown>): OperationContext {
+async function makeContext(engine: BrainEngine, params: Record<string, unknown>): Promise<OperationContext> {
+  // v0.31.8 (D11): resolve sourceId via the canonical 6-tier chain. Honors
+  // --source / GBRAIN_SOURCE / .gbrain-source / path-match / brain default /
+  // 'default'. Wrapped in try/catch so a doctor / single-source brain that
+  // never set up sources still returns 'default' silently.
+  let sourceId: string | undefined;
+  try {
+    const { resolveSourceId } = await import('./core/source-resolver.ts');
+    // params.source is set when a CLI flag was parsed for the op (rare; most
+    // CLI ops don't take --source). Falls through to env/dotfile/path-match.
+    const explicit = (params.source as string | undefined) ?? null;
+    sourceId = await resolveSourceId(engine, explicit);
+  } catch {
+    // Source resolution failed (e.g. sources table doesn't exist on a fresh
+    // pre-init brain). Leave sourceId unset; engine read methods fall through
+    // to the cross-source view (D16 back-compat path).
+    sourceId = undefined;
+  }
   return {
     engine,
     config: loadConfig() || { engine: 'postgres' },
@@ -489,6 +514,11 @@ function makeContext(engine: BrainEngine, params: Record<string, unknown>): Oper
     // confinement (e.g., cwd-locked file_upload).
     remote: false,
     cliOpts: getCliOptions(),
+    // v0.34 D4: sourceId is REQUIRED at the type level. Fall back to 'default'
+    // when resolveSourceId returned undefined (fresh pre-init brain, no sources
+    // table). Matches dispatch.ts's auto-fill so the contract holds across
+    // every transport.
+    sourceId: sourceId ?? 'default',
   };
 }
 
@@ -615,6 +645,13 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   // hint pointing at the routable MCP tools; per-subcommand splits are
   // a v0.31.x follow-up TODO.
   'takes', 'sources',
+  // v0.32 thin-client routing audit (Codex round 2 findings #2, #4):
+  // - `pages` purge-deleted is admin+localOnly (operations.ts:856-864)
+  // - `files` list / file_url MCP ops are localOnly (operations.ts:1769-1879)
+  // - `eval` export/prune/replay have no MCP equivalents
+  // - `code-def`/`code-refs`/`code-callers`/`code-callees` have NO MCP ops
+  //   in operations.ts:2630-2671; cannot be "fixed by routing" yet
+  'pages', 'files', 'eval', 'code-def', 'code-refs', 'code-callers', 'code-callees',
 ]);
 
 /**
@@ -642,6 +679,14 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   storage: 'storage operates on the local repo on disk. Run on the host.',
   takes: 'takes mutate subcommands edit local .md files; routing the read subcommands lands in v0.31.x. For now: use `takes_list` and `takes_search` MCP tools from your agent, or run on the host.',
   sources: 'sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.',
+  // v0.32 audit additions
+  pages: '`pages purge-deleted` is admin+localOnly (hard-deletes from the local DB). Run on the host.',
+  files: '`files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `gbrain files` on the host machine.',
+  eval: '`eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.',
+  'code-def': '`code-def` needs symbol-aware lookup that has no MCP op yet. Run on the host or use `search` from your agent with a symbol-shaped query.',
+  'code-refs': '`code-refs` has no MCP op yet. Run on the host.',
+  'code-callers': '`code-callers` has no MCP op yet. Run on the host.',
+  'code-callees': '`code-callees` has no MCP op yet. Run on the host.',
 };
 
 /**
@@ -765,6 +810,14 @@ async function handleCliOnly(command: string, args: string[]) {
     // connect mount engines lazily on first use by op dispatch.
     const { runMounts } = await import('./commands/mounts.ts');
     await runMounts(args);
+    return;
+  }
+  if (command === 'cache') {
+    // v0.32.x search-lite: semantic query cache management. Dispatch the
+    // subcommand handler (stats / clear / prune); the handler opens its
+    // own engine connection.
+    const { runCache } = await import('./commands/cache.ts');
+    await runCache(args);
     return;
   }
   if (command === 'routing-eval') {
@@ -897,6 +950,17 @@ async function handleCliOnly(command: string, args: string[]) {
     process.exit(await runEvalCrossModal(args.slice(1)));
   }
 
+  // v0.32 EXP-5 (codex review #10): `eval takes-quality replay <receipt>`
+  // is the ONLY sub-subcommand that doesn't need a brain — it reads a
+  // receipt JSON file from disk and re-renders it. Bypass connectEngine
+  // here so users can replay a receipt on a machine without DATABASE_URL.
+  // run/trend/regress need the brain and fall through to the regular
+  // engine-required path below.
+  if (command === 'eval' && args[0] === 'takes-quality' && args[1] === 'replay') {
+    const { runReplayNoBrain } = await import('./commands/eval-takes-quality.ts');
+    process.exit(await runReplayNoBrain(args.slice(2)));
+  }
+
   // v0.28.8: longmemeval brings its own in-memory PGLite. Bypassing
   // connectEngine here keeps `gbrain eval longmemeval --help` and benchmark
   // runs working on machines that have no `~/.gbrain/config.json` configured.
@@ -904,6 +968,18 @@ async function handleCliOnly(command: string, args: string[]) {
     const { runEvalLongMemEval } = await import('./commands/eval-longmemeval.ts');
     await runEvalLongMemEval(args.slice(1));
     return;
+  }
+
+  // v0.33.1.3: `gbrain eval whoknows` on thin-client installs bypasses
+  // connectEngine entirely — the eval routes per-query through the remote
+  // `find_experts` MCP op (the v0.31.1 routing seam). Local mode falls
+  // through to the engine-connected path below.
+  if (command === 'eval' && args[0] === 'whoknows') {
+    const cfgPre = loadConfig();
+    if (isThinClient(cfgPre)) {
+      const { runEvalWhoknows } = await import('./commands/eval-whoknows.ts');
+      process.exit(await runEvalWhoknows(null, args.slice(1)));
+    }
   }
 
   // All remaining CLI-only commands need a DB connection
@@ -952,6 +1028,16 @@ async function handleCliOnly(command: string, args: string[]) {
         break;
       }
       case 'eval': {
+        // v0.32 EXP-5: `eval takes-quality {run,trend,regress}` requires a
+        // brain (samples takes from DB / reads runs table). `replay` was
+        // already routed through the no-DB bypass above and never reaches
+        // this case. Other `eval` subcommands (export/prune/replay-capture/
+        // longmemeval/cross-modal) go to the generic dispatcher.
+        if (args[0] === 'takes-quality') {
+          const { runEvalTakesQuality } = await import('./commands/eval-takes-quality.ts');
+          await runEvalTakesQuality(engine, args.slice(1));
+          break;
+        }
         const { runEvalCommand } = await import('./commands/eval.ts');
         await runEvalCommand(engine, args);
         break;
@@ -1010,6 +1096,12 @@ async function handleCliOnly(command: string, args: string[]) {
         await runOrphans(engine, args);
         break;
       }
+      // v0.32.7 CJK wave — post-upgrade markdown re-chunk sweep.
+      case 'reindex': {
+        const { runReindex } = await import('./commands/reindex.ts');
+        await runReindex(engine, args);
+        break;
+      }
       // v0.29 — Salience + Anomaly Detection
       case 'salience': {
         const { runSalience } = await import('./commands/salience.ts');
@@ -1021,9 +1113,37 @@ async function handleCliOnly(command: string, args: string[]) {
         await runAnomalies(engine, args);
         break;
       }
+      case 'edges-backfill': {
+        // v0.34 W6 — operator escape hatch for the symbol-resolution backfill.
+        // Resumable via the edges_backfilled_at watermark; per-batch transactions
+        // commit so Ctrl-C leaves a clean resumable state.
+        const { runEdgesBackfill } = await import('./commands/edges-backfill.ts');
+        await runEdgesBackfill(engine, args);
+        break;
+      }
+      case 'whoknows': {
+        // v0.33 (Issue #?): expertise + relationship-proximity routing.
+        // MCP op `find_experts` (read-scoped) backs the same code path; CLI
+        // dispatch here is the user-facing surface. Thin-client routing
+        // happens inside runWhoknows via isThinClient(cfg) (v0.31.1 pattern).
+        const { runWhoknows } = await import('./commands/whoknows.ts');
+        await runWhoknows(engine, args);
+        break;
+      }
       case 'transcripts': {
         const { runTranscripts } = await import('./commands/transcripts.ts');
         await runTranscripts(engine, args);
+        break;
+      }
+      case 'models': {
+        const { runModels } = await import('./commands/models.ts');
+        await runModels(engine, args);
+        break;
+      }
+      case 'search': {
+        // v0.32.3 search-lite — `gbrain search modes/stats/tune`.
+        const { runSearch } = await import('./commands/search.ts');
+        await runSearch(engine, args);
         break;
       }
       case 'takes': {
@@ -1048,6 +1168,34 @@ async function handleCliOnly(command: string, args: string[]) {
         // v0.31: shorthand for expireFact. `gbrain forget <fact-id>`.
         const { runForget } = await import('./commands/recall.ts');
         await runForget(engine, args);
+        break;
+      }
+      case 'notability-eval': {
+        // v0.31.2: notability gate eval suite. Two subcommands:
+        //   gbrain notability-eval mine    — sample paragraphs, write candidates
+        //   gbrain notability-eval review  — TTY hand-confirm tiers
+        const { runNotabilityEval } = await import('./commands/notability-eval.ts');
+        const subcmd = args[0] || 'help';
+        const flags: Record<string, string | boolean> = {};
+        for (let i = 1; i < args.length; i++) {
+          const a = args[i];
+          if (a.startsWith('--')) {
+            const key = a.slice(2);
+            const next = args[i + 1];
+            if (next && !next.startsWith('--')) {
+              flags[key] = next;
+              i++;
+            } else {
+              flags[key] = true;
+            }
+          }
+        }
+        // sync.repo_path resolution (matches dream phase pattern).
+        let repoPath: string | undefined;
+        try {
+          repoPath = (flags.repo as string) || (await engine.getConfig('sync.repo_path')) || undefined;
+        } catch { /* engine may not be connected for help */ }
+        await runNotabilityEval({ cmd: subcmd, flags, engine, repoPath });
         break;
       }
       case 'sources': {
@@ -1140,6 +1288,27 @@ async function handleCliOnly(command: string, args: string[]) {
 // but not the other previously required remembering to mirror the change;
 // the helper makes that structural.
 function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
+  // v0.32 (#121 reworked): when ~/.gbrain/config.json declares
+  // openai_api_key / anthropic_api_key, fold them into the gateway env so
+  // recipes that read OPENAI_API_KEY / ANTHROPIC_API_KEY find them. Process
+  // env still wins (it's loaded last) — this is a fallback for daemons /
+  // launchd-spawned subprocesses that don't propagate ~/.zshrc-sourced keys.
+  const envFromConfig: Record<string, string> = {};
+  if (c.openai_api_key) envFromConfig.OPENAI_API_KEY = c.openai_api_key;
+  if (c.anthropic_api_key) envFromConfig.ANTHROPIC_API_KEY = c.anthropic_api_key;
+
+  // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
+  // into base_urls so the gateway hits the user's configured port. Without
+  // this, `LLAMA_SERVER_BASE_URL=http://localhost:9000` would let the probe
+  // succeed against :9000 but the actual embed call would still go to the
+  // recipe's base_url_default (localhost:8080). Same fix applies to
+  // OLLAMA_BASE_URL. Caller-provided cfg.provider_base_urls wins.
+  const envBaseUrls: Record<string, string> = {};
+  if (process.env.LLAMA_SERVER_BASE_URL) envBaseUrls['llama-server'] = process.env.LLAMA_SERVER_BASE_URL;
+  if (process.env.OLLAMA_BASE_URL) envBaseUrls['ollama'] = process.env.OLLAMA_BASE_URL;
+  if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
+  if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
+
   return {
     embedding_model: c.embedding_model,
     embedding_dimensions: c.embedding_dimensions,
@@ -1147,8 +1316,8 @@ function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     expansion_model: c.expansion_model,
     chat_model: c.chat_model,
     chat_fallback_chain: c.chat_fallback_chain,
-    base_urls: c.provider_base_urls,
-    env: { ...process.env },
+    base_urls: { ...envBaseUrls, ...(c.provider_base_urls ?? {}) }, // config wins over env
+    env: { ...envFromConfig, ...process.env }, // process.env wins
   };
 }
 
@@ -1225,6 +1394,12 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
       // clear per startup is microseconds, no hot path.
       configureGateway(buildGatewayConfig(merged));
     }
+    // v0.31.12: re-resolve gateway defaults through resolveModel so
+    // `models.tier.*` and `models.default` overrides apply to expansion +
+    // chat. Per Codex F3 — configureGateway is sync; this is the async
+    // re-stamp seam after engine.connect() makes config reads possible.
+    const { reconfigureGatewayWithEngine } = await import('./core/ai/gateway.ts');
+    await reconfigureGatewayWithEngine(engine);
   } catch {
     // Non-fatal. Pre-v39 brains may not have a usable config table yet.
   }

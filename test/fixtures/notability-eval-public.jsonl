@@ -1,0 +1,40 @@
+{"paragraph":"I sold the company to acme-co today. The deal closed at 9am. I'll spend the next year as an advisor before stepping away completely.","confirmed_tier":"high","tier_rationale":"life event + financial decision + relationship-status change with the company"}
+{"paragraph":"alice-example told me she's leaving the firm. She's giving notice tomorrow and starting at widget-co in two weeks.","confirmed_tier":"high","tier_rationale":"major commitment + relationship-status change in someone close to me"}
+{"paragraph":"I'm taking three months off starting next week. Mental health break. Doctor said I needed to or I'd burn out hard.","confirmed_tier":"high","tier_rationale":"health change + major commitment"}
+{"paragraph":"My therapist diagnosed me with anxiety today. Starting CBT next Thursday. Finally putting a name on what I've been feeling for six months.","confirmed_tier":"high","tier_rationale":"health change"}
+{"paragraph":"alice-example and I broke up last night. Twelve years. We're going to try mediation before deciding on the divorce.","confirmed_tier":"high","tier_rationale":"relationship status change"}
+{"paragraph":"My dad died this morning. The cancer came back in February and we knew it was coming but it still hit hard.","confirmed_tier":"high","tier_rationale":"life event"}
+{"paragraph":"I gave up alcohol on January 1st and I'm sticking with it. Six months sober today. Sleeping better, working out more.","confirmed_tier":"high","tier_rationale":"major commitment + health change"}
+{"paragraph":"Just signed the term sheet for fund-a's Series A. $15M lead, $25M total round. We're now formally in deal mode for the next 8 weeks.","confirmed_tier":"high","tier_rationale":"financial decision + major commitment"}
+{"paragraph":"alice-example is having the baby. Due in November. We told the family last weekend.","confirmed_tier":"high","tier_rationale":"life event"}
+{"paragraph":"I'm leaving acme-co at the end of the quarter. Told the CEO this morning. Don't have a next thing yet, just need space.","confirmed_tier":"high","tier_rationale":"major commitment + relationship status change"}
+{"paragraph":"Hospitalized last night. Heart palpitations turned out to be a-fib. They got me stable and home by morning, but I'm following up with cardiology Tuesday.","confirmed_tier":"high","tier_rationale":"health change"}
+{"paragraph":"Decided to give up the apartment lease and move closer to the office. Starting the search this weekend. Want to be in by April 1st.","confirmed_tier":"high","tier_rationale":"major commitment with multi-month implications"}
+{"paragraph":"alice-example asked me to be the godmother. I said yes. Christening is in October.","confirmed_tier":"high","tier_rationale":"relationship-status / commitment"}
+{"paragraph":"Promoted to VP of Engineering today. Effective Monday. Reports double, scope triples.","confirmed_tier":"high","tier_rationale":"major commitment, role change with multi-quarter implications"}
+{"paragraph":"I prefer dark roast coffee in the mornings, no sugar, no milk. Tartine's is fine but I really like the small place on 24th.","confirmed_tier":"medium","tier_rationale":"durable preference"}
+{"paragraph":"I think the FAANG model of unlimited PTO actually causes people to take less vacation. The data backs it up. We should switch to a use-it-or-lose-it minimum.","confirmed_tier":"medium","tier_rationale":"belief / strong opinion that reveals character"}
+{"paragraph":"I don't drink coffee in the afternoon anymore. Found that even a 1pm cappuccino destroys my sleep. Switched to herbal tea after lunch.","confirmed_tier":"medium","tier_rationale":"durable preference"}
+{"paragraph":"My favorite running route is the loop around the park, exactly 5.2 miles. I do it three times a week.","confirmed_tier":"medium","tier_rationale":"durable habit / preference"}
+{"paragraph":"I've come around to thinking that AI agents will replace most knowledge work in the next 5 years. Hard to say what the wedge use case is yet.","confirmed_tier":"medium","tier_rationale":"belief that frames future decision-making"}
+{"paragraph":"alice-example doesn't drink. She's been sober for over a decade. Important to remember when planning anything social.","confirmed_tier":"medium","tier_rationale":"durable preference about a recurring contact"}
+{"paragraph":"I prefer email over slack for any conversation longer than three turns. It compounds the wrong way otherwise.","confirmed_tier":"medium","tier_rationale":"durable preference"}
+{"paragraph":"Strongly believe small talk at the start of meetings wastes time. The first 30 seconds set the tone for the next hour.","confirmed_tier":"medium","tier_rationale":"opinion/belief revealing character"}
+{"paragraph":"I take vitamin D every morning. Got tested last fall, was deficient, started supplementing. Don't skip days.","confirmed_tier":"medium","tier_rationale":"durable health preference"}
+{"paragraph":"I'm vegetarian when I cook at home, but I eat meat when I travel. It's a sustainability framing, not an ethics one.","confirmed_tier":"medium","tier_rationale":"durable preference + framing"}
+{"paragraph":"I never schedule meetings before 10am. Mornings are for deep work. People who push back on this aren't worth working with.","confirmed_tier":"medium","tier_rationale":"durable preference / strong opinion"}
+{"paragraph":"I think compensation transparency is overrated. Markets work because info is private. The HR-side argument is mostly therapy for managers.","confirmed_tier":"medium","tier_rationale":"strong opinion / belief"}
+{"paragraph":"Generally I avoid LinkedIn. Most of what's on it is performative and the few useful messages get drowned. Twitter and email are enough.","confirmed_tier":"medium","tier_rationale":"durable preference"}
+{"paragraph":"We ate at Tartine for breakfast. The bread was good. Walked around the neighborhood after.","confirmed_tier":"low","tier_rationale":"logistical noise"}
+{"paragraph":"Meeting starts at 2pm in conference room B. The link is in the calendar invite. Don't forget the slides.","confirmed_tier":"low","tier_rationale":"logistics, expires immediately"}
+{"paragraph":"Picked up dry cleaning, dropped off the dog at daycare, grabbed coffee on 17th. Quick errands morning.","confirmed_tier":"low","tier_rationale":"logistical noise"}
+{"paragraph":"alice-example is at SFO terminal 2. Flight lands at 4:35pm. We'll grab dinner at 7.","confirmed_tier":"low","tier_rationale":"logistics"}
+{"paragraph":"Pizza for dinner. Got the half-pepperoni-half-mushroom. Watched the game. Sox lost.","confirmed_tier":"low","tier_rationale":"logistical noise"}
+{"paragraph":"Train was late again. 20 minutes. The new schedule from January has been worse than the old one for our line.","confirmed_tier":"low","tier_rationale":"logistical noise"}
+{"paragraph":"Reset the wifi. Modem light was orange. Came back after 90 seconds. Internet is back.","confirmed_tier":"low","tier_rationale":"trivial logistics"}
+{"paragraph":"alice-example texted to ask if I want to grab lunch tomorrow. Picked the place near the park. 12:30.","confirmed_tier":"low","tier_rationale":"logistics, expires after lunch"}
+{"paragraph":"Forgot my charger at the office. Borrowed one from reception. Will swap back tomorrow.","confirmed_tier":"low","tier_rationale":"trivial logistics"}
+{"paragraph":"Picked up groceries. Forgot the garlic. Will pick that up tomorrow when I'm out anyway.","confirmed_tier":"low","tier_rationale":"trivial logistics"}
+{"paragraph":"Set up the new laptop at lunch today. Took 20 minutes. Slack and email are working, calendar synced too.","confirmed_tier":"low","tier_rationale":"one-time logistics"}
+{"paragraph":"Q3 OKRs review pushed to Thursday. Same time, same room. Pre-read coming Wednesday afternoon.","confirmed_tier":"low","tier_rationale":"logistics, expires after Thursday"}
+{"paragraph":"Bumped the standup to 10am Mondays starting next week. Half the team has conflicts at 9.","confirmed_tier":"low","tier_rationale":"logistics"}

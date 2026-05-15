@@ -168,6 +168,7 @@ export async function runThink(
   const modelUsed = await resolveModel(engine, {
     cliFlag: opts.model,
     configKey: 'models.think',
+    tier: 'deep',
     fallback: 'opus',  // think is the high-stakes synthesis op; opus is the right default
   });
 

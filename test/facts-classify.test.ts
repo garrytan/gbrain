@@ -19,7 +19,7 @@ import type { FactRow } from '../src/core/engine.ts';
 function makeFact(overrides: Partial<FactRow> & { id: number }): FactRow {
   return {
     source_id: 'default', entity_slug: 'people/alice-example', fact: 'x', kind: 'fact',
-    visibility: 'private', context: null,
+    visibility: 'private', notability: 'medium', context: null,
     valid_from: new Date(), valid_until: null, expired_at: null,
     superseded_by: null, consolidated_at: null, consolidated_into: null,
     source: 'test', source_session: null, confidence: 1.0,

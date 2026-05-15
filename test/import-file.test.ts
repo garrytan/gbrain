@@ -1,8 +1,9 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { writeFileSync, mkdirSync, rmSync, symlinkSync } from 'fs';
+import { writeFileSync, mkdirSync, rmSync, symlinkSync, readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { importFile, importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
 
 const TMP = join(import.meta.dir, '.tmp-import-test');
 
@@ -406,5 +407,101 @@ ${longText}
         expect(chunks[i].chunk_index).toBe(i);
       }
     }
+  });
+});
+
+describe('importFile — CJK wave (v0.32.7)', () => {
+  test('REGRESSION: pure-CJK filename with NO frontmatter slug imports cleanly as CJK slug', async () => {
+    // After #115, slugifyPath('小米.md') = '小米' (CJK preserved). The
+    // anti-spoof rule is content with no frontmatter slug present.
+    const filePath = join(TMP, '小米.md');
+    writeFileSync(filePath, `---
+type: company
+title: Xiaomi
+---
+
+Body text.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, '小米.md', { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('小米');
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[1].chunker_version).toBe(MARKDOWN_CHUNKER_VERSION);
+    expect(putCall.args[1].source_path).toBe('小米.md');
+  });
+
+  test('empty-path-slug + frontmatter slug → fallback path fires (emoji filename)', async () => {
+    // 🚀.md slugifies empty even after #115 (emoji not in CJK ranges).
+    // Frontmatter slug must take over. logSlugFallback fires.
+    const filePath = join(TMP, '🚀.md');
+    writeFileSync(filePath, `---
+type: project
+title: Launch
+slug: projects/launch
+---
+
+Lifting off.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, '🚀.md', { noEmbed: true });
+    expect(result.status).toBe('imported');
+    expect(result.slug).toBe('projects/launch');
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[0]).toBe('projects/launch');
+    expect(putCall.args[1].source_path).toBe('🚀.md');
+  });
+
+  test('empty-path-slug + NO frontmatter slug → friendly D6=B error message', async () => {
+    // 🌟🚀 slugifies to '' (both emoji stripped, no remaining chars).
+    // No frontmatter slug to fall back on → friendly error.
+    const filePath = join(TMP, '🌟🚀.md');
+    writeFileSync(filePath, `# Bare body without frontmatter slug
+
+just content.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, '🌟🚀.md', { noEmbed: true });
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('no usable slug');
+    expect(result.error).toContain('ASCII / Chinese / Japanese / Korean');
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('REGRESSION: anti-spoof still rejects when path DOES derive a slug', async () => {
+    // notes/random.md derives slug `notes/random`. Frontmatter `slug: people/elon`
+    // is a mismatch and MUST still be rejected (the original PR #598 + C1 test
+    // fixture contradiction concern).
+    const filePath = join(TMP, 'antispoof-cjk-wave.md');
+    writeFileSync(filePath, `---
+type: person
+title: Elon
+slug: people/elon
+---
+
+Hijack.
+`);
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'notes/antispoof-cjk-wave.md', { noEmbed: true });
+    expect(result.status).toBe('skipped');
+    expect(result.error).toContain('does not match');
+    expect((engine as any)._calls.length).toBe(0);
+  });
+
+  test('chunker_version + source_path populated on every import', async () => {
+    const filePath = join(TMP, 'cjk-source-path.md');
+    writeFileSync(filePath, `---
+type: concept
+title: Has source path
+---
+
+Content.
+`);
+    const engine = mockEngine();
+    await importFile(engine, filePath, 'concepts/cjk-source-path.md', { noEmbed: true });
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall).toBeTruthy();
+    expect(putCall.args[1].chunker_version).toBe(MARKDOWN_CHUNKER_VERSION);
+    expect(putCall.args[1].source_path).toBe('concepts/cjk-source-path.md');
   });
 });

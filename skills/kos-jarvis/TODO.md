@@ -1,6 +1,20 @@
-# kos-jarvis — Outstanding Work (post v0.31.2 sync + M1/M2/M3-pilot, 2026-05-10)
+# kos-jarvis — Outstanding Work (post v0.34.4 sync, 2026-05-15)
 
-> **Updated**: 2026-05-10 — Same-day follow-up to v0.31.2 sync.
+> **Updated 2026-05-15**: v0.34.4 upstream sync landed (29 commits,
+> v0.31.3 → v0.34.4). Story in `docs/JARVIS-ARCHITECTURE.md` §6.24.
+> Schema upgraded v45 → v66 (21 migrations + 1 manual bootstrap for
+> `oauth_clients.{source_id, federated_read}`). Production smoke
+> green: kos-compat-api Chinese query round-trip 0.95+ scores.
+>
+> **3 new P1 evaluations** queued for the next session — see "Post-
+> v0.34.4 sync follow-ups" section below.
+>
+> **Active fork dirs**: still 11 (no archives this round; M2-B reopen
+> pending v0.32.5 gbrain-context evaluation).
+>
+> ---
+>
+> **Updated 2026-05-10**: Same-day follow-up to v0.31.2 sync.
 > 4 planned items, 3 commits landed, 1 (M3 production cutover) validated
 > end-to-end on throwaway DB but deferred (vector-space compat decision
 > needs a clean window). Story in `docs/JARVIS-ARCHITECTURE.md` §6.23.
@@ -107,6 +121,65 @@ prepend (但 diff 这么小,PR 路径应赢)。
 COLUMN IF NOT EXISTS …` 过了,生产 schema v34, 不依赖此 PR merge。
 
 ### [x] 服务 smoke check — DONE 2026-05-04 (详见 Done section)
+
+## P1 — Post-v0.34.4 sync follow-ups (added 2026-05-15)
+
+### [ ] (PR-2) Upstream PR: extend forward-bootstrap to cover oauth_clients.{source_id, federated_read}
+
+Pattern identical to PR #627 (which was superseded by upstream
+fixwave #682+#741 for `mcp_request_log.{agent_name, params,
+error_message}`). v0.34.1 (#861 + #876) added two new columns to
+`oauth_clients` but `applyForwardReferenceBootstrap` in both
+PostgresEngine and PGLiteEngine never learned to probe them. Result:
+any fork merging v0.34.x in-place hits `column "source_id" does not
+exist` at `schema-embedded.ts:438` (`CREATE INDEX
+idx_oauth_clients_source_id`).
+
+Scope: 4 files / ~150 LoC / pattern lift from #627. Branch
+strategy: cut from `upstream/master` (HEAD `24881f60`), no
+fork-local content. Same workflow as #627. e2e test
+`test/e2e/postgres-bootstrap.test.ts` already covers the pattern;
+extend `REQUIRED_BOOTSTRAP_COVERAGE` + add the oauth case.
+
+Reproducer (already validated against our prod brain): see §6.24
+manual ALTER block.
+
+### [ ] (CJK-eval) Reassess "vector search only" assumption after v0.32.7 CJK fix wave
+
+Premise change: v0.32.7 ("6 layers from one root cause") landed
+upstream CJK tokenizer fixes for keyword/FTS path. Our fork's
+operating assumption since v0.18 has been: *Postgres tsvector has
+no usable CJK tokenizer, vector search via Gemini embedding is the
+only working retrieval path on Chinese queries*. CLAUDE.md still
+says this.
+
+Probe: pick 5-10 known queries that historically returned `No
+results` from `gbrain query --keyword-only`. Run them post-sync.
+If results materialize, the "must keep `GOOGLE_GENERATIVE_AI_API_KEY`
+set on every consumer for any retrieval to work" rule loosens.
+Hybrid (keyword + vector) becomes practical for cost-sensitive paths
+(e.g. kos-patrol gap detection, which currently always burns embed
+budget).
+
+### [ ] (overlap-matrix) Evaluate v0.31.6 / v0.32.2 / v0.33.0 vs fork hot-memory pieces
+
+Three upstream pieces shipped between v0.31.2 and v0.34.4 that
+overlap with KOS-Jarvis hot-memory / curation surface:
+
+| Upstream | Surface | Fork piece(s) potentially redundant |
+|----------|---------|-------------------------------------|
+| v0.31.6 `extract facts during sync` | real-time fact extraction on every page write | concept-synthesis ad-hoc runs (M2-A decision (b)) |
+| v0.32.2 `facts-fence` | `## Facts` markdown fence as system-of-record | digest-to-memory's KOS digest writes back to MEMORY.md |
+| v0.33.0 `morning pulse` (9 commands) | dawn-of-day brain summary CLI | kos-patrol daily 08:07 cron output |
+
+Build a side-by-side comparison: upstream feature scope vs our
+production output. Identify which fork pieces are now strict
+subsets of upstream functionality and propose retirements. M2-A
+decision (b) — *keep concept-synthesis ad-hoc, don't wire* — was
+made before v0.31.6 / v0.32.2 landed; that decision deserves a
+second look now that upstream has parallel mechanisms.
+
+---
 
 ## P1 — consolidation PLAN 落地 (M1 milestone, 仍 active)
 
@@ -572,6 +645,39 @@ embedding cost <$1,直接 `--yes`。
 | 2026-05-07 | Step 2.4 commit-batching review for `~/brain` per-ingest commits | active |
 | 2026-05-25 | Re-evaluate Gemini 3072-dim embeddings vs current 1536-dim truncation | active |
 | ~~Trigger-based~~ | ~~PGLite → Postgres switch~~ | **CLOSED 2026-04-29 via Path 3 (§6.18)** |
+
+### [ ] Sync_failures cleanup: 48 chunker_version legacy entries (added 2026-05-15)
+
+Doctor reports 48 unacknowledged `ingest_log` failures, all with
+shape `column "chunker_version" of relation "pages" does not exist`.
+These pre-date the schema v54 migration (`cjk_wave_pages_chunker_version
+_and_source_path`); schema is now at v66 so new syncs won't reproduce.
+Run `gbrain sync --skip-failed` once to ack — purely cosmetic for
+`gbrain doctor` Health score.
+
+**Scope**: 1 command, ~30 s.
+
+### [ ] bun test full-suite hang investigation (added 2026-05-15)
+
+v0.34.4 sync's `bun test` ran 30 min at 99 % CPU then was killed (no
+stdout flushed because of the `| tail -40` pipe-eats-output trap).
+v0.32+ added ~60 new test files; one likely awaits a fixture our box
+doesn't provide. Re-run inside the repo with `bun test --bail
+--reporter=verbose` to identify which file hangs first.
+
+**Scope**: 15-30 min, may surface fork-side env mismatch.
+
+### [ ] ai.gateway "google recipe missing max_batch_tokens" NOTICE (added 2026-05-15)
+
+Every `gbrain query` / `kos-compat-api` request prints
+`[ai.gateway] recipe "google" declares an embedding touchpoint without
+max_batch_tokens; recursion is the only safety net for batch caps`.
+This is an upstream recipe-definition gap (not fork's), but the noise
+clutters logs and recursion-as-fallback is fragile. Worth filing
+upstream and/or providing the knob in our fork-side recipe override
+(if we even have one — check first).
+
+**Scope**: 20 min to locate recipe def + ~50 LoC upstream PR.
 
 ---
 
