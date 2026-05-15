@@ -705,23 +705,39 @@ export async function extractLinksForSlugs(
   slugs: string[],
   opts?: { sourceId?: string },
 ): Promise<number> {
+  // BUGFIX: build a slug→filepath map so non-canonical filenames
+  // (e.g., "Briefings/Webex Digest - foo.md" whose slug is
+  // "briefings/webex-digest-foo") are found correctly. Previously,
+  // join(repoPath, slug + '.md') silently missed every non-canonical
+  // file because existsSync returned false.
   const allFiles = walkMarkdownFiles(repoPath);
-  const allSlugs = new Set(allFiles.map(f => pathToSlug(f.relPath)));
-  // v0.18.0+ multi-source: post-sync extract reconciles same-source edges.
-  // Markdown→markdown links within one repo always live in the caller's
-  // sourceId. Cross-source extraction (rare) would need a per-repo source
-  // manifest; not in this PR's scope.
+  const slugToFile = new Map<string, string>();
+  for (const f of allFiles) slugToFile.set(pathToSlug(f.relPath), f.path);
+  const allSlugs = new Set(slugToFile.keys());
+
   const linkOpts = opts?.sourceId
     ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
     : undefined;
+
   let created = 0;
   for (const slug of slugs) {
-    const filePath = join(repoPath, slug + '.md');
-    if (!existsSync(filePath)) continue;
+    const filePath = slugToFile.get(slug);
+    if (!filePath) continue;
     try {
       const content = readFileSync(filePath, 'utf-8');
+      // Pass the SYNTHESIZED `slug + '.md'` (lowercase, slug-canonical) to
+      // extractLinksFromFile, NOT relative(repoPath, filePath). The
+      // downstream resolveSlug at extract.ts:139 does literal string match
+      // against allSlugs (lowercased); passing real mixed-case relPath
+      // would regress relative wiki-link resolution.
       for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs)) {
-        try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, undefined, undefined, undefined, linkOpts); created++; } catch { /* skip */ }
+        try {
+          await engine.addLink(
+            link.from_slug, link.to_slug, link.context, link.link_type,
+            undefined, undefined, undefined, linkOpts,
+          );
+          created++;
+        } catch { /* skip */ }
       }
     } catch { /* skip */ }
   }
