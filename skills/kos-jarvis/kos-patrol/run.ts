@@ -38,6 +38,7 @@ type Page = {
   updated?: string;
   review_after?: string;
   body: string;
+  aliases?: string[]; // frontmatter aliases — used by phase4 to suppress known-entity variants
 };
 
 type Severity = "ERROR" | "WARN";
@@ -65,6 +66,11 @@ async function loadAllPages(db: BrainDb): Promise<Page[]> {
       const v = fm?.[k];
       return typeof v === "string" ? v : undefined;
     };
+    // Extract aliases array from frontmatter (string[] or null)
+    const fmAliases = fm?.["aliases"];
+    const aliases: string[] | undefined = Array.isArray(fmAliases)
+      ? (fmAliases as unknown[]).filter((a): a is string => typeof a === "string")
+      : undefined;
     return {
       slug: r.slug,
       listed_type: r.type,
@@ -79,6 +85,7 @@ async function loadAllPages(db: BrainDb): Promise<Page[]> {
       // the legacy `gbrain get` path returned. Phase 4 strips a frontmatter
       // prefix if present, which is a no-op here.
       body: r.compiled_truth + (r.timeline ? "\n" + r.timeline : ""),
+      aliases,
     };
   });
 }
@@ -275,6 +282,13 @@ function phase4(pages: Page[]): Gap[] {
     if (p.title) knownTitles.add(p.title.toLowerCase());
     const tail = p.slug.split("/").pop()?.replace(/-/g, " ").toLowerCase();
     if (tail) knownSlugTails.add(tail);
+    // Also suppress all frontmatter aliases — 2026-05-14 fix:
+    // aliases like "Link Systems Inc" / "Peters Canyon" / "Link Canada Inc"
+    // were registered in entity page frontmatter but phase4 never read them,
+    // causing known-entity variants to surface as gaps every patrol run.
+    if (p.aliases) {
+      for (const a of p.aliases) knownTitles.add(a.toLowerCase());
+    }
   }
 
   const gaps: Gap[] = [];
