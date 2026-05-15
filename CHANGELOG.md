@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+- Added `gbrain frontmatter slug <path>` and `gbrain frontmatter abi-version`
+  subcommands so external producers can source slug computation from one
+  place instead of porting `slugifyPath()`. See `docs/guides/producer-tools.md`.
+
 ## [0.32.0] - 2026-05-10
 
 **5 new embedding providers + the discoverability fix that closes the 17-PR dupe cluster.**
