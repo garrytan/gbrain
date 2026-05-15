@@ -63,12 +63,12 @@ describe('loadCheckpoint', () => {
   test('returns null and logs to stderr for old positional format', () => {
     captureStderr();
     writeFileSync(cpPath, JSON.stringify({
-      dir: '/data/brain',
+      dir: '/tmp/example-brain',
       totalFiles: 13768,
       processedIndex: 5000,
       timestamp: '2026-01-01T00:00:00Z',
     }));
-    const result = loadCheckpoint(cpPath, '/data/brain');
+    const result = loadCheckpoint(cpPath, '/tmp/example-brain');
     expect(result).toBeNull();
     expect(stderrCaptured).toContain('Older checkpoint format detected');
   });
@@ -79,32 +79,32 @@ describe('loadCheckpoint', () => {
     // without the migration log line.
     captureStderr();
     writeFileSync(cpPath, JSON.stringify({
-      dir: '/data/brain',
+      dir: '/tmp/example-brain',
       timestamp: '2026-01-01T00:00:00Z',
     }));
-    expect(loadCheckpoint(cpPath, '/data/brain')).toBeNull();
+    expect(loadCheckpoint(cpPath, '/tmp/example-brain')).toBeNull();
     expect(stderrCaptured).not.toContain('Older checkpoint format');
   });
 
   test('returns null when completedPaths contains non-strings', () => {
     writeFileSync(cpPath, JSON.stringify({
-      dir: '/data/brain',
+      dir: '/tmp/example-brain',
       completedPaths: ['a.md', 42, 'b.md'],
       timestamp: '2026-01-01T00:00:00Z',
     }));
-    expect(loadCheckpoint(cpPath, '/data/brain')).toBeNull();
+    expect(loadCheckpoint(cpPath, '/tmp/example-brain')).toBeNull();
   });
 
   test('returns the checkpoint for valid v0.33.2 payload', () => {
     const cp: ImportCheckpoint = {
-      dir: '/data/brain',
+      dir: '/tmp/example-brain',
       completedPaths: ['meetings/2026-05-13.md', 'concepts/foo.md'],
       timestamp: '2026-05-14T12:34:56Z',
     };
     writeFileSync(cpPath, JSON.stringify(cp));
-    const loaded = loadCheckpoint(cpPath, '/data/brain');
+    const loaded = loadCheckpoint(cpPath, '/tmp/example-brain');
     expect(loaded).not.toBeNull();
-    expect(loaded?.dir).toBe('/data/brain');
+    expect(loaded?.dir).toBe('/tmp/example-brain');
     expect(loaded?.completedPaths).toEqual(['meetings/2026-05-13.md', 'concepts/foo.md']);
     expect(loaded?.timestamp).toBe('2026-05-14T12:34:56Z');
   });
@@ -113,19 +113,19 @@ describe('loadCheckpoint', () => {
 describe('saveCheckpoint', () => {
   test('round-trips through loadCheckpoint', () => {
     const cp: ImportCheckpoint = {
-      dir: '/data/brain',
+      dir: '/tmp/example-brain',
       completedPaths: ['a.md', 'b.md', 'c.md'],
       timestamp: '2026-05-14T00:00:00Z',
     };
     saveCheckpoint(cpPath, cp);
-    const loaded = loadCheckpoint(cpPath, '/data/brain');
+    const loaded = loadCheckpoint(cpPath, '/tmp/example-brain');
     expect(loaded?.completedPaths).toEqual(['a.md', 'b.md', 'c.md']);
-    expect(loaded?.dir).toBe('/data/brain');
+    expect(loaded?.dir).toBe('/tmp/example-brain');
   });
 
   test('serializes completedPaths sorted (deterministic output)', () => {
     saveCheckpoint(cpPath, {
-      dir: '/data/brain',
+      dir: '/tmp/example-brain',
       completedPaths: ['z.md', 'a.md', 'm.md'],
       timestamp: '2026-05-14T00:00:00Z',
     });
@@ -135,7 +135,7 @@ describe('saveCheckpoint', () => {
 
   test('atomic-ish write — no stray .tmp file after success', () => {
     saveCheckpoint(cpPath, {
-      dir: '/data/brain',
+      dir: '/tmp/example-brain',
       completedPaths: ['a.md'],
       timestamp: '2026-05-14T00:00:00Z',
     });
@@ -148,7 +148,7 @@ describe('saveCheckpoint', () => {
     const badPath = join(workDir, 'does-not-exist', 'cp.json');
     expect(() =>
       saveCheckpoint(badPath, {
-        dir: '/data/brain',
+        dir: '/tmp/example-brain',
         completedPaths: ['a.md'],
         timestamp: '2026-05-14T00:00:00Z',
       }),
@@ -160,40 +160,40 @@ describe('saveCheckpoint', () => {
 describe('resumeFilter', () => {
   test('empty completed set returns all files unchanged', () => {
     const all = ['a.md', 'b.md', 'c.md'];
-    expect(resumeFilter(all, '/data/brain', new Set())).toEqual(all);
+    expect(resumeFilter(all, '/tmp/example-brain', new Set())).toEqual(all);
   });
 
   test('completed set filters matching paths out', () => {
     const all = ['a.md', 'b.md', 'c.md'];
     const completed = new Set(['b.md']);
-    expect(resumeFilter(all, '/data/brain', completed)).toEqual(['a.md', 'c.md']);
+    expect(resumeFilter(all, '/tmp/example-brain', completed)).toEqual(['a.md', 'c.md']);
   });
 
   test('absolute paths get normalized to relative for lookup', () => {
     const all = [
-      '/data/brain/meetings/2026-05-13.md',
-      '/data/brain/concepts/a.md',
+      '/tmp/example-brain/meetings/2026-05-13.md',
+      '/tmp/example-brain/concepts/a.md',
     ];
     const completed = new Set(['meetings/2026-05-13.md']);
-    expect(resumeFilter(all, '/data/brain', completed)).toEqual([
-      '/data/brain/concepts/a.md',
+    expect(resumeFilter(all, '/tmp/example-brain', completed)).toEqual([
+      '/tmp/example-brain/concepts/a.md',
     ]);
   });
 
   test('mixed absolute and relative inputs both work', () => {
     const all = [
-      '/data/brain/a.md',
+      '/tmp/example-brain/a.md',
       'b.md',
-      '/data/brain/c.md',
+      '/tmp/example-brain/c.md',
     ];
     const completed = new Set(['a.md', 'c.md']);
-    expect(resumeFilter(all, '/data/brain', completed)).toEqual(['b.md']);
+    expect(resumeFilter(all, '/tmp/example-brain', completed)).toEqual(['b.md']);
   });
 
   test('full match returns empty array', () => {
     const all = ['a.md', 'b.md'];
     const completed = new Set(['a.md', 'b.md']);
-    expect(resumeFilter(all, '/data/brain', completed)).toEqual([]);
+    expect(resumeFilter(all, '/tmp/example-brain', completed)).toEqual([]);
   });
 });
 
