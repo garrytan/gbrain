@@ -12,8 +12,9 @@
 import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
-import { embed } from '../embedding.ts';
+import { embed, embedQuery } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
+import { applyReranker } from './rerank.ts';
 import { autoDetectDetail, classifyQuery } from './query-intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { enforceTokenBudget } from './token-budget.ts';
@@ -397,7 +398,10 @@ export async function hybridSearch(
   let vectorLists: SearchResult[][] = [];
   let queryEmbedding: Float32Array | null = null;
   try {
-    const embeddings = await Promise.all(queries.map(q => embed(q)));
+    // v0.33.2+: query-side embedding. For asymmetric providers (ZE zembed-1,
+    // Voyage v3+) routes input_type='query' through the embed seam; symmetric
+    // providers ignore the field — no behavior change.
+    const embeddings = await Promise.all(queries.map(q => embedQuery(q)));
     queryEmbedding = embeddings[0];
     vectorLists = await Promise.all(
       embeddings.map(emb => engine.searchVector(emb, searchOpts)),
@@ -526,7 +530,26 @@ export async function hybridSearch(
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
-  const sliced = deduped.slice(offset, offset + limit);
+  // v0.33.2+: cross-encoder reranker. Slots between dedup and slice so the
+  // reranker sees the full candidate pool (its own topNIn caps how many
+  // get sent upstream). Fail-open: any error returns deduped unchanged.
+  //
+  // Resolution: per-call SearchOpts.reranker overrides; otherwise pull
+  // from the resolved mode bundle (tokenmax → enabled, others → disabled).
+  // The resolved mode's fields already participate in knobsHash, so cache
+  // rows naturally segregate by reranker config.
+  const rerankerOpts = opts?.reranker ?? {
+    enabled: resolvedMode.reranker_enabled,
+    topNIn: resolvedMode.reranker_top_n_in,
+    topNOut: resolvedMode.reranker_top_n_out,
+    model: resolvedMode.reranker_model,
+    timeoutMs: resolvedMode.reranker_timeout_ms,
+  };
+  const reranked = rerankerOpts.enabled
+    ? await applyReranker(query, deduped, rerankerOpts as any)
+    : deduped;
+
+  const sliced = reranked.slice(offset, offset + limit);
   // v0.32.3 search-lite: budget enforcement at the main return path.
   // hybridSearchCached used to be the only place this fired; now bare
   // hybridSearch enforces it too so eval-replay + eval-longmemeval see
@@ -626,7 +649,8 @@ export async function hybridSearchCached(
     try {
       const { isAvailable } = await import('../ai/gateway.ts');
       if (isAvailable('embedding')) {
-        queryEmbedding = await embed(query);
+        // v0.33.2+: query-side embedding (cache lookup path).
+        queryEmbedding = await embedQuery(query);
       } else {
         cacheStatus = 'disabled';
       }

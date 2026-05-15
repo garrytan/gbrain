@@ -527,6 +527,23 @@ export interface SearchOpts {
    * deterministic behavior independent of query phrasing.
    */
   intentWeighting?: boolean;
+  /**
+   * v0.33.2+: cross-encoder reranker config. Resolved from mode bundle by
+   * default — tokenmax sets `enabled: true`, conservative + balanced set
+   * `enabled: false`. Per-call SearchOpts.reranker overrides the mode
+   * bundle. Slots in between dedupResults and enforceTokenBudget in
+   * hybrid.ts. Defined here as a structural type to avoid a circular
+   * import on src/core/search/rerank.ts; the runtime type lives there.
+   */
+  reranker?: {
+    enabled: boolean;
+    topNIn: number;
+    topNOut: number | null;
+    model?: string;
+    timeoutMs?: number;
+    // Test seam — never set in production code.
+    rerankerFn?: (input: { query: string; documents: string[]; topN?: number; model?: string; signal?: AbortSignal; timeoutMs?: number }) => Promise<{ index: number; relevanceScore: number }[]>;
+  };
 }
 
 /**
