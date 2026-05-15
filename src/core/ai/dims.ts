@@ -175,6 +175,15 @@ export function dimsProviderOptions(
       if (modelId === 'text-embedding-v3' || modelId === 'embedding-3') {
         return { openaiCompatible: { dimensions: dims } };
       }
+      // Qwen3-Embedding family on Ollama (and any other openai-compatible
+      // provider serving it) supports Matryoshka truncation via `dimensions`.
+      // Native sizes: 0.6B=1024, 4B=2560, 8B=4096. Without `dimensions`,
+      // Ollama returns the native size and brains configured for narrower
+      // widths hard-fail with a dim-mismatch error. Pattern match the bare
+      // model name + any `:tag` (e.g. `qwen3-embedding:4b`, `qwen3-embedding:0.6b`).
+      if (modelId === 'qwen3-embedding' || modelId.startsWith('qwen3-embedding:')) {
+        return { openaiCompatible: { dimensions: dims } };
+      }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric
       // retrieval. Today still hardcoded to 'db' for back-compat — opting
       // into the new inputType seam is a follow-up (see plan's deferred
