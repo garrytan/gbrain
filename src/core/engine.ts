@@ -1106,4 +1106,37 @@ export interface BrainEngine {
    * not a misleading mean of 1.
    */
   findAnomalies(opts: AnomaliesOpts): Promise<AnomalyResult[]>;
+
+  // ============================================================
+  // v0.32 Linkify — person-page queries for alias map construction
+  // ============================================================
+  /**
+   * Return all person pages eligible for linkification.
+   *
+   * Polarity rule (auto-stub / linkable):
+   *  - All non-auto-stub person pages are included unless frontmatter
+   *    `linkable: "false"` explicitly opts them out.
+   *  - Auto-stub pages (tagged 'auto-stub') are EXCLUDED by default; they
+   *    are only included when frontmatter `linkable: "true"` explicitly opts
+   *    them in.
+   *
+   * Returns the `isAutoStub` flag so callers can record metadata and apply
+   * a JS-side guard. Soft-deleted pages are always excluded.
+   */
+  queryPersonsForLinkify(): Promise<Array<{
+    slug: string;
+    type: string;
+    frontmatter: Record<string, unknown>;
+    isAutoStub: boolean;
+  }>>;
+
+  /**
+   * Count person pages excluded from linkification because they are
+   * auto-stubs without an explicit `linkable: "true"` opt-in.
+   *
+   * Used by `buildAliasMap` to emit an `auto_stub_excluded_total` startup
+   * diagnostic so operators know how many auto-stub pages were intentionally
+   * skipped. Soft-deleted pages are always excluded from this count.
+   */
+  countAutoStubsExcludedFromLinkify(): Promise<number>;
 }

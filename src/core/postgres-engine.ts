@@ -1710,6 +1710,45 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as Array<{ slug: string; title: string; domain: string | null }>;
   }
 
+  async queryPersonsForLinkify(): Promise<Array<{
+    slug: string;
+    type: string;
+    frontmatter: Record<string, unknown>;
+    isAutoStub: boolean;
+  }>> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT p.slug, p.type, p.frontmatter,
+             EXISTS (SELECT 1 FROM tags t WHERE t.page_id = p.id AND t.tag = 'auto-stub') AS is_auto_stub
+      FROM pages p
+      WHERE p.type = 'person'
+        AND p.deleted_at IS NULL
+        AND COALESCE(p.frontmatter->>'linkable', 'true') <> 'false'
+        AND (
+          NOT EXISTS (SELECT 1 FROM tags t WHERE t.page_id = p.id AND t.tag = 'auto-stub')
+          OR COALESCE(p.frontmatter->>'linkable', 'false') = 'true'
+        )
+    `;
+    return rows.map((r) => ({
+      slug: r.slug as string,
+      type: r.type as string,
+      frontmatter: (r.frontmatter ?? {}) as Record<string, unknown>,
+      isAutoStub: r.is_auto_stub as boolean,
+    }));
+  }
+
+  async countAutoStubsExcludedFromLinkify(): Promise<number> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT COUNT(*) AS count FROM pages p
+      WHERE p.type = 'person'
+        AND p.deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM tags t WHERE t.page_id = p.id AND t.tag = 'auto-stub')
+        AND COALESCE(p.frontmatter->>'linkable', 'false') <> 'true'
+    `;
+    return Number(rows[0].count);
+  }
+
   // Tags
   async addTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void> {
     const sql = this.sql;

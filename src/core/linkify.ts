@@ -89,6 +89,95 @@ function bumpDiag(diagnostics: Diagnostic[], d: Diagnostic) {
   diagnostics.push(d);
 }
 
+export interface BuildAliasMapResult {
+  aliasMap: AliasMap;
+  pageMeta: Map<string, PageMeta>;
+  startupDiagnostics: Diagnostic[];
+}
+
+const APOSTROPHE_STRAIGHT = "'";
+const APOSTROPHE_CURLY = "’"; // U+2019 right single quotation mark
+
+function caseFold(s: string): string { return s.normalize('NFC').toLowerCase(); }
+
+function expandApostropheVariants(key: string): string[] {
+  const hasStraight = key.indexOf(APOSTROPHE_STRAIGHT) !== -1;
+  const hasCurly = key.indexOf(APOSTROPHE_CURLY) !== -1;
+  if (!hasStraight && !hasCurly) return [key];
+  const variants = new Set<string>([key]);
+  if (hasStraight) variants.add(key.split(APOSTROPHE_STRAIGHT).join(APOSTROPHE_CURLY));
+  if (hasCurly) variants.add(key.split(APOSTROPHE_CURLY).join(APOSTROPHE_STRAIGHT));
+  return Array.from(variants);
+}
+
+export async function buildAliasMap(
+  engine: {
+    queryPersonsForLinkify(): Promise<Array<{
+      slug: string;
+      type: string;
+      frontmatter: Record<string, unknown>;
+      isAutoStub: boolean;
+    }>>;
+    countAutoStubsExcludedFromLinkify(): Promise<number>;
+  },
+  config: LinkifyConfig,
+): Promise<BuildAliasMapResult> {
+  const rows = await engine.queryPersonsForLinkify();
+  const aliasMap: AliasMap = new Map();
+  const pageMeta = new Map<string, PageMeta>();
+  const startupDiagnostics: Diagnostic[] = [];
+
+  function addKey(key: string, slug: string): boolean {
+    const folded = caseFold(key);
+    if (config.stopwords.has(folded)) return false;
+    for (const variant of expandApostropheVariants(folded)) {
+      let set = aliasMap.get(variant);
+      if (!set) { set = new Set(); aliasMap.set(variant, set); }
+      set.add(slug);
+    }
+    return true;
+  }
+
+  for (const row of rows) {
+    // Auto-stub pages are excluded unless they opted in via linkable: true in
+    // frontmatter. The SQL filter (queryPersonsForLinkify) enforces this at
+    // the DB layer; we also skip them here as a defense-in-depth guard in case
+    // a mock or future caller bypasses the SQL filter.
+    if (row.isAutoStub) continue;
+    const fm = row.frontmatter ?? {};
+    const name = typeof fm.name === 'string' ? fm.name.trim() : '';
+    if (!name) {
+      if (fm.name !== undefined) {
+        startupDiagnostics.push({ kind: 'malformed_frontmatter', slug: row.slug, field: 'name', reason: 'not a non-empty string' });
+      }
+      continue;
+    }
+    const domain = typeof fm.domain === 'string' ? fm.domain.trim().toLowerCase() : null;
+    pageMeta.set(row.slug, { slug: row.slug, name, domain, isAutoStub: row.isAutoStub });
+
+    const tokens = name.split(/\s+/).filter(Boolean);
+    const derived: string[] = [name];
+    if (tokens.length > 0) derived.push(tokens[0]);
+    if (tokens.length > 1) derived.push(tokens[tokens.length - 1]);
+
+    if (Array.isArray(fm.linkify_aliases)) {
+      for (const a of fm.linkify_aliases) {
+        if (typeof a === 'string' && a.trim()) derived.push(a.trim());
+        else startupDiagnostics.push({ kind: 'malformed_frontmatter', slug: row.slug, field: 'linkify_aliases', reason: 'non-string entry' });
+      }
+    }
+
+    let anyAdded = false;
+    for (const k of derived) if (addKey(k, row.slug)) anyAdded = true;
+    if (!anyAdded) startupDiagnostics.push({ kind: 'stopword_dropped_all_keys', slug: row.slug, name });
+  }
+
+  const autoStubExcluded = await engine.countAutoStubsExcludedFromLinkify();
+  startupDiagnostics.push({ kind: 'auto_stub_excluded_total', count: autoStubExcluded });
+
+  return { aliasMap, pageMeta, startupDiagnostics };
+}
+
 export function linkifyMarkdown(
   markdown: string,
   aliasMap: AliasMap,
