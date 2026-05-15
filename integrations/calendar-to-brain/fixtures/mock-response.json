@@ -1,0 +1,49 @@
+{
+  "ok": true,
+  "result": {
+    "events": [
+      {
+        "id": "evt_all_day",
+        "status": "confirmed",
+        "summary": "Offsite équipe",
+        "start": { "date": "2026-05-10" },
+        "end": { "date": "2026-05-11" },
+        "attendees": [
+          { "displayName": "Alice Martin", "email": "alice.example.invalid" },
+          { "displayName": "Bob Durant", "email": "bob.example.invalid" }
+        ],
+        "location": "Montreuil"
+      },
+      {
+        "id": "evt_timed_1",
+        "status": "confirmed",
+        "summary": "Point dossier X",
+        "start": { "dateTime": "2026-05-10T09:00:00+02:00" },
+        "end": { "dateTime": "2026-05-10T09:30:00+02:00" },
+        "attendees": [
+          { "displayName": "Claire Dupont", "email": "claire.example.invalid" }
+        ],
+        "location": "Visio"
+      },
+      {
+        "id": "evt_cancelled",
+        "status": "cancelled",
+        "summary": "Annulé",
+        "start": { "dateTime": "2026-05-10T11:00:00+02:00" },
+        "end": { "dateTime": "2026-05-10T11:30:00+02:00" }
+      },
+      {
+        "id": "evt_timed_2",
+        "status": "tentative",
+        "summary": "Déjeuner client",
+        "start": { "dateTime": "2026-05-11T12:00:00+02:00" },
+        "end": { "dateTime": "2026-05-11T13:00:00+02:00" },
+        "attendees": [
+          { "displayName": "David Leroy", "email": "david.example.invalid" },
+          { "displayName": "No Name", "email": "no-name.example.invalid" }
+        ],
+        "location": "Paris 11e"
+      }
+    ]
+  }
+}
