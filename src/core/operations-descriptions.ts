@@ -71,7 +71,10 @@ export const QUERY_DESCRIPTION =
 export const SEARCH_DESCRIPTION =
   "Keyword search using full-text search. For personal/emotional questions, " +
   "prefer get_recent_salience or find_anomalies — they surface activity bursts " +
-  "without needing a search term.";
+  "without needing a search term. " +
+  "For code-symbol questions (callers, callees, definitions, blast radius), use " +
+  "code_callers / code_callees / code_def / code_refs instead — those return " +
+  "structural graph data, not text chunks.";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // v0.32.6 — contradiction probe MCP surface (M3)
@@ -86,3 +89,49 @@ export const FIND_CONTRADICTIONS_DESCRIPTION =
   "{contradictions: [{a, b, severity, axis, confidence, resolution_command}]}. " +
   "Reads the cached run row — does NOT trigger a new probe; users run " +
   "`gbrain eval suspected-contradictions` for that.";
+
+// ──────────────────────────────────────────────────────────────────────────────
+// v0.33.3 Cathedral III foundation — code-intelligence ops (MCP-exposed).
+// Pre-v0.33.3 the callers/callees/def/refs commands were CLI-only — agents
+// reached for grep because the MCP surface didn't expose them. These
+// descriptions are resolver-grade so the LLM tool-selection prompt routes
+// plan-mode questions straight to the right op.
+//
+// Style notes per the v0.34 eng review D10 finding: every description carries
+// an inline example response so agents don't burn first-call context discovering
+// shape. Pin via test/operations-descriptions.test.ts.
+// ──────────────────────────────────────────────────────────────────────────────
+
+export const CODE_CALLERS_DESCRIPTION =
+  "BEFORE editing any function, run code_callers with the symbol name to find " +
+  "every caller (the people who'd be affected by your change). Returns direct " +
+  "callers from the v0.20+ tree-sitter call graph. Use during plan-mode to size " +
+  "the change. Defaults to source-scoped; for multi-source brains pass source_id " +
+  "or all_sources=true. " +
+  "Returns: `{symbol, count, callers: [{from_symbol_qualified, to_symbol_qualified, edge_type, resolved}]}`. " +
+  "Example: `{symbol:'parseMarkdown', count:4, callers:[{from_symbol_qualified:'callerInA', " +
+  "to_symbol_qualified:'parseMarkdown', edge_type:'calls', resolved:true}]}`.";
+
+export const CODE_CALLEES_DESCRIPTION =
+  "When tracing how a function flows to its dependencies (DB calls, HTTP calls, " +
+  "file I/O), run code_callees from the entry point. Forward view of the call " +
+  "graph: what does this symbol call? Use this when debugging unexpected behavior " +
+  "or when planning to extract / inline a function. Same shape as code_callers " +
+  "but the field is `callees` and the edge direction is reversed.";
+
+export const CODE_DEF_DESCRIPTION =
+  "Where is this symbol defined? Returns one row per definition site (function, " +
+  "class, type, interface, enum, struct, trait, module, contract). Use this BEFORE " +
+  "reaching for grep when you want to read a definition. Single-result is the common " +
+  "case; multiple results indicate same-name symbols across files (which is information " +
+  "in itself). " +
+  "Returns: `{symbol, count, defs: [{slug, file, language, symbol_type, start_line, end_line, snippet}]}`. " +
+  "Filter by --lang to scope a polyglot brain (e.g., lang='typescript').";
+
+export const CODE_REFS_DESCRIPTION =
+  "Find every reference to a symbol across the codebase (every file, every line). " +
+  "Differs from code_callers in two ways: (1) catches references in comments, " +
+  "strings, imports, type annotations — not just call sites; (2) returns line " +
+  "numbers, not symbol-qualified edges. Use this when planning a rename or " +
+  "deprecation where you need to touch every literal mention. " +
+  "Returns: `{symbol, count, refs: [{slug, file, language, line, context}]}`.";

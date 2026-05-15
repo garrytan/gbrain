@@ -2,6 +2,106 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.34.0.0] - 2026-05-14
+
+**Recursive code intelligence ships. Plan-mode subagents get one-call blast and flow.**
+**`code_blast` and `code_flow` walk callers and callees with depth grouping, cycle detection, and sink tagging.**
+
+The v0.34 wave builds on v0.33.3's foundation (MCP-exposed code-callers/callees/def/refs) to deliver the actual plan-mode payoff: recursive walks that replace 10-grep chains with one structured response. An agent editing a function can now ask "what calls this?" and get every transitive caller grouped by depth, with truncation flags and cycle detection. An agent tracing a request can ask "what does this lead to?" and get the chain to its terminal sinks (HTTP call, DB write, file I/O, process exec).
+
+This release also densifies the call graph beneath the new ops. Pre-v0.34 the extractor emitted bare callee tokens (`render`, `find`, `m`) and the call graph aliased same-named methods across classes. v0.34 ships receiver-type resolution for the 3 MUST patterns (`import { x }`, `this/self.m`, `new C().m`) in JS/TS/TSX + Python, plus new `imports` and `references` edge types that turn the calls-only graph into a real dependency map.
+
+### What ships in v0.34.0.0
+
+- `code_blast(symbol, depth=5, max_nodes=200)` MCP op — recursive callers grouped by depth, with `confidence`, `cycles_detected`, `truncation`, `freshness`, `did_you_mean`, `candidates`, and `supported` fields per the response envelope.
+- `code_flow(entry_point, depth=8, max_nodes=200)` MCP op — recursive callees from an entry point, with `terminal_nodes: [{symbol, sink_kind}]` where `sink_kind ∈ db_call | http_call | file_io | process_exec | unknown`.
+- `code_traversal_cache_clear(source_id?, all_sources=false)` admin op with the v0.26.5 destructive-guard pattern.
+- W1: receiver-type resolution at extraction time (3 MUST patterns; JS/TS/TSX + Python). Depth-32 walker cap.
+- W2: new `imports` and `references` edge types. JS/TS/TSX + Python get imports; TS gets type-position references. Ruby/Go/Rust/Java stay at calls-only — honest coverage in the response shape.
+- W3b: `code_traversal_cache` table (schema migration v56) with D3 generation-counter invalidation.
+- W6: `gbrain edges-backfill` CLI — operator escape hatch for the symbol-resolution backfill. Resumable via `edges_backfilled_at` watermark.
+- W7: `src/core/eval-capture-graph.ts` — pure-function metrics (node-set Jaccard, depth-group stability, truncation-match, Adjusted Rand Index) for replay-driven regression checks on code-intel ops.
+- STEP 0: `OperationContext.sourceId` promoted to TypeScript-REQUIRED. Mirrors v0.26.9 `remote` REQUIRED pattern.
+
+### Slip handling — deferred to v0.34.1
+
+The plan's explicit slip-handling clause for clusters fired at ship time. v0.34.0.0 ships the foundation + structural payoff (recursive walks) without the W4–5 Leiden cluster pipeline. Reason: the cluster ship gate requires validating ≤0.03 clusters/node on real brain data, and the eval gate requires a baseline-vs-with-code-intel comparison on a populated brain. Neither was available at ship time.
+
+Deferred to v0.34.1:
+- W4–5: Leiden clusters (schema v57, leiden module, cluster naming, recompute_code_clusters cycle phase, `code_clusters_list` + `code_cluster_get` MCP ops, `gbrain clusters` CLI, ship-gate ratio check).
+- W6: `gbrain wiki` zero-LLM aggregator (depends on clusters).
+- W7 wiring: `eval-capture.ts` `tool` field + `result_shape` payload, `eval-replay.ts` dispatch on tool.
+- W1 `.scm` pattern-file rewrite of the receiver-type walker.
+- W3 stdio rate limiter at `src/mcp/dispatch.ts` (D10).
+- W3 CLI thin-shims (`gbrain blast`, `gbrain flow`).
+- D2 autopilot 60s sub-loop for `resolve_symbol_edges`.
+
+## To take advantage of v0.34.0.0
+
+`gbrain upgrade` runs `gbrain apply-migrations` automatically. v0.34.0.0 ships migration v56 (`code_traversal_cache_v0_34`). Most users won't need to do anything else.
+
+To exercise the new W1/W2 edge shapes on an existing brain:
+
+1. **Run the symbol-resolution backfill manually (one-time on first run after upgrade):**
+   ```bash
+   gbrain edges-backfill --all-sources
+   ```
+   Resumable. Ctrl-C is safe. Re-runs are idempotent.
+
+2. **Verify code-intelligence coverage:**
+   ```bash
+   gbrain doctor --json | jq '.checks.code_intel_coverage'
+   ```
+
+3. **Try the new recursive ops:**
+   ```bash
+   gbrain call code_blast --symbol performSync
+   gbrain call code_flow --entry_point runCycle
+   ```
+
+4. **Run the v0.34.0.0 eval gate (optional — measures retrieval-quality delta):**
+   ```bash
+   # Pre-v0.34 baseline (3 runs for noise floor)
+   for i in 1 2 3; do gbrain eval code-retrieval --baseline --save /tmp/v034-baseline-$i.json; done
+   # With code-intel
+   gbrain eval code-retrieval --with-code-intel --save /tmp/v034.json
+   gbrain eval code-retrieval --compare /tmp/v034-baseline-1.json /tmp/v034.json
+   ```
+   Pass criterion: precision@5 +10pp OR top-1 stability +15pp on ≥15/30 questions above the 3-run noise floor.
+
+5. **If anything fails or surprises you**, file an issue: https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+## [0.33.3.0] - 2026-05-12
+
+**Code intelligence ships to agents. Plan-mode subagents stop falling through to grep.**
+**`code_callers`, `code_callees`, `code_def`, `code_refs` are MCP-exposed with resolver-grade descriptions.**
+
+Pre-v0.33.3 the four code-intelligence commands from v0.20+ Cathedral II lived in `CLI_ONLY` at `cli.ts:30`. An agent running through MCP saw `query`/`search` but no structural retrieval, so it grepped, missed callers in string literals, shipped plans with broken call chains, and got caught in review. v0.33.3 closes that gap and lays the foundation work that v0.34 Cathedral III (recursive blast/flow + Leiden clusters + wiki) will build on top of.
+
+This release was scoped after Codex's outside-voice review caught two load-bearing premise gaps in the original v0.34 plan: the call graph stored bare callee tokens (not qualified names), and source routing was already broken in `query` and `two-pass.ts`. Both are fixed here before any user-facing recursive op ships.
+## [0.33.2.1] - 2026-05-14
+
+**Doc-only: name the fork-PR escape hatch so AI-authored PRs don't drop their CI secrets.**
+
+PRs from `garrytan-agents` (the AI-authored PR account) live in a fork. GitHub's `pull_request` event doesn't ship base-repo secrets to forks by default, so any CI job that needs `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` quietly fails with empty-env auth errors regardless of what's set on the base repo. CLAUDE.md now documents the move-branch-to-base-repo workflow as the narrow-scope alternative to adding the account as a collaborator (which would broaden secret distribution to every PR from that account) or flipping the repo-wide fork-secret toggle (which would broaden it to every fork PR).
+
+### Itemized changes
+
+- `CLAUDE.md` gets a new `## Checking out PRs from garrytan-agents` section between "Community PR wave process" and "Skill routing". Four-step recipe: `gh pr checkout <N>` → `git push origin HEAD:<branch>` → `gh pr close <N>` → `gh pr create --base master --head <branch>`, preserving the original title and body verbatim. Closes the friction Garry hit landing #962 / Voyage 2048-dim fixup PRs from the agent account.
+- `llms-full.txt` regenerated by `bun run build:llms` so the committed doc bundle matches the live CLAUDE.md. Pinned by `test/build-llms.test.ts` in CI shard 1.
+
+## [0.33.2.0] - 2026-05-12
+
+**Code intelligence ships to agents. Plan-mode subagents stop falling through to grep.**
+**`code_callers`, `code_callees`, `code_def`, `code_refs` are MCP-exposed with resolver-grade descriptions.**
+
+Pre-v0.33.2 the four code-intelligence commands from v0.20+ Cathedral II lived in `CLI_ONLY` at `cli.ts:30`. An agent running through MCP saw `query`/`search` but no structural retrieval, so it grepped, missed callers in string literals, shipped plans with broken call chains, and got caught in review. v0.33.2 closes that gap and lays the foundation work that v0.34 Cathedral III (recursive blast/flow + Leiden clusters + wiki) will build on top of.
+
+This release was scoped after Codex's outside-voice review caught two load-bearing premise gaps in the original v0.34 plan: the call graph stored bare callee tokens (not qualified names), and source routing was already broken in `query` and `two-pass.ts`. Both are fixed here before any user-facing recursive op ships.
+
 ## [0.33.1.1] - 2026-05-13
 
 **Voyage 2048-dim brains finally produce 2048-dim vectors. Fail-loud on every Voyage misconfiguration.**
@@ -367,6 +467,42 @@ If you run gbrain with more than one source (say a `media-corpus` alongside `def
 ### The numbers that matter
 
 ```
+Agent MCP code-intel surface   →   v0.32.0: 0 ops    →   v0.33.0: 4 ops + resolver-grade descriptions
+Source-routing leak surface    →   v0.32.0: 4 sites  →   v0.33.0: 0 sites (Codex finding #2 fix)
+Cycle phases                   →   v0.32.0: 11       →   v0.33.0: 12 (new `resolve_symbol_edges`)
+```
+
+What ships:
+
+| Surface | What it does |
+|---|---|
+| `code_callers` (MCP op) | "Who calls this function?" Reverse view of the call graph. Resolver-grade description: "BEFORE editing any function, run code_callers..." |
+| `code_callees` (MCP op) | "What does this function call?" Forward view; surfaces DB calls, HTTP calls, file I/O downstream of an entry point. |
+| `code_def` (MCP op) | Where a symbol is defined. Returns file, line, snippet directly. Agents stop reading 8 files to find one definition. |
+| `code_refs` (MCP op) | Every reference (call sites, comments, imports, type annotations). Use before any rename. |
+| Within-file symbol resolver | New cycle phase. Walks unresolved edges in 200-row batches, writes resolution to `code_edges_symbol.edge_metadata` (`{resolved_chunk_id: N}` or `{ambiguous: true, candidates: [...]}`). Idempotent + resumable via `edges_backfilled_at` watermark. |
+| Source-routing fix | `query` op now passes `ctx.sourceId` to `hybridSearch`. Two-pass retrieval honors `sourceId` at both lookup sites. Multi-source brains stop cross-contaminating structural retrieval. |
+| CLI source-scoping default flipped | `gbrain code-callers <symbol>` without `--source` resolves to your brain's default source. Pass `--all-sources` for the pre-v0.33 cross-source default. |
+
+### What this means for agents
+
+Plan-mode subagents in Claude Code, OpenClaw, and Cursor now have a clean structural retrieval path. The MCP tool descriptions are resolvers, they tell the agent's tool-selection prompt WHEN to reach for `code_callers` ("BEFORE editing any function") and `code_callees` ("when tracing how a request flows to side effects"). Agents stop guessing about callers by reading 8 files; one `code_callers` call returns the full list with file and line.
+
+For agents already wired to gbrain via stdio MCP, `code_def` replaces the read-8-files-to-find-1-definition pattern with one structured call. `code_refs` is the safe-rename path. `code_callees` is the debugging path.
+
+### What this DOES NOT ship (deferred to v0.34)
+
+Per the design doc's slip-handling clause, v0.33.0 ships the foundation; v0.34 ships the rest. Deferred:
+
+- Recursive `code_blast` / `code_flow` (depth-grouped traversal with confidence decay + truncation enum)
+- Leiden community detection: `code_clusters_list` + `code_cluster_get` with inline mermaid
+- `gbrain wiki` zero-LLM aggregator CLI
+- `code_traversal_cache` (REPEATABLE READ + xmin_max snapshot isolation)
+- Per-op graph-traversal eval metrics extending v0.25.0 eval-capture
+- `imports` and `references` edge types for JS/TS/TSX + Python
+- Receiver-type scope walkers (`obj.method()` to `Class.method`)
+
+### To take advantage of v0.33.0
 Pages on non-default source (production multi-source brain)  →  5,042
 Chunks left unembedded pre-fix                               →  ~22,000
 Chunks recovered on first re-run                             →  97 across 35 pages
@@ -530,6 +666,56 @@ If you imported a Chinese / Japanese / Korean brain pre-v0.32.7 and saw silently
    ```bash
    gbrain apply-migrations --yes
    ```
+2. **Your agent reads `skills/migrations/v0.33.0.md` the next time you interact with it.** The four new MCP ops show up automatically in the tool catalog.
+3. **Verify the outcome:**
+   ```bash
+   gbrain --version    # 0.33.0
+   gbrain --tools-json | jq '.[] | select(.name | startswith("code_")) | .name'
+   # Should show: code_callers, code_callees, code_def, code_refs
+   gbrain doctor       # Should be ok; will pick up the new edges_backfilled_at watermark
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue at
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor` output and
+   `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+**MCP exposure (W3):**
+- New ops: `code_callers`, `code_callees`, `code_def`, `code_refs`. All `scope: 'read'`, source-scoped via `ctx.sourceId`. Source override params (`source_id`, `all_sources`) on every op.
+- New constants in `src/core/operations-descriptions.ts`: `CODE_CALLERS_DESCRIPTION`, `CODE_CALLEES_DESCRIPTION`, `CODE_DEF_DESCRIPTION`, `CODE_REFS_DESCRIPTION`. Each carries an inline example response per eng-review D10.
+- `SEARCH_DESCRIPTION` gains a cross-link clause pointing at the four new ops so agents stop falling through to text search for code-symbol questions.
+- 11 E2E tests in `test/e2e/code-intel-mcp-ops-pglite.test.ts`.
+
+**Foundation: source routing (W0a, Codex finding #2):**
+- `query` op handler (`src/core/operations.ts`) threads `ctx.sourceId` to `hybridSearch`. New `source_id` param with `'__all__'` escape hatch.
+- `src/core/search/two-pass.ts:81` (nearSymbol lookup) and `:131` (unresolved-edge resolution) now apply `opts.sourceId` via a `pages.source_id` join when set.
+- 4 E2E tests in `test/e2e/source-routing.test.ts` pin: source-a only, source-b only, no-sourceId crosses sources, walk_depth=1 stays in source-a.
+
+**Foundation: CLI source-scoping default flipped (W0b, Codex finding #7):**
+- New canonical helper `resolveDefaultSource(engine)` in `src/core/sources-ops.ts`. Returns the only registered source's id; throws `SourceResolutionError` with the list on multi-source brains.
+- `src/commands/code-callers.ts` and `src/commands/code-callees.ts` call `resolveDefaultSource()` when neither `--source` nor `--all-sources` is set. Pre-v0.33 the default was inverted.
+- 3 E2E tests in `test/e2e/cli-source-scoping-pglite.test.ts`.
+
+**Foundation: within-file symbol resolver (W0c):**
+- New module `src/core/chunkers/symbol-resolver.ts`. Exports `resolveSymbolEdgesIncremental`, `readEdgeResolution`, `EDGE_EXTRACTOR_VERSION_TS`.
+- Schema migration v51 (`edges_backfilled_at_v0_34`): adds `content_chunks.edges_backfilled_at TIMESTAMPTZ` + composite + partial indexes (`idx_code_edges_symbol_resolver`, `idx_content_chunks_symbol_lookup`, `idx_content_chunks_edges_backfill`).
+- New cycle phase `resolve_symbol_edges` between `extract` and `patterns`. Walks at most BATCH_SIZE * 10 = 2000 chunks per tick; resumable via the watermark.
+- 5 E2E tests in `test/e2e/symbol-resolver-pglite.test.ts`.
+
+**Pre-W0: code-retrieval eval harness:**
+- New module `src/eval/code-retrieval/` (harness + strategies + 30-question fixture).
+- New CLI subcommand `gbrain eval code-retrieval [--baseline | --with-code-intel | --compare]`. Captures pre-v0.34 retrieval quality on the gbrain self-corpus so the v0.34 ship gate measures real improvement, not a retroactively-tuned baseline.
+- 26 unit tests in `test/code-retrieval-harness.test.ts`.
+
+**Tests + verification:**
+- `bun run test` passes 5464/5465 (one pre-existing flaky LongMemEval perf gate under parallel-shard contention; runs clean in isolation at p50=29ms).
+- `bun run verify` clean.
+- 50 new test cases across 6 new test files. All v0.33-specific tests pass.
+
+### For contributors
+
+- `EDGE_EXTRACTOR_VERSION_TS` constant in `symbol-resolver.ts`: bump when the resolver or extractor shape changes; the next autopilot cycle re-walks all chunks.
+- `OperationContext.sourceId` is still optional; the v0.34 plan calls for making it `REQUIRED` at the type level (mirroring v0.26.9 `ctx.remote` REQUIRED pattern). Not done in v0.33; deferred to v0.34 to keep this release additive.
 2. **Run the markdown reindex sweep:**
    ```bash
    gbrain reindex --markdown
