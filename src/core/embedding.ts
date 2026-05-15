@@ -8,6 +8,7 @@
 import {
   embed as gatewayEmbed,
   embedOne as gatewayEmbedOne,
+  embedQuery as gatewayEmbedQuery,
   getEmbeddingModel as gatewayGetModel,
   getEmbeddingDimensions as gatewayGetDims,
 } from './ai/gateway.ts';
@@ -18,9 +19,20 @@ import {
 export { embedMultimodal } from './ai/gateway.ts';
 export type { MultimodalInput } from './ai/types.ts';
 
-/** Embed one text. */
+/** Embed one text (document-side for asymmetric providers). */
 export async function embed(text: string): Promise<Float32Array> {
   return gatewayEmbedOne(text);
+}
+
+/**
+ * v0.33.2+: embed a single text on the QUERY side. For asymmetric providers
+ * (ZE zembed-1, Voyage v3+) this routes `input_type: 'query'` through the
+ * embed seam so the provider returns query-side vectors. For symmetric
+ * providers (OpenAI text-3, DashScope, Zhipu) the field is dropped — no
+ * behavior change. Used by hybrid.ts on the search hot path.
+ */
+export async function embedQuery(text: string): Promise<Float32Array> {
+  return gatewayEmbedQuery(text);
 }
 
 export interface EmbedBatchOptions {
