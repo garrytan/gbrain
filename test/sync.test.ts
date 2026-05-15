@@ -560,3 +560,101 @@ describe('git() helper invocation order (CJK wave v0.32.7)', () => {
     ]);
   });
 });
+
+// ────────────────────────────────────────────────────────────────
+// up_to_date freshness regression: when sync confirms there's nothing
+// new to import, sources.last_sync_at must still advance so doctor's
+// sync_freshness check reflects "sync ran, all clear" rather than
+// warning whenever a quiet hour passes upstream. Pre-fix, the
+// up_to_date early-return path skipped writing last_sync_at because
+// last_commit was unchanged, so freshness drifted indefinitely.
+// ────────────────────────────────────────────────────────────────
+
+describe('up_to_date path advances sources.last_sync_at', () => {
+  let engine: PGLiteEngine;
+  let repoPath: string;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+    repoPath = mkdtempSync(join(tmpdir(), 'gbrain-sync-uptodate-'));
+    execSync('git init -q -b master', { cwd: repoPath, stdio: 'pipe' });
+    execSync('git config user.email "test@test.com"', { cwd: repoPath, stdio: 'pipe' });
+    execSync('git config user.name "Test"', { cwd: repoPath, stdio: 'pipe' });
+    execSync('git config commit.gpgsign false', { cwd: repoPath, stdio: 'pipe' });
+    mkdirSync(join(repoPath, 'people'), { recursive: true });
+    writeFileSync(join(repoPath, 'people/alice.md'), [
+      '---',
+      'type: person',
+      'title: Alice',
+      '---',
+      '',
+      'Alice.',
+    ].join('\n'));
+    execSync('git add -A && git commit -q -m "initial"', { cwd: repoPath, stdio: 'pipe' });
+  });
+
+  afterEach(() => {
+    if (repoPath) rmSync(repoPath, { recursive: true, force: true });
+  });
+
+  test('up_to_date result also touches last_sync_at on the source row', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+
+    // Register a source pointed at our local fixture repo.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ('test-src', 'Test', $1)`,
+      [repoPath],
+    );
+
+    // First sync — establishes last_commit anchor and writes last_sync_at.
+    const first = await performSync(engine, {
+      sourceId: 'test-src',
+      noPull: true,
+      noEmbed: true,
+    });
+    expect(['first_sync', 'synced']).toContain(first.status);
+
+    // Force last_sync_at well into the past so the touch is observable.
+    const oldTimestamp = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // 7 days ago
+    await engine.executeRaw(
+      `UPDATE sources SET last_sync_at = $1 WHERE id = $2`,
+      [oldTimestamp, 'test-src'],
+    );
+
+    // Sanity: confirm the staleness was actually written.
+    const beforeRows = await engine.executeRaw<{ last_sync_at: string }>(
+      `SELECT last_sync_at FROM sources WHERE id = $1`,
+      ['test-src'],
+    );
+    const beforeTs = new Date(beforeRows[0].last_sync_at).getTime();
+    expect(Date.now() - beforeTs).toBeGreaterThan(6 * 24 * 60 * 60 * 1000);
+
+    // Second sync — repo HEAD unchanged, so this lands on the up_to_date
+    // early return. Pre-fix, last_sync_at would stay 7 days stale.
+    const second = await performSync(engine, {
+      sourceId: 'test-src',
+      noPull: true,
+      noEmbed: true,
+    });
+    expect(second.status).toBe('up_to_date');
+
+    // The fix: last_sync_at must reflect the just-completed sync attempt,
+    // not the original 7-day-stale value.
+    const afterRows = await engine.executeRaw<{ last_sync_at: string }>(
+      `SELECT last_sync_at FROM sources WHERE id = $1`,
+      ['test-src'],
+    );
+    const afterTs = new Date(afterRows[0].last_sync_at).getTime();
+    expect(Date.now() - afterTs).toBeLessThan(60 * 1000); // within the last minute
+  });
+});

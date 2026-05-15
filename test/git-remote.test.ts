@@ -1,9 +1,11 @@
 import { test, expect, describe, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, chmodSync } from 'fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, chmodSync, mkdtempSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
-  GIT_SSRF_FLAGS,
+  GIT_SSRF_GLOBAL_FLAGS,
+  GIT_SSRF_PER_COMMAND_FLAGS,
   parseRemoteUrl,
   RemoteUrlError,
   cloneRepo,
@@ -75,19 +77,38 @@ beforeEach(() => {
 const fakePath = (): string => `${FAKE_GIT_DIR}:${process.env.PATH ?? ''}`;
 
 // ---------------------------------------------------------------------------
-// GIT_SSRF_FLAGS — pinned shape (snapshot test). If a future flag is added,
-// update the expected list here AND verify both cloneRepo + pullRepo pick it
-// up via the GIT_SSRF_FLAGS spread (the codex finding that motivated this).
+// GIT_SSRF_GLOBAL_FLAGS / GIT_SSRF_PER_COMMAND_FLAGS — pinned shape (snapshot
+// tests). The split is load-bearing: git is positional about flag placement.
+// `-c k=v` global options must precede the subcommand; per-subcommand flags
+// like `--no-recurse-submodules` must follow it. When this list was a single
+// flat array placed before the subcommand, every pullRepo + cloneRepo
+// invocation failed with `unknown option: --no-recurse-submodules` exit 129.
+// If you add a future flag, decide its group and verify both cloneRepo +
+// pullRepo pick it up via the right spread.
 // ---------------------------------------------------------------------------
 
-describe('GIT_SSRF_FLAGS', () => {
-  test('exact shape — codex SSRF lockdown', () => {
-    expect([...GIT_SSRF_FLAGS]).toEqual([
+describe('GIT_SSRF_*_FLAGS', () => {
+  test('GIT_SSRF_GLOBAL_FLAGS exact shape', () => {
+    expect([...GIT_SSRF_GLOBAL_FLAGS]).toEqual([
       '-c', 'http.followRedirects=false',
       '-c', 'protocol.file.allow=never',
       '-c', 'protocol.ext.allow=never',
+    ]);
+  });
+
+  test('GIT_SSRF_PER_COMMAND_FLAGS exact shape', () => {
+    expect([...GIT_SSRF_PER_COMMAND_FLAGS]).toEqual([
       '--no-recurse-submodules',
     ]);
+  });
+
+  test('regression: --no-recurse-submodules is per-subcommand, not global', () => {
+    // git rejects --no-recurse-submodules as a global flag with `unknown
+    // option` exit 129. If a contributor moves it back into GIT_SSRF_GLOBAL_FLAGS
+    // (where it lived through 2026-05), this assertion catches it before
+    // CI even runs the real-git regression below.
+    expect([...GIT_SSRF_GLOBAL_FLAGS]).not.toContain('--no-recurse-submodules');
+    expect([...GIT_SSRF_PER_COMMAND_FLAGS]).toContain('--no-recurse-submodules');
   });
 });
 
@@ -220,7 +241,7 @@ describe('parseRemoteUrl — CGNAT 100.64/10 (Tailscale)', () => {
 // ---------------------------------------------------------------------------
 
 describe('cloneRepo', () => {
-  test('happy path: invokes git with GIT_SSRF_FLAGS + --depth=1 + url + dest', async () => {
+  test('happy path: global SSRF flags before clone, per-cmd SSRF flags after', async () => {
     const dest = join(FAKE_GIT_DIR, 'clone-target');
     rmSync(dest, { recursive: true, force: true });
     await withEnv({ PATH: fakePath() }, async () => {
@@ -229,9 +250,21 @@ describe('cloneRepo', () => {
     const calls = readArgvLog();
     expect(calls.length).toBe(1);
     const argv = calls[0];
-    // Pin the SSRF flags before the 'clone' verb (codex Q2 invariant).
-    expect(argv.slice(0, GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
-    expect(argv).toContain('clone');
+
+    // Global -c flags lead.
+    expect(argv.slice(0, GIT_SSRF_GLOBAL_FLAGS.length)).toEqual([...GIT_SSRF_GLOBAL_FLAGS]);
+
+    // 'clone' verb sits between global flags and per-subcommand flags.
+    const cloneIdx = argv.indexOf('clone');
+    expect(cloneIdx).toBe(GIT_SSRF_GLOBAL_FLAGS.length);
+
+    // Per-subcommand SSRF flags (e.g. --no-recurse-submodules) must be AFTER
+    // the subcommand or git rejects them with `unknown option` exit 129.
+    for (const flag of GIT_SSRF_PER_COMMAND_FLAGS) {
+      const flagIdx = argv.indexOf(flag);
+      expect(flagIdx).toBeGreaterThan(cloneIdx);
+    }
+
     expect(argv).toContain('--depth=1');
     expect(argv).toContain('https://example.com/repo');
     expect(argv[argv.length - 1]).toBe(dest);
@@ -297,7 +330,7 @@ describe('cloneRepo', () => {
 // ---------------------------------------------------------------------------
 
 describe('pullRepo', () => {
-  test('happy path: invokes git -C path with GIT_SSRF_FLAGS + pull --ff-only', async () => {
+  test('happy path: -C path, global SSRF flags, then pull subcommand, then per-cmd SSRF flags', async () => {
     const repo = join(FAKE_GIT_DIR, 'pull-target');
     mkdirSync(repo, { recursive: true });
     await withEnv({ PATH: fakePath() }, async () => {
@@ -306,10 +339,62 @@ describe('pullRepo', () => {
     const argv = readArgvLog()[0];
     expect(argv[0]).toBe('-C');
     expect(argv[1]).toBe(repo);
-    expect(argv.slice(2, 2 + GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
-    expect(argv).toContain('pull');
+
+    // Global -c flags follow `-C path`.
+    expect(argv.slice(2, 2 + GIT_SSRF_GLOBAL_FLAGS.length)).toEqual([...GIT_SSRF_GLOBAL_FLAGS]);
+
+    // 'pull' subcommand is next.
+    const pullIdx = argv.indexOf('pull');
+    expect(pullIdx).toBe(2 + GIT_SSRF_GLOBAL_FLAGS.length);
+
+    // Per-subcommand flags AFTER 'pull' (positional requirement).
+    for (const flag of GIT_SSRF_PER_COMMAND_FLAGS) {
+      const flagIdx = argv.indexOf(flag);
+      expect(flagIdx).toBeGreaterThan(pullIdx);
+    }
+
     expect(argv).toContain('--ff-only');
     rmSync(repo, { recursive: true, force: true });
+  });
+
+  // -------------------------------------------------------------------------
+  // Real-git regression: the fake-git harness above accepts any argv shape, so
+  // it cannot detect the "unknown option" failure that real git produces when
+  // --no-recurse-submodules is positioned wrong. Run REAL git against a
+  // local-only fixture so this regression surfaces in CI exactly the way it
+  // would on a user's machine.
+  // -------------------------------------------------------------------------
+
+  test('regression: real git accepts the assembled argv (--no-recurse-submodules positioned correctly)', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'gbrain-pull-real-'));
+    try {
+      // Init a local-only repo with one commit. No remote configured, so
+      // pullRepo will fail — but the failure must NOT be `unknown option`,
+      // which is what git emits when --no-recurse-submodules is mis-placed.
+      execFileSync('git', ['init', '-q', '-b', 'master', fixture]);
+      execFileSync('git', ['-C', fixture, 'config', 'user.email', 'test@example.com']);
+      execFileSync('git', ['-C', fixture, 'config', 'user.name', 'Test']);
+      execFileSync('git', ['-C', fixture, 'config', 'commit.gpgsign', 'false']);
+      execFileSync('git', ['-C', fixture, 'commit', '-q', '--allow-empty', '-m', 'init']);
+
+      let caught: unknown;
+      try {
+        pullRepo(fixture);
+      } catch (e) {
+        caught = e;
+      }
+
+      // pullRepo MUST throw (no remote configured).
+      expect(caught).toBeInstanceOf(GitOperationError);
+      const msg = (caught as Error).message;
+      // The bug we are guarding against: `unknown option: --no-recurse-submodules`.
+      // Any message that includes that string means git rejected the flag set
+      // before doing anything, which is the exact regression that motivated
+      // the GIT_SSRF_GLOBAL_FLAGS / GIT_SSRF_PER_COMMAND_FLAGS split.
+      expect(msg).not.toMatch(/unknown option/i);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   test('throws GitOperationError when git exits non-zero', async () => {

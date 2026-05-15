@@ -303,6 +303,23 @@ async function writeSyncAnchor(
 }
 
 /**
+ * Update sources.last_sync_at without touching last_commit. Called on the
+ * up_to_date path so the doctor sync_freshness check reflects "sync ran
+ * successfully and confirmed nothing to do" rather than warning about
+ * staleness whenever a quiet hour passes upstream.
+ *
+ * No-op for the legacy (sourceId === undefined) global-config code path —
+ * that branch has no per-source last_sync_at column.
+ */
+async function touchLastSyncAt(engine: BrainEngine, sourceId: string | undefined): Promise<void> {
+  if (!sourceId) return;
+  await engine.executeRaw(
+    `UPDATE sources SET last_sync_at = now() WHERE id = $1`,
+    [sourceId],
+  );
+}
+
+/**
  * v0.20.0 Cathedral II Layer 12 (SP-1 fix) — read/write the chunker version
  * last used to sync a given source. When it mismatches CURRENT_CHUNKER_VERSION,
  * `performSync` forces a full walk regardless of git HEAD equality. Without
@@ -520,6 +537,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    // Touch sources.last_sync_at so doctor's sync_freshness check reflects
+    // "sync ran and confirmed nothing to do" instead of warning whenever a
+    // quiet hour passes upstream. last_commit unchanged.
+    await touchLastSyncAt(engine, opts.sourceId);
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,

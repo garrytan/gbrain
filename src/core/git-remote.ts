@@ -20,16 +20,33 @@ import { join } from 'path';
 import { isInternalUrl } from './url-safety.ts';
 
 /**
- * SSRF-defensive flag set. Used by both cloneRepo and pullRepo.
+ * SSRF-defensive flags applied to every git invocation. Split into two
+ * groups because git is positional about flag placement:
+ *
+ *   GLOBAL  → before the subcommand: `git -c k=v <subcommand> ...`
+ *   PER_CMD → after the subcommand:  `git <subcommand> --flag ...`
+ *
+ * `--no-recurse-submodules` is a per-subcommand flag (clone, pull, fetch
+ * accept it; git rejects it as a global flag with `unknown option` exit
+ * 129). When this list was a single flat array placed before the
+ * subcommand, every pullRepo and cloneRepo invocation failed silently —
+ * the catch branches in the callers logged a warning and let the outer
+ * caller fall through, so the SSRF protection on the .gitmodules surface
+ * was never actually applied AND `gbrain sync` couldn't pull updates on
+ * any machine that already had a clone.
+ *
  * - http.followRedirects=false: closes DNS rebinding via redirect chains
  * - protocol.file.allow=never: no local-file URLs (defense in depth)
  * - protocol.ext.allow=never: no external helpers (`git-remote-foo`)
  * - --no-recurse-submodules: .gitmodules cannot become a second fetch surface
  */
-export const GIT_SSRF_FLAGS = [
+export const GIT_SSRF_GLOBAL_FLAGS = [
   '-c', 'http.followRedirects=false',
   '-c', 'protocol.file.allow=never',
   '-c', 'protocol.ext.allow=never',
+] as const;
+
+export const GIT_SSRF_PER_COMMAND_FLAGS = [
   '--no-recurse-submodules',
 ] as const;
 
@@ -153,7 +170,11 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
     }
   }
 
-  const args: string[] = [...GIT_SSRF_FLAGS, 'clone'];
+  const args: string[] = [
+    ...GIT_SSRF_GLOBAL_FLAGS,
+    'clone',
+    ...GIT_SSRF_PER_COMMAND_FLAGS,
+  ];
   if (opts.depth !== 0) {
     args.push(`--depth=${opts.depth ?? 1}`);
   }
@@ -179,7 +200,12 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
 
 /** Pull a repo with --ff-only and the same SSRF-defensive flags as cloneRepo. */
 export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): void {
-  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', '--ff-only'];
+  const args: string[] = [
+    '-C', repoPath,
+    ...GIT_SSRF_GLOBAL_FLAGS,
+    'pull', '--ff-only',
+    ...GIT_SSRF_PER_COMMAND_FLAGS,
+  ];
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
