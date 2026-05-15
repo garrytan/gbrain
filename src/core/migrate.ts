@@ -2705,6 +2705,95 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    version: 59,
+    name: 'code_traversal_cache_v0_34',
+    // v0.34 W3b — memoization layer for code_blast / code_flow.
+    // (Originally claimed v56; renumbered to v59 on merge with master which
+    // landed query_cache_search_lite=v55, drift_watch=v56, search_telemetry=v57.)
+    //
+    // Recursive caller/callee walks on a dense (calls + imports + references)
+    // graph can fan out to 200+ nodes per call. During a plan-mode agent
+    // session that calls code_blast 5-15 times, we want hits to return
+    // <200ms instead of re-walking the same graph.
+    //
+    // The cache is correctness-safe under concurrent sync via REPEATABLE
+    // READ + xmin_max — the traversal-cache module wraps each walk in
+    // `BEGIN ISOLATION LEVEL REPEATABLE READ` and captures the snapshot's
+    // xmin_max alongside the response. On read, if the current snapshot
+    // doesn't dominate the cached snapshot, the cache misses.
+    //
+    // D3 — cluster_generation: monotonically incrementing counter bumped
+    // once per recompute_code_clusters phase. Cache rows carrying a stale
+    // generation naturally miss on next read, so cluster-renaming-mid-cycle
+    // doesn't return stale cluster names from cached blast/flow responses.
+    sql: `
+      CREATE TABLE IF NOT EXISTS code_traversal_cache (
+        id SERIAL PRIMARY KEY,
+        symbol_qualified TEXT NOT NULL,
+        depth INT NOT NULL,
+        source_id TEXT NOT NULL,
+        response_json JSONB NOT NULL,
+        max_chunk_updated_at TIMESTAMPTZ NOT NULL,
+        xmin_max BIGINT NOT NULL,
+        cluster_generation BIGINT NOT NULL DEFAULT 0,
+        computed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS code_traversal_cache_key_idx
+        ON code_traversal_cache (symbol_qualified, depth, source_id);
+      CREATE INDEX IF NOT EXISTS code_traversal_cache_source_idx
+        ON code_traversal_cache (source_id);
+    `,
+  },
+  {
+    version: 58,
+    name: 'edges_backfilled_at_v0_33_2',
+    // v0.33.2 W0c — resumable symbol-resolution backfill watermark.
+    // (Originally claimed v55; renumbered to v58 on merge with master which
+    // landed query_cache_search_lite=v55, drift_watch=v56, search_telemetry=v57.)
+    //
+    // The within-file two-pass resolver (src/core/chunkers/symbol-resolver.ts)
+    // walks every content_chunks row that has unresolved edges
+    // (rows in code_edges_symbol whose to_symbol_qualified has not been
+    // matched against same-file symbol_name_qualified yet) and writes the
+    // resolution outcome to code_edges_symbol.edge_metadata. On a 96K-chunk
+    // brain that is a 5-15 minute backfill the first time it runs.
+    //
+    // `edges_backfilled_at` is the resume watermark. Backfill runs in
+    // 200-chunk batches; on batch success the column is set to NOW() for
+    // every chunk in the batch. Resume picks up chunks where the watermark
+    // is NULL or older than EDGE_EXTRACTOR_VERSION_TS (a constant bumped
+    // when the extractor's shape changes). Crashes lose at most one batch.
+    //
+    // Composite + partial indexes for the lookup hot path (D11 from eng
+    // review):
+    //   - idx_code_edges_symbol_resolver (source_id, to_symbol_qualified)
+    //     — every code_edges_symbol row is unresolved by construction
+    //     (the table has no to_chunk_id column; that lives on code_edges_chunk).
+    //     This composite index supports the resolver's per-source lookups.
+    //   - idx_content_chunks_symbol_lookup (page_id, symbol_name_qualified)
+    //     WHERE symbol_name_qualified IS NOT NULL — file-batched lookup
+    //     used by both the resolver and the cluster recompute phase (W4-5).
+    //   - idx_content_chunks_edges_backfill (edges_backfilled_at)
+    //     WHERE edges_backfilled_at IS NULL — find unresumed rows quickly.
+    //
+    // Idempotent: IF NOT EXISTS on column + indexes. Backfill itself runs
+    // separately via the resolve_symbol_edges cycle phase.
+    sql: `
+      ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS edges_backfilled_at TIMESTAMPTZ;
+
+      CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_resolver
+        ON code_edges_symbol (source_id, to_symbol_qualified);
+
+      CREATE INDEX IF NOT EXISTS idx_content_chunks_symbol_lookup
+        ON content_chunks (page_id, symbol_name_qualified)
+        WHERE symbol_name_qualified IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_content_chunks_edges_backfill
+        ON content_chunks (edges_backfilled_at)
+        WHERE edges_backfilled_at IS NULL;
+    `,
+  },
+  {
     version: 55,
     name: 'query_cache_search_lite',
     // v0.32.x (search-lite, originally claimed v52 in PR #897; renumbered
@@ -2881,59 +2970,12 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 58,
-    name: 'edges_backfilled_at_v0_33_3',
-    // v0.33.3 W0c — resumable symbol-resolution backfill watermark.
-    // (Originally claimed v55; renumbered to v58 on merge with master's
-    // v55/v56/v57 search-lite migrations.)
-    //
-    // The within-file two-pass resolver (src/core/chunkers/symbol-resolver.ts)
-    // walks every content_chunks row that has unresolved edges
-    // (rows in code_edges_symbol whose to_symbol_qualified has not been
-    // matched against same-file symbol_name_qualified yet) and writes the
-    // resolution outcome to code_edges_symbol.edge_metadata. On a 96K-chunk
-    // brain that is a 5-15 minute backfill the first time it runs.
-    //
-    // `edges_backfilled_at` is the resume watermark. Backfill runs in
-    // 200-chunk batches; on batch success the column is set to NOW() for
-    // every chunk in the batch. Resume picks up chunks where the watermark
-    // is NULL or older than EDGE_EXTRACTOR_VERSION_TS (a constant bumped
-    // when the extractor's shape changes). Crashes lose at most one batch.
-    //
-    // Composite + partial indexes for the lookup hot path (D11 from eng
-    // review):
-    //   - idx_code_edges_symbol_resolver (source_id, to_symbol_qualified)
-    //     — every code_edges_symbol row is unresolved by construction
-    //     (the table has no to_chunk_id column; that lives on code_edges_chunk).
-    //     This composite index supports the resolver's per-source lookups.
-    //   - idx_content_chunks_symbol_lookup (page_id, symbol_name_qualified)
-    //     WHERE symbol_name_qualified IS NOT NULL — file-batched lookup
-    //     used by both the resolver and the cluster recompute phase (W4-5).
-    //   - idx_content_chunks_edges_backfill (edges_backfilled_at)
-    //     WHERE edges_backfilled_at IS NULL — find unresumed rows quickly.
-    //
-    // Idempotent: IF NOT EXISTS on column + indexes. Backfill itself runs
-    // separately via the resolve_symbol_edges cycle phase.
-    sql: `
-      ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS edges_backfilled_at TIMESTAMPTZ;
-
-      CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_resolver
-        ON code_edges_symbol (source_id, to_symbol_qualified);
-
-      CREATE INDEX IF NOT EXISTS idx_content_chunks_symbol_lookup
-        ON content_chunks (page_id, symbol_name_qualified)
-        WHERE symbol_name_qualified IS NOT NULL;
-
-      CREATE INDEX IF NOT EXISTS idx_content_chunks_edges_backfill
-        ON content_chunks (edges_backfilled_at)
-        WHERE edges_backfilled_at IS NULL;
-    `,
-  },
-  {
-    version: 59,
+    version: 60,
     name: 'embed_stale_partial_index',
-    // Renumbered from v58→v59 on merge: master's v0.33.3 W0c took v58
-    // (edges_backfilled_at) before this branch landed.
+    // Renumbered from v58→v59→v60 on merge waves:
+    //   - v58 was taken by master's v0.33.3 edges_backfilled_at on the first merge.
+    //   - v59 was taken by master's v0.34.0 code_traversal_cache on this merge.
+    // Both landed before this branch could ship.
     //
     // Partial index for `embedding IS NULL` on content_chunks.
     //
@@ -2959,7 +3001,7 @@ export const MIGRATIONS: Migration[] = [
     handler: async (engine) => {
       if (engine.kind === 'postgres') {
         await engine.runMigration(
-          59,
+          60,
           `DO $$ BEGIN
              IF EXISTS (
                SELECT 1 FROM pg_index i
@@ -2971,14 +3013,14 @@ export const MIGRATIONS: Migration[] = [
            END $$;`
         );
         await engine.runMigration(
-          59,
+          60,
           `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_null
              ON content_chunks (page_id, chunk_index)
              WHERE embedding IS NULL;`
         );
       } else {
         await engine.runMigration(
-          59,
+          60,
           `CREATE INDEX IF NOT EXISTS idx_chunks_embedding_null
              ON content_chunks (page_id, chunk_index)
              WHERE embedding IS NULL;`

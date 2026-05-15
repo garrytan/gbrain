@@ -5,7 +5,7 @@
  *
  *  - Static case: every chunk visited exactly once across multiple batches.
  *  - Cursor monotonically advances on `(page_id, chunk_index)`.
- *  - Migration v59's partial index `idx_chunks_embedding_null` exists.
+ *  - Migration v60's partial index `idx_chunks_embedding_null` exists.
  *  - D7: source-scoped scan returns ONLY that source's NULLs even when
  *    same-slug pages exist across sources.
  *  - Failed-page semantics: a failed upsert keeps `embedding IS NULL` and
@@ -60,7 +60,7 @@ async function seedNullChunks(opts: {
     RETURNING id, slug
   `;
   const slugToId = new Map<string, number>();
-  for (const r of pageRows as Array<{ id: number; slug: string }>) {
+  for (const r of pageRows as unknown as Array<{ id: number; slug: string }>) {
     slugToId.set(r.slug, r.id);
   }
   // Build the flat (page_id, chunk_index, chunk_text) arrays.
@@ -87,7 +87,7 @@ async function seedNullChunks(opts: {
   `;
 }
 
-/** Ensure the migration v59 partial index exists in the seeded DB. */
+/** Ensure the migration v60 partial index exists in the seeded DB. */
 async function indexExists(name: string): Promise<boolean> {
   const sql = getConn();
   const rows = await sql`
@@ -117,7 +117,7 @@ describeE2E('embed --stale cursor pagination (D7 + REGRESSION)', () => {
     await teardownDB();
   });
 
-  test('migration v59 created partial index idx_chunks_embedding_null', async () => {
+  test('migration v60 created partial index idx_chunks_embedding_null', async () => {
     const exists = await indexExists('idx_chunks_embedding_null');
     expect(exists).toBe(true);
   });

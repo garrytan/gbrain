@@ -242,6 +242,7 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
       logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as OperationContext['logger'],
       dryRun: false,
       remote: true,
+      sourceId: 'default',
     };
     const result = await op.handler(ctx, {}) as { contradictions: unknown[]; note?: string };
     expect(result.contradictions).toEqual([]);
@@ -292,6 +293,7 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
       logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as OperationContext['logger'],
       dryRun: false,
       remote: true,
+      sourceId: 'default',
     };
 
     const all = await op.handler(ctx, {}) as { contradictions: unknown[]; total_in_run: number };

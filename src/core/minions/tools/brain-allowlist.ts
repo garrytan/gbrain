@@ -186,6 +186,7 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     },
     dryRun: false,
     remote: true,                // match MCP trust boundary for auto-link skip
+    sourceId: 'default',         // v0.34 D4: required; subagent tools default to host source
     jobId: deps.jobId,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
