@@ -995,10 +995,43 @@ const MIN_SUB_BATCH = 1;
  * declared `safety_factor` so a transient miss doesn't permanently cap
  * throughput.
  */
-export async function embed(
-  texts: string[],
-  inputType?: 'query' | 'document',
-): Promise<Float32Array[]> {
+/**
+ * Per-call passthroughs for `embed()`. Unifies v0.33.4 cancellation/retry
+ * controls and v0.35.0.0 asymmetric-input plumbing into one interface so
+ * a future passthrough doesn't churn the call signature again.
+ *
+ * All fields are optional; production callers that don't pass them get
+ * unchanged pre-v0.33.4 behavior with document-side encoding (ZE / Voyage
+ * v3+ semantics) as the default.
+ */
+export interface EmbedOpts {
+  /**
+   * v0.33.4: propagated to Vercel AI SDK's `embedMany({abortSignal})`.
+   * When the caller's wall-clock budget fires, an in-flight HTTP request
+   * is cancelled within seconds instead of waiting out the provider's
+   * HTTP timeout (~30s on OpenAI).
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * v0.33.4: propagated to Vercel AI SDK's `embedMany({maxRetries})`.
+   * Default in the SDK is 2 (so up to 3 attempts per call). Pass `0` to
+   * disable SDK retries when a higher-level wrapper owns the retry
+   * policy — otherwise SDK and wrapper retries stack and amplify
+   * rate-limit pressure (3 × N wrapper attempts).
+   */
+  maxRetries?: number;
+  /**
+   * v0.35.0.0: asymmetric retrieval signal. `'query'` routes through
+   * `dimsProviderOptions` so providers that accept query/document
+   * encoding (ZE zembed-1, Voyage v3+) produce query-side vectors.
+   * Symmetric providers (OpenAI text-3, DashScope, Zhipu) ignore the
+   * field. Defaults to undefined (treated as 'document' by the dim
+   * resolver — the correct default for indexing paths).
+   */
+  inputType?: 'query' | 'document';
+}
+
+export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32Array[]> {
   if (!texts || texts.length === 0) return [];
 
   const cfg = requireConfig();
@@ -1008,7 +1041,7 @@ export async function embed(
     recipe.implementation,
     modelId,
     cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
-    inputType,
+    opts?.inputType,
   );
   const expected = cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
 
@@ -1025,7 +1058,7 @@ export async function embed(
   const allEmbeddings: Float32Array[] = [];
 
   for (const batch of batches) {
-    const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId);
+    const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
     allEmbeddings.push(...result);
   }
 
@@ -1143,12 +1176,18 @@ async function embedSubBatch(
   expectedDims: number,
   recipe: Recipe,
   modelId: string,
+  opts?: EmbedOpts,
 ): Promise<Float32Array[]> {
   try {
     const result = await _embedTransport({
       model,
       values: texts,
       providerOptions: providerOpts,
+      // v0.33.4: caller-supplied abortSignal + maxRetries passthrough.
+      // Undefined fields are ignored by the AI SDK so the call shape stays
+      // identical for production callers that don't opt in.
+      ...(opts?.abortSignal !== undefined && { abortSignal: opts.abortSignal }),
+      ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
     });
 
     const first = result.embeddings?.[0];
@@ -1168,8 +1207,8 @@ async function embedSubBatch(
     if (isTokenLimitError(err) && texts.length > MIN_SUB_BATCH) {
       shrinkOnMiss(recipe);
       const mid = Math.ceil(texts.length / 2);
-      const left = await embedSubBatch(texts.slice(0, mid), model, providerOpts, expectedDims, recipe, modelId);
-      const right = await embedSubBatch(texts.slice(mid), model, providerOpts, expectedDims, recipe, modelId);
+      const left = await embedSubBatch(texts.slice(0, mid), model, providerOpts, expectedDims, recipe, modelId, opts);
+      const right = await embedSubBatch(texts.slice(mid), model, providerOpts, expectedDims, recipe, modelId, opts);
       return [...left, ...right];
     }
     throw normalizeAIError(err, `embed(${recipe.id}:${modelId})`);
@@ -1198,7 +1237,7 @@ export async function embedOne(text: string): Promise<Float32Array> {
  * Returns a single Float32Array (not a batch).
  */
 export async function embedQuery(text: string): Promise<Float32Array> {
-  const [v] = await embed([text], 'query');
+  const [v] = await embed([text], { inputType: 'query' });
   return v;
 }
 

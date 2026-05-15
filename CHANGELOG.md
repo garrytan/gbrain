@@ -62,6 +62,118 @@ ZeroEntropy ships two specialized small models that target the two weakest retri
    - contents of `~/.gbrain/audit/rerank-failures-*.jsonl` if present
    - which step broke
 
+## [0.34.4.0] - 2026-05-14
+
+**`gbrain embed --stale` now actually works on large brains. `--source` flag stops silently dropping. The retry loop stops storming itself.**
+
+The v0.33.3 cherry-pick gave `embed --stale` cursor pagination so it would stop dying on Supabase's 2-minute pooler timeout. This release hardens the hot path so it survives real production load: a 30-minute wall-clock budget threads `AbortSignal` into the retry sleep, the worker claim loop, AND the gateway HTTP call (so a worker stuck mid-fetch on a 30-second OpenAI timeout cancels within seconds instead of running past budget). The retry-after delay now jitters ±30% so 20 concurrent workers don't relock on the next 429 wave. The 429 detector unwraps the gateway's `AITransientError` cause chain (the prior bare `e.status === 429` check silently never fired against normalized errors). The wrapper passes `maxRetries: 0` through to the AI SDK so its default 2-retry stack stops multiplying this wrapper's 5 attempts into 15 cycles per call.
+
+The `gbrain embed --stale --source X` flag was silently broken on multi-source brains — `embedAll(sourceId)` dropped the `sourceId` argument when calling `embedAllStale`, so operators got a full-brain scan even when they asked for one source. Threading `sourceId?` through `countStaleChunks` + `listStaleChunks` + the engine interfaces (Postgres + PGLite) fixes that.
+
+Migration v66 (the partial index `idx_chunks_embedding_null`) now uses `CREATE INDEX CONCURRENTLY` on Postgres with a handler-based engine branch and pre-drop of any invalid remnant (mirrors the v14 pattern). Plain `CREATE INDEX IF NOT EXISTS` would have taken a ShareLock on the 373K-row `content_chunks` table for the entire build, blocking every concurrent sync/embed/autopilot write. PGLite stays on plain `CREATE INDEX` since it has no concurrent writers.
+
+Twenty-six new test cases pin every new code path: 8 unit cases for `embedBatchWithBackoff` (parse ms/s retry-after, fallback, non-rate-limit rethrow, jitter range, budget-abort-mid-fetch, cause-chain unwrap, maxRetries:0 passthrough), 3 CLI flag-wiring tests, 1 end-to-end budget test, 6 Postgres E2E tests against a fresh database (static/failed-page/page-split/source-scope/dup-slug), 4 migration v66 source-shape tests, 4 PGLite engine parity tests, plus a fix to every pre-existing stale-row mock that was silently passing TypeScript's structural typing while violating `StaleChunkRow`'s newly-required `source_id` + `page_id` fields.
+
+### What changes for users
+
+| Behavior | Before | After v0.34.4.0 |
+|---|---|---|
+| `embed --stale` budget on millions-of-chunks brain | unbounded — could run hours past Minion timeout | bounded to `GBRAIN_EMBED_TIME_BUDGET_MS` (default 30m); AbortSignal cancels mid-fetch |
+| 20 concurrent workers hitting 429 | sleep in lockstep, slam API together on wake | ±30% jitter decorrelates the herd |
+| Gateway-wrapped 429 detection | `e.status === 429` silently false against `AITransientError` | unwraps cause chain (depth ≤5); message-match as fallback |
+| AI SDK retries per embed call | 3 SDK × 5 wrapper = up to 15 cycles per call | `maxRetries: 0` passthrough; wrapper is single source of truth |
+| `embed --stale --source X` | flag silently dropped; full-brain scan | actually scopes to that source |
+| Migration v66 on 373K-row table | plain `CREATE INDEX` takes ShareLock for the whole build | `CREATE INDEX CONCURRENTLY` on Postgres; invalid-remnant DROP first |
+| Cursor pagination test coverage | 4 mocks ignored opts, never exercised the cursor | 6 real-Postgres E2E + PGLite parity unit tests |
+
+### Itemized changes
+
+#### Added
+- `GBRAIN_EMBED_TIME_BUDGET_MS` env knob (default 30 min) bounds `embed --stale` wall-clock runtime; partial index makes "next run picks up" automatic.
+- `EmbedOpts` in `src/core/ai/gateway.ts` (and `EmbedBatchOptions` in `src/core/embedding.ts`) gain `abortSignal` + `maxRetries` passthrough so callers can cancel mid-fetch and disable the AI SDK's retry stack.
+- `detect429FromCause`, `parseRetryDelayMs`, `abortableSleep` exported as `@internal` from `src/commands/embed.ts` so tests can exercise the retry helpers directly.
+- `test/e2e/embed-stale-pagination.test.ts` — 6 Postgres E2E tests covering the cursor's static, failure-skip, page-split, source-scoped, and duplicate-slug-across-sources behaviors.
+
+#### Changed
+- Migration v66 (`embed_stale_partial_index`) rewritten to handler-based engine branching; Postgres uses `CREATE INDEX CONCURRENTLY` with a pre-drop of any invalid remnant via `pg_index.indisvalid`. Renumbered v58→v59→v60→v66 across four merge waves as master's v0.33.3, v0.34.0, v0.34.1, and v0.34.2 each claimed slots ahead of this branch.
+- `BrainEngine.countStaleChunks(opts?: {sourceId?})` and `listStaleChunks({sourceId?, ...})` now scope to a single source when requested. Both Postgres and PGLite engines updated.
+- `embedBatchWithBackoff` now: jitters parsed retry delays ±30%, detects 429 via cause-chain unwrap, passes `maxRetries: 0` through the gateway, and cancels mid-sleep when an `AbortSignal` fires.
+- `embedAllStale` accepts `sourceId` and creates a budget-bound `AbortController` threaded into the retry sleep, the per-key worker claim loop, and the gateway embed call.
+
+#### Fixed
+- `gbrain embed --stale --source X` silently dropped the `sourceId` argument and scanned the entire brain. Now correctly scoped end-to-end.
+- Existing test mocks omitted `source_id` and `page_id` on stale-row literals; TypeScript's structural typing accepted them but the runtime cursor needs both. Every mock fixed.
+- The wave-1 cherry-pick's `embedBatchWithBackoff` had three latent bugs (thundering herd, no wall-clock cap, SDK-retry stacking) and one silently-broken structural check (`e.status === 429` against wrapped errors). All addressed.
+
+### For contributors
+
+- 100% AI-assessed coverage of new code paths. Tests: 504 → 505 files (+1 new E2E file) and ~26 new test cases inside expanded files. `bun run test` passes 6385/0/0; full E2E suite passes 90 files / 603 tests against a fresh Postgres.
+- Plan reviewed via `/plan-eng-review` (9 decisions made interactively), `/codex` consult (12 findings folded in), and a re-review pass (D8 AbortSignal threading into gateway). Plan file: `~/.claude/plans/system-instruction-you-are-working-iterative-torvalds.md`.
+- The cherry-pick lineage: PR #987 (garrytan-agents) → cherry-picked as `ecae761a` onto this branch → opened as PR #991 → all 9 plan decisions + 12 codex findings + 1 re-review finding implemented + tested.
+
+## To take advantage of v0.34.4.0
+
+`gbrain upgrade` does it automatically. The migration v66 runs via `gbrain apply-migrations` and uses `CREATE INDEX CONCURRENTLY` on Postgres so it does not block concurrent writes.
+
+1. **Run the orchestrator (only if `gbrain doctor` warns about a partial migration):**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the outcome:**
+   ```bash
+   gbrain doctor --json | grep -o 'Version [0-9]*'  # expect Version 66
+   ```
+3. **Operator knob** for the new wall-clock budget — only set if 30 min is wrong for your brain:
+   ```bash
+   export GBRAIN_EMBED_TIME_BUDGET_MS=1800000  # 30 min default
+   ```
+4. **If `gbrain embed --stale --source X` was returning unexpected counts pre-upgrade,** the bug was that `--source` was being silently dropped. After upgrade it scopes correctly — re-run with the same flags and you should see the actual per-source NULL count.
+
+5. **If any step fails or `gbrain embed --stale` still hangs,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor` output and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+## [0.34.3.0] - 2026-05-14
+
+**Supervisor stops crashing every 24h on large brains. Watchdog stops false-firing on git mmap.**
+**One shared spawn-loop replaces two duplicate copies that drifted into the same bug class.**
+
+The Minions supervisor was committing suicide every 24h on a 96K-page brain. Every autopilot cycle, `process.memoryUsage().rss` reported ~7GB because VmRSS counts file-backed mmap pages and git holds packfiles open. The 2GB RSS watchdog fired, the worker drained cleanly, exited code=0, and the supervisor counted that clean exit as a crash. 10 clean drains in 24h tripped `max_crashes_exceeded` and the supervisor process gave up. External cron restarted it. Loop repeated.
+
+This release fixes the chain at every layer. The worker now reads RssAnon + RssShmem from `/proc/self/status` on Linux (the actual heap, ~100MB during sync on the same brain) and falls back to VmRSS only on macOS / restricted containers / kernels older than 4.5. The supervisor's exit classifier no longer collapses watchdog drains and real crashes into the same `code=0 vs code≠0` distinction. Clean exits leave `crashCount` untouched (so a worker alternating real-crash + watchdog still trips max_crashes), but they restart immediately with no backoff. A new `cleanRestartBudget` (default 10 restarts per 60s) catches the macOS fallback case where the watchdog still false-fires every cycle.
+
+Underneath that, the supervisor and `gbrain autopilot` no longer maintain two parallel spawn-and-respawn loops with different bug classes. Both now compose a shared `ChildWorkerSupervisor` core. Fix the spawn loop once, both consumers benefit.
+
+### What ships in v0.34.3.0
+
+- **Worker RSS now reads RssAnon + RssShmem on Linux.** `process.memoryUsage().rss` returns VmRSS which includes file-backed mmap pages, so git packfiles inflated the reading to 7GB on large brains. The new helper reads `/proc/self/status` for the non-file-backed pages — the metric a leak watchdog actually wants. Fallback to VmRSS on macOS / kernel <4.5 / missing `/proc`.
+- **Supervisor preserves flap detection across mixed exits.** code=0 exits no longer reset `crashCount` to 0. A worker that alternates real crashes with watchdog drains still trips `max_crashes_exceeded`; a worker that only ever drains cleanly runs forever.
+- **Clean-restart budget caps the macOS-fallback tight-loop.** If 10 code=0 exits happen inside a 60s window, the supervisor emits `health_warn` with reason `clean_restart_budget_exceeded` and applies backoff. Operators get observability instead of a silent restart loop.
+- **`ChildWorkerSupervisor` consolidates the spawn loop.** New module at `src/core/minions/child-worker-supervisor.ts` is the single source of truth for child-process supervision. `MinionSupervisor` and `gbrain autopilot` both compose it. No more parallel-implementation drift.
+- **Parser field-presence fix.** `RssAnon: 0` with `RssShmem: 512` (shmem-only workers) now parses correctly. Pre-fix it fell through to VmRSS.
+- **`awaitChildExit` short-circuit.** Fast SIGTERM responders no longer cause a 35-second hang on clean shutdown — the method now probes `child.exitCode` before registering an exit listener.
+
+### Itemized changes
+
+- `src/core/minions/worker.ts` — `getAccurateRss()` exported with injectable status reader; `parseRssFromProcStatus()` exported for unit tests. Docstring softened to call out the cgroup-OOM caveat.
+- `src/core/minions/child-worker-supervisor.ts` — new file. Pure spawn-and-respawn core. No PID file, no signal handlers, no `process.exit`, no health check. Emits lifecycle events via injected callback.
+- `src/core/minions/supervisor.ts` — refactored to compose `ChildWorkerSupervisor`. The pre-shipped reset-to-0 hunk is gone; D1 lastExitCode tracking + D2 budget live in the shared core. PID lock, signal handlers, health check, and `process.exit` on max-crashes stay.
+- `src/commands/autopilot.ts` — replaced inline spawn-and-respawn loop (lines 165-197) with `ChildWorkerSupervisor` composition. `onMaxCrashesExceeded` routes through `shutdown('max_crashes')` so the autopilot lockfile gets cleaned up (pre-refactor it called `process.exit(1)` directly and bypassed cleanup).
+- Tests: `test/child-worker-supervisor.test.ts` (NEW, 7 cases) covers D1 classifier + D2 budget + the awaitChildExit short-circuit regression. `test/worker-rss.test.ts` (NEW, 11 cases) covers the M1 parser fix and fallback paths. `test/autopilot-supervisor-wiring.test.ts` (NEW, 6 cases) static-shape regression guards. `test/supervisor.test.ts` updated to exit-1 in tests that previously relied on clean-exit-as-crash semantics.
+
+### For contributors
+
+- The `ChildWorkerSupervisor` class is the seam to compose against when adding a new long-running child-process supervisor surface. Don't roll a third spawn-and-respawn loop — compose this one.
+- The `_now` injection point on `ChildWorkerSupervisor` lets tests fake the clock without `mock.module`. The stable-run reset behavior is pinned by a deterministic test that fakes a 6-minute clean exit between two real crashes.
+
+## To take advantage of v0.34.3.0
+
+`gbrain upgrade` carries the whole wave automatically. No migrations. No config flips. If your supervisor was crashing every 24h, watch the logs for 24h after the upgrade and confirm:
+
+- `worker_exited` events have `likely_cause: 'clean_exit'` (not `unknown` or `runtime_error`)
+- `backoff` events have `reason: 'clean_exit'` and `ms: 0`
+- Zero `max_crashes_exceeded` events
+
+If `health_warn` with `reason: 'clean_restart_budget_exceeded'` starts firing on your deployment, that's the new D2 budget telling you the watchdog is firing too often. On Linux that means the worker really is leaking; investigate. On macOS that's the VmRSS-fallback fire pattern — set a higher `--max-rss` threshold to suppress.
 ## [0.34.2.0] - 2026-05-14
 
 **Path-based import checkpoint. The newest files in a partial import no longer disappear.**
@@ -357,6 +469,7 @@ initSchema runs the v60-v65 chain in ~786ms total.**
 
 Contributed by @Hansen1018 (#870), @ding-modding (#909), @DukeDawg
 (#864), @toilalesondev (#861 + #876), @yoelgal (#875).
+
 ## [0.34.0.0] - 2026-05-14
 
 **Recursive code intelligence ships. Plan-mode subagents get one-call blast and flow.**

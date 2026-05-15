@@ -105,7 +105,7 @@ describe('embedQuery — inputType plumbing (ZE asymmetric)', () => {
       capturedOpts = args.providerOptions;
       return fakeEmbeddings(args.values.length, 2560);
     }) as any);
-    await embed(['q1', 'q2'], 'query');
+    await embed(['q1', 'q2'], { inputType: 'query' });
     expect(capturedOpts?.openaiCompatible?.input_type).toBe('query');
   });
 });
