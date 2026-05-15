@@ -16,15 +16,19 @@ mock.module('../src/core/embedding.ts', () => ({
       throw new Error('GBRAIN_EMBEDDING_DIMENSIONS must be a positive integer');
     }
     const baseURL = env.GBRAIN_EMBEDDING_BASE_URL || undefined;
-    const isPerplexityConfig = model.toLowerCase().includes('pplx') || model.toLowerCase().includes('perplexity') || (baseURL?.toLowerCase().includes('perplexity') ?? false);
+    const modelLower = model.toLowerCase();
+    const baseLower = baseURL?.toLowerCase() || '';
+    const isPerplexityConfig = modelLower.includes('pplx') || modelLower.includes('perplexity') || baseLower.includes('perplexity');
+    const isHostedPerplexity = baseLower.includes('api.perplexity.ai') || modelLower.startsWith('pplx-embed-v1-');
     return {
       model,
       dimensions,
       baseURL,
       apiKey: env.GBRAIN_EMBEDDING_API_KEY
         || (isPerplexityConfig ? (env.PERPLEXITY_API_KEY || env.PPLX_API_KEY) : undefined)
-        || env.OPENAI_API_KEY
-        || (baseURL ? 'not-needed' : undefined),
+        || (!isPerplexityConfig ? env.OPENAI_API_KEY : undefined)
+        || (baseURL && !isHostedPerplexity ? 'not-needed' : undefined),
+      provider: isHostedPerplexity ? 'perplexity-hosted' : 'openai-compatible',
     };
   },
   EMBEDDING_MODEL: 'text-embedding-3-large',

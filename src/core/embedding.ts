@@ -22,6 +22,19 @@ export interface EmbeddingConfig {
   dimensions: number;
   baseURL?: string;
   apiKey?: string;
+  provider: 'openai-compatible' | 'perplexity-hosted';
+}
+
+function isPerplexityConfig(model: string, baseURL?: string): boolean {
+  const modelLower = model.toLowerCase();
+  const baseLower = baseURL?.toLowerCase() || '';
+  return modelLower.includes('pplx') || modelLower.includes('perplexity') || baseLower.includes('perplexity');
+}
+
+function isHostedPerplexity(model: string, baseURL?: string): boolean {
+  const modelLower = model.toLowerCase();
+  const baseLower = baseURL?.toLowerCase() || '';
+  return baseLower.includes('api.perplexity.ai') || modelLower.startsWith('pplx-embed-v1-');
 }
 
 export function resolveEmbeddingConfig(env: NodeJS.ProcessEnv = process.env): EmbeddingConfig {
@@ -34,17 +47,19 @@ export function resolveEmbeddingConfig(env: NodeJS.ProcessEnv = process.env): Em
   }
 
   const baseURL = env.GBRAIN_EMBEDDING_BASE_URL || undefined;
-  const isPerplexityConfig = model.toLowerCase().includes('pplx') || model.toLowerCase().includes('perplexity') || (baseURL?.toLowerCase().includes('perplexity') ?? false);
+  const perplexityConfig = isPerplexityConfig(model, baseURL);
+  const hostedPerplexity = isHostedPerplexity(model, baseURL);
   const apiKey = env.GBRAIN_EMBEDDING_API_KEY
-    || (isPerplexityConfig ? (env.PERPLEXITY_API_KEY || env.PPLX_API_KEY) : undefined)
-    || env.OPENAI_API_KEY
-    || (baseURL ? 'not-needed' : undefined);
+    || (perplexityConfig ? (env.PERPLEXITY_API_KEY || env.PPLX_API_KEY) : undefined)
+    || (!perplexityConfig ? env.OPENAI_API_KEY : undefined)
+    || (baseURL && !hostedPerplexity ? 'not-needed' : undefined);
 
   return {
     model,
     dimensions,
     baseURL,
     apiKey,
+    provider: hostedPerplexity ? 'perplexity-hosted' : 'openai-compatible',
   };
 }
 
@@ -100,16 +115,17 @@ async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const config = resolveEmbeddingConfig();
-      const response = await getClient(config).embeddings.create({
+      const request: OpenAI.Embeddings.EmbeddingCreateParams = {
         model: config.model,
         input: texts,
         dimensions: config.dimensions,
-        encoding_format: 'float',
-      });
+        encoding_format: config.provider === 'perplexity-hosted' ? 'base64_int8' : 'float',
+      } as OpenAI.Embeddings.EmbeddingCreateParams;
+      const response = await getClient(config).embeddings.create(request);
 
       // Sort by index to maintain order
       const sorted = response.data.sort((a, b) => a.index - b.index);
-      return sorted.map(d => new Float32Array(d.embedding));
+      return sorted.map(d => coerceEmbedding(d.embedding, config));
     } catch (e: unknown) {
       if (attempt === MAX_RETRIES - 1) throw e;
 
@@ -132,6 +148,27 @@ async function embedBatchWithRetry(texts: string[]): Promise<Float32Array[]> {
 
   // Should not reach here
   throw new Error('Embedding failed after all retries');
+}
+
+function coerceEmbedding(embedding: number[] | string, config: EmbeddingConfig): Float32Array {
+  const vector = typeof embedding === 'string'
+    ? decodeBase64Int8Embedding(embedding)
+    : new Float32Array(embedding);
+
+  if (vector.length !== config.dimensions) {
+    throw new Error(`Embedding provider returned ${vector.length} dimensions; expected ${config.dimensions}`);
+  }
+
+  return vector;
+}
+
+function decodeBase64Int8Embedding(value: string): Float32Array {
+  const bytes = Buffer.from(value, 'base64');
+  const vector = new Float32Array(bytes.length);
+  for (let i = 0; i < bytes.length; i += 1) {
+    vector[i] = bytes[i] > 127 ? bytes[i] - 256 : bytes[i];
+  }
+  return vector;
 }
 
 function exponentialDelay(attempt: number): number {

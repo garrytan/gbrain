@@ -87,4 +87,66 @@ describe('OpenAI-compatible embedding providers', () => {
     expect(parsed.length0).toBe(2560);
     expect(parsed.length1).toBe(2560);
   });
+
+  test('decodes hosted Perplexity base64_int8 embeddings', () => {
+    const scriptPath = join(tmpdir(), `gbrain-hosted-perplexity-${Date.now()}-${Math.random().toString(16).slice(2)}.ts`);
+    tempFiles.push(scriptPath);
+    writeFileSync(scriptPath, `
+      import { serve } from 'bun';
+      import { embedBatch } from '${process.cwd()}/src/core/embedding.ts';
+
+      const dimensions = 4;
+      let requestBody: any = null;
+      const raw = Int8Array.from([-2, -1, 0, 127]);
+      const encoded = Buffer.from(raw.buffer).toString('base64');
+      const server = serve({
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname !== '/v1/embeddings') return new Response('not found', { status: 404 });
+          requestBody = await req.json();
+          const input = Array.isArray(requestBody.input) ? requestBody.input : [requestBody.input];
+          return Response.json({
+            object: 'list',
+            data: input.map((_text: string, index: number) => ({ object: 'embedding', index, embedding: encoded })),
+            model: requestBody.model,
+            usage: { prompt_tokens: input.length, total_tokens: input.length },
+          });
+        },
+      });
+
+      process.env.GBRAIN_EMBEDDING_MODEL = 'pplx-embed-v1-4b';
+      process.env.GBRAIN_EMBEDDING_DIMENSIONS = String(dimensions);
+      process.env.GBRAIN_EMBEDDING_BASE_URL = \`http://127.0.0.1:\${server.port}/v1\`;
+      process.env.PERPLEXITY_API_KEY = 'test-perplexity-key';
+      delete process.env.GBRAIN_EMBEDDING_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+
+      try {
+        const embeddings = await embedBatch(['alpha']);
+        console.log(JSON.stringify({ requestBody, values: Array.from(embeddings[0]) }));
+      } finally {
+        server.stop(true);
+      }
+    `);
+
+    const result = Bun.spawnSync({
+      cmd: ['bun', scriptPath],
+      cwd: process.cwd(),
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env },
+    });
+
+    expect(result.exitCode).toBe(0);
+    const output = new TextDecoder().decode(result.stdout).trim();
+    const stderr = new TextDecoder().decode(result.stderr).trim();
+    expect(stderr).toBe('');
+    const parsed = JSON.parse(output);
+
+    expect(parsed.requestBody.model).toBe('pplx-embed-v1-4b');
+    expect(parsed.requestBody.dimensions).toBe(4);
+    expect(parsed.requestBody.encoding_format).toBe('base64_int8');
+    expect(parsed.values).toEqual([-2, -1, 0, 127]);
+  });
 });

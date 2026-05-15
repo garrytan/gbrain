@@ -145,7 +145,10 @@ export class PostgresEngine implements BrainEngine {
   /** Align vector column type/index with the active embedding config. */
   private async ensureEmbeddingConfiguration(): Promise<void> {
     const config = resolveEmbeddingConfig();
-    const desiredType = `vector(${config.dimensions})`;
+    // pgvector HNSW supports vector up to 2000 dims, but halfvec up to 4000 dims.
+    // Perplexity pplx-embed-v1-4b is 2560 dims, so store it as halfvec to keep ANN.
+    const embeddingType = config.dimensions > 2000 ? 'halfvec' : 'vector';
+    const desiredType = `${embeddingType}(${config.dimensions})`;
     const conn = this.sql;
     const rows = await conn<{ typ: string }[]>`
       SELECT format_type(a.atttypid, a.atttypmod) AS typ
@@ -166,11 +169,8 @@ export class PostgresEngine implements BrainEngine {
       `);
     }
 
-    if (config.dimensions <= 2000) {
-      await conn.unsafe(`CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);`);
-    } else {
-      await conn.unsafe(`DROP INDEX IF EXISTS idx_chunks_embedding;`);
-    }
+    const indexOpclass = embeddingType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+    await conn.unsafe(`CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding ${indexOpclass});`);
 
     await conn`
       INSERT INTO config (key, value) VALUES
@@ -660,12 +660,13 @@ export class PostgresEngine implements BrainEngine {
     params.push(offset);
     const offsetParam = `$${params.length}`;
 
-    const rawQuery = `
+      const vectorCast = embedding.length > 2000 ? 'halfvec' : 'vector';
+      const rawQuery = `
       WITH hnsw_candidates AS (
         SELECT
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-          1 - (cc.embedding <=> $1::vector) AS raw_score
+          1 - (cc.embedding <=> $1::${vectorCast}) AS raw_score
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE cc.embedding IS NOT NULL
@@ -675,7 +676,7 @@ export class PostgresEngine implements BrainEngine {
           ${languageClause}
           ${symbolKindClause}
           ${hardExcludeClause}
-        ORDER BY cc.embedding <=> $1::vector
+        ORDER BY cc.embedding <=> $1::${vectorCast}
         LIMIT ${innerLimitParam}
       )
       SELECT
@@ -741,6 +742,9 @@ export class PostgresEngine implements BrainEngine {
     const params: unknown[] = [];
     let paramIdx = 1;
 
+    const embeddingConfig = resolveEmbeddingConfig();
+    const embeddingCast = embeddingConfig.dimensions > 2000 ? 'halfvec' : 'vector';
+
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
@@ -750,7 +754,7 @@ export class PostgresEngine implements BrainEngine {
         : null;
 
       if (embeddingStr) {
-        rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now(), $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++})`);
+        rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::${embeddingCast}, $${paramIdx++}, $${paramIdx++}, now(), $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++})`);
         params.push(
           pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
           embeddingStr, chunk.model || 'text-embedding-3-large', chunk.token_count || null,
