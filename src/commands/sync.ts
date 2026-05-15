@@ -29,6 +29,7 @@ import {
 import { tryAcquireDbLock, SYNC_LOCK_ID } from '../core/db-lock.ts';
 import { loadStorageConfig } from '../core/storage-config.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
+import { sortNewestFirst } from '../core/sort-newest-first.ts';
 
 export interface SyncResult {
   status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures';
@@ -700,12 +701,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   const failedFiles: Array<{ path: string; error: string; line?: number }> = [];
   const addsAndMods = [...filtered.added, ...filtered.modified];
 
-  // v0.33.1: sort newest-first so recent pages get embedded before older ones.
-  // Brain paths are typically date-prefixed (meetings/2026-05-13-*, daily/2026-05-13.md)
-  // so a descending lexicographic sort naturally prioritizes recent content.
-  // This ensures that after a burst of writes, the most relevant pages become
-  // searchable first instead of waiting behind alphabetically-earlier backlog.
-  addsAndMods.sort((a, b) => b.localeCompare(a));
+  // Sort newest-first so date-prefixed brain paths get embedded before older
+  // ones. See src/core/sort-newest-first.ts for the policy.
+  sortNewestFirst(addsAndMods);
 
   // v0.22.13 (PR #490 Q5): one source of truth for the concurrency decision.
   // engine.kind === 'pglite' → forced 1; explicit opts.concurrency wins;
