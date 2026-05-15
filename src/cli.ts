@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'linkify']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'linkify', 'extract-links']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -39,6 +39,7 @@ const CLI_ONLY_SELF_HELP = new Set([
   'frontmatter', 'check-resolvable',
   'models',
   'linkify',
+  'extract-links',
 ]);
 
 async function main() {
@@ -643,6 +644,8 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   'takes', 'sources',
   // linkify rewrites local files; requires the local engine + local brain dir.
   'linkify',
+  // extract-links upserts graph edges from local files; same locality constraint.
+  'extract-links',
 ]);
 
 /**
@@ -671,6 +674,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   takes: 'takes mutate subcommands edit local .md files; routing the read subcommands lands in v0.31.x. For now: use `takes_list` and `takes_search` MCP tools from your agent, or run on the host.',
   sources: 'sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.',
   linkify: 'linkify rewrites local files. Run on the host machine where the brain dir lives.',
+  'extract-links': 'extract-links upserts graph edges from local files. Run on the host machine.',
 };
 
 /**
@@ -782,6 +786,10 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'linkify') {
     const { runLinkify } = await import('./commands/linkify.ts');
     process.exit(await runLinkify(args));
+  }
+  if (command === 'extract-links') {
+    const { runExtractLinks } = await import('./commands/extract-links.ts');
+    process.exit(await runExtractLinks(args));
   }
   if (command === 'lint') {
     const { runLint } = await import('./commands/lint.ts');
