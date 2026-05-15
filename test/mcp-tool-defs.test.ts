@@ -64,4 +64,20 @@ describe('buildToolDefs', () => {
       expect(Array.isArray(def.inputSchema.required)).toBe(true);
     }
   });
+
+  test('every array property has an items clause (strict JSON Schema)', () => {
+    // OpenAI's tool API and other strict JSON Schema validators reject an
+    // "array" property that lacks "items". An offender causes the entire
+    // toolset to fail upload with HTTP 400 before any tool is invoked.
+    const violations: string[] = [];
+    for (const def of buildToolDefs(operations)) {
+      for (const [propName, propSchema] of Object.entries(def.inputSchema.properties)) {
+        const s = propSchema as { type?: unknown; items?: unknown };
+        if (s && typeof s === 'object' && s.type === 'array' && !s.items) {
+          violations.push(`${def.name}.${propName}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
 });
