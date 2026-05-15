@@ -715,6 +715,10 @@ export async function extractLinksForSlugs(
   for (const f of allFiles) slugToFile.set(pathToSlug(f.relPath), f.path);
   const allSlugs = new Set(slugToFile.keys());
 
+  // v0.18.0+ multi-source: post-sync extract reconciles same-source edges.
+  // Markdown→markdown links within one repo always live in the caller's
+  // sourceId. Cross-source extraction (rare) would need a per-repo source
+  // manifest; not in this PR's scope.
   const linkOpts = opts?.sourceId
     ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
     : undefined;

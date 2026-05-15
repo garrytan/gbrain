@@ -74,6 +74,6 @@ describe('extractLinksForSlugs on non-canonical filenames', () => {
 
   test('canonical filename still works (regression guard)', async () => {
     const created = await extractLinksForSlugs(engine, tmpDir, ['people/jbryan-aseva']);
-    expect(created).toBeGreaterThanOrEqual(0);
+    expect(created).toBe(0);
   });
 });
