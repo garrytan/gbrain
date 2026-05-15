@@ -71,7 +71,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // The empty-fence guard refuses to run if pre-v51 legacy facts are
   // pending the v0_32_2 backfill (Codex R2-#7).
   'extract_facts',
-  // v0.33.2 W0c — within-file two-pass symbol resolution. Runs AFTER
+  // v0.33.3 W0c — within-file two-pass symbol resolution. Runs AFTER
   // extract + extract_facts so any code edges sync emitted (still bare-token)
   // get resolved into {resolved_chunk_id: N} / {ambiguous: true,
   // candidates: [...]} edge_metadata entries before downstream phases read
@@ -112,7 +112,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'extract',
   // v0.32.2 — wipes + re-inserts facts per affected page.
   'extract_facts',
-  // v0.33.2 W0c — writes code_edges_symbol.edge_metadata + content_chunks.edges_backfilled_at.
+  // v0.33.3 W0c — writes code_edges_symbol.edge_metadata + content_chunks.edges_backfilled_at.
   'resolve_symbol_edges',
   'patterns',
   // v0.29 — writes pages.emotional_weight column.
@@ -731,13 +731,13 @@ async function runPhaseExtractFacts(
 }
 
 /**
- * v0.33.2 W0c — resolve_symbol_edges phase.
+ * v0.33.3 W0c — resolve_symbol_edges phase.
  *
  * Walks at most BATCH_SIZE*10 chunks per invocation where
  * `edges_backfilled_at` is NULL or older than EDGE_EXTRACTOR_VERSION_TS.
  * Resumable across cycles via the watermark; quick-cycle compatible.
  *
- * Source scoping: walks every registered source. Pre-v0.33.2 silently
+ * Source scoping: walks every registered source. Pre-v0.33.3 silently
  * crossed sources; now each source is walked independently so symbol
  * resolution stays within its source boundary (matches the W0a fix).
  */
@@ -1169,7 +1169,7 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
-    // ── v0.33.2 W0c: resolve_symbol_edges (between extract_facts + patterns) ──
+    // ── v0.33.3 W0c: resolve_symbol_edges (between extract_facts + patterns) ──
     // Walks chunks whose edges_backfilled_at is null/stale. Resumable
     // across cycles via the watermark. Quick-cycle compatible — caps at
     // BATCH_SIZE * 10 chunks per invocation so a 60s watchdog tick stays

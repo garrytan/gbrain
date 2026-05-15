@@ -74,6 +74,14 @@ To exercise the new W1/W2 edge shapes on an existing brain:
    - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
    - which step broke
 
+## [0.33.3.0] - 2026-05-12
+
+**Code intelligence ships to agents. Plan-mode subagents stop falling through to grep.**
+**`code_callers`, `code_callees`, `code_def`, `code_refs` are MCP-exposed with resolver-grade descriptions.**
+
+Pre-v0.33.3 the four code-intelligence commands from v0.20+ Cathedral II lived in `CLI_ONLY` at `cli.ts:30`. An agent running through MCP saw `query`/`search` but no structural retrieval, so it grepped, missed callers in string literals, shipped plans with broken call chains, and got caught in review. v0.33.3 closes that gap and lays the foundation work that v0.34 Cathedral III (recursive blast/flow + Leiden clusters + wiki) will build on top of.
+
+This release was scoped after Codex's outside-voice review caught two load-bearing premise gaps in the original v0.34 plan: the call graph stored bare callee tokens (not qualified names), and source routing was already broken in `query` and `two-pass.ts`. Both are fixed here before any user-facing recursive op ships.
 ## [0.33.2.1] - 2026-05-14
 
 **Doc-only: name the fork-PR escape hatch so AI-authored PRs don't drop their CI secrets.**

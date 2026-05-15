@@ -1118,9 +1118,9 @@ const query: Operation = {
           ? undefined
           : sourceIdParam
         : ctx.sourceId;
-    // v0.32.x search-lite: route through hybridSearchCached so semantic cache
-    // + token budget + intent weighting fire automatically. Plain hybridSearch
-    // remains the bare API for callers that opt out.
+    // v0.32.x search-lite: route the query op through hybridSearchCached so
+    // semantic cache + token budget + intent weighting fire automatically.
+    // Plain hybridSearch remains the bare API for callers that opt out.
     const results = await hybridSearchCached(ctx.engine, queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
@@ -3079,7 +3079,7 @@ export const operations: Operation[] = [
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing
   find_experts,
-  // v0.33.2: Cathedral III code-intelligence (MCP-exposed; were CLI_ONLY pre-v0.33.2)
+  // v0.33.3: Cathedral III code-intelligence (MCP-exposed; were CLI_ONLY pre-v0.33.3)
   code_callers, code_callees, code_def, code_refs,
   // v0.34 W3: recursive code_blast + code_flow
   code_blast, code_flow,

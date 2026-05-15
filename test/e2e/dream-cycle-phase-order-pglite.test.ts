@@ -105,7 +105,7 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'synthesize',
   'extract',
   'extract_facts',               // v0.32.2 — reconcile fence → DB facts index
-  'resolve_symbol_edges',       // v0.33.2 — within-file symbol resolution
+  'resolve_symbol_edges',       // v0.33.3 — within-file symbol resolution
   'patterns',
   'recompute_emotional_weight', // v0.29
   'consolidate',                // v0.31

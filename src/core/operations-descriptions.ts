@@ -91,8 +91,8 @@ export const FIND_CONTRADICTIONS_DESCRIPTION =
   "`gbrain eval suspected-contradictions` for that.";
 
 // ──────────────────────────────────────────────────────────────────────────────
-// v0.33.2 Cathedral III foundation — code-intelligence ops (MCP-exposed).
-// Pre-v0.33.2 the callers/callees/def/refs commands were CLI-only — agents
+// v0.33.3 Cathedral III foundation — code-intelligence ops (MCP-exposed).
+// Pre-v0.33.3 the callers/callees/def/refs commands were CLI-only — agents
 // reached for grep because the MCP surface didn't expose them. These
 // descriptions are resolver-grade so the LLM tool-selection prompt routes
 // plan-mode questions straight to the right op.
