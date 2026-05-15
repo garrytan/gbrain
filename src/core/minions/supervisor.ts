@@ -26,8 +26,11 @@
  *   3 PID file unwritable (permission / path error)
  */
 
-import { spawn, type ChildProcess } from 'child_process';
-import { detectTini, buildSpawnInvocation } from './spawn-helpers.ts';
+import { detectTini } from './spawn-helpers.ts';
+import {
+  ChildWorkerSupervisor,
+  type ChildSupervisorEvent,
+} from './child-worker-supervisor.ts';
 import {
   closeSync,
   existsSync,
@@ -35,7 +38,6 @@ import {
   openSync,
   readFileSync,
   unlinkSync,
-  writeFileSync,
   writeSync,
 } from 'fs';
 import { dirname } from 'path';
@@ -136,13 +138,15 @@ export const ExitCodes = {
 export class MinionSupervisor {
   private opts: SupervisorOpts;
   private engine: BrainEngine;
-  private child: ChildProcess | null = null;
-  private crashCount = 0;
-  private lastStartTime = 0;
+  /**
+   * Inner spawn-and-respawn core. Created lazily in `start()` so options
+   * passed via DEFAULTS merge are visible. Stays null when `stopping` is
+   * tripped before `start()` runs (test edge case).
+   */
+  private childSupervisor: ChildWorkerSupervisor | null = null;
   /** Path to tini binary for zombie reaping, or empty string when absent. */
   private readonly tiniPath: string;
   private stopping = false;
-  private inBackoff = false;
   private healthInFlight = false;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private exitListener: (() => void) | null = null;
@@ -158,7 +162,8 @@ export class MinionSupervisor {
     // Detect tini for zombie reaping. Resolved once at construction so we
     // don't shell out on every respawn. Belt-and-suspenders with the
     // SIGCHLD handler in cli.ts — tini catches children spawned by native
-    // addons that bypass the JS event loop.
+    // addons that bypass the JS event loop. ChildWorkerSupervisor detects
+    // independently; both calls hit the same `which tini` lookup.
     this.tiniPath = detectTini();
   }
 
@@ -276,14 +281,12 @@ export class MinionSupervisor {
       this.healthTimer = null;
     }
 
-    if (this.child) {
-      try { this.child.kill('SIGTERM'); } catch { /* already dead */ }
-      await Promise.race([
-        new Promise<void>(r => this.child!.once('exit', () => r())),
-        new Promise<void>(r => setTimeout(() => r(), 35_000)),
-      ]);
-      if (this.child && !this.child.killed) {
-        try { this.child.kill('SIGKILL'); } catch { /* already dead */ }
+    if (this.childSupervisor) {
+      this.childSupervisor.killChild('SIGTERM');
+      await this.childSupervisor.awaitChildExit(35_000);
+      // If the child is still up after the 35s drain window, escalate.
+      if (this.childSupervisor.childAlive) {
+        this.childSupervisor.killChild('SIGKILL');
       }
     }
 
@@ -392,166 +395,116 @@ export class MinionSupervisor {
     }
   }
 
-  /** Run the supervise loop: spawn child, await exit, backoff+retry or give up. */
+  /**
+   * Run the supervise loop. Constructs a ChildWorkerSupervisor with the
+   * D1 lastExitCode classifier + D2 clean-restart budget baked in, then
+   * defers spawn/respawn/backoff to it. Maps the inner ChildSupervisorEvent
+   * stream to MinionSupervisor's existing SupervisorEvent emit() channel
+   * so JSONL audit consumers see byte-compatible output.
+   */
   private async runSuperviseLoop(): Promise<void> {
-    while (!this.stopping && this.crashCount < this.opts.maxCrashes) {
-      await this.spawnOnce();
-
-      if (this.stopping) return;
-
-      if (this.crashCount >= this.opts.maxCrashes) {
-        this.emit('max_crashes_exceeded', {
-          crash_count: this.crashCount,
-          max_crashes: this.opts.maxCrashes,
-        });
-        await this.shutdown('max_crashes', ExitCodes.MAX_CRASHES);
-        return;
-      }
-
-      // crashCount - 1 is the retry-attempt index (0-based exponent for backoff math).
-      // On first crash: crashCount=1, backoff exponent=0 → 1s.
-      // After stable-run reset: crashCount=1 again → 1s fresh cycle.
-      // Test-only: _backoffFloorMs short-circuits to a fixed tiny value so integration
-      // tests can exercise crash loops in < 1s without waiting for the real curve.
-      const backoff = this.opts._backoffFloorMs !== undefined
-        ? this.opts._backoffFloorMs
-        : calculateBackoffMs(this.crashCount - 1);
-
-      this.emit('backoff', { ms: Math.round(backoff), crash_count: this.crashCount });
-
-      this.inBackoff = true;
-      try {
-        await new Promise<void>(r => setTimeout(r, backoff));
-      } finally {
-        this.inBackoff = false;
-      }
+    const workerArgs = [
+      'jobs', 'work',
+      '--concurrency', String(this.opts.concurrency),
+      '--queue', this.opts.queue,
+    ];
+    if (this.opts.maxRssMb > 0) {
+      workerArgs.push('--max-rss', String(this.opts.maxRssMb));
     }
+
+    // Build child env. Explicit handling for GBRAIN_ALLOW_SHELL_JOBS:
+    // inherit only when caller opts in, otherwise strip from the clone.
+    const env: Record<string, string | undefined> = { ...process.env };
+    if (this.opts.allowShellJobs) {
+      env.GBRAIN_ALLOW_SHELL_JOBS = '1';
+    } else {
+      delete env.GBRAIN_ALLOW_SHELL_JOBS;
+    }
+    // Signal to the child worker that it's running under a supervisor.
+    // The worker's self-health-check (DB probes, stall detection) is
+    // redundant when the supervisor already provides these — setting
+    // this env var causes the worker to skip its own health timer.
+    env.GBRAIN_SUPERVISED = '1';
+
+    this.childSupervisor = new ChildWorkerSupervisor({
+      cliPath: this.opts.cliPath,
+      args: workerArgs,
+      env,
+      maxCrashes: this.opts.maxCrashes,
+      _backoffFloorMs: this.opts._backoffFloorMs,
+      isStopping: () => this.stopping,
+      onMaxCrashesExceeded: (count, max) => {
+        this.emit('max_crashes_exceeded', {
+          crash_count: count,
+          max_crashes: max,
+        });
+        void this.shutdown('max_crashes', ExitCodes.MAX_CRASHES);
+      },
+      onEvent: (event) => this.relayChildEvent(event),
+    });
+
+    await this.childSupervisor.run();
   }
 
-  /** Spawn the worker child once and await its exit. Updates `this.crashCount`. */
-  private spawnOnce(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      if (this.stopping) { resolve(); return; }
-
-      const args = [
-        'jobs', 'work',
-        '--concurrency', String(this.opts.concurrency),
-        '--queue', this.opts.queue,
-      ];
-      if (this.opts.maxRssMb > 0) {
-        args.push('--max-rss', String(this.opts.maxRssMb));
-      }
-
-      // Build child env. Explicit handling for GBRAIN_ALLOW_SHELL_JOBS:
-      // inherit only when caller opts in, otherwise strip from the clone.
-      const env: Record<string, string | undefined> = { ...process.env };
-      if (this.opts.allowShellJobs) {
-        env.GBRAIN_ALLOW_SHELL_JOBS = '1';
-      } else {
-        delete env.GBRAIN_ALLOW_SHELL_JOBS;
-      }
-      // Signal to the child worker that it's running under a supervisor.
-      // The worker's self-health-check (DB probes, stall detection) is
-      // redundant when the supervisor already provides these — setting
-      // this env var causes the worker to skip its own health timer.
-      env.GBRAIN_SUPERVISED = '1';
-
-      this.lastStartTime = Date.now();
-
-      // Wrap with tini when available — reaps zombie children that the
-      // SIGCHLD handler in cli.ts might miss (native addons, edge cases).
-      const { cmd: spawnCmd, args: spawnArgs } = buildSpawnInvocation(
-        this.tiniPath,
-        this.opts.cliPath,
-        args,
-      );
-
-      let child: ChildProcess;
-      try {
-        child = spawn(spawnCmd, spawnArgs, {
-          stdio: 'inherit',
-          env,
+  /**
+   * Map ChildSupervisorEvent (the inner core's emission shape) to the
+   * existing SupervisorEvent emit channel. The wire shape of audit JSONL
+   * is unchanged — same event names, same field names, same payload
+   * coverage. The `reason='budget_exceeded'` backoff variant is a new
+   * additive field; pre-existing consumers ignore unknown fields.
+   */
+  private relayChildEvent(event: ChildSupervisorEvent): void {
+    switch (event.kind) {
+      case 'worker_spawned':
+        this.emit('worker_spawned', {
+          pid: event.pid >= 0 ? event.pid : undefined,
+          cli_path: this.opts.cliPath,
+          ...(event.tini ? { tini: true } : {}),
         });
-      } catch (err: unknown) {
-        // Synchronous spawn error (e.g., invalid cliPath shape). Count as a crash.
+        return;
+
+      case 'worker_spawn_failed':
         this.emit('worker_spawn_failed', {
           cli_path: this.opts.cliPath,
-          error: err instanceof Error ? err.message : String(err),
-          phase: 'sync',
+          error: event.error,
+          phase: event.phase,
+          ...(event.errnoCode ? { code: event.errnoCode } : {}),
         });
-        this.crashCount++;
-        resolve();
+        return;
+
+      case 'worker_exited': {
+        const exitReason = event.signal
+          ? `signal ${event.signal}`
+          : `code ${event.code ?? 'null'}`;
+        this.emit('worker_exited', {
+          code: event.code,
+          signal: event.signal,
+          reason: exitReason,
+          likely_cause: event.likelyCause,
+          crash_count: event.crashCount,
+          max_crashes: this.opts.maxCrashes,
+          run_duration_ms: event.runDurationMs,
+        });
         return;
       }
 
-      this.child = child;
-
-      this.emit('worker_spawned', {
-        pid: child.pid,
-        cli_path: this.opts.cliPath,
-        ...(this.tiniPath ? { tini: true } : {}),
-      });
-
-      // Async spawn errors (ENOENT, EACCES after the fork/exec). Node fires
-      // 'error' first, then 'exit' with code=null. We log the error; the
-      // 'exit' handler increments crashCount as usual so the restart loop
-      // continues (max-crashes bounds this for permanent misconfigs).
-      child.on('error', (err) => {
-        this.emit('worker_spawn_failed', {
-          cli_path: this.opts.cliPath,
-          error: err.message,
-          code: (err as NodeJS.ErrnoException).code ?? 'unknown',
-          phase: 'async',
+      case 'backoff':
+        this.emit('backoff', {
+          ms: event.ms,
+          crash_count: event.crashCount,
+          reason: event.reason,
         });
-      });
+        return;
 
-      child.on('exit', (code, signal) => {
-        this.child = null;
-
-        if (this.stopping) {
-          resolve();
-          return;
-        }
-
-        // Stable-run reset: if the worker ran > 5min before crashing, we forgive
-        // prior crash history and treat this as the first crash of a new cycle
-        // (crashCount = 1, so backoff math uses retry-index 0 = 1s).
-        const runDuration = Date.now() - this.lastStartTime;
-        if (runDuration > 5 * 60 * 1000) {
-          this.crashCount = 1;
-        } else {
-          this.crashCount++;
-        }
-
-        const exitReason = signal ? `signal ${signal}` : `code ${code ?? 'null'}`;
-
-        // Classify the likely cause for easier debugging
-        let likelyCause: string;
-        if (signal === 'SIGKILL') {
-          likelyCause = 'oom_or_external_kill';
-        } else if (signal === 'SIGTERM') {
-          likelyCause = 'graceful_shutdown';
-        } else if (code === 1) {
-          likelyCause = 'runtime_error';
-        } else if (code === 0) {
-          likelyCause = 'clean_exit';
-        } else {
-          likelyCause = 'unknown';
-        }
-
-        this.emit('worker_exited', {
-          code: code ?? null,
-          signal: signal ?? null,
-          reason: exitReason,
-          likely_cause: likelyCause,
-          crash_count: this.crashCount,
-          max_crashes: this.opts.maxCrashes,
-          run_duration_ms: runDuration,
+      case 'health_warn':
+        this.emit('health_warn', {
+          reason: event.reason,
+          count: event.count,
+          window_ms: event.windowMs,
+          queue: this.opts.queue,
         });
-
-        resolve();
-      });
-    });
+        return;
+    }
   }
 
   /**
@@ -620,8 +573,10 @@ export class MinionSupervisor {
 
       // F4: suppress "worker not alive" warn while we're in the expected
       // null-child window (crash-exit → backoff-sleep → next-spawn).
-      const workerAlive = this.child != null && this.child.exitCode === null;
-      if (!workerAlive && !this.stopping && !this.inBackoff) {
+      const cs = this.childSupervisor;
+      const workerAlive = cs !== null && cs.childAlive;
+      const inBackoff = cs !== null && cs.inBackoff;
+      if (!workerAlive && !this.stopping && !inBackoff) {
         this.emit('health_warn', {
           reason: 'worker_not_alive',
           queue: this.opts.queue,
