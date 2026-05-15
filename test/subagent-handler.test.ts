@@ -20,6 +20,10 @@ import {
   RateLeaseUnavailableError,
   type MessagesClient,
 } from '../src/core/minions/handlers/subagent.ts';
+import {
+  __setChatTransportForTests,
+  type ChatResult,
+} from '../src/core/ai/gateway.ts';
 import type { ToolDef, MinionJobContext } from '../src/core/minions/types.ts';
 import type Anthropic from '@anthropic-ai/sdk';
 
@@ -38,6 +42,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  __setChatTransportForTests(null);
   await engine.executeRaw('DELETE FROM subagent_tool_executions');
   await engine.executeRaw('DELETE FROM subagent_messages');
   await engine.executeRaw('DELETE FROM subagent_rate_leases');
@@ -419,17 +424,73 @@ describe('subagent handler input validation', () => {
     const ctx = await makeCtx({ prompt: 'x', allowed_tools: ['real', 'ghost_tool'] });
     await expect(handler(ctx)).rejects.toThrow(/unknown tool/);
   });
+
+  test('trusted subagent submit accepts OpenAI-compatible model routes', async () => {
+    const ctx = await makeCtx({ prompt: 'x', model: 'litellm:gpt-5.5' });
+    expect(ctx.data.model).toBe('litellm:gpt-5.5');
+  });
 });
 
 describe('makeSubagentHandler default client construction', () => {
-  test('factory default wires sdk.messages through to the handler', async () => {
-    // Regression guard for the v0.16.0 shipped bug: makeSubagentHandler
-    // was casting `new Anthropic()` (top-level SDK class) to MessagesClient,
-    // but `.create()` lives at sdk.messages.create. Every subagent job in
-    // production died with "client.create is not a function" on first LLM
-    // call. This test exercises the default-client path (no `deps.client`
-    // injected) via the makeAnthropic dep-injection seam, so the exact
-    // default-branch construction is covered without a real API call.
+  test('factory default routes through gateway chat without Anthropic SDK construction', async () => {
+    const calls: Array<{ model?: string; system?: string }> = [];
+    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+      calls.push({ model: opts.model, system: opts.system });
+      return {
+        text: 'gateway ok',
+        blocks: [{ type: 'text', text: 'gateway ok' }],
+        stopReason: 'end',
+        usage: {
+          input_tokens: 3,
+          output_tokens: 2,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+        },
+        model: opts.model ?? 'litellm:gpt-5.5',
+        providerId: 'litellm',
+      };
+    });
+
+    const handler = makeSubagentHandler({ engine, toolRegistry: [] });
+    const ctx = await makeCtx({ prompt: 'hello', model: 'litellm:gpt-5.5' });
+    const result = await handler(ctx);
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.model).toBe('litellm:gpt-5.5');
+    expect(calls[0]!.system).toContain('gbrain subagent');
+    expect(result.result).toBe('gateway ok');
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.tokens.in).toBe(3);
+    expect(result.tokens.out).toBe(2);
+  });
+
+  test('gateway adapter prefixes bare default Claude model for gateway routing', async () => {
+    const models: Array<string | undefined> = [];
+    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+      models.push(opts.model);
+      return {
+        text: 'ok',
+        blocks: [{ type: 'text', text: 'ok' }],
+        stopReason: 'end',
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+        },
+        model: opts.model ?? 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      };
+    });
+
+    const handler = makeSubagentHandler({ engine, toolRegistry: [] });
+    const ctx = await makeCtx({ prompt: 'hello' });
+    await handler(ctx);
+
+    expect(models[0]).toBe('anthropic:claude-sonnet-4-6');
+  });
+
+  test('makeAnthropic compatibility seam still wires sdk.messages through to the handler', async () => {
     const calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
     const fakeSdk = {
       messages: {
@@ -456,8 +517,8 @@ describe('makeSubagentHandler default client construction', () => {
       },
     } as unknown as Anthropic;
 
-    // Crucial: do NOT pass `client`. Only `makeAnthropic`. This forces the
-    // factory to hit the default-client branch (`deps.client ?? makeAnthropic().messages`).
+    // Crucial: do NOT pass `client`. Only `makeAnthropic`. This preserves the
+    // legacy test seam while production defaults to the gateway adapter.
     const handler = makeSubagentHandler({
       engine,
       makeAnthropic: () => fakeSdk,
@@ -467,6 +528,7 @@ describe('makeSubagentHandler default client construction', () => {
     const result = await handler(ctx);
 
     expect(calls.length).toBe(1);
+    expect(calls[0]!.model).toBe('claude-sonnet-4-6');
     expect(result.stop_reason).toBe('end_turn');
     expect(result.result).toBe('ok');
   });

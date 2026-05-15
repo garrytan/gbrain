@@ -18,7 +18,8 @@ import {
   isDreamOutput,
   DREAM_OUTPUT_MARKER_RE,
 } from '../src/core/cycle/transcript-discovery.ts';
-import { judgeSignificance, renderPageToMarkdown, type JudgeClient } from '../src/core/cycle/synthesize.ts';
+import { judgeSignificance, renderPageToMarkdown, __testing, type JudgeClient } from '../src/core/cycle/synthesize.ts';
+import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 
 let tmpDir: string;
 
@@ -29,6 +30,7 @@ function makeTranscript(name: string, body: string): string {
 }
 
 beforeEach(() => {
+  __setChatTransportForTests(null);
   tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-synth-test-'));
 });
 
@@ -333,5 +335,40 @@ describe('judgeSignificance', () => {
     const r = await judgeSignificance(client, makeTranscript());
     expect(r.worth_processing).toBe(false);
     expect(r.reasons[0]).toContain('unparseable');
+  });
+
+  test('uses gateway chat judge when ANTHROPIC_API_KEY is absent', async () => {
+    const originalKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    const captured: { model?: string; prompt?: string } = {};
+    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+      captured.model = opts.model;
+      captured.prompt = String(opts.messages[0]?.content ?? '');
+      return {
+        text: '{"worth_processing": true, "reasons": ["gateway"]}',
+        blocks: [{ type: 'text', text: '{"worth_processing": true, "reasons": ["gateway"]}' }],
+        stopReason: 'end',
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+        },
+        model: opts.model ?? 'litellm:gpt-5.5',
+        providerId: 'litellm',
+      };
+    });
+
+    try {
+      const client = __testing.makeHaikuClient();
+      expect(client).not.toBeNull();
+      const r = await judgeSignificance(client!, makeTranscript(), 'litellm:gpt-5.5');
+      expect(captured.model).toBe('litellm:gpt-5.5');
+      expect(captured.prompt).toContain('Transcript x');
+      expect(r).toEqual({ worth_processing: true, reasons: ['gateway'] });
+    } finally {
+      if (originalKey !== undefined) process.env.ANTHROPIC_API_KEY = originalKey;
+      else delete process.env.ANTHROPIC_API_KEY;
+    }
   });
 });

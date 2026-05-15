@@ -84,27 +84,9 @@ export class MinionQueue {
         `(pass {allowProtectedSubmit: true} as the 4th arg to MinionQueue.add)`,
       );
     }
-    // v0.31.12 subagent runtime enforcement (Layer 1 of 3 — Codex F1+F2 in
-    // plan review). The subagent loop in handlers/subagent.ts uses Anthropic's
-    // Messages API with prompt caching on system + tools. Routing it elsewhere
-    // silently breaks. Reject non-Anthropic data.model at the queue boundary
-    // so the job never enters waiting state.
-    if (jobName === 'subagent' && data && typeof data === 'object') {
-      const submittedModel = (data as { model?: unknown }).model;
-      if (typeof submittedModel === 'string' && submittedModel.length > 0) {
-        // Lazy import to avoid pulling model-config (which imports engine types)
-        // into the queue module's eager-load surface.
-        const { isAnthropicProvider } = await import('../model-config.ts');
-        if (!isAnthropicProvider(submittedModel)) {
-          throw new Error(
-            `subagent job rejected: data.model "${submittedModel}" is non-Anthropic. ` +
-            `The subagent loop is Anthropic-only (Messages API + prompt caching). ` +
-            `Pass an Anthropic model id (e.g. claude-sonnet-4-6) or omit data.model ` +
-            `to use the configured default.`,
-          );
-        }
-      }
-    }
+    // Subagent model validation lives in the gateway-backed handler now. The
+    // trusted submitter may route to any chat provider that supports tool use
+    // (for example an OpenAI-compatible LiteLLM/agnt-router endpoint).
     await this.ensureSchema();
 
     const childStatus: MinionJobStatus = opts?.delay ? 'delayed' : 'waiting';

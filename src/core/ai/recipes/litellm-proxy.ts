@@ -31,6 +31,14 @@ export const litellmProxy: Recipe = {
       // no static cap to declare here. v0.32 (#779).
       no_batch_cap: true,
     },
+    chat: {
+      // Models depend on the proxy's config. OpenAI-compatible routing lets the
+      // provider surface model errors at call time.
+      models: [],
+      supports_tools: true,
+      supports_subagent_loop: true,
+      supports_prompt_cache: false,
+    },
   },
-  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
+  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --chat-model or --embedding-model as litellm:<model>.',
 };

@@ -407,7 +407,7 @@ export interface SubagentHandlerData {
   prompt: string;
   /** Optional subagent definition path (skills/subagents/*.md or plugin). */
   subagent_def?: string;
-  /** Anthropic model id. Defaults to sonnet at handler resolution time. */
+  /** Gateway chat model id. Defaults to sonnet at handler resolution time. */
   model?: string;
   /** Max assistant turns before the loop fails with stop_reason='max_turns'. */
   max_turns?: number;
@@ -483,11 +483,11 @@ export interface ToolCtx {
 }
 
 /**
- * A tool the subagent can call. Names match Anthropic's constraint
+ * A tool the subagent can call. Names match common provider constraints
  * `^[a-zA-Z0-9_-]{1,64}$` — no dots. The input_schema is the JSONSchema
- * shipped to the Anthropic Messages API verbatim; ToolDef is the single
- * Anthropic-compatible envelope, not an MCP McpToolDef (those have a
- * different shape — ".inputSchema" vs ".input_schema").
+ * shipped to the gateway adapter verbatim; ToolDef keeps the historical
+ * input_schema envelope, not an MCP McpToolDef (those have a different
+ * shape — ".inputSchema" vs ".input_schema").
  *
  * `idempotent: true` is required for the two-phase replay path: on resume,
  * a 'pending' row can be re-executed. Non-idempotent tools need a separate
@@ -502,7 +502,7 @@ export interface ToolDef {
 }
 
 /**
- * Anthropic content-block subset we persist in subagent_messages.content_blocks.
+ * Provider-neutral content-block subset we persist in subagent_messages.content_blocks.
  * This is structural — we don't gatekeep on unknown block types (future SDK
  * additions pass through). Use the string-literal discriminant on 'type'.
  */

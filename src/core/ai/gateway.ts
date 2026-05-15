@@ -523,7 +523,7 @@ export function isAvailable(touchpoint: TouchpointKind): boolean {
     if (
       Array.isArray(touchpointConfig.models) &&
       touchpointConfig.models.length === 0 &&
-      (recipe.id === 'litellm' || isUserProvided)
+      ((touchpoint === 'embedding' && recipe.id === 'litellm') || isUserProvided)
     ) return false;
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
@@ -937,7 +937,12 @@ async function embedSubBatch(
     if (first && Array.isArray(first) && first.length !== expectedDims) {
       throw new AIConfigError(
         `Embedding dim mismatch: model ${modelId} returned ${first.length} but schema expects ${expectedDims}.`,
-        `Run \`gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${first.length}\` or change models.`,
+        `If this is an existing brain, follow docs/embedding-migrations.md to alter ` +
+        `content_chunks.embedding to vector(${first.length}), then run ` +
+        `\`gbrain config set embedding_model ${getEmbeddingModel()}\`, ` +
+        `\`gbrain config set embedding_dimensions ${first.length}\`, and ` +
+        `\`gbrain embed --stale\`. For a new brain, run ` +
+        `\`gbrain init --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${first.length}\`.`,
       );
     }
 

@@ -4,6 +4,7 @@ import {
   resetGateway,
   isAvailable,
   embed,
+  __setEmbedTransportForTests,
   getEmbeddingModel,
   getEmbeddingDimensions,
   getExpansionModel,
@@ -83,6 +84,17 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
     expect(isAvailable('embedding')).toBe(true);
   });
 
+  test('embedding AVAILABLE for Ollama bge-m3 and mxbai without OPENAI_API_KEY', () => {
+    for (const model of ['ollama:bge-m3', 'ollama:mxbai-embed-large']) {
+      configureGateway({
+        embedding_model: model,
+        embedding_dimensions: 1024,
+        env: {},
+      });
+      expect(isAvailable('embedding')).toBe(true);
+    }
+  });
+
   test('anthropic rejects embedding touchpoint (has no embedding model)', () => {
     configureGateway({
       embedding_model: 'anthropic:claude-haiku-4-5-20251001',
@@ -98,6 +110,39 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
       env: { ANTHROPIC_API_KEY: 'fake' },
     });
     expect(isAvailable('expansion')).toBe(true);
+  });
+});
+
+describe('gateway Ollama embedding route', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setEmbedTransportForTests(null);
+  });
+
+  test('embeds through local Ollama bge-m3 without OPENAI_API_KEY', async () => {
+    configureGateway({
+      embedding_model: 'ollama:bge-m3',
+      embedding_dimensions: 1024,
+      env: {},
+    });
+    const calls: Array<{ values: string[]; providerOptions?: unknown }> = [];
+    const stub = async (opts: { values: string[]; providerOptions?: unknown }) => {
+      calls.push(opts);
+      return {
+        embeddings: opts.values.map((_, i) =>
+          Array.from({ length: 1024 }, (_v, j) => (j === 0 ? i : 0.01)),
+        ),
+      };
+    };
+    __setEmbedTransportForTests(stub as any);
+
+    const vectors = await embed(['dream synthesis output']);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.values).toEqual(['dream synthesis output']);
+    expect(calls[0]!.providerOptions).toBeUndefined();
+    expect(vectors).toHaveLength(1);
+    expect(vectors[0]!.length).toBe(1024);
   });
 });
 

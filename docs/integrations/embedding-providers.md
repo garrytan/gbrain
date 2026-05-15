@@ -88,7 +88,7 @@ Set `ZHIPUAI_API_KEY`. Models: `embedding-3` (current; Matryoshka 256-2048 dims)
 
 No env required — Ollama runs unauthenticated locally. Optional `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`) and `OLLAMA_API_KEY` (for auth-enabled deployments).
 
-Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1024d), `all-minilm` (384d). `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
+Recipe ships with `nomic-embed-text` (768d), `bge-m3` (1024d, recommended for local multilingual retrieval), `mxbai-embed-large` (1024d), `all-minilm` (384d). `gbrain providers test --model ollama:bge-m3 --dims 1024` smoke-tests the local install.
 
 ### llama-server (local, llama.cpp)
 

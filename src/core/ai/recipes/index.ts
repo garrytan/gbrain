@@ -48,3 +48,9 @@ export function getRecipe(id: string): Recipe | undefined {
 export function listRecipes(): Recipe[] {
   return [...ALL];
 }
+
+export function defaultEmbeddingDims(recipe: Recipe, modelId: string): number {
+  return recipe.touchpoints.embedding?.model_dims?.[modelId]
+    ?? recipe.touchpoints.embedding?.default_dims
+    ?? 0;
+}

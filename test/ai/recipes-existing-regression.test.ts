@@ -22,7 +22,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { defaultResolveAuth, applyResolveAuth } from '../../src/core/ai/gateway.ts';
-import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
+import { defaultEmbeddingDims, listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
 import type { Recipe } from '../../src/core/ai/types.ts';
 
@@ -87,6 +87,21 @@ describe('IRON RULE: existing 9 recipes survive the v0.32 resolveAuth refactor',
     const auth = defaultResolveAuth(ollama!, { OLLAMA_API_KEY: 'fake-token' }, 'embedding');
     expect(auth.headerName).toBe('Authorization');
     expect(auth.token).toBe('Bearer fake-token');
+  });
+
+  test('Ollama exposes local bge-m3 and mxbai embedding models', () => {
+    const ollama = getRecipe('ollama');
+    const models = ollama!.touchpoints.embedding!.models;
+    expect(models).toContain('bge-m3');
+    expect(models).toContain('mxbai-embed-large');
+  });
+
+  test('Ollama model-specific dims match local embedding widths', () => {
+    const ollama = getRecipe('ollama')!;
+    expect(defaultEmbeddingDims(ollama, 'nomic-embed-text')).toBe(768);
+    expect(defaultEmbeddingDims(ollama, 'bge-m3')).toBe(1024);
+    expect(defaultEmbeddingDims(ollama, 'mxbai-embed-large')).toBe(1024);
+    expect(defaultEmbeddingDims(ollama, 'all-minilm')).toBe(384);
   });
 
   test('Ollama (no env at all) falls back to "Bearer unauthenticated"', () => {

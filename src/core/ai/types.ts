@@ -26,6 +26,11 @@ export type Implementation =
 export interface EmbeddingTouchpoint {
   models: string[];
   default_dims: number;
+  /**
+   * Optional per-model default dimensions for recipes whose model list mixes
+   * fixed-width embedding models. If absent, consumers use default_dims.
+   */
+  model_dims?: Record<string, number>;
   dims_options?: number[]; // for Matryoshka-aware providers
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date

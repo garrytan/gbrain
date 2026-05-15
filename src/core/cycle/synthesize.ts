@@ -38,6 +38,11 @@ import { discoverTranscripts, type DiscoveredTranscript } from './transcript-dis
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
+import {
+  chat as gatewayChat,
+  isAvailable as gatewayIsAvailable,
+  type ChatResult,
+} from '../ai/gateway.ts';
 
 // Slug regex from validatePageSlug — kept in sync.
 // Used for the orchestrator-written summary index slug.
@@ -305,8 +310,8 @@ export async function runPhaseSynthesize(
         continue;
       }
       if (!haiku) {
-        // No API key — can't judge. Skip with explicit reason; don't crash phase.
-        verdicts.push({ filePath: t.filePath, worth: false, reasons: ['no ANTHROPIC_API_KEY for significance judge'], cached: false });
+        // No configured judge — skip with explicit reason; don't crash phase.
+        verdicts.push({ filePath: t.filePath, worth: false, reasons: ['no AI gateway chat provider for significance judge'], cached: false });
         continue;
       }
       const verdict = await judgeSignificance(haiku, t, config.verdictModel);
@@ -640,9 +645,62 @@ export interface JudgeClient {
 }
 
 function makeHaikuClient(): JudgeClient | null {
+  if (!process.env.ANTHROPIC_API_KEY && gatewayIsAvailable('chat')) {
+    return {
+      async create(params) {
+        const result = await gatewayChat({
+          model: normalizeGatewayChatModel(params.model),
+          system: typeof params.system === 'string' ? params.system : undefined,
+          messages: params.messages.map(m => ({
+            role: m.role,
+            content: typeof m.content === 'string'
+              ? m.content
+              : (m.content as Array<{ type?: string; text?: string }>)
+                  .filter(b => b.type === 'text' && typeof b.text === 'string')
+                  .map(b => b.text)
+                  .join('\n'),
+          })),
+          maxTokens: params.max_tokens,
+        });
+        return gatewayResultToAnthropicMessage(result, params.model);
+      },
+    };
+  }
   if (!process.env.ANTHROPIC_API_KEY) return null;
   const client = new Anthropic();
   return { create: client.messages.create.bind(client.messages) };
+}
+
+function normalizeGatewayChatModel(model: string): string {
+  const trimmed = model.trim();
+  if (trimmed.includes(':')) return trimmed;
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('claude-')) return `anthropic:${trimmed}`;
+  if (lower.startsWith('gpt-') || lower.startsWith('o1') || lower.startsWith('o3') || lower.startsWith('o4')) {
+    return `openai:${trimmed}`;
+  }
+  if (lower.startsWith('gemini-')) return `google:${trimmed}`;
+  return trimmed;
+}
+
+function gatewayResultToAnthropicMessage(result: ChatResult, requestedModel: string): Anthropic.Message {
+  return {
+    id: `gateway_judge_${Date.now()}`,
+    type: 'message',
+    role: 'assistant',
+    model: result.model || requestedModel,
+    stop_reason: 'end_turn',
+    stop_sequence: null,
+    content: result.blocks
+      .filter(b => b.type === 'text')
+      .map(b => ({ type: 'text', text: b.text })) as Anthropic.Message['content'],
+    usage: {
+      input_tokens: result.usage.input_tokens,
+      output_tokens: result.usage.output_tokens,
+      cache_read_input_tokens: result.usage.cache_read_tokens,
+      cache_creation_input_tokens: result.usage.cache_creation_tokens,
+    } as Anthropic.Message['usage'],
+  } as Anthropic.Message;
 }
 
 interface VerdictResult {
@@ -1073,4 +1131,5 @@ function makeError(cls: string, code: string, message: string, hint?: string): P
 // double-encoded jsonb regression). Not part of the runtime contract.
 export const __testing = {
   collectChildPutPageSlugs,
+  makeHaikuClient,
 };

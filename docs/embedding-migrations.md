@@ -22,7 +22,28 @@ Switching dimensions requires:
 That's not an upgrade-time auto-run. It's a deliberate, expensive
 operation. Run it when you've decided you actually want the new model.
 
-## Recipe — manual `psql` against your brain
+## Recipe — supported command
+
+Replace `<NEW_DIMS>` and `<MODEL>` with your target embedding width and
+provider model:
+
+```bash
+gbrain migrate-embedding-dim --embedding-dimensions <NEW_DIMS> --embedding-model <MODEL> --yes
+gbrain embed --stale
+```
+
+The command:
+
+1. Drops `idx_chunks_embedding`.
+2. Alters `content_chunks.embedding` to `vector(<NEW_DIMS>)`.
+3. Clears all existing embeddings.
+4. Clears and resizes the semantic query cache embedding column when present.
+5. Recreates vector indexes only when the target dimension is HNSW-eligible.
+6. Updates the embedding model and dimensions in config.
+
+Use `--dry-run` to inspect the plan without changing the brain.
+
+## Manual `psql` fallback
 
 Replace `<NEW_DIMS>` with your target dimension count.
 

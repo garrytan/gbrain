@@ -152,15 +152,17 @@ async function resolveAIOptions(
       process.exit(1);
     }
     out.embedding_model = `${shorthand}:${firstModel}`;
-    out.embedding_dimensions = recipe.touchpoints.embedding!.default_dims;
+    const { defaultEmbeddingDims } = await import('../core/ai/recipes/index.ts');
+    out.embedding_dimensions = defaultEmbeddingDims(recipe, firstModel);
   }
 
   if (dimsArg !== null && !Number.isNaN(dimsArg) && dimsArg > 0) {
     out.embedding_dimensions = dimsArg;
   } else if (out.embedding_model && out.embedding_dimensions === undefined) {
     // Derive default dims from the resolved recipe when verbose form was used.
-    const { getRecipe } = await import('../core/ai/recipes/index.ts');
-    const providerId = out.embedding_model.split(':')[0];
+    const { getRecipe, defaultEmbeddingDims } = await import('../core/ai/recipes/index.ts');
+    const [providerId, ...modelParts] = out.embedding_model.split(':');
+    const modelId = modelParts.join(':');
     const recipe = getRecipe(providerId);
     // v0.32: user_provided_models recipes (litellm, llama-server) have
     // default_dims=0 and ship with `models: []` — there's no sensible
@@ -177,7 +179,7 @@ async function resolveAIOptions(
       process.exit(1);
     }
     if (recipe?.touchpoints.embedding?.default_dims) {
-      out.embedding_dimensions = recipe.touchpoints.embedding.default_dims;
+      out.embedding_dimensions = defaultEmbeddingDims(recipe, modelId);
     }
   }
 

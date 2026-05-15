@@ -1,7 +1,7 @@
 /**
  * Subagent LLM-loop handler (v0.15).
  *
- * Runs one Anthropic Messages API conversation with tool use. The loop is
+ * Runs one AI gateway chat conversation with tool use. The loop is
  * crash-resumable: subagent_messages + subagent_tool_executions together
  * are the single source of truth about where the conversation is. On
  * resume after a worker kill, we load all committed rows, trust any tool
@@ -14,7 +14,7 @@
  *     renewable error so the worker re-claims.
  *   - dual-signal abort wiring (ctx.signal + ctx.shutdownSignal) drains
  *     the in-flight call and commits whatever turns are already persisted.
- *   - Anthropic prompt cache markers on system + tools blocks.
+ *   - Prompt cache markers on system + tools blocks when the provider supports them.
  *   - token rollup via ctx.updateTokens per turn.
  *
  * NOT in v0.15: refusal detection, stop_reason=max_tokens partial
@@ -25,6 +25,13 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import {
+  chat as gatewayChat,
+  type ChatBlock,
+  type ChatMessage,
+  type ChatResult,
+  type ChatToolDef,
+} from '../../ai/gateway.ts';
 import type { MinionJobContext, MinionJob } from '../types.ts';
 import { UnrecoverableError } from '../types.ts';
 import type {
@@ -47,14 +54,16 @@ import {
   logSubagentSubmission,
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
-import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import { resolveModel, TIER_DEFAULTS } from '../../model-config.ts';
 
 // ── Defaults ────────────────────────────────────────────────
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_MAX_TURNS = 20;
-const DEFAULT_RATE_KEY = 'anthropic:messages';
-const DEFAULT_MAX_CONCURRENT = Number(process.env.GBRAIN_ANTHROPIC_MAX_INFLIGHT ?? '8');
+const DEFAULT_RATE_KEY = 'ai-gateway:chat';
+const DEFAULT_MAX_CONCURRENT = Number(
+  process.env.GBRAIN_CHAT_MAX_INFLIGHT ?? process.env.GBRAIN_ANTHROPIC_MAX_INFLIGHT ?? '8',
+);
 const DEFAULT_LEASE_TTL_MS = 120_000;
 const DEFAULT_SYSTEM = 'You are a helpful assistant running as a gbrain subagent.';
 
@@ -71,18 +80,17 @@ export interface MessagesClient {
 export interface SubagentDeps {
   /** Engine for DB-backed ops (tools + message persistence + rate leases). */
   engine: BrainEngine;
-  /** Anthropic client. Defaults to the SDK-constructed client. */
+  /** Messages-shaped client. Defaults to the AI gateway chat adapter. */
   client?: MessagesClient;
   /**
-   * Anthropic SDK constructor. Defaults to `() => new Anthropic()`.
-   * Overridable in tests so the factory default-client branch is
-   * exercisable without an ANTHROPIC_API_KEY or a real API call.
+   * Legacy Anthropic SDK constructor. When supplied, bypasses the gateway
+   * adapter and uses `makeAnthropic().messages`.
    * When `deps.client` is provided, this is unused.
    */
   makeAnthropic?: () => Anthropic;
   /** Config (MCP, brain, etc.). Defaults to loadConfig(). */
   config?: GBrainConfig;
-  /** Rate-lease key. Defaults to `anthropic:messages`. */
+  /** Rate-lease key. Defaults to `ai-gateway:chat`. */
   rateLeaseKey?: string;
   /** Max concurrent inflight calls on that key. Defaults to GBRAIN_ANTHROPIC_MAX_INFLIGHT or 8. */
   maxConcurrent?: number;
@@ -123,18 +131,13 @@ interface PersistedToolExec {
 /**
  * Build a subagent handler bound to a specific engine. `registerBuiltin
  * Handlers` wires this up as `worker.register('subagent', handler)` at
- * worker startup. Always registered — `ANTHROPIC_API_KEY` is the natural
- * cost gate and `PROTECTED_JOB_NAMES` gates submission.
+ * worker startup. Always registered — the configured AI gateway provider is
+ * the natural cost gate and `PROTECTED_JOB_NAMES` gates submission.
  */
 export function makeSubagentHandler(deps: SubagentDeps) {
   const engine = deps.engine;
-  // sdk.messages IS the MessagesClient-shaped object. The v0.16.0 bug was
-  // casting new Anthropic() (top level) to MessagesClient, but .create()
-  // lives at sdk.messages.create. Assigning sdk.messages directly gets the
-  // right object; JS method-call semantics preserve `this` at the call
-  // site (subagent.ts invokes client.create(...) with client === sdk.messages).
-  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic());
-  const client: MessagesClient = deps.client ?? makeAnthropic().messages;
+  const usesGatewayClient = !deps.client && !deps.makeAnthropic;
+  const client: MessagesClient = deps.client ?? makeGatewayMessagesClient(deps.makeAnthropic);
   const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
   const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;
   const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
@@ -146,25 +149,15 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       throw new Error('subagent job data.prompt is required (string)');
     }
 
-    // v0.31.12 subagent runtime enforcement (Layer 2 of 3 — see plan/Codex F1+F2+F13).
-    // - If `data.model` is set and non-Anthropic, reject (Layer 1 fallback if the
-    //   submit-time guard in MinionQueue.add didn't fire — defense in depth).
-    // - Otherwise route through resolveModel with tier=subagent. The resolver
-    //   warns + falls back to TIER_DEFAULTS.subagent if models.default or
-    //   models.tier.subagent resolved to non-Anthropic.
-    if (data.model && !isAnthropicProvider(data.model)) {
-      throw new Error(
-        `subagent job rejected: data.model "${data.model}" is non-Anthropic. ` +
-        `The subagent loop is Anthropic-only (Messages API + prompt caching). ` +
-        `Pass an Anthropic model id (e.g. claude-sonnet-4-6) or omit data.model to use the configured default.`,
-      );
-    }
-    const model = data.model
+    // If the trusted submitter supplied a model, send that exact route through
+    // the AI gateway. Otherwise preserve the existing subagent tier default.
+    const resolvedModel = data.model
       ?? await resolveModel(engine, {
         tier: 'subagent',
         configKey: 'models.subagent',
         fallback: TIER_DEFAULTS.subagent,
       });
+    const model = usesGatewayClient ? normalizeChatModelRoute(resolvedModel) : resolvedModel;
     const maxTurns = data.max_turns ?? DEFAULT_MAX_TURNS;
     const systemPrompt = data.system ?? DEFAULT_SYSTEM;
 
@@ -252,6 +245,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             synthesizedResults.push({
               type: 'tool_result',
               tool_use_id: use.id,
+              name: use.name,
               content: asStringIfNotObject(prior.output),
             } as ContentBlock);
             continue;
@@ -260,6 +254,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             synthesizedResults.push({
               type: 'tool_result',
               tool_use_id: use.id,
+              name: use.name,
               content: prior.error ?? 'tool failed',
               is_error: true,
             } as ContentBlock);
@@ -273,7 +268,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
               `tool "${use.name}" is not in the registry for this subagent`,
             );
             synthesizedResults.push({
-              type: 'tool_result', tool_use_id: use.id,
+              type: 'tool_result', tool_use_id: use.id, name: use.name,
               content: `tool "${use.name}" is not available`, is_error: true,
             } as ContentBlock);
             continue;
@@ -288,14 +283,14 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             });
             await persistToolExecComplete(engine, ctx.id, use.id, output);
             synthesizedResults.push({
-              type: 'tool_result', tool_use_id: use.id,
+              type: 'tool_result', tool_use_id: use.id, name: use.name,
               content: asStringIfNotObject(output),
             } as ContentBlock);
           } catch (e) {
             const errText = e instanceof Error ? (e.stack ?? e.message) : String(e);
             await persistToolExecFailed(engine, ctx.id, last.message_idx, use.id, use.name, use.input, errText);
             synthesizedResults.push({
-              type: 'tool_result', tool_use_id: use.id,
+              type: 'tool_result', tool_use_id: use.id, name: use.name,
               content: errText, is_error: true,
             } as ContentBlock);
           }
@@ -466,6 +461,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           toolResults.push({
             type: 'tool_result',
             tool_use_id: use.id,
+            name: toolName,
             content: `tool "${toolName}" is not available`,
             is_error: true,
           } as ContentBlock);
@@ -486,6 +482,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           toolResults.push({
             type: 'tool_result',
             tool_use_id: use.id,
+            name: toolName,
             content: asStringIfNotObject(prior.output),
           } as ContentBlock);
           continue;
@@ -494,6 +491,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           toolResults.push({
             type: 'tool_result',
             tool_use_id: use.id,
+            name: toolName,
             content: prior.error ?? 'tool failed',
             is_error: true,
           } as ContentBlock);
@@ -527,6 +525,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           toolResults.push({
             type: 'tool_result',
             tool_use_id: use.id,
+            name: toolName,
             content: asStringIfNotObject(output),
           } as ContentBlock);
         } catch (e) {
@@ -545,6 +544,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           toolResults.push({
             type: 'tool_result',
             tool_use_id: use.id,
+            name: toolName,
             content: errText,
             is_error: true,
           } as ContentBlock);
@@ -574,6 +574,136 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       tokens: tokenTotals,
     };
   };
+}
+
+function makeGatewayMessagesClient(makeAnthropic?: () => Anthropic): MessagesClient {
+  // Back-compatibility for tests or local callers that still inject the SDK
+  // constructor without passing `client` directly.
+  if (makeAnthropic) return makeAnthropic().messages;
+  return {
+    async create(params, opts) {
+      const result = await gatewayChat({
+        model: params.model,
+        system: normalizeSystem(params.system),
+        messages: params.messages.map(toGatewayMessage),
+        tools: (params.tools ?? []).map(toGatewayTool),
+        maxTokens: params.max_tokens,
+        abortSignal: opts?.signal,
+        cacheSystem: true,
+      });
+      return fromGatewayResult(result, params.model);
+    },
+  };
+}
+
+function normalizeChatModelRoute(model: string): string {
+  const trimmed = model.trim();
+  if (trimmed.includes(':')) return trimmed;
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('claude-')) return `anthropic:${trimmed}`;
+  if (lower.startsWith('gpt-') || lower.startsWith('o1') || lower.startsWith('o3') || lower.startsWith('o4')) {
+    return `openai:${trimmed}`;
+  }
+  if (lower.startsWith('gemini-')) return `google:${trimmed}`;
+  return trimmed;
+}
+
+function normalizeSystem(system: Anthropic.MessageCreateParamsNonStreaming['system']): string | undefined {
+  if (typeof system === 'string') return system;
+  if (Array.isArray(system)) {
+    return system
+      .map(block => typeof block === 'string' ? block : ('text' in block ? String(block.text ?? '') : ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  return undefined;
+}
+
+type AnthropicToolParam = NonNullable<Anthropic.MessageCreateParamsNonStreaming['tools']>[number];
+
+function toGatewayTool(tool: AnthropicToolParam): ChatToolDef {
+  return {
+    name: tool.name,
+    description: tool.description ?? '',
+    inputSchema: (tool as { input_schema?: Record<string, unknown> }).input_schema ?? {},
+  };
+}
+
+function toGatewayMessage(message: Anthropic.MessageParam): ChatMessage {
+  if (typeof message.content === 'string') {
+    return { role: message.role, content: message.content };
+  }
+  const content = (message.content as ContentBlock[]).map(toGatewayBlock);
+  const hasOnlyToolResults = content.length > 0 && content.every(b => b.type === 'tool-result');
+  return { role: hasOnlyToolResults ? 'tool' : message.role, content };
+}
+
+function toGatewayBlock(block: ContentBlock): ChatBlock {
+  if (block.type === 'text') {
+    return { type: 'text', text: String(block.text ?? '') };
+  }
+  if (block.type === 'tool_use') {
+    return {
+      type: 'tool-call',
+      toolCallId: String(block.id),
+      toolName: String(block.name),
+      input: block.input,
+    };
+  }
+  if (block.type === 'tool_result') {
+    return {
+      type: 'tool-result',
+      toolCallId: String(block.tool_use_id),
+      toolName: typeof block.name === 'string' ? block.name : 'tool',
+      output: block.content,
+      isError: block.is_error === true,
+    };
+  }
+  return { type: 'text', text: JSON.stringify(block) };
+}
+
+function fromGatewayResult(result: ChatResult, requestedModel: string): Anthropic.Message {
+  return {
+    id: `gateway_${Date.now()}`,
+    type: 'message',
+    role: 'assistant',
+    model: result.model || requestedModel,
+    stop_reason: mapGatewayStopReason(result.stopReason) as Anthropic.Message['stop_reason'],
+    stop_sequence: null,
+    content: result.blocks.map(fromGatewayBlock) as Anthropic.Message['content'],
+    usage: {
+      input_tokens: result.usage.input_tokens,
+      output_tokens: result.usage.output_tokens,
+      cache_read_input_tokens: result.usage.cache_read_tokens,
+      cache_creation_input_tokens: result.usage.cache_creation_tokens,
+    } as Anthropic.Message['usage'],
+  } as Anthropic.Message;
+}
+
+function fromGatewayBlock(block: ChatBlock): ContentBlock {
+  if (block.type === 'text') return { type: 'text', text: block.text };
+  if (block.type === 'tool-call') {
+    return {
+      type: 'tool_use',
+      id: block.toolCallId,
+      name: block.toolName,
+      input: block.input,
+    };
+  }
+  return {
+    type: 'tool_result',
+    tool_use_id: block.toolCallId,
+    name: block.toolName,
+    content: block.output,
+    is_error: block.isError,
+  };
+}
+
+function mapGatewayStopReason(reason: ChatResult['stopReason']): string {
+  if (reason === 'tool_calls') return 'tool_use';
+  if (reason === 'length') return 'max_tokens';
+  if (reason === 'refusal') return 'refusal';
+  return 'end_turn';
 }
 
 // ── Internal: persistence ───────────────────────────────────

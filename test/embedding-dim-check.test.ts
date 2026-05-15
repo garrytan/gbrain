@@ -16,6 +16,8 @@ import {
   readContentChunksEmbeddingDim,
   embeddingMismatchMessage,
 } from '../src/core/embedding-dim-check.ts';
+import { migrateEmbeddingDimensions } from '../src/core/embedding-dim-migration.ts';
+import { configureGateway } from '../src/core/ai/gateway.ts';
 
 // Canonical pattern: single engine per file, init once, disconnect once.
 // The two tests below diverge in whether they want a migrated brain or a
@@ -94,4 +96,53 @@ describe('embeddingMismatchMessage', () => {
     expect(initMsg).toContain('Refusing to silently re-template');
     expect(doctorMsg).toContain('Embedding dimension mismatch detected');
   });
+});
+
+describe('migrateEmbeddingDimensions', () => {
+  test('resizes content_chunks.embedding and clears stale embeddings', async () => {
+    configureGateway({
+      embedding_model: 'ollama:nomic-embed-text',
+      embedding_dimensions: 768,
+      env: {},
+    });
+
+    const migrating = new PGLiteEngine();
+    await migrating.connect({});
+    try {
+      await migrating.initSchema();
+      await migrating.putPage('test/dim-migration', {
+        type: 'concept',
+        title: 'Dim Migration',
+        compiled_truth: 'migration proof',
+        timeline: '',
+        frontmatter: {},
+      });
+      await migrating.upsertChunks('test/dim-migration', [{
+        chunk_index: 0,
+        chunk_text: 'migration proof',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array(768),
+      }]);
+
+      const before = await readContentChunksEmbeddingDim(migrating);
+      expect(before.dims).toBe(768);
+      expect((await migrating.getChunks('test/dim-migration'))[0]!.embedded_at).toBeTruthy();
+
+      const result = await migrateEmbeddingDimensions(migrating, 1024);
+
+      expect(result.status).toBe('migrated');
+      expect(result.currentDims).toBe(768);
+      expect(result.targetDims).toBe(1024);
+      expect(result.embeddingsCleared).toBe(true);
+
+      const after = await readContentChunksEmbeddingDim(migrating);
+      expect(after.dims).toBe(1024);
+      const chunks = await migrating.getChunks('test/dim-migration');
+      expect(chunks[0]!.embedded_at).toBeNull();
+      expect(await migrating.getConfig('embedding_dimensions')).toBe('1024');
+    } finally {
+      await migrating.disconnect();
+      configureGateway({ env: { ...process.env } });
+    }
+  }, 60000);
 });

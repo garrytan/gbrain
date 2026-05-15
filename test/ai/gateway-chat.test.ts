@@ -30,12 +30,14 @@ import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 
 describe('chat touchpoint — recipe registry', () => {
   test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
-    const expected = ['anthropic', 'openai', 'google', 'deepseek', 'groq', 'together'];
+    const expected = ['anthropic', 'openai', 'google', 'deepseek', 'groq', 'together', 'litellm'];
     for (const id of expected) {
       const r = getRecipe(id);
       expect(r, `recipe missing: ${id}`).toBeDefined();
       expect(r!.touchpoints.chat, `${id} missing chat touchpoint`).toBeDefined();
-      expect(r!.touchpoints.chat!.models.length, `${id} chat models empty`).toBeGreaterThan(0);
+      if (id !== 'litellm') {
+        expect(r!.touchpoints.chat!.models.length, `${id} chat models empty`).toBeGreaterThan(0);
+      }
       expect(r!.touchpoints.chat!.supports_subagent_loop, `${id} should support subagent loop`).toBe(true);
     }
   });
@@ -60,6 +62,7 @@ describe('chat touchpoint — recipe registry', () => {
     expect(getRecipe('deepseek')!.base_url_default).toBe('https://api.deepseek.com/v1');
     expect(getRecipe('groq')!.base_url_default).toBe('https://api.groq.com/openai/v1');
     expect(getRecipe('together')!.base_url_default).toBe('https://api.together.xyz/v1');
+    expect(getRecipe('litellm')!.base_url_default).toBe('http://localhost:4000');
   });
 });
 
@@ -127,6 +130,7 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
   test('assertTouchpoint accepts arbitrary model on openai-compat tier', () => {
     // openai-compat lets users pass models not declared in the recipe (provider may host more)
     expect(() => assertTouchpoint(getRecipe('groq')!, 'chat', 'some-future-model')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('litellm')!, 'chat', 'gpt-5.5')).not.toThrow();
   });
 });
 
@@ -179,6 +183,11 @@ describe('chat touchpoint — gateway config plumbing', () => {
     // Voyage doesn't expose a chat touchpoint; isAvailable should refuse.
     configureGateway({ chat_model: 'voyage:voyage-3', env: { VOYAGE_API_KEY: 'fake' } });
     expect(isAvailable('chat')).toBe(false);
+  });
+
+  test('isAvailable("chat") accepts unauthenticated LiteLLM chat proxy', () => {
+    configureGateway({ chat_model: 'litellm:gpt-5.5', env: {} });
+    expect(isAvailable('chat')).toBe(true);
   });
 });
 
