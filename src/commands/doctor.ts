@@ -414,7 +414,92 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // eval run? Non-blocking — surfaces as ok + hint.
   checks.push(await checkEvalDrift(engine));
 
+  // 9. v0.33.2+ reranker_health: surfaces rerank-audit failures from
+  // ~/.gbrain/audit/rerank-failures-*.jsonl. Failure-only (no success
+  // logging on the search hot path per CDX2-F22). Reads
+  // search.reranker.enabled FIRST so absence-of-failures means different
+  // things when reranker is on vs off.
+  checks.push(await checkRerankerHealth(engine));
+
   return computeDoctorReport(checks);
+}
+
+/**
+ * v0.33.2+ reranker_health doctor check.
+ *
+ * Logic (post-CDX2 review):
+ *   1) Read `search.reranker.enabled` first. When disabled and no
+ *      failures in window → 'ok: reranker disabled'. Avoids interpreting
+ *      "no events" as "broken" when reranker is simply not in use.
+ *   2) Walk last 7 days of `~/.gbrain/audit/rerank-failures-*.jsonl`.
+ *   3) Auth failures: ANY single one warns (config-time problem doctor's
+ *      own probe should have caught — surface it).
+ *   4) Transient (network/timeout/rate_limit): warn at >=5 in window.
+ *      Below that they're noise; reranker fails open anyway.
+ *   5) Payload-too-large failures: warn at >=1 (indicates a workload
+ *      mismatch that the operator should know about).
+ *
+ * Engine-agnostic (file-based + one config-key read).
+ */
+export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const { readRecentRerankFailures } = await import('../core/rerank-audit.ts');
+    const cfg = await engine.getConfig('search.reranker.enabled');
+    const rerankerEnabled = cfg === 'true' || cfg === '1';
+
+    const failures = readRecentRerankFailures(7);
+    if (failures.length === 0) {
+      return {
+        name: 'reranker_health',
+        status: 'ok',
+        message: rerankerEnabled
+          ? 'No rerank failures in last 7 days'
+          : 'Reranker disabled — no failures expected',
+      };
+    }
+
+    const authFails = failures.filter((f) => f.reason === 'auth');
+    if (authFails.length > 0) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${authFails.length} reranker auth failure(s) in last 7 days. Fix: verify ZEROENTROPY_API_KEY and run \`gbrain models doctor\`.`,
+      };
+    }
+
+    const payloadFails = failures.filter((f) => f.reason === 'payload_too_large');
+    if (payloadFails.length > 0) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${payloadFails.length} reranker payload-too-large failure(s) in last 7 days. Fix: lower \`search.reranker.top_n_in\` (default 30) or split very large documents.`,
+      };
+    }
+
+    const transientFails = failures.filter(
+      (f) => f.reason === 'network' || f.reason === 'timeout' || f.reason === 'rate_limit',
+    );
+    if (transientFails.length >= 5) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${transientFails.length} transient reranker failure(s) in last 7 days. Search fails open to RRF order; check ZE status if persistent.`,
+      };
+    }
+
+    return {
+      name: 'reranker_health',
+      status: 'ok',
+      message: `${failures.length} reranker failure(s) in last 7 days (below threshold)`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'reranker_health',
+      status: 'warn',
+      message: `Could not check reranker audit: ${msg}`,
+    };
+  }
 }
 
 /**
@@ -2420,6 +2505,9 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     checks.push(await checkSearchMode(engine));
     progress.heartbeat('eval_drift');
     checks.push(await checkEvalDrift(engine));
+    // v0.33.2+ reranker_health — read JSONL audit; warn on auth or volume.
+    progress.heartbeat('reranker_health');
+    checks.push(await checkRerankerHealth(engine));
   }
 
   progress.finish();
