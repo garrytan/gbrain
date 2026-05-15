@@ -334,6 +334,43 @@ esac
     });
   });
 
+  describe('awaitChildExit short-circuit (P2 review fix)', () => {
+    // Regression: pre-fix the method registered child.once('exit', ...) AFTER
+    // child.exitCode was already populated, so a child that drained quickly
+    // between killChild('SIGTERM') and awaitChildExit() would never resolve
+    // and the caller waited out the full timeout. Fix probes exitCode +
+    // signalCode first and short-circuits.
+    it('resolves immediately when the child has already exited', async () => {
+      const h = makeHarness('await-already-exited', 'exit 0');
+      try {
+        // Spin up a supervisor; drive it for ONE spawn cycle and then stop.
+        const events: ChildSupervisorEvent[] = [];
+        let stopping = false;
+        const sup = new ChildWorkerSupervisor({
+          cliPath: h.workerScript,
+          args: [],
+          maxCrashes: 1,
+          _backoffFloorMs: 1,
+          isStopping: () => stopping,
+          onMaxCrashesExceeded: () => { stopping = true; },
+          onEvent: (e) => {
+            events.push(e);
+            if (e.kind === 'worker_exited') stopping = true;
+          },
+        });
+        await sup.run();
+        // After run() returns, the child has exited; awaitChildExit on an
+        // already-finished cycle MUST resolve in well under the timeout.
+        const start = Date.now();
+        await sup.awaitChildExit(5_000);
+        const elapsed = Date.now() - start;
+        expect(elapsed).toBeLessThan(200);
+      } finally {
+        h.cleanup();
+      }
+    });
+  });
+
   describe('event shape', () => {
     it('worker_spawned + worker_exited fire on every cycle with consistent shape', async () => {
       const h = makeHarness('shape', 'exit 0');

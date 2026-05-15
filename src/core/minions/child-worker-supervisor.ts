@@ -162,10 +162,23 @@ export class ChildWorkerSupervisor {
   /**
    * Wait for the current child to exit, bounded by `timeoutMs`. No-op if no
    * child is running. Used by composers' graceful-shutdown drains.
+   *
+   * Handles the already-exited case: if the child terminated between
+   * `killChild('SIGTERM')` and this call (common on fast SIGTERM
+   * responders), Node's `'exit'` event has already fired and a late
+   * `once('exit', ...)` listener would never resolve. We probe
+   * `child.exitCode !== null` first and short-circuit so clean shutdown
+   * is sub-second instead of waiting out the full `timeoutMs`.
    */
   awaitChildExit(timeoutMs: number): Promise<void> {
     if (!this._child) return Promise.resolve();
     const child = this._child;
+    // Already exited? `exitCode` becomes non-null once Node has seen the
+    // child terminate. `signalCode` is the symmetric flag for kill-signal
+    // termination — checked too so a SIGKILLed child also short-circuits.
+    if (child.exitCode !== null || child.signalCode !== null) {
+      return Promise.resolve();
+    }
     return new Promise<void>((resolve) => {
       let settled = false;
       const onExit = () => {
