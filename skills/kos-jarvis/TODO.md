@@ -386,36 +386,59 @@ If the corpus shifts later (signal-detector + voice-note-ingest accumulate
 enough recurring concept stubs across multiple months), reopen and
 re-evaluate (a) or (c) with new evidence.
 
-### [ ] (M2-B) `kos-compat-api` ↔ `gbrain serve --http` + thin translator 评估
+### [x] (M2-B) `kos-compat-api` ↔ `gbrain serve --http` + thin translator 评估 — VERDICT 2026-05-15: option (c), don't touch
 
-**Why**: 上游 v0.26.0 加 `gbrain serve --http`(MCP-over-HTTP + bearer
-auth + admin React dashboard + Operation.scope/.localOnly)。这是 fork
-`kos-compat-api` 当年自建 HTTP boundary 的根本原因第一次 closed。差异:
-- 上游契约: MCP JSON-RPC 形态(`tools/call`, `resources/list` 等)
-- fork 契约: KOS v1 兼容 (`/query`, `/ingest`, `/digest`, `/status`,
-  `/health`,直接 JSON body,适配 Notion Knowledge Agent 和 OpenClaw
-  feishu 已有调用)
+Sized the three candidate paths against actual surfaces:
 
-不能直接退役 `kos-compat-api` (外部系统 hard-coded `kos.chenge.ink/<endpoint>`
-契约),但可以:
-- (a) 让 `kos-compat-api` 内部 spawn `gbrain serve --http` 子进程,
-  然后 KOS-v1 endpoint 翻译成 MCP `tools/call`。Reduce ~500 LOC fork
-  code at the cost of 1 子进程跳转。
-- (b) 直接迁外部系统到 MCP-over-HTTP(高代价,Notion Agent 不归我们
-  控制)。
-- (c) 不动 `kos-compat-api`,只观察上游能力,等下次需求(比如多端共享
-  brain)再评估。
+- Upstream `src/commands/serve-http.ts`: 1116 LoC. OAuth 2.1 +
+  MCP JSON-RPC transport + admin dashboard + token persistence.
+- Fork `server/kos-compat-api.ts`: 661 LoC. KOS-v1 contract:
+  `GET /health`, `GET /status`, `GET /digest`, `POST /query`,
+  `POST /ingest`. Bearer-auth, JSON body.
+- MCP ops available (`src/core/operations.ts`): `query`, `search`,
+  `get_page`, `put_page`, `list_pages`, `takes_*`, etc. — none of
+  them is a 1:1 for `/ingest` or `/digest`.
 
-**What**:
-1. 读 `src/commands/serve-http.ts` 看上游 HTTP 形态。
-2. 在测试脚本里跑通 `gbrain serve --http --port 7226` + 用 curl 把
-   `/query` body 转成 `tools/call` 看是否可行。
-3. 评估翻译层 LOC + 风险(认证 / scope / 错误码)。
-4. 决定:(a)/(b)/(c)。
+**Endpoint-by-endpoint translation feasibility for option (a)**:
 
-**Acceptance**: 决定文件 + 若选 (a),实施任务拆 P1。
+| KOS-v1 endpoint | MCP equivalent | Notes |
+|---|---|---|
+| `POST /query` | `tools/call` `name="query"` | clean 1:1 (~80 LoC saved) |
+| `GET /status` | `tools/call` `name="list_pages"` + client-side aggregation | partial; per-kind histograms need new aggregation (~20-30 LoC saved best case) |
+| `GET /digest` | none | reads `~/brain/.agent/digests/patrol-*.md` — pure fork-side concern, stays |
+| `POST /ingest` | none | writes md to filesystem + git commit + spawns `gbrain sync` subprocess — pure fork-side concern, stays (~250 LoC unchanged) |
+| `GET /health` | n/a | HTTP-level ping, stays (~5 LoC) |
 
-**Scope**: 2-3 h 评估,(a) 实施另起 4-6 h。
+**Net LOC math** for option (a): theoretical ~500 LoC reduction in the
+TODO premise was wishful — only /query and /status have direct MCP
+equivalents (~110 LoC). A translation layer adds back ~80-150 LoC
+(KOS-v1 → JSON-RPC marshal, OAuth client management for talking to
+its own subprocess, error-code mapping). **Realistic net change: 0
+to -50 LoC**, in exchange for:
+
+- One extra subprocess (`gbrain serve --http`) at boot + lifecycle
+- OAuth 2.1 client-side dance for kos-compat-api → gbrain-serve
+- A second port to expose internally
+- Higher MTTR for incidents that fan out across two processes
+
+**(b)** rejected — Notion Knowledge Agent and OpenClaw feishu cron
+are hard-coded against `kos.chenge.ink/<endpoint>` with KOS-v1
+JSON-body shape. Migrating them is out of scope for the fork.
+
+**(c) selected — don't touch.** kos-compat-api is fine. The
+"upstream closed our root cause" framing in the original M2-B
+hypothesis is technically true (HTTP boundary now upstream-supported)
+but operationally moot — fork-side /ingest + /digest dominate the
+LoC and the external clients lock us to KOS-v1 wire shape anyway.
+
+**Re-evaluate trigger**:
+- Upstream ships a non-OAuth, KOS-style HTTP mode (unlikely).
+- Notion Agent rebuild reaches a point where MCP-over-HTTP is on
+  the table for external systems.
+- kos-compat-api needs a feature only OAuth-MCP provides (per-client
+  audit, etc.) that's not worth porting.
+
+Decision artifact: this entry. No code, no plan doc.
 
 ### [ ] (M2-C) Phase 4-5 邮件/日历导入 → 改基于上游 `archive-crawler`
 
