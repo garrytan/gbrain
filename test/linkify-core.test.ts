@@ -127,3 +127,37 @@ describe('linkifyMarkdown — ambiguity policy', () => {
     expect((ambig[0] as { occurrences: number }).occurrences).toBe(5);
   });
 });
+
+describe('linkifyMarkdown — Unicode & apostrophes', () => {
+  test("Jessie's matches (straight apostrophe)", () => {
+    const map = buildMap([['jessie', ['people/jbryan-aseva']]]);
+    const meta = buildMeta([['people/jbryan-aseva', { name: 'Jessie Bryan', domain: 'aseva.com', isAutoStub: false }]]);
+    const result = linkifyMarkdown("Jessie's car.", map, meta, cfgEmpty);
+    expect(result.text).toBe("[[people/jbryan-aseva|Jessie]]'s car.");
+  });
+
+  test("Jessie's matches (curly apostrophe U+2019)", () => {
+    const map = buildMap([['jessie', ['people/jbryan-aseva']]]);
+    const meta = buildMeta([['people/jbryan-aseva', { name: 'Jessie Bryan', domain: 'aseva.com', isAutoStub: false }]]);
+    const result = linkifyMarkdown("Jessie's car.", map, meta, cfgEmpty);
+    expect(result.text).toBe("[[people/jbryan-aseva|Jessie]]'s car.");
+  });
+
+  test("O'Brien does NOT match Brien", () => {
+    const map = buildMap([['brien', ['people/brien-foo']]]);
+    const meta = buildMeta([['people/brien-foo', { name: 'Pat Brien', domain: 'foo.com', isAutoStub: false }]]);
+    const result = linkifyMarkdown("Joe O'Brien left.", map, meta, cfgEmpty);
+    expect(result.text).toBe("Joe O'Brien left.");
+  });
+
+  test('longest-first: "Jessie Bryan" beats "Jessie"', () => {
+    const map = buildMap([
+      ['jessie', ['people/jbryan-aseva']],
+      ['jessie bryan', ['people/jbryan-aseva']],
+      ['bryan', ['people/jbryan-aseva']],
+    ]);
+    const meta = buildMeta([['people/jbryan-aseva', { name: 'Jessie Bryan', domain: 'aseva.com', isAutoStub: false }]]);
+    const result = linkifyMarkdown('Jessie Bryan said hi.', map, meta, cfgEmpty);
+    expect(result.text).toBe('[[people/jbryan-aseva|Jessie Bryan]] said hi.');
+  });
+});
