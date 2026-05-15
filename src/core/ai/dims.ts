@@ -47,6 +47,24 @@ export function isValidVoyageOutputDim(dims: number): boolean {
   return (VOYAGE_VALID_OUTPUT_DIMS as readonly number[]).includes(dims);
 }
 
+// v0.33.2+ ZeroEntropy zembed-1 flexible-dim allowlist. zembed-1 distills
+// from zerank-2 (Matryoshka-style); smaller dims trade quality for storage.
+// ZE rejects any other value with HTTP 400; catching it locally produces a
+// clearer error with the valid-values hint. Same failure mode as the Voyage
+// case: `embedding_model: zeroentropyai:zembed-1` configured without
+// `embedding_dimensions` falls back to DEFAULT_EMBEDDING_DIMENSIONS=1536
+// (an OpenAI default), which ZE doesn't accept.
+const ZEROENTROPY_DIM_MODELS = new Set(['zembed-1']);
+export const ZEROENTROPY_VALID_DIMS = [2560, 1280, 640, 320, 160, 80, 40] as const;
+
+export function supportsZeroEntropyDimension(modelId: string): boolean {
+  return ZEROENTROPY_DIM_MODELS.has(modelId);
+}
+
+export function isValidZeroEntropyDim(dims: number): boolean {
+  return (ZEROENTROPY_VALID_DIMS as readonly number[]).includes(dims);
+}
+
 /**
  * Build the providerOptions blob for embedMany() that pins output dimensions.
  *
@@ -56,15 +74,26 @@ export function isValidVoyageOutputDim(dims: number): boolean {
  * endpoint accepts `output_dimension`, but the AI SDK openai-compatible
  * adapter only forwards `dimensions`; gateway.ts translates that field to
  * Voyage's wire name in voyageCompatFetch.
+ *
+ * v0.33.2+ 4th param `inputType`: 'query' | 'document' for asymmetric
+ * providers (ZE zembed-1, Voyage v3+, MiniMax embo-01). When omitted, the
+ * existing document-encoding behavior is preserved (no `input_type` field
+ * emitted for symmetric providers; legacy hardcoded `type:'db'` for
+ * embo-01). gateway.embedQuery() threads `'query'`; gateway.embed() threads
+ * `'document'`. Per-model filtering happens INSIDE the switch — the field
+ * is NEVER emitted for providers that don't accept it (OpenAI text-3,
+ * DashScope, Zhipu) so the request body stays clean for those endpoints.
  */
 export function dimsProviderOptions(
   implementation: Implementation,
   modelId: string,
   dims: number,
+  inputType?: 'query' | 'document',
 ): Record<string, any> | undefined {
   switch (implementation) {
     case 'native-openai': {
       // text-embedding-3-* supports dimensions; text-embedding-ada-002 does not.
+      // OpenAI embeddings are symmetric — inputType ignored.
       if (modelId.startsWith('text-embedding-3')) {
         return { openai: { dimensions: dims } };
       }
@@ -80,10 +109,31 @@ export function dimsProviderOptions(
       // Anthropic has no embedding model.
       return undefined;
     case 'openai-compatible':
-      // Most openai-compatible providers (Ollama, LM Studio, vLLM, LiteLLM)
-      // do not expose a standard dimensions knob. Voyage is the exception,
-      // but it needs the SDK-supported field here so voyageCompatFetch can
-      // translate it to `output_dimension` before the HTTP request is sent.
+      // ZE zembed-1 — flexible Matryoshka dims + asymmetric input_type.
+      // Lives BEFORE the generic openai-compatible fall-through to avoid
+      // sending input_type to providers (Azure/DashScope/Zhipu) that
+      // would reject it.
+      if (supportsZeroEntropyDimension(modelId)) {
+        if (!isValidZeroEntropyDim(dims)) {
+          throw new AIConfigError(
+            `ZeroEntropy model "${modelId}" supports dimensions only in ` +
+            `{${ZEROENTROPY_VALID_DIMS.join(', ')}}, got ${dims}.`,
+            `Set \`embedding_dimensions\` to one of ` +
+            `${ZEROENTROPY_VALID_DIMS.join('/')} in your gbrain config.`,
+          );
+        }
+        return {
+          openaiCompatible: {
+            dimensions: dims,
+            input_type: inputType ?? 'document',
+          },
+        };
+      }
+      // Voyage hosted flexible-dim models — accept `output_dimension`
+      // (translated by voyageCompatFetch) AND `input_type: query|document`
+      // for asymmetric retrieval. inputType is opt-in: when undefined,
+      // emit no field (preserves pre-v0.33.2 callers + existing tests).
+      // When threaded explicitly by embedQuery()/embed(), it reaches Voyage.
       if (supportsVoyageOutputDimension(modelId)) {
         // Fail-loud at the embed boundary if the user configured a dim
         // Voyage doesn't accept. The most common path here: a brain with
@@ -101,13 +151,19 @@ export function dimsProviderOptions(
             `switch to a fixed-dim Voyage model (e.g. voyage-3, voyage-3-lite).`,
           );
         }
-        return { openaiCompatible: { dimensions: dims } };
+        return {
+          openaiCompatible: {
+            dimensions: dims,
+            ...(inputType ? { input_type: inputType } : {}),
+          },
+        };
       }
       // OpenAI text-embedding-3 family on the openai-compatible adapter
       // (Azure OpenAI hosts these via its OpenAI-compatible /embeddings
       // endpoint). The provider defaults to the model's native size (3072
       // for `-large`, 1536 for `-small`); without `dimensions`, brains
       // configured for a smaller width (e.g. 1536) hard-fail at first embed.
+      // Azure/OpenAI-compat embeddings are symmetric — inputType ignored.
       if (modelId.startsWith('text-embedding-3')) {
         return { openaiCompatible: { dimensions: dims } };
       }
@@ -115,14 +171,15 @@ export function dimsProviderOptions(
       // embedding-3 (Matryoshka 256-2048) both accept `dimensions` on the
       // OpenAI-compat path. Without this, user-selected non-default dims are
       // silently ignored and the provider returns its default size.
+      // Symmetric retrieval — inputType ignored.
       if (modelId === 'text-embedding-v3' || modelId === 'embedding-3') {
         return { openaiCompatible: { dimensions: dims } };
       }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric
-      // retrieval. Default to 'db' (the indexing path) so embed() works for
-      // import. Queries also embed with type:'db', making retrieval
-      // symmetric. Asymmetric query support is a follow-up TODO that needs
-      // a query/document signal threaded through the embed seam.
+      // retrieval. Today still hardcoded to 'db' for back-compat — opting
+      // into the new inputType seam is a follow-up (see plan's deferred
+      // section "Fix MiniMax embo-01 asymmetry"). When fixed: map
+      // inputType==='query' → type:'query', else 'db'.
       if (modelId === 'embo-01') {
         return { openaiCompatible: { type: 'db' } };
       }
