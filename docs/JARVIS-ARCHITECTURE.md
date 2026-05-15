@@ -2841,6 +2841,193 @@ stubs across multiple months that produce real T1/T2 candidates.
 
 ---
 
+## 6.24 Upstream v0.34.4 sync (2026-05-15)
+
+29 commits across 17 patch/minor versions: `eec2d2bf..upstream/master` =
+v0.31.3 → v0.34.4. Branch `sync-v0.34.4`, merge commit `1b6acd77`. 429
+files / +63 566 / -1 952 LoC — slightly larger than v0.31.2 sync, but
+**only 3 conflicts** (down from 5) and `gateway.ts` auto-merged clean
+this round.
+
+### Headline upstream features adopted
+
+- **v0.32.7 CJK fix wave** (6 layers from one root cause) — a Chinese-
+  first knowledge base directly benefits. KOS Jarvis is Chinese-primary;
+  this potentially restores keyword-search as a hybrid alongside our
+  vector-only fallback. Needs evaluation.
+- **v0.32.5 gbrain-context** — OpenClaw deterministic context engine
+  (temporal/spatial injection). Touches the same surface our
+  `kos-compat-api` covers; **M2-B reassessment now relevant**.
+- **v0.32.8 multi-source bug class extermination** — even a single-
+  source fork gains correctness fixes across embed / extract / takes /
+  patterns / integrity / migrate-engine.
+- **v0.34.1 MCP fix wave** — source-isolation P0 + PKCE DCR +
+  federated_read. Required `oauth_clients.{source_id, federated_read}`
+  columns (the column at the heart of this sync's bootstrap fight).
+- **v0.31.6 facts extraction during sync** + **v0.33.0 morning pulse**
+  + **v0.32.2 facts-fence** — three pieces of an evolving "hot memory"
+  story that **overlap with `kos-patrol` and the M2-A concept-synthesis
+  decision** (pilot landed 2026-05-10 with decision (b): keep ad-hoc).
+  Functional overlap matrix is a new P1 item.
+- **v0.34.0 Cathedral III** — recursive code intelligence + Leiden
+  clusters. Drives the bulk of `src/` churn but **fork doesn't use it**.
+  Watch whether default-on indexing eats embedding budget.
+- **v0.33.2 search-lite** (token budget + semantic query cache +
+  intent weighting) — performance win, especially for CJK retrieval.
+- **v0.33.1 eval-gated whoknows** + **v0.34.4 cursor-paginated `--stale`
+  hardening** + **v0.34.2 path-based checkpoint resume** — operational
+  hardening, no fork-side work.
+
+### Conflicts and how they were resolved
+
+3 conflicts; expected ~5–7 going in.
+
+1. **`CLAUDE.md`** — same pattern as v0.31.2 sync. Kept fork-only HEAD
+   (~150 lines); refreshed `docs/CLAUDE-UPSTREAM.md` snapshot (1308 →
+   1607 lines) by replacing everything after the fork header (line 21)
+   with the latest `upstream/master:CLAUDE.md` content. Fork's offload
+   policy holds: future syncs land upstream `CLAUDE.md` deltas in
+   `CLAUDE-UPSTREAM.md`, NOT in root.
+2. **`skills/RESOLVER.md`** — upstream consolidated 8 routing entries
+   (`article-enrichment` / `strategic-reading` / `concept-synthesis` /
+   `perplexity-research` / `archive-crawler` / `academic-verify` /
+   `brain-pdf` / `voice-note-ingest`) from the scattered table-block
+   into a unified "Strategic & meta" section at line 118-126. Our fork
+   carried the old scattered versions. Kept the upstream consolidated
+   form; KOS-Jarvis extensions block (lines 130+) preserved untouched.
+3. **`skills/manifest.json`** — union: 3 new upstream skills
+   (`cold-start`, `ask-user`, `functional-area-resolver`) appended
+   before our 4 `kos-jarvis/*` entries. JSON validated post-edit.
+
+`src/core/pglite-engine.ts` auto-merged this round (was a conflict in
+v0.31.2). `src/core/ai/gateway.ts` auto-merged: v0.31.12 added
+`registerExtendedModel` + Voyage 256MB cap, but our M3 cutover is
+config-path only (`embedding_model = google:gemini-embedding-001`
+via `~/.gbrain/config.json`) — the gateway entry points pass through
+unchanged.
+
+### Schema migration: v45 → v66 (21 migrations) + bootstrap workaround
+
+This sync hit a familiar trap: **another `applyForwardReferenceBootstrap`
+miss**, this time for the v0.34.1 `oauth_clients.{source_id,
+federated_read}` columns. Pattern identical to v0.26.3
+`mcp_request_log.{agent_name, params, error_message}` that produced
+our PR #627 (superseded by upstream fixwave #682+#741 — see §6.22).
+
+**Symptom**: `bun install` postinstall ran `gbrain apply-migrations`,
+which under the hood requires schema_version ≥ 51 for the v0.32.2 facts
+orchestrator. Schema was at v45. Running `gbrain init --migrate-only`
+to bump v45 → v66 failed at `schema-embedded.ts:438`:
+```sql
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
+  ON oauth_clients(source_id) WHERE source_id IS NOT NULL;
+```
+`oauth_clients` existed (pre-v0.34) without `source_id`, so the index
+DDL hit `column "source_id" does not exist`. Forward-bootstrap covers
+9 forward-reference targets (`pages.source_id`, `pages.deleted_at`,
+`links.*`, `content_chunks.*`, `mcp_request_log.*`, etc.) but missed
+`oauth_clients.{source_id, federated_read}`.
+
+**Workaround** (manual, ~2 seconds):
+```sql
+ALTER TABLE oauth_clients
+  ADD COLUMN IF NOT EXISTS source_id TEXT
+    REFERENCES sources(id) ON DELETE RESTRICT;
+ALTER TABLE oauth_clients
+  ADD COLUMN IF NOT EXISTS federated_read TEXT[]
+    NOT NULL DEFAULT '{}';
+```
+After that, `gbrain init --migrate-only` ran all 21 migrations clean in
+under a minute. Final `schema_version = 66`; `gbrain doctor` shows
+`schema_version: Version 66 (latest: 66)`, RLS up to 41/41 tables (was
+35/35).
+
+**Bonus complication**: a stale `gbrain sources` background process
+from before the schema fix held `pg_advisory_lock(42)` for 20 minutes
+while idle, blocking three subsequent migration attempts. `kill <pid>`
+released the lock cleanly. The retry framework in `migrate.ts:3276`
+(`runMigrationSQLWithRetry` with 5s/15s/45s backoff) didn't help here —
+it only retries on `statement_timeout (57014)`, not on `pg_advisory_lock`
+contention. Operationally: when migrations stall, check
+`pg_stat_activity` for idle holders of advisory locks before retrying.
+
+**v0.32.2 orchestrator** (facts-fence) ran post-schema in one shot,
+`status=complete`: the `facts` table was empty (fork hasn't used hot
+memory yet), so phase-A (legacy fact backfill into entity-page
+`## Facts` fences) was a no-op walk. **No markdown changes** to the
+brain repo — `/Users/chenyuanquan/brain` working tree stayed clean
+throughout.
+
+### Production smoke
+
+- `kos-compat-api` (PID inherited from launchd) served `POST /query`
+  with Chinese question 知识图谱 → 20 retrievals, top score 0.9541
+  (`concepts/knowledge-compilation`), LLM-synthesized answer via
+  Anthropic proxy. End-to-end Gemini embedding + pgvector + Anthropic
+  synthesis all green. No service restart needed.
+- `gbrain doctor`: brain_score 80/100 (unchanged); 3071 pages, 100%
+  embed coverage; 48 unacknowledged sync failures predate the sync
+  (all `column "chunker_version" of relation "pages" does not exist`
+  from pre-v54 sync attempts; schema is now at v66 so new syncs
+  won't reproduce these — `gbrain sync --skip-failed` cleanup queued
+  as P2).
+- Typecheck (`bun run typecheck`): exit 0, clean.
+- `bun install`: 0 dependency changes.
+- `bun test`: hung at 99% CPU for 30 min and was killed; this echoes
+  the v0.31.2 "9 fails / 4760 pass" experience but worsened. Likely
+  one of the 60+ new test files (v0.32 wave) has an environment
+  expectation our box doesn't satisfy. Filed as a P2.
+
+### Brain state (post-sync)
+
+Pages: **3071** (+353 since v0.31.2 sync, ~5 days). Schema: **v66**.
+RLS: 41/41 tables. Embedding model: `google:gemini-embedding-001`
+(1536-dim native; M3 cutover from §6.23 holds). PGLite-vs-Postgres
+config (`~/.gbrain/config.json`) unchanged (snapshotted to
+`.before-v0.34.4-sync` before any migration work).
+
+### Follow-ups
+
+Three new P1 evaluation items (recorded in `skills/kos-jarvis/TODO.md`):
+
+1. **Upstream PR opportunity**: extend `applyForwardReferenceBootstrap`
+   (PostgresEngine + PGLiteEngine) to probe
+   `oauth_clients.{source_id, federated_read}` before the schema-init
+   `CREATE INDEX` runs. Pattern identical to PR #627 (which was
+   superseded). Worth filing.
+2. **v0.32.7 CJK fix wave** evaluation: probe whether keyword search
+   now produces useful hits on Chinese queries → if yes, our
+   "vector-only" assumption can be replaced with hybrid.
+3. **Functional overlap evaluation**: v0.31.6 facts-on-sync +
+   v0.33.0 morning pulse + v0.32.2 facts-fence overlap with kos-patrol
+   + concept-synthesis (M2-A) + digest-to-memory. Decide what fork
+   retires now that upstream has parallel mechanisms.
+
+P2 cleanup queue:
+
+- `gbrain sync --skip-failed` to ack the 48 historical chunker_version
+  sync failures.
+- `bun test` half-hour hang in test/ root: identify which new v0.32+
+  test file hangs, file env mismatch.
+- `[ai.gateway] recipe "google" declares an embedding touchpoint
+  without max_batch_tokens` NOTICE on every query path: upstream
+  recipe gap, not fork's, but verify our recipe override doesn't
+  also need this knob.
+
+### Commits
+
+Fork-side commits this session:
+
+- `1e2777e` — `fix(kos-patrol): phase4 honors frontmatter aliases`
+  (pre-sync, standalone bug fix)
+- `1b6acd77` — `v0.34.4 sync: 29-commit upstream merge (v0.31.3 →
+  v0.34.4)` — the merge commit
+
+End-to-end wall-time: ~2 h including 20-min advisory-lock detour and
+the manual oauth_clients bootstrap.
+
+---
+
 ## 7. Known gaps (see `skills/kos-jarvis/TODO.md` for live tracker)
 
 - **P0 resolved 2026-04-22**: notion-poller PGLite deadlock — Path B landed in v0.17 sync (see §6.7). `scripts/minions-wrap/notion-poller.sh` deleted; plist now direct-bun invocation of `workers/notion-poller/run.ts`. First live cycle: 78 s / 9 pages ingested / 0 lock timeouts.
