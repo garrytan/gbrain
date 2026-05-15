@@ -35,6 +35,10 @@ ZeroEntropy ships two specialized small models that target the two weakest retri
 - New tests: `test/ai/zeroentropy-recipe.test.ts`, `test/ai/dims-zeroentropy.test.ts`, `test/search/rerank.test.ts`, `test/rerank-audit.test.ts` — 42 cases pinning recipe shape, dim allowlist, 4th-arg inputType plumbing, reranker fail-open across every error class, null-vs-undefined topNOut semantics, and the no-success-logging contract.
 - The plan that drove this release went through two Codex rounds (47 source-grounded findings across consult + adversarial challenge) before any code was written. Every must-fix landed; nine deferred bugs (the cache-wrapper double-embed, MiniMax embo-01 asymmetry, openai-compat allowlist gap, cache-hit limit/budget divergence) are documented in the plan file at `~/.claude/plans/system-instruction-you-are-working-linked-moonbeam.md`.
 
+### Fixed
+
+- `gbrain orphans` no longer counts pages you've soft-deleted, and inbound links from soft-deleted pages no longer hide downstream pages that are now effectively orphaned.
+
 ## To take advantage of v0.35.0.0
 
 `gbrain upgrade` does NOT auto-switch your embedding or reranker model. ZeroEntropy is opt-in; you choose when to flip. To try it:

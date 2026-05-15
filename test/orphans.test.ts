@@ -283,6 +283,73 @@ describe('findOrphans (engine-injected)', () => {
     expect(slugs).toContain('topic/standalone');
   });
 
+  test('excludes soft-deleted pages from orphan scan and totals', async () => {
+    await engine.putPage('topic/deleted-orphan', {
+      type: 'concept',
+      title: 'Deleted Orphan',
+      compiled_truth: 'no inbound links',
+      timeline: '',
+    });
+    await engine.putPage('topic/live-orphan', {
+      type: 'concept',
+      title: 'Live Orphan',
+      compiled_truth: 'no inbound links',
+      timeline: '',
+    });
+    await engine.softDeletePage('topic/deleted-orphan');
+
+    const result = await findOrphans(engine);
+    const slugs = result.orphans.map(o => o.slug).sort();
+
+    expect(slugs).toEqual(['topic/live-orphan']);
+    expect(result.total_orphans).toBe(1);
+    expect(result.total_pages).toBe(1);
+  });
+
+  test('ignores inbound links from soft-deleted source pages', async () => {
+    await engine.putPage('topic/source', {
+      type: 'concept',
+      title: 'Source',
+      compiled_truth: 'links to target',
+      timeline: '',
+    });
+    await engine.putPage('topic/target', {
+      type: 'concept',
+      title: 'Target',
+      compiled_truth: 'target page',
+      timeline: '',
+    });
+    await engine.addLink('topic/source', 'topic/target', 'mentions', 'references', 'markdown');
+
+    expect((await findOrphans(engine)).orphans.map(o => o.slug).sort()).toEqual(['topic/source']);
+
+    await engine.softDeletePage('topic/source');
+
+    expect((await findOrphans(engine)).orphans.map(o => o.slug).sort()).toEqual(['topic/target']);
+  });
+
+  test('health orphan_pages ignores soft-deleted pages and their outbound links', async () => {
+    await engine.putPage('topic/deleted-source', {
+      type: 'concept',
+      title: 'Deleted Source',
+      compiled_truth: 'links to target',
+      timeline: '',
+    });
+    await engine.putPage('topic/target', {
+      type: 'concept',
+      title: 'Target',
+      compiled_truth: 'target page',
+      timeline: '',
+    });
+    await engine.addLink('topic/deleted-source', 'topic/target', 'mentions', 'references', 'markdown');
+
+    expect((await engine.getHealth()).orphan_pages).toBe(0);
+
+    await engine.softDeletePage('topic/deleted-source');
+
+    expect((await engine.getHealth()).orphan_pages).toBe(1);
+  });
+
   test('zero pages: empty result (no crash on empty brain)', async () => {
     const result = await findOrphans(engine);
     expect(result.orphans).toEqual([]);
