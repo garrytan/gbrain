@@ -3,7 +3,7 @@ import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
-import { autoDetectSkillsDir } from '../core/repo-root.ts';
+import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
@@ -69,6 +69,130 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
  * pending demand. Local doctor is unchanged — operators on the host machine
  * still get the full check set.
  */
+/**
+ * Doctor check: takes.weight grid integrity (v0.32 — EXP-2).
+ *
+ * Pure helper — no `process.exit`, no side effects beyond the SQL probe.
+ * `runDoctor` calls this and pushes the result onto its check list.
+ * Tests can target this directly with a stubbed engine (codex review #7).
+ *
+ * Branches:
+ *   - takes table doesn't exist (fresh brain pre-v37) → warn, "skipped"
+ *   - 0 takes total → ok, "no takes yet" (avoids divide-by-zero)
+ *   - off_grid / total > 10% → fail
+ *   - off_grid / total > 1%  → warn
+ *   - else → ok
+ *
+ * Tolerance matches migration v48: any value with abs(weight - on_grid) > 1e-3
+ * is genuinely off-grid (the 0.05 grid is 5e-2; float32 noise is ~1e-7).
+ */
+/**
+ * v0.33: whoknows_health — verify the eval fixture is present at the
+ * documented path. Lightweight; just checks file existence and row count,
+ * not the eval gate outcome (that runs via `gbrain eval whoknows`).
+ *
+ * Surface is intentionally narrow: a missing fixture means the eval
+ * cannot run at all, which is the highest-leverage signal. Hit-rate
+ * regression detection lives in `gbrain eval whoknows --json` and is
+ * the job of the eval command, not the doctor sweep.
+ */
+export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> {
+  try {
+    const { existsSync, readFileSync, statSync } = await import('fs');
+    const path = await import('path');
+    const repoRoot = process.cwd();
+    const fixturePath = path.join(repoRoot, 'test/fixtures/whoknows-eval.jsonl');
+    if (!existsSync(fixturePath)) {
+      return {
+        name: 'whoknows_health',
+        status: 'warn',
+        message: `whoknows eval fixture missing at test/fixtures/whoknows-eval.jsonl. Fix: hand-label 10 queries you'd actually run, format {query, expected_top_3_slugs, notes}.`,
+      };
+    }
+    const stat = statSync(fixturePath);
+    if (stat.size === 0) {
+      return {
+        name: 'whoknows_health',
+        status: 'warn',
+        message: 'whoknows eval fixture exists but is empty. The eval cannot pass without queries.',
+      };
+    }
+    const raw = readFileSync(fixturePath, 'utf-8');
+    const rows = raw
+      .split('\n')
+      .filter((l) => {
+        const t = l.trim();
+        return t && !t.startsWith('#') && !t.startsWith('//');
+      });
+    if (rows.length < 5) {
+      return {
+        name: 'whoknows_health',
+        status: 'warn',
+        message: `whoknows eval fixture has only ${rows.length} row(s); ENG-D2 recommends 10. Fix: add more hand-labeled queries.`,
+      };
+    }
+    return {
+      name: 'whoknows_health',
+      status: 'ok',
+      message: `whoknows eval fixture present (${rows.length} queries). Run \`gbrain eval whoknows test/fixtures/whoknows-eval.jsonl\` to grade.`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'whoknows_health',
+      status: 'warn',
+      message: `Could not check whoknows fixture: ${msg}`,
+    };
+  }
+}
+
+export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ off_grid: string | number; total: string | number }>(
+      `SELECT
+         count(*) FILTER (WHERE weight IS NOT NULL
+                          AND abs(weight::numeric - ROUND(weight::numeric * 20) / 20) > 0.001)::int AS off_grid,
+         count(*)::int AS total
+       FROM takes`,
+    );
+    const total = Number(rows[0]?.total ?? 0);
+    const offGrid = Number(rows[0]?.off_grid ?? 0);
+    if (total === 0) {
+      return { name: 'takes_weight_grid', status: 'ok', message: 'No takes yet' };
+    }
+    const ratio = offGrid / total;
+    if (ratio > 0.10) {
+      return {
+        name: 'takes_weight_grid',
+        status: 'fail',
+        message: `${offGrid}/${total} takes off the 0.05 grid (${(ratio * 100).toFixed(1)}%). Fix: gbrain apply-migrations --yes`,
+      };
+    }
+    if (ratio > 0.01) {
+      return {
+        name: 'takes_weight_grid',
+        status: 'warn',
+        message: `${offGrid}/${total} takes off the 0.05 grid (${(ratio * 100).toFixed(1)}%). Fix: gbrain apply-migrations --yes`,
+      };
+    }
+    return {
+      name: 'takes_weight_grid',
+      status: 'ok',
+      message: offGrid === 0
+        ? `${total} take(s) on grid`
+        : `${total} take(s) on grid (${offGrid} within tolerance)`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // takes table missing on a fresh pre-v37 brain — warn, don't fail.
+    return {
+      name: 'takes_weight_grid',
+      status: 'warn',
+      message: `Could not check takes weight grid: ${msg}`,
+    };
+  }
+}
+
 export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
   const checks: Check[] = [];
 
@@ -133,6 +257,51 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     });
   }
 
+  // 3b. Migration wedge hint (v0.31.8 — D14 + D19). The brain server's
+  // filesystem holds the migration ledger; the wedge condition (>=3 consecutive
+  // partials with no later complete) needs the force-retry hint, not plain
+  // --yes. Same shape as the local doctor at line ~336.
+  try {
+    const completed = loadCompletedMigrations();
+    const byVersion = new Map<string, { complete: boolean; partial: boolean }>();
+    for (const entry of completed) {
+      const seen = byVersion.get(entry.version) ?? { complete: false, partial: false };
+      if (entry.status === 'complete') seen.complete = true;
+      if (entry.status === 'partial') seen.partial = true;
+      byVersion.set(entry.version, seen);
+    }
+    const completedVersions = Array.from(byVersion.entries()).filter(([, s]) => s.complete).map(([v]) => v);
+    const stuck = Array.from(byVersion.entries())
+      .filter(([v, s]) => {
+        if (!s.partial || s.complete) return false;
+        const supersededBy = completedVersions.find(cv => compareVersions(cv, v) >= 0);
+        return supersededBy === undefined;
+      })
+      .map(([v]) => v);
+    const wedged: string[] = [];
+    for (const v of stuck) {
+      const partialCount = completed.filter(e => e.version === v && e.status === 'partial').length;
+      if (partialCount >= 3) wedged.push(v);
+    }
+    if (wedged.length > 0) {
+      const cmd = wedged.map(v => `gbrain apply-migrations --force-retry ${v}`).join(' && ');
+      checks.push({
+        name: 'minions_migration',
+        status: 'fail',
+        message: `WEDGED MIGRATION(s) on brain host: ${wedged.join(', ')}. Run on the host: ${cmd}`,
+      });
+    } else if (stuck.length > 0) {
+      checks.push({
+        name: 'minions_migration',
+        status: 'fail',
+        message: `MINIONS HALF-INSTALLED on brain host: ${stuck.join(', ')}. Run on the host: gbrain apply-migrations --yes`,
+      });
+    }
+  } catch {
+    // Best-effort. A broken JSONL on the brain server should not stop the
+    // remote doctor.
+  }
+
   // 4. Sync failures (file-plane state, not in-DB; see src/core/sync.ts).
   // Read the JSONL file directly at the canonical path; cheap and engine-agnostic.
   try {
@@ -160,6 +329,48 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     checks.push({ name: 'sync_failures', status: 'ok', message: 'No failures recorded' });
   }
 
+  // 4b. Multi-source drift (v0.31.8 — D8 + D14). Same shape as the local
+  // doctor's check at the same name. Runs server-side; the result is
+  // returned to the thin-client over MCP.
+  try {
+    const { findMisroutedPages } = await import('../core/multi-source-drift.ts');
+    const sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
+      `SELECT id, local_path FROM sources`,
+    );
+    const nonDefaultWithPath = sources.filter(s => s.id !== 'default' && s.local_path);
+    if (sources.length > 1 && nonDefaultWithPath.length > 0) {
+      const result = await findMisroutedPages(
+        engine,
+        nonDefaultWithPath.map(s => ({ id: s.id, local_path: s.local_path as string })),
+      );
+      if (result.walk_truncated) {
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'warn',
+          message: 'Multi-source drift check skipped — FS walk hit limit/timeout on the brain server.',
+        });
+      } else if (result.count > 0) {
+        const sampleStr = result.sample.map(s => `${s.slug} (intended=${s.intended_source})`).join(', ');
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'warn',
+          message:
+            `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
+            `(e.g., ${sampleStr}). Likely pre-v0.30.3 misroutes OR an incomplete initial sync. ` +
+            `Verify on the brain host: \`gbrain sources status\` then \`gbrain sync --source <id> --full\`.`,
+        });
+      } else {
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'ok',
+          message: 'No cross-source slug drift detected.',
+        });
+      }
+    }
+  } catch {
+    // Best-effort, like the rest of doctorReportRemote.
+  }
+
   // 5. Queue health (Postgres-only). PGLite has no minion_jobs in the same
   // shape; skip the check there with an informational message.
   if (engine.kind === 'postgres') {
@@ -185,7 +396,295 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     checks.push({ name: 'queue_health', status: 'ok', message: 'PGLite — no queue to check' });
   }
 
+  // v0.31.12 subagent runtime enforcement (Layer 3 of 3 — Codex F13).
+  // The subagent loop is Anthropic-only. If models.tier.subagent or
+  // models.default is explicitly set to a non-Anthropic provider, warn here
+  // so the user sees it at the next `gbrain doctor` run instead of at the
+  // next subagent job submission. (Layers 1+2 also enforce — this is the
+  // surfacing layer.)
+  checks.push(await checkSubagentProvider(engine));
+
+  // 6. Sync freshness check
+  checks.push(await checkSyncFreshness(engine));
+
+  // 7. v0.32.3 search-lite mode + per-key drift surface.
+  checks.push(await checkSearchMode(engine));
+
+  // 8. v0.32.3 eval_drift: retrieval-affecting files changed since last
+  // eval run? Non-blocking — surfaces as ok + hint.
+  checks.push(await checkEvalDrift(engine));
+
   return computeDoctorReport(checks);
+}
+
+/**
+ * v0.32.3 [CDX-20]: surface mode + per-key override drift.
+ *
+ * Status stays `ok` (never warns; never docks health score). If
+ * search.mode is unset → suggest picking one. If overrides contradict
+ * the mode (e.g. mode=conservative but cache.enabled=false), say so in
+ * the message and paste a `gbrain search modes --reset` fix command.
+ */
+export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
+  try {
+    const mode = await engine.getConfig('search.mode');
+    const overrides = await engine.listConfigKeys('search.');
+    // Exclude search.mode itself + the upgrade-notice state key from the
+    // override roster — they aren't knobs.
+    const overrideKeys = overrides.filter(k => k !== 'search.mode' && k !== 'search.mode_upgrade_notice_shown');
+
+    if (!mode) {
+      return {
+        name: 'search_mode',
+        status: 'ok',
+        message: 'search.mode is unset (using balanced fallback). Run `gbrain search modes` to see what is running and pick a mode explicitly.',
+      };
+    }
+
+    if (overrideKeys.length === 0) {
+      return {
+        name: 'search_mode',
+        status: 'ok',
+        message: `Mode: ${mode} (no per-key overrides — mode bundle is canonical).`,
+      };
+    }
+
+    return {
+      name: 'search_mode',
+      status: 'ok',
+      message: `Mode: ${mode} with ${overrideKeys.length} per-key override(s) (${overrideKeys.join(', ')}). To consolidate to the pure mode bundle: gbrain search modes --reset`,
+    };
+  } catch (e) {
+    return {
+      name: 'search_mode',
+      status: 'ok',
+      message: `Could not read search mode config (${(e as Error).message ?? 'unknown'}).`,
+    };
+  }
+}
+
+/**
+ * v0.32.3 [CDX-6]: surface when retrieval-affecting files have changed
+ * since the most recent published eval. Curated watch-list in
+ * src/core/eval/drift-watch.ts; additions to that list require a
+ * CHANGELOG line.
+ *
+ * Status stays `ok` — operator-facing reminder, not a hard gate.
+ */
+export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
+  try {
+    const { watchedFilesDrifted } = await import('../core/eval/drift-watch.ts');
+    // Working tree vs HEAD (uncommitted retrieval changes). The fuller
+    // version (vs the commit of the last published eval) is wired when
+    // eval_results lands; today we just probe for uncommitted retrieval
+    // changes so the operator sees them before re-running evals.
+    const repoRoot = process.cwd();
+    const drifted = watchedFilesDrifted(repoRoot);
+    if (drifted.length === 0) {
+      return {
+        name: 'eval_drift',
+        status: 'ok',
+        message: 'No retrieval-affecting files changed in working tree.',
+      };
+    }
+    const summary = drifted.slice(0, 3).join(', ') + (drifted.length > 3 ? ', …' : '');
+    return {
+      name: 'eval_drift',
+      status: 'ok',
+      message: `${drifted.length} retrieval-affecting file(s) changed since HEAD: ${summary}. Re-run \`gbrain eval run-all\` after committing these changes.`,
+    };
+  } catch (e) {
+    return {
+      name: 'eval_drift',
+      status: 'ok',
+      message: `Could not probe retrieval drift (${(e as Error).message ?? 'unknown'}).`,
+    };
+  }
+}
+
+/**
+ * v0.31.12 — surface a warn when models.tier.subagent or models.default
+ * resolves to a non-Anthropic provider. The subagent loop in
+ * src/core/minions/handlers/subagent.ts uses Anthropic Messages API with
+ * prompt caching on system + tools; non-Anthropic providers would break
+ * the loop at runtime. This check makes the configuration drift visible
+ * before a job is submitted.
+ */
+async function checkSubagentProvider(engine: BrainEngine): Promise<Check> {
+  try {
+    const { isAnthropicProvider } = await import('../core/model-config.ts');
+    const tierSubagent = await engine.getConfig('models.tier.subagent');
+    const modelsDefault = await engine.getConfig('models.default');
+
+    // Tier-explicit override loses fail-loud since the user clearly meant it.
+    if (tierSubagent && !isAnthropicProvider(tierSubagent)) {
+      return {
+        name: 'subagent_provider',
+        status: 'warn',
+        message:
+          `models.tier.subagent is "${tierSubagent}" but the subagent loop is Anthropic-only. ` +
+          `Runtime will fall back to claude-sonnet-4-6. Fix: ` +
+          `\`gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6\`.`,
+      };
+    }
+    // models.default sneaking subagent into a non-Anthropic provider.
+    if (!tierSubagent && modelsDefault && !isAnthropicProvider(modelsDefault)) {
+      return {
+        name: 'subagent_provider',
+        status: 'warn',
+        message:
+          `models.default is "${modelsDefault}" which would route subagent jobs to a non-Anthropic provider. ` +
+          `Runtime falls back to claude-sonnet-4-6 for subagent only. ` +
+          `Fix: \`gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6\` to lock it in.`,
+      };
+    }
+    return { name: 'subagent_provider', status: 'ok', message: 'Subagent tier resolves to Anthropic' };
+  } catch (e) {
+    return {
+      name: 'subagent_provider',
+      status: 'warn',
+      message: `Could not check subagent provider: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+// Module-scoped flag so the NaN-fallback warning fires once per process.
+let _syncFreshnessEnvWarned = false;
+
+function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
+  const raw = process.env[varName];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    if (!_syncFreshnessEnvWarned) {
+      _syncFreshnessEnvWarned = true;
+      console.warn(
+        `[gbrain doctor] Ignoring invalid ${varName}=${raw}; using default ${fallback}h.`,
+      );
+    }
+    return fallback;
+  }
+  return n;
+}
+
+/**
+ * Sync freshness check (v0.32.4) — verify that sources with local_path have
+ * been synced recently. Detects the silent failure mode where `gbrain sync`
+ * stopped running and brain search now misses recent pages.
+ *
+ * Pure staleness check. Reads `sources.last_sync_at` only — no filesystem
+ * access. Filesystem-vs-DB drift detection is intentionally out of scope:
+ *   - doctorReportRemote runs in the HTTP MCP server (src/commands/serve-http.ts);
+ *     walking arbitrary DB-supplied paths from a remote-callable endpoint
+ *     crosses a trust boundary (OAuth write scope could mutate local_path).
+ *   - Drift detection belongs in `multi_source_drift` which already has
+ *     GBRAIN_DRIFT_LIMIT + GBRAIN_DRIFT_TIMEOUT_MS guards.
+ *
+ * Thresholds (env-overridable, default = 24h warn / 72h fail):
+ *   - GBRAIN_SYNC_FRESHNESS_WARN_HOURS
+ *   - GBRAIN_SYNC_FRESHNESS_FAIL_HOURS
+ * Invalid values (NaN, ≤0) fall back to defaults with a once-per-process warn.
+ *
+ * Edge cases handled:
+ *   - last_sync_at IS NULL → fail "never synced"
+ *   - last_sync_at > now() (clock skew / corrupted timestamp) → warn
+ *   - mixed sources → highest-severity drives the overall status
+ *   - executeRaw throws → outer-catch warn so doctor keeps running
+ *
+ * Failure messages embed `source.id` so the fix command
+ * `gbrain sync --source <id>` matches what the user copy-pastes.
+ */
+export async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
+  try {
+    const sources = await engine.executeRaw<{
+      id: string;
+      name: string;
+      local_path: string | null;
+      last_sync_at: Date | null;
+    }>(
+      `SELECT id, name, local_path, last_sync_at FROM sources WHERE local_path IS NOT NULL`,
+    );
+
+    if (sources.length === 0) {
+      return {
+        name: 'sync_freshness',
+        status: 'ok',
+        message: 'No federated sources to sync',
+      };
+    }
+
+    const warnHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_WARN_HOURS', 24);
+    const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
+    const warnMs = warnHours * 60 * 60 * 1000;
+    const failMs = failHours * 60 * 60 * 1000;
+
+    const now = Date.now();
+    const issues: string[] = [];
+    let hasWarnings = false;
+    let hasFailures = false;
+
+    for (const source of sources) {
+      // Embed source.id in user-visible messages so `gbrain sync --source <id>`
+      // matches what the user copy-pastes. Show display name in parens when set.
+      const display = source.name && source.name !== source.id
+        ? `'${source.id}' (${source.name})`
+        : `'${source.id}'`;
+
+      if (!source.last_sync_at) {
+        issues.push(`Source ${display} has never been synced`);
+        hasFailures = true;
+        continue;
+      }
+
+      const lastSync = new Date(source.last_sync_at).getTime();
+      const ageMs = now - lastSync;
+
+      if (ageMs < 0) {
+        issues.push(
+          `Source ${display} has future last_sync_at — clock skew or corrupted timestamp`,
+        );
+        hasWarnings = true;
+        continue;
+      }
+
+      const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
+      const ageDays = Math.floor(ageHours / 24);
+
+      if (ageMs > failMs) {
+        issues.push(`Source ${display} last synced ${ageDays}d ago — brain search is stale!`);
+        hasFailures = true;
+      } else if (ageMs > warnMs) {
+        issues.push(`Source ${display} last synced ${ageHours}h ago`);
+        hasWarnings = true;
+      }
+    }
+
+    if (hasFailures) {
+      return {
+        name: 'sync_freshness',
+        status: 'fail',
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source`,
+      };
+    }
+    if (hasWarnings) {
+      return {
+        name: 'sync_freshness',
+        status: 'warn',
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh`,
+      };
+    }
+    return {
+      name: 'sync_freshness',
+      status: 'ok',
+      message: `All ${sources.length} federated source(s) synced recently`,
+    };
+  } catch (e) {
+    return {
+      name: 'sync_freshness',
+      status: 'warn',
+      message: `Could not check sync freshness: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
 }
 
 /**
@@ -231,16 +730,35 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // Use the same auto-detect as `check-resolvable` so doctor sees a
   // workspace/skills dir reachable via $OPENCLAW_WORKSPACE or
   // ~/.openclaw/workspace, not just a `skills/` walked up from cwd.
-  const detected = autoDetectSkillsDir();
+  // Read-only variant adds the install-path fallback so a hosted-CLI install
+  // run from `~` (e.g., `bun install -g github:garrytan/gbrain && cd ~ &&
+  // gbrain doctor`) can still find the bundled skills/ dir without warning.
+  const detected = autoDetectSkillsDirReadOnly();
   const skillsDir = detected.dir;
   if (skillsDir) {
 
     // --fix: run auto-repair BEFORE checkResolvable so the post-fix scan
     // reflects the new state. Auto-fix only targets DRY violations today;
     // other resolver issues are left to human repair.
+    //
+    // SAFETY GATE (v0.31.7 follow-up to D5): refuse --fix when the skills
+    // dir came from the install-path fallback. autoFixDryViolations writes
+    // to SKILL.md files; a user running `cd ~ && gbrain doctor --fix`
+    // without an explicit signal would have install_path resolve to the
+    // bundled gbrain repo and silently rewrite the install-tree skills.
+    // Codex caught this leak in the v0.31.7 ship review (D6 lock).
     if (doFix) {
-      autoFixReport = autoFixDryViolations(skillsDir, { dryRun });
-      printAutoFixReport(autoFixReport, dryRun, jsonOutput);
+      if (detected.source === 'install_path') {
+        process.stderr.write(
+          'gbrain doctor --fix refused: skills dir resolved via install-path fallback (read-only).\n' +
+          'The --fix flag writes to SKILL.md files; running it against the bundled install\n' +
+          'tree would silently mutate gbrain itself. Set $GBRAIN_SKILLS_DIR, $OPENCLAW_WORKSPACE,\n' +
+          'or pass --skills-dir <path> to point at the workspace you actually want to fix.\n',
+        );
+      } else {
+        autoFixReport = autoFixDryViolations(skillsDir, { dryRun });
+        printAutoFixReport(autoFixReport, dryRun, jsonOutput);
+      }
     }
 
     const report = checkResolvable(skillsDir);
@@ -312,7 +830,36 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         return supersededBy === undefined;
       })
       .map(([v]) => v);
-    if (stuck.length > 0) {
+
+    // v0.31.8 (D19): detect 3-consecutive-partials shape (the apply-migrations
+    // wedge condition). The `stuck` filter above already excludes
+    // forward-progress-superseded versions, so we only count actual unresolved
+    // partials per version. A version with >=3 trailing partials needs
+    // `gbrain apply-migrations --force-retry <v>` once before plain --yes
+    // will succeed (the 3-consecutive-partials guard in apply-migrations.ts
+    // is still active). Without this hint, operators wedged on v0.29.1 (and
+    // any future migration that hits the same guard) get "run --yes" advice
+    // that won't unstick them.
+    const wedged: string[] = [];
+    for (const v of stuck) {
+      const partialCount = completed.filter(
+        e => e.version === v && e.status === 'partial',
+      ).length;
+      if (partialCount >= 3) wedged.push(v);
+    }
+
+    if (wedged.length > 0) {
+      // The wedged set is a STRICT subset of the stuck set, so a wedged
+      // version is also stuck. Surface the force-retry hint instead of the
+      // generic --yes hint; chained with `&&` when multiple versions are
+      // wedged so the operator can copy-paste a single line.
+      const cmd = wedged.map(v => `gbrain apply-migrations --force-retry ${v}`).join(' && ');
+      checks.push({
+        name: 'minions_migration',
+        status: 'fail',
+        message: `WEDGED MIGRATION(s): ${wedged.join(', ')} (>=3 consecutive partials). Run: ${cmd}`,
+      });
+    } else if (stuck.length > 0) {
       checks.push({
         name: 'minions_migration',
         status: 'fail',
@@ -447,6 +994,78 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   } catch {
     // Best-effort. A broken JSONL should not stop doctor.
+  }
+
+  // 3d. Slug-fallback audit (v0.32.7 CJK wave, codex C7). Informational
+  // count of pages where importFromFile fell back to a frontmatter slug
+  // because the path slugified empty (emoji / Thai / Arabic / exotic-script
+  // filenames). NOT routed through sync-failures.jsonl — that surface
+  // gates bookmark advancement, info rows don't fit there.
+  try {
+    const { readRecentSlugFallbacks } = await import('../core/audit-slug-fallback.ts');
+    const fallbacks = readRecentSlugFallbacks(7);
+    if (fallbacks.length > 0) {
+      checks.push({
+        name: 'slug_fallback_audit',
+        status: 'ok',
+        message: `info: ${fallbacks.length} slug fallback${fallbacks.length === 1 ? '' : 's'} in the last 7 days (SLUG_FALLBACK_FRONTMATTER).`,
+      });
+    }
+  } catch {
+    // Best-effort; audit-log read failure shouldn't stop doctor.
+  }
+
+  // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
+  // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
+  // For each non-default source with local_path set, walk the FS and surface
+  // slugs that exist at default but NOT at the intended source. Only runs
+  // on multi-source brains (sources count > 1). Single-source brains skip.
+  // Engine is nullable in runDoctor (--fast / DB-down skip the DB phase);
+  // bail silently here when engine is null since the check needs DB access.
+  if (engine !== null) try {
+    const { findMisroutedPages } = await import('../core/multi-source-drift.ts');
+    const sources = await engine!.executeRaw<{ id: string; local_path: string | null }>(
+      `SELECT id, local_path FROM sources`,
+    );
+    const nonDefaultWithPath = sources.filter(s => s.id !== 'default' && s.local_path);
+    if (sources.length > 1 && nonDefaultWithPath.length > 0) {
+      const result = await findMisroutedPages(
+        engine!,
+        nonDefaultWithPath.map(s => ({ id: s.id, local_path: s.local_path as string })),
+      );
+      if (result.walk_truncated) {
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'warn',
+          message:
+            `Multi-source drift check skipped — FS walk hit limit/timeout. ` +
+            `Re-run on a quieter brain or shorter walk via GBRAIN_DRIFT_LIMIT/GBRAIN_DRIFT_TIMEOUT_MS.`,
+        });
+      } else if (result.count > 0) {
+        const sampleStr = result.sample.map(s => `${s.slug} (intended=${s.intended_source})`).join(', ');
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'warn',
+          message:
+            `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
+            `(e.g., ${sampleStr}). Two possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
+            `(2) source X never completed initial sync and the default page is unrelated. ` +
+            `Verify with 'gbrain sources status', then either re-sync with ` +
+            `'gbrain sync --source <id> --full' or 'gbrain delete <slug>' if the default-source ` +
+            `row is the misroute. (A 'gbrain sources rehome' cleanup command is tracked for v0.32.0.)`,
+        });
+      } else {
+        checks.push({
+          name: 'multi_source_drift',
+          status: 'ok',
+          message: 'No cross-source slug drift detected.',
+        });
+      }
+    }
+  } catch {
+    // Best-effort. A broken sources table or unreadable local_path should
+    // not stop doctor. The walk itself catches per-directory errors; this
+    // outer try covers the executeRaw path.
   }
 
   // 3c. Orphan clone temp dirs (v0.28 P1). `gbrain sources add --url` clones
@@ -864,20 +1483,70 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     });
   }
 
+  // 8c. Alternative provider advisory (v0.32 D11=C / Codex finding #2 wire-through).
+  // Walks listRecipes() and surfaces any recipe whose required env vars are ALL
+  // set in the process env but is not the currently configured provider. Helps
+  // users discover that, e.g., OPENAI_API_KEY=x DASHSCOPE_API_KEY=y means they
+  // have a Chinese-region alternative ready to go without setup.
+  progress.heartbeat('alternative_providers');
+  try {
+    const { listRecipes } = await import('../core/ai/recipes/index.ts');
+    const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
+    const configuredId = (getEmbeddingModel() || '').split(':')[0];
+    const alternatives: string[] = [];
+    for (const r of listRecipes()) {
+      if (r.id === configuredId) continue;
+      const required = r.auth_env?.required ?? [];
+      // Skip recipes with no required env (they're "always available" — not a
+      // useful signal) and recipes that require env we don't have.
+      if (required.length === 0) continue;
+      const allPresent = required.every(k => !!process.env[k]);
+      if (!allPresent) continue;
+      // Skip recipes without an embedding touchpoint (chat-only — not an
+      // embedding alternative).
+      if (!r.touchpoints.embedding) continue;
+      alternatives.push(r.id);
+    }
+    if (alternatives.length > 0) {
+      checks.push({
+        name: 'alternative_providers',
+        status: 'ok',
+        message: `Detected ${alternatives.length} alternative embedding provider${alternatives.length > 1 ? 's' : ''} ready to use: ${alternatives.join(', ')}. Run \`gbrain providers list\` to switch.`,
+      });
+    }
+  } catch { /* listRecipes / gateway not available — silent */ }
+
   // 9. Graph health (link + timeline coverage on entity pages).
   // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
+  //
+  // Skip when the brain has 0 entity pages (markdown-only wikis, journals,
+  // notes brains). The coverage formula divides by entity-page count, so it's
+  // structurally undefined when no entities exist — emitting WARN under that
+  // condition is a false positive. Closes #530.
   progress.heartbeat('graph_coverage');
   try {
     const health = await engine.getHealth();
+    const entityCount = (await engine.executeRaw<{ count: number }>(
+      "SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization')",
+    ))[0]?.count ?? 0;
+
     const linkPct = ((health.link_coverage ?? 0) * 100).toFixed(0);
     const timelinePct = ((health.timeline_coverage ?? 0) * 100).toFixed(0);
-    if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {
+    if (entityCount === 0) {
+      // Markdown-only / journal / wiki brain — no entity pages to compute
+      // coverage against. Coverage formula is structurally inapplicable.
+      checks.push({
+        name: 'graph_coverage',
+        status: 'ok',
+        message: 'No entity pages — graph_coverage not applicable (markdown-only brain)',
+      });
+    } else if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {
       checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%` });
     } else {
       checks.push({
         name: 'graph_coverage',
         status: 'warn',
-        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain extract links && gbrain extract timeline`,
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}% (${entityCount} entity pages). Run: gbrain extract all`,
       });
     }
 
@@ -979,6 +1648,26 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   } catch {
     checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
   }
+
+  // 10b. Takes weight grid integrity (v0.32 — EXP-2).
+  //
+  // Cross-modal eval over 100K production takes flagged 0.74, 0.82-style
+  // weights as false precision. v0.31's engine layer rounds to 0.05 on
+  // insert (PR #795); v0.32's migration v48 backfills pre-existing data.
+  // This check is the post-backfill drift detector — if a downstream
+  // extraction agent or hand-edit re-introduces off-grid values, we want
+  // the warning to surface before it pollutes scorecard / calibration math.
+  //
+  // Pure helper so the test surface targets `takesWeightGridCheck(engine)`
+  // directly rather than the full `runDoctor` pipeline (codex review #7).
+  progress.heartbeat('takes_weight_grid');
+  checks.push(await takesWeightGridCheck(engine));
+
+  // v0.33: whoknows_health — fixture presence + row count. The eval
+  // gate itself runs via `gbrain eval whoknows`; this check is the
+  // "did you do the assignment?" signal.
+  progress.heartbeat('whoknows_health');
+  checks.push(await whoknowsHealthCheck(engine));
 
   // 11. Markdown body completeness (v0.12.3 reliability wave).
   // v0.12.0's splitBody ate everything after the first `---` horizontal rule,
@@ -1116,6 +1805,179 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         name: 'eval_capture',
         status: 'warn',
         message: `Could not read eval_capture_failures: ${(err as Error)?.message ?? String(err)}`,
+      });
+    }
+  }
+
+  // 11a-bis-3. contradictions probe summary (v0.32.6 — M1).
+  //
+  // Reads the most recent eval_contradictions_runs row and surfaces:
+  //   - headline count + severity breakdown
+  //   - paste-ready resolution commands per HIGH-severity finding
+  //   - Wilson CI band so the user knows whether the headline is trustworthy
+  // Skipped (status: 'ok') when the table is empty — the probe simply hasn't
+  // run yet, which is normal on a fresh install.
+  progress.heartbeat('contradictions');
+  try {
+    const recent = await engine.loadContradictionsTrend(7);
+    if (recent.length === 0) {
+      checks.push({
+        name: 'contradictions',
+        status: 'ok',
+        message: 'No probe runs in the last 7 days. Run `gbrain eval suspected-contradictions --query "..." --top-k 5` to populate.',
+      });
+    } else {
+      const latest = recent[0];
+      const report = latest.report_json as Record<string, unknown> | null;
+      const perQuery = (report?.per_query as Array<{
+        contradictions: Array<{
+          severity: 'low' | 'medium' | 'high';
+          axis: string;
+          a: { slug: string };
+          b: { slug: string };
+          resolution_command: string;
+        }>;
+      }> | undefined) ?? [];
+      let high = 0, medium = 0, low = 0;
+      const highFindings: Array<{ a: string; b: string; axis: string; cmd: string }> = [];
+      for (const q of perQuery) {
+        for (const c of q.contradictions) {
+          if (c.severity === 'high') {
+            high++;
+            highFindings.push({ a: c.a.slug, b: c.b.slug, axis: c.axis, cmd: c.resolution_command });
+          } else if (c.severity === 'medium') medium++;
+          else low++;
+        }
+      }
+      const total = high + medium + low;
+      if (total === 0) {
+        checks.push({
+          name: 'contradictions',
+          status: 'ok',
+          message: `Latest probe run (${latest.ran_at.slice(0, 10)}) found no suspected contradictions across ${latest.queries_evaluated} queries.`,
+        });
+      } else {
+        const ciLow = (latest.wilson_ci_lower * 100).toFixed(0);
+        const ciHigh = (latest.wilson_ci_upper * 100).toFixed(0);
+        const lines = [
+          `${total} suspected contradictions (high=${high} medium=${medium} low=${low}) detected by latest probe — Wilson CI 95%: ${ciLow}-${ciHigh}%.`,
+        ];
+        for (const f of highFindings.slice(0, 3)) {
+          lines.push(`  HIGH: ${f.a} vs ${f.b}${f.axis ? ' — ' + f.axis : ''}`);
+          lines.push(`    → ${f.cmd}`);
+        }
+        if (highFindings.length > 3) {
+          lines.push(`  …and ${highFindings.length - 3} more — see \`gbrain eval suspected-contradictions review\``);
+        }
+        checks.push({
+          name: 'contradictions',
+          status: high > 0 ? 'warn' : 'ok',
+          message: lines.join('\n  '),
+        });
+      }
+    }
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42P01') {
+      checks.push({ name: 'contradictions', status: 'ok', message: 'Skipped (eval_contradictions_runs table unavailable — apply migrations to enable)' });
+    } else {
+      checks.push({
+        name: 'contradictions',
+        status: 'warn',
+        message: `Could not read contradictions trend: ${(err as Error)?.message ?? String(err)}`,
+      });
+    }
+  }
+
+  // 11a-bis-2. facts_extraction_health (v0.31.2 — codex P1 #3).
+  //
+  // Mirrors the eval_capture check shape but reads facts:absorb rows
+  // (written by writeFactsAbsorbLog from src/core/facts/absorb-log.ts).
+  // Iterates over EVERY source so multi-source brains see per-source
+  // failure rates instead of only 'default'. Threshold configurable via
+  // `facts.absorb_warn_threshold` (default 10 over the last 24h, per
+  // source, per reason). When the threshold is exceeded for any
+  // (source, reason) pair, status flips to warn and the message names
+  // the breakdown.
+  progress.heartbeat('facts_extraction_health');
+  try {
+    const thresholdRaw = await engine.getConfig('facts.absorb_warn_threshold');
+    const parsed = parseInt(thresholdRaw ?? '', 10);
+    const threshold = Number.isFinite(parsed) && parsed > 0 ? parsed : 10;
+
+    // Single SQL grouping by (source_id, reason) over the last 24h. The
+    // composite index v50 added (idx_ingest_log_source_type_created on
+    // source_id, source_type, created_at DESC) covers this query's
+    // filter + sort path.
+    const rows = await engine.executeRaw<{
+      source_id: string;
+      reason: string;
+      n: string | number;
+    }>(
+      `SELECT
+         source_id,
+         split_part(summary, ':', 1) AS reason,
+         COUNT(*)::text AS n
+       FROM ingest_log
+       WHERE source_type = 'facts:absorb'
+         AND created_at >= now() - INTERVAL '24 hours'
+       GROUP BY source_id, split_part(summary, ':', 1)
+       ORDER BY source_id, COUNT(*) DESC`,
+    );
+
+    if (rows.length === 0) {
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'ok',
+        message: 'No facts:absorb failures in the last 24h.',
+      });
+    } else {
+      // Group per source so the breakdown is operator-friendly.
+      const bySource = new Map<string, Array<{ reason: string; n: number }>>();
+      let anyOverThreshold = false;
+      for (const r of rows) {
+        const n = typeof r.n === 'number' ? r.n : parseInt(r.n, 10);
+        if (!Number.isFinite(n)) continue;
+        if (n >= threshold) anyOverThreshold = true;
+        if (!bySource.has(r.source_id)) bySource.set(r.source_id, []);
+        bySource.get(r.source_id)!.push({ reason: r.reason, n });
+      }
+      const summary = [...bySource.entries()]
+        .map(([sid, reasons]) =>
+          `${sid}: ${reasons.map(x => `${x.n} ${x.reason}`).join(', ')}`,
+        )
+        .join(' | ');
+      checks.push({
+        name: 'facts_extraction_health',
+        status: anyOverThreshold ? 'warn' : 'ok',
+        message: anyOverThreshold
+          ? `Facts:absorb failures over the threshold (${threshold}) in the last 24h: ${summary}. ` +
+            `Run \`gbrain recall --since 24h --json\` to inspect what landed; ` +
+            `tune the gate via \`gbrain config set facts.absorb_warn_threshold N\`.`
+          : `Facts:absorb activity in last 24h (under threshold ${threshold}): ${summary}.`,
+      });
+    }
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42P01' || code === '42703') {
+      // ingest_log missing entirely (extreme legacy) or source_id column
+      // missing (pre-v50 brain that hasn't run apply-migrations yet).
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'ok',
+        message: 'Skipped (ingest_log.source_id unavailable — run `gbrain apply-migrations --yes`).',
+      });
+    } else if (code === '42501') {
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'warn',
+        message: 'RLS denies SELECT on ingest_log. The check can\'t see facts:absorb rows. Run as a BYPASSRLS role or grant SELECT on this table.',
+      });
+    } else {
+      checks.push({
+        name: 'facts_extraction_health',
+        status: 'warn',
+        message: `Could not read ingest_log for facts:absorb: ${(err as Error)?.message ?? String(err)}`,
       });
     }
   }
@@ -1384,6 +2246,14 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   }
 
+  // 11.4 subagent_provider (v0.31.12 — Codex F13 layer 3 of 3). Surfaces a
+  // warn when models.tier.subagent or models.default points at a non-Anthropic
+  // provider. Layers 1 (queue.ts submit-time) and 2 (handler runtime) also
+  // enforce; this is the surfacing layer so users see the config drift before
+  // a job is submitted.
+  progress.heartbeat('subagent_provider');
+  checks.push(await checkSubagentProvider(engine));
+
   // 11.5 facts_health (v0.31 hot memory). Surfaces per-source counters so
   // operators can see the extraction pipeline's pulse without raw SQL.
   // Lightweight: one COUNT-with-filters query + a top-5 aggregate. Only
@@ -1535,6 +2405,21 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         });
       }
     } catch { /* config table missing on a very old brain — skip */ }
+  }
+
+  // Sync freshness check (v0.32 — Check that sources are synced recently)
+  if (engine !== null) {
+    progress.heartbeat('sync_freshness');
+    checks.push(await checkSyncFreshness(engine));
+  }
+
+  // v0.32.3 search-lite — mode + eval_drift surfaces. Status stays 'ok' per
+  // [CDX-20]; hint lives in `message`.
+  if (engine !== null) {
+    progress.heartbeat('search_mode');
+    checks.push(await checkSearchMode(engine));
+    progress.heartbeat('eval_drift');
+    checks.push(await checkEvalDrift(engine));
   }
 
   progress.finish();

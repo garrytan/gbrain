@@ -32,6 +32,7 @@ function makeCtx(opts: { remote?: boolean } = {}): OperationContext {
     dryRun: false,
     // Default: trusted local invocation (matches `gbrain call` semantics).
     remote: opts.remote ?? false,
+    sourceId: 'default',
   };
 }
 

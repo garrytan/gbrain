@@ -23,7 +23,7 @@ import {
   type ResolvableIssue,
   type AutoFixReport,
 } from '../core/check-resolvable.ts';
-import { autoDetectSkillsDir, AUTO_DETECT_HINT, type SkillsDirSource } from '../core/repo-root.ts';
+import { autoDetectSkillsDirReadOnly, AUTO_DETECT_HINT_READ_ONLY, type SkillsDirSource } from '../core/repo-root.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -142,7 +142,7 @@ export function resolveSkillsDir(flags: Flags): {
     return { dir, error: null, message: null, source: 'explicit' };
   }
 
-  const detected = autoDetectSkillsDir();
+  const detected = autoDetectSkillsDirReadOnly();
   if (!detected.dir) {
     return {
       dir: null,
@@ -150,19 +150,21 @@ export function resolveSkillsDir(flags: Flags): {
       message:
         'Could not auto-detect skills/ with a RESOLVER.md or AGENTS.md.\n' +
         'Priority order:\n' +
-        AUTO_DETECT_HINT +
-        '\nFix: export OPENCLAW_WORKSPACE=<path> or pass --skills-dir <path>.',
+        AUTO_DETECT_HINT_READ_ONLY +
+        '\nFix: export GBRAIN_SKILLS_DIR=<path>, OPENCLAW_WORKSPACE=<path>, or pass --skills-dir <path>.',
       source: null,
     };
   }
 
   const sourceLabel = {
+    env_explicit: '$GBRAIN_SKILLS_DIR (explicit operator override)',
     repo_root: 'repo root skills/',
     openclaw_workspace_env: '$OPENCLAW_WORKSPACE/skills',
     openclaw_workspace_env_root: '$OPENCLAW_WORKSPACE (AGENTS.md at workspace root)',
     openclaw_workspace_home: '~/.openclaw/workspace/skills',
     openclaw_workspace_home_root: '~/.openclaw/workspace (AGENTS.md at workspace root)',
     cwd_skills: './skills',
+    install_path: 'gbrain install path (read-only fallback)',
   }[detected.source!]!;
 
   return {
@@ -280,6 +282,21 @@ export async function runCheckResolvable(args: string[]): Promise<void> {
 
   let autoFix: AutoFixReport | null = null;
   if (flags.fix) {
+    // SAFETY GATE (v0.31.7 follow-up to D5): refuse --fix when the skills
+    // dir came from the install-path fallback. autoFixDryViolations writes
+    // to SKILL.md files; running --fix from a directory with no resolver up
+    // the cwd tree would resolve to the bundled gbrain repo via the
+    // read-only install-path fallback and silently mutate it. Codex caught
+    // this leak in the v0.31.7 ship review (D6 lock).
+    if (source === 'install_path') {
+      process.stderr.write(
+        'gbrain check-resolvable --fix refused: skills dir resolved via install-path fallback (read-only).\n' +
+        'The --fix flag writes to SKILL.md files; running it against the bundled install\n' +
+        'tree would silently mutate gbrain itself. Set $GBRAIN_SKILLS_DIR, $OPENCLAW_WORKSPACE,\n' +
+        'or pass --skills-dir <path> to point at the workspace you actually want to fix.\n',
+      );
+      process.exit(1);
+    }
     autoFix = autoFixDryViolations(skillsDir, { dryRun: flags.dryRun });
   }
 

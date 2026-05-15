@@ -350,17 +350,23 @@ CREATE INDEX IF NOT EXISTS idx_versions_page ON page_versions(page_id);
 -- ============================================================
 -- ingest_log
 -- ============================================================
--- NOTE (v0.18.0 Step 1): ingest_log.source_id is NOT added yet — lands
--- in v17 alongside the sync rewrite (Step 5), which starts writing
--- source-scoped entries.
+-- v0.31.2 (codex P1 #3): source_id added so facts:absorb logging
+-- (runFactsBackstop / writeFactsAbsorbLog) and doctor's
+-- facts_extraction_health check can scope failure counts per source.
+-- Migration v47 ALTERs existing brains; this inline definition covers
+-- fresh installs.
 CREATE TABLE IF NOT EXISTS ingest_log (
   id            SERIAL PRIMARY KEY,
+  source_id     TEXT    NOT NULL DEFAULT 'default',
   source_type   TEXT    NOT NULL,
   source_ref    TEXT    NOT NULL,
   pages_updated JSONB   NOT NULL DEFAULT '[]',
   summary       TEXT    NOT NULL DEFAULT '',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_ingest_log_source_type_created
+  ON ingest_log (source_id, source_type, created_at DESC);
 
 -- ============================================================
 -- config: brain-level settings
@@ -422,8 +428,17 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   client_secret_expires_at BIGINT,
   token_ttl               INTEGER,
   deleted_at              TIMESTAMPTZ,
+  source_id               TEXT REFERENCES sources(id) ON DELETE RESTRICT,
+  federated_read          TEXT[] NOT NULL DEFAULT '{}',
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- v0.34.1 (#861, D13 + #876): source_id is the write-source scope;
+-- federated_read is the read-source array. Migrations v60-v65 land both
+-- columns on upgrade; fresh installs include them inline above.
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
+  ON oauth_clients(source_id) WHERE source_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_federated_read
+  ON oauth_clients USING GIN (federated_read);
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
   token_hash   TEXT PRIMARY KEY,
@@ -787,6 +802,72 @@ CREATE TABLE IF NOT EXISTS eval_capture_failures (
 );
 CREATE INDEX IF NOT EXISTS idx_eval_capture_failures_ts ON eval_capture_failures(ts DESC);
 
+-- eval_takes_quality_runs (v0.32 — EXP-5): DB-authoritative receipts for the
+-- takes-quality eval CLI. 4-sha unique key (corpus, prompt, models, rubric)
+-- so re-running the same run is a no-op (ON CONFLICT DO NOTHING) and a
+-- future rubric tweak segregates trend rows cleanly. receipt_json carries
+-- the full receipt blob so \`replay\` can reconstruct when the disk artifact
+-- is missing. Mirrored in src/core/pglite-schema.ts + migration v49.
+CREATE TABLE IF NOT EXISTS eval_takes_quality_runs (
+  id                    BIGSERIAL    PRIMARY KEY,
+  receipt_sha8_corpus   TEXT         NOT NULL,
+  receipt_sha8_prompt   TEXT         NOT NULL,
+  receipt_sha8_models   TEXT         NOT NULL,
+  receipt_sha8_rubric   TEXT         NOT NULL,
+  rubric_version        TEXT         NOT NULL,
+  verdict               TEXT         NOT NULL CHECK (verdict IN ('pass','fail','inconclusive')),
+  overall_score         REAL         NOT NULL,
+  dim_scores            JSONB        NOT NULL,
+  cost_usd              REAL         NOT NULL,
+  receipt_json          JSONB        NOT NULL,
+  receipt_disk_path     TEXT,
+  created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  UNIQUE (receipt_sha8_corpus, receipt_sha8_prompt, receipt_sha8_models, receipt_sha8_rubric)
+);
+CREATE INDEX IF NOT EXISTS eval_takes_quality_runs_trend_idx
+  ON eval_takes_quality_runs (rubric_version, created_at DESC);
+
+-- eval_contradictions_cache (v0.32.6): persistent judge verdicts for the
+-- contradiction probe. Composite primary key includes prompt_version +
+-- truncation_policy so any prompt edit cleanly invalidates prior verdicts
+-- (Codex outside-voice fix). TTL via expires_at; cache.ts sweeps periodically.
+CREATE TABLE IF NOT EXISTS eval_contradictions_cache (
+  chunk_a_hash       TEXT         NOT NULL,
+  chunk_b_hash       TEXT         NOT NULL,
+  model_id           TEXT         NOT NULL,
+  prompt_version     TEXT         NOT NULL,
+  truncation_policy  TEXT         NOT NULL,
+  verdict            JSONB        NOT NULL,
+  created_at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  expires_at         TIMESTAMPTZ  NOT NULL,
+  PRIMARY KEY (chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy)
+);
+CREATE INDEX IF NOT EXISTS eval_contradictions_cache_expires_idx
+  ON eval_contradictions_cache (expires_at);
+
+-- eval_contradictions_runs (v0.32.6): time-series tracking for the probe.
+-- One row per run; source for the \`trend\` sub-subcommand and the doctor
+-- \`contradictions\` check. report_json carries the full ProbeReport for replay.
+CREATE TABLE IF NOT EXISTS eval_contradictions_runs (
+  run_id                       TEXT         PRIMARY KEY,
+  ran_at                       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  schema_version               INTEGER      NOT NULL DEFAULT 1,
+  judge_model                  TEXT         NOT NULL,
+  prompt_version               TEXT         NOT NULL,
+  queries_evaluated            INTEGER      NOT NULL,
+  queries_with_contradiction   INTEGER      NOT NULL,
+  total_contradictions_flagged INTEGER      NOT NULL,
+  wilson_ci_lower              REAL         NOT NULL,
+  wilson_ci_upper              REAL         NOT NULL,
+  judge_errors_total           INTEGER      NOT NULL,
+  cost_usd_total               REAL         NOT NULL,
+  duration_ms                  INTEGER      NOT NULL,
+  source_tier_breakdown        JSONB        NOT NULL,
+  report_json                  JSONB        NOT NULL
+);
+CREATE INDEX IF NOT EXISTS eval_contradictions_runs_ran_at_idx
+  ON eval_contradictions_runs (ran_at DESC);
+
 -- NOTIFY trigger for real-time job events (Postgres only, not PGLite)
 CREATE OR REPLACE FUNCTION notify_minion_job_change() RETURNS trigger AS \$\$
 BEGIN
@@ -839,6 +920,10 @@ BEGIN
     ALTER TABLE dream_verdicts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE eval_candidates ENABLE ROW LEVEL SECURITY;
     ALTER TABLE eval_capture_failures ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE eval_takes_quality_runs ENABLE ROW LEVEL SECURITY;
+    -- v0.32.6 contradiction probe tables
+    ALTER TABLE eval_contradictions_cache ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE eval_contradictions_runs ENABLE ROW LEVEL SECURITY;
     -- v0.26 OAuth 2.1 tables
     ALTER TABLE oauth_clients ENABLE ROW LEVEL SECURITY;
     ALTER TABLE oauth_tokens ENABLE ROW LEVEL SECURITY;

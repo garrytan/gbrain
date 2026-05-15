@@ -4,9 +4,15 @@ import type { Recipe } from '../types.ts';
  * Voyage AI exposes an OpenAI-compatible /embeddings endpoint.
  * Base URL: https://api.voyageai.com/v1
  *
- * Voyage 4 family (Jan 2026): shared embedding space across all v4 variants,
- * flexible dims (256/512/1024/2048), 32K context, MoE architecture (large).
- * You can index with voyage-4-large and query with voyage-4-lite — no reindex.
+ * Hosted v4 trio (voyage-4-large / voyage-4 / voyage-4-lite, Jan 2026):
+ * shared embedding space, flexible dims (256/512/1024/2048), 32K context,
+ * MoE architecture (large). You can index with voyage-4-large and query with
+ * voyage-4-lite — no reindex.
+ *
+ * voyage-4-nano is a DIFFERENT thing: an open-weight variant Voyage lists
+ * separately. It does NOT accept the `output_dimension` parameter on
+ * Voyage's hosted API — fixed 1024-dim. See VOYAGE_OUTPUT_DIMENSION_MODELS
+ * in src/core/ai/dims.ts; nano is intentionally excluded.
  *
  * voyage-multimodal-3 (v0.27.1): text + image inputs in the same 1024-dim
  * space. supports_multimodal flips routing to embedMultimodal() in the

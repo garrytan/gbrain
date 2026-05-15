@@ -2,8 +2,7 @@
  * Shared link/timeline extraction utilities.
  *
  * Used by:
- *   - src/commands/link-extract.ts        (batch DB extraction)
- *   - src/commands/timeline-extract.ts    (batch DB extraction)
+ *   - src/commands/extract.ts             (batch DB + FS extraction — `gbrain extract links|timeline|all`)
  *   - src/commands/backlinks.ts           (filesystem walk, legacy)
  *   - src/core/operations.ts put_page     (auto-link post-hook)
  *

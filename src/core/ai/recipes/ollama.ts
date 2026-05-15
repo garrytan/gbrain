@@ -17,6 +17,9 @@ export const ollama: Recipe = {
       default_dims: 768, // nomic-embed-text native dim
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-04-20',
+      // Ollama's batch capacity depends on the locally loaded model + the
+      // OLLAMA_NUM_PARALLEL config; no static cap to declare. v0.32 (#779).
+      no_batch_cap: true,
     },
   },
   setup_hint: 'Install Ollama from https://ollama.ai, then `ollama pull nomic-embed-text` and `ollama serve`.',

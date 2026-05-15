@@ -36,6 +36,8 @@ interface ParsedArgs {
   expansion: boolean;
   topK: number;
   outputPath?: string;
+  /** v0.32.3 — search-lite mode to evaluate under. Resolves through resolveSearchMode. */
+  mode?: 'conservative' | 'balanced' | 'tokenmax';
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -56,6 +58,15 @@ function parseArgs(args: string[]): ParsedArgs {
     if (a === '--model') { out.model = args[++i]; continue; }
     if (a === '--top-k') { out.topK = Number(args[++i]); continue; }
     if (a === '--output') { out.outputPath = args[++i]; continue; }
+    if (a === '--mode') {
+      const v = args[++i];
+      if (v === 'conservative' || v === 'balanced' || v === 'tokenmax') {
+        out.mode = v;
+      } else {
+        throw new Error(`--mode must be one of conservative|balanced|tokenmax (got: ${v})`);
+      }
+      continue;
+    }
     if (!a.startsWith('-') && !out.datasetPath) { out.datasetPath = a; continue; }
   }
   return out;
@@ -77,6 +88,10 @@ function printHelp(): void {
     `  --expansion               Enable multi-query expansion (off by default for benchmarks).\n` +
     `                            Costs one Haiku call per question; non-deterministic.\n` +
     `  --top-k K                 Retrieve K sessions per question (default: 8).\n` +
+    `  --mode M                  v0.32.3 — search-lite mode: conservative|balanced|tokenmax.\n` +
+    `                            Mode resolves through src/core/search/mode.ts so the search\n` +
+    `                            behavior matches what production gets under that mode.\n` +
+    `                            --mode tokenmax implies --expansion unless overridden.\n` +
     `  --output FILE             Write JSONL to FILE instead of stdout.\n` +
     `  -h, --help                Show this help.\n\n` +
     `Note: a full 500-question run takes ~20-60 minutes depending on flags. Use\n` +
@@ -271,7 +286,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
 
   process.stderr.write(`[longmemeval] estimated 20-60 minutes for ${questions.length} questions; use --limit N for shorter runs\n`);
   process.stderr.write(`[longmemeval] connecting in-memory brain...\n`);
-  process.stderr.write(`[longmemeval] starting (questions: ${questions.length}, model: ${model}, expansion: ${opts.expansion ? 'on' : 'off'})\n`);
+  process.stderr.write(`[longmemeval] starting (questions: ${questions.length}, model: ${model}, expansion: ${opts.expansion ? 'on' : 'off'}${opts.mode ? `, mode: ${opts.mode}` : ''})\n`);
 
   const emitter = makeEmitter(opts.outputPath);
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
@@ -283,6 +298,12 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   let errorCount = 0;
 
   await withBenchmarkBrain(async (engine) => {
+    // v0.32.3 search-lite: thread --mode into the in-memory brain's config.
+    // resetTables preserves `config` between questions, so this fires once
+    // for the run. hybridSearch resolves it through the standard chain.
+    if (opts.mode) {
+      await engine.setConfig('search.mode', opts.mode);
+    }
     for (const q of questions) {
       const qStart = Date.now();
       try {
@@ -369,5 +390,8 @@ async function runOneQuestion(
     question_id: q.question_id,
     hypothesis,
     retrieved_session_ids: retrievedSessionIds,
+    // v0.32.3 — record the active mode in every per-question row so reviewers
+    // can group/compare without re-running. Omitted when --mode is unset.
+    ...(opts.mode ? { mode: opts.mode } : {}),
   });
 }

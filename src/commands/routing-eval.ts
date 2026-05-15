@@ -14,7 +14,7 @@
  * layer only. A future release will implement the tie-break layer.
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync } from 'fs';
 import { resolve as resolvePath, isAbsolute } from 'path';
 
 import {
@@ -25,8 +25,8 @@ import {
   type RoutingReport,
   type FixtureLintIssue,
 } from '../core/routing-eval.ts';
-import { findResolverFile, RESOLVER_FILENAMES_LABEL } from '../core/resolver-filenames.ts';
-import { autoDetectSkillsDir } from '../core/repo-root.ts';
+import { findAllResolverFiles, RESOLVER_FILENAMES_LABEL } from '../core/resolver-filenames.ts';
+import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
 import { join } from 'path';
 
 interface Flags {
@@ -93,7 +93,7 @@ function resolveSkillsDir(
       : resolvePath(process.cwd(), flags.skillsDir);
     return { dir, source: 'explicit', error: null, message: null };
   }
-  const detected = autoDetectSkillsDir();
+  const detected = autoDetectSkillsDirReadOnly();
   if (!detected.dir) {
     return {
       dir: null,
@@ -140,8 +140,17 @@ export async function runRoutingEvalCli(args: string[]): Promise<void> {
   }
 
   const skillsDir = dir!;
-  const resolverFile =
-    findResolverFile(skillsDir) ?? findResolverFile(join(skillsDir, '..'));
+  // v0.31.7 D6 fix: collect entries from ALL resolver files across both the
+  // skills directory and its parent, matching the multi-file merge behavior
+  // in src/core/check-resolvable.ts. Without this, OpenClaw deployments
+  // (thin skills/RESOLVER.md + rich ../AGENTS.md) would have routing-eval
+  // see only the thin file's triggers and report false misses/ambiguity
+  // while doctor and check-resolvable see the full merged index.
+  const allResolverPaths = [
+    ...findAllResolverFiles(skillsDir),
+    ...findAllResolverFiles(join(skillsDir, '..')),
+  ];
+  const resolverFile = allResolverPaths[0] ?? null;
   if (!resolverFile) {
     const env: RoutingEvalEnvelope = {
       ok: false,
@@ -158,7 +167,11 @@ export async function runRoutingEvalCli(args: string[]): Promise<void> {
     process.exit(2);
   }
 
-  const resolverContent = readFileSync(resolverFile, 'utf-8');
+  // Build combined resolverContent across all matched files (RESOLVER.md +
+  // ../AGENTS.md, etc.), so indexResolverTriggers sees the union.
+  const resolverContent = allResolverPaths
+    .map(p => readFileSync(p, 'utf-8'))
+    .join('\n\n');
   const index = indexResolverTriggers(resolverContent);
 
   const loaded = loadRoutingFixtures(skillsDir);

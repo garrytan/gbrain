@@ -151,3 +151,42 @@ to add a new directory the synthesis subagent may write to:
 2. Cross-reference compulsively: every new page MUST link to existing brain content.
 3. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated. NO underscores, NO file extensions.
 4. Edited transcripts produce NEW slugs (content-hash suffix changes) — never silently overwrite a prior reflection.
+
+## Takes attribution (v0.32+)
+
+When writing a `<!--- gbrain:takes:begin -->` fence, the **holder** column says
+WHO BELIEVES the claim, not who it's ABOUT. Cross-modal eval over 100K
+production takes scored attribution at 6.5/10 — holder/subject confusion was
+the #1 error. These six rules are the contract. Long form with worked
+examples lives in `docs/takes-vs-facts.md`.
+
+1. **Holder ≠ subject.** The test: did this person SAY or CLEARLY IMPLY this?
+   - YES → `holder = people/<slug>`
+   - NO, it's your analysis OF them → `holder = brain`
+   - Example: "Garry has a hero/rescuer pattern" → `holder=brain` (analysis ABOUT Garry, not stated BY Garry)
+2. **Atomic claims.** Split compound rows into separate rows. One claim per row.
+3. **Amplification ≠ endorsement.** A retweet-only signal caps at `weight 0.55`.
+   The user shared something; they didn't necessarily endorse every clause.
+4. **Self-reported ≠ verified.** "Saif reports 7 figures" → `holder=people/saif`,
+   `weight=0.75`, NOT `holder=world/1.0`. Self-report is a strong individual
+   signal, not consensus fact.
+5. **No false precision.** Use 0.05 increments only (`0.35`, `0.55`, `0.75`).
+   `0.74` and `0.82` imply calibration accuracy that doesn't exist. The engine
+   layer rounds on insert — match the grid in your fence and avoid the warning.
+6. **"So what" test.** Skip metadata-style trivia (Twitter handles, follower
+   counts, obvious bio fields). A take has to be load-bearing for some future
+   query.
+
+**Holder format (enforced as a parser warning in v0.32, error in v0.33+):**
+- `world` (consensus fact, no individual claimant)
+- `brain` (AI-inferred, holder genuinely ambiguous)
+- `people/<slug>` (individual's stated belief)
+- `companies/<slug>` (institutional fact, no individual claimant)
+
+Slugs use the standard grammar (`[a-z0-9._-]+`). `Garry`, `people/Garry-Tan`,
+and `world/garry-tan` all fail validation.
+
+**Founder-describing-own-company rule.** When a founder describes their own
+company, the holder is the FOUNDER, not the company. "We can hit $10M ARR"
+said by Bo Lu → `holder=people/bo-lu`, NOT `holder=companies/clipboard-health`.
+Companies don't speak; their employees do.

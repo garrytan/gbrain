@@ -1,4 +1,4 @@
-import { readdirSync, lstatSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
+import { readdirSync, lstatSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
 import { cpus, totalmem } from 'os';
@@ -13,6 +13,13 @@ import {
   isImageFilePath as isImageFilePathFromSync,
   type SyncStrategy,
 } from '../core/sync.ts';
+import { sortNewestFirst } from '../core/sort-newest-first.ts';
+import {
+  loadCheckpoint,
+  saveCheckpoint,
+  clearCheckpoint,
+  resumeFilter,
+} from '../core/import-checkpoint.ts';
 
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
@@ -86,23 +93,23 @@ export async function runImport(
     : strategy === 'auto' ? 'syncable' : 'markdown';
   console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
 
-  // Resume from checkpoint if available
-  const checkpointPath = gbrainPath('import-checkpoint.json');
-  let files = allFiles;
-  let resumeIndex = 0;
+  // Sort newest-first so date-prefixed brain paths get embedded before older ones.
+  // See src/core/sort-newest-first.ts for the policy.
+  sortNewestFirst(allFiles);
 
-  if (!fresh && existsSync(checkpointPath)) {
-    try {
-      const cp = JSON.parse(readFileSync(checkpointPath, 'utf-8'));
-      if (cp.dir === dir && cp.totalFiles === allFiles.length) {
-        resumeIndex = cp.processedIndex;
-        files = allFiles.slice(resumeIndex);
-        console.log(`Resuming from checkpoint: skipping ${resumeIndex} already-processed files`);
-      }
-    } catch {
-      // Invalid checkpoint, start fresh
+  // Resume from checkpoint if available. v0.33.2: path-based resume —
+  // see src/core/import-checkpoint.ts for the bug-class this fixes
+  // (parallel-import silent-skip and failed-file no-retry).
+  const checkpointPath = gbrainPath('import-checkpoint.json');
+  const completed = new Set<string>();
+  if (!fresh) {
+    const cp = loadCheckpoint(checkpointPath, dir);
+    if (cp) {
+      for (const p of cp.completedPaths) completed.add(p);
+      console.log(`Resuming from checkpoint: skipping ${completed.size} already-processed files`);
     }
   }
+  const files = resumeFilter(allFiles, dir, completed);
 
   // Determine actual worker count
   const actualWorkers = workerCount > 1 ? workerCount : 1;
@@ -150,12 +157,18 @@ export async function runImport(
         imported++;
         chunksCreated += result.chunks;
         importedSlugs.push(result.slug);
+        // v0.33.2: path-based checkpoint — record only on success.
+        completed.add(relativePath);
       } else {
         skipped++;
         if (result.error && result.error !== 'unchanged') {
           console.error(`  Skipped ${relativePath}: ${result.error}`);
           // Bug 9 — non-"unchanged" skips carry a real error reason.
           failures.push({ path: relativePath, error: result.error });
+        } else {
+          // 'unchanged' or no-error skip: content_hash matched a prior
+          // successful import, so this file IS done for checkpoint purposes.
+          completed.add(relativePath);
         }
       }
     } catch (e: unknown) {
@@ -173,20 +186,20 @@ export async function runImport(
     }
     processed++;
     tickProgress();
-    if (processed % 100 === 0 || processed === files.length) {
-      // Save checkpoint every 100 files — track completed file set, not just a counter
-      if (processed % 100 === 0) {
-        try {
-          const cpDir = gbrainPath();
-          if (!existsSync(cpDir)) { const { mkdirSync } = await import('fs'); mkdirSync(cpDir, { recursive: true }); }
-          writeFileSync(checkpointPath, JSON.stringify({
-            dir, totalFiles: allFiles.length,
-            processedIndex: resumeIndex + processed,
-            completedFiles: importedSlugs.length + skipped,
-            timestamp: new Date().toISOString(),
-          }));
-        } catch { /* non-fatal */ }
+    // Save checkpoint every 100 SUCCESSFUL adds (not every 100 processed).
+    // Failed files never enter `completed`, so a flaky file can't push the
+    // checkpoint past it — the next run will retry it.
+    if (completed.size > 0 && completed.size % 100 === 0) {
+      const cpDir = gbrainPath();
+      if (!existsSync(cpDir)) {
+        try { const { mkdirSync } = await import('fs'); mkdirSync(cpDir, { recursive: true }); }
+        catch { /* non-fatal */ }
       }
+      saveCheckpoint(checkpointPath, {
+        dir,
+        completedPaths: Array.from(completed),
+        timestamp: new Date().toISOString(),
+      });
     }
   }
 
@@ -259,10 +272,12 @@ export async function runImport(
     }
   }
 
-  // Clear checkpoint only on successful completion (no errors)
-  if (errors === 0 && existsSync(checkpointPath)) {
-    try { unlinkSync(checkpointPath); } catch { /* non-fatal */ }
-  } else if (errors > 0 && existsSync(checkpointPath)) {
+  // Clear checkpoint on clean completion. On error, the path-based checkpoint
+  // preserves only the successfully-completed paths, so the next run retries
+  // failed files automatically (they never entered `completed`).
+  if (errors === 0) {
+    clearCheckpoint(checkpointPath);
+  } else if (existsSync(checkpointPath)) {
     console.log(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
   }
 

@@ -204,7 +204,7 @@ Examples:
 
 Configure synthesize:
   gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
-  gbrain config set dream.synthesize.enabled true
+  gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
 
 Related:
   gbrain autopilot --install            # continuous maintenance as a daemon

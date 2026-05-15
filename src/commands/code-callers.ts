@@ -11,12 +11,21 @@
  * in repo A ≠ same string in repo B). Pass `--all-sources` to search
  * globally.
  *
+ * v0.34 W0b (Codex finding #7): the pre-v0.34 implementation set
+ * `allSources: allSources || !sourceId`, which INVERTED the documented
+ * default to global whenever --source was omitted. Multi-source brains
+ * cross-contaminated structural retrieval despite the docstring claim.
+ * Fix: when --source is omitted AND --all-sources is NOT set, resolve to
+ * the brain's only source (single-source brains) or fail with a clear
+ * error listing valid source ids (multi-source brains).
+ *
  * Output: non-TTY → JSON envelope. TTY → human table. Follows the
  * code-def / code-refs pattern.
  */
 
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
+import { resolveDefaultSource, SourceResolutionError } from '../core/sources-ops.ts';
 
 function parseFlag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -37,7 +46,7 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
       class: 'UsageError',
       code: 'code_callers_requires_symbol',
       message: 'code-callers requires a symbol name',
-      hint: 'gbrain code-callers <symbol> [--all-sources] [--limit N] [--json]',
+      hint: 'gbrain code-callers <symbol> [--source S | --all-sources] [--limit N] [--json]',
     });
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify({ error: err.envelope }));
@@ -48,12 +57,37 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
   }
   const limit = parseInt(parseFlag(args, '--limit') || '100', 10);
   const allSources = args.includes('--all-sources');
-  const sourceId = parseFlag(args, '--source');
+  let sourceId = parseFlag(args, '--source');
+
+  // v0.34 W0b: when neither --source nor --all-sources is set, resolve
+  // to the brain's only source. Multi-source brains require an explicit
+  // choice — no more silent cross-source default.
+  if (!allSources && !sourceId) {
+    try {
+      sourceId = await resolveDefaultSource(engine);
+    } catch (e: unknown) {
+      if (e instanceof SourceResolutionError) {
+        const env = errorFor({
+          class: 'UsageError',
+          code: e.code,
+          message: e.message,
+          hint: 'pass --source <id> for one source, or --all-sources to search every source',
+        }).envelope;
+        if (shouldEmitJson(args)) {
+          console.log(JSON.stringify({ error: env }));
+        } else {
+          console.error(e.message);
+        }
+        process.exit(2);
+      }
+      throw e;
+    }
+  }
 
   try {
     const edges = await engine.getCallersOf(sym, {
       limit,
-      allSources: allSources || !sourceId,
+      allSources,
       sourceId: sourceId ?? undefined,
     });
 

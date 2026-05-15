@@ -93,7 +93,14 @@ describe('chunkCodeTextFull — integration with real parser', () => {
       // Recursive fallback still produces chunks; assertion is that the
       // call returned cleanly instead of hanging.
       expect(Array.isArray(result.chunks)).toBe(true);
-      expect(result.edges).toEqual([]); // edges only emitted on tree-sitter path
+      // v0.34 W2: extractAllEdges can emit imports/references from a partial
+      // parse (top-level statements survive grammar timeout). The original
+      // assertion was edges=[] under the calls-only extractor; with W2's
+      // imports/references emit, top-level imports show up even on the
+      // partial-parse fallback path. The contract that matters is `result`
+      // returned cleanly without hanging — edges array shape (empty or not)
+      // is engine-side noise.
+      expect(Array.isArray(result.edges)).toBe(true);
     });
   });
 });

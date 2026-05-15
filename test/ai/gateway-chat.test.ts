@@ -65,28 +65,39 @@ describe('chat touchpoint — recipe registry', () => {
 
 describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
   test('parseModelId handles dated and undated forms identically at parse time', () => {
-    expect(parseModelId('anthropic:claude-sonnet-4-6-20250929')).toEqual({
-      providerId: 'anthropic',
-      modelId: 'claude-sonnet-4-6-20250929',
-    });
     expect(parseModelId('anthropic:claude-sonnet-4-6')).toEqual({
       providerId: 'anthropic',
       modelId: 'claude-sonnet-4-6',
     });
+    expect(parseModelId('anthropic:claude-haiku-4-5-20251001')).toEqual({
+      providerId: 'anthropic',
+      modelId: 'claude-haiku-4-5-20251001',
+    });
   });
 
-  test('resolveRecipe expands undated alias to dated canonical', () => {
-    const { parsed } = resolveRecipe('anthropic:claude-sonnet-4-6');
-    expect(parsed.modelId).toBe('claude-sonnet-4-6-20250929');
-    const { parsed: parsed2 } = resolveRecipe('anthropic:claude-haiku-4-5');
-    expect(parsed2.modelId).toBe('claude-haiku-4-5-20251001');
+  test('resolveRecipe expands pre-4.6 dateless alias to dated canonical', () => {
+    // Pre-4.6 models keep date-based aliases (Haiku 4.5 predates the
+    // dateless convention).
+    const { parsed } = resolveRecipe('anthropic:claude-haiku-4-5');
+    expect(parsed.modelId).toBe('claude-haiku-4-5-20251001');
   });
 
-  test('resolveRecipe leaves canonical-form modelIds unchanged', () => {
+  test('resolveRecipe leaves dateless 4.6+ models unchanged (they ARE canonical)', () => {
     const { parsed } = resolveRecipe('anthropic:claude-opus-4-7');
-    expect(parsed.modelId).toBe('claude-opus-4-7'); // already canonical, no alias
-    const { parsed: parsed2 } = resolveRecipe('anthropic:claude-sonnet-4-6-20250929');
-    expect(parsed2.modelId).toBe('claude-sonnet-4-6-20250929');
+    expect(parsed.modelId).toBe('claude-opus-4-7');
+    const { parsed: parsed2 } = resolveRecipe('anthropic:claude-sonnet-4-6');
+    expect(parsed2.modelId).toBe('claude-sonnet-4-6');
+  });
+
+  test('reverse alias rescues v0.31.6-shipped broken Sonnet 4.6 ID (regression)', () => {
+    // gbrain v0.31.6 shipped 'claude-sonnet-4-6-20250929' as a hardcoded
+    // default, which 404s on the Anthropic API (Sonnet 4.6 is dateless).
+    // The reverse alias rewrites broken → canonical so any user with a
+    // stale `models.dream.synthesize` / `facts.extraction_model` config
+    // keeps working. Regression guard against a future "cleanup" that
+    // drops this alias entry.
+    const { parsed } = resolveRecipe('anthropic:claude-sonnet-4-6-20250929');
+    expect(parsed.modelId).toBe('claude-sonnet-4-6');
   });
 
   test('assertTouchpoint accepts chat for chat-capable native + openai-compat providers', () => {
@@ -122,9 +133,9 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
 describe('chat touchpoint — gateway config plumbing', () => {
   beforeEach(() => resetGateway());
 
-  test('default chat_model is anthropic:claude-sonnet-4-6-20250929', () => {
+  test('default chat_model is anthropic:claude-sonnet-4-6', () => {
     configureGateway({ env: {} });
-    expect(getChatModel()).toBe('anthropic:claude-sonnet-4-6-20250929');
+    expect(getChatModel()).toBe('anthropic:claude-sonnet-4-6');
   });
 
   test('explicit chat_model overrides the default', () => {

@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, statSync, lstatSync, existsSync, writeFileSy
 import { join, relative, extname, basename, dirname } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
-import * as db from '../core/db.ts';
+import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
 import { humanSize } from '../core/file-resolver.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -47,16 +47,16 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
 
   switch (subcommand) {
     case 'list':
-      await listFiles(args[1]);
+      await listFiles(engine, args[1]);
       break;
     case 'upload':
-      await uploadFile(args.slice(1));
+      await uploadFile(engine, args.slice(1));
       break;
     case 'sync':
-      await syncFiles(args[1]);
+      await syncFiles(engine, args[1]);
       break;
     case 'verify':
-      await verifyFiles();
+      await verifyFiles(engine);
       break;
     case 'mirror':
       await mirrorFiles(args.slice(1));
@@ -74,7 +74,7 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
       await cleanFiles(args.slice(1));
       break;
     case 'upload-raw':
-      await uploadRaw(args.slice(1));
+      await uploadRaw(engine, args.slice(1));
       break;
     case 'signed-url':
       await signedUrl(args.slice(1));
@@ -100,8 +100,8 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
   }
 }
 
-async function listFiles(slug?: string) {
-  const sql = db.getConnection();
+async function listFiles(engine: BrainEngine, slug?: string) {
+  const sql = sqlQueryForEngine(engine);
   let rows;
   if (slug) {
     rows = await sql`SELECT * FROM files WHERE page_slug = ${slug} ORDER BY filename LIMIT 100`;
@@ -116,12 +116,13 @@ async function listFiles(slug?: string) {
 
   console.log(`${rows.length} file(s):`);
   for (const row of rows) {
-    const size = row.size_bytes ? `${Math.round(row.size_bytes / 1024)}KB` : '?';
+    const sizeBytes = row.size_bytes as number | null;
+    const size = sizeBytes ? `${Math.round(sizeBytes / 1024)}KB` : '?';
     console.log(`  ${row.page_slug || '(unlinked)'} / ${row.filename}  [${size}, ${row.mime_type || '?'}]`);
   }
 }
 
-async function uploadFile(args: string[]) {
+async function uploadFile(engine: BrainEngine, args: string[]) {
   const filePath = args.find(a => !a.startsWith('--'));
   const pageSlug = args.find((a, i) => args[i - 1] === '--page') || null;
 
@@ -136,7 +137,7 @@ async function uploadFile(args: string[]) {
   const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
   const mimeType = getMimeType(filePath);
 
-  const sql = db.getConnection();
+  const sql = sqlQueryForEngine(engine);
 
   // Check for existing file by hash
   const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
@@ -178,7 +179,7 @@ async function uploadFile(args: string[]) {
  *
  * The .redirect.yaml pointer stays in the brain repo so git tracks what was stored.
  */
-async function uploadRaw(args: string[]) {
+async function uploadRaw(engine: BrainEngine, args: string[]) {
   const filePath = args.find(a => !a.startsWith('--'));
   const pageSlug = args.find((a, i) => args[i - 1] === '--page') || null;
   const fileType = args.find((a, i) => args[i - 1] === '--type') || null;
@@ -248,17 +249,20 @@ async function uploadRaw(args: string[]) {
     console.error(`Pointer written: ${pointerPath}`);
   }
 
-  // Record in DB
-  const sql = db.getConnection();
-  await sql`
-    INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-    VALUES (${pageSlug}, ${filename}, ${storagePath}, ${mimeType}, ${stat.size}, ${'sha256:' + hash},
-            ${sql.json({ type: fileType, upload_method: method })})
-    ON CONFLICT (storage_path) DO UPDATE SET
-      content_hash = EXCLUDED.content_hash,
-      size_bytes = EXCLUDED.size_bytes,
-      mime_type = EXCLUDED.mime_type
-  `;
+  // Record in DB. files.metadata is JSONB — pass the object via
+  // executeRawJsonb with an explicit ::jsonb cast so post-v0.31 reads see
+  // an actual object, not a JSON-encoded string (D1 wave).
+  await executeRawJsonb(
+    engine,
+    `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+     ON CONFLICT (storage_path) DO UPDATE SET
+       content_hash = EXCLUDED.content_hash,
+       size_bytes = EXCLUDED.size_bytes,
+       mime_type = EXCLUDED.mime_type`,
+    [pageSlug, filename, storagePath, mimeType, stat.size, 'sha256:' + hash],
+    [{ type: fileType, upload_method: method }],
+  );
 
   // Output JSON for scripting
   console.log(JSON.stringify({
@@ -296,7 +300,7 @@ async function signedUrl(args: string[]) {
   console.log(url);
 }
 
-async function syncFiles(dir?: string) {
+async function syncFiles(engine: BrainEngine, dir?: string) {
   if (!dir || !existsSync(dir)) {
     console.error('Usage: gbrain files sync <directory>');
     process.exit(1);
@@ -323,7 +327,7 @@ async function syncFiles(dir?: string) {
     const mimeType = getMimeType(filePath);
     const stat = statSync(filePath);
 
-    const sql = db.getConnection();
+    const sql = sqlQueryForEngine(engine);
     const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
     if (existing.length > 0) {
       skipped++;
@@ -351,8 +355,8 @@ async function syncFiles(dir?: string) {
   console.log(`Files sync complete: ${uploaded} uploaded, ${skipped} skipped (unchanged)`);
 }
 
-async function verifyFiles() {
-  const sql = db.getConnection();
+async function verifyFiles(engine: BrainEngine) {
+  const sql = sqlQueryForEngine(engine);
   const rows = await sql`SELECT * FROM files ORDER BY storage_path LIMIT 1000`;
 
   if (rows.length === 0) {

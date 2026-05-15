@@ -377,6 +377,56 @@ export async function addSource(
   return created;
 }
 
+// ── resolveDefaultSource ────────────────────────────────────────────────────
+//
+// v0.34 W0b — canonical helper for CLI commands that take an optional
+// --source flag. The contract per the eng review D7:
+//   - exactly 1 registered source → return its id (single-source brains,
+//     the 80% case; --source flag is unnecessary friction)
+//   - 0 sources → throw (no source to scope to)
+//   - 2+ sources → throw with the list, forcing the caller to be explicit
+//
+// Codex finding #7: src/commands/code-callers.ts:54 + code-callees.ts:43
+// historically set `allSources: allSources || !sourceId` — which means
+// the documented "source-scoped by default" behavior INVERTED to global
+// whenever `--source` was omitted. Multi-source brains silently
+// cross-contaminated structural retrieval despite the docstring claim.
+//
+// Helper consolidates the resolution rule so blast/flow/clusters/wiki
+// (v0.34 new commands) and code-callers/callees (v0.20.0 retrofit)
+// behave identically.
+
+export class SourceResolutionError extends Error {
+  constructor(
+    message: string,
+    public readonly code: 'no_sources' | 'multiple_sources_ambiguous',
+    public readonly availableSources: string[],
+  ) {
+    super(message);
+    this.name = 'SourceResolutionError';
+  }
+}
+
+export async function resolveDefaultSource(engine: BrainEngine): Promise<string> {
+  const sources = await listSources(engine);
+  if (sources.length === 0) {
+    throw new SourceResolutionError(
+      'no sources registered; run `gbrain sources add` first',
+      'no_sources',
+      [],
+    );
+  }
+  if (sources.length === 1) {
+    return sources[0]!.id;
+  }
+  const ids = sources.map((s) => s.id);
+  throw new SourceResolutionError(
+    `multi-source brain — specify --source from: ${ids.join(', ')}`,
+    'multiple_sources_ambiguous',
+    ids,
+  );
+}
+
 // ── listSources ─────────────────────────────────────────────────────────────
 
 export async function listSources(
