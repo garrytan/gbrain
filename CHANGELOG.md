@@ -4,6 +4,13 @@ All notable changes to GBrain will be documented in this file.
 
 ## [Unreleased]
 
+- Added `gbrain linkify` CLI for producer-side auto-linking of bare person
+  mentions into Obsidian wiki-links.
+- Fixed: `extractLinksForSlugs` and `extractForSlugs` previously silently
+  skipped files whose on-disk names were not slug-canonical.
+- Exported `stripCodeBlocks`, `WIKILINK_RE`, `QUALIFIED_WIKILINK_RE` from
+  `src/core/link-extraction.ts`.
+
 - Added `gbrain frontmatter slug <path>` and `gbrain frontmatter abi-version`
   subcommands so external producers can source slug computation from one
   place instead of porting `slugifyPath()`. See `docs/guides/producer-tools.md`.
