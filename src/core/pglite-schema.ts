@@ -600,8 +600,8 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
 );
 -- v0.34.1 (#861, D13 + #876): source_id is the OAuth client's write-source
 -- scope; federated_read is its read-source array (a federated client can
--- read sources beyond its source_id). Migration v58 adds source_id;
--- v59-v63 add federated_read + GIN index + flip FK to RESTRICT. Fresh
+-- read sources beyond its source_id). Migration v59 adds source_id;
+-- v60-v64 add federated_read + GIN index + flip FK to RESTRICT. Fresh
 -- installs land in the post-migration shape via the inline columns above.
 CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
   ON oauth_clients(source_id) WHERE source_id IS NOT NULL;

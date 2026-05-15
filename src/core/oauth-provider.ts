@@ -197,7 +197,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // v0.34.1 (#861, D2 + D13 + #876): DCR clients get source_id='default'
     // (matches legacy fallback) and federated_read=['default'] (read scope
     // == write scope). Operators who need narrower / wider scope rescope
-    // via the CLI later. Pre-v58/v59 brain falls through to the legacy
+    // via the CLI later. Pre-v59/v60 brain falls through to the legacy
     // projection (no source_id / federated_read column yet).
     try {
       await this.sql`
@@ -485,7 +485,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // adds the source_id thread on the same JOIN).
     //
     // v0.34.1 (#861): the JOIN guards on a c.source_id column that
-    // migration v58 adds. Pre-v58 brains throw a "column does not exist"
+    // migration v59 adds. Pre-v59 brains throw a "column does not exist"
     // error here — caught at the boundary via isUndefinedColumnError so
     // unmigrated brains degrade to "no source scope" rather than refusing
     // every token verification.
@@ -499,13 +499,13 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
       `;
     } catch (err) {
-      // v0.34.1: pre-v58 brain → source_id column missing. Pre-v59 brain →
+      // v0.34.1: pre-v59 brain → source_id column missing. Pre-v60 brain →
       // federated_read column missing. Both classes degrade to legacy
       // projection so auth keeps working until the operator runs
       // apply-migrations. Probe both column names so partial-upgrade brains
-      // (v58 applied but v59 didn't yet) also fall through cleanly.
+      // (v59 applied but v60 didn't yet) also fall through cleanly.
       if (isUndefinedColumnError(err, 'source_id') || isUndefinedColumnError(err, 'federated_read')) {
-        // Try the v58-only projection first (source_id but no federated_read).
+        // Try the v59-only projection first (source_id but no federated_read).
         try {
           oauthRows = await this.sql`
             SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.source_id
@@ -515,7 +515,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
           `;
         } catch (err2) {
           if (isUndefinedColumnError(err2, 'source_id')) {
-            // Truly pre-v58: no source_id either. Pre-v0.34 projection.
+            // Truly pre-v59: no source_id either. Pre-v0.34 projection.
             oauthRows = await this.sql`
               SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
               FROM oauth_tokens t
@@ -542,7 +542,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       }
       // v0.34.1 (#876): federated_read normalization. SELECT returns
       // either a JS array (Postgres / PGLite text[] driver mapping) or
-      // undefined when the legacy projection ran (pre-v59 brain). Empty
+      // undefined when the legacy projection ran (pre-v60 brain). Empty
       // array vs undefined matters: empty array = explicit no-federated-
       // read; undefined = column missing on this brain.
       const federatedRaw = row.federated_read;
@@ -557,8 +557,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         expiresAt,
         resource: row.resource ? new URL(row.resource as string) : undefined,
         // v0.34.1 (#861, D2): source-isolation scope from oauth_clients.
-        // Undefined when the row predates v58 or when the brain itself
-        // predates v58 (fell through to the legacy projection above).
+        // Undefined when the row predates v59 or when the brain itself
+        // predates v59 (fell through to the legacy projection above).
         sourceId: (row.source_id as string | null) ?? undefined,
         // v0.34.1 (#876): federated read scope. sourceScopeOpts in
         // operations.ts prefers this array over scalar sourceId when set
@@ -727,7 +727,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     // v0.34.1 (#861 + #876): persist source_id AND federated_read so
     // verifyAccessToken can populate both AuthInfo fields. Defaults:
-    //   source_id = 'default' (matches v58 backfill)
+    //   source_id = 'default' (matches v59 backfill)
     //   federated_read = [source_id] when omitted (a non-federated client
     //                    has read scope == write scope, the v0.33 default)
     const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
@@ -741,10 +741,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
                 ${sourceId}, ${pgArray(federated)})
       `;
     } catch (err) {
-      // Pre-v58 / pre-v59 brain: column missing. Fall back through both
+      // Pre-v59 / pre-v60 brain: column missing. Fall back through both
       // projections so registration still works until apply-migrations.
       if (isUndefinedColumnError(err, 'federated_read')) {
-        // v58-only brain: source_id but no federated_read.
+        // v59-only brain: source_id but no federated_read.
         try {
           await this.sql`
             INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
