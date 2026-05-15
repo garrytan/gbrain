@@ -150,22 +150,43 @@ during the v0.34.4 sync (§6.24); not blocking. PR closes the gap for
 any other downstream that runs `gbrain init --migrate-only` on a
 pre-v0.34 schema after pulling v0.34.x.
 
-### [ ] (CJK-eval) Reassess "vector search only" assumption after v0.32.7 CJK fix wave
+### [x] (CJK-eval) Reassess "vector search only" assumption after v0.32.7 CJK fix wave — VERDICT 2026-05-15: assumption holds for compound CJK; tighten the wording, no behavior change
 
-Premise change: v0.32.7 ("6 layers from one root cause") landed
-upstream CJK tokenizer fixes for keyword/FTS path. Our fork's
-operating assumption since v0.18 has been: *Postgres tsvector has
-no usable CJK tokenizer, vector search via Gemini embedding is the
-only working retrieval path on Chinese queries*. CLAUDE.md still
-says this.
+15-query probe via `gbrain search` (keyword-only, tsvector path) at
+schema v66 / v0.34.4 / Postgres engine:
 
-Probe: pick 5-10 known queries that historically returned `No
-results` from `gbrain query --keyword-only`. Run them post-sync.
-If results materialize, the "must keep `GOOGLE_GENERATIVE_AI_API_KEY`
-set on every consumer for any retrieval to work" rule loosens.
-Hybrid (keyword + vector) becomes practical for cost-sensitive paths
-(e.g. kos-patrol gap detection, which currently always burns embed
-budget).
+| Pattern | Sample | Result |
+|---|---|---|
+| English single/multi word | `Lucien`, `Omada`, `Notion`, `Postgres` | 10-18 hits, 0.3-0.5 scores |
+| Mixed CJK+space | `AI 网关` | 8 hits via Latin fragment, low CJK weight |
+| 2-3 char CJK | `知识管理`, `知识库` | 2-3 hits via body-fragment containment |
+| 4-char CJK compound | `向量检索`, `嵌入模型`, `云控制器`, `万兆网卡`, `Gemini 嵌入` | **0 hits** every time |
+| 2-char CJK names | `拉勾`, `猫人` | 0 hits |
+
+**Verdict**: v0.32.7's CJK work landed downstream of where it would
+have helped pure-keyword retrieval here. Postgres `to_tsvector('simple')`
+treats Han runs as a single non-tokenizable blob; matches only fire when
+the query string is a literal substring of the body (and even then
+they're scored weakly). 4-char compound CJK — the *typical* operator
+query shape on this brain — still goes 0/N on keyword. Vector path
+remains the only reliable retrieval for CJK compound queries.
+
+**Operating-assumption update**: CLAUDE.md's "vector search is the
+only working retrieval path on Chinese queries" is correct in spirit
+but slightly overstated — English-on-CJK-corpora keyword search works
+fine, and so does fragment match on 2-3 char standalone CJK terms.
+The accurate wording is: *compound CJK queries (4+ Han characters
+without whitespace) cannot be served by tsvector and require the
+vector path*. Update CLAUDE.md to this tighter form in a follow-up
+edit; no behavior change to kos-patrol / kos-compat-api routing.
+
+**Hybrid budget save — not yet worth it**: the original probe goal
+was to find a path that lets cost-sensitive callers (kos-patrol gap
+detection, etc.) drop the embed call. Today's keyword path can't
+serve the compound-CJK queries those workloads actually issue, so
+hybrid + keyword-first / vector-backfill saves nothing on the
+modal query. Re-evaluate if upstream lands a real CJK tokenizer
+(jieba binding, ICU, or pgroonga ext — none in v0.34.x).
 
 ### [ ] (overlap-matrix) Evaluate v0.31.6 / v0.32.2 / v0.33.0 vs fork hot-memory pieces
 
@@ -652,26 +673,47 @@ embedding cost <$1,直接 `--yes`。
 | 2026-05-25 | Re-evaluate Gemini 3072-dim embeddings vs current 1536-dim truncation | active |
 | ~~Trigger-based~~ | ~~PGLite → Postgres switch~~ | **CLOSED 2026-04-29 via Path 3 (§6.18)** |
 
-### [ ] Sync_failures cleanup: 48 chunker_version legacy entries (added 2026-05-15)
+### [x] Sync_failures cleanup: 48 chunker_version legacy entries — DONE 2026-05-15
 
-Doctor reports 48 unacknowledged `ingest_log` failures, all with
-shape `column "chunker_version" of relation "pages" does not exist`.
-These pre-date the schema v54 migration (`cjk_wave_pages_chunker_version
-_and_source_path`); schema is now at v66 so new syncs won't reproduce.
-Run `gbrain sync --skip-failed` once to ack — purely cosmetic for
-`gbrain doctor` Health score.
+`gbrain sync --skip-failed --no-pull` on the host: `Acknowledged 48
+pre-existing failure(s)`. `~/.gbrain/sync-failures.jsonl` open→0.
+Verified via direct read of the jsonl pre-run (`total=48 open=48
+acked=0`) and post-run noop sync (`Already up to date`). All 48 were
+the same `column "chunker_version" of relation "pages" does not exist`
+shape captured today 07:02 UTC during the morning poll, before the
+schema-v66 fix wave fully drained. Schema is at v66 now so the failure
+mode can't reproduce.
 
-**Scope**: 1 command, ~30 s.
+### [x] bun test full-suite hang investigation — DONE 2026-05-15 (root-caused, env-coupled)
 
-### [ ] bun test full-suite hang investigation (added 2026-05-15)
+`bun test --bail` (no `--reporter=verbose`; that flag was rejected by
+bun 1.3, accepted values are `junit` and `dots`) ran 616 tests across
+37 files in **45 s** before hitting the bail. Root cause:
 
-v0.34.4 sync's `bun test` ran 30 min at 99 % CPU then was killed (no
-stdout flushed because of the `| tail -40` pipe-eats-output trap).
-v0.32+ added ~60 new test files; one likely awaits a fixture our box
-doesn't provide. Re-run inside the repo with `bun test --bail
---reporter=verbose` to identify which file hangs first.
+**`test/think-pipeline.serial.test.ts`** — the `beforeAll` hook
+(`new PGLiteEngine() → connect({}) → initSchema() + seed`) exceeded
+bun's default 5 s hook timeout, exiting with `a beforeEach/afterEach
+hook timed out for this test` after 6 538 ms. Same family as the
+PGLite #223 cold-start hang we've recorded under §6.20 — PGLite cold
+init varies wildly on this Mac (3-15 s seen). Without `--bail`, every
+serial test that opens a fresh PGLite engine pays the same tax in
+sequence, which is what drove the original 30-min wedge during the
+v0.34.4 sync.
 
-**Scope**: 15-30 min, may surface fork-side env mismatch.
+**Not a code defect, not a fix-it-now item.** Practical mitigations:
+1. Run `bun test --bail` to abort on first PGLite-cold-start miss
+   rather than letting it accumulate.
+2. Run a specific test file (`bun test test/<file>.ts`) when you only
+   need targeted coverage — fork's day-to-day green path.
+3. If we ever need full-suite green on this box, the upstream-side fix
+   is bumping the hook timeout via `test.timeout(15_000)` at the top
+   of any `.serial.test.ts` that boots PGLite cold. Not worth filing
+   upstream unless other operators report the same wedge.
+
+Diagnosis evidence: bun-test-bail log captured the failing file name
+clearly (single test failed before the others kept running). Suite
+total before bail: 616 tests / 37 files / 45 s; 0 unexpected failures
+beyond the timeout itself.
 
 ### [x] ai.gateway "google recipe missing max_batch_tokens" NOTICE — DONE 2026-05-15 (fork-local + upstream PR pending)
 
