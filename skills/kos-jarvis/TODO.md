@@ -188,23 +188,35 @@ hybrid + keyword-first / vector-backfill saves nothing on the
 modal query. Re-evaluate if upstream lands a real CJK tokenizer
 (jieba binding, ICU, or pgroonga ext — none in v0.34.x).
 
-### [ ] (overlap-matrix) Evaluate v0.31.6 / v0.32.2 / v0.33.0 vs fork hot-memory pieces
+### [x] (overlap-matrix) Evaluate v0.31.6 / v0.32.2 / v0.33.0 vs fork hot-memory pieces — VERDICT 2026-05-15: no retirements; upstream features complementary, not replacement
 
-Three upstream pieces shipped between v0.31.2 and v0.34.4 that
-overlap with KOS-Jarvis hot-memory / curation surface:
+Built the side-by-side. None of the three upstream surfaces is a
+superset of the fork piece I framed it against; the original
+"potentially redundant" column overstated the overlap. Detail:
 
-| Upstream | Surface | Fork piece(s) potentially redundant |
-|----------|---------|-------------------------------------|
-| v0.31.6 `extract facts during sync` | real-time fact extraction on every page write | concept-synthesis ad-hoc runs (M2-A decision (b)) |
-| v0.32.2 `facts-fence` | `## Facts` markdown fence as system-of-record | digest-to-memory's KOS digest writes back to MEMORY.md |
-| v0.33.0 `morning pulse` (9 commands) | dawn-of-day brain summary CLI | kos-patrol daily 08:07 cron output |
+| Upstream | Real surface | Fork piece | Verdict |
+|---|---|---|---|
+| v0.31.6 extract-facts-during-sync (`src/core/facts/extract.ts` runs per page-write, lands in `facts` table + `## Facts` fence) | per-page real-time fact extraction | concept-synthesis (M2-A.pilot, decision (b) keep ad-hoc, **never wired**) | **No overlap.** Upstream's extract-facts is per-page real-time; concept-synthesis was for cross-page multi-month recurrence clustering. Different problem. Fork has nothing wired on the per-page real-time path. |
+| v0.32.2 facts-fence (`## Facts` fence on entity pages as system-of-record, reconciled to DB on every sync; `src/core/facts-fence.ts` + migrate.ts:2572) | INSIDE individual brain pages | digest-to-memory (weekly Sun 22:00 cron writes `[knowledge-os]` summary to `~/.openclaw/workspace/MEMORY.md`) | **Different surface entirely.** facts-fence is intra-page, intra-brain; digest-to-memory is cross-system push from brain → OpenClaw MEMORY.md. No conflict, no retire. |
+| v0.33.0 "morning pulse" — actual scope is `gbrain recall --pulse / --since-last-run / --pending` on the `facts` table (PR title is misleading; `src/commands/recall.ts`) | hot-memory fact recall, entity-scoped + time-windowed | kos-patrol daily 08:07 cron (brain-wide health audit → `~/brain/.agent/dashboards/knowledge-health-<date>.md` + digests) | **Different scope.** Upstream pulse queries the facts table for recently-added rows; kos-patrol audits structural health (lint / staleness / entity gaps). Same cadence convention, totally different output. No retire. |
 
-Build a side-by-side comparison: upstream feature scope vs our
-production output. Identify which fork pieces are now strict
-subsets of upstream functionality and propose retirements. M2-A
-decision (b) — *keep concept-synthesis ad-hoc, don't wire* — was
-made before v0.31.6 / v0.32.2 landed; that decision deserves a
-second look now that upstream has parallel mechanisms.
+**No retirements warranted from this matrix.** M2-A.pilot decision
+(b) — *keep concept-synthesis ad-hoc, don't wire* — also survives:
+the upstream feature that landed (extract-facts) addresses a
+different need (per-page fact extraction), not the recurrence-
+clustering need concept-synthesis was prototyped for.
+
+**Side benefit: a new capability to evaluate, not a retire**.
+Upstream's `extract-facts-during-sync` would give the fork's brain
+a real-time per-page fact index for free. Currently it's **not
+enabled** here (every `gbrain sync` skips the facts:absorb writer
+because the sub-process never connects — same root cause as the
+[`facts:absorb`](#-factsabsorb-sub-process-factsabsorb-writer-has-no-db-connection-added-2026-05-15)
+P1 entry above). Re-evaluating whether to enable it on this fork is
+worth tracking; for now, no fork code changes from this matrix
+work.
+
+Decision artifact lives in this entry; no separate plan doc needed.
 
 ---
 
