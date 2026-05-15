@@ -58,6 +58,245 @@ If anything looks wrong, file an issue at https://github.com/garrytan/gbrain/iss
 - output of `gbrain doctor`
 - contents of `~/.gbrain/import-checkpoint.json` (if present)
 
+## [0.34.1.0] - 2026-05-14
+
+**MCP hardening wave: stricter source isolation on the read path, PKCE
+DCR works, loopback-by-default, and federated read scopes for shared
+brains. Six community PRs land as one release.**
+
+The v0.34.1 wave consolidates six community PRs into a single ship.
+Source-isolation tightening is the centerpiece — an authenticated OAuth
+client scoped to one source no longer sees rows from neighboring sources
+through the read path. The wave also seals smaller papercuts that have
+been costing real users: gateway-managed stdio MCP servers no longer
+exit on the post-handshake EOF, PKCE-only DCR clients can register
+without inheriting a phantom secret, and `gbrain serve --http` defaults
+to loopback so a personal-laptop brain isn't one accidental config away
+from publishing itself to the LAN. Federated_read adds the read-scope
+axis that shared-brain deployments need: a department client can write
+to one source and read across a curated set without becoming a
+super-reader.
+
+### What you can now do
+
+**Scope OAuth clients to a single source.** `gbrain auth register-client
+my-agent --source dept-x` registers a client whose write authority is
+`dept-x`. Read paths only return rows whose `source_id` matches. The
+auth-layer thread is on `verifyAccessToken` so every per-request
+dispatch starts with the scope in `AuthInfo.sourceId`; ops consume it
+through the canonical `ctx.sourceId` pattern that v0.31.8 established.
+Pre-v0.34 clients without an explicit source default to `default` on
+upgrade — the v0.33 effective behavior is preserved verbatim.
+
+**Federate read scope independently.** `gbrain auth register-client
+my-l3-dept --source dept-x --federated-read dept-x,wecare,shared`
+registers a client that writes to `dept-x` but reads from the union of
+`dept-x`, `wecare` parent canon, and `shared` org canon. The two scope
+axes are orthogonal — `source_id` is the write authority, `federated_read`
+is the read authority. Engine read paths apply
+`WHERE source_id = ANY($1::text[])` at SQL when the array is set; scalar
+single-source clients keep the v0.31.12 fast path.
+
+**Run gateway-piped stdio MCP without race-killing your server.** Set
+`MCP_STDIO=1` in the env and the server skips the stdin EOF shutdown
+hooks. Signal handlers (SIGTERM / SIGINT / SIGHUP) and parent-process
+watchdog still cover legitimate disconnects. OpenClaw's bundle-mcp
+gateway and similar wrappers pipe the handshake then close their stdin
+half; pre-fix this killed the server before the first tool call landed.
+
+**Register PKCE-only public clients.** `POST /register` with
+`token_endpoint_auth_method: "none"` (Claude Code, Cursor, every other
+PKCE-first MCP client) now returns RFC 7591-compliant response shape:
+no `client_secret` field on public clients, secret-bearing on default
+`client_secret_post` clients. The `/token` exchange accepts the public
+client through the SDK's clientAuth path because `getClient` correctly
+normalizes a NULL `client_secret_hash` to JS undefined.
+
+**Bind the HTTP MCP server to loopback by default.** `gbrain serve
+--http` now listens on `127.0.0.1` unless you pass `--bind 0.0.0.0` (or
+a specific interface IP). Personal-laptop installs are no longer one
+default-config away from publishing the brain to a LAN. Self-hosted
+server operators who actually want remote access pass `--bind 0.0.0.0`
+once; a stderr WARN fires when `--public-url` is set without `--bind` so
+the operator doesn't silently bind loopback at startup.
+
+**Embed images through LiteLLM / openai-compatible multimodal models.**
+The gateway's `embedMultimodal` no longer hardcodes Voyage; recipes with
+`implementation: 'openai-compatible'` route through the standard
+`/embeddings` endpoint with content arrays carrying `image_url` entries.
+Runtime dimension validation throws a clear error pre-storage if the
+provider returns a vector that doesn't match the brain's embedding
+column width — no more cryptic `vector dimension mismatch` at INSERT
+time.
+
+### The migration block
+
+`gbrain upgrade` applies migrations v60-v65 automatically. The migration
+chain adds two columns to `oauth_clients` and an index, plus a FK flip
+once federated_read is in place.
+
+### To take advantage of v0.34.1
+
+`gbrain upgrade` should do this automatically. If it didn't, or if
+`gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the schema landed:**
+   ```bash
+   gbrain doctor --json | jq '.checks.schema_version'
+   # version should be >= 60
+   ```
+3. **Existing OAuth clients keep working.** Pre-v0.34 clients without an
+   explicit source scope are backfilled to `source_id='default'` so
+   their effective scope matches v0.33. To narrow a specific client's
+   scope, re-register it with `--source <id>`:
+   ```bash
+   gbrain auth revoke-client <client_id>
+   gbrain auth register-client <name> --source <source_id> --scopes read,write
+   ```
+4. **`gbrain serve --http` default changed.** Existing self-hosted
+   server deployments must add `--bind 0.0.0.0` to keep accepting remote
+   connections. Personal-laptop users see no behavior change (loopback
+   is now the default).
+5. **If `gbrain apply-migrations` refuses with an `oauth_clients` stale
+   source_id error** (possible only if an operator hand-poked the column
+   before upgrading): the error message names the offending client IDs.
+   Either revoke + re-register them with a valid source, or re-run with
+   `GBRAIN_ACCEPT_SILENT_WIDEN=1` to NULL the stale values (widens those
+   clients to super-reader; re-scope via `gbrain auth register-client`
+   after).
+6. **If any step fails or the numbers look wrong,** file an issue:
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor --json`
+   output and the failing step.
+
+### Itemized changes
+
+**Source-isolation hardening:**
+- `OperationContext.auth` now carries `AuthInfo.sourceId` (write scope)
+  and `AuthInfo.allowedSources` (federated read scope), threaded from
+  `oauth_clients` rows at token-verification time.
+- New helper `sourceScopeOpts(ctx)` in `src/core/operations.ts` encodes
+  the precedence ladder: federated array wins over scalar over nothing.
+  Every read-side op handler routes through it so future ops can't
+  silently drift from the canonical thread.
+- `src/core/search/hybrid.ts` inner `SearchOpts` rebuild now includes
+  `sourceId` + `sourceIds` fields — the structural fix that prevents
+  the explicit-pick footgun that motivated the wave.
+- `src/core/types.ts` adds `sourceIds?: string[]` to `SearchOpts` and
+  `PageFilters` for the federated read axis. Both Postgres and PGLite
+  engines apply `WHERE source_id = ANY($N::text[])` when the array is
+  set; scalar fast path preserved when unset.
+- Engine method signatures `traverseGraph(slug, depth, opts?)` and
+  `traversePaths(slug, opts?)` accept `opts.sourceId` /
+  `opts.sourceIds` so graph walks respect the caller's scope.
+- `src/core/oauth-provider.ts:verifyAccessToken` JOINs
+  `oauth_clients.source_id` + `federated_read` and surfaces both on the
+  returned `AuthInfo`. Pre-v60 / pre-v61 brains degrade gracefully via
+  `isUndefinedColumnError` fallback.
+- `src/commands/serve-http.ts` drops the `(authInfo as AuthInfo &
+  {sourceId?: string}).sourceId ?? env ?? 'default'` cast chain. The
+  typed field is the source of truth now.
+- Legacy `src/mcp/http-transport.ts` (v0.22.7-style access_tokens path)
+  threads `sourceId: 'default'` through DispatchOpts so legacy tokens
+  stay source-scoped.
+
+**Migration chain v60-v65 (six new migrations on top of v54):**
+- v60 (`oauth_clients_source_id_fk`) — ALTER TABLE ... ADD COLUMN
+  source_id TEXT, backfill NULL→'default', install FK with
+  ON DELETE SET NULL.
+- v61 (`oauth_clients_federated_read_column`) — ALTER TABLE ... ADD
+  COLUMN federated_read TEXT[] NOT NULL DEFAULT '{}'.
+- v62 (`oauth_clients_federated_read_backfill`) — explicit CASE backfill
+  so `source_id IS NULL` produces `'{}'` not an array-containing-NULL.
+- v63 (`oauth_clients_federated_read_validate`) — fail-loud check that
+  every row's source_id is in its federated_read array post-backfill.
+- v64 (`oauth_clients_source_id_fk_restrict`) — flip FK to
+  ON DELETE RESTRICT now that federated_read provides the alternative
+  scope-loss path. Source delete is refused if any client references it.
+- v65 (`oauth_clients_federated_read_gin_index`) — GIN index for the
+  array-containment queries the read paths run.
+
+**OAuth + auth surface:**
+- `auth.ts` CLI adds `--source <id>` and `--federated-read <SRC1,SRC2,...>`
+  flags to `register-client`. The output now prints the resolved
+  `Write source` and `Federated reads` for the registered client.
+- DCR `/register` endpoint now writes `source_id='default'` and
+  `federated_read=['default']` on the inserted row so new public clients
+  start in a sane scope.
+- `registerClient` honors `token_endpoint_auth_method: "none"` (RFC 7591
+  §3.2.1): public clients store `client_secret_hash = NULL` and the
+  response payload omits `client_secret` entirely. Confidential clients
+  (default `client_secret_post` and explicit `client_secret_basic`) keep
+  their one-time-reveal shape.
+
+**MCP transports:**
+- `src/mcp/server.ts` + `src/commands/serve.ts` skip stdin
+  `'end'`/`'close'` shutdown hooks when `process.env.MCP_STDIO === '1'`.
+  `ServeOptions` gains a `mcpStdio?: boolean` test seam so the runtime
+  guard is exercisable without process.env mutation.
+- `src/commands/serve-http.ts` adds `--bind HOST` (default `127.0.0.1`).
+  Stderr WARN fires when `--public-url` is set without `--bind`.
+  Startup banner prints the resolved `Bind:` line.
+
+**Multimodal embedding:**
+- `gateway.ts` adds `embedMultimodalOpenAICompat()` that POSTs to the
+  standard `/embeddings` endpoint with content arrays. Routes by
+  `recipe.implementation === 'openai-compatible'` so LiteLLM-fronted
+  providers (Anyscale, vLLM, Gemini multimodal via proxy) work alongside
+  Voyage's existing `/multimodalembeddings` path.
+- `recipes/litellm-proxy.ts` declares `supports_multimodal: true` so the
+  recipe accepts multimodal calls without a model allow-list (LiteLLM is
+  a passthrough; user-owned model id selection).
+- Runtime dimension validation: the returned vector length is checked
+  against the recipe's declared `default_dims` or the brain's
+  `embedding_dimensions` config. Mismatch throws `AIConfigError` with
+  model id + observed + expected before the vector reaches storage.
+
+**Tests:**
+- `test/e2e/source-isolation-pglite.test.ts` — 14 cases pinning the
+  scope filter at the engine layer plus op-handler threading for both
+  `ctx.sourceId` and `ctx.auth.allowedSources` paths.
+- `test/openai-compat-multimodal.test.ts` — 11 cases covering the
+  openai-compatible multimodal path: happy-path single + multi-input,
+  unauthenticated proxy, D12 dim mismatch + default-dim fallback,
+  401 / 400 / malformed-JSON / non-array error paths, and a Voyage
+  regression test.
+- `test/oauth.test.ts` — 5 new cases for PKCE DCR public-client gate
+  (no secret for public; secret unchanged for default; getClient
+  NULL→undefined normalization; full PKCE `/authorize` → `/token`
+  round-trip).
+- `test/serve-stdio-lifecycle.test.ts` — 3 new cases for the
+  `MCP_STDIO=1` guard (stdin EOF does NOT trigger shutdown; SIGTERM
+  still does; unset env preserves CLI behavior).
+- `test/book-mirror.test.ts` — `runCli` helper now uses a fresh
+  `GBRAIN_HOME` tempdir so the test isn't sensitive to the developer's
+  local `~/.gbrain/config.json`. Pre-fix this could silently inherit a
+  real Postgres connection and hang past the default 5s test timeout.
+
+**Test results: 6045 unit tests pass / 0 fail. typecheck clean. PGLite
+initSchema runs the v60-v65 chain in ~786ms total.**
+
+### For contributors
+
+- The wave bundled six community PRs (#870, #909, #864, #861, #875,
+  #876) with cross-model plan review (codex outside-voice) before
+  cherry-pick. Codex caught three structural bugs the original PRs
+  missed: a 6th source-isolation leak surface (the `query` image path
+  in `operations.ts:1071-1082`), a 5th read-side op missing from #861's
+  thread (`find_experts`), and migration-numbering collisions on
+  v47-v53 that would have wedged on cherry-pick (the branch had grown
+  to v57 by ship time after master shipped its own v55-v57 search-lite
+  migrations). The wave's migration chain renumbers to v60-v65.
+- The single PR carries `Co-Authored-By:` for the six external
+  contributors. PRs originated against earlier base branches and the
+  diffs were re-implemented on the collector branch rather than merged
+  directly (per CLAUDE.md's PR wave process).
+
+Contributed by @Hansen1018 (#870), @ding-modding (#909), @DukeDawg
+(#864), @toilalesondev (#861 + #876), @yoelgal (#875).
 ## [0.34.0.0] - 2026-05-14
 
 **Recursive code intelligence ships. Plan-mode subagents get one-call blast and flow.**

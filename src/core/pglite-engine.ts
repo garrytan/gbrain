@@ -640,8 +640,12 @@ export class PGLiteEngine implements BrainEngine {
       params.push(escaped);
       where.push(`p.slug LIKE $${params.length} ESCAPE '\\'`);
     }
-    // v0.31.12: scope to a single source when requested.
-    if (filters?.sourceId) {
+    // v0.31.12 + v0.34.1 (#876, D9): scope to a single source OR an array
+    // of sources. Array form wins (federated subsumes scalar).
+    if (filters?.sourceIds && filters.sourceIds.length > 0) {
+      params.push(filters.sourceIds);
+      where.push(`p.source_id = ANY($${params.length}::text[])`);
+    } else if (filters?.sourceId) {
       params.push(filters.sourceId);
       where.push(`p.source_id = $${params.length}`);
     }
@@ -788,6 +792,14 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.beforeDate);
       extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
+    // v0.34.1 (#861 — P0 leak seal): source-isolation. Array wins over scalar.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      extraFilter += ` AND p.source_id = $${params.length}`;
+    }
 
     const { rows } = await this.db.query(
       `WITH ranked AS (
@@ -885,6 +897,14 @@ export class PGLiteEngine implements BrainEngine {
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
       extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
+    // v0.34.1 (#861 — P0 leak seal): source-isolation on the CJK fallback path.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      extraFilter += ` AND p.source_id = $${params.length}`;
     }
 
     // Bigram-frequency count: count occurrences of $qRaw in chunk_text via
@@ -1006,6 +1026,16 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.beforeDate);
       extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
+    // v0.34.1 (#861 — P0 leak seal): source-isolation for the chunk-grain
+    // anchor primitive. Layer 7 two-pass walks from these anchors so a
+    // foreign-source anchor would let the walk leak into foreign neighbors.
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      extraFilter += ` AND p.source_id = $${params.length}`;
+    }
 
     // visibilityClause already declared above (v0.32.7: hoisted so CJK branch can reuse).
 
@@ -1082,6 +1112,16 @@ export class PGLiteEngine implements BrainEngine {
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
       extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    }
+    // v0.34.1 (#861, F2 — P0 leak seal): source-isolation in the INNER CTE
+    // so HNSW candidate pool narrows before re-rank. Mirrors postgres-engine
+    // placement decision (codex flagged this during plan review).
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      extraFilter += ` AND p.source_id = $${params.length}`;
     }
 
     // v0.26.5: visibility filter applied in the inner CTE so HNSW sees the
@@ -1516,13 +1556,38 @@ export class PGLiteEngine implements BrainEngine {
     return { slug: row.slug, similarity: row.sim };
   }
 
-  async traverseGraph(slug: string, depth: number = 5): Promise<GraphNode[]> {
+  async traverseGraph(
+    slug: string,
+    depth: number = 5,
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<GraphNode[]> {
+    // v0.34.1 (#861 — P0 leak seal): source-scope filters at seed, step, and
+    // aggregation subquery. Mirrors postgres-engine.traverseGraph placement.
+    const params: unknown[] = [slug, depth];
+    const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;
+    let seedScope = '';
+    let stepScope = '';
+    let aggScope = '';
+    if (useSourceIds) {
+      params.push(opts!.sourceIds);
+      const idx = params.length;
+      seedScope = `AND p.source_id = ANY($${idx}::text[])`;
+      stepScope = `AND p2.source_id = ANY($${idx}::text[])`;
+      aggScope = `AND p3.source_id = ANY($${idx}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      const idx = params.length;
+      seedScope = `AND p.source_id = $${idx}`;
+      stepScope = `AND p2.source_id = $${idx}`;
+      aggScope = `AND p3.source_id = $${idx}`;
+    }
+
     // Cycle prevention: visited array tracks page IDs already in the path.
     // Prevents exponential blowup on cyclic subgraphs (e.g., A->B->A).
     const { rows } = await this.db.query(
       `WITH RECURSIVE graph AS (
         SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
-        FROM pages p WHERE p.slug = $1
+        FROM pages p WHERE p.slug = $1 ${seedScope}
 
         UNION ALL
 
@@ -1532,6 +1597,7 @@ export class PGLiteEngine implements BrainEngine {
         JOIN pages p2 ON p2.id = l.to_page_id
         WHERE g.depth < $2
           AND NOT (p2.id = ANY(g.visited))
+          ${stepScope}
       )
       SELECT DISTINCT g.slug, g.title, g.type, g.depth,
         coalesce(
@@ -1543,12 +1609,12 @@ export class PGLiteEngine implements BrainEngine {
           (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
-           WHERE l2.from_page_id = g.id),
+           WHERE l2.from_page_id = g.id ${aggScope}),
           '[]'::jsonb
         ) as links
       FROM graph g
       ORDER BY g.depth, g.slug`,
-      [slug, depth]
+      params
     );
 
     return (rows as Record<string, unknown>[]).map(r => ({
@@ -1562,7 +1628,7 @@ export class PGLiteEngine implements BrainEngine {
 
   async traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' },
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
   ): Promise<GraphPath[]> {
     const depth = opts?.depth ?? 5;
     const direction = opts?.direction ?? 'out';
@@ -1571,12 +1637,36 @@ export class PGLiteEngine implements BrainEngine {
     const params: unknown[] = [slug, depth];
     if (linkType !== null) params.push(linkType);
 
+    // v0.34.1 (#861 — P0 leak seal): source-scope filters at seed + step +
+    // final SELECT joins (for the 'both' branch's pf + pt). Mirrors
+    // postgres-engine.traversePaths placement.
+    const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;
+    let seedScope = '';
+    let stepScope = '';
+    let pfScope = '';
+    let ptScope = '';
+    if (useSourceIds) {
+      params.push(opts!.sourceIds);
+      const idx = params.length;
+      seedScope = `AND p.source_id = ANY($${idx}::text[])`;
+      stepScope = `AND p2.source_id = ANY($${idx}::text[])`;
+      pfScope = `AND pf.source_id = ANY($${idx}::text[])`;
+      ptScope = `AND pt.source_id = ANY($${idx}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      const idx = params.length;
+      seedScope = `AND p.source_id = $${idx}`;
+      stepScope = `AND p2.source_id = $${idx}`;
+      pfScope = `AND pf.source_id = $${idx}`;
+      ptScope = `AND pt.source_id = $${idx}`;
+    }
+
     let sql: string;
     if (direction === 'out') {
       sql = `
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int AS depth, ARRAY[p.id] AS visited
-          FROM pages p WHERE p.slug = $1
+          FROM pages p WHERE p.slug = $1 ${seedScope}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
@@ -1585,6 +1675,7 @@ export class PGLiteEngine implements BrainEngine {
           WHERE w.depth < $2
             AND NOT (p2.id = ANY(w.visited))
             ${linkTypeWhere}
+            ${stepScope}
         )
         SELECT w.slug AS from_slug, p2.slug AS to_slug,
                l.link_type, l.context, w.depth + 1 AS depth
@@ -1593,13 +1684,14 @@ export class PGLiteEngine implements BrainEngine {
         JOIN pages p2 ON p2.id = l.to_page_id
         WHERE w.depth < $2
           ${linkTypeWhere}
+          ${stepScope}
         ORDER BY depth, from_slug, to_slug
       `;
     } else if (direction === 'in') {
       sql = `
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int AS depth, ARRAY[p.id] AS visited
-          FROM pages p WHERE p.slug = $1
+          FROM pages p WHERE p.slug = $1 ${seedScope}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
@@ -1608,6 +1700,7 @@ export class PGLiteEngine implements BrainEngine {
           WHERE w.depth < $2
             AND NOT (p2.id = ANY(w.visited))
             ${linkTypeWhere}
+            ${stepScope}
         )
         SELECT p2.slug AS from_slug, w.slug AS to_slug,
                l.link_type, l.context, w.depth + 1 AS depth
@@ -1616,6 +1709,7 @@ export class PGLiteEngine implements BrainEngine {
         JOIN pages p2 ON p2.id = l.from_page_id
         WHERE w.depth < $2
           ${linkTypeWhere}
+          ${stepScope}
         ORDER BY depth, from_slug, to_slug
       `;
     } else {
@@ -1624,7 +1718,7 @@ export class PGLiteEngine implements BrainEngine {
       sql = `
         WITH RECURSIVE walk AS (
           SELECT p.id, 0::int AS depth, ARRAY[p.id] AS visited
-          FROM pages p WHERE p.slug = $1
+          FROM pages p WHERE p.slug = $1 ${seedScope}
           UNION ALL
           SELECT p2.id, w.depth + 1, w.visited || p2.id
           FROM walk w
@@ -1633,6 +1727,7 @@ export class PGLiteEngine implements BrainEngine {
           WHERE w.depth < $2
             AND NOT (p2.id = ANY(w.visited))
             ${linkTypeWhere}
+            ${stepScope}
         )
         SELECT pf.slug AS from_slug, pt.slug AS to_slug,
                l.link_type, l.context, w.depth + 1 AS depth
@@ -1642,6 +1737,8 @@ export class PGLiteEngine implements BrainEngine {
         JOIN pages pt ON pt.id = l.to_page_id
         WHERE w.depth < $2
           ${linkTypeWhere}
+          ${pfScope}
+          ${ptScope}
         ORDER BY depth, from_slug, to_slug
       `;
     }

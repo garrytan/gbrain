@@ -139,7 +139,9 @@ pick scopes, save the credentials shown once in the reveal modal. Programmatic
 registration via `oauthProvider.registerClientManual(...)` and the
 `gbrain auth register-client` CLI are also available.
 
-- **OAuth 2.1 via the MCP SDK** — client credentials (machine-to-machine: Perplexity, Claude), authorization code + PKCE (browser-based: ChatGPT), refresh token rotation, revocation, protected resource metadata. Optional Dynamic Client Registration behind `--enable-dcr` (DCR redirect_uris must be `https://` or loopback per RFC 6749 §3.1.2.1).
+- **OAuth 2.1 via the MCP SDK** — client credentials (machine-to-machine: Perplexity, Claude), authorization code + PKCE (browser-based: ChatGPT), refresh token rotation, revocation, protected resource metadata. PKCE-only public clients (`token_endpoint_auth_method: "none"`) register without a secret per RFC 7591 §3.2.1 (v0.34). Optional Dynamic Client Registration behind `--enable-dcr` (DCR redirect_uris must be `https://` or loopback per RFC 6749 §3.1.2.1).
+- **Source-scoped OAuth clients (v0.34)** — `gbrain auth register-client my-agent --source dept-x` ties the client's write authority to one source; read paths only return rows matching that source. `--federated-read S1,S2,S3` adds an orthogonal read-scope axis for shared brains (departments writing to one canon while reading the union). Pre-v0.34 clients are backfilled to `source_id='default'` on upgrade.
+- **Loopback default for `serve --http` (v0.34)** — listens on `127.0.0.1` unless `--bind 0.0.0.0` (or a specific interface IP). Personal-laptop installs no longer publish the brain to the LAN by accident. A stderr WARN fires when `--public-url` is set without `--bind` so the operator sees the binding before the first request.
 - **Scoped operations** — 30 operations tagged `read | write | admin`. `sync_brain` and `file_upload` are `localOnly`, rejected over HTTP.
 - **React admin dashboard** — 7 screens baked into the binary (~65KB gzip). Live SSE activity feed, agents table, credential reveal, filterable request log, per-client config export.
 - **Legacy bearer tokens still work** — pre-v0.26 `gbrain auth create` tokens continue to authenticate as `read+write+admin`. v0.22.7's simpler `src/mcp/http-transport.ts` path stays compiled in for backward compat callers; v0.26+ deployments use the OAuth-aware `serve-http.ts`.
@@ -788,12 +790,16 @@ ADMIN
                                         [--skip=<provider>] [--json]
   gbrain serve                          MCP server (stdio)
   gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard
+                                        [--bind HOST] (v0.34: default 127.0.0.1; pass
+                                        --bind 0.0.0.0 for LAN/remote access)
                                         [--token-ttl 3600] [--enable-dcr]
                                         [--public-url URL] [--log-full-params]
   gbrain auth create|list|revoke|test   Legacy bearer token management
   gbrain auth register-client <name>    Register an OAuth 2.1 client
         --grant-types client_credentials,authorization_code
         --scopes "read write admin"
+        --source <id>                   v0.34: write authority for source-scoped clients
+        --federated-read <S1,S2,...>    v0.34: read scope across multiple sources
   gbrain auth revoke-client <client_id> Revoke an OAuth 2.1 client (cascade purges
                                         active tokens + auth codes via FK CASCADE)
   # OAuth 2.1 clients can also be registered from the /admin dashboard or
