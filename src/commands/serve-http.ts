@@ -244,7 +244,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Express 5 app
   const app = express();
-  app.set('trust proxy', 'loopback'); // Caddy/Tailscale reverse proxy on localhost
+  // Trust-proxy default is 'loopback' (works for local Caddy/Tailscale reverse proxies).
+  // Set GBRAIN_TRUST_PROXY=1 (or any positive integer) when deploying behind a PaaS
+  // load balancer (Fly.io, Render, Railway, Vercel) where the actual client IP
+  // arrives in X-Forwarded-For after exactly N hops. See docs/mcp/DEPLOY.md.
+  const trustProxyEnv = process.env.GBRAIN_TRUST_PROXY;
+  const trustProxyValue = trustProxyEnv
+    ? (/^\d+$/.test(trustProxyEnv) ? parseInt(trustProxyEnv, 10) : trustProxyEnv)
+    : 'loopback';
+  app.set('trust proxy', trustProxyValue);
 
   // ---------------------------------------------------------------------------
   // Cookie parsing — required for /admin auth (express 5 has no built-in)
