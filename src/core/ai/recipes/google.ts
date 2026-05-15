@@ -16,6 +16,12 @@ export const google: Recipe = {
       dims_options: [768, 1536, 3072],
       cost_per_1m_tokens_usd: 0.15,
       price_last_verified: '2026-04-20',
+      // Google publishes an 8K token per-input limit for Gemini embeddings;
+      // keep batch pre-splitting conservative so recursive retry is a backup,
+      // not the primary protection.
+      max_batch_tokens: 8_000,
+      chars_per_token: 4,
+      safety_factor: 0.8,
     },
     expansion: {
       models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite'],
