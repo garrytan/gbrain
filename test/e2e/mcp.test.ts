@@ -44,6 +44,11 @@ describe('E2E: MCP Tool Generation', () => {
       expect(tool.inputSchema.type).toBe('object');
       expect(typeof tool.inputSchema.properties).toBe('object');
       expect(Array.isArray(tool.inputSchema.required)).toBe(true);
+      for (const prop of Object.values(tool.inputSchema.properties) as Array<Record<string, unknown>>) {
+        if (prop.type === 'array') {
+          expect(prop.items).toBeTruthy();
+        }
+      }
     }
 
     // Verify specific tools exist
