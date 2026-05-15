@@ -440,32 +440,44 @@ LoC and the external clients lock us to KOS-v1 wire shape anyway.
 
 Decision artifact: this entry. No code, no plan doc.
 
-### [ ] (M2-C) Phase 4-5 邮件/日历导入 → 改基于上游 `archive-crawler`
+### [x] (M2-C) Phase 4-5 邮件/日历导入 → 改基于上游 `archive-crawler` — VERDICT 2026-05-15: option (b) split — archive-crawler covers Phase 5 Email; Phase 4 Calendar stays fork-local
 
-**Why**: 原 fork plan(`docs/JARVIS-NEXT-STEPS.md`)Phase 4 = 日历导入,
-Phase 5 = 邮件导入。**两个都要从头自建 fork-local skill**。但上游
-v0.25.1 加的 `archive-crawler`(skills/archive-crawler/SKILL.md)正好
-是这个域:Universal archivist for personal file archives(Dropbox /
-B2 / Gmail-takeout / local-mount / hard-drive-dump),REFUSES TO RUN
-without explicit `gbrain.yml archive-crawler.scan_paths` allow-list。
+Read `skills/archive-crawler/SKILL.md` for source-format coverage.
+Supported `Source.type` values: `local`, `dropbox`, `backblaze`,
+`gmail-takeout`, `mbox`, `pst`. Refuses to run without
+`archive-crawler.scan_paths` allow-list in `gbrain.yml` (safety
+gate; writes to `originals/` / `personal/` / `ideas/`).
 
-**What**:
-1. 读 `archive-crawler/SKILL.md` 完整看它支持哪些 source format
-   (Gmail takeout? iCal export?)。
-2. 比对 fork Phase 4-5 原计划(从 Apple Calendar / 邮箱 IMAP 拉数据
-   到 brain),看哪些步骤可以直接走 archive-crawler,哪些需要 fork
-   pre-processing(如 IMAP → mbox export step)。
-3. 决定:
-   - (a) Phase 4-5 完全替换为 `archive-crawler` 配置 + minimal fork
-     pre-processor
-   - (b) 部分迁移(archive-crawler 处理 ingestion,fork 处理 source
-     specific extraction)
-   - (c) 上游不够用,继续 fork 路线
+| Fork Phase | Format | archive-crawler covers? |
+|---|---|---|
+| Phase 5 — Email | `.mbox`, Gmail takeout, `.pst` | **Yes, fully**. Both `mbox` and `gmail-takeout` are first-class source types. |
+| Phase 4 — Calendar | Apple/Google Calendar via API, `.ics` export | **No**. Not in `Source.type` enum. Calendar isn't an "archive of files" — it's a stream of structured events that needs an OAuth/API client or `.ics` parser fork-side. |
 
-**Acceptance**: 决定文件 + 若 (a)/(b),`docs/JARVIS-NEXT-STEPS.md`
-Phase 4-5 段重写为"上游驱动 + 配置"。
+**Verdict (b) — partial migration**:
 
-**Scope**: 1.5 h 评估。Phase 4-5 实施本身不在本 milestone 范围。
+- **Phase 5 Email** → upstream-driven. When the time comes to
+  implement, the work is `gbrain.yml` config + path allow-list +
+  per-mbox manifest review, NOT a new fork-local skill. Net fork
+  surface gain from Phase 5: 0 new skills.
+- **Phase 4 Calendar** → stays on the original fork-local plan. Needs
+  either an OAuth Google Calendar client (in `workers/calendar-poller/`
+  similar to `workers/notion-poller/`) or a recurring `.ics` export +
+  parse step. archive-crawler can't help.
+
+**Acceptance**: this entry's verdict is the artifact. Per the M2-C
+scope note, **Phase 4-5 implementation itself is out of milestone
+scope** — neither has been started, both gate on
+`docs/JARVIS-NEXT-STEPS.md` Phase 1-3 finishing first.
+
+**Follow-up when Phase 4-5 actually starts**: update
+`docs/JARVIS-NEXT-STEPS.md` Phase 5 section to say "configure
+upstream archive-crawler with `gmail-takeout` source", and Phase 4
+to remain fork-local with the calendar-poller worker design. No doc
+edits today — wait until that work moves to active.
+
+**Scope reduction**: original fork plan estimated Phase 5 at ~1 week
+of net-new skill build; archive-crawler reduction is ~3-4 days saved
+(config + review loop vs ground-up worker). Phase 4 unaffected.
 
 ### [x] (M2-D) `Operation.scope` + `.localOnly` 取代 fork-local `OperationContext.remote` — RESOLVED 2026-05-10 (premise wrong, never-needed)
 
