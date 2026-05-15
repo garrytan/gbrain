@@ -37,15 +37,33 @@ export async function runUpgrade(args: string[]) {
       break;
     }
 
-    case 'bun':
+    case 'bun': {
+      // Find the install root (`~/.bun/install/global/` for bun globals)
+      // and run `bun update gbrain` from there. Without setting cwd, the
+      // command inherits the user's shell cwd — typically `~` — which has
+      // no package.json, so bun no-ops with "No package.json, so nothing
+      // to update" and the user gets a misleading "Upgrade failed" line.
+      const installRoot = detectBunGlobalInstallRoot();
       console.log('Upgrading via bun...');
       try {
-        execSync('bun update gbrain', { stdio: 'inherit', timeout: 120_000 });
+        execFileSync('bun', ['update', 'gbrain'], {
+          stdio: 'inherit',
+          timeout: 120_000,
+          cwd: installRoot ?? undefined,
+        });
         upgraded = true;
       } catch {
-        console.error('Upgrade failed. Try running manually: bun update gbrain');
+        if (installRoot) {
+          console.error('Upgrade failed. Try running manually:');
+          console.error(`  cd ${installRoot} && bun update gbrain`);
+        } else {
+          console.error('Upgrade failed and the bun global install root could not be located.');
+          console.error('Try running manually from your bun global install directory:');
+          console.error('  cd $(dirname $(dirname $(realpath $(which gbrain)))) && bun update gbrain');
+        }
       }
       break;
+    }
 
     case 'binary':
       console.log('Binary self-update not yet implemented.');
@@ -429,6 +447,51 @@ function detectBunLink(): { repoRoot: string } | null {
           }
         } catch { /* unreadable config — not our case */ }
         return null;
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Locate the bun global-install root that owns this gbrain binary.
+ *
+ * `bun install -g github:garrytan/gbrain` produces:
+ *
+ *   ~/.bun/install/global/                  ← INSTALL ROOT
+ *   ├── package.json                        (lists gbrain as a dep)
+ *   ├── bun.lock
+ *   └── node_modules/
+ *       └── gbrain/                         (the package itself)
+ *           └── src/cli.ts                  ← symlinked from ~/.bun/bin/gbrain
+ *
+ * `bun update gbrain` MUST be run from the install root, otherwise bun
+ * looks for a package.json in the inherited cwd (typically the user's
+ * shell home), finds none, and silently no-ops with:
+ *
+ *   No package.json, so nothing to update
+ *
+ * We walk up from `realpath(argv1)` and return the first ancestor that
+ * has BOTH `package.json` AND a `node_modules/` subdir — the package.json
+ * inside `node_modules/gbrain/` is rejected by the second predicate.
+ *
+ * Exported for test use. Returns null when the walk doesn't find a
+ * matching directory within 8 levels; the caller falls back to a
+ * paste-ready manual recovery hint.
+ */
+export function detectBunGlobalInstallRoot(): string | null {
+  try {
+    const argv1 = process.argv[1];
+    if (!argv1) return null;
+    let dir = dirname(realpathSync(argv1));
+    for (let i = 0; i < 8; i++) {
+      if (existsSync(join(dir, 'package.json')) && existsSync(join(dir, 'node_modules'))) {
+        return dir;
       }
       const parent = dirname(dir);
       if (parent === dir) break;
