@@ -56,6 +56,13 @@ export interface ServeOptions {
   // tick fell through to the cached `process.ppid` and the watchdog
   // never fired, while still claiming to be installed.
   probeWatchdog?: () => boolean;
+  // v0.34.1 (#870): test seam for the MCP_STDIO=1 piped-stdin guard.
+  // When true, runServe skips the stdin 'end'/'close' shutdown hooks
+  // because the wrapping gateway (OpenClaw bundle-mcp, others) pipes the
+  // JSON-RPC handshake and closes stdin immediately. Signal handlers and
+  // transport.onclose still cover legitimate shutdown.
+  // Defaults to `process.env.MCP_STDIO === '1'` when omitted.
+  mcpStdio?: boolean;
 }
 
 export async function runServe(
@@ -90,8 +97,18 @@ export async function runServe(
     // when set so the posture change is visible in stderr.
     const logFullParams = args.includes('--log-full-params');
 
+    // v0.34.1 (#864, D11): `--bind HOST` lets operators choose the network
+    // interface to listen on. When unset, runServeHttp defaults to 127.0.0.1
+    // (loopback) — server operators who need remote access pass
+    // `--bind 0.0.0.0` (or a specific interface IP). `bind` is intentionally
+    // left undefined here when the flag is absent so the WARN-on-public-url
+    // path in serve-http can distinguish "operator chose loopback explicitly"
+    // from "operator didn't set the flag at all."
+    const bindIdx = args.indexOf('--bind');
+    const bind = bindIdx >= 0 ? args[bindIdx + 1] : undefined;
+
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams });
+    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams, bind });
     return;
   }
 
@@ -201,7 +218,15 @@ function installStdioLifecycle(
   // Skip when stdin is a TTY: interactive `gbrain serve` use shouldn't
   // terminate just because the user hasn't typed anything. Signal /
   // watchdog paths still cover that case if needed.
-  if (!deps.stdin.isTTY) {
+  // v0.34.1 (#870): when MCP_STDIO=1, the wrapping gateway pipes the
+  // JSON-RPC handshake then closes its stdin half. Treating that as a
+  // permanent disconnect kills the server before the first tool call.
+  // Signal handlers (SIGTERM/SIGINT/SIGHUP), transport.onclose, and the
+  // parent-process watchdog below still cover legitimate shutdown paths.
+  // `mcpStdio` is the injectable form; default reads the env once at
+  // install time so tests stay isolated (no process.env mutation).
+  const mcpStdioMode = opts.mcpStdio ?? (process.env.MCP_STDIO === '1');
+  if (!deps.stdin.isTTY && !mcpStdioMode) {
     deps.stdin.once('end', () => beginShutdown('stdin-end'));
     deps.stdin.once('close', () => beginShutdown('stdin-close'));
   }
