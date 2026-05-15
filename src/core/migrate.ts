@@ -2943,12 +2943,48 @@ export const MIGRATIONS: Migration[] = [
     // statement_timeout. With the partial index, the scan is instant.
     //
     // Also used by countStaleChunks() for the pre-flight check.
+    //
+    // Engine-aware via handler (mirrors v14): Postgres uses
+    // CREATE INDEX CONCURRENTLY to avoid the ShareLock on `content_chunks`
+    // that a plain CREATE INDEX takes for the duration of the build.
+    // On a 373K-row table this lock blocks every concurrent write (sync,
+    // embed, autopilot). CONCURRENTLY refuses to run inside a transaction
+    // AND postgres.js's multi-statement `.unsafe()` wraps in an implicit
+    // transaction, so each statement runs as a separate call. A failed
+    // CONCURRENTLY leaves an invalid index with the target name; the
+    // handler pre-drops any invalid remnant via pg_index.indisvalid.
+    // PGLite has no concurrent writers, so plain CREATE is safe.
     idempotent: true,
-    sql: `
-      CREATE INDEX IF NOT EXISTS idx_chunks_embedding_null
-        ON content_chunks (page_id, chunk_index)
-        WHERE embedding IS NULL;
-    `,
+    sql: '',
+    handler: async (engine) => {
+      if (engine.kind === 'postgres') {
+        await engine.runMigration(
+          59,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'idx_chunks_embedding_null' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding_null';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          59,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_null
+             ON content_chunks (page_id, chunk_index)
+             WHERE embedding IS NULL;`
+        );
+      } else {
+        await engine.runMigration(
+          59,
+          `CREATE INDEX IF NOT EXISTS idx_chunks_embedding_null
+             ON content_chunks (page_id, chunk_index)
+             WHERE embedding IS NULL;`
+        );
+      }
+    },
   },
 ];
 

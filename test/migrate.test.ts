@@ -719,6 +719,71 @@ describe('migrate — runner behavioral (v14 handler + v15 backfill)', () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────
+// v0.33.4 D6 — migration v59 (embed_stale_partial_index)
+// Mirrors v14's CONCURRENTLY + invalid-remnant pattern for the
+// content_chunks partial index. Verifies both the source shape and the
+// actual schema state post-migration on PGLite.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('migrate v59 — embed_stale_partial_index (D6)', () => {
+  const v59 = MIGRATIONS.find(m => m.version === 59);
+
+  test('v59 exists and uses a handler (engine-aware branching, mirrors v14)', () => {
+    expect(v59).toBeDefined();
+    expect(v59!.name).toBe('embed_stale_partial_index');
+    expect(typeof v59!.handler).toBe('function');
+    expect(v59!.sql).toBe('');
+  });
+
+  test('v59 handler source: CONCURRENTLY + invalid-index cleanup on Postgres branch', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/core/migrate.ts', 'utf-8');
+    const v59Start = src.indexOf("name: 'embed_stale_partial_index'");
+    expect(v59Start).toBeGreaterThan(-1);
+    const v59Block = src.slice(v59Start, v59Start + 3000);
+    expect(v59Block).toContain('pg_index');
+    expect(v59Block).toContain('indisvalid');
+    expect(v59Block).toContain('DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding_null');
+    expect(v59Block).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_null');
+    // Partial index predicate must match the production query in
+    // postgres-engine.ts / pglite-engine.ts: `WHERE embedding IS NULL`.
+    expect(v59Block).toContain('WHERE embedding IS NULL');
+    // DROP IF EXISTS must precede CREATE IF NOT EXISTS so a failed prior
+    // CONCURRENTLY build is cleaned before re-create.
+    const dropIdx = v59Block.indexOf('DROP INDEX CONCURRENTLY IF EXISTS');
+    const createIdx = v59Block.indexOf('CREATE INDEX CONCURRENTLY IF NOT EXISTS');
+    expect(dropIdx).toBeLessThan(createIdx);
+    // Branches on engine.kind (handler-pattern from v14).
+    expect(v59Block).toContain('engine.kind');
+  });
+
+  test('v59 idempotent flag is true (re-run safety)', () => {
+    expect(v59!.idempotent).toBe(true);
+  });
+});
+
+describe('migrate runner v59 — partial index materialized on PGLite', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  test('v59 created idx_chunks_embedding_null on PGLite via handler branch', async () => {
+    const rows = await (engine as any).db.query(
+      `SELECT indexname FROM pg_indexes WHERE indexname = 'idx_chunks_embedding_null'`
+    );
+    expect(rows.rows.length).toBe(1);
+  });
+});
+
 describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate rows', () => {
   let engine: PGLiteEngine;
 

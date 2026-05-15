@@ -533,11 +533,16 @@ export interface BrainEngine {
    */
   getChunks(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]>;
   /**
-   * Count chunks across the entire brain where embedded_at IS NULL.
+   * Count chunks across the brain where embedding IS NULL.
    * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
    * does no further work after a single SELECT count(*) (~50 bytes wire).
+   *
+   * `opts.sourceId` scopes the count to a single source. When omitted,
+   * counts across every source in the brain. Operators running
+   * `gbrain embed --stale --source media-corpus` expect only that
+   * source's NULLs touched; the caller threads `sourceId` here.
    */
-  countStaleChunks(): Promise<number>;
+  countStaleChunks(opts?: { sourceId?: string }): Promise<number>;
   /**
    * Return every chunk where embedding IS NULL, with the metadata needed
    * to call embedBatch + upsertChunks. The `embedding` column is omitted
@@ -549,11 +554,16 @@ export interface BrainEngine {
    * last row's `(page_id, chunk_index)` as `afterPageId`/`afterChunkIndex`
    * to fetch the next page.  When fewer than `batchSize` rows come back,
    * the caller has reached the end.
+   *
+   * `opts.sourceId` scopes the scan to a single source (matches the
+   * countStaleChunks contract). Paired with embedAllStale's --source
+   * support.
    */
   listStaleChunks(opts?: {
     batchSize?: number;
     afterPageId?: number;
     afterChunkIndex?: number;
+    sourceId?: string;
   }): Promise<StaleChunkRow[]>;
   /**
    * Delete every chunk for a page. Internal page-id lookup is sourceId-scoped
