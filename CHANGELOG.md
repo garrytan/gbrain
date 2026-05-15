@@ -2,6 +2,49 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.34.3.0] - 2026-05-14
+
+**Supervisor stops crashing every 24h on large brains. Watchdog stops false-firing on git mmap.**
+**One shared spawn-loop replaces two duplicate copies that drifted into the same bug class.**
+
+The Minions supervisor was committing suicide every 24h on a 96K-page brain. Every autopilot cycle, `process.memoryUsage().rss` reported ~7GB because VmRSS counts file-backed mmap pages and git holds packfiles open. The 2GB RSS watchdog fired, the worker drained cleanly, exited code=0, and the supervisor counted that clean exit as a crash. 10 clean drains in 24h tripped `max_crashes_exceeded` and the supervisor process gave up. External cron restarted it. Loop repeated.
+
+This release fixes the chain at every layer. The worker now reads RssAnon + RssShmem from `/proc/self/status` on Linux (the actual heap, ~100MB during sync on the same brain) and falls back to VmRSS only on macOS / restricted containers / kernels older than 4.5. The supervisor's exit classifier no longer collapses watchdog drains and real crashes into the same `code=0 vs code≠0` distinction. Clean exits leave `crashCount` untouched (so a worker alternating real-crash + watchdog still trips max_crashes), but they restart immediately with no backoff. A new `cleanRestartBudget` (default 10 restarts per 60s) catches the macOS fallback case where the watchdog still false-fires every cycle.
+
+Underneath that, the supervisor and `gbrain autopilot` no longer maintain two parallel spawn-and-respawn loops with different bug classes. Both now compose a shared `ChildWorkerSupervisor` core. Fix the spawn loop once, both consumers benefit.
+
+### What ships in v0.34.3.0
+
+- **Worker RSS now reads RssAnon + RssShmem on Linux.** `process.memoryUsage().rss` returns VmRSS which includes file-backed mmap pages, so git packfiles inflated the reading to 7GB on large brains. The new helper reads `/proc/self/status` for the non-file-backed pages — the metric a leak watchdog actually wants. Fallback to VmRSS on macOS / kernel <4.5 / missing `/proc`.
+- **Supervisor preserves flap detection across mixed exits.** code=0 exits no longer reset `crashCount` to 0. A worker that alternates real crashes with watchdog drains still trips `max_crashes_exceeded`; a worker that only ever drains cleanly runs forever.
+- **Clean-restart budget caps the macOS-fallback tight-loop.** If 10 code=0 exits happen inside a 60s window, the supervisor emits `health_warn` with reason `clean_restart_budget_exceeded` and applies backoff. Operators get observability instead of a silent restart loop.
+- **`ChildWorkerSupervisor` consolidates the spawn loop.** New module at `src/core/minions/child-worker-supervisor.ts` is the single source of truth for child-process supervision. `MinionSupervisor` and `gbrain autopilot` both compose it. No more parallel-implementation drift.
+- **Parser field-presence fix.** `RssAnon: 0` with `RssShmem: 512` (shmem-only workers) now parses correctly. Pre-fix it fell through to VmRSS.
+- **`awaitChildExit` short-circuit.** Fast SIGTERM responders no longer cause a 35-second hang on clean shutdown — the method now probes `child.exitCode` before registering an exit listener.
+
+### Itemized changes
+
+- `src/core/minions/worker.ts` — `getAccurateRss()` exported with injectable status reader; `parseRssFromProcStatus()` exported for unit tests. Docstring softened to call out the cgroup-OOM caveat.
+- `src/core/minions/child-worker-supervisor.ts` — new file. Pure spawn-and-respawn core. No PID file, no signal handlers, no `process.exit`, no health check. Emits lifecycle events via injected callback.
+- `src/core/minions/supervisor.ts` — refactored to compose `ChildWorkerSupervisor`. The pre-shipped reset-to-0 hunk is gone; D1 lastExitCode tracking + D2 budget live in the shared core. PID lock, signal handlers, health check, and `process.exit` on max-crashes stay.
+- `src/commands/autopilot.ts` — replaced inline spawn-and-respawn loop (lines 165-197) with `ChildWorkerSupervisor` composition. `onMaxCrashesExceeded` routes through `shutdown('max_crashes')` so the autopilot lockfile gets cleaned up (pre-refactor it called `process.exit(1)` directly and bypassed cleanup).
+- Tests: `test/child-worker-supervisor.test.ts` (NEW, 7 cases) covers D1 classifier + D2 budget + the awaitChildExit short-circuit regression. `test/worker-rss.test.ts` (NEW, 11 cases) covers the M1 parser fix and fallback paths. `test/autopilot-supervisor-wiring.test.ts` (NEW, 6 cases) static-shape regression guards. `test/supervisor.test.ts` updated to exit-1 in tests that previously relied on clean-exit-as-crash semantics.
+
+### For contributors
+
+- The `ChildWorkerSupervisor` class is the seam to compose against when adding a new long-running child-process supervisor surface. Don't roll a third spawn-and-respawn loop — compose this one.
+- The `_now` injection point on `ChildWorkerSupervisor` lets tests fake the clock without `mock.module`. The stable-run reset behavior is pinned by a deterministic test that fakes a 6-minute clean exit between two real crashes.
+
+## To take advantage of v0.34.3.0
+
+`gbrain upgrade` carries the whole wave automatically. No migrations. No config flips. If your supervisor was crashing every 24h, watch the logs for 24h after the upgrade and confirm:
+
+- `worker_exited` events have `likely_cause: 'clean_exit'` (not `unknown` or `runtime_error`)
+- `backoff` events have `reason: 'clean_exit'` and `ms: 0`
+- Zero `max_crashes_exceeded` events
+
+If `health_warn` with `reason: 'clean_restart_budget_exceeded'` starts firing on your deployment, that's the new D2 budget telling you the watchdog is firing too often. On Linux that means the worker really is leaking; investigate. On macOS that's the VmRSS-fallback fire pattern — set a higher `--max-rss` threshold to suppress.
+
 ## [0.34.0.0] - 2026-05-14
 
 **Recursive code intelligence ships. Plan-mode subagents get one-call blast and flow.**
