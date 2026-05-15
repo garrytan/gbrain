@@ -1237,6 +1237,30 @@ describe('migration v31 — eval_capture_tables', () => {
   });
 });
 
+describe('migration v41 — pages_recency_columns (v0.29.1)', () => {
+  test('runs its DDL under migration version 41, not an older completed version', async () => {
+    const v41 = MIGRATIONS.find(m => m.version === 41);
+    expect(v41).toBeDefined();
+    expect(v41?.name).toBe('pages_recency_columns');
+    expect(v41?.handler).toBeDefined();
+
+    const calls: Array<{ version: number; sql: string }> = [];
+    const fakeEngine = {
+      kind: 'pglite',
+      runMigration: async (version: number, sql: string) => {
+        calls.push({ version, sql });
+      },
+    } as unknown as BrainEngine;
+
+    await v41!.handler!(fakeEngine);
+
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.every(call => call.version === 41)).toBe(true);
+    expect(calls.map(call => call.sql).join('\n')).toContain('effective_date');
+    expect(calls.map(call => call.sql).join('\n')).toContain('pages_coalesce_date_idx');
+  });
+});
+
 describe('migration v40 — pages_emotional_weight (v0.29)', () => {
   // v0.29 ships off master. Master is at v39 (multimodal_dual_column_v0_27_1);
   // v0.29 lands at v40. Idempotent ADD COLUMN IF NOT EXISTS, so brains that
