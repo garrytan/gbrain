@@ -549,6 +549,15 @@ export async function importCodeFile(
   if (byteLength > MAX_FILE_SIZE) {
     return { slug, status: 'skipped', chunks: 0, error: `Code file too large (${byteLength} bytes)` };
   }
+  // Skip empty code files. With zero bytes there's nothing to chunk and no
+  // compiled_truth to derive, but without this guard the page row is still
+  // written with NULL compiled_truth — which then fails every subsequent
+  // `reindex-code` pass with `missing compiled_truth`. Empty files are
+  // legitimate in real repos (stub/placeholder files committed during
+  // refactors); skipping mirrors the symmetric MAX_FILE_SIZE branch above.
+  if (byteLength === 0) {
+    return { slug, status: 'skipped', chunks: 0, error: 'empty code file' };
+  }
 
   // Hash for idempotency. CHUNKER_VERSION is folded in so chunker shape
   // changes across releases force clean re-chunks without sync --force.
