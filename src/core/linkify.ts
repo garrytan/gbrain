@@ -5,6 +5,8 @@
  * See: docs/superpowers/specs/2026-05-15-gbrain-linkify-design.md
  */
 
+import { stripCodeBlocks, WIKILINK_RE, QUALIFIED_WIKILINK_RE } from './link-extraction.ts';
+
 export type AliasMap = Map<string, Set<string>>;
 
 export interface PageMeta {
@@ -42,14 +44,33 @@ export interface LinkifyResult {
 const BOUNDARY_LEFT = "(?<![\\p{L}\\p{N}_'\\u2019])";
 const BOUNDARY_RIGHT = "(?![\\p{L}\\p{N}_])";
 
+function maskSkipZones(content: string): string {
+  let masked = content;
+  // Frontmatter
+  const fmMatch = /^---\n[\s\S]*?\n---\n/.exec(masked);
+  if (fmMatch) masked = ' '.repeat(fmMatch[0].length) + masked.slice(fmMatch[0].length);
+  // Fenced + inline code
+  masked = stripCodeBlocks(masked);
+  // Qualified + unqualified wikilinks
+  for (const re of [QUALIFIED_WIKILINK_RE, WIKILINK_RE]) {
+    re.lastIndex = 0;
+    masked = masked.replace(re, (m) => ' '.repeat(m.length));
+  }
+  // Markdown links
+  masked = masked.replace(/\[[^\]]*\]\([^)]*\)/g, (m) => ' '.repeat(m.length));
+  // Bare URLs
+  masked = masked.replace(/https?:\/\/\S+/g, (m) => ' '.repeat(m.length));
+  // Email addresses
+  masked = masked.replace(/\S+@[\w.-]+/g, (m) => ' '.repeat(m.length));
+  return masked;
+}
+
 export function linkifyMarkdown(
   markdown: string,
   aliasMap: AliasMap,
   pageMeta: Map<string, PageMeta>,
   config: LinkifyConfig,
 ): LinkifyResult {
-  void pageMeta;
-  void config;
   const diagnostics: Diagnostic[] = [];
   const uniquePeople = new Set<string>();
   let linked = 0;
@@ -61,11 +82,12 @@ export function linkifyMarkdown(
   const pattern = BOUNDARY_LEFT + '(' + escaped.join('|') + ')' + BOUNDARY_RIGHT;
   const re = new RegExp(pattern, 'giu');
 
+  const masked = maskSkipZones(markdown);
   const parts: string[] = [];
   let cursor = 0;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(markdown)) !== null) {
-    const match = m[0];
+  while ((m = re.exec(masked)) !== null) {
+    const match = markdown.slice(m.index, m.index + m[0].length);
     const key = match.toLowerCase();
     const slugs = aliasMap.get(key);
     parts.push(markdown.slice(cursor, m.index));
