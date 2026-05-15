@@ -2,6 +2,62 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.34.2.0] - 2026-05-14
+
+**Path-based import checkpoint. The newest files in a partial import no longer disappear.**
+**`gbrain import` resumes by completed-path set instead of positional index, so failed and slow files retry instead of silently dropping.**
+
+Three bug classes died in this release. If you ever ran `gbrain import` against a large brain, hit Ctrl-C, and ran it again — or if you've ever run parallel import on Postgres — there were paths where files silently failed to import and never retried until you manually cleared the checkpoint. The old model tracked progress as a positional index into a sorted file list. Under parallel workers, a slow file at index 0 plus three fast completions wrote `processedIndex=3` to the checkpoint, and a crash dropped the slow file on resume. Failed files bumped the same counter, so the checkpoint advanced past them and the next run skipped them. And the v0.33.x sort-newest-first change made cross-version resume drop the newest N files.
+
+v0.34.2.0 replaces all of it with a path-set checkpoint. A file is only "done" when its import succeeds. The checkpoint stores the set of completed relative paths, not a counter. Sort order is irrelevant to checkpoint correctness. Failed files automatically retry on the next run with no manual intervention.
+
+### What changes for users
+
+- `gbrain import` resumes correctly under any execution model: serial, parallel, slow-file-first, or failure-mixed. No more "the new files I just added didn't import."
+- Failed files retry on the next `gbrain import` run automatically. Pre-v0.34.2 you had to delete `~/.gbrain/import-checkpoint.json` by hand to retry a file that errored during a prior run.
+- Newest pages get embedded first across both `gbrain sync` and `gbrain import` — the v0.33 sort-newest-first behavior now lives in a single helper so the policy never drifts between the two commands.
+- Pre-v0.34.2 checkpoints get discarded on first resume with a stderr log line so you know why the run is re-walking. Re-walking is cheap because `content_hash` short-circuits unchanged files.
+
+### Itemized changes
+
+#### Added
+
+- `src/core/import-checkpoint.ts` — `loadCheckpoint`, `saveCheckpoint`, `resumeFilter`, `clearCheckpoint`, and the `ImportCheckpoint` type. Atomic write via `.tmp` + rename so a mid-write crash never leaves a partial JSON. Old positional-format checkpoints get detected and logged before being discarded.
+- `src/core/sort-newest-first.ts` — single source of truth for the descending lex sort that `gbrain import` and `gbrain sync` both apply. Future ordering changes flip one line.
+
+#### Changed
+
+- `src/commands/import.ts` — checkpoint resume now driven by `loadCheckpoint` + `resumeFilter`. Successful imports (and unchanged-via-content-hash) call `completed.add(relativePath)`. Failed files never enter the set. Checkpoint write fires every 100 successful adds (not every 100 processed). Cleanup on clean exit uses `clearCheckpoint`.
+- `src/commands/sync.ts` — inline `.sort()` replaced with `sortNewestFirst(addsAndMods)`.
+
+#### Tests
+
+- `test/sort-newest-first.test.ts` — 5 hermetic cases pinning descending order, mixed prefixes, empty/single input, and in-place mutation contract.
+- `test/import-checkpoint.test.ts` — 18 unit cases over the helpers: missing/malformed/dir-mismatch/old-positional/valid for `loadCheckpoint`, round-trip + atomic-rename + non-fatal-on-error for `saveCheckpoint`, full filter semantics for `resumeFilter`, no-op-on-missing for `clearCheckpoint`.
+- `test/import-resume.test.ts` — fully refactored. Now isolates via `GBRAIN_HOME` env override through `withEnv` (was writing to real `~/.gbrain` pre-v0.34.2). Drives `runImport` against PGLite for true integration coverage. 5 cases including the SLUG_MISMATCH retry regression that pins the pre-existing P1 bug codex caught during plan-eng-review.
+
+#### Includes from PR #964
+
+This release also incorporates @garrytan-agents's [PR #964](https://github.com/garrytan/gbrain/pull/964) (cherry-picked as commit `8dbcf6a5` and superseded by this PR's broader rewrite). The original sort-newest-first contribution is what surfaced the underlying checkpoint bugs during plan-eng-review.
+
+## To take advantage of v0.34.2.0
+
+`gbrain upgrade` handles this automatically. There is no manual step. The first `gbrain import` after upgrade with a pre-existing checkpoint will:
+
+1. Detect the old positional format and log to stderr: `Older checkpoint format detected — re-walking (cheap via content_hash)`.
+2. Re-walk every file in the brain dir. Unchanged files short-circuit via `content_hash` (no embed cost, no DB write).
+3. Write the new path-based checkpoint format going forward.
+
+If you want to verify the new behavior:
+
+```bash
+gbrain doctor
+```
+
+If anything looks wrong, file an issue at https://github.com/garrytan/gbrain/issues with:
+- output of `gbrain doctor`
+- contents of `~/.gbrain/import-checkpoint.json` (if present)
+
 ## [0.34.0.0] - 2026-05-14
 
 **Recursive code intelligence ships. Plan-mode subagents get one-call blast and flow.**
