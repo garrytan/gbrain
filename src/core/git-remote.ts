@@ -20,16 +20,22 @@ import { join } from 'path';
 import { isInternalUrl } from './url-safety.ts';
 
 /**
- * SSRF-defensive flag set. Used by both cloneRepo and pullRepo.
+ * SSRF-defensive flag sets. Used by both cloneRepo and pullRepo.
  * - http.followRedirects=false: closes DNS rebinding via redirect chains
  * - protocol.file.allow=never: no local-file URLs (defense in depth)
  * - protocol.ext.allow=never: no external helpers (`git-remote-foo`)
- * - --no-recurse-submodules: .gitmodules cannot become a second fetch surface
+ *
+ * --no-recurse-submodules is split into GIT_SSRF_SUBCMD_FLAGS because it
+ * is only valid after a subcommand (clone/pull/fetch), not as a top-level
+ * git flag. Mixing it with -c flags causes "unknown option" (exit 129).
  */
 export const GIT_SSRF_FLAGS = [
   '-c', 'http.followRedirects=false',
   '-c', 'protocol.file.allow=never',
   '-c', 'protocol.ext.allow=never',
+] as const;
+
+export const GIT_SSRF_SUBCMD_FLAGS = [
   '--no-recurse-submodules',
 ] as const;
 
@@ -153,7 +159,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
     }
   }
 
-  const args: string[] = [...GIT_SSRF_FLAGS, 'clone'];
+  const args: string[] = [...GIT_SSRF_FLAGS, 'clone', ...GIT_SSRF_SUBCMD_FLAGS];
   if (opts.depth !== 0) {
     args.push(`--depth=${opts.depth ?? 1}`);
   }
@@ -179,7 +185,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
 
 /** Pull a repo with --ff-only and the same SSRF-defensive flags as cloneRepo. */
 export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): void {
-  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', '--ff-only'];
+  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', '--ff-only', ...GIT_SSRF_SUBCMD_FLAGS];
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
