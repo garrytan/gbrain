@@ -24,13 +24,24 @@ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhase
 import { appendCompletedMigration } from '../../core/preferences.ts';
 import { loadConfig, toEngineConfig } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 
 // ── Phase A — Schema ────────────────────────────────────────
 
+
+function _childEnv(): NodeJS.ProcessEnv {
+  try {
+    const cfg = JSON.parse(readFileSync(join(process.env.HOME || '', '.gbrain', 'config.json'), 'utf8'));
+    const u = cfg.database_url || process.env.GBRAIN_DATABASE_URL;
+    return { ...process.env, ...(u ? { GBRAIN_DATABASE_URL: u } : {}), GBRAIN_DISABLE_DIRECT_POOL: '1' };
+  } catch { return process.env; }
+}
 function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain init --migrate-only', { stdio: 'inherit', timeout: 600_000, env: process.env });
+    execSync('gbrain init --migrate-only', { stdio: 'inherit', timeout: 600_000, env: _childEnv() });
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

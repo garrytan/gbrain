@@ -39,6 +39,24 @@ function home(): string { return process.env.HOME || ''; }
 function gbrainDir(): string { return join(home(), '.gbrain'); }
 function pendingHostWorkPath(): string { return join(gbrainDir(), 'migrations', 'pending-host-work.jsonl'); }
 
+// Read the configured database URL from ~/.gbrain/config.json so subprocess
+// calls (gbrain init --migrate-only) use the pooler URL instead of attempting
+// a direct IPv6 connection. Falls back to process.env.GBRAIN_DATABASE_URL.
+function configuredDatabaseUrl(): string | undefined {
+  try {
+    const cfg = JSON.parse(readFileSync(join(gbrainDir(), 'config.json'), 'utf8'));
+    return cfg.database_url || process.env.GBRAIN_DATABASE_URL;
+  } catch {
+    return process.env.GBRAIN_DATABASE_URL;
+  }
+}
+
+function childEnv(): NodeJS.ProcessEnv {
+  const dbUrl = configuredDatabaseUrl();
+  if (!dbUrl) return process.env;
+  return { ...process.env, GBRAIN_DATABASE_URL: dbUrl, GBRAIN_DISABLE_DIRECT_POOL: '1' };
+}
+
 export interface PendingHostWorkEntry {
   type: 'cron-handler-needs-host-registration' | 'agents-md-dispatcher-needs-host-review';
   status: 'pending' | 'complete';
@@ -61,7 +79,7 @@ export interface PendingHostWorkEntry {
 function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain init --migrate-only' + childGlobalFlags(), { stdio: 'inherit', timeout: 60_000, env: process.env });
+    execSync('gbrain init --migrate-only' + childGlobalFlags(), { stdio: 'inherit', timeout: 60_000, env: childEnv() });
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -76,7 +94,7 @@ function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
 function phaseBSmoke(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'smoke', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain jobs smoke', { stdio: 'inherit', timeout: 30_000, env: process.env });
+    execSync('gbrain jobs smoke', { stdio: 'inherit', timeout: 30_000, env: childEnv() });
     return { name: 'smoke', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -397,7 +415,7 @@ function phaseFInstall(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'install', status: 'skipped', detail: 'dry-run' };
   if (opts.noAutopilotInstall) return { name: 'install', status: 'skipped', detail: '--no-autopilot-install' };
   try {
-    execSync('gbrain autopilot --install --yes', { stdio: 'inherit', timeout: 60_000, env: process.env });
+    execSync('gbrain autopilot --install --yes', { stdio: 'inherit', timeout: 60_000, env: childEnv() });
     return { name: 'install', status: 'complete' };
   } catch (e) {
     // Install is best-effort — log but don't fail the whole migration. User
