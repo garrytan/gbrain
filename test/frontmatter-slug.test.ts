@@ -56,3 +56,15 @@ describe('gbrain frontmatter slug', () => {
     expect(r.status).toBe(2);
   });
 });
+
+describe('gbrain frontmatter abi-version', () => {
+  test('emits an integer >= 1', () => {
+    const res = spawnSync('bun', [CLI, 'frontmatter', 'abi-version'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf-8',
+    });
+    expect(res.status).toBe(0);
+    expect(res.stdout.trim()).toMatch(/^[0-9]+$/);
+    expect(parseInt(res.stdout.trim(), 10)).toBeGreaterThanOrEqual(1);
+  });
+});

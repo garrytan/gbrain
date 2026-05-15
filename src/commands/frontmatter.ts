@@ -67,6 +67,13 @@ export async function runFrontmatter(args: string[]): Promise<void> {
     process.stdout.write(slugifyPath(path) + '\n');
     return;
   }
+  if (sub === 'abi-version') {
+    // Slug-rules ABI version. Bump when slugifyPath() or slugifySegment()
+    // changes output for any input that previously produced different
+    // output. Producers assert a minimum at startup.
+    process.stdout.write('1\n');
+    return;
+  }
   console.error(`Unknown frontmatter subcommand: ${sub}\n`);
   printHelp();
   process.exitCode = 1;
@@ -132,6 +139,22 @@ audit
 
   --source <id>  Limit scan to one registered source.
   --json         Emit AuditReport-shaped JSON on stdout.
+
+slug
+  Emit the canonical gbrain slug for a brain-root-relative path. Uses the
+  same slugifyPath() that inferSlug() applies at sync validation time.
+  External producers can call this to source slug values from gbrain instead
+  of porting the slug rules themselves.
+
+  Example:
+    gbrain frontmatter slug 'Briefings/Webex Meeting - 2026-05-13 09:15'
+    → briefings/webex-meeting-2026-05-13-0915
+
+abi-version
+  Print an integer representing the slug-rules ABI. Producers assert a
+  minimum version at startup so a future gbrain upgrade that changes slug
+  rules fails loudly rather than silently re-slugging differently.
+  Currently emits: 1
 `);
 }
 
