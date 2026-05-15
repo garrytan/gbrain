@@ -124,25 +124,31 @@ COLUMN IF NOT EXISTS …` 过了,生产 schema v34, 不依赖此 PR merge。
 
 ## P1 — Post-v0.34.4 sync follow-ups (added 2026-05-15)
 
-### [ ] (PR-2) Upstream PR: extend forward-bootstrap to cover oauth_clients.{source_id, federated_read}
+### [x] (PR-2) Upstream PR: extend forward-bootstrap to cover oauth_clients.{source_id, federated_read} — FILED 2026-05-15
 
-Pattern identical to PR #627 (which was superseded by upstream
-fixwave #682+#741 for `mcp_request_log.{agent_name, params,
-error_message}`). v0.34.1 (#861 + #876) added two new columns to
-`oauth_clients` but `applyForwardReferenceBootstrap` in both
-PostgresEngine and PGLiteEngine never learned to probe them. Result:
-any fork merging v0.34.x in-place hits `column "source_id" does not
-exist` at `schema-embedded.ts:438` (`CREATE INDEX
-idx_oauth_clients_source_id`).
+**[garrytan/gbrain#1017](https://github.com/garrytan/gbrain/pull/1017)**.
+Branch `upstream-fix/bootstrap-oauth-clients-cols` cut from
+`upstream/master` (HEAD `24881f60` v0.34.4). Pattern lift from #627:
+probe `oauth_clients.{source_id, federated_read}` in the
+`information_schema` round-trip, ALTER TABLE ADD COLUMN IF NOT EXISTS
+when missing, FK on `source_id` to `sources(id)` and `NOT NULL
+DEFAULT '{}'` on `federated_read`. Both PostgresEngine and PGLiteEngine
+mirror the change. `REQUIRED_BOOTSTRAP_COVERAGE` gains two entries.
+3 files / +87 -4 / `bun test test/schema-bootstrap-coverage.test.ts
+test/bootstrap.test.ts` 11 pass / 0 fail (50 expect() vs 48 pre-patch).
 
-Scope: 4 files / ~150 LoC / pattern lift from #627. Branch
-strategy: cut from `upstream/master` (HEAD `24881f60`), no
-fork-local content. Same workflow as #627. e2e test
-`test/e2e/postgres-bootstrap.test.ts` already covers the pattern;
-extend `REQUIRED_BOOTSTRAP_COVERAGE` + add the oauth case.
+E2E test in `test/e2e/postgres-bootstrap.test.ts` not extended — the
+in-memory PGLite contract test already validates the per-column
+bootstrap loop; PR body offers to add an oauth-specific E2E case if
+maintainers prefer.
 
-Reproducer (already validated against our prod brain): see §6.24
-manual ALTER block.
+On merge: drop this entry from TODO + on next fork sync the local
+changes (if any) auto-merge clean.
+
+Production impact: already manually ALTER-ed on the fork's prod DB
+during the v0.34.4 sync (§6.24); not blocking. PR closes the gap for
+any other downstream that runs `gbrain init --migrate-only` on a
+pre-v0.34 schema after pulling v0.34.x.
 
 ### [ ] (CJK-eval) Reassess "vector search only" assumption after v0.32.7 CJK fix wave
 
@@ -678,10 +684,15 @@ on the new chunk. 34/34 `recipes-contract` + `gateway` tests pass.
 
 Fork-local patch doc at
 [`docs/UPSTREAM-PATCHES/v034-google-recipe-max-batch-tokens.md`](../../docs/UPSTREAM-PATCHES/v034-google-recipe-max-batch-tokens.md).
-Upstream PR `upstream-fix/google-recipe-max-batch-tokens` to be cut
-from `upstream/master` (HEAD `24881f60` v0.34.4) next; on merge the
-next sync auto-drops the local diff (additive field change, clean
-text merge).
+Upstream PR filed 2026-05-15:
+**[garrytan/gbrain#1016](https://github.com/garrytan/gbrain/pull/1016)** —
+branch `upstream-fix/google-recipe-max-batch-tokens` cut from
+`upstream/master` (HEAD `24881f60` v0.34.4), 3 files / +25 -7 / `bun
+test test/ai/` 144/144 green. On merge the next fork sync auto-drops
+the local diff (additive field change + matching test edits, clean
+text merge). Fork master `test/ai/no-batch-cap-suppression.serial.test.ts`
++ `test/ai/adaptive-embed-batch.test.ts` backported in the same
+session so `bun test test/ai/` stays 144/144 here too.
 
 **Diagnostic correction** — the original P2 framing suggested this
 was just log noise. A 2026-05-15 morning probe initially read the

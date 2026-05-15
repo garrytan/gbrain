@@ -52,15 +52,20 @@ describe('v0.32 #779: no_batch_cap suppresses the missing-max_batch_tokens warni
     }
   });
 
-  test('configureGateway STILL warns for google (real provider, no cap declared)', () => {
+  test('configureGateway does not warn for any first-party recipe (every embedding recipe declares max_batch_tokens or no_batch_cap)', () => {
     warnSpy.mockClear();
     resetGateway();
     configureGateway({ env: {} });
     const messages = warnSpy.mock.calls.map(c => String(c[0] ?? ''));
-    expect(
-      messages.some(m => m.includes('"google"') && m.includes('without max_batch_tokens')),
-      'google should warn (it has fixed-cap models)',
-    ).toBe(true);
+    // Pre-v0.34.5 this test asserted that google STILL warned (waiting for
+    // someone to cap it). google now declares max_batch_tokens, so the
+    // contract flips: every native/openai-compat recipe is capped, and the
+    // missing-cap warning is silent for the entire first-party set.
+    const missingCapWarnings = messages.filter(m =>
+      m.includes('declares an embedding touchpoint') &&
+      m.includes('without max_batch_tokens'),
+    );
+    expect(missingCapWarnings).toHaveLength(0);
   });
 
   test('every recipe with empty models[] declares user_provided_models OR has openai-fast-path', () => {
