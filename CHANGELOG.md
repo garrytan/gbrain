@@ -2,6 +2,76 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.34.3.0] - 2026-05-14
+
+**`gbrain embed --stale` now actually works on large brains. `--source` flag stops silently dropping. The retry loop stops storming itself.**
+
+The v0.33.3 cherry-pick gave `embed --stale` cursor pagination so it would stop dying on Supabase's 2-minute pooler timeout. This release hardens the hot path so it survives real production load: a 30-minute wall-clock budget threads `AbortSignal` into the retry sleep, the worker claim loop, AND the gateway HTTP call (so a worker stuck mid-fetch on a 30-second OpenAI timeout cancels within seconds instead of running past budget). The retry-after delay now jitters ±30% so 20 concurrent workers don't relock on the next 429 wave. The 429 detector unwraps the gateway's `AITransientError` cause chain (the prior bare `e.status === 429` check silently never fired against normalized errors). The wrapper passes `maxRetries: 0` through to the AI SDK so its default 2-retry stack stops multiplying this wrapper's 5 attempts into 15 cycles per call.
+
+The `gbrain embed --stale --source X` flag was silently broken on multi-source brains — `embedAll(sourceId)` dropped the `sourceId` argument when calling `embedAllStale`, so operators got a full-brain scan even when they asked for one source. Threading `sourceId?` through `countStaleChunks` + `listStaleChunks` + the engine interfaces (Postgres + PGLite) fixes that.
+
+Migration v60 (the partial index `idx_chunks_embedding_null`) now uses `CREATE INDEX CONCURRENTLY` on Postgres with a handler-based engine branch and pre-drop of any invalid remnant (mirrors the v14 pattern). Plain `CREATE INDEX IF NOT EXISTS` would have taken a ShareLock on the 373K-row `content_chunks` table for the entire build, blocking every concurrent sync/embed/autopilot write. PGLite stays on plain `CREATE INDEX` since it has no concurrent writers.
+
+Twenty-six new test cases pin every new code path: 8 unit cases for `embedBatchWithBackoff` (parse ms/s retry-after, fallback, non-rate-limit rethrow, jitter range, budget-abort-mid-fetch, cause-chain unwrap, maxRetries:0 passthrough), 3 CLI flag-wiring tests, 1 end-to-end budget test, 6 Postgres E2E tests against a fresh database (static/failed-page/page-split/source-scope/dup-slug), 4 migration v60 source-shape tests, 4 PGLite engine parity tests, plus a fix to every pre-existing stale-row mock that was silently passing TypeScript's structural typing while violating `StaleChunkRow`'s newly-required `source_id` + `page_id` fields.
+
+### What changes for users
+
+| Behavior | Before | After v0.34.3.0 |
+|---|---|---|
+| `embed --stale` budget on millions-of-chunks brain | unbounded — could run hours past Minion timeout | bounded to `GBRAIN_EMBED_TIME_BUDGET_MS` (default 30m); AbortSignal cancels mid-fetch |
+| 20 concurrent workers hitting 429 | sleep in lockstep, slam API together on wake | ±30% jitter decorrelates the herd |
+| Gateway-wrapped 429 detection | `e.status === 429` silently false against `AITransientError` | unwraps cause chain (depth ≤5); message-match as fallback |
+| AI SDK retries per embed call | 3 SDK × 5 wrapper = up to 15 cycles per call | `maxRetries: 0` passthrough; wrapper is single source of truth |
+| `embed --stale --source X` | flag silently dropped; full-brain scan | actually scopes to that source |
+| Migration v60 on 373K-row table | plain `CREATE INDEX` takes ShareLock for the whole build | `CREATE INDEX CONCURRENTLY` on Postgres; invalid-remnant DROP first |
+| Cursor pagination test coverage | 4 mocks ignored opts, never exercised the cursor | 6 real-Postgres E2E + PGLite parity unit tests |
+
+### Itemized changes
+
+#### Added
+- `GBRAIN_EMBED_TIME_BUDGET_MS` env knob (default 30 min) bounds `embed --stale` wall-clock runtime; partial index makes "next run picks up" automatic.
+- `EmbedOpts` in `src/core/ai/gateway.ts` (and `EmbedBatchOptions` in `src/core/embedding.ts`) gain `abortSignal` + `maxRetries` passthrough so callers can cancel mid-fetch and disable the AI SDK's retry stack.
+- `detect429FromCause`, `parseRetryDelayMs`, `abortableSleep` exported as `@internal` from `src/commands/embed.ts` so tests can exercise the retry helpers directly.
+- `test/e2e/embed-stale-pagination.test.ts` — 6 Postgres E2E tests covering the cursor's static, failure-skip, page-split, source-scoped, and duplicate-slug-across-sources behaviors.
+
+#### Changed
+- Migration v60 (`embed_stale_partial_index`) rewritten to handler-based engine branching; Postgres uses `CREATE INDEX CONCURRENTLY` with a pre-drop of any invalid remnant via `pg_index.indisvalid`. Renumbered from v58 (claimed by master's v0.33.3 edges_backfilled_at) to v59 (claimed by master's v0.34.0 code_traversal_cache) to v60 across two merge waves.
+- `BrainEngine.countStaleChunks(opts?: {sourceId?})` and `listStaleChunks({sourceId?, ...})` now scope to a single source when requested. Both Postgres and PGLite engines updated.
+- `embedBatchWithBackoff` now: jitters parsed retry delays ±30%, detects 429 via cause-chain unwrap, passes `maxRetries: 0` through the gateway, and cancels mid-sleep when an `AbortSignal` fires.
+- `embedAllStale` accepts `sourceId` and creates a budget-bound `AbortController` threaded into the retry sleep, the per-key worker claim loop, and the gateway embed call.
+
+#### Fixed
+- `gbrain embed --stale --source X` silently dropped the `sourceId` argument and scanned the entire brain. Now correctly scoped end-to-end.
+- Existing test mocks omitted `source_id` and `page_id` on stale-row literals; TypeScript's structural typing accepted them but the runtime cursor needs both. Every mock fixed.
+- The wave-1 cherry-pick's `embedBatchWithBackoff` had three latent bugs (thundering herd, no wall-clock cap, SDK-retry stacking) and one silently-broken structural check (`e.status === 429` against wrapped errors). All addressed.
+
+### For contributors
+
+- 100% AI-assessed coverage of new code paths. Tests: 504 → 505 files (+1 new E2E file) and ~26 new test cases inside expanded files. `bun run test` passes 6385/0/0; full E2E suite passes 90 files / 603 tests against a fresh Postgres.
+- Plan reviewed via `/plan-eng-review` (9 decisions made interactively), `/codex` consult (12 findings folded in), and a re-review pass (D8 AbortSignal threading into gateway). Plan file: `~/.claude/plans/system-instruction-you-are-working-iterative-torvalds.md`.
+- The cherry-pick lineage: PR #987 (garrytan-agents) → cherry-picked as `ecae761a` onto this branch → opened as PR #991 → all 9 plan decisions + 12 codex findings + 1 re-review finding implemented + tested.
+
+## To take advantage of v0.34.3.0
+
+`gbrain upgrade` does it automatically. The migration v60 runs via `gbrain apply-migrations` and uses `CREATE INDEX CONCURRENTLY` on Postgres so it does not block concurrent writes.
+
+1. **Run the orchestrator (only if `gbrain doctor` warns about a partial migration):**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the outcome:**
+   ```bash
+   gbrain doctor --json | grep -o 'Version [0-9]*'  # expect Version 60
+   ```
+3. **Operator knob** for the new wall-clock budget — only set if 30 min is wrong for your brain:
+   ```bash
+   export GBRAIN_EMBED_TIME_BUDGET_MS=1800000  # 30 min default
+   ```
+4. **If `gbrain embed --stale --source X` was returning unexpected counts pre-upgrade,** the bug was that `--source` was being silently dropped. After upgrade it scopes correctly — re-run with the same flags and you should see the actual per-source NULL count.
+
+5. **If any step fails or `gbrain embed --stale` still hangs,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor` output and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
 ## [0.34.0.0] - 2026-05-14
 
 **Recursive code intelligence ships. Plan-mode subagents get one-call blast and flow.**

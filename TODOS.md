@@ -1,5 +1,11 @@
 # TODOS
 
+## embed --stale follow-ups (v0.34.3.0)
+
+- [ ] **v0.35.x: Concurrent NULL→non-NULL upsert race in `embed.ts:429-443` + `postgres-engine.ts:1231`'s `COALESCE(EXCLUDED.embedding, content_chunks.embedding)`.** Two `embed --stale` workers (or `embed --stale` racing with a sync that re-embeds the same chunk) can have the slower writer overwrite the faster one's fresher embedding. Window is small (20 workers, all from the same `listStaleChunks` snapshot) but exists. Tractable fix: a `WHERE content_chunks.embedded_at < EXCLUDED.embedded_at OR content_chunks.embedding IS NULL` predicate on the upsert. Out of scope for v0.34.3.0 because the upsert is not in the diff; pre-existing bug. Filed during v0.34.3.0 codex outside-voice review.
+
+- [ ] **v0.35.x: New stale rows inserted behind the keyset cursor.** A sync or `gbrain put_page` mid-`embed --stale` creates chunks with `embedding IS NULL` at `(page_id, chunk_index)` already passed by the cursor. Picked up on next run via the partial index; documented limitation. Possible fix: a second pass at end-of-run that does a fresh `countStaleChunks()` and re-enters the loop while count > 0 and budget allows. Filed during v0.34.3.0 codex outside-voice review.
+
 ## functional-area-resolver follow-ups (v0.32.3.0)
 
 - [ ] **v0.33.x: Dogfood `functional-area-resolver` on gbrain's own `skills/RESOLVER.md`** when it crosses ~12KB (currently 8KB). Apply the pattern to the Operational section first (largest). Filed during v0.32.3.0 CEO review.
