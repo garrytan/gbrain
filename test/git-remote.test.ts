@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   GIT_SSRF_FLAGS,
+  GIT_NO_RECURSE_SUBMODULES_FLAG,
   parseRemoteUrl,
   RemoteUrlError,
   cloneRepo,
@@ -78,6 +79,7 @@ const fakePath = (): string => `${FAKE_GIT_DIR}:${process.env.PATH ?? ''}`;
 // GIT_SSRF_FLAGS — pinned shape (snapshot test). If a future flag is added,
 // update the expected list here AND verify both cloneRepo + pullRepo pick it
 // up via the GIT_SSRF_FLAGS spread (the codex finding that motivated this).
+// Keep git global flags separate from subcommand-only flags.
 // ---------------------------------------------------------------------------
 
 describe('GIT_SSRF_FLAGS', () => {
@@ -86,8 +88,11 @@ describe('GIT_SSRF_FLAGS', () => {
       '-c', 'http.followRedirects=false',
       '-c', 'protocol.file.allow=never',
       '-c', 'protocol.ext.allow=never',
-      '--no-recurse-submodules',
     ]);
+  });
+
+  test('submodule hardening is tracked as a subcommand flag', () => {
+    expect(GIT_NO_RECURSE_SUBMODULES_FLAG).toBe('--no-recurse-submodules');
   });
 });
 
@@ -231,7 +236,9 @@ describe('cloneRepo', () => {
     const argv = calls[0];
     // Pin the SSRF flags before the 'clone' verb (codex Q2 invariant).
     expect(argv.slice(0, GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
-    expect(argv).toContain('clone');
+    const cloneIdx = argv.indexOf('clone');
+    expect(cloneIdx).toBeGreaterThan(-1);
+    expect(argv[cloneIdx + 1]).toBe(GIT_NO_RECURSE_SUBMODULES_FLAG);
     expect(argv).toContain('--depth=1');
     expect(argv).toContain('https://example.com/repo');
     expect(argv[argv.length - 1]).toBe(dest);
@@ -306,9 +313,14 @@ describe('pullRepo', () => {
     const argv = readArgvLog()[0];
     expect(argv[0]).toBe('-C');
     expect(argv[1]).toBe(repo);
-    expect(argv.slice(2, 2 + GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
-    expect(argv).toContain('pull');
+    const ssrfStart = 2;
+    expect(argv.slice(ssrfStart, ssrfStart + GIT_SSRF_FLAGS.length)).toEqual([
+      ...GIT_SSRF_FLAGS,
+    ]);
+    const pullIdx = argv.indexOf('pull');
+    expect(pullIdx).toBeGreaterThan(-1);
     expect(argv).toContain('--ff-only');
+    expect(argv.indexOf(GIT_NO_RECURSE_SUBMODULES_FLAG)).toBeGreaterThan(pullIdx);
     rmSync(repo, { recursive: true, force: true });
   });
 
