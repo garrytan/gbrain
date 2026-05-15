@@ -9,6 +9,16 @@
  * Pure helper; the engine layer is the data dependency injected by callers.
  * Lives under `src/core/entities/` so signal-detector can reuse it for the
  * Sonnet pass too without circular import through facts/.
+ *
+ * v0.34.5 — added a prefix-expansion step between fuzzy
+ * match and slugify fallback. Bare first names like "Jared" scored too
+ * low on pg_trgm (short strings have terrible trigram overlap), so they
+ * fell through to slugify("Jared") → "jared", which then spawned a
+ * phantom `people/jared.md` stub instead of resolving to the existing
+ * `people/jared-friedman` page. The fix queries `slug LIKE 'people/X-%'`
+ * (then `companies/X-%`) when fuzzy fails on a single-word bare name, and
+ * uses connection count (links + chunks) as the tiebreaker when multiple
+ * candidates match.
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -49,8 +59,105 @@ export async function resolveEntitySlug(
   const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
   if (fuzzy) return fuzzy;
 
-  // 3. Fallback: deterministic slugify.
+  // 3. Prefix-expansion match: when the input looks like a bare first name
+  //    (no slash, no prefix, slugifies to a single short token), try
+  //    `people/<token>-%` then `companies/<token>-%`. Short bare names
+  //    score terribly on pg_trgm — similarity('jared', 'jared-friedman')
+  //    is below the 0.4 threshold — so this is the layer that catches
+  //    `"Jared"` → `people/jared-friedman` before we phantom-stub a
+  //    bare `people/jared.md`.
+  if (isBareName(trimmed)) {
+    const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
+    if (expanded) return expanded;
+  }
+
+  // 4. Fallback: deterministic slugify.
   return slugify(trimmed);
+}
+
+/**
+ * "Bare name" detector — true when the input is a single word with no
+ * slash, no embedded prefix marker, and slugifies to a non-empty token.
+ * Multi-word inputs (e.g. "Jared Friedman") are handled by fuzzy match;
+ * this gate only fires for short first-name-shaped tokens.
+ */
+function isBareName(raw: string): boolean {
+  if (raw.includes('/')) return false;
+  // One-token input. Whitespace-tokenize: "Jared" → 1, "Jared Friedman" → 2.
+  const tokens = raw.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length !== 1) return false;
+  const slug = slugify(raw);
+  if (!slug) return false;
+  // Reject hyphenated multi-token slugs like "jared-friedman" — those
+  // should hit the exact-slug or fuzzy path, not prefix expansion.
+  if (slug.includes('-')) return false;
+  return true;
+}
+
+const PREFIX_EXPANSION_DIRS = ['people', 'companies'] as const;
+
+/**
+ * Look up pages whose slug starts with `<dir>/<token>-` for each known
+ * entity directory. When multiple candidates match within a directory,
+ * pick the one with the highest connection count (links_in + links_out +
+ * chunk count) — the most-mentioned entity is the most likely canonical
+ * target for a bare-name reference. When no candidates match in any
+ * directory, returns null and the caller falls through to slugify.
+ */
+async function tryPrefixExpansion(
+  engine: BrainEngine,
+  source_id: string,
+  token: string,
+): Promise<string | null> {
+  for (const dir of PREFIX_EXPANSION_DIRS) {
+    const pattern = `${dir}/${token}-%`;
+    try {
+      const rows = await engine.executeRaw<{
+        slug: string;
+        connection_count: number;
+      }>(
+        // Connection count is a simple proxy for canonicality:
+        // (incoming links) + (outgoing links) + (content chunks).
+        // No graph traversal, just three indexed counts per page.
+        // Filter is applied AFTER the aggregate so pages with zero
+        // connections still show up (a stub page is still a real page).
+        `SELECT p.slug,
+                (COALESCE(li.in_count, 0) + COALESCE(lo.out_count, 0) + COALESCE(cc.chunk_count, 0))
+                  AS connection_count
+         FROM pages p
+         LEFT JOIN (
+           SELECT to_page_id AS pid, COUNT(*)::int AS in_count
+           FROM links GROUP BY to_page_id
+         ) li ON li.pid = p.id
+         LEFT JOIN (
+           SELECT from_page_id AS pid, COUNT(*)::int AS out_count
+           FROM links GROUP BY from_page_id
+         ) lo ON lo.pid = p.id
+         LEFT JOIN (
+           SELECT page_id AS pid, COUNT(*)::int AS chunk_count
+           FROM content_chunks GROUP BY page_id
+         ) cc ON cc.pid = p.id
+         WHERE p.source_id = $1
+           AND p.deleted_at IS NULL
+           AND p.slug LIKE $2
+         ORDER BY connection_count DESC, p.slug ASC
+         LIMIT 5`,
+        [source_id, pattern],
+      );
+      if (rows.length === 0) continue;
+      // Single unambiguous match: return it.
+      if (rows.length === 1) return rows[0].slug;
+      // Multiple matches: the top row (sorted by connection_count desc)
+      // wins. The slug-ASC secondary key makes ties deterministic when
+      // connection counts collide — important for test pinning.
+      return rows[0].slug;
+    } catch {
+      // Defensive: a missing table or index shouldn't crash extraction.
+      // Try the next directory (or fall through to slugify).
+      continue;
+    }
+  }
+  return null;
 }
 
 function looksLikeSlug(s: string): boolean {
