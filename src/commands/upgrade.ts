@@ -1,6 +1,6 @@
 import { execSync, execFileSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { basename, join, dirname, resolve } from 'path';
 import { VERSION } from '../version.ts';
 
 const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
@@ -37,15 +37,18 @@ export async function runUpgrade(args: string[]) {
       break;
     }
 
-    case 'bun':
+    case 'bun': {
       console.log('Upgrading via bun...');
+      const bunGlobalRoot = resolveBunGlobalRoot();
       try {
-        execSync('bun update gbrain', { stdio: 'inherit', timeout: 120_000 });
+        execFileSync('bun', ['update', 'gbrain'], { cwd: bunGlobalRoot, stdio: 'inherit', timeout: 120_000 });
         upgraded = true;
       } catch {
-        console.error('Upgrade failed. Try running manually: bun update gbrain');
+        console.error('Upgrade failed. Try running manually:');
+        console.error(`  cd ${bunGlobalRoot} && bun update gbrain`);
       }
       break;
+    }
 
     case 'binary':
       console.log('Binary self-update not yet implemented.');
@@ -105,6 +108,46 @@ export async function runUpgrade(args: string[]) {
     } catch {
       // features scan is best-effort
     }
+  }
+}
+
+export function resolveBunGlobalRoot(): string {
+  const bunInstall = process.env.BUN_INSTALL;
+  if (bunInstall) {
+    return join(bunInstall, 'install', 'global');
+  }
+
+  const defaultRoot = join(process.env.HOME || '', '.bun', 'install', 'global');
+  if (isBunGlobalRoot(defaultRoot)) {
+    return defaultRoot;
+  }
+
+  const installRoot = findBunInstallRootFromArgv();
+  return installRoot ?? defaultRoot;
+}
+
+function isBunGlobalRoot(dir: string): boolean {
+  return existsSync(join(dir, 'package.json')) && existsSync(join(dir, 'node_modules'));
+}
+
+function findBunInstallRootFromArgv(): string | null {
+  try {
+    const argv1 = process.argv[1];
+    if (!argv1) return null;
+
+    let dir = dirname(realpathSync(argv1));
+    for (let i = 0; i < 10; i++) {
+      if (basename(dir) === 'gbrain' && basename(dirname(dir)) === 'node_modules') {
+        const root = dirname(dirname(dir));
+        if (isBunGlobalRoot(root)) return root;
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
