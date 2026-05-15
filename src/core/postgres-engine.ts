@@ -289,6 +289,8 @@ export class PostgresEngine implements BrainEngine {
    *     (indexed by `idx_mcp_log_agent_time`) — v0.26.3
    *   - `subagent_messages.provider_id` column (indexed by
    *     `idx_subagent_messages_provider`) — v0.27
+   *   - `oauth_clients.source_id` + `federated_read` columns (indexed by
+   *     `idx_oauth_clients_source_id` and `idx_oauth_clients_federated_read`) — v0.34.1
    *
    * Keep this in sync with the PGLite version; covered by
    * `test/schema-bootstrap-coverage.test.ts` (PGLite side) and
@@ -319,6 +321,9 @@ export class PostgresEngine implements BrainEngine {
       subagent_provider_id_exists: boolean;
       ingest_log_exists: boolean;
       ingest_log_source_id_exists: boolean;
+      oauth_clients_exists: boolean;
+      oauth_source_id_exists: boolean;
+      oauth_federated_read_exists: boolean;
     }[]>`
       SELECT
         EXISTS (SELECT 1 FROM information_schema.tables
@@ -356,7 +361,13 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema = current_schema() AND table_name = 'ingest_log') AS ingest_log_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'ingest_log' AND column_name = 'source_id') AS ingest_log_source_id_exists
+                WHERE table_schema = current_schema() AND table_name = 'ingest_log' AND column_name = 'source_id') AS ingest_log_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'oauth_clients') AS oauth_clients_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'source_id') AS oauth_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'federated_read') AS oauth_federated_read_exists
     `;
     const probe = probeRows[0]!;
 
@@ -386,11 +397,18 @@ export class PostgresEngine implements BrainEngine {
     // source_id. Old brains have ingest_log without source_id; bootstrap adds
     // the column before SCHEMA_SQL replay creates the index.
     const needsIngestLogSourceId = probe.ingest_log_exists && !probe.ingest_log_source_id_exists;
+    // v0.34.1 (#861 + #876): idx_oauth_clients_source_id (partial) and
+    // idx_oauth_clients_federated_read (GIN) in SCHEMA_SQL reference these
+    // two columns. Pre-v0.34 brains have oauth_clients without them;
+    // bootstrap adds both before SCHEMA_SQL replay so the CREATE INDEX
+    // statements don't crash with `column "source_id" does not exist`.
+    const needsOauthClientsBootstrap = probe.oauth_clients_exists
+      && (!probe.oauth_source_id_exists || !probe.oauth_federated_read_exists);
 
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
         && !needsChunksEmbeddingImage && !needsPagesRecency
-        && !needsIngestLogSourceId) return;
+        && !needsIngestLogSourceId && !needsOauthClientsBootstrap) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -516,6 +534,24 @@ export class PostgresEngine implements BrainEngine {
       // so the index can build cleanly.
       await conn.unsafe(`
         ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS source_id TEXT NOT NULL DEFAULT 'default';
+      `);
+    }
+
+    if (needsOauthClientsBootstrap) {
+      // v0.34.1 (#861 + #876) adds source_id (write-source scope) and
+      // federated_read (read-source array) to oauth_clients. SCHEMA_SQL's
+      //   CREATE INDEX idx_oauth_clients_source_id ON oauth_clients(source_id)
+      //     WHERE source_id IS NOT NULL;
+      //   CREATE INDEX idx_oauth_clients_federated_read ON oauth_clients USING GIN(federated_read);
+      // both crash on pre-v0.34 brains without the columns. Migrations v60-v65
+      // backfill both alongside the rest of the federated-OAuth wave; bootstrap
+      // only adds enough state for SCHEMA_SQL replay to land cleanly. The
+      // migration chain runs later via runMigrations and is idempotent.
+      await conn.unsafe(`
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS source_id TEXT
+          REFERENCES sources(id) ON DELETE RESTRICT;
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS federated_read TEXT[]
+          NOT NULL DEFAULT '{}';
       `);
     }
   }

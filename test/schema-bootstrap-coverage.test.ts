@@ -108,6 +108,16 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // created_at DESC)`. Old brains have ingest_log without source_id; bootstrap
   // adds the column before SCHEMA_SQL replay creates the index.
   { kind: 'column', table: 'ingest_log', column: 'source_id' },
+  // v0.34.1 (#861 + #876) — forward-referenced by
+  // `CREATE INDEX idx_oauth_clients_source_id ON oauth_clients(source_id)
+  //   WHERE source_id IS NOT NULL` (partial) and
+  // `CREATE INDEX idx_oauth_clients_federated_read ON oauth_clients
+  //   USING GIN(federated_read)` (GIN). Pre-v0.34 brains have oauth_clients
+  // without either column; bootstrap adds both before SCHEMA_SQL replay so
+  // the CREATE INDEX statements land cleanly. Migrations v60-v65 cover the
+  // backfill + RLS-policy side of the federated-OAuth wave.
+  { kind: 'column', table: 'oauth_clients', column: 'source_id' },
+  { kind: 'column', table: 'oauth_clients', column: 'federated_read' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
