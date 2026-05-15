@@ -16,7 +16,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { extractLinksForSlugs } from '../src/commands/extract.ts';
+import { extractLinksForSlugs, runExtractCore } from '../src/commands/extract.ts';
 import type { PageInput } from '../src/core/types.ts';
 
 describe('extractLinksForSlugs on non-canonical filenames', () => {
@@ -75,5 +75,67 @@ describe('extractLinksForSlugs on non-canonical filenames', () => {
   test('canonical filename still works (regression guard)', async () => {
     const created = await extractLinksForSlugs(engine, tmpDir, ['people/jbryan-aseva']);
     expect(created).toBe(0);
+  });
+});
+
+describe('extractForSlugs on non-canonical filenames', () => {
+  // Reuses the same fixture brain created by the outer describe's beforeAll.
+  // We use a fresh PGLiteEngine per describe so FK seeds don't conflict.
+  let tmpDir2: string;
+  let engine2: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine2 = new PGLiteEngine();
+    await engine2.connect({});
+    await engine2.initSchema();
+
+    tmpDir2 = mkdtempSync(join(tmpdir(), 'gbrain-extract-for-slugs-test-'));
+    mkdirSync(join(tmpDir2, 'briefings'));
+    mkdirSync(join(tmpDir2, 'people'));
+
+    // Non-canonical filename whose pathToSlug() = 'briefings/webex-digest-foo'.
+    writeFileSync(
+      join(tmpDir2, 'briefings', 'Webex Digest - foo.md'),
+      '---\nslug: briefings/webex-digest-foo\ntype: meeting\n---\n\nLink to [[people/jbryan-aseva]] inside.\n',
+    );
+    writeFileSync(
+      join(tmpDir2, 'people', 'jbryan-aseva.md'),
+      '---\nslug: people/jbryan-aseva\ntype: person\nname: Jessie Bryan\n---\n',
+    );
+
+    // Seed both pages so FK constraints on addLink don't fail.
+    const meetingPage: PageInput = {
+      type: 'meeting',
+      title: 'Webex Digest - foo',
+      compiled_truth: 'Link to [[people/jbryan-aseva]] inside.',
+      timeline: '',
+    };
+    const personPage: PageInput = {
+      type: 'person',
+      title: 'Jessie Bryan',
+      compiled_truth: '',
+      timeline: '',
+    };
+    await engine2.putPage('briefings/webex-digest-foo', meetingPage);
+    await engine2.putPage('people/jbryan-aseva', personPage);
+  }, 60_000);
+
+  afterAll(async () => {
+    if (engine2) await engine2.disconnect();
+    rmSync(tmpDir2, { recursive: true, force: true });
+  }, 60_000);
+
+  test('extractForSlugs finds links in non-canonical-filename file', async () => {
+    // PRE-FIX: extractForSlugs does join(brainDir, slug + '.md') + existsSync(),
+    //          which fails for 'Webex Digest - foo.md', so links_created === 0.
+    // POST-FIX: uses slug→filepath map, so links_created === 1.
+    const result = await runExtractCore(engine2, {
+      mode: 'links',
+      dir: tmpDir2,
+      dryRun: false,
+      jsonMode: true,
+      slugs: ['briefings/webex-digest-foo'],
+    });
+    expect(result.links_created).toBeGreaterThanOrEqual(1);
   });
 });

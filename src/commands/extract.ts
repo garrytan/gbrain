@@ -484,7 +484,9 @@ async function extractForSlugs(
 ): Promise<{ links_created: number; timeline_created: number; pages: number }> {
   // Build the full slug set for link resolution (fast: just readdir, no file reads)
   const allFiles = walkMarkdownFiles(brainDir);
-  const allSlugs = new Set(allFiles.map(f => pathToSlug(f.relPath)));
+  const slugToFile = new Map<string, string>();
+  for (const f of allFiles) slugToFile.set(pathToSlug(f.relPath), f.path);
+  const allSlugs = new Set(slugToFile.keys());
 
   const doLinks = mode === 'links' || mode === 'all';
   const doTimeline = mode === 'timeline' || mode === 'all';
@@ -524,11 +526,11 @@ async function extractForSlugs(
   }
 
   for (const slug of slugs) {
-    const relPath = slug + '.md';
-    const fullPath = join(brainDir, relPath);
+    const fullPath = slugToFile.get(slug);
+    if (!fullPath) continue;  // slug not in this brain (deleted, never existed, etc.)
+    const relPath = slug + '.md';  // synthesized, slug-canonical; preserves downstream resolveSlug behavior
 
     try {
-      if (!existsSync(fullPath)) continue; // deleted file — sync already handled removal
       const content = readFileSync(fullPath, 'utf-8');
 
       // Links
