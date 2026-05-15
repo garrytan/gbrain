@@ -97,3 +97,33 @@ describe('linkifyMarkdown — skip zones', () => {
     expect(twice).toBe(once);
   });
 });
+
+describe('linkifyMarkdown — ambiguity policy', () => {
+  const map = buildMap([['cooper', ['people/cself-aseva', 'people/cooper-ciralta']]]);
+  const meta = buildMeta([
+    ['people/cself-aseva', { name: 'Cooper Self', domain: 'aseva.com', isAutoStub: false }],
+    ['people/cooper-ciralta', { name: 'Cooper Smith', domain: 'ciralta.com', isAutoStub: false }],
+  ]);
+
+  test('|C|>1 with default-domain tiebreaker links default-domain candidate', () => {
+    const cfg = { ...cfgEmpty, defaultDomains: ['aseva.com'] };
+    const result = linkifyMarkdown('Cooper said hi.', map, meta, cfg);
+    expect(result.text).toBe('[[people/cself-aseva|Cooper]] said hi.');
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      kind: 'resolved_by_default_domain', chosen: 'people/cself-aseva',
+    }));
+  });
+
+  test('|C|>1 with no default-domain tiebreaker leaves unlinked', () => {
+    const result = linkifyMarkdown('Cooper said hi.', map, meta, cfgEmpty);
+    expect(result.text).toBe('Cooper said hi.');
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ kind: 'ambiguous_unresolved' }));
+  });
+
+  test('diagnostic dedup: 5 occurrences → 1 diagnostic with occurrences=5', () => {
+    const result = linkifyMarkdown('Cooper, Cooper, Cooper, Cooper, Cooper.', map, meta, cfgEmpty);
+    const ambig = result.diagnostics.filter(d => d.kind === 'ambiguous_unresolved');
+    expect(ambig).toHaveLength(1);
+    expect((ambig[0] as { occurrences: number }).occurrences).toBe(5);
+  });
+});

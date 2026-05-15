@@ -65,6 +65,30 @@ function maskSkipZones(content: string): string {
   return masked;
 }
 
+function bumpDiag(diagnostics: Diagnostic[], d: Diagnostic) {
+  const dKey = JSON.stringify({
+    kind: d.kind,
+    match: 'match' in d ? d.match : undefined,
+    candidates: 'candidates' in d ? d.candidates : undefined,
+    chosen: 'chosen' in d ? d.chosen : undefined,
+    rejected: 'rejected' in d ? d.rejected : undefined,
+  });
+  for (const existing of diagnostics) {
+    const eKey = JSON.stringify({
+      kind: existing.kind,
+      match: 'match' in existing ? existing.match : undefined,
+      candidates: 'candidates' in existing ? existing.candidates : undefined,
+      chosen: 'chosen' in existing ? existing.chosen : undefined,
+      rejected: 'rejected' in existing ? existing.rejected : undefined,
+    });
+    if (eKey === dKey && 'occurrences' in existing && 'occurrences' in d) {
+      (existing as { occurrences: number }).occurrences += d.occurrences;
+      return;
+    }
+  }
+  diagnostics.push(d);
+}
+
 export function linkifyMarkdown(
   markdown: string,
   aliasMap: AliasMap,
@@ -96,9 +120,29 @@ export function linkifyMarkdown(
       parts.push(`[[${slug}|${match}]]`);
       linked++;
       uniquePeople.add(slug);
+    } else if (slugs && slugs.size > 1) {
+      const defaultDomainSet = new Set(config.defaultDomains);
+      const inDefault: string[] = [];
+      const outOfDefault: string[] = [];
+      for (const s of slugs) {
+        const dom = pageMeta.get(s)?.domain;
+        if (dom && defaultDomainSet.has(dom)) inDefault.push(s);
+        else outOfDefault.push(s);
+      }
+      if (inDefault.length === 1) {
+        const chosen = inDefault[0];
+        parts.push(`[[${chosen}|${match}]]`);
+        linked++;
+        uniquePeople.add(chosen);
+        bumpDiag(diagnostics, { kind: 'resolved_by_default_domain', match: key, chosen, rejected: outOfDefault, occurrences: 1 });
+      } else {
+        parts.push(match);
+        ambiguous++;
+        bumpDiag(diagnostics, { kind: 'ambiguous_unresolved', match: key, candidates: Array.from(slugs).sort(), occurrences: 1 });
+      }
     } else {
+      // No match in alias map (regex matched but key not present), or empty Set
       parts.push(match);
-      if (slugs && slugs.size > 1) ambiguous++;
     }
     cursor = m.index + match.length;
   }
