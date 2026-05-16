@@ -594,6 +594,51 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(phantomPage[0].deleted_at).not.toBeNull();
   });
 
+  itHomed('preserves valid_until on time-bounded facts during migration (round-10 P2)', async () => {
+    // Codex round-10 P2: when a phantom fact has an explicit
+    // `valid_until` (e.g. "alice will be on sabbatical until
+    // 2026-08-31"), the merge must carry that date through to the
+    // canonical's fence. Pre-fix the FenceInputFact API dropped
+    // valid_until entirely, so time-bound facts became indefinitely
+    // active after migration.
+    await seedPage('alice-bounded', 'concept');
+    await seedPage('people/alice-bounded-example', 'person');
+    await seedChunks('people/alice-bounded-example', 3);
+
+    // Insert a fact with an explicit valid_until via raw SQL so we
+    // bypass the seedFact helper (which doesn't take valid_until).
+    const validUntil = '2026-08-31';
+    await engine.executeRaw(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, source, valid_from, valid_until)
+       VALUES ('default', 'alice-bounded', 'Alice is on sabbatical.', 'fact', 'private', 'medium', 'test', '2026-05-01', $1)`,
+      [validUntil],
+    );
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(1);
+    expect(result.merged[0].canonical).toBe('people/alice-bounded-example');
+
+    // Canonical row should preserve valid_until from the phantom.
+    const canonical = await engine.executeRaw<{ valid_until: Date | null; fact: string }>(
+      `SELECT valid_until, fact
+         FROM facts
+        WHERE source_id = 'default' AND entity_slug = 'people/alice-bounded-example'`,
+      [],
+    );
+    expect(canonical.length).toBe(1);
+    expect(canonical[0].fact).toBe('Alice is on sabbatical.');
+    expect(canonical[0].valid_until).not.toBeNull();
+    // The DB may return a Date or string depending on driver; coerce.
+    const iso = canonical[0].valid_until instanceof Date
+      ? canonical[0].valid_until.toISOString().slice(0, 10)
+      : String(canonical[0].valid_until).slice(0, 10);
+    expect(iso).toBe(validUntil);
+  });
+
   itHomed('migrates ALL phantom facts even when count exceeds MAX_SEARCH_LIMIT (round-9 P1 #2)', async () => {
     // Codex round-9 P1 #2: listFactsByEntity clamps `limit` at
     // MAX_SEARCH_LIMIT (100). The old merge implementation used

@@ -249,11 +249,12 @@ export async function runMergePhantomsCore(
       visibility: 'private' | 'world';
       confidence: number;
       valid_from: Date;
+      valid_until: Date | null;
       embedding: Float32Array | null;
       source_session: string | null;
     }>(
       `SELECT fact, kind, notability, source, context, visibility,
-              confidence, valid_from, embedding, source_session
+              confidence, valid_from, valid_until, embedding, source_session
          FROM facts
         WHERE source_id = $1
           AND entity_slug = $2
@@ -309,6 +310,9 @@ export async function runMergePhantomsCore(
       visibility: fr.visibility,
       confidence: fr.confidence,
       validFrom: fr.valid_from,
+      // Preserve time-bound expiration windows across the migration —
+      // codex round-10 P2.
+      validUntil: fr.valid_until ?? undefined,
       embedding: fr.embedding,
       sessionId: fr.source_session,
     }));

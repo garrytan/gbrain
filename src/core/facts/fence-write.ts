@@ -63,6 +63,15 @@ export interface FenceInputFact {
   /** Defaults to 1.0 when undefined (matches engine.insertFact behavior). */
   confidence?: number;
   validFrom?: Date;
+  /**
+   * Optional time-bound expiration for the fact (e.g. "valid through
+   * 2026-08-31"). When set, the rendered fence row carries the
+   * date so re-fence operations preserve the validity window
+   * (codex round-10 P2 fix). Defaults to undefined for normal
+   * extraction paths where the LLM never produces an explicit upper
+   * bound.
+   */
+  validUntil?: Date;
   embedding: Float32Array | null;
   sessionId: string | null;
 }
@@ -204,6 +213,9 @@ export async function writeFactsToFence(
       const assignedRowNums: number[] = [];
       for (const f of facts) {
         const validFromStr = (f.validFrom ?? new Date()).toISOString().slice(0, 10);
+        const validUntilStr = f.validUntil
+          ? f.validUntil.toISOString().slice(0, 10)
+          : undefined;
         const { body: updated, rowNum } = upsertFactRow(body, {
           claim:       f.fact,
           kind:        (f.kind ?? 'fact') as 'fact' | 'event' | 'preference' | 'commitment' | 'belief',
@@ -211,7 +223,7 @@ export async function writeFactsToFence(
           visibility:  f.visibility,
           notability:  f.notability ?? 'medium',
           validFrom:   validFromStr,
-          validUntil:  undefined,
+          validUntil:  validUntilStr,
           source:      f.source,
           context:     f.context ?? undefined,
         });
