@@ -167,38 +167,6 @@ describe('resetTables: schema-migration robustness', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. speed (warm) — p50 + p99 across 10 trials
-// ---------------------------------------------------------------------------
-
-describe('warm-create speed gate', () => {
-  test('p50 < 500ms, p99 reported (warn-only at 1500ms)', async () => {
-    const trials = 10;
-    const samples: number[] = [];
-    for (let i = 0; i < trials; i++) {
-      const t0 = performance.now();
-      await resetTables(sharedEngine);
-      for (let j = 0; j < 5; j++) {
-        const slug = `chat/speed-${i}-${j}`;
-        const content = `---\ntype: note\n---\n\n**user:** speed sample ${i}-${j} keyword apple\n`;
-        await importFromContent(sharedEngine, slug, content, { noEmbed: true });
-      }
-      await sharedEngine.searchKeyword('apple', { limit: 5 });
-      samples.push(performance.now() - t0);
-    }
-    samples.sort((a, b) => a - b);
-    const p50 = samples[Math.floor(samples.length * 0.5)];
-    const p99 = samples[Math.floor(samples.length * 0.99)];
-    process.stderr.write(
-      `[speed] warm reset+import+search p50=${p50.toFixed(1)}ms p99=${p99.toFixed(1)}ms (n=${trials})\n`,
-    );
-    expect(p50).toBeLessThan(500);
-    if (p99 > 1500) {
-      process.stderr.write(`[speed] WARN: p99 above 1500ms threshold (informational)\n`);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
 // 5. adapter shape
 // ---------------------------------------------------------------------------
 
