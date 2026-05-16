@@ -17,6 +17,57 @@ only signed, sanitized exports into company-visible member sources.
 - `skills/COMPANY_RESOLVER.md` for company agents
 - Docker and Railway deployment files for a multi-service company setup
 
+## Install
+
+Install the GBrain software once. The same codebase runs both individual and
+company mode; the role is chosen by runtime configuration.
+
+```bash
+git clone https://github.com/garrytan/gbrain.git ~/gbrain
+cd ~/gbrain
+curl -fsSL https://bun.sh/install | bash
+export PATH="$HOME/.bun/bin:$PATH"
+bun install && bun link
+```
+
+Do not create separate GBrain software forks for each person and the company.
+Deploy the same GBrain code multiple times with isolated homes, databases, and
+markdown source repos:
+
+```text
+gbrain-alice   -> --mode individual, Alice DB, Alice markdown repo
+gbrain-bob     -> --mode individual, Bob DB, Bob markdown repo
+gbrain-company -> --mode company, Company DB, Company markdown repo
+```
+
+For local or server installs, choose the mode during init:
+
+```bash
+GBRAIN_HOME=/var/lib/gbrain/alice \
+  gbrain init --mode individual --url "$ALICE_DATABASE_URL" --non-interactive
+
+GBRAIN_HOME=/var/lib/gbrain/company \
+  gbrain init --mode company --url "$COMPANY_DATABASE_URL" --non-interactive
+```
+
+For cloud deployments, set the equivalent environment variables per service:
+
+```text
+gbrain-alice:
+  GBRAIN_MODE=individual
+  DATABASE_URL=<alice-db>
+  BRAIN_REPO_URL=<alice-markdown-brain-repo>
+
+gbrain-company:
+  GBRAIN_MODE=company
+  DATABASE_URL=<company-db>
+  BRAIN_REPO_URL=<company-markdown-brain-repo>
+```
+
+The company service should only connect to member brains through
+`gbrain company-share pull`; it should not mount or sync a member's private
+markdown repo directly.
+
 ## Model
 
 ```text
