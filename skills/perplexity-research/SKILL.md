@@ -158,6 +158,28 @@ the agent doesn't re-narrate already-known facts.
 Pass `recency_filter` to Perplexity: `hour | day | week | month`. Useful
 for news-cycle topics; omit for evergreen research.
 
+## Recognized flags
+
+When invoked via `claude -p "/perplexity-research <args>"` (or the
+equivalent slash invocation), treat these tokens as parameters, not
+as topic text:
+
+- `--topic <text>` — the topic to research (required if no positional
+  argument).
+- `--context-slugs <slug,slug,...>` — comma-separated gbrain page
+  slugs to load as brain-context (alternative to inline embedding).
+- `--inline-context <text>` — additional inline context. Used in
+  addition to any `--context-slugs` content, not instead of.
+- `--recency <hour|day|week|month|none>` — recency filter passed to
+  Perplexity. Default: omit (no filter).
+- `--model <sonar|sonar-pro>` — Perplexity model. Default: `sonar-pro`.
+- `--run-id <id>` — caller-provided ID used in the brain page slug:
+  `research/<run-id>-<topic-slug>` (no `.md` suffix; `put_page`
+  appends `.md` for the on-disk file). If omitted, fall back to the
+  date-based slug (existing behavior).
+- `--output-envelope` — emit the trailing JSON block per the
+  "Output envelope" section below.
+
 ## Anti-Patterns
 
 - ❌ Sending NO brain context. Then it's just a search — use `web_fetch`
@@ -166,6 +188,55 @@ for news-cycle topics; omit for evergreen research.
   know." Send dense context.
 - ❌ Discarding citations. Every claim in the output must have a URL.
 - ❌ Skipping the cross-link step when entities are mentioned. Iron Law.
+
+## Output envelope (programmatic callers)
+
+When invoked with `--output-envelope` (e.g. by SRW's `RunSkillActivity`
+dispatch in `agentic-temporal-os`), **end your output with a single
+fenced JSON block** in addition to the normal brain-page markdown.
+This block is parsed by the caller; do not omit it, paraphrase it,
+or embed it in prose.
+
+The block MUST be the last content in your output. Only optional
+trailing whitespace is allowed after the closing fence.
+
+````markdown
+```json
+{
+  "envelope_version": 1,
+  "brain_page_slug": "research/<exact-slug-you-wrote>",
+  "citations": [
+    {"title": "<source title>", "url": "<source URL>", "accessed": "YYYY-MM-DD"}
+  ],
+  "key_deltas": [
+    "<one-line summary of each Recommended Brain Update>"
+  ],
+  "cost_cents": 4,
+  "latency_ms": 8200
+}
+```
+````
+
+Schema rules:
+
+- `envelope_version` — integer, currently `1`. Bump only via a
+  coordinated SKILL.md + caller change.
+- `brain_page_slug` — **exact** slug of the page you wrote. No leading
+  slash, no `.md` extension. Must match `^[a-zA-Z0-9_\-/]+$`.
+- `citations[]` — one entry per source you cited in the markdown above.
+  Every URL in the markdown body must appear here. Do not invent
+  citations that aren't in the markdown.
+- `key_deltas[]` — one-line summary per item in the "Recommended Brain
+  Updates" section. Empty array allowed.
+- `cost_cents` — integer, best-effort. If unsure, report the Perplexity
+  model's known per-call price (`sonar-pro` = 4, `sonar` = 1) rounded
+  up to integer.
+- `latency_ms` — integer milliseconds. If unsure, set to 0.
+
+If `--output-envelope` is **not** passed, do not emit the block —
+existing freeform behavior is unchanged. The mining cron callers
+(`signal-detector`, `daily-task-prep`, `concept-synthesis`) don't pass
+the flag and must keep their current output shape.
 
 ## Environment
 
