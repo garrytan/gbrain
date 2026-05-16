@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -923,6 +923,49 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     );
     expect(surviving[0].deleted_at).toBeNull();
     expect(surviving[0].compiled_truth.length).toBeGreaterThan(200);
+  });
+
+  itHomed('removes the phantom .md file from disk on soft-delete (round-19 P2)', async () => {
+    // Codex round-19 P2: when the phantom page also exists on disk
+    // (e.g. `alice.md` created by the v0.34.5-era writeFactsToFence
+    // path), soft-deleting only the DB row leaves the file behind.
+    // The next `gbrain sync` would re-import the file and resurrect
+    // the phantom DB row after autopilot's purge phase deletes it.
+    // The merge must remove the file alongside the soft-delete.
+    await seedPage('alice-with-file', 'person');
+    await seedPage('people/alice-with-file-example', 'person');
+    await seedChunks('people/alice-with-file-example', 3);
+    await seedFact('alice-with-file', 'A fact for the file-backed phantom.');
+
+    // Write the phantom .md to the brainDir so the merge has a file
+    // to clean up.
+    const phantomFile = join(brainDir, 'alice-with-file.md');
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    mkdirSync(dirname(phantomFile), { recursive: true });
+    writeFileSync(
+      phantomFile,
+      '---\ntype: person\ntitle: alice-with-file\nslug: alice-with-file\n---\n\n# alice-with-file\n',
+      'utf-8',
+    );
+    expect(existsSync(phantomFile)).toBe(true);
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(1);
+    expect(result.merged[0].canonical).toBe('people/alice-with-file-example');
+
+    // Phantom file is gone from disk.
+    expect(existsSync(phantomFile)).toBe(false);
+
+    // Phantom DB row soft-deleted.
+    const phantomPage = await engine.executeRaw<{ deleted_at: Date | null }>(
+      `SELECT deleted_at FROM pages WHERE slug = 'alice-with-file' AND source_id = 'default'`,
+      [],
+    );
+    expect(phantomPage[0].deleted_at).not.toBeNull();
   });
 
   itHomed('is idempotent — second run produces zero merges', async () => {

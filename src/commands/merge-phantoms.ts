@@ -51,7 +51,7 @@
  */
 
 import { join, dirname } from 'node:path';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { serializeMarkdown } from '../core/markdown.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import {
@@ -468,6 +468,29 @@ export async function runMergePhantomsCore(
     // Soft-delete the phantom page; autopilot's purge phase hard-purges
     // after 72h.
     await engine.softDeletePage(row.slug, { sourceId: opts.sourceId });
+
+    // Codex round-19 P2: also remove the phantom .md file from disk.
+    // Without this, the next `gbrain sync` / `gbrain import` walk
+    // would re-import the leftover file and resurrect the phantom DB
+    // row after the autopilot purge phase hard-deleted it — undoing
+    // the cleanup and re-opening the bare-name fact-split path.
+    // Soft-delete on the DB row + unlink on the file is the matched
+    // pair. localPath is non-null here (we already passed the
+    // feasibility check earlier in this iteration).
+    const phantomFile = join(localPath, `${row.slug}.md`);
+    if (existsSync(phantomFile)) {
+      try {
+        unlinkSync(phantomFile);
+      } catch (err) {
+        // Best-effort. The DB soft-delete already succeeded, so the
+        // operator's brain state is correct from a data perspective;
+        // the leftover file is a low-stakes mess. Log and continue.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[merge-phantoms] couldn't unlink phantom file ${phantomFile}: ${err instanceof Error ? err.message : String(err)}. Remove it manually so the next sync doesn't resurrect the phantom.`,
+        );
+      }
+    }
 
     merged.push({ phantom: row.slug, canonical, facts_moved });
   }
