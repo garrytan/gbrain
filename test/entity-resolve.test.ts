@@ -215,6 +215,37 @@ describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
     expect(result).toBe('people/alice-example');
   });
 
+  it('preserves a bare page whose content lives in the timeline column (round-18 P2)', async () => {
+    // Codex round-18 P2: tryExactSlugBody must look at BOTH
+    // compiled_truth AND timeline when deciding whether a bare slug
+    // is real or stub-shaped. A real page with stubby
+    // compiled_truth + populated pages.timeline column would
+    // previously look stub-shaped and get overridden by prefix
+    // expansion.
+    await engine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
+       VALUES ('default', 'tl-only-page', 'concept', 'markdown', 'TL Only Page', '# TL Only Page',
+               '- 2026-04-01: First milestone\n- 2026-05-01: Second milestone',
+               $1::jsonb, 'h', now())
+       ON CONFLICT (source_id, slug) DO UPDATE SET timeline = EXCLUDED.timeline`,
+      [JSON.stringify({ type: 'concept', title: 'TL Only Page', slug: 'tl-only-page' })],
+    );
+    await engine.putPage(
+      'concepts/tl-only-page-canonical',
+      {
+        type: 'concept' as any,
+        title: 'TL Only Page Canonical',
+        compiled_truth: '# canonical',
+        frontmatter: { type: 'concept', title: 'TL Only Page Canonical', slug: 'concepts/tl-only-page-canonical' },
+      },
+      { sourceId: 'default' },
+    );
+    // The bare slug exists with a timeline-column body, so the
+    // resolver must NOT override to the canonical.
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'tl-only-page');
+    expect(result).toBe('tl-only-page');
+  });
+
   it('preserves a TERSE real top-level page (one sentence) (round-11 P2)', async () => {
     // Codex round-11 P2: a 50-char threshold misclassifies terse but
     // intentional pages (e.g. `# RAG` + a one-sentence note). The
@@ -572,6 +603,64 @@ describe('stub-guard + backstop integration (D5 regression — IRON RULE)', () =
 
       // And no markdown file.
       expect(existsSync(join(brainDir, 'zander.md'))).toBe(false);
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+      rmSync(gbrainHome, { recursive: true, force: true });
+    }
+  });
+
+  it('writeFactsToFence materializes a real DB-only unprefixed page instead of firing stub-guard (round-18 P1)', async () => {
+    // Codex round-18 P1: when an unprefixed slug has a real DB body
+    // (put_page MCP created it on a source with local_path but never
+    // synced to disk), writeFactsToFence must NOT fire the stub-
+    // guard and drop the fact. Instead it should materialize the DB
+    // body to disk, then append the fence — preserving both the
+    // existing page content AND the new fact.
+    const realBody = '# Real Bare Page\n\nThis is real content that must be preserved.';
+    await engine.putPage(
+      'real-bare-page',
+      {
+        type: 'concept' as any,
+        title: 'Real Bare Page',
+        compiled_truth: realBody,
+        frontmatter: { type: 'concept', title: 'Real Bare Page', slug: 'real-bare-page' },
+      },
+      { sourceId: 'default' },
+    );
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-stub-guard-real-'));
+    const gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-stub-guard-real-home-'));
+    try {
+      // The bare-slug .md file does NOT exist on disk pre-call.
+      expect(existsSync(join(brainDir, 'real-bare-page.md'))).toBe(false);
+
+      const result = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
+        writeFactsToFence(
+          engine as unknown as BrainEngine,
+          { sourceId: 'default', localPath: brainDir, slug: 'real-bare-page' },
+          [
+            {
+              fact: 'A fact about the real bare page.',
+              kind: 'fact' as const,
+              notability: 'medium' as const,
+              source: 'test:regression',
+              visibility: 'private' as const,
+              embedding: null,
+              sessionId: null,
+            },
+          ],
+        ),
+      );
+
+      // No stub-guard fire; fact inserted.
+      expect(result.stubGuardBlocked).toBeUndefined();
+      expect(result.inserted).toBe(1);
+
+      // Markdown file now exists at the bare path WITH the real body + the fence.
+      const filePath = join(brainDir, 'real-bare-page.md');
+      expect(existsSync(filePath)).toBe(true);
+      const onDisk = readFileSync(filePath, 'utf-8');
+      expect(onDisk).toContain('This is real content that must be preserved.');
+      expect(onDisk).toContain('A fact about the real bare page.');
     } finally {
       rmSync(brainDir, { recursive: true, force: true });
       rmSync(gbrainHome, { recursive: true, force: true });

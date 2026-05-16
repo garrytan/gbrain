@@ -180,32 +180,62 @@ export async function writeFactsToFence(
   return withPageLock(
     target.slug,
     async () => {
-      // 1. Read existing body or stub-create.
+      // 1. Read existing body, materialize from DB, or stub-create.
       let body: string;
       if (existsSync(filePath)) {
         body = readFileSync(filePath, 'utf-8');
       } else {
-        // v0.34.5 stub-creation guard. Phantom entity pages like
-        // `jared.md` at the brain root were being spawned when
-        // resolveEntitySlug fell through to slugify("Jared") because
-        // pg_trgm scored too low on short bare names. The resolver
-        // now has a prefix-expansion step that catches most of those,
-        // but this guard is the second wall: refuse to stub-create a
-        // page whose slug has no directory prefix (people/, companies/,
-        // deals/, topics/, etc.). The caller routes these facts to the
-        // legacy DB-only path so they aren't silently dropped — the
-        // fact still gets recorded, it just doesn't spawn a phantom
-        // entity page on disk.
-        if (!target.slug.includes('/')) {
+        // The stub-creation guard prevents v0.34.5-era phantom entity
+        // pages (`jared.md`, `alice.md` at brain root) from being
+        // spawned. But there's a benign case: a legitimate top-level
+        // DB page (created via MCP put_page or importFromContent on a
+        // source with local_path but never synced to disk). For that
+        // case we materialize the DB body to disk BEFORE the fence
+        // append, so the user's content survives intact.
+        //
+        // Codex round-17 P2 + round-18 P1 — distinguish:
+        //   - Real DB page with non-stub body → materialize + append.
+        //   - DB page with stub body OR no DB row at all → fire guard.
+        const existingPage = await engine.getPage(target.slug, {
+          sourceId: target.sourceId,
+        });
+        const { isStubBody, stubBodyChars } = await import('../entities/resolve.ts');
+        const hasRealContent =
+          existingPage !== null &&
+          (!isStubBody(existingPage.compiled_truth ?? '') ||
+            (existingPage.timeline ?? '').trim().length > 0);
+
+        if (!hasRealContent && !target.slug.includes('/')) {
+          // No real DB body AND unprefixed slug — this would spawn a
+          // phantom. Caller routes to the dropped-audit log.
           // eslint-disable-next-line no-console
           console.warn(
             `[facts] refusing to stub-create unprefixed entity page slug=${target.slug} — routing to legacy DB-only path. Provide a directory prefix (people/, companies/, etc.) to opt into fence writes.`,
           );
           return { inserted: 0, ids: [], stubGuardBlocked: true };
         }
-        // Stub-create the parent directory if it doesn't exist.
+
         mkdirSync(dirname(filePath), { recursive: true });
-        body = stubEntityPage(target.slug);
+        if (existingPage && hasRealContent) {
+          // Materialize the existing DB body to disk so the fence
+          // write appends to the real content rather than a stub.
+          const { serializeMarkdown } = await import('../markdown.ts');
+          const tags = Array.isArray(existingPage.frontmatter?.tags)
+            ? (existingPage.frontmatter!.tags as string[])
+            : [];
+          body = serializeMarkdown(
+            (existingPage.frontmatter as Record<string, unknown>) ?? {},
+            existingPage.compiled_truth ?? '',
+            existingPage.timeline ?? '',
+            { type: existingPage.type, title: existingPage.title, tags },
+          );
+        } else {
+          // Prefixed slug with no DB row → legitimately stub-create
+          // a new entity page (the path that always worked).
+          body = stubEntityPage(target.slug);
+        }
+        // Silence unused-import warnings on stubBodyChars.
+        void stubBodyChars;
       }
 
       // 2. Upsert each fact onto the fence in input order. row_num

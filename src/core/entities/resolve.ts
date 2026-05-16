@@ -312,14 +312,25 @@ async function tryExactSlugBody(
   candidate: string,
 ): Promise<string | 'missing'> {
   try {
-    const rows = await engine.executeRaw<{ compiled_truth: string | null }>(
-      `SELECT compiled_truth FROM pages
+    const rows = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null }>(
+      `SELECT compiled_truth, timeline FROM pages
         WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL
         LIMIT 1`,
       [source_id, candidate],
     );
     if (rows.length === 0) return 'missing';
-    return rows[0].compiled_truth ?? '';
+    // Codex round-18 P2: include the timeline column so a real
+    // top-level page whose substantive content lives in
+    // pages.timeline isn't classified as stub-shaped by the
+    // resolver's bare-name-override gate. The downstream
+    // `isStubBody(body)` check will see a non-empty body whenever
+    // EITHER compiled_truth has real content OR the timeline column
+    // does. Concatenated via a separator so a single non-empty
+    // column is enough to defeat the stub heuristic.
+    const compiled = rows[0].compiled_truth ?? '';
+    const timeline = (rows[0].timeline ?? '').trim();
+    if (timeline.length > 0) return `${compiled}\n\n## Timeline\n\n${timeline}`;
+    return compiled;
   } catch (err) {
     if (isUndefinedColumnError(err, 'deleted_at')) return 'missing';
     throw err;
