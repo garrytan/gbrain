@@ -683,6 +683,7 @@ Two reasons max, one phrase each.`;
     model: verdictModel,
     max_tokens: 200,
     system: sys,
+    thinking: { type: 'disabled' },
     messages: [{ role: 'user', content: `Transcript ${t.basename}:\n\n${trimmed}` }],
   });
 
