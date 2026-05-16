@@ -82,6 +82,29 @@ export interface MergePhantomsResult {
 const ENTITY_TYPES = ['person', 'company', 'deal', 'topic', 'concept'] as const;
 
 /**
+ * 1:1 map from entity type to the slug directory that holds canonical
+ * pages for that type. The merge command uses this to constrain the
+ * prefix-expansion search — without it, a phantom `acme` of type
+ * 'company' could resolve to `people/acme-example` (because `people`
+ * is first in DEFAULT_PREFIX_EXPANSION_DIRS) and the company facts
+ * would land on a person's page. Codex flagged this as a data-
+ * correctness P1 in the round-4 review.
+ *
+ * Type-to-dir is intentionally a constant map, not config-driven:
+ * the page type column IS the type system. If a user has custom
+ * `type: fund` pages under `funds/`, they extend this map plus
+ * extend `ENTITY_TYPES`. Cross-cutting feature; out of scope for
+ * the v0.34.5 fix wave.
+ */
+const TYPE_TO_DIR: Record<string, string> = {
+  person: 'people',
+  company: 'companies',
+  deal: 'deals',
+  topic: 'topics',
+  concept: 'concepts',
+};
+
+/**
  * Find phantom unprefixed entity pages.
  * Pure data fetch; the caller does the resolve loop.
  */
@@ -121,11 +144,19 @@ export async function runMergePhantomsCore(
     // Use tryPrefixExpansion directly instead of resolveEntitySlug —
     // the latter's exact-slug step would match the phantom itself
     // (slug='alice' exists, so exact-slug returns 'alice' immediately)
-    // and short-circuit before reaching prefix expansion. Slugify
-    // defensively in case the stored phantom slug has unexpected
-    // characters; for "alice"-shaped phantoms this is a no-op.
+    // and short-circuit before reaching prefix expansion.
+    //
+    // Type-constrained search (codex round-4 P1): pass exactly the
+    // directory that matches the phantom's page type, so a `company`
+    // phantom 'acme' can only resolve into `companies/`, not `people/`.
+    // Otherwise the global dir order would let person + company facts
+    // mismerge onto each other.
     const token = slugify(row.slug);
-    const canonical = token ? await tryPrefixExpansion(engine, opts.sourceId, token) : null;
+    const targetDir = TYPE_TO_DIR[row.type];
+    const canonical =
+      token && targetDir
+        ? await tryPrefixExpansion(engine, opts.sourceId, token, { dirs: [targetDir] })
+        : null;
 
     if (!canonical) {
       skipped.push({ phantom: row.slug, canonical: null, skipped: 'no_canonical' });
@@ -166,6 +197,19 @@ export async function runMergePhantomsCore(
     });
     const facts_moved = phantomFacts.length;
 
+    // Feasibility check BEFORE the dry-run short-circuit (codex round-4
+    // P2): a phantom that has facts but lives in a source with no
+    // local_path can't be re-fenced. Dry-run must report the same
+    // skip the real run would produce, or the operator preview is
+    // misleading.
+    if (facts_moved > 0) {
+      const localPathPreview = await lookupSourceLocalPath(engine, opts.sourceId);
+      if (localPathPreview === null) {
+        skipped.push({ phantom: row.slug, canonical, skipped: 'no_local_path' });
+        continue;
+      }
+    }
+
     if (opts.dryRun) {
       merged.push({ phantom: row.slug, canonical, facts_moved });
       continue;
@@ -179,11 +223,13 @@ export async function runMergePhantomsCore(
     }
 
     // Re-fence into canonical's `## Facts` fence (codex P2 fix).
-    // Requires the source's local_path for the markdown file write.
-    // Thin-client sources without local_path can't be migrated this
-    // way; surface as a skip so operator can decide what to do.
+    // Re-fetch localPath (already known to be non-null from the
+    // feasibility check above, but the type narrowing was scoped to
+    // that block).
     const localPath = await lookupSourceLocalPath(engine, opts.sourceId);
     if (localPath === null) {
+      // Defensive: should be unreachable since we already passed the
+      // feasibility check above. Kept so type narrowing works.
       skipped.push({ phantom: row.slug, canonical, skipped: 'no_local_path' });
       continue;
     }

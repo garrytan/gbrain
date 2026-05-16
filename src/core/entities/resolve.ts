@@ -155,8 +155,14 @@ export async function tryPrefixExpansion(
   engine: BrainEngine,
   source_id: string,
   token: string,
+  opts: { dirs?: readonly string[] } = {},
 ): Promise<string | null> {
-  for (const dir of getPrefixExpansionDirs()) {
+  // Callers can constrain the search to a specific subset of directories
+  // (e.g. merge-phantoms passes a single-element list matching the
+  // phantom's entity type to prevent cross-type mismerges). Defaults to
+  // the full configured set via getPrefixExpansionDirs.
+  const searchDirs = opts.dirs ?? getPrefixExpansionDirs();
+  for (const dir of searchDirs) {
     // Match BOTH `<dir>/<token>` exactly AND `<dir>/<token>-%` (hyphenated
     // variants). Without the exact-match leg, a brain whose canonical slug
     // is `companies/acme` (no hyphen-suffix) would never resolve bare

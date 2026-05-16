@@ -419,6 +419,60 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     }
   });
 
+  it('constrains merge to phantom entity type — cross-type collision routes to correct canonical', async () => {
+    // codex round-4 P1: phantom 'acme' of type=company must merge to
+    // companies/acme-example, NOT to people/acme-example, even though
+    // people/ is checked first in DEFAULT_PREFIX_EXPANSION_DIRS. The
+    // fix passes a type-constrained dir list to tryPrefixExpansion.
+    await seedPage('acme', 'company');                  // phantom (type=company)
+    await seedPage('people/acme-example', 'person');    // wrong-type canonical (tempting)
+    await seedChunks('people/acme-example', 100);       // higher chunk count to bait the wrong path
+    await seedPage('companies/acme-example', 'company');// correct-type canonical
+    await seedChunks('companies/acme-example', 3);
+    await seedFact('acme', 'Acme raised a Series B.');
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(1);
+    expect(result.merged[0].canonical).toBe('companies/acme-example');
+
+    // The fact landed on the company page, NOT the person page.
+    const onCompany = await engine.executeRaw<{ entity_slug: string }>(
+      `SELECT entity_slug FROM facts WHERE entity_slug = 'companies/acme-example'`,
+      [],
+    );
+    expect(onCompany.length).toBe(1);
+    const onPerson = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM facts WHERE entity_slug = 'people/acme-example'`,
+      [],
+    );
+    expect(onPerson[0].n).toBe(0);
+  });
+
+  it('dry-run honors no_local_path skip (codex round-4 P2)', async () => {
+    // Dry-run must report what an actual run would do. A source with
+    // local_path=NULL skips with no_local_path in real mode; the
+    // preview must match.
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`, []);
+    await seedPage('alice', 'person');
+    await seedPage('people/alice-example', 'person');
+    await seedChunks('people/alice-example', 5);
+    await seedFact('alice', 'Dry-run feasibility test.');
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: true,
+    });
+
+    expect(result.dry_run).toBe(true);
+    expect(result.merged.length).toBe(0);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0].skipped).toBe('no_local_path');
+  });
+
   it('is idempotent — second run produces zero merges', async () => {
     await seedPage('alice', 'person');
     await seedPage('people/alice-example', 'person');
