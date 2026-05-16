@@ -1010,7 +1010,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
 
     const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
     const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
-    const crashes24h = events.filter(e => e.event === 'worker_exited').length;
+    // Only count non-zero exits as crashes; clean restarts (code 0) are normal
+    // worker lifecycle — the worker finishes its queue and exits cleanly.
+    const allExits = events.filter(e => e.event === 'worker_exited');
+    const realCrashes = allExits.filter(e => (e as any).code !== 0 && (e as any).code !== undefined);
+    const cleanRestarts = allExits.length - realCrashes.length;
+    const crashes24h = realCrashes.length;
     const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 
     // Only surface a Check if the supervisor was ever observed (stops the
@@ -1032,13 +1037,13 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         checks.push({
           name: 'supervisor',
           status: 'warn',
-          message: `Supervisor running but worker crashed ${crashes24h}x in last 24h. Check ~/.gbrain/audit/supervisor-*.jsonl for causes.`,
+          message: `Supervisor running but worker crashed ${crashes24h}x in last 24h (${cleanRestarts} clean restarts excluded). Check ~/.gbrain/audit/supervisor-*.jsonl for causes.`,
         });
       } else {
         checks.push({
           name: 'supervisor',
           status: 'ok',
-          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h}`,
+          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes=${crashes24h}${cleanRestarts > 0 ? ` clean_restarts=${cleanRestarts}` : ''}`,
         });
       }
     }
