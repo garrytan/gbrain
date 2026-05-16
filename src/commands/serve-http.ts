@@ -714,11 +714,22 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { name, scopes, tokenTtl } = req.body;
+      const { name, scopes, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      const grants = Array.isArray(grantTypes) && grantTypes.length > 0 ? grantTypes : ['client_credentials'];
+      const uris = Array.isArray(redirectUris) ? redirectUris : [];
       const result = await oauthProvider.registerClientManual(
-        name, ['client_credentials'], scopes || 'read', [],
+        name, grants, scopes || 'read', uris,
       );
+      // Public client (PKCE-only, no secret): NULL out client_secret_hash and
+      // set auth method so the SDK's clientAuth middleware skips the hash-vs-
+      // plaintext comparison that would otherwise reject the request. This is
+      // the supported pattern for browser-based OAuth (e.g. claude.ai's
+      // Custom Connector flow, which uses authorization_code + PKCE).
+      if (tokenEndpointAuthMethod === 'none') {
+        await sql`UPDATE oauth_clients SET client_secret_hash = NULL, token_endpoint_auth_method = 'none' WHERE client_id = ${result.clientId}`;
+        delete (result as any).clientSecret;
+      }
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
         await sql`UPDATE oauth_clients SET token_ttl = ${Number(tokenTtl)} WHERE client_id = ${result.clientId}`;
