@@ -134,6 +134,9 @@ lets Hermes query company-owned pages and imported member summaries without
 direct access to individual databases. Configure an individual MCP connector only
 when you intentionally want Hermes to act as that user's private agent.
 
+For a three-service Railway deployment with two individual brains and one company
+brain, see [`docs/deploy/railway-company-gbrain.md`](docs/deploy/railway-company-gbrain.md).
+
 ### Standalone CLI (no agent)
 
 ```bash
