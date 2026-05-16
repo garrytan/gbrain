@@ -32,7 +32,20 @@ prepare_brain_repo() {
     exit 2
   fi
 
-  if [ -n "${BRAIN_REPO_SSH_KEY:-}" ]; then
+  if [ -n "${BRAIN_REPO_TOKEN:-}" ]; then
+    mkdir -p "$GBRAIN_HOME/git"
+    cat > "$GBRAIN_HOME/git/askpass.sh" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  *Username*) printf '%s\n' "x-access-token" ;;
+  *Password*) printf '%s\n' "$BRAIN_REPO_TOKEN" ;;
+  *) printf '%s\n' "$BRAIN_REPO_TOKEN" ;;
+esac
+EOF
+    chmod 700 "$GBRAIN_HOME/git/askpass.sh"
+    export GIT_ASKPASS="$GBRAIN_HOME/git/askpass.sh"
+    export GIT_TERMINAL_PROMPT=0
+  elif [ -n "${BRAIN_REPO_SSH_KEY:-}" ]; then
     mkdir -p "$GBRAIN_HOME/ssh"
     chmod 700 "$GBRAIN_HOME/ssh"
     printf '%s\n' "$BRAIN_REPO_SSH_KEY" > "$GBRAIN_HOME/ssh/id_brain_repo"

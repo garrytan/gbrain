@@ -45,11 +45,11 @@ GBRAIN_HOME=/data/gbrain
 GBRAIN_MODE=individual
 DATABASE_URL=<ALICE_DATABASE_URL>
 PUBLIC_URL=https://gbrain-alice.up.railway.app
-BRAIN_REPO_URL=git@github.com:<org>/gbrain-alice-brain.git
+BRAIN_REPO_URL=https://github.com/<org>/gbrain-alice-brain.git
 BRAIN_REPO_BRANCH=main
 BRAIN_REPO_PATH=/data/brain-repo
 BRAIN_REPO_SYNC_INTERVAL_SECONDS=300
-BRAIN_REPO_SSH_KEY=<read-only-deploy-key-private-key>
+BRAIN_REPO_TOKEN=<read-only-github-token>
 COMPANY_SHARE_SECRET=<ALICE_COMPANY_SHARE_SECRET>
 ```
 
@@ -60,11 +60,11 @@ GBRAIN_HOME=/data/gbrain
 GBRAIN_MODE=individual
 DATABASE_URL=<BOB_DATABASE_URL>
 PUBLIC_URL=https://gbrain-bob.up.railway.app
-BRAIN_REPO_URL=git@github.com:<org>/gbrain-bob-brain.git
+BRAIN_REPO_URL=https://github.com/<org>/gbrain-bob-brain.git
 BRAIN_REPO_BRANCH=main
 BRAIN_REPO_PATH=/data/brain-repo
 BRAIN_REPO_SYNC_INTERVAL_SECONDS=300
-BRAIN_REPO_SSH_KEY=<read-only-deploy-key-private-key>
+BRAIN_REPO_TOKEN=<read-only-github-token>
 COMPANY_SHARE_SECRET=<BOB_COMPANY_SHARE_SECRET>
 ```
 
@@ -75,12 +75,16 @@ GBRAIN_HOME=/data/gbrain
 GBRAIN_MODE=company
 DATABASE_URL=<COMPANY_DATABASE_URL>
 PUBLIC_URL=https://gbrain-company.up.railway.app
-BRAIN_REPO_URL=git@github.com:<org>/gbrain-company-brain.git
+BRAIN_REPO_URL=https://github.com/<org>/gbrain-company-brain.git
 BRAIN_REPO_BRANCH=main
 BRAIN_REPO_PATH=/data/brain-repo
 BRAIN_REPO_SYNC_INTERVAL_SECONDS=300
-BRAIN_REPO_SSH_KEY=<read-only-deploy-key-private-key>
+BRAIN_REPO_TOKEN=<read-only-github-token>
 ```
+
+`BRAIN_REPO_TOKEN` is preferred for Railway because it uses outbound HTTPS. If
+you use SSH instead, set `BRAIN_REPO_URL=git@github.com:<org>/<repo>.git` and
+`BRAIN_REPO_SSH_KEY=<read-only-deploy-key-private-key>`.
 
 The container start command is:
 
