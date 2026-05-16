@@ -55,17 +55,9 @@ EOF
   fi
 
   mkdir -p "$(dirname "$BRAIN_REPO_PATH")"
-  if [ -d "$BRAIN_REPO_PATH/.git" ]; then
-    echo "[gbrain] updating brain repo at $BRAIN_REPO_PATH"
-    git -C "$BRAIN_REPO_PATH" remote set-url origin "$BRAIN_REPO_URL"
-    git -C "$BRAIN_REPO_PATH" fetch origin "$BRAIN_REPO_BRANCH"
-    git -C "$BRAIN_REPO_PATH" checkout "$BRAIN_REPO_BRANCH"
-    git -C "$BRAIN_REPO_PATH" reset --hard "origin/$BRAIN_REPO_BRANCH"
-  else
-    echo "[gbrain] cloning brain repo into $BRAIN_REPO_PATH"
-    rm -rf "$BRAIN_REPO_PATH"
-    git clone --branch "$BRAIN_REPO_BRANCH" --depth 1 "$BRAIN_REPO_URL" "$BRAIN_REPO_PATH"
-  fi
+  echo "[gbrain] cloning brain repo into $BRAIN_REPO_PATH"
+  rm -rf "$BRAIN_REPO_PATH"
+  git clone --branch "$BRAIN_REPO_BRANCH" --depth 1 "$BRAIN_REPO_URL" "$BRAIN_REPO_PATH"
 }
 
 sync_brain_repo_once() {
