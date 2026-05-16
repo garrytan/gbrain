@@ -183,13 +183,116 @@ ingestion:
 | Kind | Meaning |
 |------|---------|
 | `resolved_by_default_domain` | Multi-candidate match; winner picked by `default_domains` config. |
+| `resolved_by_context_keywords` | Multi-candidate match; winner picked by context-keyword scoring (see below). |
 | `ambiguous_unresolved` | Multi-candidate match, no tiebreaker available; mention left unlinked. |
 | `auto_stub_excluded_total` | Startup count: how many auto-stub pages were excluded from the candidate index. |
 | `stopword_dropped_all_keys` | A person page's name reduced entirely to stopwords; page excluded from index. |
-| `malformed_frontmatter` | A person page has a non-string `name` or non-string entries in `linkify_aliases`; page excluded. |
+| `malformed_frontmatter` | A person page has a non-string `name`, non-string entries in `linkify_aliases`, or non-string entries in `linkify_context_keywords`; page excluded or field ignored. |
 | `concurrent_modification_skipped` | File's mtime changed between read and write; file skipped to avoid clobbering concurrent changes. |
 | `icloud_placeholder_skipped` | iCloud Drive placeholder detected; file not materialized locally, skipped. |
 | `enoent` | File disappeared between directory enumeration and read; skipped. |
+
+---
+
+## Context-keyword disambiguation
+
+When an alias matches multiple candidates and the `default_domains` tiebreaker
+does not pick a winner (e.g., two people share the same first name and the same
+domain), linkify can use per-page context keywords to resolve the ambiguity.
+
+### Frontmatter field
+
+Add `linkify_context_keywords` to the person page's frontmatter:
+
+```yaml
+---
+name: Justin Thompson
+domain: aseva.com
+linkify_context_keywords:
+  - network
+  - AI
+  - BGP
+---
+```
+
+```yaml
+---
+name: Justin Worley
+domain: aseva.com
+linkify_context_keywords:
+  - TAC
+  - support
+  - ticket
+---
+```
+
+### How it works
+
+When resolving an ambiguous alias, linkify scans a **±500-character window**
+around the match position in the source markdown (the original, unmasked text —
+skip zones like code blocks are not stripped for this purpose, as the surrounding
+prose is what matters for context). For each candidate, it counts
+case-insensitive non-overlapping substring hits of that candidate's
+`linkify_context_keywords` within the window.
+
+The tiebreaker applies in this order:
+
+1. **Single candidate** — link directly.
+2. **`default_domains`** — if exactly one candidate's domain is in
+   `default_domains`, link to it.
+3. **Context keywords** (this feature) — if exactly one candidate has a
+   strictly-higher keyword-hit count (> all others) AND the count is > 0, link
+   to that candidate.
+4. **`ambiguous_unresolved`** — leave the mention unlinked and emit a
+   diagnostic.
+
+### Tie behavior
+
+If two candidates score equally in the context window, or if no keywords appear
+in the window at all, the tiebreaker does not pick a winner and the mention
+falls through to `ambiguous_unresolved`. A partial keyword advantage (one
+candidate scores > 0 while the other scores 0) counts as strictly higher and
+resolves the tie.
+
+### Worked example
+
+Given the two person pages above, linkify processes:
+
+```
+BGP convergence issue on the WAN. Justin to investigate.
+```
+
+The ±500-char window around "Justin" contains "BGP". Justin Thompson's keywords
+include "BGP" (1 hit); Justin Worley's keywords do not match anything in the
+window (0 hits). Strictly higher → resolved to Justin Thompson.
+
+```
+TAC support ticket escalated. Justin will follow up.
+```
+
+The window contains "TAC", "support", and "ticket" — all three match Justin
+Worley's keywords (3 hits); Justin Thompson scores 0. Resolved to Justin Worley.
+
+```
+Discussed BGP and TAC. Justin will lead.
+```
+
+The window contains "BGP" (Thompson: 1) and "TAC" (Worley: 1). Equal scores →
+tied → `ambiguous_unresolved`.
+
+### Diagnostic
+
+A successful context-keyword resolution emits a `resolved_by_context_keywords`
+diagnostic:
+
+```jsonl
+{"kind":"resolved_by_context_keywords","match":"justin","chosen":"people/jthompson-aseva","rejected":["people/jworley-aseva"],"window_hit_count":1,"occurrences":1}
+```
+
+The `window_hit_count` field reports the total keyword hits for the winning
+candidate in that window. Multiple identical resolutions in the same file
+(same match, same chosen, same rejected) are deduplicated into a single
+diagnostic with `occurrences` incremented.
 
 ---
 

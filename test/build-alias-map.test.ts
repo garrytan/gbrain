@@ -85,4 +85,33 @@ describe('buildAliasMap', () => {
     const { aliasMap } = await buildAliasMap(engine as never, baseCfg);
     expect(aliasMap.size).toBe(0);
   });
+
+  test('loads linkify_context_keywords into pageMeta', async () => {
+    const engine = mockEngine([
+      { slug: 'people/jthompson-aseva', type: 'person', frontmatter: { name: 'Justin Thompson', domain: 'aseva.com', linkify_context_keywords: ['network', 'AI'] }, isAutoStub: false },
+    ]);
+    const { pageMeta } = await buildAliasMap(engine as never, baseCfg);
+    expect(pageMeta.get('people/jthompson-aseva')?.contextKeywords).toEqual(['network', 'AI']);
+  });
+
+  test('pageMeta.contextKeywords defaults to empty array when frontmatter missing', async () => {
+    const engine = mockEngine([
+      { slug: 'people/no-keywords-aseva', type: 'person', frontmatter: { name: 'No Keywords', domain: 'aseva.com' }, isAutoStub: false },
+    ]);
+    const { pageMeta } = await buildAliasMap(engine as never, baseCfg);
+    expect(pageMeta.get('people/no-keywords-aseva')?.contextKeywords).toEqual([]);
+  });
+
+  test('non-string entries in linkify_context_keywords are dropped + emit malformed_frontmatter', async () => {
+    const engine = mockEngine([
+      { slug: 'people/mixed-aseva', type: 'person', frontmatter: { name: 'Mixed', domain: 'aseva.com', linkify_context_keywords: ['valid', 42, '', 'also-valid'] }, isAutoStub: false },
+    ]);
+    const { pageMeta, startupDiagnostics } = await buildAliasMap(engine as never, baseCfg);
+    expect(pageMeta.get('people/mixed-aseva')?.contextKeywords).toEqual(['valid', 'also-valid']);
+    expect(startupDiagnostics).toContainEqual(expect.objectContaining({
+      kind: 'malformed_frontmatter',
+      slug: 'people/mixed-aseva',
+      field: 'linkify_context_keywords',
+    }));
+  });
 });

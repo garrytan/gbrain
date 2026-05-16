@@ -7,9 +7,9 @@ function buildMap(entries: Array<[string, string[]]>): AliasMap {
   return m;
 }
 
-function buildMeta(entries: Array<[string, Omit<PageMeta, 'slug'>]>): Map<string, PageMeta> {
+function buildMeta(entries: Array<[string, Omit<PageMeta, 'slug' | 'contextKeywords'> & { contextKeywords?: string[] }]>): Map<string, PageMeta> {
   const m = new Map<string, PageMeta>();
-  for (const [slug, partial] of entries) m.set(slug, { slug, ...partial });
+  for (const [slug, partial] of entries) m.set(slug, { slug, contextKeywords: [], ...partial });
   return m;
 }
 
@@ -159,5 +159,69 @@ describe('linkifyMarkdown — Unicode & apostrophes', () => {
     const meta = buildMeta([['people/jbryan-aseva', { name: 'Jessie Bryan', domain: 'aseva.com', isAutoStub: false }]]);
     const result = linkifyMarkdown('Jessie Bryan said hi.', map, meta, cfgEmpty);
     expect(result.text).toBe('[[people/jbryan-aseva|Jessie Bryan]] said hi.');
+  });
+});
+
+describe('linkifyMarkdown — context-keyword tiebreaker', () => {
+  const map = buildMap([['justin', ['people/jthompson-aseva', 'people/jworley-aseva']]]);
+  const meta = buildMeta([
+    ['people/jthompson-aseva', { name: 'Justin Thompson', domain: 'aseva.com', isAutoStub: false, contextKeywords: ['network', 'AI', 'BGP'] }],
+    ['people/jworley-aseva',   { name: 'Justin Worley',   domain: 'aseva.com', isAutoStub: false, contextKeywords: ['TAC', 'support', 'ticket'] }],
+  ]);
+
+  test('context window picks the candidate with strictly-more keyword hits', () => {
+    const text = 'BGP convergence issue on the WAN. Justin to investigate.';
+    const result = linkifyMarkdown(text, map, meta, cfgEmpty);
+    expect(result.text).toBe('BGP convergence issue on the WAN. [[people/jthompson-aseva|Justin]] to investigate.');
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      kind: 'resolved_by_context_keywords',
+      chosen: 'people/jthompson-aseva',
+    }));
+  });
+
+  test('different window picks the other candidate', () => {
+    const text = 'TAC support ticket escalated. Justin will follow up.';
+    const result = linkifyMarkdown(text, map, meta, cfgEmpty);
+    expect(result.text).toBe('TAC support ticket escalated. [[people/jworley-aseva|Justin]] will follow up.');
+  });
+
+  test('tied window keeps unresolved', () => {
+    const text = 'Discussed BGP and TAC. Justin will lead.';
+    const result = linkifyMarkdown(text, map, meta, cfgEmpty);
+    expect(result.text).toBe('Discussed BGP and TAC. Justin will lead.');
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ kind: 'ambiguous_unresolved' }));
+  });
+
+  test('no keywords in window keeps unresolved', () => {
+    const text = 'Justin spoke up.';
+    const result = linkifyMarkdown(text, map, meta, cfgEmpty);
+    expect(result.text).toBe('Justin spoke up.');
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ kind: 'ambiguous_unresolved' }));
+  });
+
+  test('case-insensitive keyword match', () => {
+    const text = 'Working on bgp peers. Justin will look.';
+    const result = linkifyMarkdown(text, map, meta, cfgEmpty);
+    expect(result.text).toBe('Working on bgp peers. [[people/jthompson-aseva|Justin]] will look.');
+  });
+
+  test('context tiebreaker runs AFTER default_domains tiebreaker (not before)', () => {
+    const map2 = buildMap([['cooper', ['people/cself-aseva', 'people/cooper-ciralta']]]);
+    const meta2 = buildMeta([
+      ['people/cself-aseva',    { name: 'Cooper Self',  domain: 'aseva.com',   isAutoStub: false, contextKeywords: [] }],
+      ['people/cooper-ciralta', { name: 'Cooper Smith', domain: 'ciralta.com', isAutoStub: false, contextKeywords: ['ciralta', 'TAC'] }],
+    ]);
+    const cfg = { ...cfgEmpty, defaultDomains: ['aseva.com'] };
+    // Even though "ciralta TAC" is in context, aseva.com wins via default_domains first
+    const result = linkifyMarkdown('ciralta TAC ticket. Cooper said hi.', map2, meta2, cfg);
+    expect(result.text).toContain('[[people/cself-aseva|Cooper]]');
+  });
+
+  test('preserves diagnostic dedup for repeated context resolutions', () => {
+    const text = 'BGP. Justin. BGP. Justin. BGP. Justin.';
+    const result = linkifyMarkdown(text, map, meta, cfgEmpty);
+    const ctx = result.diagnostics.filter(d => d.kind === 'resolved_by_context_keywords');
+    expect(ctx.length).toBe(1);
+    expect((ctx[0] as { occurrences: number }).occurrences).toBe(3);
   });
 });

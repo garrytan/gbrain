@@ -4,6 +4,12 @@ All notable changes to GBrain will be documented in this file.
 
 ## [Unreleased]
 
+- Added context-keyword disambiguation to `gbrain linkify`. New optional
+  frontmatter field `linkify_context_keywords:` on person pages lets the
+  linkifier resolve same-domain alias collisions using ±500-char window
+  context. Composes as a third tiebreaker layer between `default_domains`
+  and `ambiguous_unresolved`.
+
 - Added `gbrain linkify` CLI for producer-side auto-linking of bare person
   mentions into Obsidian wiki-links.
 - Fixed: `extractLinksForSlugs` and `extractForSlugs` previously silently

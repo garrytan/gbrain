@@ -14,6 +14,7 @@ export interface PageMeta {
   name: string;
   domain: string | null;
   isAutoStub: boolean;
+  contextKeywords: string[];  // empty array if not specified in frontmatter
 }
 
 export interface LinkifyConfig {
@@ -27,6 +28,7 @@ export interface LinkifyConfig {
 
 export type Diagnostic =
   | { kind: 'resolved_by_default_domain'; match: string; chosen: string; rejected: string[]; occurrences: number }
+  | { kind: 'resolved_by_context_keywords'; match: string; chosen: string; rejected: string[]; window_hit_count: number; occurrences: number }
   | { kind: 'ambiguous_unresolved'; match: string; candidates: string[]; occurrences: number }
   | { kind: 'auto_stub_excluded_total'; count: number }
   | { kind: 'stopword_dropped_all_keys'; slug: string; name: string }
@@ -156,7 +158,19 @@ export async function buildAliasMap(
       continue;
     }
     const domain = typeof fm.domain === 'string' ? fm.domain.trim().toLowerCase() : null;
-    pageMeta.set(row.slug, { slug: row.slug, name, domain, isAutoStub: row.isAutoStub });
+
+    let contextKeywords: string[] = [];
+    if (Array.isArray(fm.linkify_context_keywords)) {
+      const hasNonString = fm.linkify_context_keywords.some(k => typeof k !== 'string');
+      if (hasNonString) {
+        startupDiagnostics.push({ kind: 'malformed_frontmatter', slug: row.slug, field: 'linkify_context_keywords', reason: 'non-string entry' });
+      }
+      contextKeywords = fm.linkify_context_keywords
+        .filter((k): k is string => typeof k === 'string' && k.trim().length > 0)
+        .map(k => k.trim());
+    }
+
+    pageMeta.set(row.slug, { slug: row.slug, name, domain, isAutoStub: row.isAutoStub, contextKeywords });
 
     const tokens = name.split(/\s+/).filter(Boolean);
     const derived: string[] = [name];
@@ -228,9 +242,52 @@ export function linkifyMarkdown(
         uniquePeople.add(chosen);
         bumpDiag(diagnostics, { kind: 'resolved_by_default_domain', match: key, chosen, rejected: outOfDefault, occurrences: 1 });
       } else {
-        parts.push(match);
-        ambiguous++;
-        bumpDiag(diagnostics, { kind: 'ambiguous_unresolved', match: key, candidates: Array.from(slugs).sort(), occurrences: 1 });
+        // Context-keyword tiebreaker: scan ±500-char window in unmasked markdown
+        const WINDOW = 500;
+        const windowStart = Math.max(0, m.index - WINDOW);
+        const windowEnd = Math.min(markdown.length, m.index + m[0].length + WINDOW);
+        const windowText = markdown.slice(windowStart, windowEnd).toLowerCase();
+
+        let bestSlug: string | null = null;
+        let bestCount = 0;
+        let bestIsUnique = false;
+        for (const s of slugs) {
+          const keywords = pageMeta.get(s)?.contextKeywords ?? [];
+          if (keywords.length === 0) continue;
+          let count = 0;
+          for (const kw of keywords) {
+            const needle = kw.toLowerCase();
+            if (!needle) continue;
+            let idx = 0;
+            while ((idx = windowText.indexOf(needle, idx)) !== -1) {
+              count++;
+              idx += needle.length;
+            }
+          }
+          if (count > bestCount) {
+            bestSlug = s;
+            bestCount = count;
+            bestIsUnique = true;
+          } else if (count === bestCount && count > 0) {
+            bestIsUnique = false;  // tie at the top — disqualifies
+          }
+        }
+
+        if (bestSlug !== null && bestIsUnique && bestCount > 0) {
+          const rejected = Array.from(slugs).filter(s => s !== bestSlug).sort();
+          parts.push(`[[${bestSlug}|${match}]]`);
+          linked++;
+          uniquePeople.add(bestSlug);
+          bumpDiag(diagnostics, {
+            kind: 'resolved_by_context_keywords',
+            match: key, chosen: bestSlug, rejected,
+            window_hit_count: bestCount, occurrences: 1,
+          });
+        } else {
+          parts.push(match);
+          ambiguous++;
+          bumpDiag(diagnostics, { kind: 'ambiguous_unresolved', match: key, candidates: Array.from(slugs).sort(), occurrences: 1 });
+        }
       }
     } else {
       // No match in alias map (regex matched but key not present), or empty Set
