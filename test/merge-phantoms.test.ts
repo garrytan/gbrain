@@ -449,15 +449,17 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     }
   });
 
-  itHomed('constrains merge to phantom entity type — cross-type collision routes to correct canonical', async () => {
-    // codex round-4 P1: phantom 'acme' of type=company must merge to
-    // companies/acme-example, NOT to people/acme-example, even though
-    // people/ is checked first in DEFAULT_PREFIX_EXPANSION_DIRS. The
-    // fix passes a type-constrained dir list to tryPrefixExpansion.
+  itHomed('cross-directory ambiguity: phantom that matches in multiple dirs skips as ambiguous', async () => {
+    // codex round-4 P1 + round-6 P2 #1 resolution. The phantom's own
+    // `type` field is unreliable because pre-fix `stubEntityPage`
+    // defaulted to `concept` for unprefixed slugs (round-6 finding).
+    // So we can't constrain by phantom.type. Instead, we search every
+    // directory and refuse to auto-pick when MORE THAN ONE directory
+    // has a candidate — the operator decides manually.
     await seedPage('acme', 'company');                  // phantom (type=company)
-    await seedPage('people/acme-example', 'person');    // wrong-type canonical (tempting)
-    await seedChunks('people/acme-example', 100);       // higher chunk count to bait the wrong path
-    await seedPage('companies/acme-example', 'company');// correct-type canonical
+    await seedPage('people/acme-example', 'person');    // candidate in people/
+    await seedChunks('people/acme-example', 100);
+    await seedPage('companies/acme-example', 'company');// candidate in companies/
     await seedChunks('companies/acme-example', 3);
     await seedFact('acme', 'Acme raised a Series B.');
 
@@ -466,20 +468,56 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
       dryRun: false,
     });
 
-    expect(result.merged.length).toBe(1);
-    expect(result.merged[0].canonical).toBe('companies/acme-example');
+    expect(result.merged.length).toBe(0);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0].skipped).toBe('ambiguous');
+    expect(result.skipped[0].ambiguous_candidates).toBeDefined();
+    expect(result.skipped[0].ambiguous_candidates!.sort()).toEqual([
+      'companies/acme-example',
+      'people/acme-example',
+    ]);
 
-    // The fact landed on the company page, NOT the person page.
-    const onCompany = await engine.executeRaw<{ entity_slug: string }>(
-      `SELECT entity_slug FROM facts WHERE entity_slug = 'companies/acme-example'`,
+    // Phantom and its fact are untouched — operator can resolve manually.
+    const phantomPage = await engine.executeRaw<{ deleted_at: Date | null }>(
+      `SELECT deleted_at FROM pages WHERE slug = 'acme' AND source_id = 'default'`,
       [],
     );
-    expect(onCompany.length).toBe(1);
-    const onPerson = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM facts WHERE entity_slug = 'people/acme-example'`,
+    expect(phantomPage[0].deleted_at).toBeNull();
+    const facts = await engine.executeRaw<{ entity_slug: string }>(
+      `SELECT entity_slug FROM facts WHERE entity_slug = 'acme'`,
       [],
     );
-    expect(onPerson[0].n).toBe(0);
+    expect(facts.length).toBe(1);
+  });
+
+  itHomed('pre-fix phantom with type=concept still resolves to the right people/ canonical', async () => {
+    // Codex round-6 P2 #1: pre-fix `stubEntityPage` defaulted ALL
+    // unprefixed entity stubs to `type: concept`. A phantom `alice`
+    // really represents a person but has the wrong stored type. The
+    // merge must still find `people/alice-example` and route facts
+    // there, NOT skip as no_canonical because it only searched
+    // `concepts/`.
+    await seedPage('alice', 'concept');                 // phantom with wrong type
+    await seedPage('people/alice-example', 'person');   // correct canonical (different dir)
+    await seedChunks('people/alice-example', 5);
+    await seedFact('alice', 'Alice fact pre-fix.');
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(1);
+    expect(result.merged[0].canonical).toBe('people/alice-example');
+    expect(result.merged[0].facts_moved).toBe(1);
+
+    // Facts repointed to the canonical.
+    const onCanonical = await engine.executeRaw<{ source_markdown_slug: string }>(
+      `SELECT source_markdown_slug FROM facts WHERE entity_slug = 'people/alice-example'`,
+      [],
+    );
+    expect(onCanonical.length).toBe(1);
+    expect(onCanonical[0].source_markdown_slug).toBe('people/alice-example');
   });
 
   itHomed('dry-run honors no_local_path skip (codex round-4 P2)', async () => {
@@ -501,6 +539,56 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(result.merged.length).toBe(0);
     expect(result.skipped.length).toBe(1);
     expect(result.skipped[0].skipped).toBe('no_local_path');
+  });
+
+  itHomed('fact-bearing phantom (long compiled_truth from fence) still migrates', async () => {
+    // Codex round-6 P2 #2: a pre-fix phantom that accumulated facts has
+    // a `compiled_truth` that includes the full ## Facts fence — easily
+    // 200+ chars from fence markers + a couple of fact rows. The
+    // body-size gate must exclude fence content so these phantoms still
+    // get migrated rather than skipped as not_a_stub.
+    const factHeavyStubBody = [
+      '# Alice',
+      '',
+      '## Facts',
+      '<!-- facts -->',
+      '| row | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+      '|-----|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
+      '| 1 | Alice likes integration tests. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
+      '| 2 | Alice attended YC W26. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
+      '<!-- /facts -->',
+      '',
+    ].join('\n');
+    expect(factHeavyStubBody.length).toBeGreaterThan(200); // sanity: would have tripped the round-5 gate
+
+    await engine.putPage(
+      'alice-fence',
+      {
+        type: 'concept' as any,
+        title: 'Alice',
+        compiled_truth: factHeavyStubBody,
+        frontmatter: { type: 'concept', title: 'Alice', slug: 'alice-fence' },
+      },
+      { sourceId: 'default' },
+    );
+    await seedPage('people/alice-fence-example', 'person');
+    await seedChunks('people/alice-fence-example', 5);
+    await seedFact('alice-fence', 'A fact about Alice.');
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(1);
+    expect(result.merged[0].canonical).toBe('people/alice-fence-example');
+
+    // Phantom soft-deleted, fact moved to canonical.
+    const phantomPage = await engine.executeRaw<{ deleted_at: Date | null }>(
+      `SELECT deleted_at FROM pages WHERE slug = 'alice-fence' AND source_id = 'default'`,
+      [],
+    );
+    expect(phantomPage[0].deleted_at).not.toBeNull();
   });
 
   itHomed('skips a top-level page that has real content (not a stub)', async () => {

@@ -51,7 +51,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import { tryPrefixExpansion, slugify } from '../core/entities/resolve.ts';
+import { tryPrefixExpansion, slugify, getPrefixExpansionDirs } from '../core/entities/resolve.ts';
 import { writeFactsToFence, lookupSourceLocalPath, type FenceInputFact } from '../core/facts/fence-write.ts';
 
 /** Phantom-resolution outcome for one row. */
@@ -68,26 +68,67 @@ export interface PhantomMerge {
     | 'canonical_missing'
     | 'no_local_path'
     | 'fence_write_failed'
-    | 'not_a_stub';
+    | 'not_a_stub'
+    | 'ambiguous';
+  /**
+   * When `skipped === 'ambiguous'`, the list of canonical candidates
+   * that matched across multiple directories. Operator picks which
+   * one to merge into manually.
+   */
+  ambiguous_candidates?: string[];
 }
 
 /**
- * Content-length threshold (in characters) above which a top-level entity
- * page is treated as a real user page rather than a v0.34.5-era phantom
- * stub. Stubs produced by `stubEntityPage` in fence-write.ts are well
- * under 100 chars (frontmatter + title + empty fence). 200 chars gives
- * room for a stub that grew a few small facts in its fence; anything
- * above that is almost certainly a user-imported page whose body
- * carries real content that would be lost on soft-delete.
+ * Body-content threshold (excluding facts/timeline fences and the H1
+ * title) above which a top-level entity page is treated as a real
+ * user page rather than a v0.34.5-era stub.
  *
- * Codex round-5 P2: without this filter, a legitimate top-level
- * `rag.md` or `alice.md` imported from the user's own brain repo would
- * be classified as a phantom and soft-deleted after re-fencing only
- * the facts — losing the page's body, links, and any timeline. The
- * threshold is conservative; non-stub pages skip with `not_a_stub` so
- * the operator can see them in the `gbrain merge-phantoms` output.
+ * Codex round-5 P2: without this filter, a legitimate `rag.md` or
+ * `alice.md` page imported from the user's brain repo would be
+ * soft-deleted after re-fencing only the facts — losing the body,
+ * links, and timeline.
+ *
+ * Codex round-6 P2 #2: the v0.34.5 stub may have accumulated facts
+ * over time. Each fence row + the table markers easily push total
+ * `compiled_truth` length past 200 chars. We need to count BODY
+ * chars only (paragraphs / non-fence sections), not the fence
+ * payload, so fact-bearing phantoms still get migrated.
+ *
+ * `stubBodyChars` extracts the chars that aren't frontmatter, title,
+ * or fenced sections (Facts, Timeline). A stub has 0 chars by this
+ * measure; a real imported page has hundreds.
  */
-const PHANTOM_STUB_MAX_BODY_CHARS = 200;
+const PHANTOM_STUB_MAX_BODY_CHARS = 50;
+
+/**
+ * Strip frontmatter, H1 title, and `## Facts` / `## Timeline` fenced
+ * sections from a `compiled_truth` body. Returns the trimmed remainder.
+ * A v0.34.5-era stub returns the empty string (or close to it). A real
+ * imported entity page with paragraphs or extra sections returns
+ * hundreds-to-thousands of chars.
+ *
+ * Conservative regex set: matches the canonical fence shapes produced
+ * by `serializeFactsFence` / writeFactsToFence. Pages with custom
+ * sections survive intact (they show up in the remainder and trip the
+ * not_a_stub gate, which is the safe outcome).
+ */
+export function stubBodyChars(compiledTruth: string | null | undefined): number {
+  if (!compiledTruth) return 0;
+  const stripped = compiledTruth
+    // Frontmatter (just in case some pipelines leave it on the body).
+    .replace(/^---\n[\s\S]*?\n---\n?/, '')
+    // The H1 title line (the stub's `# Title`).
+    .replace(/^#\s+.+\r?\n?/m, '')
+    // The ## Facts section, from the heading through the end of its
+    // fence or to the next ## heading / EOF, whichever is first.
+    // Conservative: greedy stops at next `\n## ` to avoid swallowing
+    // adjacent sections.
+    .replace(/##\s*Facts[\s\S]*?(?=\n##\s|\s*$)/, '')
+    // The ## Timeline section, same shape.
+    .replace(/##\s*Timeline[\s\S]*?(?=\n##\s|\s*$)/, '')
+    .trim();
+  return stripped.length;
+}
 
 export interface MergePhantomsResult {
   merged: PhantomMerge[];
@@ -101,42 +142,36 @@ export interface MergePhantomsResult {
 const ENTITY_TYPES = ['person', 'company', 'deal', 'topic', 'concept'] as const;
 
 /**
- * 1:1 map from entity type to the slug directory that holds canonical
- * pages for that type. The merge command uses this to constrain the
- * prefix-expansion search — without it, a phantom `acme` of type
- * 'company' could resolve to `people/acme-example` (because `people`
- * is first in DEFAULT_PREFIX_EXPANSION_DIRS) and the company facts
- * would land on a person's page. Codex flagged this as a data-
- * correctness P1 in the round-4 review.
+ * Search every configured prefix-expansion directory rather than
+ * constraining by phantom.type. Codex round-6 P2 #1 flagged the
+ * round-4 type-constraint as broken: the pre-fix `stubEntityPage`
+ * defaulted unprefixed phantoms to `type: concept`, so a phantom
+ * `alice` (real-world: a person) had stored type='concept' and the
+ * round-4 fix would only search `concepts/` and skip the canonical
+ * `people/alice-example`. The merge command's whole job is to clean
+ * up exactly that bug class.
  *
- * Type-to-dir is intentionally a constant map, not config-driven:
- * the page type column IS the type system. If a user has custom
- * `type: fund` pages under `funds/`, they extend this map plus
- * extend `ENTITY_TYPES`. Cross-cutting feature; out of scope for
- * the v0.34.5 fix wave.
+ * Ambiguity protection comes from the search itself: when the same
+ * token resolves in multiple directories (e.g. both `people/acme-*`
+ * AND `companies/acme-*` exist), the merge skips with `ambiguous`
+ * and lists the candidates instead of auto-picking the wrong one.
+ * This was round-4's concern; the new path addresses it with a
+ * cross-dir tie check rather than a per-phantom type filter.
  */
-const TYPE_TO_DIR: Record<string, string> = {
-  person: 'people',
-  company: 'companies',
-  deal: 'deals',
-  topic: 'topics',
-  concept: 'concepts',
-};
 
 /**
  * Find candidate phantom unprefixed entity pages. Returns the row plus
- * the size of `compiled_truth` so the caller can distinguish stub-shape
- * pages (a few dozen chars) from user-imported pages with real bodies.
- * Codex round-5 P2: non-stub pages skip in the merge loop rather than
- * being silently soft-deleted with content loss.
+ * the full `compiled_truth` so the caller can apply `stubBodyChars()`
+ * to distinguish v0.34.5-era stubs (zero chars after stripping the
+ * fence content) from user-imported pages with real bodies (codex
+ * round-5 P2 + round-6 P2 #2).
  */
 export async function listPhantomEntityPages(
   engine: BrainEngine,
   sourceId: string,
-): Promise<Array<{ id: number; slug: string; type: string; body_chars: number }>> {
-  return engine.executeRaw<{ id: number; slug: string; type: string; body_chars: number }>(
-    `SELECT id, slug, type,
-            COALESCE(LENGTH(compiled_truth), 0)::int AS body_chars
+): Promise<Array<{ id: number; slug: string; type: string; compiled_truth: string | null }>> {
+  return engine.executeRaw<{ id: number; slug: string; type: string; compiled_truth: string | null }>(
+    `SELECT id, slug, type, compiled_truth
        FROM pages
       WHERE source_id = $1
         AND slug NOT LIKE '%/%'
@@ -162,33 +197,50 @@ export async function runMergePhantomsCore(
   const merged: PhantomMerge[] = [];
   const skipped: PhantomMerge[] = [];
 
+  const dirs = getPrefixExpansionDirs();
+
   for (const row of phantoms) {
-    // Content-size gate (codex round-5 P2): skip pages whose body looks
-    // like a user-imported entity page rather than a v0.34.5-era stub.
-    // The merge command only re-fences facts; it doesn't migrate
-    // compiled_truth / links / timeline. Soft-deleting a real page
-    // would silently lose all that.
-    if (row.body_chars > PHANTOM_STUB_MAX_BODY_CHARS) {
+    // Content-size gate (codex round-5 P2 + round-6 P2 #2): skip pages
+    // whose body looks like a user-imported entity page rather than a
+    // v0.34.5-era stub. We must count BODY chars only (paragraphs +
+    // non-fence sections), not the fence payload — round-6 caught
+    // that fact-bearing phantoms exceed any total-length threshold.
+    if (stubBodyChars(row.compiled_truth) > PHANTOM_STUB_MAX_BODY_CHARS) {
       skipped.push({ phantom: row.slug, canonical: null, skipped: 'not_a_stub' });
       continue;
     }
 
-    // Use tryPrefixExpansion directly instead of resolveEntitySlug —
-    // the latter's exact-slug step would match the phantom itself
-    // (slug='alice' exists, so exact-slug returns 'alice' immediately)
-    // and short-circuit before reaching prefix expansion.
+    // Search EVERY configured directory rather than constraining by
+    // the phantom's own type. Pre-fix `stubEntityPage` defaulted all
+    // unprefixed phantoms to `type: concept`, so the phantom's type
+    // is unreliable for routing decisions (codex round-6 P2 #1).
     //
-    // Type-constrained search (codex round-4 P1): pass exactly the
-    // directory that matches the phantom's page type, so a `company`
-    // phantom 'acme' can only resolve into `companies/`, not `people/`.
-    // Otherwise the global dir order would let person + company facts
-    // mismerge onto each other.
+    // Cross-directory ambiguity protection: if more than one
+    // directory has a candidate (e.g. both `people/acme-*` AND
+    // `companies/acme-*` exist), skip with `ambiguous` so the
+    // operator can decide manually instead of the merge auto-picking
+    // the wrong target (codex round-4's original concern, now solved
+    // structurally rather than via type-constraint).
     const token = slugify(row.slug);
-    const targetDir = TYPE_TO_DIR[row.type];
-    const canonical =
-      token && targetDir
-        ? await tryPrefixExpansion(engine, opts.sourceId, token, { dirs: [targetDir] })
-        : null;
+    const dirCandidates: Array<{ dir: string; canonical: string }> = [];
+    if (token) {
+      for (const dir of dirs) {
+        const hit = await tryPrefixExpansion(engine, opts.sourceId, token, { dirs: [dir] });
+        if (hit) dirCandidates.push({ dir, canonical: hit });
+      }
+    }
+
+    if (dirCandidates.length > 1) {
+      skipped.push({
+        phantom: row.slug,
+        canonical: null,
+        skipped: 'ambiguous',
+        ambiguous_candidates: dirCandidates.map(c => c.canonical),
+      });
+      continue;
+    }
+
+    const canonical = dirCandidates[0]?.canonical ?? null;
 
     if (!canonical) {
       skipped.push({ phantom: row.slug, canonical: null, skipped: 'no_canonical' });
