@@ -100,11 +100,11 @@ gbrain sync --repo "$BRAIN_REPO_PATH" --yes
 gbrain serve --http --bind 0.0.0.0 --port "$PORT" --public-url "$PUBLIC_URL"
 ```
 
-When `BRAIN_REPO_URL` is set, startup clones or refreshes that markdown repo,
-syncs it into the service's own database, and runs a background sync loop. This
-does not change the company-share boundary: `gbrain-company` still only learns
-from Alice through the signed export/import path unless the company markdown
-repo itself contains company-authored pages.
+When `BRAIN_REPO_URL` is set, startup makes a fresh shallow clone of that
+markdown repo, syncs it into the service's own database, and runs a background
+sync loop. This does not change the company-share boundary: `gbrain-company`
+still only learns from Alice through the signed export/import path unless the
+company markdown repo itself contains company-authored pages.
 
 For a single member, the company service can also bootstrap the member registry
 from Railway variables at startup:

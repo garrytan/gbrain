@@ -43,10 +43,32 @@ export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality
 Save to shell profile or `.env`. Without OpenAI, keyword search still works.
 Without Anthropic, search works but skips query expansion.
 
-## Step 3: Create the Brain
+## Step 3: Choose Brain Role, Then Create the Brain
+
+Most installs are a single-user **individual** brain. For a company-wide setup,
+do not reuse the same home, database, or markdown repo for a member and the
+company aggregate.
+
+```text
+individual brain = one user's private/default brain
+company brain    = aggregate company brain that imports approved member exports
+
+brain repo       = markdown source of truth
+database         = runtime search/index store
+```
+
+Use one GBrain code checkout, but separate the knowledge plane:
+
+```text
+alice-brain repo     -> Alice individual DB
+company-brain repo   -> Company DB
+Alice export/pull    -> Company source member-alice
+```
+
+For a normal personal install:
 
 ```bash
-gbrain init                           # PGLite, no server needed
+gbrain init --mode individual         # PGLite, no server needed
 gbrain doctor --json                  # verify all checks pass
 ```
 
@@ -60,6 +82,28 @@ mkdir -p ~/brain && cd ~/brain && git init
 Read `~/gbrain/docs/GBRAIN_RECOMMENDED_SCHEMA.md` and set up the MECE directory
 structure (people/, companies/, concepts/, etc.) inside the user's brain repo,
 NOT inside ~/gbrain.
+
+For a company setup, initialize each role separately. The most important rule is
+isolation: each role gets its own `GBRAIN_HOME`, database, and markdown repo.
+
+```bash
+export ALICE_HOME=/var/lib/gbrain/alice
+export COMPANY_HOME=/var/lib/gbrain/company
+
+GBRAIN_HOME="$ALICE_HOME" gbrain init --mode individual --url "$ALICE_DATABASE_URL" --non-interactive
+GBRAIN_HOME="$COMPANY_HOME" gbrain init --mode company --url "$COMPANY_DATABASE_URL" --non-interactive
+```
+
+Then sync each role's own markdown source of truth:
+
+```bash
+GBRAIN_HOME="$ALICE_HOME" gbrain sync --repo /repos/alice-brain --yes
+GBRAIN_HOME="$COMPANY_HOME" gbrain sync --repo /repos/company-brain --yes
+```
+
+The company brain must not open Alice's repo or database directly. It learns
+Alice-approved content only through `gbrain company-share pull`, which imports
+into a dedicated source such as `member-alice`.
 
 ## Step 3.5: Confirm search mode with the user (DO NOT SKIP)
 
@@ -152,8 +196,15 @@ and supports `--since YYYY-MM-DD` for incremental runs.
 
 ## Step 5: Load Skills
 
-Read `~/gbrain/skills/RESOLVER.md`. This is the skill dispatcher. It tells you which
-skill to read for any task. Save this to your memory permanently.
+For individual brains, read `~/gbrain/skills/RESOLVER.md`. This is the skill
+dispatcher. It tells you which skill to read for any task. Save this to your
+memory permanently.
+
+For company brains, read `~/gbrain/skills/COMPANY_RESOLVER.md` instead. Company
+mode intentionally exposes a smaller skill surface: query, research/synthesis,
+briefing/reporting, maintenance, and guardrails. Personal setup/identity,
+skillify, private enrichment, and other user-private workflows stay on the
+individual brain side unless an operator explicitly runs them locally.
 
 The three most important skills to adopt immediately:
 
@@ -184,6 +235,7 @@ If skipped, minimal defaults are installed automatically.
 Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab):
 
 - **Live sync** (every 15 min): `gbrain sync --repo ~/brain && gbrain embed --stale`
+- **Company share pull** (company brains only, every 15 min): `gbrain company-share pull`
 - **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install)
 - **Dream cycle** (nightly): read `docs/guides/cron-schedule.md` for the full protocol.
   Entity sweep, citation fixes, memory consolidation, plus (v0.23+) overnight conversation
@@ -198,6 +250,43 @@ installer. It tells you what credentials to ask for, how to validate, and what c
 to register. Ask the user which integrations they want (email, calendar, voice, Twitter).
 
 Verify: `gbrain integrations doctor` (after at least one is configured)
+
+## Step 8.5: Company Brain Wiring (only for company-wide installs)
+
+On each individual member brain, configure private-by-default sharing:
+
+```bash
+GBRAIN_HOME="$ALICE_HOME" gbrain company-share secret set --secret "$ALICE_COMPANY_SHARE_SECRET"
+GBRAIN_HOME="$ALICE_HOME" gbrain company-share set-source default --default private
+GBRAIN_HOME="$ALICE_HOME" gbrain company-share set-page <slug> --mode summary   # or full/private
+```
+
+Register an OAuth client on the individual brain for the company puller, then
+register that member on the company brain:
+
+```bash
+GBRAIN_HOME="$ALICE_HOME" gbrain auth register-client company-share \
+  --grant-types client_credentials \
+  --scopes read
+
+GBRAIN_HOME="$COMPANY_HOME" gbrain company-share members add alice \
+  --issuer-url https://gbrain-alice.example.com \
+  --mcp-url https://gbrain-alice.example.com/mcp \
+  --oauth-client-id <alice-client-id> \
+  --oauth-client-secret <alice-client-secret> \
+  --manifest-secret "$ALICE_COMPANY_SHARE_SECRET"
+
+GBRAIN_HOME="$COMPANY_HOME" gbrain company-share pull --member alice
+```
+
+Configure Hermes/OpenClaw against the company brain only unless the agent is
+intended to act as a specific user's private assistant:
+
+```text
+name: company-gbrain
+issuer_url: https://gbrain-company.example.com
+mcp_url: https://gbrain-company.example.com/mcp
+```
 
 ## Step 9: Verify
 

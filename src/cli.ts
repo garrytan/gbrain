@@ -187,6 +187,27 @@ function hasHelpFlag(args: string[]): boolean {
 }
 
 function printCliOnlyHelp(command: string) {
+  if (command === 'init') {
+    console.log(`Usage: gbrain init [--mode individual|company] [--pglite|--supabase|--url <connection_string>] [options]
+
+Create or migrate a GBrain database.
+
+Role:
+  --mode individual              User/private brain. Private by default for company sharing.
+  --mode company                 Company aggregate brain. Imports signed member exports.
+
+Common options:
+  --pglite                       Use local embedded PGLite.
+  --supabase                     Run the Supabase/Postgres setup wizard.
+  --url <connection_string>      Use an existing Postgres/Supabase database.
+  --non-interactive              Require --url or DATABASE_URL/GBRAIN_DATABASE_URL.
+  --mcp-only                     Configure this machine as a thin client to a remote MCP.
+
+Company-wide setups need separate GBRAIN_HOME, database, and markdown brain repo
+for each individual brain and for the company brain. The company brain learns
+from members through \`gbrain company-share pull\`, not by opening member DBs.`);
+    return;
+  }
   console.log(`Usage: gbrain ${command}`);
   console.log('');
   console.log(`gbrain ${command} - run gbrain --help for the full command list.`);
@@ -1441,7 +1462,8 @@ USAGE
   gbrain <command> [options]
 
 SETUP
-  init [--pglite|--supabase|--url]   Create brain (PGLite default, no server)
+  init [--mode individual|company]   Create brain (PGLite default, no server)
+       [--pglite|--supabase|--url]
   migrate --to <supabase|pglite>     Transfer brain between engines
   upgrade                            Self-update
   check-update [--json]              Check for new versions

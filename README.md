@@ -25,13 +25,14 @@ member-example GBrain           gbrain-company
 mode: individual                mode: company
 own GBRAIN_HOME                 own GBRAIN_HOME
 own database                    own database
+own markdown brain repo         own markdown brain repo
 private by default              imports member-* sources
 exports approved pages   --->   queries company-visible snapshots
 ```
 
-The company brain does not open a member database directly. It pulls through the
-member's MCP/OAuth endpoint and imports the approved export into a source such as
-`member-example`.
+The company brain does not open a member database or markdown repo directly. It
+pulls through the member's MCP/OAuth endpoint and imports the approved export
+into a source such as `member-example`.
 
 ## Minimal Setup
 
@@ -102,7 +103,7 @@ gbrain-company      mode: company
 ```
 
 Each service needs its own `GBRAIN_HOME`, database, and public MCP/OAuth issuer
-URL. Use explicit MCP names such as `company-gbrain` and
+URL. It should also have its own markdown source-of-truth repo. Use explicit MCP names such as `company-gbrain` and
 `member-example-gbrain` so agents do not confuse the aggregate company brain
 with a member's private brain.
 
