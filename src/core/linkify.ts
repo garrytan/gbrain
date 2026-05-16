@@ -102,12 +102,12 @@ export interface BuildAliasMapResult {
   startupDiagnostics: Diagnostic[];
 }
 
-const APOSTROPHE_STRAIGHT = "'";
-const APOSTROPHE_CURLY = "’"; // U+2019 right single quotation mark
+export const APOSTROPHE_STRAIGHT = "'";
+export const APOSTROPHE_CURLY = "’"; // U+2019 right single quotation mark
 
-function caseFold(s: string): string { return s.normalize('NFC').toLowerCase(); }
+export function caseFold(s: string): string { return s.normalize('NFC').toLowerCase(); }
 
-function expandApostropheVariants(key: string): string[] {
+export function expandApostropheVariants(key: string): string[] {
   const hasStraight = key.indexOf(APOSTROPHE_STRAIGHT) !== -1;
   const hasCurly = key.indexOf(APOSTROPHE_CURLY) !== -1;
   if (!hasStraight && !hasCurly) return [key];
