@@ -252,6 +252,88 @@ interface Totals {
   dryRun: boolean;
 }
 
+/**
+ * Map an AuditDiagnostic from internal camelCase to the snake_case wire
+ * format defined in the design spec. TS types stay camelCase (idiomatic);
+ * only the JSON emit boundary translates. Consumers (Phase 2/3 producers,
+ * third-party tools) read these field names against the spec, so the wire
+ * format must match it.
+ *
+ * See: docs/superpowers/specs/2026-05-16-gbrain-audit-name-links-design.md
+ * (Diagnostic types section).
+ */
+export function serializeDiagnostic(d: AuditDiagnostic): Record<string, unknown> {
+  switch (d.kind) {
+    case 'name_mismatch':
+      return {
+        kind: d.kind,
+        file: d.file,
+        line: d.line,
+        slug: d.slug,
+        display: d.display,
+        canonical_names: d.canonicalNames,
+        link_form: d.linkForm,
+        occurrences: d.occurrences,
+      };
+    case 'unknown_target':
+      return {
+        kind: d.kind,
+        file: d.file,
+        line: d.line,
+        slug: d.slug,
+        display: d.display,
+        canonical_names: d.canonicalNames,
+        link_form: d.linkForm,
+        occurrences: d.occurrences,
+      };
+    case 'malformed_target':
+      return {
+        kind: d.kind,
+        file: d.file,
+        line: d.line,
+        slug: d.slug,
+        display: d.display,
+        canonical_names: d.canonicalNames,
+        link_form: d.linkForm,
+        reason: d.malformedReason,
+        occurrences: d.occurrences,
+      };
+    case 'display_fixed':
+      return {
+        kind: d.kind,
+        file: d.file,
+        line: d.line,
+        slug: d.slug,
+        old_display: d.oldDisplay,
+        new_display: d.newDisplay,
+        link_form: d.linkForm,
+      };
+    case 'concurrent_modification_skipped':
+      return { kind: d.kind, file: d.file };
+    case 'icloud_placeholder_skipped':
+      return { kind: d.kind, file: d.file };
+    case 'enoent':
+      return { kind: d.kind, file: d.file };
+  }
+}
+
+/**
+ * Map the counts-totals to the snake_case summary wire format. Mirrors the
+ * counts-only stderr text format (`files=N name_mismatch=K ...`) so JSON
+ * consumers see the same field names.
+ */
+export function serializeSummary(totals: Totals): Record<string, unknown> {
+  return {
+    kind: 'summary',
+    files: totals.filesProcessed,
+    name_mismatch: totals.nameMismatch,
+    unknown_target: totals.unknownTarget,
+    malformed_target: totals.malformedTarget,
+    display_fixed: totals.displayFixed,
+    dry_run: totals.dryRun,
+  };
+}
+
 function emitDiagnostics(
   diagnostics: AuditDiagnostic[],
   totals: Totals,
@@ -267,9 +349,9 @@ function emitDiagnostics(
 
   if (opts.jsonDiagnostics) {
     for (const d of diagnostics) {
-      process.stderr.write(JSON.stringify(d) + '\n');
+      process.stderr.write(JSON.stringify(serializeDiagnostic(d)) + '\n');
     }
-    process.stderr.write(JSON.stringify({ kind: 'summary', ...totals }) + '\n');
+    process.stderr.write(JSON.stringify(serializeSummary(totals)) + '\n');
   } else if (opts.verboseDiagnostics) {
     for (const d of diagnostics) {
       process.stderr.write(diagnosticToLine(d) + '\n');

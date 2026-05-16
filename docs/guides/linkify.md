@@ -591,15 +591,17 @@ The `[Nx]` suffix is the occurrence count after dedup by
 **`--json-diagnostics`:**
 
 ```jsonl
-{"kind":"name_mismatch","file":"/vault/Briefings/2026-05-11.md","line":113,"slug":"people/cwaytek-aseva","display":"Calvin Waytek","canonicalNames":["chris","christopher","christopher waytek","waytek"],"linkForm":"markdown","occurrences":2}
-{"kind":"unknown_target","file":"/vault/Briefings/2026-05-11.md","line":240,"slug":"people/lallen-aseva","display":"Leedy Allen","canonicalNames":[],"linkForm":"markdown","occurrences":1}
-{"kind":"display_fixed","file":"/vault/Briefings/2026-05-11.md","line":113,"slug":"people/cwaytek-aseva","oldDisplay":"Calvin Waytek","newDisplay":"Christopher Waytek","linkForm":"markdown"}
-{"kind":"summary","filesProcessed":1,"nameMismatch":0,"unknownTarget":1,"malformedTarget":0,"displayFixed":2,"dryRun":false}
+{"kind":"name_mismatch","file":"/vault/Briefings/2026-05-11.md","line":113,"slug":"people/cwaytek-aseva","display":"Calvin Waytek","canonical_names":["chris","christopher","christopher waytek","waytek"],"link_form":"markdown","occurrences":2}
+{"kind":"unknown_target","file":"/vault/Briefings/2026-05-11.md","line":240,"slug":"people/lallen-aseva","display":"Leedy Allen","canonical_names":[],"link_form":"markdown","occurrences":1}
+{"kind":"display_fixed","file":"/vault/Briefings/2026-05-11.md","line":113,"slug":"people/cwaytek-aseva","old_display":"Calvin Waytek","new_display":"Christopher Waytek","link_form":"markdown"}
+{"kind":"summary","files":1,"name_mismatch":0,"unknown_target":1,"malformed_target":0,"display_fixed":2,"dry_run":false}
 ```
 
-Diagnostic JSON fields use camelCase (`canonicalNames`, `linkForm`,
-`oldDisplay`, `newDisplay`) for consistency with the rest of gbrain's
-JSON outputs.
+Diagnostic JSON fields use snake_case (`canonical_names`, `link_form`,
+`old_display`, `new_display`, `reason`) to match the design spec at
+`docs/superpowers/specs/2026-05-16-gbrain-audit-name-links-design.md`.
+Producers should read these field names directly, not the camelCase TS
+type names (which are an internal implementation detail).
 
 ### Producer integration
 

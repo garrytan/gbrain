@@ -262,22 +262,35 @@ describe('audit-name-links engine-injected runs', () => {
     const original = 'Reviewed [Calvin Waytek](people/cwaytek-aseva) update.\n';
     writeFileSync(f, original);
 
-    // Capture stderr via spawnSync against the subprocess so we can assert
-    // the display_fixed diagnostic was emitted while the file stays untouched.
-    const r = spawnSync(
-      'bun',
-      [CLI, 'audit-name-links', '--path', f, '--fix-display-names', '--dry-run', '--verbose-diagnostics'],
-      { cwd: resolve(import.meta.dir, '..'), encoding: 'utf8' },
-    );
-    expect(r.status ?? -1).toBeGreaterThanOrEqual(0);
-    // File unchanged.
-    expect(readFileSync(f, 'utf-8')).toBe(original);
-    // Stderr mentions display_fixed (subprocess path may emit nothing if
-    // the subprocess can't reach the brain — but the file MUST be untouched).
-    // Tolerate engine-unavailable (exit 3); the critical invariant is no write.
-    if (r.status === 0) {
-      expect(r.stderr).toContain('display_fixed');
+    // Hermetic in-process path: capture stderr from the engine-injected
+    // runAuditNameLinks call so the assertion does not depend on the
+    // developer's real ~/.gbrain having seeded fixtures. The captureStderr
+    // helper mirrors test/audit-name-links-integration.test.ts.
+    const chunks: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    // @ts-ignore — monkey-patch for test capture
+    process.stderr.write = (chunk: string | Uint8Array, ...rest: unknown[]) => {
+      if (typeof chunk === 'string') chunks.push(chunk);
+      else chunks.push(Buffer.from(chunk).toString('utf-8'));
+      return orig(chunk, ...(rest as []));
+    };
+    let code: number;
+    try {
+      code = await runAuditNameLinks(
+        ['--path', f, '--fix-display-names', '--dry-run', '--verbose-diagnostics'],
+        { engine },
+      );
+    } finally {
+      // @ts-ignore
+      process.stderr.write = orig;
     }
+    const stderr = chunks.join('');
+
+    expect(code).toBe(0);
+    // Critical invariant: --dry-run never writes.
+    expect(readFileSync(f, 'utf-8')).toBe(original);
+    // Diagnostic emitted (verbose-mode rendering of the display_fixed event).
+    expect(stderr).toContain('display_fixed');
   });
 
   test('--fix-display-names --strict: strict evaluates post-fix state', async () => {
