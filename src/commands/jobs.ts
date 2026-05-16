@@ -6,6 +6,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
+import { classifyWorkerExit } from '../core/minions/exit-classification.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
@@ -803,7 +804,7 @@ HANDLER TYPES (built in)
         const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
         const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
         const allExits = events.filter(e => e.event === 'worker_exited');
-        const realCrashes = allExits.filter(e => (e as any).code !== 0 && (e as any).code !== undefined);
+        const realCrashes = allExits.filter(e => classifyWorkerExit(e as { code?: number | null }) === 'crash');
         const cleanRestarts = allExits.length - realCrashes.length;
         const crashes24h = realCrashes.length;
         const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;

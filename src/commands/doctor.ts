@@ -8,6 +8,7 @@ import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { classifyWorkerExit } from '../core/minions/exit-classification.ts';
 import type { DbUrlSource } from '../core/config.ts';
 import { join } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
@@ -1013,7 +1014,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // Only count non-zero exits as crashes; clean restarts (code 0) are normal
     // worker lifecycle — the worker finishes its queue and exits cleanly.
     const allExits = events.filter(e => e.event === 'worker_exited');
-    const realCrashes = allExits.filter(e => (e as any).code !== 0 && (e as any).code !== undefined);
+    const realCrashes = allExits.filter(e => classifyWorkerExit(e as { code?: number | null }) === 'crash');
     const cleanRestarts = allExits.length - realCrashes.length;
     const crashes24h = realCrashes.length;
     const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
