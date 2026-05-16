@@ -594,6 +594,58 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(phantomPage[0].deleted_at).not.toBeNull();
   });
 
+  itHomed('preserves canonical body when the .md file is missing on disk (round-17 P2)', async () => {
+    // Codex round-17 P2: when canonical exists in DB only (e.g.
+    // created via MCP put_page on a source with local_path but
+    // never synced to disk), merge-phantoms must NOT stub-create the
+    // file with just a title — that would lose the DB body when the
+    // post-fence importFromFile overwrites it.
+    const realCanonicalBody =
+      'Real canonical body content. '.repeat(20) + 'This must survive the merge intact.';
+    await engine.putPage(
+      'people/db-only-canonical-example',
+      {
+        type: 'person' as any,
+        title: 'DB Only Canonical Example',
+        compiled_truth: realCanonicalBody,
+        frontmatter: {
+          type: 'person',
+          title: 'DB Only Canonical Example',
+          slug: 'people/db-only-canonical-example',
+        },
+      },
+      { sourceId: 'default' },
+    );
+    // Sanity: file must not exist before merge.
+    const filePath = join(brainDir, 'people/db-only-canonical-example.md');
+    expect(existsSync(filePath)).toBe(false);
+
+    // Seed the phantom.
+    await seedPage('db-only-canonical', 'person');
+    await seedFact('db-only-canonical', 'A fact about the canonical.');
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(1);
+    expect(result.merged[0].canonical).toBe('people/db-only-canonical-example');
+
+    // Canonical's body survived the merge.
+    const surviving = await engine.executeRaw<{ compiled_truth: string }>(
+      `SELECT compiled_truth FROM pages WHERE slug = 'people/db-only-canonical-example' AND source_id = 'default'`,
+      [],
+    );
+    expect(surviving[0].compiled_truth).toContain('Real canonical body content.');
+    expect(surviving[0].compiled_truth).toContain('This must survive the merge intact.');
+
+    // The fence on disk has the migrated fact appended to the real body.
+    const onDisk = readFileSync(filePath, 'utf-8');
+    expect(onDisk).toContain('Real canonical body content.');
+    expect(onDisk).toContain('A fact about the canonical.');
+  });
+
   itHomed('preserves valid_until on time-bounded facts during migration (round-10 P2)', async () => {
     // Codex round-10 P2: when a phantom fact has an explicit
     // `valid_until` (e.g. "alice will be on sabbatical until

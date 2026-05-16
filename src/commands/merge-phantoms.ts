@@ -50,7 +50,9 @@
  * Plan: ~/.claude/plans/mossy-popping-crown.md D7 + D9 (codex P2).
  */
 
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { serializeMarkdown } from '../core/markdown.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import {
   tryPrefixExpansion,
@@ -336,6 +338,39 @@ export async function runMergePhantomsCore(
       embedding: tryParseEmbedding(fr.embedding),
       sessionId: fr.source_session,
     }));
+
+    // Codex round-17 P2: if the canonical page exists in the DB but
+    // its markdown file is MISSING on disk (e.g. created via the
+    // MCP put_page op on a source with local_path but never synced
+    // to disk), writeFactsToFence would stub-create a NEW markdown
+    // file containing only the title. The subsequent importFromFile
+    // would then OVERWRITE the canonical's existing pages.compiled_truth
+    // with the stub body. Data loss.
+    //
+    // Fix: read the canonical's existing DB body and materialize it
+    // to disk BEFORE writeFactsToFence runs. writeFactsToFence then
+    // sees the canonical file and appends to its fence rather than
+    // stub-creating.
+    const canonicalFilePath = join(localPath, `${canonical}.md`);
+    if (!existsSync(canonicalFilePath)) {
+      const canonicalPage = await engine.getPage(canonical, { sourceId: opts.sourceId });
+      if (canonicalPage) {
+        mkdirSync(dirname(canonicalFilePath), { recursive: true });
+        const tags = Array.isArray(canonicalPage.frontmatter?.tags)
+          ? (canonicalPage.frontmatter!.tags as string[])
+          : [];
+        const body = serializeMarkdown(
+          (canonicalPage.frontmatter as Record<string, unknown>) ?? {},
+          canonicalPage.compiled_truth ?? '',
+          canonicalPage.timeline ?? '',
+          { type: canonicalPage.type, title: canonicalPage.title, tags },
+        );
+        writeFileSync(canonicalFilePath, body, 'utf-8');
+      }
+      // If canonicalPage is null we silently fall through — the
+      // canonical_missing skip earlier in the loop already covered
+      // the "no DB row" case, so reaching here means there IS a row.
+    }
 
     const fenceResult = await writeFactsToFence(
       engine,
