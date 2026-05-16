@@ -215,6 +215,38 @@ describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
     expect(result).toBe('people/alice-example');
   });
 
+  it('preserves a TERSE real top-level page (one sentence) (round-11 P2)', async () => {
+    // Codex round-11 P2: a 50-char threshold misclassifies terse but
+    // intentional pages (e.g. `# RAG` + a one-sentence note). The
+    // fix is threshold = 0 — only the literal stub shape (frontmatter
+    // + H1 + maybe an empty fence) is a stub. Any user content beyond
+    // that, however short, makes the page real.
+    await engine.putPage(
+      'rag-terse',
+      {
+        type: 'concept' as any,
+        title: 'RAG Terse',
+        compiled_truth: '# RAG Terse\n\nLook it up.',
+        frontmatter: { type: 'concept', title: 'RAG Terse', slug: 'rag-terse' },
+      },
+      { sourceId: 'default' },
+    );
+    await engine.putPage(
+      'concepts/rag-terse-example',
+      {
+        type: 'concept' as any,
+        title: 'RAG Terse Example',
+        compiled_truth: '# RAG Terse Example',
+        frontmatter: { type: 'concept', title: 'RAG Terse Example', slug: 'concepts/rag-terse-example' },
+      },
+      { sourceId: 'default' },
+    );
+    // The 10-char "Look it up." should be enough to keep the bare
+    // page intact even with the canonical candidate present.
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'rag-terse');
+    expect(result).toBe('rag-terse');
+  });
+
   it('preserves exact bare-slug match for a REAL top-level page (round-8 P2 #2)', async () => {
     // Codex round-8 P2 #2: when a user has a legitimate top-level
     // `rag-real` page with real body content AND a `concepts/rag-real`

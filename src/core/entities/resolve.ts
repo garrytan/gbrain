@@ -131,11 +131,19 @@ export const DEFAULT_PREFIX_EXPANSION_DIRS = ['people', 'companies', 'deals', 't
 
 /**
  * Body-content threshold — anything above this is treated as a real
- * user page rather than a v0.34.5-era stub. Stubs from `stubEntityPage`
- * in fence-write.ts run well under 50 chars after fence-content is
- * stripped; a real page has hundreds.
+ * user page rather than a v0.34.5-era stub.
+ *
+ * Threshold is 0 (codex round-11 P2): stubs from `stubEntityPage` in
+ * fence-write.ts produce exactly `# Title\n` after the frontmatter,
+ * which strips to "" via the regex chain below. Any non-empty
+ * remainder means the user wrote something — even one sentence — and
+ * the page should be preserved.
+ *
+ * A previous 50-char threshold misclassified terse hand-written pages
+ * (e.g. `# RAG` + a single sentence). The strict-zero version flips
+ * the contract: "stub iff nothing-but-stub-shape remains."
  */
-export const PHANTOM_STUB_MAX_BODY_CHARS = 50;
+export const PHANTOM_STUB_MAX_BODY_CHARS = 0;
 
 /**
  * Strip frontmatter, H1 title, and the v0.32.2 facts-fence MARKERS
