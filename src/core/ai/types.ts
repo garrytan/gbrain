@@ -15,7 +15,8 @@ export type TouchpointKind =
   | 'chunking'
   | 'transcription'
   | 'enrichment'
-  | 'improve';
+  | 'improve'
+  | 'reranker';
 
 export type Implementation =
   | 'native-openai'
@@ -126,6 +127,30 @@ export interface ExpansionTouchpoint {
  * unstable tool_call_id behavior across replays. supports_subagent_loop is the
  * stricter signal that subagent.ts asserts.
  */
+/**
+ * Reranker touchpoint (v0.35.0.0+): cross-encoder rerankers that take a query
+ * + N documents and return a relevance-score-sorted index list. Slots into
+ * `applyReranker()` in src/core/search/rerank.ts between RRF dedup and
+ * token-budget enforcement.
+ *
+ * Reranking is NOT in the AI SDK's abstraction — `gateway.rerank()` makes a
+ * native HTTP call. The recipe carries auth + base URL + model allowlist; the
+ * gateway uses `recipe.auth_env.required[0]` for the Bearer token and posts to
+ * `${recipe.base_url_default}/models/rerank` (or the recipe-specific path).
+ *
+ * `max_payload_bytes` is the upstream's per-request size cap. gateway.rerank()
+ * pre-flights the body size and throws RerankError with reason
+ * 'payload_too_large' when over-cap; applyReranker catches this and falls
+ * back to RRF order (fail-open).
+ */
+export interface RerankerTouchpoint {
+  models: string[];
+  default_model: string;
+  cost_per_1m_tokens_usd?: number;
+  price_last_verified?: string;
+  max_payload_bytes: number;
+}
+
 export interface ChatTouchpoint {
   models: string[];
   /** Provider returns native function/tool calling. */
@@ -164,6 +189,7 @@ export interface Recipe {
     embedding?: EmbeddingTouchpoint;
     expansion?: ExpansionTouchpoint;
     chat?: ChatTouchpoint;
+    reranker?: RerankerTouchpoint;
   };
   /**
    * Optional alias map for friendlier `provider:model` strings.
@@ -251,6 +277,13 @@ export interface AIGatewayConfig {
   expansion_model?: string;
   /** Default chat model for `gateway.chat()` callers (subagent default). */
   chat_model?: string;
+  /**
+   * v0.35.0.0+: default reranker model for `gateway.rerank()` callers. As
+   * `'provider:model'` (e.g. `'zeroentropyai:zerank-2'`). Resolved at
+   * configure time and re-resolved by reconfigureGatewayWithEngine() when
+   * mode-bundle or config-key overrides change.
+   */
+  reranker_model?: string;
   /**
    * Optional silent-refusal fallback chain ("provider:modelId" entries).
    * Plumbed for `chatWithFallback()` (commit 3). Blocked from critic/judge/

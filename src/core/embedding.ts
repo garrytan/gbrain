@@ -8,6 +8,7 @@
 import {
   embed as gatewayEmbed,
   embedOne as gatewayEmbedOne,
+  embedQuery as gatewayEmbedQuery,
   getEmbeddingModel as gatewayGetModel,
   getEmbeddingDimensions as gatewayGetDims,
 } from './ai/gateway.ts';
@@ -18,9 +19,20 @@ import {
 export { embedMultimodal } from './ai/gateway.ts';
 export type { MultimodalInput } from './ai/types.ts';
 
-/** Embed one text. */
+/** Embed one text (document-side for asymmetric providers). */
 export async function embed(text: string): Promise<Float32Array> {
   return gatewayEmbedOne(text);
+}
+
+/**
+ * v0.35.0.0+: embed a single text on the QUERY side. For asymmetric providers
+ * (ZE zembed-1, Voyage v3+) this routes `input_type: 'query'` through the
+ * embed seam so the provider returns query-side vectors. For symmetric
+ * providers (OpenAI text-3, DashScope, Zhipu) the field is dropped — no
+ * behavior change. Used by hybrid.ts on the search hot path.
+ */
+export async function embedQuery(text: string): Promise<Float32Array> {
+  return gatewayEmbedQuery(text);
 }
 
 export interface EmbedBatchOptions {
@@ -29,6 +41,21 @@ export interface EmbedBatchOptions {
    * tick a reporter; Minion handlers can call job.updateProgress here.
    */
   onBatchComplete?: (done: number, total: number) => void;
+  /**
+   * v0.33.4 (D8): propagate the caller's `AbortSignal` into Vercel AI SDK's
+   * `embedMany({abortSignal})` so a wall-clock budget can cancel mid-fetch.
+   * Without this, a worker stuck mid-HTTP on a ~30s OpenAI timeout ignores
+   * the budget until the fetch resolves.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * v0.33.4 (D4a): cap on AI SDK's per-call retries. Default in `embedMany`
+   * is 2 (so up to 3 attempts). Pass `0` from higher-level wrappers that
+   * own their own retry policy, otherwise wrapper × SDK retries stack
+   * (e.g. 3 SDK attempts × 5 wrapper attempts = 15 cycles per embedBatch)
+   * and amplify rate-limit pressure.
+   */
+  maxRetries?: number;
 }
 
 /**
@@ -43,14 +70,20 @@ export async function embedBatch(
   options: EmbedBatchOptions = {},
 ): Promise<Float32Array[]> {
   if (!texts || texts.length === 0) return [];
+  // Build the gateway-call passthrough once; undefined fields stay undefined
+  // so non-opt-in callers see unchanged pre-v0.33.4 behavior.
+  const gwOpts = {
+    ...(options.abortSignal !== undefined && { abortSignal: options.abortSignal }),
+    ...(options.maxRetries !== undefined && { maxRetries: options.maxRetries }),
+  };
   // Fast path: small batch, no progress callback — single gateway call.
   if (texts.length <= BATCH_SIZE && !options.onBatchComplete) {
-    return gatewayEmbed(texts);
+    return gatewayEmbed(texts, gwOpts);
   }
   const results: Float32Array[] = [];
   for (let i = 0; i < texts.length; i += BATCH_SIZE) {
     const slice = texts.slice(i, i + BATCH_SIZE);
-    const out = await gatewayEmbed(slice);
+    const out = await gatewayEmbed(slice, gwOpts);
     results.push(...out);
     options.onBatchComplete?.(results.length, texts.length);
   }

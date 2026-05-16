@@ -35,7 +35,9 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
     expect(Object.isFrozen(MODE_BUNDLES.tokenmax)).toBe(true);
   });
 
-  // The 3x7 cell-by-cell assertion. The methodology doc cites these.
+  // The cell-by-cell assertion. The methodology doc cites these.
+  // v0.35.0.0+ extended with 5 reranker fields. tokenmax flips reranker on;
+  // conservative + balanced keep it off until eval data backs a change.
   test('conservative bundle values are canonical', () => {
     expect(MODE_BUNDLES.conservative).toEqual({
       cache_enabled: true,
@@ -45,6 +47,11 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       tokenBudget: 4000,
       expansion: false,
       searchLimit: 10,
+      reranker_enabled: false,
+      reranker_model: 'zeroentropyai:zerank-2',
+      reranker_top_n_in: 30,
+      reranker_top_n_out: null,
+      reranker_timeout_ms: 5000,
     });
   });
 
@@ -57,6 +64,11 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       tokenBudget: 12000,
       expansion: false,
       searchLimit: 25,
+      reranker_enabled: false,
+      reranker_model: 'zeroentropyai:zerank-2',
+      reranker_top_n_in: 30,
+      reranker_top_n_out: null,
+      reranker_timeout_ms: 5000,
     });
   });
 
@@ -69,6 +81,11 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       tokenBudget: undefined,
       expansion: true,
       searchLimit: 50,
+      reranker_enabled: true,
+      reranker_model: 'zeroentropyai:zerank-2',
+      reranker_top_n_in: 30,
+      reranker_top_n_out: null,
+      reranker_timeout_ms: 5000,
     });
   });
 
@@ -247,7 +264,10 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
   });
 
   test('KNOBS_HASH_VERSION constant exposed for migrations to bump on schema change', () => {
-    expect(KNOBS_HASH_VERSION).toBe(1);
+    // v0.35.0.0+ bumped 1→2 to fold reranker fields into the cache key.
+    // CDX2-F14: a timeout change from 5s to 100ms changes search behavior
+    // (more fail-opens) so stale cache rows must invalidate.
+    expect(KNOBS_HASH_VERSION).toBe(2);
   });
 });
 

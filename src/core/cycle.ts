@@ -55,6 +55,7 @@ import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 
 export type CyclePhase =
   | 'lint' | 'backlinks' | 'sync' | 'synthesize' | 'extract' | 'extract_facts'
+  | 'resolve_symbol_edges'
   | 'patterns' | 'recompute_emotional_weight' | 'consolidate'
   | 'embed' | 'orphans' | 'purge';
 
@@ -70,6 +71,13 @@ export const ALL_PHASES: CyclePhase[] = [
   // The empty-fence guard refuses to run if pre-v51 legacy facts are
   // pending the v0_32_2 backfill (Codex R2-#7).
   'extract_facts',
+  // v0.33.3 W0c — within-file two-pass symbol resolution. Runs AFTER
+  // extract + extract_facts so any code edges sync emitted (still bare-token)
+  // get resolved into {resolved_chunk_id: N} / {ambiguous: true,
+  // candidates: [...]} edge_metadata entries before downstream phases read
+  // the graph. Quick-cycle compatible: each invocation walks at most
+  // BATCH_SIZE*10 chunks where edges_backfilled_at IS NULL or stale.
+  'resolve_symbol_edges',
   'patterns',
   // v0.29 — runs AFTER extract + synthesize so it sees the union of
   // sync-touched + synthesize-written pages with fresh tag + take state.
@@ -104,6 +112,8 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'extract',
   // v0.32.2 — wipes + re-inserts facts per affected page.
   'extract_facts',
+  // v0.33.3 W0c — writes code_edges_symbol.edge_metadata + content_chunks.edges_backfilled_at.
+  'resolve_symbol_edges',
   'patterns',
   // v0.29 — writes pages.emotional_weight column.
   'recompute_emotional_weight',
@@ -171,6 +181,10 @@ export interface CycleReport {
     patterns_written: number;
     /** v0.29: number of pages whose emotional_weight was (re)computed. */
     pages_emotional_weight_recomputed: number;
+    /** v0.34: number of code edges resolved (1 candidate) by the resolve_symbol_edges phase. */
+    edges_resolved: number;
+    /** v0.34: number of code edges marked ambiguous (2+ candidates) by the resolve_symbol_edges phase. */
+    edges_ambiguous: number;
     /** v0.26.5: number of source rows hard-deleted by the purge phase. */
     purged_sources_count: number;
     /** v0.26.5: number of page rows hard-deleted by the purge phase. */
@@ -716,6 +730,73 @@ async function runPhaseExtractFacts(
   }
 }
 
+/**
+ * v0.33.3 W0c — resolve_symbol_edges phase.
+ *
+ * Walks at most BATCH_SIZE*10 chunks per invocation where
+ * `edges_backfilled_at` is NULL or older than EDGE_EXTRACTOR_VERSION_TS.
+ * Resumable across cycles via the watermark; quick-cycle compatible.
+ *
+ * Source scoping: walks every registered source. Pre-v0.33.3 silently
+ * crossed sources; now each source is walked independently so symbol
+ * resolution stays within its source boundary (matches the W0a fix).
+ */
+async function runPhaseResolveSymbolEdges(
+  engine: BrainEngine,
+  dryRun: boolean,
+): Promise<PhaseResult> {
+  if (dryRun) {
+    return {
+      phase: 'resolve_symbol_edges',
+      status: 'skipped',
+      duration_ms: 0,
+      summary: 'dry-run: resolve_symbol_edges phase skipped',
+      details: { dryRun: true, reason: 'no_dry_run_support' },
+    };
+  }
+  try {
+    const { resolveSymbolEdgesIncremental } = await import('./chunkers/symbol-resolver.ts');
+    const { listSources } = await import('./sources-ops.ts');
+    const sources = await listSources(engine);
+    let totalChunks = 0;
+    let totalResolved = 0;
+    let totalAmbiguous = 0;
+    let totalUnmatched = 0;
+    for (const s of sources) {
+      const stats = await resolveSymbolEdgesIncremental(engine, { sourceId: s.id });
+      totalChunks += stats.chunks_walked;
+      totalResolved += stats.edges_resolved;
+      totalAmbiguous += stats.edges_ambiguous;
+      totalUnmatched += stats.edges_unmatched;
+    }
+    return {
+      phase: 'resolve_symbol_edges',
+      status: 'ok',
+      duration_ms: 0,
+      summary:
+        totalChunks === 0
+          ? 'no chunks needed symbol resolution'
+          : `${totalChunks} chunk(s) walked; resolved ${totalResolved}, ambiguous ${totalAmbiguous}, unmatched ${totalUnmatched}`,
+      details: {
+        chunks_walked: totalChunks,
+        edges_resolved: totalResolved,
+        edges_ambiguous: totalAmbiguous,
+        edges_unmatched: totalUnmatched,
+        sources_walked: sources.length,
+      },
+    };
+  } catch (e) {
+    return {
+      phase: 'resolve_symbol_edges',
+      status: 'fail',
+      duration_ms: 0,
+      summary: 'resolve_symbol_edges phase failed',
+      details: {},
+      error: makeErrorFromException(e),
+    };
+  }
+}
+
 async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean): Promise<PhaseResult> {
   try {
     const { runEmbedCore } = await import('../commands/embed.ts');
@@ -1088,6 +1169,31 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
+    // ── v0.33.3 W0c: resolve_symbol_edges (between extract_facts + patterns) ──
+    // Walks chunks whose edges_backfilled_at is null/stale. Resumable
+    // across cycles via the watermark. Quick-cycle compatible — caps at
+    // BATCH_SIZE * 10 chunks per invocation so a 60s watchdog tick stays
+    // responsive even on a 100K-chunk brain.
+    if (phases.includes('resolve_symbol_edges')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'resolve_symbol_edges',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.resolve_symbol_edges');
+        const { result, duration_ms } = await timePhase(() => runPhaseResolveSymbolEdges(engine, dryRun));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
     // ── Phase 6: patterns (v0.23) ───────────────────────────────
     // MUST run after extract so the graph state reads fresh — subagent
     // put_page calls in synthesize set ctx.remote=true, so auto-link
@@ -1285,6 +1391,8 @@ function emptyTotals(): CycleReport['totals'] {
     synth_pages_written: 0,
     patterns_written: 0,
     pages_emotional_weight_recomputed: 0,
+    edges_resolved: 0,
+    edges_ambiguous: 0,
     purged_sources_count: 0,
     purged_pages_count: 0,
     facts_consolidated: 0,
@@ -1318,6 +1426,9 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
       t.patterns_written = Number(p.details.patterns_written ?? 0);
     } else if (p.phase === 'recompute_emotional_weight' && p.details) {
       t.pages_emotional_weight_recomputed = Number(p.details.pages_recomputed ?? 0);
+    } else if (p.phase === 'resolve_symbol_edges' && p.details) {
+      t.edges_resolved = Number(p.details.edges_resolved ?? 0);
+      t.edges_ambiguous = Number(p.details.edges_ambiguous ?? 0);
     } else if (p.phase === 'purge' && p.details) {
       t.purged_sources_count = Number(p.details.purged_sources_count ?? 0);
       t.purged_pages_count = Number(p.details.purged_pages_count ?? 0);

@@ -57,6 +57,7 @@ function makeOpCtx(engine: PGLiteEngine): OperationContext {
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
     remote: false,
+    sourceId: 'default',
   };
 }
 

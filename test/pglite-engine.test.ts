@@ -392,6 +392,135 @@ describe('PGLiteEngine: Chunks', () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────
+// v0.33.4 D7 + IRON RULE — countStaleChunks + listStaleChunks contract
+// PGLite parity for the Postgres E2E in test/e2e/embed-stale-pagination.
+// Pins the tuple-compare `(cc.page_id, cc.chunk_index) > ($1, $2)` against
+// the WASM build (Postgres 17.5 in WASM has had quirks here historically).
+// ────────────────────────────────────────────────────────────────────────
+
+describe('PGLiteEngine: stale chunk pagination (D7 + REGRESSION)', () => {
+  beforeEach(truncateAll);
+
+  test('countStaleChunks: zero-state baseline', async () => {
+    expect(await engine.countStaleChunks()).toBe(0);
+  });
+
+  test('countStaleChunks counts chunks with NULL embedding only', async () => {
+    await engine.putPage('test/stale-a', testPage);
+    await engine.upsertChunks('test/stale-a', [
+      { chunk_index: 0, chunk_text: 'no embed', chunk_source: 'compiled_truth' },
+      { chunk_index: 1, chunk_text: 'has embed', chunk_source: 'compiled_truth', embedding: new Float32Array(1536).fill(0.1) },
+    ]);
+    expect(await engine.countStaleChunks()).toBe(1);
+  });
+
+  test('listStaleChunks: cursor pagination across page boundaries', async () => {
+    // Seed 3 pages × 3 chunks = 9 stale rows; walk with batchSize=2.
+    for (const slug of ['c-a', 'c-b', 'c-c']) {
+      await engine.putPage(`test/${slug}`, testPage);
+      await engine.upsertChunks(`test/${slug}`, [
+        { chunk_index: 0, chunk_text: 'a', chunk_source: 'compiled_truth' },
+        { chunk_index: 1, chunk_text: 'b', chunk_source: 'compiled_truth' },
+        { chunk_index: 2, chunk_text: 'c', chunk_source: 'compiled_truth' },
+      ]);
+    }
+    const visited = new Set<string>();
+    let after_pid = 0;
+    let after_idx = -1;
+    let lastPid = -1;
+    let lastIdx = -1;
+    let cursorMonotonic = true;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const batch = await engine.listStaleChunks({
+        batchSize: 2,
+        afterPageId: after_pid,
+        afterChunkIndex: after_idx,
+      });
+      if (batch.length === 0) break;
+      for (const row of batch) {
+        const key = `${row.page_id}::${row.chunk_index}`;
+        expect(visited.has(key)).toBe(false);
+        visited.add(key);
+        const advance = row.page_id > lastPid
+          || (row.page_id === lastPid && row.chunk_index > lastIdx);
+        if (!advance) cursorMonotonic = false;
+        lastPid = row.page_id;
+        lastIdx = row.chunk_index;
+      }
+      const tail = batch[batch.length - 1];
+      after_pid = tail.page_id;
+      after_idx = tail.chunk_index;
+      if (batch.length < 2) break;
+    }
+    expect(visited.size).toBe(9);
+    expect(cursorMonotonic).toBe(true);
+  });
+
+  test('listStaleChunks: page split across batches (1 page, 5 chunks, batchSize=2)', async () => {
+    await engine.putPage('test/split', testPage);
+    await engine.upsertChunks('test/split', [
+      { chunk_index: 0, chunk_text: 'a', chunk_source: 'compiled_truth' },
+      { chunk_index: 1, chunk_text: 'b', chunk_source: 'compiled_truth' },
+      { chunk_index: 2, chunk_text: 'c', chunk_source: 'compiled_truth' },
+      { chunk_index: 3, chunk_text: 'd', chunk_source: 'compiled_truth' },
+      { chunk_index: 4, chunk_text: 'e', chunk_source: 'compiled_truth' },
+    ]);
+    const collected: number[] = [];
+    let after_pid = 0;
+    let after_idx = -1;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const batch = await engine.listStaleChunks({
+        batchSize: 2,
+        afterPageId: after_pid,
+        afterChunkIndex: after_idx,
+      });
+      if (batch.length === 0) break;
+      for (const r of batch) collected.push(r.chunk_index);
+      const tail = batch[batch.length - 1];
+      after_pid = tail.page_id;
+      after_idx = tail.chunk_index;
+      if (batch.length < 2) break;
+    }
+    expect(collected).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  test('countStaleChunks + listStaleChunks honor sourceId filter (D7)', async () => {
+    // PGLite default seed has 'default' source. Add 'other-source' and
+    // seed identical slugs in both.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ('other', 'other', '/tmp/other') ON CONFLICT (id) DO NOTHING`,
+    );
+    // Default source page via the engine API.
+    await engine.putPage('test/shared', testPage, { sourceId: 'default' });
+    await engine.upsertChunks('test/shared', [
+      { chunk_index: 0, chunk_text: 'default-0', chunk_source: 'compiled_truth' },
+      { chunk_index: 1, chunk_text: 'default-1', chunk_source: 'compiled_truth' },
+    ], { sourceId: 'default' });
+    // Same slug, different source.
+    await engine.putPage('test/shared', testPage, { sourceId: 'other' });
+    await engine.upsertChunks('test/shared', [
+      { chunk_index: 0, chunk_text: 'other-0', chunk_source: 'compiled_truth' },
+      { chunk_index: 1, chunk_text: 'other-1', chunk_source: 'compiled_truth' },
+      { chunk_index: 2, chunk_text: 'other-2', chunk_source: 'compiled_truth' },
+    ], { sourceId: 'other' });
+
+    expect(await engine.countStaleChunks()).toBe(5);
+    expect(await engine.countStaleChunks({ sourceId: 'default' })).toBe(2);
+    expect(await engine.countStaleChunks({ sourceId: 'other' })).toBe(3);
+
+    const defaultRows = await engine.listStaleChunks({ sourceId: 'default', batchSize: 100 });
+    expect(defaultRows).toHaveLength(2);
+    for (const r of defaultRows) expect(r.source_id).toBe('default');
+
+    const otherRows = await engine.listStaleChunks({ sourceId: 'other', batchSize: 100 });
+    expect(otherRows).toHaveLength(3);
+    for (const r of otherRows) expect(r.source_id).toBe('other');
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 // Links + Graph
 // ─────────────────────────────────────────────────────────────────

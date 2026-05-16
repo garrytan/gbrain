@@ -46,6 +46,10 @@ const DEFAULT_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
 const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
+// v0.35.0.0+: reranker default. Used only when search.reranker.enabled is set
+// AND no explicit reranker_model is configured. Mode bundles' per-mode
+// `reranker_model` default to this same value but can be overridden.
+const DEFAULT_RERANKER_MODEL = 'zeroentropyai:zerank-2';
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
@@ -157,6 +161,24 @@ export class VoyageResponseTooLargeError extends Error {
   }
 }
 
+/**
+ * v0.35.0.0+: same defense pattern as Voyage's cap but tagged separately so the
+ * `instanceof` rethrow inside zeroEntropyCompatFetch only matches its own
+ * throws (avoids cross-recipe entanglement if both shims fire in the same
+ * process). Plan called for unifying these into one
+ * `EmbeddingResponseTooLargeError` class — descoped because
+ * `test/voyage-response-cap.test.ts` does structural source-text greps
+ * pinning the Voyage name. Unification is a follow-up cleanup.
+ */
+const MAX_ZEROENTROPY_RESPONSE_BYTES = 256 * 1024 * 1024;
+
+export class ZeroEntropyResponseTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ZeroEntropyResponseTooLargeError';
+  }
+}
+
 // ---- Unified auth resolution (D12=A) ----
 //
 // Pre-v0.32, openai-compatible auth was duplicated across instantiateEmbedding,
@@ -181,7 +203,7 @@ export class VoyageResponseTooLargeError extends Error {
 export function defaultResolveAuth(
   recipe: Recipe,
   env: Record<string, string | undefined>,
-  touchpoint: 'embedding' | 'expansion' | 'chat',
+  touchpoint: 'embedding' | 'expansion' | 'chat' | 'reranker',
 ): { headerName: string; token: string } {
   const required = recipe.auth_env?.required ?? [];
   const optional = recipe.auth_env?.optional ?? [];
@@ -220,7 +242,7 @@ export function defaultResolveAuth(
 export function applyResolveAuth(
   recipe: Recipe,
   cfg: AIGatewayConfig,
-  touchpoint: 'embedding' | 'expansion' | 'chat',
+  touchpoint: 'embedding' | 'expansion' | 'chat' | 'reranker',
 ): { apiKey?: string; headers?: Record<string, string> } {
   const resolved = recipe.resolveAuth
     ? recipe.resolveAuth(cfg.env)
@@ -276,6 +298,11 @@ export function configureGateway(config: AIGatewayConfig): void {
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     chat_model: config.chat_model ?? DEFAULT_CHAT_MODEL,
     chat_fallback_chain: config.chat_fallback_chain,
+    // v0.35.0.0+: reranker_model stays undefined when unset — reranker is
+    // opt-in and pulling DEFAULT_RERANKER_MODEL into every gateway start
+    // would silently register a third-party model id on brains that never
+    // wanted it. isAvailable('reranker') returns false when unset.
+    reranker_model: config.reranker_model,
     base_urls: config.base_urls,
     env: config.env,
   };
@@ -289,6 +316,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     _config.embedding_multimodal_model,
     _config.expansion_model,
     _config.chat_model,
+    _config.reranker_model,
     ...(_config.chat_fallback_chain ?? []),
   ]) {
     if (m) registerExtendedModel(m);
@@ -347,6 +375,7 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
     _config.embedding_multimodal_model,
     _config.expansion_model,
     _config.chat_model,
+    _config.reranker_model,
     ...(_config.chat_fallback_chain ?? []),
   ]) {
     if (m) registerExtendedModel(m);
@@ -484,6 +513,17 @@ export function getChatFallbackChain(): string[] {
 }
 
 /**
+ * v0.35.0.0+: configured reranker model. Returns undefined when no reranker
+ * is configured (default for installs that haven't opted in). Callers must
+ * check before invoking gateway.rerank() — `applyReranker` in
+ * src/core/search/rerank.ts does the existence check via isAvailable
+ * ('reranker') first.
+ */
+export function getRerankerModel(): string | undefined {
+  return requireConfig().reranker_model;
+}
+
+/**
  * Check whether a touchpoint can be served given the current config.
  * Replaces scattered `!process.env.OPENAI_API_KEY` checks (Codex C3).
  */
@@ -503,6 +543,8 @@ export function isAvailable(touchpoint: TouchpointKind): boolean {
         ? getExpansionModel()
         : touchpoint === 'chat'
         ? getChatModel()
+        : touchpoint === 'reranker'
+        ? getRerankerModel() ?? null
         : null;
     if (!modelStr) return false;
     const { recipe } = resolveRecipe(modelStr);
@@ -510,7 +552,7 @@ export function isAvailable(touchpoint: TouchpointKind): boolean {
     // Recipe must actually support the requested touchpoint.
     // Anthropic declares only expansion + chat (no embedding model); requesting
     // embedding from an anthropic-configured brain is unavailable regardless of auth.
-    const touchpointConfig = recipe.touchpoints[touchpoint as 'embedding' | 'expansion' | 'chat'];
+    const touchpointConfig = recipe.touchpoints[touchpoint as 'embedding' | 'expansion' | 'chat' | 'reranker'];
     if (!touchpointConfig) return false;
     // Openai-compat recipes with empty models list require a user-provided
     // model. Either the recipe explicitly opts in via
@@ -677,6 +719,165 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
   }
 }) as unknown as typeof fetch;
 
+/**
+ * ZeroEntropy compatibility shim. ZE's `/v1/models/embed` endpoint is NOT
+ * OpenAI-compatible at the wire level:
+ *  - Path: AI SDK adapter calls `${base_url}/embeddings`; ZE wants
+ *    `${base_url}/models/embed`. Rewrite the URL path.
+ *  - Body: inject `input_type: 'document'` (or `'query'` when threaded via
+ *    providerOptions.openaiCompatible.input_type) and `encoding_format:
+ *    'float'` (don't trust SDK default; strip any base64 caller injected
+ *    to keep the response rewriter simple).
+ *  - Response: ZE returns `{results: [{embedding: float[]}], usage:
+ *    {total_bytes, total_tokens}}`. AI SDK's openai-compatible Zod schema
+ *    expects `{data: [{embedding, index}], usage: {prompt_tokens, ...}}`.
+ *    Rewrite both shapes.
+ *
+ * Layer 1 / Layer 2 OOM caps mirror the Voyage pattern; ZE embeddings are
+ * float[] (not base64), so the Layer 2 cap compares against the JSON
+ * payload size of each embedding rather than a base64 string length.
+ */
+const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  // OUTBOUND: normalize URL, rewrite path /embeddings → /models/embed, then
+  // rewrite body. fetch accepts RequestInfo (string | Request) | URL; we
+  // handle all three so a `new Request(...)`-shaped caller works.
+  let urlString: string;
+  let baseInit: RequestInit = init ?? {};
+  if (typeof input === 'string') {
+    urlString = input;
+  } else if (input instanceof URL) {
+    urlString = input.toString();
+  } else {
+    // input is a Request — pull URL + headers + method + body off it.
+    urlString = input.url;
+    baseInit = {
+      method: input.method,
+      headers: input.headers,
+      // Reading body off a Request consumes it; the test seam passes
+      // string/URL so this branch is rarely hit in practice. When it is,
+      // we copy what we can and trust the caller passes the body via init.
+      ...(init ?? {}),
+    };
+  }
+  try {
+    const u = new URL(urlString);
+    // Replace the trailing path segment '/embeddings' with '/models/embed'.
+    // `base_url_default` ends with `/v1`, so the SDK calls `/v1/embeddings`
+    // and we rewrite to `/v1/models/embed`. Use endsWith to avoid mangling
+    // any future ZE endpoints that happen to contain 'embeddings' as a
+    // substring.
+    if (u.pathname.endsWith('/embeddings')) {
+      u.pathname = u.pathname.slice(0, -'/embeddings'.length) + '/models/embed';
+      urlString = u.toString();
+    }
+  } catch {
+    // Malformed URL — let fetch handle the error.
+  }
+
+  // Rewrite request body: inject input_type + encoding_format, strip any
+  // base64 the caller smuggled in.
+  if (baseInit.body && typeof baseInit.body === 'string') {
+    try {
+      const parsed = JSON.parse(baseInit.body);
+      if (parsed && typeof parsed === 'object') {
+        let mutated = false;
+        // Force encoding_format: 'float' so the response is a plain
+        // float[] and the response-rewriter doesn't need to base64-decode.
+        if (parsed.encoding_format !== 'float') {
+          parsed.encoding_format = 'float';
+          mutated = true;
+        }
+        // Default input_type when caller didn't thread one (document-side
+        // embedding is the correct default for ingest paths).
+        if (parsed.input_type === undefined) {
+          parsed.input_type = 'document';
+          mutated = true;
+        }
+        if (mutated) {
+          const headers = new Headers(baseInit.headers ?? {});
+          headers.delete('content-length');
+          baseInit = { ...baseInit, body: JSON.stringify(parsed), headers };
+        }
+      }
+    } catch {
+      // Body wasn't JSON — pass through untouched.
+    }
+  }
+
+  const resp = await fetch(urlString, baseInit);
+  if (!resp.ok) return resp;
+  const ct = resp.headers.get('content-type') ?? '';
+  if (!ct.toLowerCase().includes('application/json')) return resp;
+
+  // Layer 1 OOM cap (Content-Length pre-check). Same sizing rationale as
+  // Voyage — 256 MB is "unambiguously not a real ZE response" given
+  // zembed-1's max 2560-dim × 4 bytes × 16K embeddings = ~160 MB raw.
+  const contentLengthHeader = resp.headers.get('content-length');
+  if (contentLengthHeader) {
+    const len = parseInt(contentLengthHeader, 10);
+    if (Number.isFinite(len) && len > MAX_ZEROENTROPY_RESPONSE_BYTES) {
+      throw new ZeroEntropyResponseTooLargeError(
+        `ZeroEntropy response Content-Length=${len} exceeds ` +
+        `${MAX_ZEROENTROPY_RESPONSE_BYTES} bytes — likely compromised endpoint`,
+      );
+    }
+  }
+
+  // INBOUND: rewrite response shape from {results:[{embedding}]} to
+  // {data:[{embedding, index}]} so the AI SDK's openai-compatible schema
+  // validates. Also map usage.total_tokens → prompt_tokens (SDK requires
+  // prompt_tokens when `usage` is present — same divergence Voyage hit at
+  // gateway.ts:655).
+  try {
+    const json: any = await resp.clone().json();
+    if (!json || typeof json !== 'object') return resp;
+    let modified = false;
+    if (Array.isArray(json.results) && !Array.isArray(json.data)) {
+      // Layer 2 OOM cap — per-embedding size. ZE returns float[] arrays,
+      // so we count the elements × 4 bytes (the float32 width).
+      for (const item of json.results) {
+        if (item && Array.isArray(item.embedding)) {
+          const estBytes = item.embedding.length * 4;
+          if (estBytes > MAX_ZEROENTROPY_RESPONSE_BYTES) {
+            throw new ZeroEntropyResponseTooLargeError(
+              `ZeroEntropy embedding exceeds ${MAX_ZEROENTROPY_RESPONSE_BYTES} ` +
+              `bytes (estimated ${estBytes} from ${item.embedding.length} floats)`,
+            );
+          }
+        }
+      }
+      json.data = json.results.map((r: any, i: number) => ({
+        object: 'embedding',
+        embedding: r?.embedding ?? [],
+        index: i,
+      }));
+      delete json.results;
+      modified = true;
+    }
+    if (
+      json.usage &&
+      typeof json.usage === 'object' &&
+      json.usage.prompt_tokens === undefined
+    ) {
+      json.usage.prompt_tokens =
+        typeof json.usage.total_tokens === 'number' ? json.usage.total_tokens : 0;
+      // SDK also expects total_tokens; ZE provides it directly.
+      modified = true;
+    }
+    if (!modified) return resp;
+    return new Response(JSON.stringify(json), {
+      status: resp.status,
+      statusText: resp.statusText,
+      headers: resp.headers,
+    });
+  } catch (err) {
+    // OOM-cap throws MUST propagate. Voyage's pattern: instanceof check on
+    // its own tagged class. Same here — only rethrow our own cap class.
+    if (err instanceof ZeroEntropyResponseTooLargeError) throw err;
+    return resp;
+  }
+}) as unknown as typeof fetch;
+
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -729,7 +930,16 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       // request/response shape) when the recipe doesn't ship its own fetch
       // wrapper via resolveOpenAICompatConfig. Azure recipes ship their own
       // fetch (api-version splice); voyage doesn't — use voyageCompatFetch.
-      const fetchWrapper = compat.fetch ?? (recipe.id === 'voyage' ? voyageCompatFetch : undefined);
+      // ZeroEntropy needs zeroEntropyCompatFetch (URL path + body input_type
+      // + response shape rewrite + OOM caps). Same per-recipe-id branch
+      // pattern as voyage so adding a third compat shim is one more case.
+      const fetchWrapper =
+        compat.fetch ??
+        (recipe.id === 'voyage'
+          ? voyageCompatFetch
+          : recipe.id === 'zeroentropyai'
+          ? zeroEntropyCompatFetch
+          : undefined);
       const client = createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
@@ -785,13 +995,54 @@ const MIN_SUB_BATCH = 1;
  * declared `safety_factor` so a transient miss doesn't permanently cap
  * throughput.
  */
-export async function embed(texts: string[]): Promise<Float32Array[]> {
+/**
+ * Per-call passthroughs for `embed()`. Unifies v0.33.4 cancellation/retry
+ * controls and v0.35.0.0 asymmetric-input plumbing into one interface so
+ * a future passthrough doesn't churn the call signature again.
+ *
+ * All fields are optional; production callers that don't pass them get
+ * unchanged pre-v0.33.4 behavior with document-side encoding (ZE / Voyage
+ * v3+ semantics) as the default.
+ */
+export interface EmbedOpts {
+  /**
+   * v0.33.4: propagated to Vercel AI SDK's `embedMany({abortSignal})`.
+   * When the caller's wall-clock budget fires, an in-flight HTTP request
+   * is cancelled within seconds instead of waiting out the provider's
+   * HTTP timeout (~30s on OpenAI).
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * v0.33.4: propagated to Vercel AI SDK's `embedMany({maxRetries})`.
+   * Default in the SDK is 2 (so up to 3 attempts per call). Pass `0` to
+   * disable SDK retries when a higher-level wrapper owns the retry
+   * policy — otherwise SDK and wrapper retries stack and amplify
+   * rate-limit pressure (3 × N wrapper attempts).
+   */
+  maxRetries?: number;
+  /**
+   * v0.35.0.0: asymmetric retrieval signal. `'query'` routes through
+   * `dimsProviderOptions` so providers that accept query/document
+   * encoding (ZE zembed-1, Voyage v3+) produce query-side vectors.
+   * Symmetric providers (OpenAI text-3, DashScope, Zhipu) ignore the
+   * field. Defaults to undefined (treated as 'document' by the dim
+   * resolver — the correct default for indexing paths).
+   */
+  inputType?: 'query' | 'document';
+}
+
+export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32Array[]> {
   if (!texts || texts.length === 0) return [];
 
   const cfg = requireConfig();
   const { model, recipe, modelId } = await resolveEmbeddingProvider(getEmbeddingModel());
   const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
-  const providerOpts = dimsProviderOptions(recipe.implementation, modelId, cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS);
+  const providerOpts = dimsProviderOptions(
+    recipe.implementation,
+    modelId,
+    cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
+    opts?.inputType,
+  );
   const expected = cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
 
   const embedding = recipe.touchpoints?.embedding;
@@ -807,7 +1058,7 @@ export async function embed(texts: string[]): Promise<Float32Array[]> {
   const allEmbeddings: Float32Array[] = [];
 
   for (const batch of batches) {
-    const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId);
+    const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
     allEmbeddings.push(...result);
   }
 
@@ -925,12 +1176,18 @@ async function embedSubBatch(
   expectedDims: number,
   recipe: Recipe,
   modelId: string,
+  opts?: EmbedOpts,
 ): Promise<Float32Array[]> {
   try {
     const result = await _embedTransport({
       model,
       values: texts,
       providerOptions: providerOpts,
+      // v0.33.4: caller-supplied abortSignal + maxRetries passthrough.
+      // Undefined fields are ignored by the AI SDK so the call shape stays
+      // identical for production callers that don't opt in.
+      ...(opts?.abortSignal !== undefined && { abortSignal: opts.abortSignal }),
+      ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
     });
 
     const first = result.embeddings?.[0];
@@ -950,8 +1207,8 @@ async function embedSubBatch(
     if (isTokenLimitError(err) && texts.length > MIN_SUB_BATCH) {
       shrinkOnMiss(recipe);
       const mid = Math.ceil(texts.length / 2);
-      const left = await embedSubBatch(texts.slice(0, mid), model, providerOpts, expectedDims, recipe, modelId);
-      const right = await embedSubBatch(texts.slice(mid), model, providerOpts, expectedDims, recipe, modelId);
+      const left = await embedSubBatch(texts.slice(0, mid), model, providerOpts, expectedDims, recipe, modelId, opts);
+      const right = await embedSubBatch(texts.slice(mid), model, providerOpts, expectedDims, recipe, modelId, opts);
       return [...left, ...right];
     }
     throw normalizeAIError(err, `embed(${recipe.id}:${modelId})`);
@@ -961,6 +1218,26 @@ async function embedSubBatch(
 /** Embed one text (convenience wrapper). */
 export async function embedOne(text: string): Promise<Float32Array> {
   const [v] = await embed([text]);
+  return v;
+}
+
+/**
+ * v0.35.0.0+: embed a single text on the QUERY side of an asymmetric retrieval
+ * pipeline. Threads `inputType: 'query'` into `dimsProviderOptions`, which
+ * for ZE (`zembed-1`) and Voyage v3+ models emits `input_type: 'query'` into
+ * the request body so the provider returns query-side vectors. For
+ * symmetric providers (OpenAI text-3, DashScope, Zhipu) the field is dropped
+ * — no behavior change.
+ *
+ * Two call sites in v0.33.2: vector seed embed at hybrid.ts:400 (cache miss
+ * path) and cache lookup embed at hybrid.ts:629. All ingest paths (sync,
+ * import, embed CLI) continue to use `embed()` which defaults to document
+ * encoding.
+ *
+ * Returns a single Float32Array (not a batch).
+ */
+export async function embedQuery(text: string): Promise<Float32Array> {
+  const [v] = await embed([text], { inputType: 'query' });
   return v;
 }
 
@@ -1016,11 +1293,18 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
     );
   }
 
-  // Voyage-specific HTTP path. When v0.28 lands additional providers, branch
-  // on recipe.id and route to each provider's multimodal endpoint.
+  // v0.34.1 (#875): route by recipe.implementation so openai-compat
+  // providers (LiteLLM, Anyscale, vLLM, etc.) reach the standard
+  // /embeddings endpoint with multimodal content arrays. The Voyage
+  // recipe is `openai-compat` per tier but uses its own /multimodalembeddings
+  // path, so we still branch on recipe.id for that one.
+  if (recipe.id !== 'voyage' && recipe.implementation === 'openai-compatible') {
+    return embedMultimodalOpenAICompat(inputs, recipe, parsed.modelId, cfg);
+  }
   if (recipe.id !== 'voyage') {
     throw new AIConfigError(
-      `Multimodal embedding for recipe ${recipe.id} is not implemented yet (v0.27.1 ships Voyage only).`,
+      `Multimodal embedding for recipe ${recipe.id} (${recipe.implementation}) is not implemented yet. ` +
+      `Today: voyage (own endpoint), openai-compatible recipes (standard /embeddings with content arrays).`,
     );
   }
 
@@ -1129,6 +1413,149 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
 // each input at MULTIMODAL_MAX_IMAGE_BYTES (20MB). importImageFile enforces
 // this and routes oversize files to sync_failures.jsonl.
 void MULTIMODAL_MAX_IMAGE_BYTES;
+
+/**
+ * v0.34.1 (#875): multimodal embedding via the standard OpenAI-compatible
+ * `/embeddings` endpoint. Many providers fronted by LiteLLM (Anyscale, vLLM,
+ * native OpenAI fed multimodal models) accept content arrays where each
+ * element is either `{type: "input_text", text: "..."}` or
+ * `{type: "image_url", image_url: {url: "data:..."}}` and return the same
+ * `{data: [{embedding: number[]}, ...]}` shape as text embeddings.
+ *
+ * Routing comes from gateway.embedMultimodal when the recipe's implementation
+ * is 'openai-compatible' and recipe.id is not 'voyage' (which has its own
+ * /multimodalembeddings path).
+ *
+ * D12 dim validation: the response is checked against the recipe's
+ * declared `default_dims` or the brain's `embedding_dimensions` config.
+ * Mismatch throws AIConfigError with a paste-ready hint pointing at the
+ * model picker — preferable to a silent corrupt-storage failure when the
+ * brain's vector(N) column rejects the row.
+ */
+async function embedMultimodalOpenAICompat(
+  inputs: MultimodalInput[],
+  recipe: Recipe,
+  modelId: string,
+  cfg: AIGatewayConfig,
+): Promise<Float32Array[]> {
+  // Auth resolution via the gateway's canonical helper so LiteLLM-style
+  // optional-auth recipes (Authorization: Bearer LITELLM_API_KEY) and
+  // hard-required-auth recipes (OpenAI Authorization: Bearer
+  // OPENAI_API_KEY) both work via the same code path. Throws AIConfigError
+  // when required env is missing.
+  const authResult = recipe.resolveAuth
+    ? recipe.resolveAuth(cfg.env)
+    : defaultResolveAuth(recipe, cfg.env, 'embedding');
+  const baseUrl = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
+  if (!baseUrl) {
+    throw new AIConfigError(
+      `${recipe.name} requires a base URL for multimodal embedding.`,
+      recipe.setup_hint,
+    );
+  }
+
+  // D12 — dim validation. Prefer recipe's declared default_dims when set;
+  // fall back to the brain's configured embedding_dimensions. If neither
+  // is known (LiteLLM recipe with default_dims=0 and no config override),
+  // we skip the dim check rather than fabricate an expected value — the
+  // engine's vector(N) column will reject mismatched rows at INSERT time
+  // with a clearer error than anything we could throw here.
+  const recipeDims = recipe.touchpoints.embedding?.default_dims ?? 0;
+  const expectedDims = recipeDims > 0
+    ? recipeDims
+    : (cfg.embedding_dimensions ?? 0);
+
+  // Send each input as one /embeddings request. Most providers cap the
+  // number of inputs per call at the text-embedding batch limit, but the
+  // multimodal content array varies per provider. Single-input requests
+  // are the safe lowest common denominator; LiteLLM's proxy backend
+  // batches internally if it can.
+  const allEmbeddings: Float32Array[] = [];
+  for (const input of inputs) {
+    const body = {
+      model: modelId,
+      input: [
+        {
+          // OpenAI's documented multimodal content shape. The data-URL
+          // form embeds the image bytes inline so the proxy doesn't need
+          // network access to fetch the image.
+          type: 'image_url',
+          image_url: { url: `data:${input.mime};base64,${input.data}` },
+        },
+      ],
+    };
+
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl}/embeddings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [authResult.headerName]: authResult.token,
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`);
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      if (res.status === 401 || res.status === 403) {
+        const requiredKey = recipe.auth_env?.required[0];
+        throw new AIConfigError(
+          `${recipe.name} multimodal returned ${res.status}: ${text || 'auth failed'}.`,
+          requiredKey
+            ? `Re-export ${requiredKey} or rotate the key at ${recipe.auth_env?.setup_url ?? recipe.setup_hint}.`
+            : recipe.setup_hint,
+        );
+      }
+      // Surface the upstream error verbatim — 400s here usually mean the
+      // proxied model doesn't support multimodal input. The error text is
+      // the user's best signal for picking a different model id.
+      throw new AITransientError(
+        `${recipe.name} multimodal returned ${res.status}: ${text || 'transient error'}.`,
+      );
+    }
+
+    let parsedBody: { data?: Array<{ embedding: number[] }> };
+    try {
+      parsedBody = (await res.json()) as { data?: Array<{ embedding: number[] }> };
+    } catch (err) {
+      throw new AITransientError(
+        `${recipe.name} multimodal returned malformed JSON: ${err instanceof Error ? err.message : String(err)}.`,
+      );
+    }
+    if (!parsedBody.data || !Array.isArray(parsedBody.data) || parsedBody.data.length < 1) {
+      throw new AITransientError(
+        `${recipe.name} multimodal returned no embeddings (expected 1).`,
+      );
+    }
+
+    const row = parsedBody.data[0];
+    if (!Array.isArray(row.embedding)) {
+      throw new AITransientError(
+        `${recipe.name} multimodal returned non-array embedding payload.`,
+      );
+    }
+    // D12 — dim validation. Throw EmbedDimensionMismatchError-shape error
+    // (AIConfigError with model id + observed + expected so the operator
+    // can diagnose and pick a compatible model OR adjust the brain's
+    // embedding_dimensions config). Skip the check when expectedDims=0
+    // (no recipe declaration AND no config override).
+    if (expectedDims > 0 && row.embedding.length !== expectedDims) {
+      throw new AIConfigError(
+        `${recipe.id}:${modelId} returned ${row.embedding.length}-dim vector; expected ${expectedDims}.`,
+        `The brain's embedding column is fixed at ${expectedDims} dims; this model is incompatible. ` +
+        `Either pick a model that returns ${expectedDims} dims, OR set --embedding-dimensions ${row.embedding.length} ` +
+        `and reinitialize the embedding column at the new width.`,
+      );
+    }
+    allEmbeddings.push(new Float32Array(row.embedding));
+  }
+
+  return allEmbeddings;
+}
 
 // ---- Expansion ----
 
@@ -1503,6 +1930,195 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     };
   } catch (err) {
     throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
+  }
+}
+
+// ---- Reranker (v0.35.0.0+) ----
+
+/** Tagged error class for gateway.rerank() failures. `reason` classifies into the
+ * shape applyReranker uses to decide between fail-open (network/timeout) and
+ * loud-fail (auth — should have been caught by doctor). Mirror of the
+ * RemoteMcpError pattern in src/core/mcp-client.ts. */
+export class RerankError extends Error {
+  reason: 'auth' | 'rate_limit' | 'network' | 'timeout' | 'payload_too_large' | 'unknown';
+  status?: number;
+  constructor(message: string, reason: RerankError['reason'], status?: number) {
+    super(message);
+    this.name = 'RerankError';
+    this.reason = reason;
+    this.status = status;
+  }
+}
+
+export interface RerankInput {
+  query: string;
+  documents: string[];
+  topN?: number;
+  /** Override the gateway-configured reranker model for this single call. */
+  model?: string;
+  signal?: AbortSignal;
+  /** Timeout in ms (default 5000). Search hot path; long stalls degrade UX. */
+  timeoutMs?: number;
+}
+
+export interface RerankResult {
+  index: number;
+  relevanceScore: number;
+}
+
+/**
+ * Test seam — same pattern as `_embedTransport` / `_chatTransport`. Tests
+ * install a stub via `__setRerankTransportForTests` to exercise the call-site
+ * pipeline without hitting the network. Production never reads the override.
+ */
+type RerankTransport = (
+  url: string,
+  init: RequestInit,
+) => Promise<Response>;
+let _rerankTransport: RerankTransport | null = null;
+export function __setRerankTransportForTests(fn: RerankTransport | null): void {
+  _rerankTransport = fn;
+}
+
+const DEFAULT_RERANK_TIMEOUT_MS = 5000;
+
+/**
+ * Submit a query + N documents to the configured reranker. Returns a list of
+ * `{index, relevanceScore}` sorted by relevanceScore descending (per upstream
+ * convention).
+ *
+ * Resolution order: `input.model` → `getRerankerModel()` → `DEFAULT_RERANKER_MODEL`.
+ *
+ * Pre-flight: rejects payloads that would exceed
+ * `recipe.touchpoints.reranker.max_payload_bytes` (default 5MB for ZE) with
+ * `RerankError(reason: 'payload_too_large')`. applyReranker catches this in
+ * the fail-open path so search never throws.
+ *
+ * Errors classified into RerankError.reason for the caller's fail-open
+ * decision table. The model allowlist check is done HERE (not via
+ * assertTouchpoint), because assertTouchpoint doesn't enforce allowlists for
+ * openai-compatible recipes — CDX2-F11 in the plan.
+ */
+export async function rerank(input: RerankInput): Promise<RerankResult[]> {
+  if (!input.query) {
+    throw new RerankError('rerank: query is required', 'unknown');
+  }
+  if (!input.documents || input.documents.length === 0) {
+    return [];
+  }
+
+  const modelStr =
+    input.model ??
+    getRerankerModel() ??
+    DEFAULT_RERANKER_MODEL;
+  const { parsed, recipe } = resolveRecipe(modelStr);
+  const tp = recipe.touchpoints.reranker;
+  if (!tp) {
+    throw new RerankError(
+      `Provider "${recipe.id}" does not declare a reranker touchpoint.`,
+      'unknown',
+    );
+  }
+  if (tp.models.length > 0 && !tp.models.includes(parsed.modelId)) {
+    throw new RerankError(
+      `Model "${parsed.modelId}" is not listed for ${recipe.name} reranker. ` +
+      `Known: ${tp.models.join(', ')}.`,
+      'unknown',
+    );
+  }
+
+  // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
+  const cfg = requireConfig();
+  const compat = applyOpenAICompatConfig(recipe, cfg);
+  const url = `${compat.baseURL.replace(/\/$/, '')}/models/rerank`;
+  const auth = applyResolveAuth(recipe, cfg, 'reranker');
+  // applyResolveAuth returns { apiKey } for Bearer-style auth (SDK's native
+  // path) or { headers } for custom-header providers (Azure). gateway.rerank
+  // builds the HTTP request directly (no SDK adapter), so we materialize
+  // both shapes into a Headers map.
+  const authHeaders: Record<string, string> = auth.headers
+    ? { ...auth.headers }
+    : auth.apiKey
+    ? { Authorization: `Bearer ${auth.apiKey}` }
+    : {};
+  const body = JSON.stringify({
+    model: parsed.modelId,
+    query: input.query,
+    documents: input.documents,
+    ...(input.topN !== undefined ? { top_n: input.topN } : {}),
+  });
+
+  // Pre-flight payload size guard (CDX1-F17 / plan Phase 3 cost guard). The
+  // 5MB cap matches ZE's upstream limit; over-cap returns payload_too_large
+  // so applyReranker can fail-open without ever issuing the HTTP request.
+  const bodyBytes = Buffer.byteLength(body, 'utf8');
+  if (bodyBytes > tp.max_payload_bytes) {
+    throw new RerankError(
+      `Rerank payload ${bodyBytes} bytes exceeds ${tp.max_payload_bytes} ` +
+      `byte cap for ${recipe.name}`,
+      'payload_too_large',
+    );
+  }
+
+  // Build headers from resolveAuth (default applies Bearer-style header).
+  const headers = new Headers(authHeaders);
+  headers.set('Content-Type', 'application/json');
+
+  // Timeout via AbortController; merges with caller-supplied signal.
+  const ctrl = new AbortController();
+  const timeoutMs = input.timeoutMs ?? DEFAULT_RERANK_TIMEOUT_MS;
+  const t = setTimeout(() => ctrl.abort(new Error('rerank timed out')), timeoutMs);
+  if (input.signal) {
+    if (input.signal.aborted) ctrl.abort(input.signal.reason);
+    else input.signal.addEventListener('abort', () => ctrl.abort(input.signal!.reason), { once: true });
+  }
+
+  try {
+    const transport: RerankTransport = _rerankTransport ?? ((u, init) => fetch(u, init));
+    const resp = await transport(url, {
+      method: 'POST',
+      headers,
+      body,
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) {
+      let msg = `rerank HTTP ${resp.status}`;
+      try {
+        const txt = await resp.text();
+        if (txt) msg = `${msg}: ${txt.slice(0, 500)}`;
+      } catch {
+        // Body read failed — preserve status-only message.
+      }
+      const reason: RerankError['reason'] =
+        resp.status === 401 || resp.status === 403
+          ? 'auth'
+          : resp.status === 429
+          ? 'rate_limit'
+          : resp.status >= 500
+          ? 'network'
+          : 'unknown';
+      throw new RerankError(msg, reason, resp.status);
+    }
+    const json: any = await resp.json();
+    if (!json || !Array.isArray(json.results)) {
+      throw new RerankError('rerank: malformed response (no results array)', 'unknown');
+    }
+    return json.results.map((r: any) => ({
+      index: typeof r.index === 'number' ? r.index : 0,
+      relevanceScore: typeof r.relevance_score === 'number' ? r.relevance_score : 0,
+    }));
+  } catch (err) {
+    if (err instanceof RerankError) throw err;
+    // AbortError on timeout — classify cleanly.
+    if (err && typeof err === 'object' && (err as any).name === 'AbortError') {
+      const msg = (err as Error).message || 'rerank aborted';
+      throw new RerankError(msg, msg.toLowerCase().includes('timed out') ? 'timeout' : 'unknown');
+    }
+    // Network errors (DNS, connection refused, etc.) become network class.
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new RerankError(`rerank: ${msg}`, 'network');
+  } finally {
+    clearTimeout(t);
   }
 }
 

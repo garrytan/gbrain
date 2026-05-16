@@ -21,6 +21,7 @@ function mkCtx(): OperationContext {
     logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as OperationContext['logger'],
     dryRun: false,
     remote: false,
+    sourceId: 'default',
   };
 }
 

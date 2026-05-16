@@ -533,20 +533,38 @@ export interface BrainEngine {
    */
   getChunks(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]>;
   /**
-   * Count chunks across the entire brain where embedded_at IS NULL.
+   * Count chunks across the brain where embedding IS NULL.
    * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
    * does no further work after a single SELECT count(*) (~50 bytes wire).
+   *
+   * `opts.sourceId` scopes the count to a single source. When omitted,
+   * counts across every source in the brain. Operators running
+   * `gbrain embed --stale --source media-corpus` expect only that
+   * source's NULLs touched; the caller threads `sourceId` here.
    */
-  countStaleChunks(): Promise<number>;
+  countStaleChunks(opts?: { sourceId?: string }): Promise<number>;
   /**
-   * Return every chunk where embedded_at IS NULL, with the metadata needed
+   * Return every chunk where embedding IS NULL, with the metadata needed
    * to call embedBatch + upsertChunks. The `embedding` column is omitted
    * by design — stale rows have NULL embeddings, so shipping them wastes
    * wire bytes for no gain. Caller groups by slug, embeds, and re-upserts.
    *
-   * Bounded by an internal LIMIT of 100000 to mirror listPages.
+   * v0.33.3: cursor-paginated — yields up to `batchSize` rows per call
+   * (default 2000) to stay within Supabase's statement_timeout. Pass the
+   * last row's `(page_id, chunk_index)` as `afterPageId`/`afterChunkIndex`
+   * to fetch the next page.  When fewer than `batchSize` rows come back,
+   * the caller has reached the end.
+   *
+   * `opts.sourceId` scopes the scan to a single source (matches the
+   * countStaleChunks contract). Paired with embedAllStale's --source
+   * support.
    */
-  listStaleChunks(): Promise<StaleChunkRow[]>;
+  listStaleChunks(opts?: {
+    batchSize?: number;
+    afterPageId?: number;
+    afterChunkIndex?: number;
+    sourceId?: string;
+  }): Promise<StaleChunkRow[]>;
   /**
    * Delete every chunk for a page. Internal page-id lookup is sourceId-scoped
    * when `opts.sourceId` is given; otherwise the bare-slug subquery returns
@@ -629,18 +647,31 @@ export interface BrainEngine {
     dirPrefix?: string,
     minSimilarity?: number,
   ): Promise<{ slug: string; similarity: number } | null>;
-  traverseGraph(slug: string, depth?: number): Promise<GraphNode[]>;
+  /**
+   * v0.34.1 (#861 — P0 leak seal): `opts.sourceId` / `opts.sourceIds`
+   * constrain visited nodes to a single source or array of sources.
+   * Pre-fix, the walk ignored source scope and an authenticated MCP
+   * client could enumerate cross-source topology + page metadata via
+   * the graph op. MCP-bound callers MUST pass the auth'd scope; local
+   * CLI callers omit it for the historical unscoped behavior.
+   */
+  traverseGraph(
+    slug: string,
+    depth?: number,
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<GraphNode[]>;
   /**
    * Edge-based graph traversal with optional type and direction filters.
    * Returns a list of edges (GraphPath[]) instead of nodes. Supports:
    * - linkType: per-edge filter, only follows matching edges (per-edge semantics)
    * - direction: 'in' (follow to->from), 'out' (follow from->to), 'both'
    * - depth: max depth from root (default 5)
+   * - sourceId/sourceIds: v0.34.1 source-isolation filter, see traverseGraph
    * Uses cycle prevention (visited array in recursive CTE).
    */
   traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' },
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
   ): Promise<GraphPath[]>;
   /**
    * For a list of slugs, return how many inbound links each has.

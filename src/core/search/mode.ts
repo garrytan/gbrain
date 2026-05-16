@@ -66,6 +66,34 @@ export interface ModeBundle {
    * EXPANSION from the implicit current default (limit 20).
    */
   searchLimit: number;
+  /**
+   * v0.35.0.0+ — cross-encoder reranker. Off for conservative/balanced,
+   * on for tokenmax. ZeroEntropy zerank-2 by default; can be overridden
+   * via `search.reranker.model`. Slots between dedup and token-budget
+   * enforcement in hybrid.ts; fail-open on any RerankError (audit-logged).
+   * Cost anchor: ~$0.0003/query at tokenmax topNIn=30 × ~400 tokens/chunk
+   * (rounding error vs Opus, meaningful vs Haiku).
+   */
+  reranker_enabled: boolean;
+  /**
+   * Provider:model for the reranker. Default `'zeroentropyai:zerank-2'`.
+   * Other ZE rerankers (`zerank-1`, `zerank-1-small`) work via the same
+   * recipe; future Cohere/Voyage rerankers drop in as new recipes
+   * declaring `touchpoints.reranker`.
+   */
+  reranker_model: string;
+  /** Candidates to send upstream (default 30). The full result list always
+   *  reaches the user — topNIn just caps API spend on the rerank call. */
+  reranker_top_n_in: number;
+  /**
+   * Truncate the reranked output to this many. `null` = no truncate; the
+   * caller's `limit` is what trims final output. Distinct from undefined
+   * (which would fall through to mode bundle) — `null` is the explicit
+   * "don't truncate" signal, see CDX2-F15+F16.
+   */
+  reranker_top_n_out: number | null;
+  /** HTTP timeout in ms (default 5000). Threaded into gateway.rerank. */
+  reranker_timeout_ms: number;
 }
 
 /**
@@ -84,6 +112,13 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     tokenBudget: 4000,
     expansion: false,
     searchLimit: 10,
+    // v0.35.0.0+: reranker off — conservative is cost-sensitive; reranker
+    // spend doesn't fit the tier's value prop.
+    reranker_enabled: false,
+    reranker_model: 'zeroentropyai:zerank-2',
+    reranker_top_n_in: 30,
+    reranker_top_n_out: null,
+    reranker_timeout_ms: 5000,
   }),
   balanced: Object.freeze({
     cache_enabled: true,
@@ -93,6 +128,14 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     tokenBudget: 12000,
     expansion: false,
     searchLimit: 25,
+    // Off in balanced too — operators opt in via
+    // `gbrain config set search.reranker.enabled true` until eval data
+    // backs a mode-bundle default change.
+    reranker_enabled: false,
+    reranker_model: 'zeroentropyai:zerank-2',
+    reranker_top_n_in: 30,
+    reranker_top_n_out: null,
+    reranker_timeout_ms: 5000,
   }),
   tokenmax: Object.freeze({
     cache_enabled: true,
@@ -102,6 +145,16 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     tokenBudget: undefined,
     expansion: true,
     searchLimit: 50,
+    // tokenmax is the high-cost-tolerant tier that already pays for LLM
+    // expansion + 50-result payloads. Reranker is the natural capstone:
+    // better ordering of a large candidate set is where rerankers earn
+    // their fee. ~$0.0003/query at this shape; rounding error vs the
+    // tier's $700/mo @ Opus pairing per CLAUDE.md cost matrix.
+    reranker_enabled: true,
+    reranker_model: 'zeroentropyai:zerank-2',
+    reranker_top_n_in: 30,
+    reranker_top_n_out: null,
+    reranker_timeout_ms: 5000,
   }),
 });
 
@@ -124,6 +177,15 @@ export interface SearchKeyOverrides {
   tokenBudget?: number;
   expansion?: boolean;
   searchLimit?: number;
+  // v0.35.0.0+ reranker overrides
+  reranker_enabled?: boolean;
+  reranker_model?: string;
+  reranker_top_n_in?: number;
+  // CDX2-F16: null is the explicit "don't truncate" signal; undefined
+  // means "fall through to mode bundle". Use number | null, not
+  // number | undefined.
+  reranker_top_n_out?: number | null;
+  reranker_timeout_ms?: number;
 }
 
 /**
@@ -141,6 +203,12 @@ export interface SearchPerCallOpts {
   tokenBudget?: number;
   expansion?: boolean;
   searchLimit?: number;
+  // v0.35.0.0+ reranker per-call overrides (same shape as SearchKeyOverrides).
+  reranker_enabled?: boolean;
+  reranker_model?: string;
+  reranker_top_n_in?: number;
+  reranker_top_n_out?: number | null;
+  reranker_timeout_ms?: number;
 }
 
 /**
@@ -194,6 +262,11 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     tokenBudget: pick('tokenBudget'),
     expansion: pick('expansion'),
     searchLimit: pick('searchLimit'),
+    reranker_enabled: pick('reranker_enabled'),
+    reranker_model: pick('reranker_model'),
+    reranker_top_n_in: pick('reranker_top_n_in'),
+    reranker_top_n_out: pick('reranker_top_n_out'),
+    reranker_timeout_ms: pick('reranker_timeout_ms'),
     resolved_mode,
     mode_valid: valid,
   };
@@ -242,7 +315,19 @@ export function attributeKnob<K extends keyof ModeBundle>(
  * reorder or add a knob without bumping a constant — a hash collision would
  * mean stale cache rows silently reading the wrong shape.
  */
-export const KNOBS_HASH_VERSION = 1;
+// v0.35.0.0+ bump 1→2: reranker fields participate in the cache key so a
+// tokenmax-with-reranker write can't be served to a reranker-off lookup.
+// CDX2-F13 convention: under a version bump, additions are APPEND-ONLY at
+// the end of `parts[]` — reordering existing fields would silently rebuild
+// the hash for every existing row.
+//
+// CDX2-F12 mid-deploy duplicate-row note: because `cacheRowId()` (in
+// src/core/search/query-cache.ts) includes knobsHash, a v=1 process and a
+// v=2 process writing the same `(source_id, query_text)` produce DISTINCT
+// row IDs. Expect a temporary hit-rate dip + cache-row doubling for hot
+// queries during a rolling deploy. Clears naturally within
+// `cache.ttl_seconds` (default 3600s). The CHANGELOG note covers this.
+export const KNOBS_HASH_VERSION = 2;
 
 export function knobsHash(knobs: ResolvedSearchKnobs): string {
   // Fixed-order key list. Adding a knob here REQUIRES bumping
@@ -257,6 +342,12 @@ export function knobsHash(knobs: ResolvedSearchKnobs): string {
     `tb=${knobs.tokenBudget ?? 'none'}`,
     `exp=${knobs.expansion ? 1 : 0}`,
     `lim=${knobs.searchLimit}`,
+    // v=2 additions (append-only).
+    `rr=${knobs.reranker_enabled ? 1 : 0}`,
+    `rrm=${knobs.reranker_model}`,
+    `rri=${knobs.reranker_top_n_in}`,
+    `rro=${knobs.reranker_top_n_out ?? 'none'}`,
+    `rrt=${knobs.reranker_timeout_ms}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -310,6 +401,40 @@ export function loadOverridesFromConfig(
     if (Number.isFinite(n) && n > 0) out.searchLimit = n;
   }
 
+  // v0.35.0.0+ reranker overrides
+  const re = get('search.reranker.enabled');
+  if (re !== undefined) {
+    out.reranker_enabled = re === '1' || re.toLowerCase() === 'true';
+  }
+  const rm = get('search.reranker.model');
+  if (rm !== undefined && rm.trim().length > 0) {
+    out.reranker_model = rm.trim();
+  }
+  const ri = get('search.reranker.top_n_in');
+  if (ri !== undefined) {
+    const n = parseInt(ri, 10);
+    if (Number.isFinite(n) && n > 0) out.reranker_top_n_in = n;
+  }
+  // CDX2-F15 null parsing: top_n_out distinguishes three input shapes:
+  //   key absent → undefined → fall through to mode bundle
+  //   'null' / 'none' / '' → explicit null (no truncate)
+  //   positive integer → that number
+  const ro = get('search.reranker.top_n_out');
+  if (ro !== undefined) {
+    const trimmed = ro.trim().toLowerCase();
+    if (trimmed === '' || trimmed === 'null' || trimmed === 'none') {
+      out.reranker_top_n_out = null;
+    } else {
+      const n = parseInt(trimmed, 10);
+      if (Number.isFinite(n) && n > 0) out.reranker_top_n_out = n;
+    }
+  }
+  const rt = get('search.reranker.timeout_ms');
+  if (rt !== undefined) {
+    const n = parseInt(rt, 10);
+    if (Number.isFinite(n) && n > 0) out.reranker_timeout_ms = n;
+  }
+
   return out;
 }
 
@@ -322,6 +447,12 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.tokenBudget',
   'search.expansion',
   'search.searchLimit',
+  // v0.35.0.0+ reranker keys
+  'search.reranker.enabled',
+  'search.reranker.model',
+  'search.reranker.top_n_in',
+  'search.reranker.top_n_out',
+  'search.reranker.timeout_ms',
 ]);
 
 /**

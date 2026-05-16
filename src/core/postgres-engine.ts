@@ -685,10 +685,14 @@ export class PostgresEngine implements BrainEngine {
     const slugCondition = slugPrefix
       ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sql``;
-    // v0.31.12: scope to a single source when requested.
-    const sourceCondition = filters?.sourceId
-      ? sql`AND p.source_id = ${filters.sourceId}`
-      : sql``;
+    // v0.31.12 + v0.34.1 (#876, D9): scope to a single source OR an array
+    // of sources. When BOTH are set, the array wins (federated semantics
+    // subsume the scalar case). When neither is set, no filter applies.
+    const sourceCondition = filters?.sourceIds && filters.sourceIds.length > 0
+      ? sql`AND p.source_id = ANY(${filters.sourceIds}::text[])`
+      : filters?.sourceId
+        ? sql`AND p.source_id = ${filters.sourceId}`
+        : sql``;
     // v0.26.5: hide soft-deleted by default; opt in via filters.includeDeleted.
     const deletedCondition = filters?.includeDeleted === true
       ? sql``
@@ -828,6 +832,22 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.beforeDate);
       beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
+    // v0.34.1 (#861 — P0 leak seal): source-isolation filter. When the
+    // caller's auth scope is set, narrow the inner CTE candidate set so
+    // an authenticated MCP client cannot see foreign-source pages via
+    // keyword search. Array form wins over scalar (federated subsumes
+    // single-source). Index-backed by idx_pages_source_id; the filter is
+    // pushed to the INNER CTE specifically so HNSW-style downstream
+    // ranking sees a narrowed candidate set rather than re-ranking a
+    // cross-source pool.
+    let sourceClause = '';
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -860,6 +880,7 @@ export class PostgresEngine implements BrainEngine {
           ${symbolKindClause}
           ${afterDateClause}
           ${beforeDateClause}
+          ${sourceClause}
           ${hardExcludeClause}
           ${visibilityClause}
           -- v0.27.1: hide image rows from text-keyword search so OCR text
@@ -964,6 +985,17 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.beforeDate);
       beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
+    // v0.34.1 (#861 — P0 leak seal): source-isolation. Anchor primitive
+    // for two-pass retrieval, so cross-source anchors would let the walk
+    // discover foreign-source neighbors. Filter at chunk-rank time.
+    let sourceClause = '';
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
     params.push(limit);
     const limitParam = `$${params.length}`;
     params.push(offset);
@@ -991,6 +1023,7 @@ export class PostgresEngine implements BrainEngine {
         ${symbolKindClause}
         ${afterDateClause}
         ${beforeDateClause}
+        ${sourceClause}
         ${hardExcludeClause}
         ${visibilityClause}
       ORDER BY score DESC
@@ -1074,6 +1107,19 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.beforeDate);
       beforeDateClause = `AND COALESCE(p.updated_at, p.created_at) < $${params.length}::timestamptz`;
     }
+    // v0.34.1 (#861, F2 — P0 leak seal): source-isolation in the INNER CTE
+    // specifically. Pushing the filter inside narrows the HNSW candidate set
+    // before re-rank; pushing it to the outer SELECT would force HNSW to
+    // over-fetch then post-filter, wasting candidate slots. Codex flagged
+    // this placement during plan review. Array form wins over scalar.
+    let sourceClause = '';
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      sourceClause = `AND p.source_id = $${params.length}`;
+    }
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -1110,6 +1156,7 @@ export class PostgresEngine implements BrainEngine {
           ${symbolKindClause}
           ${afterDateClause}
           ${beforeDateClause}
+          ${sourceClause}
           ${hardExcludeClause}
           ${visibilityClause}
         ORDER BY cc.${col} <=> $1::vector
@@ -1266,26 +1313,70 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r) => rowToChunk(r as Record<string, unknown>));
   }
 
-  async countStaleChunks(): Promise<number> {
+  async countStaleChunks(opts?: { sourceId?: string }): Promise<number> {
     const sql = this.sql;
+    // Fast path: no source filter → bare count query, no join.
+    // Slow path: source-scoped count → join pages.
+    // D7: closes the bug where `gbrain embed --stale --source X` silently
+    // dropped X and counted across every source.
+    if (opts?.sourceId === undefined) {
+      const [row] = await sql`
+        SELECT count(*)::int AS count
+        FROM content_chunks
+        WHERE embedding IS NULL
+      `;
+      return Number((row as { count?: number } | undefined)?.count ?? 0);
+    }
     const [row] = await sql`
       SELECT count(*)::int AS count
-      FROM content_chunks
-      WHERE embedding IS NULL
+      FROM content_chunks cc
+      JOIN pages p ON p.id = cc.page_id
+      WHERE cc.embedding IS NULL
+        AND p.source_id = ${opts.sourceId}
     `;
     return Number((row as { count?: number } | undefined)?.count ?? 0);
   }
 
-  async listStaleChunks(): Promise<StaleChunkRow[]> {
+  async listStaleChunks(opts?: {
+    batchSize?: number;
+    afterPageId?: number;
+    afterChunkIndex?: number;
+    sourceId?: string;
+  }): Promise<StaleChunkRow[]> {
     const sql = this.sql;
+    const limit = opts?.batchSize ?? 2000;
+    const afterPid = opts?.afterPageId ?? 0;
+    const afterIdx = opts?.afterChunkIndex ?? -1;
+    // Cursor-paginated: keyset pagination on (page_id, chunk_index).
+    // The partial index idx_chunks_embedding_null makes the WHERE fast;
+    // LIMIT keeps each round-trip well within statement_timeout.
+    //
+    // D7: optional source_id filter. NULL/undefined = scan all sources
+    // (pre-existing behavior); a value scopes to that source so
+    // `gbrain embed --stale --source X` actually does what it says.
+    if (opts?.sourceId === undefined) {
+      const rows = await sql`
+        SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+               cc.model, cc.token_count, p.source_id, cc.page_id
+        FROM content_chunks cc
+        JOIN pages p ON p.id = cc.page_id
+        WHERE cc.embedding IS NULL
+          AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
+        ORDER BY cc.page_id, cc.chunk_index
+        LIMIT ${limit}
+      `;
+      return rows as unknown as StaleChunkRow[];
+    }
     const rows = await sql`
       SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-             cc.model, cc.token_count, p.source_id
+             cc.model, cc.token_count, p.source_id, cc.page_id
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
       WHERE cc.embedding IS NULL
-      ORDER BY p.id, cc.chunk_index
-      LIMIT 100000
+        AND p.source_id = ${opts.sourceId}
+        AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
+      ORDER BY cc.page_id, cc.chunk_index
+      LIMIT ${limit}
     `;
     return rows as unknown as StaleChunkRow[];
   }
@@ -1521,13 +1612,40 @@ export class PostgresEngine implements BrainEngine {
     return { slug: row.slug, similarity: row.sim };
   }
 
-  async traverseGraph(slug: string, depth: number = 5): Promise<GraphNode[]> {
+  async traverseGraph(
+    slug: string,
+    depth: number = 5,
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<GraphNode[]> {
     const sql = this.sql;
+    // v0.34.1 (#861 — P0 leak seal): scope visited nodes to the caller's
+    // source(s). Without this, the walk follows edges into pages from
+    // foreign sources, leaking topology + page metadata. The filter
+    // applies at BOTH the seed (root must be in scope) AND the recursive
+    // step (every visited neighbor must be in scope). The aggregation
+    // subquery also filters so the per-node `links` array only includes
+    // edges to in-scope pages.
+    const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;
+    const seedScope = useSourceIds
+      ? sql`AND p.source_id = ANY(${opts!.sourceIds!}::text[])`
+      : opts?.sourceId
+        ? sql`AND p.source_id = ${opts.sourceId}`
+        : sql``;
+    const stepScope = useSourceIds
+      ? sql`AND p2.source_id = ANY(${opts!.sourceIds!}::text[])`
+      : opts?.sourceId
+        ? sql`AND p2.source_id = ${opts.sourceId}`
+        : sql``;
+    const aggScope = useSourceIds
+      ? sql`AND p3.source_id = ANY(${opts!.sourceIds!}::text[])`
+      : opts?.sourceId
+        ? sql`AND p3.source_id = ${opts.sourceId}`
+        : sql``;
     // Cycle prevention: visited array tracks page IDs already in the path.
     const rows = await sql`
       WITH RECURSIVE graph AS (
         SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
-        FROM pages p WHERE p.slug = ${slug}
+        FROM pages p WHERE p.slug = ${slug} ${seedScope}
 
         UNION ALL
 
@@ -1537,6 +1655,7 @@ export class PostgresEngine implements BrainEngine {
         JOIN pages p2 ON p2.id = l.to_page_id
         WHERE g.depth < ${depth}
           AND NOT (p2.id = ANY(g.visited))
+          ${stepScope}
       )
       SELECT DISTINCT g.slug, g.title, g.type, g.depth,
         coalesce(
@@ -1550,7 +1669,7 @@ export class PostgresEngine implements BrainEngine {
           (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
-           WHERE l2.from_page_id = g.id),
+           WHERE l2.from_page_id = g.id ${aggScope}),
           '[]'::jsonb
         ) as links
       FROM graph g
@@ -1568,20 +1687,47 @@ export class PostgresEngine implements BrainEngine {
 
   async traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both' },
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
   ): Promise<GraphPath[]> {
     const sql = this.sql;
     const depth = opts?.depth ?? 5;
     const direction = opts?.direction ?? 'out';
     const linkType = opts?.linkType ?? null;
     const linkTypeMatches = linkType !== null;
+    // v0.34.1 (#861 — P0 leak seal): source-scope filter fragments. Applied
+    // at seed (root must be in scope) AND at every recursive step (neighbor
+    // must be in scope) AND in the SELECT join (final edges respect scope).
+    // The 'both' branch needs filters on BOTH endpoint joins.
+    const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;
+    const seedScope = useSourceIds
+      ? sql`AND p.source_id = ANY(${opts!.sourceIds!}::text[])`
+      : opts?.sourceId
+        ? sql`AND p.source_id = ${opts.sourceId}`
+        : sql``;
+    const stepScope = useSourceIds
+      ? sql`AND p2.source_id = ANY(${opts!.sourceIds!}::text[])`
+      : opts?.sourceId
+        ? sql`AND p2.source_id = ${opts.sourceId}`
+        : sql``;
+    // For the 'both' direction's final SELECT, both endpoint joins (pf, pt)
+    // get scope filters so edges crossing into a foreign source are dropped.
+    const pfScope = useSourceIds
+      ? sql`AND pf.source_id = ANY(${opts!.sourceIds!}::text[])`
+      : opts?.sourceId
+        ? sql`AND pf.source_id = ${opts.sourceId}`
+        : sql``;
+    const ptScope = useSourceIds
+      ? sql`AND pt.source_id = ANY(${opts!.sourceIds!}::text[])`
+      : opts?.sourceId
+        ? sql`AND pt.source_id = ${opts.sourceId}`
+        : sql``;
 
     let rows;
     if (direction === 'out') {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug}
+          FROM pages p WHERE p.slug = ${slug} ${seedScope}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
@@ -1590,6 +1736,7 @@ export class PostgresEngine implements BrainEngine {
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+            ${stepScope}
         )
         SELECT w.slug as from_slug, p2.slug as to_slug,
                l.link_type, l.context, w.depth + 1 as depth
@@ -1598,13 +1745,14 @@ export class PostgresEngine implements BrainEngine {
         JOIN pages p2 ON p2.id = l.to_page_id
         WHERE w.depth < ${depth}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+          ${stepScope}
         ORDER BY depth, from_slug, to_slug
       `;
     } else if (direction === 'in') {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug}
+          FROM pages p WHERE p.slug = ${slug} ${seedScope}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
@@ -1613,6 +1761,7 @@ export class PostgresEngine implements BrainEngine {
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+            ${stepScope}
         )
         SELECT p2.slug as from_slug, w.slug as to_slug,
                l.link_type, l.context, w.depth + 1 as depth
@@ -1621,13 +1770,14 @@ export class PostgresEngine implements BrainEngine {
         JOIN pages p2 ON p2.id = l.from_page_id
         WHERE w.depth < ${depth}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+          ${stepScope}
         ORDER BY depth, from_slug, to_slug
       `;
     } else {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug}
+          FROM pages p WHERE p.slug = ${slug} ${seedScope}
           UNION ALL
           SELECT p2.id, w.depth + 1, w.visited || p2.id
           FROM walk w
@@ -1636,6 +1786,7 @@ export class PostgresEngine implements BrainEngine {
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+            ${stepScope}
         )
         SELECT pf.slug as from_slug, pt.slug as to_slug,
                l.link_type, l.context, w.depth + 1 as depth
@@ -1645,6 +1796,8 @@ export class PostgresEngine implements BrainEngine {
         JOIN pages pt ON pt.id = l.to_page_id
         WHERE w.depth < ${depth}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
+          ${pfScope}
+          ${ptScope}
         ORDER BY depth, from_slug, to_slug
       `;
     }

@@ -96,6 +96,7 @@ async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
 //   v0.26.5 — added `purge` (last)
 //   v0.29   — added `recompute_emotional_weight` between patterns and embed
 //   v0.31   — added `consolidate` between recompute_emotional_weight and embed
+//   v0.33   — added `resolve_symbol_edges` between extract and patterns
 type CyclePhase = (typeof ALL_PHASES)[number];
 const EXPECTED_PHASES: CyclePhase[] = [
   'lint',
@@ -104,6 +105,7 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'synthesize',
   'extract',
   'extract_facts',               // v0.32.2 — reconcile fence → DB facts index
+  'resolve_symbol_edges',       // v0.33.3 — within-file symbol resolution
   'patterns',
   'recompute_emotional_weight', // v0.29
   'consolidate',                // v0.31
