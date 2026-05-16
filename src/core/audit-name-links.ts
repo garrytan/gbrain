@@ -237,15 +237,22 @@ export function buildCanonicalNameSets(rows: Array<{
 
 /**
  * Mask the leading YAML frontmatter slice with spaces so offsets transfer
- * cleanly to the original (un-masked) source.
+ * cleanly to the original (un-masked) source. Tolerates CRLF line endings
+ * (Windows producers + iCloud sync sometimes carry `\r\n` through).
  */
 function maskFrontmatter(content: string): string {
-  const fmMatch = /^---\n[\s\S]*?\n---\n/.exec(content);
+  const fmMatch = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(content);
   if (!fmMatch) return content;
   return ' '.repeat(fmMatch[0].length) + content.slice(fmMatch[0].length);
 }
 
-const MARKDOWN_LINK_RE = /\[([^\]]+)\]\(([./]*people\/[a-z][a-z0-9-]{0,61}[a-z0-9])(\.md)?\)/g;
+// CommonMark permits optional whitespace immediately after `(` and before `)`
+// in inline links. We tolerate that on either side of the slug capture but
+// not inside the slug itself (slug shape is still strict). We intentionally
+// do NOT handle nested-bracket labels like `[[X]](people/Y)` — the producer
+// markdown subset we audit does not emit that shape; see TODOS.md for the
+// formal contract list.
+const MARKDOWN_LINK_RE = /\[([^\]]+)\]\(\s*([./]*people\/[a-z][a-z0-9-]{0,61}[a-z0-9])(\.md)?\s*\)/g;
 
 /**
  * Scan a markdown file's content for [Display](people/Slug) and

@@ -119,6 +119,43 @@ describe('findOccurrences', () => {
     const occs = findOccurrences(content, 'fixture.md');
     expect(occs).toHaveLength(0);
   });
+
+  // ---- Edge-case fixture coverage (#9, #10, #12) ----
+
+  test('CRLF frontmatter is masked correctly (no leak into body scan)', () => {
+    const content = [
+      '---',
+      'title: foo',
+      'related: "[Calvin](people/cwaytek-aseva)"',
+      '---',
+      '',
+      'body',
+    ].join('\r\n');
+    const occs = findOccurrences(content, 'fixture.md');
+    expect(occs).toHaveLength(0);
+  });
+
+  test('whitespace after `(` and before `)` in markdown link parens is tolerated', () => {
+    const content = '[Calvin]( people/cwaytek-aseva )';
+    const occs = findOccurrences(content, 'fixture.md');
+    expect(occs).toHaveLength(1);
+    expect(occs[0].slug).toBe('people/cwaytek-aseva');
+    expect(occs[0].display).toBe('Calvin');
+  });
+
+  test('whitespace only after `(` is tolerated', () => {
+    const content = '[Calvin]( people/cwaytek-aseva)';
+    const occs = findOccurrences(content, 'fixture.md');
+    expect(occs).toHaveLength(1);
+    expect(occs[0].slug).toBe('people/cwaytek-aseva');
+  });
+
+  test('whitespace only before `)` is tolerated', () => {
+    const content = '[Calvin](people/cwaytek-aseva )';
+    const occs = findOccurrences(content, 'fixture.md');
+    expect(occs).toHaveLength(1);
+    expect(occs[0].slug).toBe('people/cwaytek-aseva');
+  });
 });
 
 describe('classifyOccurrences', () => {
@@ -249,6 +286,24 @@ describe('classifyOccurrences', () => {
     const empty: CanonicalNameSets = new Map();
     const out = classifyOccurrences([], empty, new Map());
     expect(out).toEqual([]);
+  });
+
+  test('display text spanning a line break is normalized to single-space for lookup', () => {
+    // `[Justin\nThompson](people/jthompson-aseva)` — the display capture
+    // contains a literal newline. The classifier normalizes runs of
+    // whitespace to a single space before caseFold-matching against the
+    // canonical set's `"justin thompson"` entry.
+    const occs = findOccurrences('Hi [Justin\nThompson](people/jthompson-aseva) said.', 'f.md');
+    expect(occs).toHaveLength(1);
+    const out = classifyOccurrences(occs, sets, malformedSlugs);
+    expect(out).toHaveLength(0);
+  });
+
+  test('display text with multiple internal spaces collapses for lookup', () => {
+    const occs = findOccurrences('Hi [Justin   Thompson](people/jthompson-aseva).', 'f.md');
+    expect(occs).toHaveLength(1);
+    const out = classifyOccurrences(occs, sets, malformedSlugs);
+    expect(out).toHaveLength(0);
   });
 });
 
