@@ -15,11 +15,14 @@
  *
  * `GBRAIN_AUDIT_DIR` overrides the default ~/.gbrain/audit/ path — useful
  * for container deploys with a read-only $HOME.
+ *
+ * 2026-05-16 refactored to use the shared `createAuditLogger` primitive
+ * from `~/Projects/gbrain/src/core/audit-jsonl.ts`. Two event types share
+ * one logger via union type; `readSubagentAuditForJob` is a thin filter
+ * on top of `logger.readRecent`.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { resolveAuditDir } from './shell-audit.ts';
+import { createAuditLogger, computeIsoWeekFilename } from '../../audit-jsonl.ts';
 
 export interface SubagentSubmissionEvent {
   ts: string;
@@ -51,42 +54,45 @@ export interface SubagentHeartbeatEvent {
 
 export type SubagentAuditEvent = SubagentSubmissionEvent | SubagentHeartbeatEvent;
 
+const logger = createAuditLogger<SubagentAuditEvent>({
+  prefix: 'subagent-jobs',
+  stderrTag: '[subagent-audit]',
+  continueMessage: 'job continues',
+  // Defensive: trim heartbeat error text to avoid huge stack traces in audit.
+  // Type narrowing via discriminator before touching the heartbeat-only field.
+  transform: (event) => {
+    if (event.type === 'heartbeat') {
+      // Now safely narrowed to SubagentHeartbeatEvent (minus ts).
+      const hb = event as Omit<SubagentHeartbeatEvent, 'ts'>;
+      if (hb.error) {
+        return { ...hb, error: hb.error.slice(0, 200) };
+      }
+    }
+    return event;
+  },
+});
+
 /** File name, rotated by ISO week. `subagent-jobs-YYYY-Www.jsonl`. */
 export function computeSubagentAuditFilename(now: Date = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7;
-  d.setUTCDate(d.getUTCDate() - dayNum + 3);
-  const isoYear = d.getUTCFullYear();
-  const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
-  const firstThursdayDayNum = (firstThursday.getUTCDay() + 6) % 7;
-  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstThursdayDayNum + 3);
-  const weekNum = Math.round((d.getTime() - firstThursday.getTime()) / (7 * 86400000)) + 1;
-  const ww = String(weekNum).padStart(2, '0');
-  return `subagent-jobs-${isoYear}-W${ww}.jsonl`;
+  return computeIsoWeekFilename('subagent-jobs', now);
 }
 
 /** Low-level append. Best-effort; write failure goes to stderr + keep running. */
 function append(event: SubagentAuditEvent): void {
-  const dir = resolveAuditDir();
-  const file = path.join(dir, computeSubagentAuditFilename());
-  const line = JSON.stringify(event) + '\n';
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(file, line, { encoding: 'utf8' });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[subagent-audit] write failed (${msg}); job continues\n`);
-  }
+  // The factory's log() takes Omit<T, 'ts'>; convert by destructuring ts off.
+  // We accept SubagentAuditEvent (with ts) here because the legacy callers
+  // construct it that way. Adjust to the factory's contract.
+  const { ts: _ts, ...rest } = event;
+  void _ts;
+  logger.log(rest as Omit<SubagentAuditEvent, 'ts'>);
 }
 
 export function logSubagentSubmission(event: Omit<SubagentSubmissionEvent, 'ts' | 'type'>): void {
-  append({ ...event, ts: new Date().toISOString(), type: 'submission' });
+  logger.log({ ...event, type: 'submission' });
 }
 
 export function logSubagentHeartbeat(event: Omit<SubagentHeartbeatEvent, 'ts' | 'type'>): void {
-  // Defensive: trim error text to avoid accidentally writing huge stack traces.
-  const trimmed = event.error ? { ...event, error: event.error.slice(0, 200) } : event;
-  append({ ...trimmed, ts: new Date().toISOString(), type: 'heartbeat' });
+  logger.log({ ...event, type: 'heartbeat' });
 }
 
 /**
@@ -94,41 +100,20 @@ export function logSubagentHeartbeat(event: Omit<SubagentHeartbeatEvent, 'ts' | 
  * files. Used by `gbrain agent logs <job>`. Returns chronological order.
  *
  * `sinceIso` (if present) filters to events with ts >= sinceIso.
+ *
+ * Implementation: thin filter over the factory's 14-day-window readRecent.
+ * Factory returns newest-first; this function re-sorts to oldest-first
+ * per existing API contract.
  */
 export function readSubagentAuditForJob(jobId: number, opts: { sinceIso?: string } = {}): SubagentAuditEvent[] {
-  const dir = resolveAuditDir();
-  if (!fs.existsSync(dir)) return [];
-
-  const now = new Date();
-  const thisWeek = computeSubagentAuditFilename(now);
-  const weekAgo = computeSubagentAuditFilename(new Date(now.getTime() - 7 * 86400000));
-  const candidates = [...new Set([weekAgo, thisWeek])];
-
-  const out: SubagentAuditEvent[] = [];
-  for (const name of candidates) {
-    const file = path.join(dir, name);
-    if (!fs.existsSync(file)) continue;
-    let raw: string;
-    try {
-      raw = fs.readFileSync(file, 'utf8');
-    } catch {
-      continue;
-    }
-    for (const line of raw.split('\n')) {
-      if (!line) continue;
-      let ev: SubagentAuditEvent;
-      try {
-        ev = JSON.parse(line) as SubagentAuditEvent;
-      } catch {
-        continue;
-      }
-      // Submission events have job_id at top level; heartbeats too. Both safe.
-      if ((ev as { job_id?: number }).job_id !== jobId) continue;
-      if (opts.sinceIso && ev.ts < opts.sinceIso) continue;
-      out.push(ev);
-    }
-  }
-  return out.sort((a, b) => a.ts.localeCompare(b.ts));
+  // 14 days covers current + prior ISO week boundary cases the old code
+  // handled explicitly. The factory's prefix-scoped reads handle the
+  // walk-multiple-files concern.
+  const all = logger.readRecent(14);
+  return all
+    .filter((ev) => (ev as { job_id?: number }).job_id === jobId)
+    .filter((ev) => !opts.sinceIso || ev.ts >= opts.sinceIso)
+    .sort((a, b) => a.ts.localeCompare(b.ts)); // oldest-first per API
 }
 
 /** Exported for unit tests. */

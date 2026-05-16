@@ -119,7 +119,11 @@ describe('rerank-audit JSONL round-trip', () => {
       });
       const events = readRecentRerankFailures(7);
       expect(events.length).toBe(2);
-      expect(events.map(e => e.query_hash)).toEqual(['good1', 'good2']);
+      // 2026-05-16 refactor: readRecentRerankFailures now returns
+      // newest-first (factory contract). Two events written ~microseconds
+      // apart may tie on ISO-millisecond ts; use Set to assert membership
+      // without order-sensitivity.
+      expect(new Set(events.map(e => e.query_hash))).toEqual(new Set(['good1', 'good2']));
     });
   });
 

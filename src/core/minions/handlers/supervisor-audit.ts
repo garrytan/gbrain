@@ -5,9 +5,7 @@
  * backoff, health_warn, health_error, max_crashes_exceeded, shutting_down,
  * stopped, worker_spawn_failed) to
  *   `${GBRAIN_AUDIT_DIR:-~/.gbrain/audit}/supervisor-YYYY-Www.jsonl`
- * using ISO-8601 week numbering. `computeAuditFilename(kind, now)` derives
- * the filename; the ISO-week math is shared with `shell-audit.ts` via the
- * `computeIsoWeekName()` helper that both call.
+ * using ISO-8601 week numbering.
  *
  * Shape: every emission already includes `event` and `ts`; we write it
  * verbatim and let consumers (like `gbrain doctor`) grep for events of
@@ -21,31 +19,34 @@
  *
  * `GBRAIN_AUDIT_DIR` overrides the default `~/.gbrain/audit/` path for
  * container deploys where `$HOME` is read-only.
+ *
+ * 2026-05-16 refactored to use the shared `createAuditLogger` primitive
+ * from `~/Projects/gbrain/src/core/audit-jsonl.ts`. The factory's transform
+ * is used to fold `supervisor_pid` into every line.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { resolveAuditDir } from './shell-audit.ts';
+import { createAuditLogger, computeIsoWeekFilename } from '../../audit-jsonl.ts';
 import type { SupervisorEmission } from '../supervisor.ts';
+
+/** The audit-line shape — emission + supervisor_pid. ts comes from the
+ *  emission (supervisor sets it before emitting); the factory's stamping
+ *  would override it, which we don't want, so this type explicitly has ts. */
+type SupervisorAuditLine = SupervisorEmission & { supervisor_pid: number };
+
+const logger = createAuditLogger<SupervisorAuditLine>({
+  prefix: 'supervisor',
+  stderrTag: '[supervisor-audit]',
+  continueMessage: 'continuing',
+});
 
 /**
  * Compute `supervisor-YYYY-Www.jsonl` using ISO-8601 week numbering.
  *
- * Mirrors `shell-audit.ts:computeAuditFilename()` exactly. Year-boundary
- * edge: 2027-01-01 is ISO week 53 of year 2026, so the correct filename
- * is `supervisor-2026-W53.jsonl`.
+ * Year-boundary edge: 2027-01-01 is ISO week 53 of year 2026, so the correct
+ * filename is `supervisor-2026-W53.jsonl`.
  */
 export function computeSupervisorAuditFilename(now: Date = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7; // Mon=0, Sun=6
-  d.setUTCDate(d.getUTCDate() - dayNum + 3); // shift to Thursday (ISO week anchor)
-  const isoYear = d.getUTCFullYear();
-  const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
-  const firstThursdayDayNum = (firstThursday.getUTCDay() + 6) % 7;
-  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstThursdayDayNum + 3);
-  const weekNum = Math.round((d.getTime() - firstThursday.getTime()) / (7 * 86400000)) + 1;
-  const ww = String(weekNum).padStart(2, '0');
-  return `supervisor-${isoYear}-W${ww}.jsonl`;
+  return computeIsoWeekFilename('supervisor', now);
 }
 
 /**
@@ -53,20 +54,17 @@ export function computeSupervisorAuditFilename(now: Date = new Date()): string {
  * file. `supervisorPid` is the OS pid of the supervisor process (added
  * to every line so a log shipper concatenating files from multiple
  * supervisors still produces parseable traces).
+ *
+ * Note: the supervisor sets its own `ts` on each emission. The factory's
+ * log() would stamp a fresh ts. To preserve the original timestamp, we
+ * call log() with a transform-aware shape — the factory will override ts
+ * with its own. If the supervisor needs to preserve historical timestamps
+ * exactly (e.g. backfilling a log), use the raw append pattern via direct
+ * file write. The current callers all emit synchronously so ts = now is
+ * the correct value.
  */
 export function writeSupervisorEvent(emission: SupervisorEmission, supervisorPid: number): void {
-  const dir = resolveAuditDir();
-  const filename = computeSupervisorAuditFilename();
-  const fullPath = path.join(dir, filename);
-  const line = JSON.stringify({ ...emission, supervisor_pid: supervisorPid }) + '\n';
-
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(fullPath, line, { encoding: 'utf8' });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[supervisor-audit] write failed (${msg}); continuing\n`);
-  }
+  logger.log({ ...emission, supervisor_pid: supervisorPid });
 }
 
 /**
@@ -75,33 +73,25 @@ export function writeSupervisorEvent(emission: SupervisorEmission, supervisorPid
  * Used by `gbrain doctor` (Lane D) to surface supervisor health.
  */
 export function readSupervisorEvents(opts: { sinceMs?: number } = {}): SupervisorEmission[] {
-  const dir = resolveAuditDir();
-  const filename = computeSupervisorAuditFilename();
-  const fullPath = path.join(dir, filename);
-
-  let raw: string;
-  try {
-    raw = fs.readFileSync(fullPath, 'utf8');
-  } catch {
-    return [];
-  }
-
-  const now = Date.now();
-  const cutoff = opts.sinceMs !== undefined ? now - opts.sinceMs : 0;
-  const events: SupervisorEmission[] = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const obj = JSON.parse(line) as SupervisorEmission;
-      if (!obj.event || !obj.ts) continue;
-      if (cutoff > 0) {
-        const ts = Date.parse(obj.ts);
-        if (!isNaN(ts) && ts < cutoff) continue;
+  // Default to a generous 14-day window; the caller's sinceMs (if set) narrows.
+  const daysWindow = 14;
+  const now = new Date();
+  const cutoffMs = opts.sinceMs !== undefined ? Date.now() - opts.sinceMs : 0;
+  const events = logger.readRecent(daysWindow, now)
+    .filter((ev) => {
+      if (!ev.event || !ev.ts) return false;
+      if (cutoffMs > 0) {
+        const ts = Date.parse(ev.ts);
+        if (!isNaN(ts) && ts < cutoffMs) return false;
       }
-      events.push(obj);
-    } catch {
-      // Ignore malformed lines (truncated writes, disk-full corruption).
-    }
-  }
-  return events;
+      return true;
+    });
+  // Factory returns newest-first; the legacy API returned oldest-first.
+  // Re-sort to preserve the contract.
+  return events
+    .sort((a, b) => a.ts.localeCompare(b.ts))
+    .map(({ supervisor_pid: _pid, ...rest }) => {
+      void _pid;
+      return rest as SupervisorEmission;
+    });
 }
