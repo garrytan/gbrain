@@ -328,13 +328,13 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     process.exit(2);
   }
 
-  if (cli.list) { printList(plan, installed); return; }
-  if (cli.dryRun) { printDryRun(plan, installed); return; }
+  if (cli.list) { printList(plan, installed); process.exit(0); }
+  if (cli.dryRun) { printDryRun(plan, installed); process.exit(0); }
 
   const toRun: Migration[] = [...plan.partial, ...plan.pending];
   if (toRun.length === 0) {
     console.log('All migrations up to date.');
-    return;
+    process.exit(0);
   }
 
   // Run each orchestrator in registry order. An orchestrator failure aborts
