@@ -2,6 +2,41 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.35.1.1] - 2026-05-16
+
+**Fix wave: `gbrain eval longmemeval` actually runs against the public _s split.**
+
+A pre-spend smoke for the upcoming embedder shootout caught three tightly-coupled bugs that would have made all 7 cells fail. Shipping the fixes before anyone burns judge tokens.
+
+### What this fixes
+
+**The longmemeval adapter accepts the public _s dataset shape.** Pre-v0.35.1.1 assumed every dataset used the oracle `{session_id, turns}` shape, but the HuggingFace _s split serializes sessions as a parallel `haystack_session_ids: string[]` + a `LongMemEvalTurn[][]` (each inner array is one session's turns directly). The old adapter crashed `session.turns is undefined` on every question. New `normalizeSessions` helper accepts both shapes, mirroring the proven path in `gbrain-evals/eval/runner/longmemeval.ts`.
+
+**Session IDs that contain underscores or uppercase letters now produce valid slugs.** The _s split's IDs look like `sharegpt_yywfIrx_0`, both of which the v0.32.7 CJK-wave slug validator rejects. New `sanitizeSessionIdForSlug` lowercases and rewrites disallowed chars to `-`. The frontmatter `session_id:` line still carries the original verbatim, so downstream JSONL emit + LongMemEval correctness scoring work unchanged — only the slug gets rewritten to satisfy the validator.
+
+**`gbrain eval longmemeval` now configures the AI gateway before running.** v0.28.8 deliberately skipped `connectEngine()` for this subcommand so it would run on machines without a configured brain. Side effect: the gateway never got configured either, so the first embed call inside `importFromContent` crashed with "AI gateway is not configured." Fix: explicit `configureGateway()` before `runEvalLongMemEval`, reading `~/.gbrain/config.json` if present and falling back to env vars (`GBRAIN_EMBEDDING_MODEL`, `GBRAIN_EMBEDDING_DIMENSIONS`, etc.) when there's no config — preserving the "runs on a fresh machine" property.
+
+### Itemized changes
+
+- `src/eval/longmemeval/adapter.ts`: new `normalizeSessions` accepts both oracle (`{session_id, turns}`) and _s (`Turn[][]` + parallel `haystack_session_ids`) shapes; new `sanitizeSessionIdForSlug` rewrites underscores + uppercase + other disallowed chars to `-`; `LongMemEvalQuestion.haystack_sessions` typed as the union, `haystack_session_ids?: string[]` field added with documentation.
+- `src/cli.ts`: gateway configure step added before the `eval longmemeval` dispatch path, gated on `--help` short-circuit so help still works without a configured gateway.
+- `test/eval-longmemeval.test.ts`: 2 new regression cases pinning the _s shape normalization end-to-end (slugs sanitized, frontmatter preserves original session_id, dates flow through) and the missing-haystack_session_ids fallback to synthesized `lme_<question_id>_<i>` ids.
+
+## To take advantage of v0.35.1.1
+
+`gbrain upgrade` handles the fix transparently. Re-run any LongMemEval-against-_s-split commands that had been crashing.
+
+1. **Upgrade:**
+   ```bash
+   gbrain upgrade
+   ```
+2. **(If you hit the prior crash) re-run with `--resume-from` to skip any questions already scored:**
+   ```bash
+   gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s.json \
+     --output results.jsonl --resume-from results.jsonl --mode tokenmax
+   ```
+3. **No migration, no schema change, no breaking semantics.**
+
 ## [0.35.1.0] - 2026-05-15
 
 **Embedder shootout prereqs: pricing, public gateway export, and resume-from for long eval runs.**
