@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.35.2.0] - 2026-05-16
+## [0.35.4.0] - 2026-05-16
 
 **Doctor stops crying wolf on clean worker restarts. Entity resolver stops spawning phantom pages. Prefix-expansion gets 58x faster.**
 
@@ -16,7 +16,7 @@ A fix-wave shipping privacy work, bug fixes, observability, and one big perf win
 
 **See when the resolver is missing a case.** New `stub_guard_24h` check in `gbrain doctor` reads the new stub-guard audit log and WARNs at >10 fires/24h. The fix hint points operators directly at `~/.gbrain/audit/stub-guard-*.jsonl` so the offending slugs are one `cat` away. The check stays silent on zero hits (clean brain output) and shows count + below-threshold OK status when hits happen but stay reasonable. The sunset criterion is also wired in: when the 24h reads stay below 5/week for 3 consecutive weeks, the guard can be removed in v0.36 (the resolver fix has earned the trust).
 
-**Extract facts ~58x faster on brains with substantial link/chunk counts.** The pre-fix `tryPrefixExpansion` SQL did three derived-table aggregations (`LEFT JOIN (SELECT FROM links GROUP BY to_page_id)`) that pre-aggregated the ENTIRE links and content_chunks tables on every call. On the v0.35.2.0 perf benchmark (5K pages, 50K links, 25K chunks): old median 18.16ms, new median 0.31ms, speedup **58.22x**. The new shape uses correlated subqueries scoped to the slug-LIKE candidates — PostgreSQL hits the indexes on `links.to_page_id`, `links.from_page_id`, and `content_chunks.page_id` exactly N=3 times per candidate, not N=1 time across the whole table. Behavior is preserved; tiebreaker semantics unchanged.
+**Extract facts ~58x faster on brains with substantial link/chunk counts.** The pre-fix `tryPrefixExpansion` SQL did three derived-table aggregations (`LEFT JOIN (SELECT FROM links GROUP BY to_page_id)`) that pre-aggregated the ENTIRE links and content_chunks tables on every call. On the v0.35.4.0 perf benchmark (5K pages, 50K links, 25K chunks): old median 18.16ms, new median 0.31ms, speedup **58.22x**. The new shape uses correlated subqueries scoped to the slug-LIKE candidates — PostgreSQL hits the indexes on `links.to_page_id`, `links.from_page_id`, and `content_chunks.page_id` exactly N=3 times per candidate, not N=1 time across the whole table. Behavior is preserved; tiebreaker semantics unchanged.
 
 ### Itemized changes
 
@@ -31,7 +31,7 @@ A fix-wave shipping privacy work, bug fixes, observability, and one big perf win
 - `.gitignore` adds `reports/network-intelligence/` as defense-in-depth (private-brain export dir).
 - Test infrastructure: `test/exit-classification.test.ts` (17 cases — helper unit tests + consumer wire-up + audit-shape round-trip + inline-filter regression guards), `test/stub-guard-audit.test.ts` (9 cases — filename math + writer error tolerance + dual-week boundary read), `test/entity-resolve.test.ts` (13 cases — bare name resolution + tiebreaker + edge cases, fixtures use `alice-example`/`bob-example`/`charlie-example`/`dave-example` placeholders per CLAUDE.md privacy rule), `test/entity-resolve-perf.slow.test.ts` (1 case — baseline-ratio regression guard, 58x speedup measured), plus extensions in `test/fence-write.test.ts` (+3), `test/facts-backstop.test.ts` (+1), `test/doctor.test.ts` (+5).
 
-## To take advantage of v0.35.2.0
+## To take advantage of v0.35.4.0
 
 `gbrain upgrade` handles everything automatically. No migration, no config changes, no manual action needed.
 
