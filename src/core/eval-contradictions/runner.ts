@@ -294,10 +294,18 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
     allPairs.push(...allPairsForQuery);
 
     // Date pre-filter.
+    // v0.34 / Lane B: thread page-level effective_date through so the
+    // filter's relaxation rule fires for dated pairs (judge classifies
+    // temporal supersession instead of the pair being silently skipped).
     const survivedDate: ContradictionPair[] = [];
     let skippedByDate = 0;
     for (const p of allPairsForQuery) {
-      const decision = shouldSkipForDateMismatch({ textA: p.a.text, textB: p.b.text });
+      const decision = shouldSkipForDateMismatch({
+        textA: p.a.text,
+        textB: p.b.text,
+        effectiveDateA: p.a.effective_date,
+        effectiveDateB: p.b.effective_date,
+      });
       if (decision.skip) {
         skippedByDate++;
         continue;
