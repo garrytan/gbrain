@@ -10,6 +10,7 @@ import {
   formatMergePhantomsText,
   type MergePhantomsResult,
 } from '../src/commands/merge-phantoms.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 /**
  * v0.34.5 — operator cleanup of pre-fix phantom unprefixed entity pages.
@@ -36,12 +37,17 @@ import {
 
 let engine: PGLiteEngine;
 let brainDir: string;
+let gbrainHome: string;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({ database_url: '' });
   await engine.initSchema();
   brainDir = mkdtempSync(join(tmpdir(), 'gbrain-merge-phantoms-'));
+  // Codex round-5 P2: isolate GBRAIN_HOME so page-locks (acquired by
+  // writeFactsToFence under gbrainPath('page-locks')) land in a tempdir
+  // instead of the developer / CI user's real ~/.gbrain.
+  gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-merge-home-'));
   // Wire local_path on the default source so the re-fence path
   // has a brain dir to write to.
   await engine.executeRaw(
@@ -53,7 +59,31 @@ beforeAll(async () => {
 afterAll(async () => {
   await engine.disconnect();
   rmSync(brainDir, { recursive: true, force: true });
+  rmSync(gbrainHome, { recursive: true, force: true });
 });
+
+/**
+ * Wraps a test body in `withEnv({ GBRAIN_HOME })` so any
+ * `gbrainPath('page-locks')` call (writeFactsToFence does this) lands
+ * inside the test's tempdir instead of the developer's real
+ * `~/.gbrain`. Mirrors the with-env pattern from CLAUDE.md's test
+ * isolation rules (R1) without forcing the file to `.serial.test.ts`.
+ */
+async function withTestHome<T>(fn: () => Promise<T>): Promise<T> {
+  return withEnv({ GBRAIN_HOME: gbrainHome }, fn);
+}
+
+/**
+ * `it` wrapper that runs each test body under the test's GBRAIN_HOME
+ * tempdir. Use this instead of `it` for every test that touches
+ * runMergePhantomsCore or writeFactsToFence so page-locks stay
+ * hermetic across the file.
+ */
+function itHomed(name: string, body: () => Promise<void>): void {
+  it(name, async () => {
+    await withTestHome(body);
+  });
+}
 
 // Wipe the test surface between cases. Pages + facts + chunks get
 // reset; sources keep their local_path so each test inherits the
@@ -136,7 +166,7 @@ describe('merge-phantoms — listPhantomEntityPages', () => {
 });
 
 describe('merge-phantoms — runMergePhantomsCore', () => {
-  it('dry-run reports the would-merge count without mutating', async () => {
+  itHomed('dry-run reports the would-merge count without mutating', async () => {
     await seedPage('alice', 'person');
     await seedPage('people/alice-example', 'person');
     await seedChunks('people/alice-example', 5);
@@ -169,7 +199,7 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(phantomPage[0].deleted_at).toBeNull();
   });
 
-  it('re-fences facts into the canonical and soft-deletes the phantom', async () => {
+  itHomed('re-fences facts into the canonical and soft-deletes the phantom', async () => {
     await seedPage('alice', 'person');
     await seedPage('people/alice-example', 'person');
     await seedChunks('people/alice-example', 5);
@@ -227,7 +257,7 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(body).toContain('Fact two about Alice.');
   });
 
-  it('soft-deletes a phantom even when it has no facts attached', async () => {
+  itHomed('soft-deletes a phantom even when it has no facts attached', async () => {
     await seedPage('emptyperson', 'person');
     await seedPage('people/emptyperson-example', 'person');
     await seedChunks('people/emptyperson-example', 5);
@@ -248,7 +278,7 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(phantomPage[0].deleted_at).not.toBeNull();
   });
 
-  it('skips a phantom with no matching canonical (prefix expansion finds nothing)', async () => {
+  itHomed('skips a phantom with no matching canonical (prefix expansion finds nothing)', async () => {
     await seedPage('zoolander', 'person');
     await seedFact('zoolander', 'Sample fact about Zoolander.');
 
@@ -274,7 +304,7 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(factRow[0].entity_slug).toBe('zoolander');
   });
 
-  it('skips a phantom whose canonical target is soft-deleted', async () => {
+  itHomed('skips a phantom whose canonical target is soft-deleted', async () => {
     await seedPage('beth', 'person');
     await seedPage('people/beth-example', 'person');
     await seedChunks('people/beth-example', 3);
@@ -298,7 +328,7 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(phantomPage[0].deleted_at).toBeNull();
   });
 
-  it('skips re-fence when source has no local_path (thin-client) without losing fact', async () => {
+  itHomed('skips re-fence when source has no local_path (thin-client) without losing fact', async () => {
     // Wipe local_path so re-fence can't run.
     await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`, []);
     await seedPage('alice', 'person');
@@ -329,7 +359,7 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(phantomPage[0].deleted_at).toBeNull();
   });
 
-  it('does not create legacy-shape rows (row_num NULL + entity_slug NOT NULL)', async () => {
+  itHomed('does not create legacy-shape rows (row_num NULL + entity_slug NOT NULL)', async () => {
     // codex P1 + P2 regression: the merge must not leave behind rows
     // that trip the v0.32.2 extract_facts reconciliation guard.
     await seedPage('alice', 'person');
@@ -353,7 +383,7 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(legacy[0].n).toBe(0);
   });
 
-  it('scopes merge to the requested source_id', async () => {
+  itHomed('scopes merge to the requested source_id', async () => {
     // Seed phantom 'alice' + canonical in TWO sources.
     const otherBrainDir = mkdtempSync(join(tmpdir(), 'gbrain-merge-other-'));
     try {
@@ -419,7 +449,7 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     }
   });
 
-  it('constrains merge to phantom entity type — cross-type collision routes to correct canonical', async () => {
+  itHomed('constrains merge to phantom entity type — cross-type collision routes to correct canonical', async () => {
     // codex round-4 P1: phantom 'acme' of type=company must merge to
     // companies/acme-example, NOT to people/acme-example, even though
     // people/ is checked first in DEFAULT_PREFIX_EXPANSION_DIRS. The
@@ -452,7 +482,7 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(onPerson[0].n).toBe(0);
   });
 
-  it('dry-run honors no_local_path skip (codex round-4 P2)', async () => {
+  itHomed('dry-run honors no_local_path skip (codex round-4 P2)', async () => {
     // Dry-run must report what an actual run would do. A source with
     // local_path=NULL skips with no_local_path in real mode; the
     // preview must match.
@@ -473,7 +503,46 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(result.skipped[0].skipped).toBe('no_local_path');
   });
 
-  it('is idempotent — second run produces zero merges', async () => {
+  itHomed('skips a top-level page that has real content (not a stub)', async () => {
+    // Codex round-5 P2: a legitimate `rag.md` or imported `alice.md`
+    // page with a real body must NOT be soft-deleted by the merge.
+    // Seed a long-bodied page at the top level and assert the merge
+    // skips with `not_a_stub` rather than re-fencing + soft-deleting.
+    const longBody = '# RAG\n\nRetrieval-augmented generation is a technique that combines '.repeat(20);
+    await engine.putPage(
+      'rag',
+      {
+        type: 'concept' as any,
+        title: 'RAG',
+        compiled_truth: longBody,
+        frontmatter: { type: 'concept', title: 'RAG', slug: 'rag' },
+      },
+      { sourceId: 'default' },
+    );
+    // Also seed a canonical that prefix-expansion WOULD match if we
+    // got past the content gate.
+    await seedPage('concepts/rag-example', 'concept');
+    await seedChunks('concepts/rag-example', 3);
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(0);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0].skipped).toBe('not_a_stub');
+
+    // Top-level page survives intact.
+    const surviving = await engine.executeRaw<{ deleted_at: Date | null; compiled_truth: string }>(
+      `SELECT deleted_at, compiled_truth FROM pages WHERE slug = 'rag' AND source_id = 'default'`,
+      [],
+    );
+    expect(surviving[0].deleted_at).toBeNull();
+    expect(surviving[0].compiled_truth.length).toBeGreaterThan(200);
+  });
+
+  itHomed('is idempotent — second run produces zero merges', async () => {
     await seedPage('alice', 'person');
     await seedPage('people/alice-example', 'person');
     await seedChunks('people/alice-example', 5);
@@ -495,7 +564,7 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
 });
 
 describe('merge-phantoms — output shape', () => {
-  it('returns a stable result envelope (suitable for --json)', async () => {
+  itHomed('returns a stable result envelope (suitable for --json)', async () => {
     await seedPage('alice', 'person');
     await seedPage('people/alice-example', 'person');
     await seedChunks('people/alice-example', 5);

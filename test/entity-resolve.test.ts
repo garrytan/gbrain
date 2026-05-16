@@ -410,20 +410,26 @@ describe('stub-guard + backstop integration (D5 regression — IRON RULE)', () =
     const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-stub-guard-'));
     const gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-home-stub-'));
     try {
-      const result = await writeFactsToFence(
-        engine as unknown as BrainEngine,
-        { sourceId: 'default', localPath: brainDir, slug: 'zander' },
-        [
-          {
-            fact: 'Zander likes integration tests.',
-            kind: 'fact' as const,
-            notability: 'medium' as const,
-            source: 'test:regression',
-            visibility: 'private' as const,
-            embedding: null,
-            sessionId: null,
-          },
-        ],
+      // Codex round-5 P2: writeFactsToFence acquires page-locks under
+      // `gbrainPath('page-locks')`. Without GBRAIN_HOME isolation the
+      // test writes lockfiles into the developer's real ~/.gbrain and
+      // fails in hermetic / read-only-home runners with EPERM.
+      const result = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
+        writeFactsToFence(
+          engine as unknown as BrainEngine,
+          { sourceId: 'default', localPath: brainDir, slug: 'zander' },
+          [
+            {
+              fact: 'Zander likes integration tests.',
+              kind: 'fact' as const,
+              notability: 'medium' as const,
+              source: 'test:regression',
+              visibility: 'private' as const,
+              embedding: null,
+              sessionId: null,
+            },
+          ],
+        ),
       );
 
       // The guard fired.
@@ -491,21 +497,25 @@ describe('stub-guard + backstop integration (D5 regression — IRON RULE)', () =
     // Inverse coverage: confirm the guard ONLY fires on unprefixed slugs.
     // A `people/yvonne-example` write should land normally.
     const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-stub-guard-ok-'));
+    const gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-stub-guard-ok-home-'));
     try {
-      const result = await writeFactsToFence(
-        engine as unknown as BrainEngine,
-        { sourceId: 'default', localPath: brainDir, slug: 'people/yvonne-example' },
-        [
-          {
-            fact: 'Yvonne likes prefixed slugs.',
-            kind: 'fact' as const,
-            notability: 'medium' as const,
-            source: 'test:regression',
-            visibility: 'private' as const,
-            embedding: null,
-            sessionId: null,
-          },
-        ],
+      // GBRAIN_HOME isolation per codex round-5 P2 (page-locks).
+      const result = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
+        writeFactsToFence(
+          engine as unknown as BrainEngine,
+          { sourceId: 'default', localPath: brainDir, slug: 'people/yvonne-example' },
+          [
+            {
+              fact: 'Yvonne likes prefixed slugs.',
+              kind: 'fact' as const,
+              notability: 'medium' as const,
+              source: 'test:regression',
+              visibility: 'private' as const,
+              embedding: null,
+              sessionId: null,
+            },
+          ],
+        ),
       );
 
       // No guard fire; row inserted.
@@ -517,6 +527,7 @@ describe('stub-guard + backstop integration (D5 regression — IRON RULE)', () =
       expect(existsSync(join(brainDir, 'people/yvonne-example.md'))).toBe(true);
     } finally {
       rmSync(brainDir, { recursive: true, force: true });
+      rmSync(gbrainHome, { recursive: true, force: true });
     }
   });
 });

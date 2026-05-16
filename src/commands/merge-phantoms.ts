@@ -67,8 +67,27 @@ export interface PhantomMerge {
     | 'canonical_unprefixed'
     | 'canonical_missing'
     | 'no_local_path'
-    | 'fence_write_failed';
+    | 'fence_write_failed'
+    | 'not_a_stub';
 }
+
+/**
+ * Content-length threshold (in characters) above which a top-level entity
+ * page is treated as a real user page rather than a v0.34.5-era phantom
+ * stub. Stubs produced by `stubEntityPage` in fence-write.ts are well
+ * under 100 chars (frontmatter + title + empty fence). 200 chars gives
+ * room for a stub that grew a few small facts in its fence; anything
+ * above that is almost certainly a user-imported page whose body
+ * carries real content that would be lost on soft-delete.
+ *
+ * Codex round-5 P2: without this filter, a legitimate top-level
+ * `rag.md` or `alice.md` imported from the user's own brain repo would
+ * be classified as a phantom and soft-deleted after re-fencing only
+ * the facts — losing the page's body, links, and any timeline. The
+ * threshold is conservative; non-stub pages skip with `not_a_stub` so
+ * the operator can see them in the `gbrain merge-phantoms` output.
+ */
+const PHANTOM_STUB_MAX_BODY_CHARS = 200;
 
 export interface MergePhantomsResult {
   merged: PhantomMerge[];
@@ -105,16 +124,19 @@ const TYPE_TO_DIR: Record<string, string> = {
 };
 
 /**
- * Find phantom unprefixed entity pages.
- * Pure data fetch; the caller does the resolve loop.
+ * Find candidate phantom unprefixed entity pages. Returns the row plus
+ * the size of `compiled_truth` so the caller can distinguish stub-shape
+ * pages (a few dozen chars) from user-imported pages with real bodies.
+ * Codex round-5 P2: non-stub pages skip in the merge loop rather than
+ * being silently soft-deleted with content loss.
  */
 export async function listPhantomEntityPages(
   engine: BrainEngine,
   sourceId: string,
-): Promise<Array<{ id: number; slug: string; type: string }>> {
-  // Build the type-list IN clause. Five known entries, parameterized.
-  return engine.executeRaw<{ id: number; slug: string; type: string }>(
-    `SELECT id, slug, type
+): Promise<Array<{ id: number; slug: string; type: string; body_chars: number }>> {
+  return engine.executeRaw<{ id: number; slug: string; type: string; body_chars: number }>(
+    `SELECT id, slug, type,
+            COALESCE(LENGTH(compiled_truth), 0)::int AS body_chars
        FROM pages
       WHERE source_id = $1
         AND slug NOT LIKE '%/%'
@@ -141,6 +163,16 @@ export async function runMergePhantomsCore(
   const skipped: PhantomMerge[] = [];
 
   for (const row of phantoms) {
+    // Content-size gate (codex round-5 P2): skip pages whose body looks
+    // like a user-imported entity page rather than a v0.34.5-era stub.
+    // The merge command only re-fences facts; it doesn't migrate
+    // compiled_truth / links / timeline. Soft-deleting a real page
+    // would silently lose all that.
+    if (row.body_chars > PHANTOM_STUB_MAX_BODY_CHARS) {
+      skipped.push({ phantom: row.slug, canonical: null, skipped: 'not_a_stub' });
+      continue;
+    }
+
     // Use tryPrefixExpansion directly instead of resolveEntitySlug —
     // the latter's exact-slug step would match the phantom itself
     // (slug='alice' exists, so exact-slug returns 'alice' immediately)
