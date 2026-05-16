@@ -106,6 +106,23 @@ export interface GBrainConfig {
     oauth_client_id: string;
     oauth_client_secret?: string;
   };
+
+  /**
+   * v0.34.5 — entity-resolver tuning. Controls which slug directories
+   * the prefix-expansion step (`src/core/entities/resolve.ts`) walks
+   * when canonicalizing a bare first-name reference like "Alice" into
+   * `people/alice-example`. The first matching directory wins (after the
+   * connection-count tiebreak inside that directory).
+   *
+   * Default (when unset): `['people', 'companies', 'deals', 'topics']` —
+   * matches the stub-guard's recognized prefix set in
+   * `src/core/facts/fence-write.ts`. Override to support custom entity
+   * schemas (`['funds', 'advisors']` etc.) once the rest of the system
+   * grows to recognize them. Order matters: list higher-priority dirs first.
+   */
+  entities?: {
+    prefix_expansion_dirs?: string[];
+  };
 }
 
 /**

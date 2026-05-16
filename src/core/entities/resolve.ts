@@ -10,18 +10,25 @@
  * Lives under `src/core/entities/` so signal-detector can reuse it for the
  * Sonnet pass too without circular import through facts/.
  *
- * v0.34.5 — added a prefix-expansion step between fuzzy
- * match and slugify fallback. Bare first names like "Jared" scored too
- * low on pg_trgm (short strings have terrible trigram overlap), so they
- * fell through to slugify("Jared") → "jared", which then spawned a
- * phantom `people/jared.md` stub instead of resolving to the existing
- * `people/jared-friedman` page. The fix queries `slug LIKE 'people/X-%'`
- * (then `companies/X-%`) when fuzzy fails on a single-word bare name, and
- * uses connection count (links + chunks) as the tiebreaker when multiple
- * candidates match.
+ * v0.34.5 — added a prefix-expansion step between fuzzy match and
+ * slugify fallback. Bare first names like "Alice" scored too low on
+ * pg_trgm (short strings have terrible trigram overlap), so they fell
+ * through to slugify("Alice") → "alice", which then spawned a phantom
+ * `people/alice.md` stub instead of resolving to an existing
+ * `people/alice-example` page. The fix queries `slug LIKE 'people/X-%'`
+ * (then `companies/X-%`, etc., per the configured dir list) when fuzzy
+ * fails on a single-word bare name, and uses connection count
+ * (links + chunks) as the tiebreaker when multiple candidates match.
+ *
+ * The dir list is config-driven via `entities.prefix_expansion_dirs`
+ * (see `src/core/config.ts`). Default covers the four directories the
+ * stub-guard recognizes; custom brains override to support funds/,
+ * advisors/, etc. See plan `mossy-popping-crown.md` D2.
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { isUndefinedColumnError } from '../utils.ts';
+import { loadConfig } from '../config.ts';
 
 /**
  * Canonicalize a free-form entity reference to a page slug.
@@ -31,7 +38,10 @@ import type { BrainEngine } from '../engine.ts';
  *      exact pages.slug row in this source), return it untouched.
  *   2. Try fuzzy match against pages.slug + pages.title within the source
  *      (case-insensitive). Pick the highest-trgm-score match if any.
- *   3. Fall back to a deterministic slugify: lowercase-no-spaces with
+ *   3. Prefix-expansion match for bare single-token names: walk each
+ *      configured entity directory (`entities.prefix_expansion_dirs`) and
+ *      query `<dir>/<token>-%`. Highest-connection wins.
+ *   4. Fall back to a deterministic slugify: lowercase-no-spaces with
  *      hyphen-collapse. NOT prefixed with a directory — caller decides
  *      whether to prefix `people/`, `companies/`, etc.
  *
@@ -61,11 +71,11 @@ export async function resolveEntitySlug(
 
   // 3. Prefix-expansion match: when the input looks like a bare first name
   //    (no slash, no prefix, slugifies to a single short token), try
-  //    `people/<token>-%` then `companies/<token>-%`. Short bare names
-  //    score terribly on pg_trgm — similarity('jared', 'jared-friedman')
-  //    is below the 0.4 threshold — so this is the layer that catches
-  //    `"Jared"` → `people/jared-friedman` before we phantom-stub a
-  //    bare `people/jared.md`.
+  //    `<dir>/<token>-%` for each configured directory in order. Short
+  //    bare names score terribly on pg_trgm — similarity('alice',
+  //    'alice-example') is below the 0.4 threshold — so this is the
+  //    layer that catches `"Alice"` → `people/alice-example` before we
+  //    phantom-stub a bare `people/alice.md`.
   if (isBareName(trimmed)) {
     const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
     if (expanded) return expanded;
@@ -78,83 +88,108 @@ export async function resolveEntitySlug(
 /**
  * "Bare name" detector — true when the input is a single word with no
  * slash, no embedded prefix marker, and slugifies to a non-empty token.
- * Multi-word inputs (e.g. "Jared Friedman") are handled by fuzzy match;
+ * Multi-word inputs (e.g. "Alice Example") are handled by fuzzy match;
  * this gate only fires for short first-name-shaped tokens.
  */
 function isBareName(raw: string): boolean {
   if (raw.includes('/')) return false;
-  // One-token input. Whitespace-tokenize: "Jared" → 1, "Jared Friedman" → 2.
+  // One-token input. Whitespace-tokenize: "Alice" → 1, "Alice Example" → 2.
   const tokens = raw.trim().split(/\s+/).filter(Boolean);
   if (tokens.length !== 1) return false;
   const slug = slugify(raw);
   if (!slug) return false;
-  // Reject hyphenated multi-token slugs like "jared-friedman" — those
+  // Reject hyphenated multi-token slugs like "alice-example" — those
   // should hit the exact-slug or fuzzy path, not prefix expansion.
   if (slug.includes('-')) return false;
   return true;
 }
 
-const PREFIX_EXPANSION_DIRS = ['people', 'companies'] as const;
+/**
+ * Default prefix-expansion directories. Matches the stub-guard's
+ * recognized prefix set in `src/core/facts/fence-write.ts` so the
+ * resolver and the guard see the same world. Override per-brain via
+ * the `entities.prefix_expansion_dirs` config key.
+ */
+export const DEFAULT_PREFIX_EXPANSION_DIRS = ['people', 'companies', 'deals', 'topics'] as const;
 
 /**
- * Look up pages whose slug starts with `<dir>/<token>-` for each known
+ * Resolve the active prefix-expansion dir list. Config-first, default-fallback.
+ * Exported for tests and for callers that want to inspect the configured set.
+ */
+export function getPrefixExpansionDirs(): readonly string[] {
+  const cfg = loadConfig();
+  const fromConfig = cfg?.entities?.prefix_expansion_dirs;
+  if (Array.isArray(fromConfig) && fromConfig.length > 0) {
+    // Filter to non-empty strings; anything else silently drops so a bad
+    // config entry can't 500 the resolver. Matches the v0.31.12
+    // model-tier resolver's "fall back to defaults on bad input" posture.
+    const cleaned = fromConfig.filter((s): s is string => typeof s === 'string' && s.length > 0);
+    if (cleaned.length > 0) return cleaned;
+  }
+  return DEFAULT_PREFIX_EXPANSION_DIRS;
+}
+
+/**
+ * Look up pages whose slug starts with `<dir>/<token>-` for each configured
  * entity directory. When multiple candidates match within a directory,
  * pick the one with the highest connection count (links_in + links_out +
  * chunk count) — the most-mentioned entity is the most likely canonical
  * target for a bare-name reference. When no candidates match in any
  * directory, returns null and the caller falls through to slugify.
+ *
+ * The connection-count subqueries are correlated (per page row) rather
+ * than full table aggregates so the cost scales with the number of
+ * slug-LIKE-matching candidates (typically 1-3), not with brain size.
+ * Indexes used: `idx_links_to`, `idx_links_from`, `idx_chunks_page`.
  */
-async function tryPrefixExpansion(
+/**
+ * Run the prefix-expansion step in isolation. Skips the exact-slug and
+ * fuzzy-match layers — useful for `gbrain merge-phantoms` where the
+ * input IS a phantom unprefixed slug that would exact-match itself and
+ * short-circuit `resolveEntitySlug` before reaching prefix expansion.
+ *
+ * `token` should be a pre-slugified single word (e.g. `'alice'`, not
+ * `'Alice'`). Returns null when no candidate matches in any configured
+ * directory.
+ */
+export async function tryPrefixExpansion(
   engine: BrainEngine,
   source_id: string,
   token: string,
 ): Promise<string | null> {
-  for (const dir of PREFIX_EXPANSION_DIRS) {
+  for (const dir of getPrefixExpansionDirs()) {
     const pattern = `${dir}/${token}-%`;
     try {
       const rows = await engine.executeRaw<{
         slug: string;
         connection_count: number;
       }>(
-        // Connection count is a simple proxy for canonicality:
-        // (incoming links) + (outgoing links) + (content chunks).
-        // No graph traversal, just three indexed counts per page.
-        // Filter is applied AFTER the aggregate so pages with zero
-        // connections still show up (a stub page is still a real page).
+        // Correlated subqueries: each per p.id, hitting the existing
+        // (to_page_id), (from_page_id), (page_id) indexes. The outer
+        // WHERE p.slug LIKE $2 is highly selective, so N is small.
         `SELECT p.slug,
-                (COALESCE(li.in_count, 0) + COALESCE(lo.out_count, 0) + COALESCE(cc.chunk_count, 0))
+                ((SELECT COUNT(*) FROM links WHERE to_page_id = p.id) +
+                 (SELECT COUNT(*) FROM links WHERE from_page_id = p.id) +
+                 (SELECT COUNT(*) FROM content_chunks WHERE page_id = p.id))
                   AS connection_count
          FROM pages p
-         LEFT JOIN (
-           SELECT to_page_id AS pid, COUNT(*)::int AS in_count
-           FROM links GROUP BY to_page_id
-         ) li ON li.pid = p.id
-         LEFT JOIN (
-           SELECT from_page_id AS pid, COUNT(*)::int AS out_count
-           FROM links GROUP BY from_page_id
-         ) lo ON lo.pid = p.id
-         LEFT JOIN (
-           SELECT page_id AS pid, COUNT(*)::int AS chunk_count
-           FROM content_chunks GROUP BY page_id
-         ) cc ON cc.pid = p.id
          WHERE p.source_id = $1
            AND p.deleted_at IS NULL
            AND p.slug LIKE $2
          ORDER BY connection_count DESC, p.slug ASC
-         LIMIT 5`,
+         LIMIT 1`,
         [source_id, pattern],
       );
       if (rows.length === 0) continue;
-      // Single unambiguous match: return it.
-      if (rows.length === 1) return rows[0].slug;
-      // Multiple matches: the top row (sorted by connection_count desc)
-      // wins. The slug-ASC secondary key makes ties deterministic when
-      // connection counts collide — important for test pinning.
       return rows[0].slug;
-    } catch {
-      // Defensive: a missing table or index shouldn't crash extraction.
-      // Try the next directory (or fall through to slugify).
-      continue;
+    } catch (err) {
+      // Narrow probe: column-missing on legacy brains (most likely
+      // `deleted_at` pre-v0.26.5) falls through to the next directory.
+      // Genuine failures (pool exhaustion, lock timeout, network blip)
+      // propagate so they're visible instead of silently masquerading
+      // as "no prefix match." See v0.26.9 D14 in CLAUDE.md.
+      if (isUndefinedColumnError(err, 'deleted_at')) continue;
+      throw err;
     }
   }
   return null;
@@ -179,8 +214,11 @@ async function tryExactSlug(
       [source_id, candidate],
     );
     if (rows.length > 0) return rows[0].slug;
-  } catch {
-    // Defensive: fail open. Caller still gets a slug from the fallback.
+  } catch (err) {
+    // Legacy brain without `deleted_at` column — fall through to slugify
+    // fallback. Other failures propagate.
+    if (isUndefinedColumnError(err, 'deleted_at')) return null;
+    throw err;
   }
   return null;
 }
@@ -214,9 +252,14 @@ async function tryFuzzyMatch(
       [source_id, lc, fragment],
     );
     if (rows.length > 0 && rows[0].score >= 0.4) return rows[0].slug;
-  } catch {
-    // pg_trgm functions might not be available on every engine config;
-    // fall through to slugify.
+  } catch (err) {
+    // pg_trgm functions (`similarity`, `%`) might not be available on
+    // every engine config; same for `deleted_at` on legacy brains.
+    // Either fall through to the prefix-expansion + slugify path.
+    if (isUndefinedColumnError(err, 'deleted_at')) return null;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/similarity|operator does not exist|function similarity/i.test(msg)) return null;
+    throw err;
   }
   return null;
 }

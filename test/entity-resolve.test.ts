@@ -1,13 +1,39 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
-import { resolveEntitySlug, slugify } from '../src/core/entities/resolve.ts';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import {
+  resolveEntitySlug,
+  slugify,
+  getPrefixExpansionDirs,
+  DEFAULT_PREFIX_EXPANSION_DIRS,
+} from '../src/core/entities/resolve.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { writeFactsToFence } from '../src/core/facts/fence-write.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 /**
  * v0.34.5 — entity resolution prefix expansion tests.
  *
  * Validates that bare first names resolve to existing pages via prefix
  * expansion, preventing phantom stub creation.
+ *
+ * Privacy: all seed data uses canonical placeholders per CLAUDE.md
+ * "Privacy rule: scrub real names from public docs" — alice-example,
+ * bob-example, charlie-example, dave-example, acme-example. The
+ * bug being fixed is name-agnostic; slugify('Alice') exercises the
+ * same path that slugify('Jared') did pre-fix.
+ *
+ * Coverage matrix per plan mossy-popping-crown.md D5:
+ *   - prefix expansion happy path (single + multi candidate)
+ *   - tiebreak via connection_count DESC, slug ASC
+ *   - companies/ prefix
+ *   - links contribution to connection_count (not just chunks)
+ *   - identical connection_count → slug ASC fallback
+ *   - source-id isolation
+ *   - config-driven dirs (entities.prefix_expansion_dirs)
+ *   - integration regression: stub-guard → backstop → DB row, no markdown file
  */
 
 let engine: PGLiteEngine;
@@ -17,16 +43,27 @@ beforeAll(async () => {
   await engine.connect({ database_url: '' });
   await engine.initSchema();
 
-  // Seed test pages.
+  // Seed test pages. Two variants per first name so the tiebreak
+  // path has real candidates to choose between.
   const pages = [
-    { slug: 'people/jared-friedman', title: 'Jared Friedman', type: 'person' },
-    { slug: 'people/diana-hu', title: 'Diana Hu', type: 'person' },
-    { slug: 'people/diana-ross', title: 'Diana Ross', type: 'person' },
-    { slug: 'people/sam-altman', title: 'Sam Altman', type: 'person' },
-    { slug: 'people/sam-bankman-fried', title: 'Sam Bankman-Fried', type: 'person' },
-    { slug: 'people/garry-tan', title: 'Garry Tan', type: 'person' },
-    { slug: 'companies/stripe', title: 'Stripe', type: 'company' },
-    { slug: 'companies/stripe-atlas', title: 'Stripe Atlas', type: 'company' },
+    { slug: 'people/alice-example',           title: 'Alice Example',           type: 'person' },
+    { slug: 'people/charlie-example',         title: 'Charlie Example',         type: 'person' },
+    { slug: 'people/charlie-ross-example',    title: 'Charlie Ross Example',    type: 'person' },
+    { slug: 'people/bob-example',             title: 'Bob Example',             type: 'person' },
+    { slug: 'people/bob-bankman-example',     title: 'Bob Bankman Example',     type: 'person' },
+    { slug: 'people/dave-example',            title: 'Dave Example',            type: 'person' },
+    { slug: 'companies/acme-example',         title: 'Acme Example',            type: 'company' },
+    { slug: 'companies/acme-atlas-example',   title: 'Acme Atlas Example',      type: 'company' },
+    // Links-only candidate (no chunks) — exercises the links contribution
+    // to connection_count.
+    { slug: 'people/eve-example',             title: 'Eve Example',             type: 'person' },
+    { slug: 'people/eve-friend-example',      title: 'Eve Friend Example',      type: 'person' },
+    // Tiebreak candidates with identical connection counts — exercises
+    // the deterministic slug ASC secondary sort.
+    { slug: 'people/frank-aaa-example',       title: 'Frank Aaa Example',       type: 'person' },
+    { slug: 'people/frank-zzz-example',       title: 'Frank Zzz Example',       type: 'person' },
+    // Custom-dir candidate for config-driven test (`funds`).
+    { slug: 'funds/founders-x-example',       title: 'Founders X Example',      type: 'concept' },
   ];
 
   for (const p of pages) {
@@ -38,80 +75,142 @@ beforeAll(async () => {
     }, { sourceId: 'default' });
   }
 
-  // Give jared-friedman more connections (chunks) to win tiebreakers
-  const jaredPage = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM pages WHERE slug = 'people/jared-friedman' AND source_id = 'default'`,
-    [],
-  );
-  if (jaredPage.length > 0) {
-    for (let i = 0; i < 10; i++) {
-      await engine.executeRaw(
-        `INSERT INTO content_chunks (page_id, chunk_index, chunk_text)
-         VALUES ($1, $2, $3)`,
-        [jaredPage[0].id, i, `Chunk ${i} about Jared Friedman`],
-      );
+  // Give alice-example 10 chunks — exercises the single-best-match path.
+  await seedChunks(engine, 'people/alice-example', 10);
+  // bob-example > bob-bankman-example — tiebreak via chunk count.
+  await seedChunks(engine, 'people/bob-example', 20);
+  await seedChunks(engine, 'people/bob-bankman-example', 3);
+  // charlie-example > charlie-ross-example.
+  await seedChunks(engine, 'people/charlie-example', 15);
+  await seedChunks(engine, 'people/charlie-ross-example', 2);
+  // acme-example > acme-atlas-example.
+  await seedChunks(engine, 'companies/acme-example', 8);
+  await seedChunks(engine, 'companies/acme-atlas-example', 1);
+  // dave-example: single companion match, low chunks.
+  await seedChunks(engine, 'people/dave-example', 4);
+
+  // Links-only contribution: eve-example wins via inbound links rather
+  // than chunks. The UNIQUE constraint on (from_page_id, to_page_id,
+  // link_type, link_source, origin_page_id) means each (from, to, type)
+  // pair allows at most 4 distinct rows (link_source: markdown/frontmatter/
+  // manual/NULL). Seed multiple from-pages so eve accumulates enough
+  // inbound links to beat eve-friend-example deterministically.
+  const eve = await pageId(engine, 'people/eve-example');
+  const alice = await pageId(engine, 'people/alice-example');
+  const charlie = await pageId(engine, 'people/charlie-example');
+  const dave = await pageId(engine, 'people/dave-example');
+  const eveFriend = await pageId(engine, 'people/eve-friend-example');
+  if (eve && alice && charlie && dave) {
+    const sources: Array<string | null> = ['markdown', 'frontmatter', 'manual', null];
+    for (const from of [alice, charlie, dave]) {
+      for (const ls of sources) {
+        await engine.executeRaw(
+          `INSERT INTO links (from_page_id, to_page_id, link_type, link_source)
+           VALUES ($1, $2, 'mentions', $3)
+           ON CONFLICT DO NOTHING`,
+          [from, eve, ls],
+        );
+      }
     }
+  }
+  // Eve-friend gets exactly one inbound link so it's a clear loser.
+  if (eveFriend && alice) {
+    await engine.executeRaw(
+      `INSERT INTO links (from_page_id, to_page_id, link_type, link_source)
+       VALUES ($1, $2, 'mentions', 'markdown')
+       ON CONFLICT DO NOTHING`,
+      [alice, eveFriend],
+    );
   }
 
-  // Give sam-altman more connections than sam-bankman-fried
-  const samPage = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM pages WHERE slug = 'people/sam-altman' AND source_id = 'default'`,
-    [],
-  );
-  if (samPage.length > 0) {
-    for (let i = 0; i < 20; i++) {
-      await engine.executeRaw(
-        `INSERT INTO content_chunks (page_id, chunk_index, chunk_text)
-         VALUES ($1, $2, $3)`,
-        [samPage[0].id, i, `Chunk ${i} about Sam Altman`],
-      );
-    }
-  }
+  // Identical-count tiebreak: frank-aaa-example and frank-zzz-example
+  // each get 5 chunks. The resolver should deterministically pick
+  // frank-aaa-example (ASC).
+  await seedChunks(engine, 'people/frank-aaa-example', 5);
+  await seedChunks(engine, 'people/frank-zzz-example', 5);
 
-  // Give diana-hu more connections than diana-ross
-  const dianaPage = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM pages WHERE slug = 'people/diana-hu' AND source_id = 'default'`,
+  // funds candidate gets 3 chunks so the config-driven test has data to match.
+  await seedChunks(engine, 'funds/founders-x-example', 3);
+
+  // Source-isolation setup: create a sibling source and put `people/alice-example`
+  // there too with WAY more chunks. The resolver in source 'default' must
+  // still return `people/alice-example` (the default's row), NOT leak to
+  // the high-chunk row in the other source.
+  await engine.executeRaw(
+    `INSERT INTO sources (id, name, config) VALUES ('other-src', 'other-src', '{}'::jsonb)
+     ON CONFLICT (id) DO NOTHING`,
     [],
   );
-  if (dianaPage.length > 0) {
-    for (let i = 0; i < 15; i++) {
-      await engine.executeRaw(
-        `INSERT INTO content_chunks (page_id, chunk_index, chunk_text)
-         VALUES ($1, $2, $3)`,
-        [dianaPage[0].id, i, `Chunk ${i} about Diana Hu`],
-      );
-    }
-  }
+  await engine.putPage('people/alice-example', {
+    type: 'person' as any,
+    title: 'Alice (other source)',
+    compiled_truth: `# Alice in other source`,
+    frontmatter: { type: 'person', title: 'Alice (other source)', slug: 'people/alice-example' },
+  }, { sourceId: 'other-src' });
+  await seedChunks(engine, 'people/alice-example', 50, 'other-src');
+  // Sanity: put a name only in other-src so it must NOT resolve in default.
+  await engine.putPage('people/grace-other-example', {
+    type: 'person' as any,
+    title: 'Grace (other source only)',
+    compiled_truth: `# Grace only in other source`,
+    frontmatter: { type: 'person', title: 'Grace (other source only)', slug: 'people/grace-other-example' },
+  }, { sourceId: 'other-src' });
+  await seedChunks(engine, 'people/grace-other-example', 20, 'other-src');
 });
 
 afterAll(async () => {
   await engine.disconnect();
 });
 
+async function seedChunks(eng: PGLiteEngine, slug: string, count: number, sourceId = 'default'): Promise<void> {
+  const rows = await eng.executeRaw<{ id: string }>(
+    `SELECT id FROM pages WHERE slug = $1 AND source_id = $2`,
+    [slug, sourceId],
+  );
+  if (rows.length === 0) return;
+  const pid = rows[0].id;
+  for (let i = 0; i < count; i++) {
+    await eng.executeRaw(
+      `INSERT INTO content_chunks (page_id, chunk_index, chunk_text)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (page_id, chunk_index) DO NOTHING`,
+      [pid, i, `Chunk ${i} about ${slug}`],
+    );
+  }
+}
+
+async function pageId(eng: PGLiteEngine, slug: string, sourceId = 'default'): Promise<string | null> {
+  const rows = await eng.executeRaw<{ id: string }>(
+    `SELECT id FROM pages WHERE slug = $1 AND source_id = $2 LIMIT 1`,
+    [slug, sourceId],
+  );
+  return rows[0]?.id ?? null;
+}
+
 describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
-  it('resolves "Jared" to people/jared-friedman', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Jared');
-    expect(result).toBe('people/jared-friedman');
+  it('resolves "Alice" to people/alice-example', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Alice');
+    expect(result).toBe('people/alice-example');
   });
 
-  it('resolves "jared" (lowercase) to people/jared-friedman', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'jared');
-    expect(result).toBe('people/jared-friedman');
+  it('resolves "alice" (lowercase) to people/alice-example', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'alice');
+    expect(result).toBe('people/alice-example');
   });
 
-  it('resolves "Diana" to people/diana-hu (more connections)', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Diana');
-    expect(result).toBe('people/diana-hu');
+  it('resolves "Charlie" to people/charlie-example (more connections)', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Charlie');
+    expect(result).toBe('people/charlie-example');
   });
 
-  it('resolves "Sam" to people/sam-altman (more connections)', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Sam');
-    expect(result).toBe('people/sam-altman');
+  it('resolves "Bob" to people/bob-example (more connections)', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Bob');
+    expect(result).toBe('people/bob-example');
   });
 
-  it('resolves "Garry" to people/garry-tan (single match)', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Garry');
-    expect(result).toBe('people/garry-tan');
+  it('resolves "Dave" to people/dave-example (single match)', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Dave');
+    expect(result).toBe('people/dave-example');
   });
 
   it('falls through to slugify for unknown names', async () => {
@@ -120,20 +219,20 @@ describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
   });
 
   it('exact match still works for fully-qualified slugs', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'people/jared-friedman');
-    expect(result).toBe('people/jared-friedman');
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'people/alice-example');
+    expect(result).toBe('people/alice-example');
   });
 
   it('multi-word input does NOT trigger prefix expansion', async () => {
-    // "Jared Friedman" should go through fuzzy match, not prefix expansion
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Jared Friedman');
+    // "Alice Example" should go through fuzzy match, not prefix expansion
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Alice Example');
     // Should resolve via fuzzy match to the same page
-    expect(result).toContain('jared-friedman');
+    expect(result).toContain('alice-example');
   });
 
   it('hyphenated input does NOT trigger prefix expansion', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'jared-friedman');
-    expect(result).toBe('people/jared-friedman');
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'alice-example');
+    expect(result).toBe('people/alice-example');
   });
 
   it('returns null for empty input', async () => {
@@ -142,13 +241,233 @@ describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
   });
 });
 
+describe('resolveEntitySlug — additional coverage (D5)', () => {
+  it('expands bare "Acme" to companies/acme-example via the companies/ directory', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Acme');
+    expect(result).toBe('companies/acme-example');
+  });
+
+  it('uses inbound + outbound link counts (not just chunks) for connection_count', async () => {
+    // eve-example has many inbound links + zero chunks; eve-friend-example
+    // has one inbound link + zero chunks. The winner is whichever the
+    // connection_count expression scores higher, and that scoring HAS
+    // to consider links or eve-example would tie eve-friend-example.
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Eve');
+    expect(result).toBe('people/eve-example');
+  });
+
+  it('breaks identical-count ties deterministically via slug ASC', async () => {
+    // frank-aaa-example and frank-zzz-example both have exactly 5
+    // chunks and 0 links. Tiebreak is slug ASC → "aaa" wins.
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Frank');
+    expect(result).toBe('people/frank-aaa-example');
+  });
+
+  it('scopes prefix expansion to the requested source_id', async () => {
+    // people/alice-example exists in BOTH 'default' (10 chunks) and
+    // 'other-src' (50 chunks). Resolving "Alice" in 'default' must
+    // return default's row, not leak to other-src's higher-chunk row.
+    // If the SQL ever drops `WHERE p.source_id = $1`, the high-chunk
+    // other-src row would win the tiebreak — this test pins that.
+    const defaultResult = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Alice');
+    expect(defaultResult).toBe('people/alice-example');
+
+    // "Grace" only exists in other-src. Resolving in 'default' must
+    // fall through to slugify, NOT find the other-src row.
+    const defaultGrace = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Grace');
+    expect(defaultGrace).toBe('grace');
+
+    // And in other-src, Grace resolves cleanly.
+    const otherGrace = await resolveEntitySlug(engine as unknown as BrainEngine, 'other-src', 'Grace');
+    expect(otherGrace).toBe('people/grace-other-example');
+  });
+});
+
+describe('getPrefixExpansionDirs — config-driven (D2)', () => {
+  it('returns DEFAULT_PREFIX_EXPANSION_DIRS when no config exists', async () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-prefix-default-'));
+    try {
+      const dirs = await withEnv({ GBRAIN_HOME: tmpHome }, () => getPrefixExpansionDirs());
+      expect(dirs).toEqual([...DEFAULT_PREFIX_EXPANSION_DIRS]);
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it('honors entities.prefix_expansion_dirs config override', async () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-prefix-custom-'));
+    try {
+      // GBRAIN_HOME=<tmp> → config lives at <tmp>/.gbrain/config.json.
+      const cfgDir = join(tmpHome, '.gbrain');
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync(cfgDir, { recursive: true });
+      writeFileSync(
+        join(cfgDir, 'config.json'),
+        JSON.stringify({
+          engine: 'pglite',
+          entities: { prefix_expansion_dirs: ['funds', 'people'] },
+        }),
+        'utf-8',
+      );
+      const dirs = await withEnv({ GBRAIN_HOME: tmpHome }, () => getPrefixExpansionDirs());
+      expect(dirs).toEqual(['funds', 'people']);
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to defaults when config override is empty or malformed', async () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-prefix-bad-'));
+    try {
+      const cfgDir = join(tmpHome, '.gbrain');
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync(cfgDir, { recursive: true });
+      writeFileSync(
+        join(cfgDir, 'config.json'),
+        JSON.stringify({
+          engine: 'pglite',
+          entities: { prefix_expansion_dirs: [123, '', null] }, // all bad
+        }),
+        'utf-8',
+      );
+      const dirs = await withEnv({ GBRAIN_HOME: tmpHome }, () => getPrefixExpansionDirs());
+      expect(dirs).toEqual([...DEFAULT_PREFIX_EXPANSION_DIRS]);
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves through a custom funds/ directory when configured', async () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-prefix-funds-'));
+    try {
+      const cfgDir = join(tmpHome, '.gbrain');
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync(cfgDir, { recursive: true });
+      writeFileSync(
+        join(cfgDir, 'config.json'),
+        JSON.stringify({
+          engine: 'pglite',
+          entities: { prefix_expansion_dirs: ['funds'] },
+        }),
+        'utf-8',
+      );
+      const result = await withEnv({ GBRAIN_HOME: tmpHome }, () =>
+        resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Founders'),
+      );
+      expect(result).toBe('funds/founders-x-example');
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('stub-guard + backstop integration (D5 regression — IRON RULE)', () => {
+  it('writeFactsToFence refuses to stub-create an unprefixed slug', async () => {
+    // This is the regression test for the literal bug class the PR fixes.
+    // When resolveEntitySlug falls through to slugify("Zander") → "zander"
+    // (no matching page, no prefix), writeFactsToFence must NOT create
+    // a phantom `zander.md` at the brain root. Instead it returns
+    // stubGuardBlocked: true so the caller (backstop) can route the fact
+    // to the legacy DB-only path.
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-stub-guard-'));
+    try {
+      const result = await writeFactsToFence(
+        engine as unknown as BrainEngine,
+        { sourceId: 'default', localPath: brainDir, slug: 'zander' },
+        [
+          {
+            fact: 'Zander likes integration tests.',
+            kind: 'fact' as const,
+            notability: 'medium' as const,
+            source: 'test:regression',
+            visibility: 'private' as const,
+            embedding: null,
+            sessionId: null,
+          },
+        ],
+      );
+
+      // The guard fired.
+      expect(result.stubGuardBlocked).toBe(true);
+      expect(result.inserted).toBe(0);
+      expect(result.ids).toEqual([]);
+
+      // No phantom markdown file was created at the brain root.
+      expect(existsSync(join(brainDir, 'zander.md'))).toBe(false);
+
+      // Now simulate the backstop's fallback: insert the fact via the
+      // legacy DB-only path. This mirrors what runPipelineWithBody does
+      // in src/core/facts/backstop.ts when result.stubGuardBlocked is true.
+      const legacy = await (engine as unknown as BrainEngine).insertFact(
+        {
+          fact: 'Zander likes integration tests.',
+          kind: 'fact' as const,
+          entity_slug: 'zander',
+          visibility: 'private' as const,
+          notability: 'medium' as const,
+          source: 'test:regression',
+          source_session: null,
+          embedding: null,
+        },
+        { source_id: 'default' },
+      );
+      expect(legacy.id).toBeGreaterThan(0);
+      expect(legacy.status).toBe('inserted');
+
+      // DB row exists with entity_slug='zander', no markdown file.
+      const rows = await engine.executeRaw<{ id: number; entity_slug: string; fact: string }>(
+        `SELECT id, entity_slug, fact FROM facts WHERE entity_slug = $1 AND source_id = $2`,
+        ['zander', 'default'],
+      );
+      expect(rows.length).toBe(1);
+      expect(rows[0].entity_slug).toBe('zander');
+      expect(existsSync(join(brainDir, 'zander.md'))).toBe(false);
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+    }
+  });
+
+  it('writeFactsToFence DOES create the page when the slug has a directory prefix', async () => {
+    // Inverse coverage: confirm the guard ONLY fires on unprefixed slugs.
+    // A `people/yvonne-example` write should land normally.
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-stub-guard-ok-'));
+    try {
+      const result = await writeFactsToFence(
+        engine as unknown as BrainEngine,
+        { sourceId: 'default', localPath: brainDir, slug: 'people/yvonne-example' },
+        [
+          {
+            fact: 'Yvonne likes prefixed slugs.',
+            kind: 'fact' as const,
+            notability: 'medium' as const,
+            source: 'test:regression',
+            visibility: 'private' as const,
+            embedding: null,
+            sessionId: null,
+          },
+        ],
+      );
+
+      // No guard fire; row inserted.
+      expect(result.stubGuardBlocked).toBeUndefined();
+      expect(result.inserted).toBe(1);
+      expect(result.ids.length).toBe(1);
+
+      // Markdown file exists at the prefixed path.
+      expect(existsSync(join(brainDir, 'people/yvonne-example.md'))).toBe(true);
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('slugify', () => {
   it('lowercases and hyphenates', () => {
-    expect(slugify('Jared Friedman')).toBe('jared-friedman');
+    expect(slugify('Alice Example')).toBe('alice-example');
   });
 
   it('handles single word', () => {
-    expect(slugify('Jared')).toBe('jared');
+    expect(slugify('Alice')).toBe('alice');
   });
 
   it('strips accents', () => {
