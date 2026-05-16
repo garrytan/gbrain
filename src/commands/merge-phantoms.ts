@@ -51,7 +51,7 @@
  */
 
 import { join, dirname } from 'node:path';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { serializeMarkdown } from '../core/markdown.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import {
@@ -300,8 +300,28 @@ export async function runMergePhantomsCore(
     }
 
     if (facts_moved === 0) {
-      // Phantom with no facts to migrate — just soft-delete it.
+      // Phantom with no facts to migrate — just soft-delete it AND
+      // remove the .md file (codex round-20 P2 #1: the factless early-
+      // continue used to bypass the unlink-on-disk block, leaving a
+      // file that next sync would resurrect). The feasibility check
+      // above only ran when facts_moved > 0, so re-fetch localPath
+      // here — may be null for thin-client sources, in which case
+      // there's nothing on disk to unlink.
       await engine.softDeletePage(row.slug, { sourceId: opts.sourceId });
+      const factlessLocalPath = await lookupSourceLocalPath(engine, opts.sourceId);
+      if (factlessLocalPath !== null) {
+        const phantomFile = join(factlessLocalPath, `${row.slug}.md`);
+        if (existsSync(phantomFile)) {
+          try {
+            unlinkSync(phantomFile);
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[merge-phantoms] couldn't unlink factless phantom file ${phantomFile}: ${err instanceof Error ? err.message : String(err)}.`,
+            );
+          }
+        }
+      }
       merged.push({ phantom: row.slug, canonical, facts_moved: 0 });
       continue;
     }
@@ -340,19 +360,22 @@ export async function runMergePhantomsCore(
     }));
 
     // Codex round-17 P2: if the canonical page exists in the DB but
-    // its markdown file is MISSING on disk (e.g. created via the
-    // MCP put_page op on a source with local_path but never synced
-    // to disk), writeFactsToFence would stub-create a NEW markdown
-    // file containing only the title. The subsequent importFromFile
-    // would then OVERWRITE the canonical's existing pages.compiled_truth
-    // with the stub body. Data loss.
+    // its markdown file is MISSING on disk, materialize from the DB
+    // body BEFORE writeFactsToFence to avoid stub-creating over real
+    // content.
     //
-    // Fix: read the canonical's existing DB body and materialize it
-    // to disk BEFORE writeFactsToFence runs. writeFactsToFence then
-    // sees the canonical file and appends to its fence rather than
-    // stub-creating.
+    // Codex round-20 P2 #2 rollback support: capture the pre-merge
+    // markdown state so we can restore it if the post-write
+    // importFromFile fails. Without rollback, a failed import leaves
+    // canonical fact rows with row_num values that a subsequent rerun
+    // would re-attempt to insert, hitting the partial UNIQUE index on
+    // `(source_id, source_markdown_slug, row_num)` and aborting until
+    // the operator manually deletes the orphans.
     const canonicalFilePath = join(localPath, `${canonical}.md`);
-    if (!existsSync(canonicalFilePath)) {
+    let preMergeBody: string | null = null;       // null if file was created by materialize
+    if (existsSync(canonicalFilePath)) {
+      preMergeBody = readFileSync(canonicalFilePath, 'utf-8');
+    } else {
       const canonicalPage = await engine.getPage(canonical, { sourceId: opts.sourceId });
       if (canonicalPage) {
         mkdirSync(dirname(canonicalFilePath), { recursive: true });
@@ -366,10 +389,9 @@ export async function runMergePhantomsCore(
           { type: canonicalPage.type, title: canonicalPage.title, tags },
         );
         writeFileSync(canonicalFilePath, body, 'utf-8');
+        // preMergeBody stays null — we created the file from the DB,
+        // so rollback should unlink it (sync artifact, not user state).
       }
-      // If canonicalPage is null we silently fall through — the
-      // canonical_missing skip earlier in the loop already covered
-      // the "no DB row" case, so reaching here means there IS a row.
     }
 
     const fenceResult = await writeFactsToFence(
@@ -427,25 +449,46 @@ export async function runMergePhantomsCore(
     // the operator can rerun after fixing the canonical.
     if (!importStatus || importStatus.status !== 'imported') {
       const detail = importStatus?.error ?? 'unknown';
-      // Codex round-15 P2 + round-16 P2 #2: when re-import fails AFTER
-      // writeFactsToFence has already mutated the canonical fence + DB,
-      // we leave the phantom rows intact so the operator can rerun.
-      // Rerun is structurally idempotent:
-      //   - writeFactsToFence → upsertFactRow updates fence rows by
-      //     `(claim, kind, source)` key, so re-running doesn't append
-      //     duplicates in the markdown.
-      //   - engine.insertFacts is dedup'd against the partial UNIQUE
-      //     index on (source_id, source_markdown_slug, row_num), so
-      //     re-running doesn't double-insert DB rows.
-      // The visible cost between the failed run and the rerun is that
-      // `pages.compiled_truth` stays stale (the import didn't refresh
-      // it), so the next autopilot extract_facts cycle MAY reconcile
-      // against the old body. The operator should rerun
-      // merge-phantoms (or invoke `gbrain import` against the canonical
-      // page) before the next cycle to avoid that window.
+      // Codex round-20 P2 #2 rollback: writeFactsToFence already
+      // inserted canonical fact rows. If we leave them and the
+      // operator reruns merge-phantoms after fixing the markdown,
+      // engine.insertFacts hits the partial UNIQUE index on
+      // (source_id, source_markdown_slug, row_num) and aborts.
+      // Rollback DELETEs the canonical rows we just inserted AND
+      // restores the canonical markdown file to its pre-merge state
+      // (or unlinks it when we materialized from DB and the rollback
+      // should not leave a sync artifact behind).
+      if (fenceResult.ids.length > 0) {
+        try {
+          await engine.executeRaw(
+            `DELETE FROM facts WHERE source_id = $1 AND id = ANY($2::int[])`,
+            [opts.sourceId, fenceResult.ids],
+          );
+        } catch (rollbackErr) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[merge-phantoms] rollback DELETE failed for canonical fact rows (${fenceResult.ids.join(',')}): ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}. Operator may need to clear these manually before rerun.`,
+          );
+        }
+      }
+      try {
+        if (preMergeBody !== null) {
+          writeFileSync(canonicalFilePath, preMergeBody, 'utf-8');
+        } else if (existsSync(canonicalFilePath)) {
+          // We materialized the canonical from the DB; the sync
+          // artifact should be removed on rollback.
+          unlinkSync(canonicalFilePath);
+        }
+      } catch (fileErr) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[merge-phantoms] rollback markdown restore failed for ${canonicalFilePath}: ${fileErr instanceof Error ? fileErr.message : String(fileErr)}. Operator may need to fix manually.`,
+        );
+      }
+
       // eslint-disable-next-line no-console
       console.warn(
-        `[merge-phantoms] canonical re-import for ${canonical} did not produce status='imported' (got ${importStatus?.status ?? 'null'}: ${detail}). Phantom NOT soft-deleted; rerun the merge after fixing the markdown.`,
+        `[merge-phantoms] canonical re-import for ${canonical} did not produce status='imported' (got ${importStatus?.status ?? 'null'}: ${detail}). Rolled back the canonical inserts; phantom NOT soft-deleted. Fix the markdown and rerun.`,
       );
       skipped.push({ phantom: row.slug, canonical, skipped: 'fence_write_failed' });
       continue;
