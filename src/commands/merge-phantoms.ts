@@ -444,10 +444,18 @@ because phantoms are already soft-deleted.
   const dryRun = args.includes('--dry-run');
   const json = args.includes('--json');
   const sourceIdx = args.indexOf('--source');
-  const sourceId =
+  const explicitSource =
     sourceIdx >= 0 && args[sourceIdx + 1] && !args[sourceIdx + 1].startsWith('--')
       ? args[sourceIdx + 1]
-      : 'default';
+      : null;
+
+  // Resolve source via the standard chain (--source flag → GBRAIN_SOURCE
+  // env → .gbrain-source dotfile → CWD-local registered source → default).
+  // Codex round-13 P2: a literal `'default'` fallback would silently
+  // mutate the wrong source in multi-source brains where the operator
+  // is working in a non-default source via cwd or env.
+  const { resolveSourceId } = await import('../core/source-resolver.ts');
+  const sourceId = await resolveSourceId(engine, explicitSource);
 
   const result = await runMergePhantomsCore(engine, { sourceId, dryRun });
 
