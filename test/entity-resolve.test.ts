@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -362,14 +362,21 @@ describe('getPrefixExpansionDirs — config-driven (D2)', () => {
 });
 
 describe('stub-guard + backstop integration (D5 regression — IRON RULE)', () => {
-  it('writeFactsToFence refuses to stub-create an unprefixed slug', async () => {
-    // This is the regression test for the literal bug class the PR fixes.
-    // When resolveEntitySlug falls through to slugify("Zander") → "zander"
+  it('writeFactsToFence refuses to stub-create an unprefixed slug; backstop drops fact + audits to JSONL', async () => {
+    // Regression for the literal bug class this PR fixes. When
+    // resolveEntitySlug falls through to slugify("Zander") → "zander"
     // (no matching page, no prefix), writeFactsToFence must NOT create
-    // a phantom `zander.md` at the brain root. Instead it returns
-    // stubGuardBlocked: true so the caller (backstop) can route the fact
-    // to the legacy DB-only path.
+    // a phantom `zander.md`. Instead it returns stubGuardBlocked: true
+    // so the caller (backstop) logs + audits + skips.
+    //
+    // The pre-codex-review version of this PR inserted these facts into
+    // the DB to avoid silent data loss, but that produced
+    // legacy-shape rows (row_num NULL + entity_slug NOT NULL) that
+    // trip the v0.32.2 extract_facts reconciliation guard. The fix is
+    // to NOT insert and instead write a structured audit entry to
+    // ~/.gbrain/facts.dropped.jsonl for operator recovery.
     const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-stub-guard-'));
+    const gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-home-stub-'));
     try {
       const result = await writeFactsToFence(
         engine as unknown as BrainEngine,
@@ -395,35 +402,56 @@ describe('stub-guard + backstop integration (D5 regression — IRON RULE)', () =
       // No phantom markdown file was created at the brain root.
       expect(existsSync(join(brainDir, 'zander.md'))).toBe(false);
 
-      // Now simulate the backstop's fallback: insert the fact via the
-      // legacy DB-only path. This mirrors what runPipelineWithBody does
-      // in src/core/facts/backstop.ts when result.stubGuardBlocked is true.
-      const legacy = await (engine as unknown as BrainEngine).insertFact(
-        {
+      // Simulate the backstop's fallback under a controlled GBRAIN_HOME
+      // so the JSONL lands in the tempdir and not the real brain.
+      const { appendDroppedFactAudit } = await import('../src/core/facts/dropped-audit.ts');
+      await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+        appendDroppedFactAudit({
+          source_id: 'default',
+          phantom_slug: 'zander',
+          reason: 'stub_guard_blocked',
           fact: 'Zander likes integration tests.',
-          kind: 'fact' as const,
-          entity_slug: 'zander',
-          visibility: 'private' as const,
-          notability: 'medium' as const,
+          kind: 'fact',
+          notability: 'medium',
+          visibility: 'private',
           source: 'test:regression',
           source_session: null,
-          embedding: null,
-        },
-        { source_id: 'default' },
-      );
-      expect(legacy.id).toBeGreaterThan(0);
-      expect(legacy.status).toBe('inserted');
+        });
+      });
 
-      // DB row exists with entity_slug='zander', no markdown file.
-      const rows = await engine.executeRaw<{ id: number; entity_slug: string; fact: string }>(
-        `SELECT id, entity_slug, fact FROM facts WHERE entity_slug = $1 AND source_id = $2`,
-        ['zander', 'default'],
+      // The fact is NOT in the DB — this is the v0.32.2 reconciliation
+      // guard fix. Previous regression test asserted the OPPOSITE; this
+      // updated assertion pins the codex P1 fix.
+      const rows = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM facts WHERE source_id = 'default' AND fact = 'Zander likes integration tests.'`,
+        [],
       );
-      expect(rows.length).toBe(1);
-      expect(rows[0].entity_slug).toBe('zander');
+      expect(rows.length).toBe(0);
+
+      // No legacy-shape rows produced by this code path.
+      const legacyRows = await engine.executeRaw<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM facts WHERE row_num IS NULL AND entity_slug = 'zander'`,
+        [],
+      );
+      expect(legacyRows[0].n).toBe(0);
+
+      // The audit log captured the fact for operator recovery.
+      const auditPath = join(gbrainHome, '.gbrain', 'facts.dropped.jsonl');
+      expect(existsSync(auditPath)).toBe(true);
+      const auditLines = readFileSync(auditPath, 'utf-8').trim().split('\n');
+      expect(auditLines.length).toBe(1);
+      const entry = JSON.parse(auditLines[0]);
+      expect(entry.phantom_slug).toBe('zander');
+      expect(entry.reason).toBe('stub_guard_blocked');
+      expect(entry.fact).toBe('Zander likes integration tests.');
+      expect(entry.kind).toBe('fact');
+      expect(entry.notability).toBe('medium');
+
+      // And no markdown file.
       expect(existsSync(join(brainDir, 'zander.md'))).toBe(false);
     } finally {
       rmSync(brainDir, { recursive: true, force: true });
+      rmSync(gbrainHome, { recursive: true, force: true });
     }
   });
 

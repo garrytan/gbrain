@@ -40,6 +40,7 @@
 import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
+import { appendDroppedFactAudit } from './dropped-audit.ts';
 
 export interface FactsBackstopCtx {
   engine: BrainEngine;
@@ -456,28 +457,37 @@ async function runPipelineWithBody(
       continue;
     }
     if (result.stubGuardBlocked) {
-      // v0.34.5: writeFactsToFence refused to spawn a phantom
-      // unprefixed entity page (e.g. `jared.md` at brain root).
-      // Route these facts to the legacy DB-only path so they
-      // aren't dropped — the slug stays attached but no markdown
-      // file is created.
+      // v0.34.5 (codex P1 follow-up): writeFactsToFence refused to spawn a
+      // phantom unprefixed entity page (e.g. `zoolander.md` at brain root).
+      // The pre-codex-review version of this branch inserted these facts
+      // via `engine.insertFact` to avoid silent data loss, but that
+      // produced rows shaped like pre-v0.32.2 legacy migration rows
+      // (`row_num IS NULL AND entity_slug IS NOT NULL`), and the v0.32.2
+      // extract_facts cycle phase guard at `src/core/cycle/extract-facts.ts:83`
+      // refuses to run reconciliation while any such rows exist. One
+      // unknown bare entity reference silently broke autopilot extract_facts
+      // forever.
+      //
+      // Fix: log loudly + append a structured entry to
+      // `~/.gbrain/facts.dropped.jsonl` for operator recovery. The fact
+      // text is preserved verbatim so a future `gbrain replay-dropped` tool
+      // can re-process once the canonical entity page exists.
       for (const { f } of group) {
-        const newFact: NewFact = {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[facts] dropping fact (no canonical for unprefixed slug=${slug}): "${f.fact.slice(0, 80)}${f.fact.length > 80 ? '…' : ''}". Logged to ~/.gbrain/facts.dropped.jsonl for recovery.`,
+        );
+        appendDroppedFactAudit({
+          source_id: ctx.sourceId,
+          phantom_slug: slug,
+          reason: 'stub_guard_blocked',
           fact: f.fact,
-          kind: f.kind,
-          entity_slug: slug,
+          kind: f.kind ?? null,
+          notability: f.notability ?? null,
           visibility,
-          notability: f.notability,
           source: f.source,
           source_session: f.source_session ?? null,
-          confidence: f.confidence,
-          embedding: f.embedding ?? null,
-        };
-        const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: stub-guard fallback for unprefixed entity slugs (no fenceable page)
-        fact_ids.push(legacyResult.id);
-        if (legacyResult.status === 'inserted') inserted += 1;
-        else if ((legacyResult.status as FactInsertStatus) === 'duplicate') duplicate += 1;
-        else superseded += 1;
+        });
       }
       continue;
     }

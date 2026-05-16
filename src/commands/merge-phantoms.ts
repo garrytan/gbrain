@@ -9,10 +9,19 @@
  * stops new phantoms from being created (stub-guard + backstop fallback)
  * but does nothing about the pile that built up before the fix landed.
  *
- * This command reads existing unprefixed entity pages, runs the new
- * resolver against them to find a canonical target, moves the facts
- * over (via UPDATE facts SET entity_slug = $canonical), and soft-deletes
- * the phantom page using the v0.26.5 destructive-guard machinery.
+ * This command reads existing unprefixed entity pages, finds a
+ * canonical target via prefix expansion, RE-FENCES the phantom's active
+ * facts into the canonical page's `## Facts` fence (so the rows land
+ * with proper `source_markdown_slug` + `row_num` pointing at the
+ * canonical, not the soft-deleted phantom), then soft-deletes the
+ * phantom.
+ *
+ * Per codex P2 in /codex review: a naive UPDATE that moves only
+ * `entity_slug` leaves rows with `source_markdown_slug = phantom`,
+ * which subsequent extract_facts cycle phases would wipe (the cycle
+ * deletes rows keyed on the phantom's slug). The re-fence path mirrors
+ * the v0.32.2 "fence is canonical" contract — the canonical page's
+ * markdown becomes the source of truth, the DB index follows.
  *
  * Operator-only. Not exposed as an MCP op — destructive operations
  * stay CLI-only until there's a clear remote use case.
@@ -20,29 +29,30 @@
  *   gbrain merge-phantoms [--dry-run] [--source SOURCE_ID] [--json]
  *
  * Algorithm:
- *   1. SELECT id, slug, type FROM pages
- *      WHERE source_id = $1
- *        AND slug NOT LIKE '%/%'
- *        AND type IN ('person','company','deal','topic','concept')
- *        AND deleted_at IS NULL
- *   2. For each row, call resolveEntitySlug to find a canonical target.
- *      Skip if (a) canonical is null or empty, (b) canonical equals the
- *      phantom slug, (c) canonical lacks a directory prefix, (d) the
- *      canonical page does not exist in the same source.
- *   3. UPDATE facts SET entity_slug = canonical WHERE entity_slug = slug.
- *      The facts table's dedup is body-hash based at write time, so
- *      moving the entity_slug column doesn't create duplicates here.
- *   4. softDeletePage the phantom (sets deleted_at, hides from search,
- *      72h purge TTL via the autopilot cycle's purge phase).
- *   5. Report what moved.
+ *   1. List phantom unprefixed entity pages.
+ *   2. For each row, call tryPrefixExpansion to find a canonical
+ *      target. Skip when no canonical exists.
+ *   3. listFactsByEntity(phantom_slug, activeOnly=true) — get the
+ *      facts that need migration.
+ *   4. Build FenceInputFact[] preserving fact text, kind, notability,
+ *      visibility, source, source_session, confidence, embedding.
+ *   5. writeFactsToFence(canonical, inputFacts) — appends the facts
+ *      to the canonical's markdown fence and inserts new DB rows with
+ *      source_markdown_slug=canonical + proper row_nums.
+ *   6. deleteFactsForPage(phantom_slug) wipes post-v0.32.2 phantom
+ *      rows. A raw DELETE handles pre-v0.32.2 NULL-source_markdown_slug
+ *      rows attached to the phantom by entity_slug.
+ *   7. softDeletePage the phantom (autopilot cycle's purge phase
+ *      hard-purges after 72h).
  *
  * `--dry-run` prints what would happen without mutating anything.
  *
- * Plan: ~/.claude/plans/mossy-popping-crown.md D7.
+ * Plan: ~/.claude/plans/mossy-popping-crown.md D7 + D9 (codex P2).
  */
 
 import type { BrainEngine } from '../core/engine.ts';
 import { tryPrefixExpansion, slugify } from '../core/entities/resolve.ts';
+import { writeFactsToFence, lookupSourceLocalPath, type FenceInputFact } from '../core/facts/fence-write.ts';
 
 /** Phantom-resolution outcome for one row. */
 export interface PhantomMerge {
@@ -51,7 +61,13 @@ export interface PhantomMerge {
   /** Set when the merge fired. */
   facts_moved?: number;
   /** Set when the row was skipped. */
-  skipped?: 'no_canonical' | 'canonical_equals_phantom' | 'canonical_unprefixed' | 'canonical_missing';
+  skipped?:
+    | 'no_canonical'
+    | 'canonical_equals_phantom'
+    | 'canonical_unprefixed'
+    | 'canonical_missing'
+    | 'no_local_path'
+    | 'fence_write_failed';
 }
 
 export interface MergePhantomsResult {
@@ -139,20 +155,85 @@ export async function runMergePhantomsCore(
       continue;
     }
 
-    // How many facts will move?
-    const factCount = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM facts WHERE source_id = $1 AND entity_slug = $2`,
+    // Read the phantom's active facts. listFactsByEntity defaults to
+    // activeOnly=true, which is what we want — expired/strikethrough
+    // facts stay on the phantom (it gets soft-deleted, hard-purged in
+    // 72h, taking the historical record with it). Active facts are
+    // what the user cares about migrating.
+    const phantomFacts = await engine.listFactsByEntity(opts.sourceId, row.slug, {
+      activeOnly: true,
+      limit: 10_000,
+    });
+    const facts_moved = phantomFacts.length;
+
+    if (opts.dryRun) {
+      merged.push({ phantom: row.slug, canonical, facts_moved });
+      continue;
+    }
+
+    if (facts_moved === 0) {
+      // Phantom with no facts to migrate — just soft-delete it.
+      await engine.softDeletePage(row.slug, { sourceId: opts.sourceId });
+      merged.push({ phantom: row.slug, canonical, facts_moved: 0 });
+      continue;
+    }
+
+    // Re-fence into canonical's `## Facts` fence (codex P2 fix).
+    // Requires the source's local_path for the markdown file write.
+    // Thin-client sources without local_path can't be migrated this
+    // way; surface as a skip so operator can decide what to do.
+    const localPath = await lookupSourceLocalPath(engine, opts.sourceId);
+    if (localPath === null) {
+      skipped.push({ phantom: row.slug, canonical, skipped: 'no_local_path' });
+      continue;
+    }
+
+    const inputFacts: FenceInputFact[] = phantomFacts.map(fr => ({
+      fact: fr.fact,
+      kind: fr.kind,
+      notability: fr.notability,
+      source: fr.source,
+      context: fr.context,
+      visibility: fr.visibility,
+      confidence: fr.confidence,
+      validFrom: fr.valid_from,
+      embedding: fr.embedding,
+      sessionId: fr.source_session,
+    }));
+
+    const fenceResult = await writeFactsToFence(
+      engine,
+      { sourceId: opts.sourceId, localPath, slug: canonical },
+      inputFacts,
+    );
+
+    if (fenceResult.fenceWriteFailed || fenceResult.stubGuardBlocked) {
+      // Neither should fire here in practice — canonical has a
+      // directory prefix so stub-guard is structurally impossible, and
+      // the canonical fence is the writer's existing canonical state.
+      // If something goes wrong, log+skip so we don't double-delete
+      // facts the canonical doesn't own.
+      skipped.push({ phantom: row.slug, canonical, skipped: 'fence_write_failed' });
+      continue;
+    }
+
+    // Wipe the phantom's rows. Two delete passes cover both eras:
+    //   - deleteFactsForPage targets source_markdown_slug = phantom
+    //     (post-v0.32.2 phantom rows).
+    //   - The raw DELETE catches pre-v0.32.2 NULL-source_markdown_slug
+    //     rows attached to the phantom via entity_slug.
+    await engine.deleteFactsForPage(row.slug, opts.sourceId);
+    await engine.executeRaw(
+      `DELETE FROM facts
+        WHERE source_id = $1
+          AND entity_slug = $2
+          AND source_markdown_slug IS NULL`,
       [opts.sourceId, row.slug],
     );
-    const facts_moved = factCount[0]?.n ?? 0;
 
-    if (!opts.dryRun) {
-      await engine.executeRaw(
-        `UPDATE facts SET entity_slug = $1 WHERE source_id = $2 AND entity_slug = $3`,
-        [canonical, opts.sourceId, row.slug],
-      );
-      await engine.softDeletePage(row.slug, { sourceId: opts.sourceId });
-    }
+    // Soft-delete the phantom page; autopilot's purge phase hard-purges
+    // after 72h.
+    await engine.softDeletePage(row.slug, { sourceId: opts.sourceId });
 
     merged.push({ phantom: row.slug, canonical, facts_moved });
   }
