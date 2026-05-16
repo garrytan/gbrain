@@ -64,4 +64,26 @@ describe('buildToolDefs', () => {
       expect(Array.isArray(def.inputSchema.required)).toBe(true);
     }
   });
+
+  test('no array property is missing items (Gemini Pro strict JSON Schema compat)', () => {
+    // Strict JSON Schema validators (Gemini Pro tool-call API is the canonical
+    // offender, but ChatGPT and others follow the same rule) reject any
+    // { type: 'array' } that lacks an items field. A single bad property in the
+    // tools/list response blocks the entire MCP tool surface for that session.
+    const missing: string[] = [];
+    function walk(node: unknown, path: string): void {
+      if (!node || typeof node !== 'object') return;
+      const obj = node as Record<string, unknown>;
+      if (obj.type === 'array' && !('items' in obj)) {
+        missing.push(path);
+      }
+      for (const [k, v] of Object.entries(obj)) {
+        walk(v, `${path}.${k}`);
+      }
+    }
+    for (const def of buildToolDefs(operations)) {
+      walk(def.inputSchema, `${def.name}.inputSchema`);
+    }
+    expect(missing).toEqual([]);
+  });
 });
