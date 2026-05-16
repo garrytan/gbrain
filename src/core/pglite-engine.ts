@@ -1610,16 +1610,18 @@ export class PGLiteEngine implements BrainEngine {
 
   async queryPersonsForAudit(): Promise<Array<{
     slug: string;
+    source_id: string;
     frontmatter: Record<string, unknown>;
   }>> {
     const { rows } = await this.db.query(
-      `SELECT p.slug, p.frontmatter
+      `SELECT p.slug, p.source_id, p.frontmatter
        FROM pages p
        WHERE p.type = 'person'
          AND p.deleted_at IS NULL`
     );
-    return (rows as Array<{ slug: string; frontmatter: Record<string, unknown> }>).map((r) => ({
+    return (rows as Array<{ slug: string; source_id: string | null; frontmatter: Record<string, unknown> }>).map((r) => ({
       slug: r.slug,
+      source_id: (r.source_id ?? 'default') as string,
       frontmatter: (r.frontmatter ?? {}) as Record<string, unknown>,
     }));
   }

@@ -251,3 +251,61 @@ describe('classifyOccurrences', () => {
     expect(out).toEqual([]);
   });
 });
+
+describe('classifyOccurrences — source-axis routing', () => {
+  test('qualified wikilink validates against the matching source-specific set', () => {
+    const { sets, setsBySource, malformedSlugs } = buildCanonicalNameSets([
+      { slug: 'people/example', source_id: 'team-a', frontmatter: { name: 'Alpha Example' } },
+      { slug: 'people/example', source_id: 'team-b', frontmatter: { name: 'Beta Example' } },
+    ]);
+    // [[team-a:people/example|Alpha]] matches team-a (alpha is first-token).
+    const occsA = findOccurrences('See [[team-a:people/example|Alpha]].', 'f.md');
+    const outA = classifyOccurrences(occsA, sets, malformedSlugs, setsBySource);
+    expect(outA).toHaveLength(0);
+
+    // [[team-b:people/example|Beta]] matches team-b.
+    const occsB = findOccurrences('See [[team-b:people/example|Beta]].', 'f.md');
+    const outB = classifyOccurrences(occsB, sets, malformedSlugs, setsBySource);
+    expect(outB).toHaveLength(0);
+  });
+
+  test('qualified wikilink with mismatched source displays a name_mismatch (per-source set is strict)', () => {
+    const { sets, setsBySource, malformedSlugs } = buildCanonicalNameSets([
+      { slug: 'people/example', source_id: 'team-a', frontmatter: { name: 'Alpha Example' } },
+      { slug: 'people/example', source_id: 'team-b', frontmatter: { name: 'Beta Example' } },
+    ]);
+    // [[team-a:people/example|Beta]] — team-a's set does NOT contain "beta".
+    // Per-source lookup wins; fallback to brain-wide is only used when the
+    // source has no row for the slug. Here team-a has its own row, so beta
+    // surfaces as a name_mismatch even though brain-wide would accept it.
+    const occs = findOccurrences('See [[team-a:people/example|Beta]].', 'f.md');
+    const out = classifyOccurrences(occs, sets, malformedSlugs, setsBySource);
+    expect(out).toHaveLength(1);
+    expect(out[0].kind).toBe('name_mismatch');
+    expect(out[0].canonicalNames).toContain('alpha example');
+    expect(out[0].canonicalNames).not.toContain('beta example');
+  });
+
+  test('unqualified wikilink uses brain-wide union (matches either source name)', () => {
+    const { sets, setsBySource, malformedSlugs } = buildCanonicalNameSets([
+      { slug: 'people/example', source_id: 'team-a', frontmatter: { name: 'Alpha Example' } },
+      { slug: 'people/example', source_id: 'team-b', frontmatter: { name: 'Beta Example' } },
+    ]);
+    // Brain-wide union: both alpha and beta are legitimate.
+    const occsA = findOccurrences('See [[people/example|Alpha]].', 'f.md');
+    expect(classifyOccurrences(occsA, sets, malformedSlugs, setsBySource)).toHaveLength(0);
+    const occsB = findOccurrences('See [[people/example|Beta]].', 'f.md');
+    expect(classifyOccurrences(occsB, sets, malformedSlugs, setsBySource)).toHaveLength(0);
+  });
+
+  test('qualified wikilink with unknown source falls through to brain-wide', () => {
+    const { sets, setsBySource, malformedSlugs } = buildCanonicalNameSets([
+      { slug: 'people/example', source_id: 'team-a', frontmatter: { name: 'Alpha Example' } },
+    ]);
+    // [[stale-source:people/example|Alpha]] — stale-source has no row for
+    // this slug. Per the policy, fall through to brain-wide.
+    const occs = findOccurrences('See [[stale-source:people/example|Alpha]].', 'f.md');
+    const out = classifyOccurrences(occs, sets, malformedSlugs, setsBySource);
+    expect(out).toHaveLength(0);
+  });
+});

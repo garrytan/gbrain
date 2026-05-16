@@ -1751,17 +1751,19 @@ export class PostgresEngine implements BrainEngine {
 
   async queryPersonsForAudit(): Promise<Array<{
     slug: string;
+    source_id: string;
     frontmatter: Record<string, unknown>;
   }>> {
     const sql = this.sql;
     const rows = await sql`
-      SELECT p.slug, p.frontmatter
+      SELECT p.slug, p.source_id, p.frontmatter
       FROM pages p
       WHERE p.type = 'person'
         AND p.deleted_at IS NULL
     `;
     return rows.map((r) => ({
       slug: r.slug as string,
+      source_id: (r.source_id ?? 'default') as string,
       frontmatter: (r.frontmatter ?? {}) as Record<string, unknown>,
     }));
   }

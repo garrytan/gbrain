@@ -431,14 +431,14 @@ export async function runAuditNameLinks(args: string[], opts?: RunAuditNameLinks
 
   try {
     // Build canonical-name sets from every non-deleted person page.
-    let rows: Array<{ slug: string; frontmatter: Record<string, unknown> }>;
+    let rows: Array<{ slug: string; source_id: string; frontmatter: Record<string, unknown> }>;
     try {
       rows = await engine.queryPersonsForAudit();
     } catch (e) {
       process.stderr.write(`audit-name-links: engine query failed: ${e instanceof Error ? e.message : String(e)}\n`);
       return 3;
     }
-    const { sets, pageNames, malformedSlugs } = buildCanonicalNameSets(rows);
+    const { sets, setsBySource, pageNames, pageNamesBySource, malformedSlugs } = buildCanonicalNameSets(rows);
 
     // Enumerate input files
     let candidateFiles: string[];
@@ -482,7 +482,7 @@ export async function runAuditNameLinks(args: string[], opts?: RunAuditNameLinks
       filesProcessed++;
 
       const occurrences = findOccurrences(content, file);
-      const mismatches = classifyOccurrences(occurrences, sets, malformedSlugs);
+      const mismatches = classifyOccurrences(occurrences, sets, malformedSlugs, setsBySource);
 
       // Apply Mode-1 auto-fix first (if requested), then count remaining
       // diagnostics — --strict is evaluated against the post-fix state.
@@ -490,7 +490,7 @@ export async function runAuditNameLinks(args: string[], opts?: RunAuditNameLinks
       let newContent: string | null = null;
 
       if (parsed.fixDisplayNames) {
-        const fixResult = applyDisplayFixes(content, occurrences, mismatches, pageNames);
+        const fixResult = applyDisplayFixes(content, occurrences, mismatches, pageNames, pageNamesBySource);
         if (fixResult.appliedFixes.length > 0) {
           newContent = fixResult.newContent;
           for (const fix of fixResult.appliedFixes) {
@@ -509,7 +509,7 @@ export async function runAuditNameLinks(args: string[], opts?: RunAuditNameLinks
           // Re-classify against the post-fix content so --strict sees only
           // mismatches that survived the auto-fix pass.
           const postOccurrences = findOccurrences(fixResult.newContent, file);
-          postFixMismatches = classifyOccurrences(postOccurrences, sets, malformedSlugs);
+          postFixMismatches = classifyOccurrences(postOccurrences, sets, malformedSlugs, setsBySource);
         }
       }
 

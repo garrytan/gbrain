@@ -9,6 +9,15 @@
 import { caseFold, expandApostropheVariants } from './linkify.ts';
 import { stripCodeBlocks, QUALIFIED_WIKILINK_RE } from './link-extraction.ts';
 
+/**
+ * Canonical-name sets keyed on slug for the brain-wide (unqualified) lookup
+ * path. When the audit needs to honor a qualified wikilink's source-id, it
+ * consults `setsBySource` first and falls back to the brain-wide `sets`.
+ *
+ * Brain-wide lookup is the union of every source's canonical set for a given
+ * slug — matches linkify.ts:buildAliasMap's slug-only posture (slugs treated
+ * brain-wide). See `buildCanonicalNameSets` for the documented policy.
+ */
 export type CanonicalNameSets = Map<string, Set<string>>;
 
 /**
@@ -21,7 +30,17 @@ export interface LinkOccurrence {
   slug: string;                  // e.g., 'people/cwaytek-aseva' (lowercase, no .md)
   display: string;
   linkForm: 'markdown' | 'wikilink';
-  // Byte offsets in the ORIGINAL (un-masked) source.
+  /**
+   * Source-id captured from a qualified wikilink (`[[source-id:dir/slug|X]]`).
+   * Undefined for markdown links and unqualified wikilinks, which carry no
+   * source-id and fall through to the brain-wide lookup. See
+   * `buildCanonicalNameSets` for the policy.
+   */
+  source_id?: string;
+  // Code-unit offsets in the ORIGINAL (un-masked) source. JavaScript strings
+  // are indexed by UTF-16 code units, not bytes; multi-byte display names
+  // (e.g. emoji, CJK) span the right number of code units for splice math
+  // to remain stable.
   matchStart: number;            // start of the full link
   displayStart: number;          // start of the display-text capture
   displayEnd: number;            // exclusive end of the display-text capture
@@ -54,10 +73,67 @@ export type AuditDiagnostic =
   | { kind: 'enoent'; file: string };
 
 /**
- * Build per-page canonical-name sets from person-page frontmatter rows.
+ * Internal helper that derives the canonical-name key list from a person
+ * page's `name` + `linkify_aliases` frontmatter. Mirrors the key derivation
+ * in `src/core/linkify.ts:buildAliasMap` so the audit cannot drift from
+ * linkify's notion of "what counts as a canonical name".
  *
- * Derivation mirrors buildAliasMap (src/core/linkify.ts) exactly so the audit's
- * notion of "legitimate display text" cannot drift from linkify's:
+ * Returns one entry per derived key (full + first + last + aliases), each
+ * already caseFolded and expanded to its apostrophe variants. No stopword
+ * filter — explicit author-supplied links bypass the stopword guard.
+ *
+ * DRY follow-up: `linkify.ts:buildAliasMap` inlines this derivation; lift it
+ * out once both sites can share a single implementation without churning the
+ * linkify diagnostic surface (TODOS.md).
+ */
+function deriveCanonicalKeys(name: string, aliases: unknown): string[] {
+  const tokens = name.split(/\s+/).filter(Boolean);
+  const derived: string[] = [name];
+  if (tokens.length > 0) derived.push(tokens[0]);
+  if (tokens.length > 1) derived.push(tokens[tokens.length - 1]);
+
+  if (Array.isArray(aliases)) {
+    for (const a of aliases) {
+      if (typeof a === 'string' && a.trim()) derived.push(a.trim());
+    }
+  }
+
+  const out: string[] = [];
+  for (const k of derived) {
+    const folded = caseFold(k);
+    for (const variant of expandApostropheVariants(folded)) {
+      out.push(variant);
+    }
+  }
+  return out;
+}
+
+/**
+ * Build canonical-name sets from person-page frontmatter rows. The audit
+ * mirrors `src/core/linkify.ts:buildAliasMap`'s slug-only routing posture:
+ * linkify treats slugs as brain-wide unique (does not key on source_id),
+ * so the audit's unqualified lookups do the same. Qualified wikilinks
+ * (`[[source-id:dir/slug|Display]]`) carry an explicit source-id and may
+ * validate against that source's canonical set specifically.
+ *
+ * Source-axis policy:
+ *   - **Unqualified** markdown `[X](people/Y)` and wikilinks `[[people/Y|X]]`:
+ *     no source-id is supplied, so the audit looks up the brain-wide union
+ *     of every source's canonical set for slug Y. A display that's legitimate
+ *     in any source for Y is treated as legitimate (mirrors linkify's
+ *     behavior; same backward-compat posture).
+ *   - **Qualified** wikilink `[[source-id:dir/slug|X]]`: the source-id is
+ *     captured and used for a per-source lookup. Falls through to brain-wide
+ *     when the source-id has no row for that slug (typically because the
+ *     producer wrote a stale qualified link; the audit will emit
+ *     `unknown_target` in that case).
+ *
+ * For single-source brains (the only shape supported in v1 user vaults)
+ * every per-source lookup degenerates to the brain-wide lookup, so the
+ * policy is forward-compatible. See TODOS.md for multi-source stress
+ * testing and an `ambiguous_target` diagnostic kind.
+ *
+ * Derivation per row:
  *   - name (full, trimmed)
  *   - first whitespace-split token of name
  *   - last whitespace-split token of name (when name has >=2 tokens)
@@ -67,58 +143,96 @@ export type AuditDiagnostic =
  * author-supplied link bypasses the stopword guard linkify needs).
  *
  * Returns:
- *   - sets: slug -> Set<case-folded canonical strings>
- *   - pageNames: slug -> original `name` field (preserved case; used by
- *     applyDisplayFixes as the canonical replacement target)
+ *   - sets: slug -> Set<case-folded canonical strings> (brain-wide union)
+ *   - setsBySource: "source_id:slug" -> Set<...> (per-source map used by
+ *     qualified wikilinks; unqualified links never consult this map)
+ *   - pageNames: slug -> original `name` field (preserved case). When
+ *     multiple sources have the same slug with different `name` fields,
+ *     deterministic alphabetical-first source_id wins. Used by
+ *     applyDisplayFixes as the canonical replacement target.
+ *   - pageNamesBySource: "source_id:slug" -> original `name` field, used
+ *     for qualified-wikilink fixes that should snap to the matching source.
  *   - malformedSlugs: slug -> human-readable reason for any page missing
- *     a usable `name` field. Such slugs are NOT present in `sets`.
+ *     a usable `name` field. A slug is malformed only when EVERY source's
+ *     row for that slug is malformed; otherwise the valid sources win.
+ *     Malformed slugs are NOT present in `sets`.
  */
 export function buildCanonicalNameSets(rows: Array<{
   slug: string;
+  source_id?: string;
   frontmatter: Record<string, unknown>;
-}>): { sets: CanonicalNameSets; pageNames: Map<string, string>; malformedSlugs: Map<string, string> } {
+}>): {
+  sets: CanonicalNameSets;
+  setsBySource: Map<string, Set<string>>;
+  pageNames: Map<string, string>;
+  pageNamesBySource: Map<string, string>;
+  malformedSlugs: Map<string, string>;
+} {
   const sets: CanonicalNameSets = new Map();
+  const setsBySource = new Map<string, Set<string>>();
   const pageNames = new Map<string, string>();
-  const malformedSlugs = new Map<string, string>();
+  const pageNamesBySource = new Map<string, string>();
+  // Track per-slug malformed reason candidates; only commit a slug to
+  // malformedSlugs if every source's row was malformed.
+  const malformedReasonBySlug = new Map<string, string>();
+  const validSlugs = new Set<string>();
+  // Track per-slug winning source_id for deterministic pageNames pick
+  // (alphabetical-first source_id wins).
+  const pageNameWinningSource = new Map<string, string>();
 
   for (const row of rows) {
+    const sourceId = row.source_id ?? 'default';
     const fm = row.frontmatter ?? {};
     const rawName = fm.name;
     if (typeof rawName !== 'string') {
-      malformedSlugs.set(row.slug, rawName === undefined
-        ? 'name field absent'
-        : 'name field not a string');
+      const reason = rawName === undefined ? 'name field absent' : 'name field not a string';
+      if (!validSlugs.has(row.slug) && !malformedReasonBySlug.has(row.slug)) {
+        malformedReasonBySlug.set(row.slug, reason);
+      }
       continue;
     }
     const name = rawName.trim();
     if (!name) {
-      malformedSlugs.set(row.slug, 'name field is empty');
+      if (!validSlugs.has(row.slug) && !malformedReasonBySlug.has(row.slug)) {
+        malformedReasonBySlug.set(row.slug, 'name field is empty');
+      }
       continue;
     }
 
-    const tokens = name.split(/\s+/).filter(Boolean);
-    const derived: string[] = [name];
-    if (tokens.length > 0) derived.push(tokens[0]);
-    if (tokens.length > 1) derived.push(tokens[tokens.length - 1]);
+    const variants = deriveCanonicalKeys(name, fm.linkify_aliases);
 
-    if (Array.isArray(fm.linkify_aliases)) {
-      for (const a of fm.linkify_aliases) {
-        if (typeof a === 'string' && a.trim()) derived.push(a.trim());
-      }
+    // Per-source set.
+    const bySourceKey = `${sourceId}:${row.slug}`;
+    const bySourceSet = setsBySource.get(bySourceKey) ?? new Set<string>();
+    for (const v of variants) bySourceSet.add(v);
+    setsBySource.set(bySourceKey, bySourceSet);
+    pageNamesBySource.set(bySourceKey, name);
+
+    // Brain-wide union set.
+    const unionSet = sets.get(row.slug) ?? new Set<string>();
+    for (const v of variants) unionSet.add(v);
+    sets.set(row.slug, unionSet);
+
+    // Track the winning source_id for pageNames (alphabetical-first wins).
+    const prior = pageNameWinningSource.get(row.slug);
+    if (prior === undefined || sourceId < prior) {
+      pageNameWinningSource.set(row.slug, sourceId);
+      pageNames.set(row.slug, name);
     }
 
-    const set = new Set<string>();
-    for (const k of derived) {
-      const folded = caseFold(k);
-      for (const variant of expandApostropheVariants(folded)) {
-        set.add(variant);
-      }
-    }
-    sets.set(row.slug, set);
-    pageNames.set(row.slug, name);
+    validSlugs.add(row.slug);
+    // A slug becomes valid as soon as one source has a usable name; drop any
+    // earlier malformed reason recorded against it.
+    malformedReasonBySlug.delete(row.slug);
   }
 
-  return { sets, pageNames, malformedSlugs };
+  // Only mark a slug malformed if no source ever produced a valid row.
+  const malformedSlugs = new Map<string, string>();
+  for (const [slug, reason] of malformedReasonBySlug) {
+    if (!validSlugs.has(slug)) malformedSlugs.set(slug, reason);
+  }
+
+  return { sets, setsBySource, pageNames, pageNamesBySource, malformedSlugs };
 }
 
 /**
@@ -187,6 +301,7 @@ export function findOccurrences(fileContent: string, filePath: string): LinkOccu
     const matchStart = m.index;
     const fullMatch = m[0];
     // Captures from QUALIFIED_WIKILINK_RE: 1=sourceId, 2=slug, 3=display.
+    const sourceIdCapture = m[1];
     const slugCapture = m[2];
     const display = m[3];
     if (!display) continue;  // bare wikilinks (no display) are out of scope
@@ -208,6 +323,7 @@ export function findOccurrences(fileContent: string, filePath: string): LinkOccu
       slug,
       display,
       linkForm: 'wikilink',
+      source_id: sourceIdCapture,
       matchStart,
       displayStart,
       displayEnd,
@@ -247,21 +363,63 @@ export function findOccurrences(fileContent: string, filePath: string): LinkOccu
 }
 
 /**
+ * Normalize a display string for case-folded set membership. Collapses
+ * any run of ASCII whitespace (including embedded newlines from links that
+ * wrap across lines) into a single space before caseFolding. The canonical
+ * set's keys come from `split(/\s+/)` so they're already single-space
+ * normalized; this matches.
+ */
+function normalizeDisplayForLookup(display: string): string {
+  return caseFold(display.replace(/\s+/g, ' ').trim());
+}
+
+/**
+ * Look up the canonical-name set for a given (slug, source_id?) pair.
+ *
+ * Qualified wikilinks pass `source_id`. The lookup tries the per-source
+ * set first; if that source has no row for the slug, it falls through to
+ * the brain-wide union (covers cases where a producer wrote a qualified
+ * link before the multi-source schema landed, or where the slug only
+ * exists in a different source). Unqualified links always use the
+ * brain-wide union.
+ *
+ * Returns undefined when neither lookup yields a set — the caller treats
+ * that as `unknown_target`.
+ */
+function lookupCanonicalSet(
+  occ: LinkOccurrence,
+  sets: CanonicalNameSets,
+  setsBySource: Map<string, Set<string>>,
+): Set<string> | undefined {
+  if (occ.source_id) {
+    const bySource = setsBySource.get(`${occ.source_id}:${occ.slug}`);
+    if (bySource) return bySource;
+  }
+  return sets.get(occ.slug);
+}
+
+/**
  * Classify each LinkOccurrence against the canonical-name sets. Emits one
  * AuditMismatch per (kind, file, slug, display) tuple; duplicate occurrences
  * are collapsed onto the first emission with `occurrences` incremented and
  * the FIRST `line` seen preserved.
  *
  * Resolution order per occurrence:
- *   1. slug in malformedSlugs           -> malformed_target
- *   2. slug not in sets (and not above) -> unknown_target
- *   3. caseFold(display) in sets.get(slug) -> legitimate, skip
- *   4. otherwise                        -> name_mismatch
+ *   1. slug in malformedSlugs              -> malformed_target
+ *   2. neither (source_id, slug) nor slug
+ *      in sets                             -> unknown_target
+ *   3. normalized(display) in set          -> legitimate, skip
+ *   4. otherwise                           -> name_mismatch
+ *
+ * Source-axis routing (see `buildCanonicalNameSets` docstring): qualified
+ * wikilinks consult the per-source set first; unqualified links match
+ * brain-wide.
  */
 export function classifyOccurrences(
   occurrences: LinkOccurrence[],
   sets: CanonicalNameSets,
   malformedSlugs: Map<string, string>,
+  setsBySource: Map<string, Set<string>> = new Map(),
 ): AuditMismatch[] {
   const out: AuditMismatch[] = [];
   const byKey = new Map<string, AuditMismatch>();
@@ -276,11 +434,11 @@ export function classifyOccurrences(
       kind = 'malformed_target';
       reason = malformedReason;
     } else {
-      const set = sets.get(occ.slug);
+      const set = lookupCanonicalSet(occ, sets, setsBySource);
       if (!set) {
         kind = 'unknown_target';
       } else {
-        if (set.has(caseFold(occ.display))) continue;  // legitimate
+        if (set.has(normalizeDisplayForLookup(occ.display))) continue;  // legitimate
         kind = 'name_mismatch';
         canonicalNames = Array.from(set).sort();
       }
@@ -312,20 +470,29 @@ export function classifyOccurrences(
 
 /**
  * Apply Mode-1 auto-fix to a file's content. Replaces the display text in
- * every name_mismatch occurrence with the page's canonical `name` (from
- * pageNames). Mode 2 (unknown_target, malformed_target) is NOT touched.
+ * every name_mismatch occurrence with the page's canonical `name`. Mode 2
+ * (unknown_target, malformed_target) is NOT touched.
+ *
+ * Canonical name pick (multi-source): when `occurrence.source_id` is set
+ * (qualified wikilink) and a per-source `pageNamesBySource` entry exists
+ * for that (source_id, slug) pair, the auto-fix snaps to the matching
+ * source's `name`. Otherwise it falls back to the brain-wide `pageNames`
+ * entry, which is the alphabetical-first source_id's `name` per
+ * `buildCanonicalNameSets`. Single-source brains have a one-row
+ * `pageNamesBySource` map so the policy degenerates to the v1 behavior.
  *
  * Rewrites end-to-start (sorted by displayStart desc) so earlier offsets
  * remain valid as later splices land.
  *
  * Idempotent: a second call on the same content produces no further fixes
- * because the rewritten display matches caseFold's set membership.
+ * because the rewritten display matches the canonical set's membership.
  */
 export function applyDisplayFixes(
   fileContent: string,
   occurrences: LinkOccurrence[],
   mismatches: AuditMismatch[],
   pageNames: Map<string, string>,
+  pageNamesBySource: Map<string, string> = new Map(),
 ): { newContent: string; appliedFixes: Array<{ slug: string; oldDisplay: string; newDisplay: string; line: number; linkForm: 'markdown' | 'wikilink' }> } {
   // Mode-1 only.
   const modeOneKeys = new Set<string>();
@@ -344,7 +511,11 @@ export function applyDisplayFixes(
   const appliedFixes: Array<{ slug: string; oldDisplay: string; newDisplay: string; line: number; linkForm: 'markdown' | 'wikilink' }> = [];
 
   for (const occ of fixable) {
-    const canonical = pageNames.get(occ.slug);
+    let canonical: string | undefined;
+    if (occ.source_id) {
+      canonical = pageNamesBySource.get(`${occ.source_id}:${occ.slug}`);
+    }
+    if (canonical === undefined) canonical = pageNames.get(occ.slug);
     if (canonical === undefined) continue;  // defensive: Mode-1 occurrence must have a name
     content = content.slice(0, occ.displayStart) + canonical + content.slice(occ.displayEnd);
     appliedFixes.push({

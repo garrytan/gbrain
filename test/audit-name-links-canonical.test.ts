@@ -79,3 +79,67 @@ describe('buildCanonicalNameSets', () => {
     expect(malformedSlugs.get('people/blank')).toBeDefined();
   });
 });
+
+describe('buildCanonicalNameSets — multi-source axis', () => {
+  test('two sources same slug same name → brain-wide and per-source sets both populated', () => {
+    const { sets, setsBySource, pageNames, pageNamesBySource } = buildCanonicalNameSets([
+      { slug: 'people/alice-example', source_id: 'source-a', frontmatter: { name: 'Alice Example' } },
+      { slug: 'people/alice-example', source_id: 'source-b', frontmatter: { name: 'Alice Example' } },
+    ]);
+    expect(sets.get('people/alice-example')!.has('alice example')).toBe(true);
+    expect(setsBySource.get('source-a:people/alice-example')!.has('alice example')).toBe(true);
+    expect(setsBySource.get('source-b:people/alice-example')!.has('alice example')).toBe(true);
+    // Both sources agree → pageNames is identical regardless of winner.
+    expect(pageNames.get('people/alice-example')).toBe('Alice Example');
+    expect(pageNamesBySource.get('source-a:people/alice-example')).toBe('Alice Example');
+    expect(pageNamesBySource.get('source-b:people/alice-example')).toBe('Alice Example');
+  });
+
+  test('two sources same slug different names → brain-wide set is the union; per-source sets stay distinct', () => {
+    const { sets, setsBySource, pageNames, pageNamesBySource } = buildCanonicalNameSets([
+      { slug: 'people/example', source_id: 'team-a', frontmatter: { name: 'Alpha Example' } },
+      { slug: 'people/example', source_id: 'team-b', frontmatter: { name: 'Beta Example' } },
+    ]);
+    const brainWide = sets.get('people/example')!;
+    // Brain-wide is the union: both names + first/last tokens of each.
+    expect(brainWide.has('alpha example')).toBe(true);
+    expect(brainWide.has('beta example')).toBe(true);
+    expect(brainWide.has('alpha')).toBe(true);
+    expect(brainWide.has('beta')).toBe(true);
+    // Per-source stays distinct.
+    expect(setsBySource.get('team-a:people/example')!.has('alpha example')).toBe(true);
+    expect(setsBySource.get('team-a:people/example')!.has('beta example')).toBe(false);
+    expect(setsBySource.get('team-b:people/example')!.has('beta example')).toBe(true);
+    expect(setsBySource.get('team-b:people/example')!.has('alpha example')).toBe(false);
+    // pageNames picks the alphabetically-first source_id deterministically.
+    expect(pageNames.get('people/example')).toBe('Alpha Example');
+    expect(pageNamesBySource.get('team-a:people/example')).toBe('Alpha Example');
+    expect(pageNamesBySource.get('team-b:people/example')).toBe('Beta Example');
+  });
+
+  test('mixed valid + malformed across sources → slug is valid (one source has a name)', () => {
+    const { sets, malformedSlugs, pageNames } = buildCanonicalNameSets([
+      { slug: 'people/half-valid', source_id: 'source-a', frontmatter: {} },
+      { slug: 'people/half-valid', source_id: 'source-b', frontmatter: { name: 'Half Valid' } },
+    ]);
+    expect(malformedSlugs.has('people/half-valid')).toBe(false);
+    expect(sets.has('people/half-valid')).toBe(true);
+    expect(pageNames.get('people/half-valid')).toBe('Half Valid');
+  });
+
+  test('all sources malformed → slug marked malformed', () => {
+    const { sets, malformedSlugs } = buildCanonicalNameSets([
+      { slug: 'people/bad-everywhere', source_id: 'source-a', frontmatter: {} },
+      { slug: 'people/bad-everywhere', source_id: 'source-b', frontmatter: { name: '' } },
+    ]);
+    expect(sets.has('people/bad-everywhere')).toBe(false);
+    expect(malformedSlugs.has('people/bad-everywhere')).toBe(true);
+  });
+
+  test('row without source_id defaults to "default" source key', () => {
+    const { setsBySource } = buildCanonicalNameSets([
+      { slug: 'people/no-source', frontmatter: { name: 'No Source' } },
+    ]);
+    expect(setsBySource.has('default:people/no-source')).toBe(true);
+  });
+});

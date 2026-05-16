@@ -1146,10 +1146,16 @@ export interface BrainEngine {
    * to validate explicit author-supplied [Display](people/Slug) links and
    * [[people/Slug|Display]] wikilinks against the canonical name set.
    *
-   * Includes pages from all source_ids — the audit is brain-wide.
+   * Includes pages from all source_ids — the audit is brain-wide. Each row
+   * carries its own `source_id` so callers can honor the gbrain architecture's
+   * (brain, source, slug) routing key for qualified wikilinks; unqualified
+   * links continue to match brain-wide (mirroring `queryPersonsForLinkify`).
+   * See `buildCanonicalNameSets` in `src/core/audit-name-links.ts` for the
+   * documented fallback policy.
    */
   queryPersonsForAudit(): Promise<Array<{
     slug: string;
+    source_id: string;
     frontmatter: Record<string, unknown>;
   }>>;
 }
