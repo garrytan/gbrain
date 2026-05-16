@@ -18,6 +18,9 @@ All notable changes to GBrain will be documented in this file.
   audit-name-links`. See `docs/guides/linkify.md` for the full flag
   matrix, diagnostic format, and the operator-facing vault migration
   runbook.
+
+### For contributors
+
 - New flags on `gbrain audit-name-links`: `--path`, `--dir`,
   `--since`, `--filename-prefix`, `--all`, `--fix-display-names`,
   `--dry-run`, `--strict`, `--json-diagnostics`, `--verbose-diagnostics`,
@@ -29,14 +32,13 @@ All notable changes to GBrain will be documented in this file.
   `concurrent_modification_skipped`, `icloud_placeholder_skipped`,
   `enoent`. `malformed_target` is always informational and never trips
   `--strict` (a missing `name:` field is a gbrain data-quality issue,
-  not a producer bug). JSON output uses camelCase field names
-  (`canonicalNames`, `linkForm`, `oldDisplay`, `newDisplay`) consistent
-  with the rest of gbrain's JSON surfaces.
+  not a producer bug). JSON output uses snake_case field names; see the
+  field table in `docs/guides/linkify.md#auditing-name-links`.
 - New `BrainEngine` method `queryPersonsForAudit`. Broader than the
   existing `queryPersonsForLinkify`: returns every non-deleted person
-  page regardless of `linkable:` flag, auto-stub status, or `source_id`,
-  so explicit author-supplied links to opt-out pages and cross-source
-  slugs still validate. Implemented for both `pglite-engine` and
+  page regardless of `linkable:` flag or auto-stub status, with each
+  row carrying its `source_id` so the audit can validate qualified
+  cross-source wikilinks. Implemented for both `pglite-engine` and
   `postgres-engine`.
 - Exported `caseFold`, `expandApostropheVariants`, `APOSTROPHE_STRAIGHT`,
   `APOSTROPHE_CURLY`, and `atomicWriteSameDir` from `src/commands/linkify.ts`
