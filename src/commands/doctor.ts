@@ -1052,6 +1052,51 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // Audit read / import failure is best-effort; skip silently.
   }
 
+  // 3b-tris. Stub-guard fire count (last 24h). The v0.34.5 stub guard in
+  // fence-write.ts refuses to spawn unprefixed entity pages (e.g. bare
+  // `alice.md` at brain root). Each fire is appended to
+  // ~/.gbrain/audit/stub-guard-YYYY-Www.jsonl. This check is the operator
+  // visibility surface for the guard's v0.36 sunset criterion: when the
+  // 24h count is consistently low, the prefix-expansion in
+  // resolveEntitySlug is doing its job and the guard can be removed.
+  //
+  // WARN at >10 fires/24h — at that rate the resolver is probably missing
+  // a case (typo prefix, alias, non-Latin script). Operators should grep
+  // the audit log for the slugs that hit it and either add the missing
+  // resolver branch or document them as legitimate bare-slug ingestion.
+  try {
+    const { readRecentStubGuardEvents } = await import('../core/facts/stub-guard-audit.ts');
+    const events = readRecentStubGuardEvents({ sinceMs: 24 * 60 * 60 * 1000 });
+    if (events.length > 10) {
+      // Surface the top 3 slugs that hit it so operators have somewhere to start.
+      const slugCounts = new Map<string, number>();
+      for (const e of events) slugCounts.set(e.slug, (slugCounts.get(e.slug) ?? 0) + 1);
+      const topSlugs = [...slugCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([slug, n]) => `${slug}(${n})`)
+        .join(', ');
+      checks.push({
+        name: 'stub_guard_24h',
+        status: 'warn',
+        message:
+          `Stub guard fired ${events.length}x in last 24h (top: ${topSlugs}). ` +
+          `If this stays elevated, the prefix-expansion in resolveEntitySlug is ` +
+          `missing a case. Check ~/.gbrain/audit/stub-guard-*.jsonl for the slugs ` +
+          `that hit it.`,
+      });
+    } else if (events.length > 0) {
+      checks.push({
+        name: 'stub_guard_24h',
+        status: 'ok',
+        message: `Stub guard fired ${events.length}x in last 24h (below WARN threshold of 10).`,
+      });
+    }
+    // Zero hits is the goal — emit no check at all so the doctor output stays clean.
+  } catch {
+    // Audit read failure is best-effort; skip silently.
+  }
+
   // 3c. Sync failure trail (Bug 9). sync.ts gates the `sync.last_commit`
   // bookmark when per-file parse errors happen, and appends each failure
   // to ~/.gbrain/sync-failures.jsonl with the commit hash + exact error.
