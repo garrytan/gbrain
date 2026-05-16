@@ -1803,3 +1803,101 @@ flow + recovery messaging).
 **Priority:** P2.
 **Depends on:** decision on whether to deprecate the bare name or dual-publish
 during a transition window.
+
+---
+
+## audit-name-links follow-ups (v1.x)
+
+These items surfaced during the v1 review wave (per-phase, Gemini-slot,
+Codex). v1 ships single-source brains correctly and is forward-compatible
+with multi-source via the policy documented in
+`src/core/audit-name-links.ts:buildCanonicalNameSets`. The items below
+deepen multi-source coverage and tighten producer-markdown handling.
+
+### Multi-source-axis stress tests + ambiguous_target diagnostic
+**What:** The brain-wide fallback for unqualified links is documented in
+`buildCanonicalNameSets`, but multi-source brains with collisions (same
+slug, different names per source) are an under-tested surface. Today the
+audit picks deterministic alphabetical-first source_id for the brain-wide
+`pageNames`/canonical replacement target. That's safe but silent; an
+operator running `--fix-display-names` on a cross-source collision won't
+see that the auto-fix snapped to one source's name without explanation.
+
+Add: real-vault stress tests with 2+ sources, a new `ambiguous_target`
+diagnostic kind when two sources disagree on the `name` field for a given
+slug (informational; does NOT trip --strict — same posture as
+`malformed_target`), and a `--source-id <id>` CLI flag to scope the audit
+to a single source's writes for incremental adoption.
+
+**Priority:** P3 — no v1 user has a multi-source vault.
+**Depends on:** team-brain mount UX maturing (`gbrain mounts add`).
+
+### Same-second double-write hardening
+**What:** The concurrent-modification guard re-stats the file pre-write
+and compares `mtimeMs`. On second-precision filesystems (some older HFS,
+some network mounts) a same-second double-write can slip through.
+
+Add: a content-hash or size check pre-write in
+`audit-name-links.ts:applyDisplayFixes`. Currently mitigated by all
+producers running detective-only; the risk window is operator
+`--fix-display-names` runs against an active producer.
+
+**Priority:** P3 — narrow risk window.
+
+### Line-number computation is O(n²) per file
+**What:** `findOccurrences` computes the line number for every match via
+`fileContent.slice(0, matchStart).split('\n').length`. Fine for producer
+single-file use (briefings + transcripts are short). Degrades on Phase 4
+vault sweep with link-heavy transcripts: every match re-walks the prefix.
+
+Replace with a single newline-offset prefix array built once per file
+(O(n) total), then binary-search the array for each match's line number.
+
+**Priority:** P3 — not yet a measured hotspot.
+
+### Diagnostic-shape drifts from spec — `canonical_names` always-array
+**What:** `unknown_target` and `malformed_target` JSON serializers emit
+`canonical_names: []` (always-array). The design spec says the field is
+absent for those kinds. Two paths: tighten the spec to "always-array,
+empty for unknown / malformed" (default; more consumable), OR drop the
+field from those serializer branches. Pick one and pin via a serializer
+test.
+
+**Priority:** P3 — consumer-facing.
+
+### Producer markdown subset documentation
+**What:** The markdown link regex deliberately does NOT handle:
+- Nested-bracket labels: `[[X]](people/Y)`
+- CommonMark reference-style links: `[X][ref]` + `[ref]: people/Y`
+- Multi-line link destinations: `[X](\npeople/Y)`
+
+Add a test fixture documenting which shapes the production producer
+pipelines (webex-digest, ai-apple-transcripts) emit and audit cleanly.
+If a producer ever needs another shape, extend the regex AND the
+documented contract together.
+
+**Priority:** P3.
+
+### `--suggested-slug` column for Mode 2 detective output
+**What:** Mode 2 (`unknown_target`) emits "slug not found" but leaves
+the operator to guess what the display string should have resolved to.
+Use `makeResolver()` from `src/core/linkify.ts` to suggest which slug
+the display string would normally resolve to. Detective-only; never
+auto-fixes the slug (that would re-attribute Mode 2 silently). Helps
+the operator triage `unknown_target` cases without re-reading source.
+
+Already in the design spec's open follow-ups list.
+
+**Priority:** P3 — operator-ergonomics polish.
+
+### DRY `deriveCanonicalKeys` shared with linkify
+**What:** `src/core/audit-name-links.ts` inlines `deriveCanonicalKeys`
+(full name + first/last tokens + aliases × apostrophe variants) as an
+internal helper, by design — lifting the matching block out of
+`linkify.ts:buildAliasMap` would churn linkify's diagnostic emission
+path. Once both sites can share a single implementation without
+touching the diagnostic shape, extract a shared helper to
+`src/core/audit-name-links-keys.ts` (or similar) so drift becomes
+structural rather than advisory.
+
+**Priority:** P3.

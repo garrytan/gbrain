@@ -329,7 +329,7 @@ describe('audit-name-links engine-injected runs', () => {
     }
   });
 
-  test('concurrent modification: file modified mid-audit emits concurrent_modification_skipped', async () => {
+  test('concurrent-modification skip diagnostic is wired into the runner (smoke)', async () => {
     const f = join(tmpDir, 'concurrent.md');
     writeFileSync(f, 'Reviewed [Calvin Waytek](people/cwaytek-aseva) update.\n');
     // Force a deterministic pre-mtime so we can change it cleanly later.
