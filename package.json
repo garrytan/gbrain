@@ -24,6 +24,7 @@
     "./backoff": "./src/core/backoff.ts",
     "./search/hybrid": "./src/core/search/hybrid.ts",
     "./search/expansion": "./src/core/search/expansion.ts",
+    "./ai/gateway": "./src/core/ai/gateway.ts",
     "./extract": "./src/commands/extract.ts"
   },
   "scripts": {
