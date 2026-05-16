@@ -62,8 +62,12 @@ export function buildCacheKey(opts: {
 function isJudgeVerdict(raw: unknown): raw is JudgeVerdict {
   if (!raw || typeof raw !== 'object') return false;
   const v = raw as Record<string, unknown>;
+  // v0.34 / Lane A2: shape check matches the new `verdict: Verdict` enum.
+  // Old v1-shaped rows (with `contradicts: boolean` instead) fail this guard
+  // and get treated as cache misses — same effect as the PROMPT_VERSION '1'
+  // rows already being filtered out by the cache-key tuple, but doubly safe.
   return (
-    typeof v.contradicts === 'boolean' &&
+    typeof v.verdict === 'string' &&
     typeof v.severity === 'string' &&
     typeof v.confidence === 'number' &&
     typeof v.axis === 'string'

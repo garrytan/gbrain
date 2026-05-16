@@ -62,8 +62,15 @@ function mkResult(slug: string, page_id: number, chunk_id: number, text: string,
 
 /** Stubbed judge that returns a fixed verdict pattern. */
 function stubJudge(opts: {
+  /**
+   * v0.34 / Lane A2: `verdict` replaces `contradicts`. Legacy `contradicts:
+   * true` maps to verdict='contradiction'; `contradicts: false` to
+   * verdict='no_contradiction'. Callers can pass either field; verdict wins
+   * when both are set.
+   */
+  verdict?: 'no_contradiction' | 'contradiction' | 'temporal_supersession' | 'temporal_regression' | 'temporal_evolution' | 'negation_artifact';
   contradicts?: boolean;
-  severity?: 'low' | 'medium' | 'high';
+  severity?: 'info' | 'low' | 'medium' | 'high';
   confidence?: number;
   inputTokens?: number;
   outputTokens?: number;
@@ -75,9 +82,11 @@ function stubJudge(opts: {
     if (opts.throwOn && opts.throwOn(idx)) {
       throw new Error('stub: simulated transient 503');
     }
+    const resolvedVerdict =
+      opts.verdict ?? (opts.contradicts === false ? 'no_contradiction' : 'contradiction');
     return {
       verdict: {
-        contradicts: opts.contradicts ?? true,
+        verdict: resolvedVerdict,
         severity: opts.severity ?? 'medium',
         axis: 'stub axis',
         confidence: opts.confidence ?? 0.85,
@@ -374,7 +383,7 @@ describe('runContradictionProbe', () => {
         // Yield to let the abort fire.
         await new Promise((r) => setTimeout(r, 1));
         return {
-          verdict: { contradicts: false, severity: 'low', axis: '', confidence: 0.3, resolution_kind: null },
+          verdict: { verdict: 'no_contradiction', severity: 'info', axis: '', confidence: 0.3, resolution_kind: null },
           usage: { inputTokens: 1, outputTokens: 1 },
         };
       },
@@ -418,7 +427,7 @@ describe('runContradictionProbe', () => {
     const recordOrder = (out: string[]): JudgeFn => async (input) => {
       out.push(`${input.a.slug}|${input.b.slug}`);
       return {
-        verdict: { contradicts: false, severity: 'low', axis: '', confidence: 0.4, resolution_kind: null },
+        verdict: { verdict: 'no_contradiction', severity: 'info', axis: '', confidence: 0.4, resolution_kind: null },
         usage: { inputTokens: 1, outputTokens: 1 },
       };
     };

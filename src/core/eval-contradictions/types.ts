@@ -28,22 +28,62 @@ export const TRUNCATION_POLICY = '1500-chars-utf8-safe' as const;
 
 export type ContradictionKind = 'cross_slug_chunks' | 'intra_page_chunk_take';
 
-export type Severity = 'low' | 'medium' | 'high';
+/**
+ * v0.34 / Lane A2: severity gains 'info' for the new non-error-class verdicts
+ * (temporal_supersession, temporal_evolution) that should surface in the
+ * report without inflating the contradiction count.
+ */
+export type Severity = 'info' | 'low' | 'medium' | 'high';
 
+/**
+ * v0.34 / Lane A2: replaces the v1 `contradicts: boolean` shape. Six members.
+ *
+ * - no_contradiction      → drop from findings (not surfaced)
+ * - contradiction         → genuine conflict at the same point in time
+ * - temporal_supersession → newer claim updates/replaces older; not an error
+ * - temporal_regression   → metric/status went backwards over time
+ * - temporal_evolution    → legitimate change over time, neither of the above
+ * - negation_artifact     → judge misread an explicit negation in one chunk
+ */
+export type Verdict =
+  | 'no_contradiction'
+  | 'contradiction'
+  | 'temporal_supersession'
+  | 'temporal_regression'
+  | 'temporal_evolution'
+  | 'negation_artifact';
+
+/**
+ * Resolution kinds. v0.34 / Lane A2 added three new members covering the new
+ * verdicts; the original four still apply to `verdict === 'contradiction'`.
+ *
+ * - temporal_supersede     → render `gbrain takes supersede ... --since <date>`
+ * - flag_for_review        → informational; no CLI command rendered
+ * - log_timeline_change    → render a hint pointing at the future
+ *                             timeline-writer subcommand (deferred)
+ */
 export type ResolutionKind =
   | 'takes_supersede'
   | 'dream_synthesize'
   | 'takes_mark_debate'
-  | 'manual_review';
+  | 'manual_review'
+  | 'temporal_supersede'
+  | 'flag_for_review'
+  | 'log_timeline_change';
 
 export type SourceTier = 'curated' | 'bulk' | 'other';
 
 /**
  * Judge's verdict for a single pair. Either the judge ran cleanly and we have
  * scoring, or it failed and we have a typed error to surface in the report.
+ *
+ * v0.34 / Lane A2: `verdict: Verdict` replaces the v1 `contradicts: boolean`.
+ * Every consumer that previously branched on `verdict.contradicts` now
+ * switches on `verdict.verdict`. PROMPT_VERSION bumped in A1 invalidates the
+ * old cached rows.
  */
 export interface JudgeVerdict {
-  contradicts: boolean;
+  verdict: Verdict;
   severity: Severity;
   /** One-line description of what they disagree about, or empty when no contradiction. */
   axis: string;
@@ -101,6 +141,12 @@ export interface ContradictionPair {
 }
 
 export interface ContradictionFinding extends ContradictionPair {
+  /**
+   * v0.34 / Lane A2: which verdict bucket this finding belongs to. Always one
+   * of the five non-`no_contradiction` members (no_contradiction findings are
+   * dropped from the report by the runner emit predicate).
+   */
+  verdict: Verdict;
   severity: Severity;
   axis: string;
   confidence: number;
@@ -111,6 +157,13 @@ export interface ContradictionFinding extends ContradictionPair {
 export interface PerQueryResult {
   query: string;
   result_count: number;
+  /**
+   * v0.34 / Lane A2: contains every non-`no_contradiction` finding (genuine
+   * contradictions PLUS temporal_supersession / temporal_regression /
+   * temporal_evolution / negation_artifact). Field name preserved for wire-
+   * compatibility; consumers that want the strict-contradiction subset
+   * filter on `f.verdict === 'contradiction'`.
+   */
   contradictions: ContradictionFinding[];
   /** Pairs the date pre-filter rejected before any judge call. Diagnostic only. */
   pairs_skipped_by_date: number;
@@ -118,6 +171,20 @@ export interface PerQueryResult {
   pairs_cache_hit: number;
   /** Pairs the judge actually scored. */
   pairs_judged: number;
+}
+
+/**
+ * v0.34 / Lane A2: per-run tally across all 6 verdicts. Surfaces in the trend
+ * rollup so operators can see whether `gbrain eval suspected-contradictions`
+ * is finding mostly genuine contradictions or mostly temporal noise.
+ */
+export interface VerdictBreakdown {
+  no_contradiction: number;
+  contradiction: number;
+  temporal_supersession: number;
+  temporal_regression: number;
+  temporal_evolution: number;
+  negation_artifact: number;
 }
 
 export interface SourceTierBreakdown {
@@ -171,8 +238,25 @@ export interface ProbeReport {
   top_k: number;
   sampling: 'deterministic' | 'score-first';
   queries_evaluated: number;
+  /**
+   * Count of queries that produced at least one `verdict === 'contradiction'`
+   * finding. Strict-contradiction count; used as the headline metric + the
+   * Wilson-CI denominator. v0.34 / Lane A2: meaning preserved from v1, but
+   * the field is now narrower than `queries_with_any_finding`.
+   */
   queries_with_contradiction: number;
+  /**
+   * v0.34 / Lane A2: count of queries with ANY non-`no_contradiction` verdict.
+   * Always >= queries_with_contradiction. Helps operators see whether the
+   * probe is finding mostly genuine contradictions or mostly temporal signals.
+   */
+  queries_with_any_finding: number;
   total_contradictions_flagged: number;
+  /**
+   * v0.34 / Lane A2: per-verdict tally across every judged pair in the run.
+   * The sum equals (pairs_judged + cache_hits) across all queries.
+   */
+  verdict_breakdown: VerdictBreakdown;
   calibration: Calibration;
   judge_errors: JudgeErrorsCounts;
   cost_usd: CostBreakdown;

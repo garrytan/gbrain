@@ -39,6 +39,7 @@ function mkFinding(opts: {
       effective_date_source: null,
     },
     combined_score: 1,
+    verdict: 'contradiction',
     severity: opts.severity,
     axis: 'test',
     confidence: 0.9,

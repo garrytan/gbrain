@@ -46,6 +46,8 @@ import {
   type PairMember,
   type PerQueryResult,
   type ProbeReport,
+  type Verdict,
+  type VerdictBreakdown,
 } from './types.ts';
 
 const DEFAULT_TOP_K = 5;
@@ -255,6 +257,17 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
   const allPairs: ContradictionPair[] = [];
   let capHitMidRun = false;
   let queriesWithContradiction = 0;
+  let queriesWithAnyFinding = 0;
+  // v0.34 / Lane A2: per-verdict tally across every judged pair (and cache hit).
+  const verdictBreakdown: VerdictBreakdown = {
+    no_contradiction: 0,
+    contradiction: 0,
+    temporal_supersession: 0,
+    temporal_regression: 0,
+    temporal_evolution: 0,
+    negation_artifact: 0,
+  };
+  const tallyVerdict = (v: Verdict) => { verdictBreakdown[v]++; };
 
   for (const query of opts.queries) {
     if (opts.abortSignal?.aborted) break;
@@ -309,7 +322,11 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
       const cached = await cache.lookup(pair.a.text, pair.b.text);
       if (cached) {
         cacheHits++;
-        if (cached.contradicts) {
+        tallyVerdict(cached.verdict);
+        // v0.34 / Lane A2: emit findings for every non-no_contradiction verdict.
+        // Without this, the new verdicts (temporal_supersession etc.) would
+        // disappear from the report and the whole wave is invisible to users.
+        if (cached.verdict !== 'no_contradiction') {
           findings.push(pairToFinding(pair, cached));
         }
         continue;
@@ -339,7 +356,9 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
         tracker.recordJudgeCall(judgeModel, out.usage);
         await cache.store(pair.a.text, pair.b.text, out.verdict);
         judged++;
-        if (out.verdict.contradicts) {
+        tallyVerdict(out.verdict.verdict);
+        // v0.34 / Lane A2: same emit predicate as the cache-hit branch.
+        if (out.verdict.verdict !== 'no_contradiction') {
           findings.push(pairToFinding(pair, out.verdict));
         }
       } catch (err) {
@@ -347,7 +366,12 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
       }
     }
 
-    if (findings.length > 0) queriesWithContradiction++;
+    // v0.34 / Lane A2: distinguish strict-contradiction from any-finding.
+    // The strict count drives the Wilson-CI denominator (the historic
+    // headline metric). The broad count surfaces the wave's new value:
+    // "of N queries, M had at least one temporal signal."
+    if (findings.length > 0) queriesWithAnyFinding++;
+    if (findings.some((f) => f.verdict === 'contradiction')) queriesWithContradiction++;
     perQuery.push({
       query,
       result_count: results.length,
@@ -382,7 +406,9 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
     sampling,
     queries_evaluated: opts.queries.length,
     queries_with_contradiction: queriesWithContradiction,
+    queries_with_any_finding: queriesWithAnyFinding,
     total_contradictions_flagged: allFindings.length,
+    verdict_breakdown: verdictBreakdown,
     calibration,
     judge_errors: judgeErrors,
     cost_usd: cost,

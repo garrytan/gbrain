@@ -120,13 +120,14 @@ describe('pairToFinding', () => {
   test('merges pair + verdict into a finding', () => {
     const pair = mkIntraPagePair('people/alice', 7);
     const verdict: JudgeVerdict = {
-      contradicts: true,
+      verdict: 'contradiction',
       severity: 'high',
       axis: 'CFO role status',
       confidence: 0.92,
       resolution_kind: 'takes_supersede',
     };
     const finding = pairToFinding(pair, verdict);
+    expect(finding.verdict).toBe('contradiction');
     expect(finding.severity).toBe('high');
     expect(finding.axis).toBe('CFO role status');
     expect(finding.confidence).toBe(0.92);
