@@ -232,8 +232,13 @@ When resolving an ambiguous alias, linkify scans a **±500-character window**
 around the match position in the source markdown (the original, unmasked text —
 skip zones like code blocks are not stripped for this purpose, as the surrounding
 prose is what matters for context). For each candidate, it counts
-case-insensitive non-overlapping substring hits of that candidate's
-`linkify_context_keywords` within the window.
+case-insensitive keyword hits of that candidate's `linkify_context_keywords`
+within the window.
+
+Keyword matching uses Unicode word boundaries (a keyword must appear as a
+standalone token in the window, NOT as a substring of another word). For
+example, keyword `AI` matches `AI` as a word but NOT `expl**AI**n` or
+`m**AI**n`.
 
 The tiebreaker applies in this order:
 
@@ -253,6 +258,16 @@ in the window at all, the tiebreaker does not pick a winner and the mention
 falls through to `ambiguous_unresolved`. A partial keyword advantage (one
 candidate scores > 0 while the other scores 0) counts as strictly higher and
 resolves the tie.
+
+### Keyword selection guidance
+
+Choose keywords that appear as standalone tokens in your prose. Short keywords
+are fine (`AI`, `BGP`, `TAC`) as long as they aren't substrings of common words
+you'd write in the same window — those won't false-positive thanks to
+word-boundary matching. Multi-word phrases are NOT supported as single keywords
+(a phrase like `"service implementation"` should be entered as two separate
+keywords `"service"` and `"implementation"`, OR be redesigned to use a unique
+token).
 
 ### Worked example
 

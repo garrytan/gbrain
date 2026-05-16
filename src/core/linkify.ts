@@ -46,6 +46,11 @@ export interface LinkifyResult {
 const BOUNDARY_LEFT = "(?<![\\p{L}\\p{N}_'\\u2019])";
 const BOUNDARY_RIGHT = "(?![\\p{L}\\p{N}_])";
 
+// Keyword-matching boundaries: same character class as above but without the
+// apostrophe exception — context keywords are prose tokens, not possessives.
+const KEYWORD_BOUNDARY_LEFT = "(?<![\\p{L}\\p{N}_])";
+const KEYWORD_BOUNDARY_RIGHT = "(?![\\p{L}\\p{N}_])";
+
 function maskSkipZones(content: string): string {
   let masked = content;
   // Frontmatter
@@ -258,11 +263,9 @@ export function linkifyMarkdown(
           for (const kw of keywords) {
             const needle = kw.toLowerCase();
             if (!needle) continue;
-            let idx = 0;
-            while ((idx = windowText.indexOf(needle, idx)) !== -1) {
-              count++;
-              idx += needle.length;
-            }
+            const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const re = new RegExp(KEYWORD_BOUNDARY_LEFT + escaped + KEYWORD_BOUNDARY_RIGHT, 'gu');
+            count += (windowText.match(re) ?? []).length;
           }
           if (count > bestCount) {
             bestSlug = s;

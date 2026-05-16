@@ -224,4 +224,28 @@ describe('linkifyMarkdown — context-keyword tiebreaker', () => {
     expect(ctx.length).toBe(1);
     expect((ctx[0] as { occurrences: number }).occurrences).toBe(3);
   });
+
+  test('keyword "AI" does NOT false-positive on embedded substrings (word boundary)', () => {
+    // 'AI' inside 'explain', 'main', 'available' must NOT contribute hits.
+    // Without word boundaries, the previous indexOf-based impl would have
+    // counted 3 hits and resolved to Thompson, which is wrong.
+    const text = 'We need to explain the main available options. Justin will help.';
+    const result = linkifyMarkdown(text, map, meta, cfgEmpty);
+    expect(result.text).toBe(text);  // unchanged — ambiguous unresolved
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ kind: 'ambiguous_unresolved' }));
+  });
+
+  test('keyword "AI" matches as a standalone word', () => {
+    // 'AI' followed by space/period — real word boundary.
+    const text = 'Discussed AI roadmap. Justin to follow up.';
+    const result = linkifyMarkdown(text, map, meta, cfgEmpty);
+    expect(result.text).toBe('Discussed AI roadmap. [[people/jthompson-aseva|Justin]] to follow up.');
+  });
+
+  test('keyword "BGP" matches as standalone but not embedded', () => {
+    // 'BGP' is uncommon as substring — still verify boundary behavior explicitly.
+    const text = 'BGP issue affecting routing. Justin to investigate.';
+    const result = linkifyMarkdown(text, map, meta, cfgEmpty);
+    expect(result.text).toBe('BGP issue affecting routing. [[people/jthompson-aseva|Justin]] to investigate.');
+  });
 });
