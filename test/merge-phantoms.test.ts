@@ -591,6 +591,59 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(phantomPage[0].deleted_at).not.toBeNull();
   });
 
+  itHomed('skips a top-level page with prose under a non-machine ## Facts heading (round-8 P2 #1)', async () => {
+    // Codex round-8 P2 #1: a page with a normal `## Facts` heading
+    // (NOT the auto-generated `<!-- facts -->` ... `<!-- /facts -->`
+    // fence) followed by user-authored prose must trip not_a_stub.
+    // The stub-detector strips only the canonical fence markers, not
+    // the bare heading.
+    const userAuthoredFacts = [
+      '# Alice Profile',
+      '',
+      '## Facts',
+      '',
+      'Alice is a hypothetical software engineer who has been working ',
+      'on distributed systems for over a decade. Her published papers ',
+      'on Byzantine consensus algorithms have been cited extensively ',
+      'across the field. The content below is intentional user prose, ',
+      'not the machine-generated fence the migration command targets.',
+      '',
+    ].join('\n');
+    expect(userAuthoredFacts).not.toContain('<!-- facts -->');
+    expect(userAuthoredFacts.length).toBeGreaterThan(200);
+
+    await engine.putPage(
+      'alice-real-profile',
+      {
+        type: 'person' as any,
+        title: 'Alice Profile',
+        compiled_truth: userAuthoredFacts,
+        frontmatter: { type: 'person', title: 'Alice Profile', slug: 'alice-real-profile' },
+      },
+      { sourceId: 'default' },
+    );
+    // Seed a canonical so prefix expansion would otherwise route here.
+    await seedPage('people/alice-real-profile-example', 'person');
+    await seedChunks('people/alice-real-profile-example', 3);
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(0);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0].skipped).toBe('not_a_stub');
+
+    // Page survives with prose intact.
+    const surviving = await engine.executeRaw<{ deleted_at: Date | null; compiled_truth: string }>(
+      `SELECT deleted_at, compiled_truth FROM pages WHERE slug = 'alice-real-profile' AND source_id = 'default'`,
+      [],
+    );
+    expect(surviving[0].deleted_at).toBeNull();
+    expect(surviving[0].compiled_truth).toContain('Byzantine consensus algorithms');
+  });
+
   itHomed('skips a top-level page with substantial Timeline content (round-7 P2)', async () => {
     // Codex round-7 P2 #2: a page with a populated ## Timeline fence
     // is not a stub — merge-phantoms only migrates facts, so the

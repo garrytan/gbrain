@@ -57,25 +57,34 @@ export async function resolveEntitySlug(
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
-  // 1. Bare-name prefix expansion FIRST (codex round-7 P2 #1).
-  //    Brains that still have a pre-fix phantom `alice.md` alongside
-  //    the canonical `people/alice-example.md` would previously have
-  //    seen "Alice" exact-match (slug='alice') OR fuzzy-match (title
-  //    'Alice') against the phantom and silently keep adding facts to
-  //    it. Running prefix expansion before exact/fuzzy ensures the
-  //    canonical wins for any single-word input that resolves into a
-  //    configured entity directory. Prefixed slugs (`people/alice`)
-  //    and multi-word inputs (`Alice Example`) skip this layer
-  //    structurally (isBareName returns false) and continue through
-  //    the normal exact/fuzzy chain.
+  // 1. Bare-name resolution: prefer a canonical prefixed page over an
+  //    unprefixed phantom, but ONLY when the bare slug match looks
+  //    like a stub. A user with a real top-level `rag` page plus a
+  //    `concepts/rag` page should keep resolving "rag" → "rag" because
+  //    the bare page is intentional, not a phantom. Codex rounds 7
+  //    + 8 calibrated this together:
+  //      - Round 7 wanted prefix-first to stop the alice.md/people/alice
+  //        fact-split for pre-fix phantom users.
+  //      - Round 8 caught that prefix-first also overrides real
+  //        top-level pages. Solution: peek the bare slug's body, and
+  //        only prefix-override when it's stub-shaped.
   if (isBareName(trimmed)) {
-    const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
-    if (expanded) return expanded;
+    const token = slugify(trimmed);
+    const bareBody = await tryExactSlugBody(engine, source_id, token);
+    if (bareBody === 'missing' || isStubBody(bareBody)) {
+      // Either no bare page exists, or it exists but is stub-shaped —
+      // try prefix expansion and prefer the canonical.
+      const expanded = await tryPrefixExpansion(engine, source_id, token);
+      if (expanded) return expanded;
+    }
+    // Either bareBody is a real (non-stub) page or prefix expansion
+    // found nothing. Fall through to step 2 which will exact-match
+    // the bare page when it exists.
   }
 
   // 2. Exact match on slug. Catches prefixed slugs (`people/alice-example`)
-  //    that the caller passed verbatim, and bare slugs where no canonical
-  //    target was found in step 1.
+  //    that the caller passed verbatim, and bare slugs where step 1
+  //    either declined to override or found no canonical.
   if (looksLikeSlug(trimmed)) {
     const exact = await tryExactSlug(engine, source_id, trimmed);
     if (exact) return exact;
@@ -119,6 +128,54 @@ function isBareName(raw: string): boolean {
  * the `entities.prefix_expansion_dirs` config key.
  */
 export const DEFAULT_PREFIX_EXPANSION_DIRS = ['people', 'companies', 'deals', 'topics', 'concepts'] as const;
+
+/**
+ * Body-content threshold — anything above this is treated as a real
+ * user page rather than a v0.34.5-era stub. Stubs from `stubEntityPage`
+ * in fence-write.ts run well under 50 chars after fence-content is
+ * stripped; a real page has hundreds.
+ */
+export const PHANTOM_STUB_MAX_BODY_CHARS = 50;
+
+/**
+ * Strip frontmatter, H1 title, and the v0.32.2 facts-fence MARKERS
+ * (not the heading text alone) from a `compiled_truth` body. Returns
+ * the trimmed remainder.
+ *
+ * Codex rounds 6 + 7 + 8 calibration:
+ *   - Round 6: facts fence inflates body length on fact-bearing
+ *     phantoms; must be excluded so the stub detector catches them.
+ *   - Round 7: timeline content is NOT migrated by merge-phantoms;
+ *     must be preserved in the body count so pages with a populated
+ *     Timeline trip not_a_stub.
+ *   - Round 8: strip ONLY the canonical `<!-- facts -->` ...
+ *     `<!-- /facts -->` fence pair (and an immediately-preceding
+ *     `## Facts` heading if and only if it's paired with the fence
+ *     markers). NEVER strip arbitrary content under a `## Facts`
+ *     heading without machine markers — that's user-authored prose.
+ *
+ * A v0.34.5 stub returns ~0 chars; a fact-bearing stub does too
+ * (the fence between machine markers strips out); a real page with
+ * user-authored content under any heading returns hundreds.
+ */
+export function stubBodyChars(compiledTruth: string | null | undefined): number {
+  if (!compiledTruth) return 0;
+  const stripped = compiledTruth
+    .replace(/^---\n[\s\S]*?\n---\n?/, '')
+    .replace(/^#\s+.+\r?\n?/m, '')
+    .replace(/(?:^##\s*Facts\s*\n+)?<!--\s*facts\s*-->[\s\S]*?<!--\s*\/facts\s*-->\n?/m, '')
+    .trim();
+  return stripped.length;
+}
+
+/**
+ * Predicate wrapper around `stubBodyChars` for callers that don't
+ * need the raw char count. True when the body looks like a v0.34.5-era
+ * stub (or an empty page).
+ */
+export function isStubBody(compiledTruth: string | null | undefined): boolean {
+  return stubBodyChars(compiledTruth) <= PHANTOM_STUB_MAX_BODY_CHARS;
+}
 
 /**
  * Resolve the active prefix-expansion dir list. Config-first, default-fallback.
@@ -218,6 +275,37 @@ function looksLikeSlug(s: string): boolean {
   if (/\s/.test(s)) return false;
   if (s !== s.toLowerCase()) return false;
   return /^[a-z0-9/_-]+$/.test(s);
+}
+
+/**
+ * Probe the body of a bare-slug exact match without returning the
+ * slug. Returns:
+ *   - 'missing' when no page exists with that exact slug
+ *   - the body string when a page exists (may be empty or a stub)
+ *
+ * Used by step 1 of resolveEntitySlug to distinguish phantom-shaped
+ * bare slugs (where the canonical should win) from real top-level
+ * pages (where the bare slug should win). The 3-value return shape
+ * makes the caller's intent explicit (missing vs. stub vs. real).
+ */
+async function tryExactSlugBody(
+  engine: BrainEngine,
+  source_id: string,
+  candidate: string,
+): Promise<string | 'missing'> {
+  try {
+    const rows = await engine.executeRaw<{ compiled_truth: string | null }>(
+      `SELECT compiled_truth FROM pages
+        WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL
+        LIMIT 1`,
+      [source_id, candidate],
+    );
+    if (rows.length === 0) return 'missing';
+    return rows[0].compiled_truth ?? '';
+  } catch (err) {
+    if (isUndefinedColumnError(err, 'deleted_at')) return 'missing';
+    throw err;
+  }
 }
 
 async function tryExactSlug(

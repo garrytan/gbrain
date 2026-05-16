@@ -51,7 +51,13 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import { tryPrefixExpansion, slugify, getPrefixExpansionDirs } from '../core/entities/resolve.ts';
+import {
+  tryPrefixExpansion,
+  slugify,
+  getPrefixExpansionDirs,
+  stubBodyChars,
+  PHANTOM_STUB_MAX_BODY_CHARS,
+} from '../core/entities/resolve.ts';
 import { writeFactsToFence, lookupSourceLocalPath, type FenceInputFact } from '../core/facts/fence-write.ts';
 
 /** Phantom-resolution outcome for one row. */
@@ -78,65 +84,11 @@ export interface PhantomMerge {
   ambiguous_candidates?: string[];
 }
 
-/**
- * Body-content threshold (excluding facts/timeline fences and the H1
- * title) above which a top-level entity page is treated as a real
- * user page rather than a v0.34.5-era stub.
- *
- * Codex round-5 P2: without this filter, a legitimate `rag.md` or
- * `alice.md` page imported from the user's brain repo would be
- * soft-deleted after re-fencing only the facts — losing the body,
- * links, and timeline.
- *
- * Codex round-6 P2 #2: the v0.34.5 stub may have accumulated facts
- * over time. Each fence row + the table markers easily push total
- * `compiled_truth` length past 200 chars. We need to count BODY
- * chars only (paragraphs / non-fence sections), not the fence
- * payload, so fact-bearing phantoms still get migrated.
- *
- * `stubBodyChars` extracts the chars that aren't frontmatter, title,
- * or fenced sections (Facts, Timeline). A stub has 0 chars by this
- * measure; a real imported page has hundreds.
- */
-const PHANTOM_STUB_MAX_BODY_CHARS = 50;
-
-/**
- * Strip frontmatter, H1 title, and the `## Facts` fence from a
- * `compiled_truth` body. Returns the trimmed remainder. A v0.34.5-era
- * stub with or without facts returns near-zero chars; a real
- * imported entity page with paragraphs / sections / a `## Timeline`
- * returns hundreds-to-thousands of chars.
- *
- * Why Facts is stripped but Timeline is NOT (codex rounds 6 + 7):
- *   - Facts fence content is exactly what merge-phantoms migrates.
- *     A pre-fix phantom that accumulated facts has its fence inlined
- *     into compiled_truth and that fence is well over the threshold
- *     by itself — stripping it lets the stub gate see real prose
- *     vs. stub shape (round-6 P2 #2 fix).
- *   - Timeline content is NOT migrated by the merge command — it's
- *     real history. A page with a populated Timeline is by definition
- *     not a stub; we want it to TRIP the not_a_stub gate so the page
- *     survives intact (round-7 P2 #2 fix).
- *
- * Conservative regex: matches the canonical fence shapes produced by
- * `serializeFactsFence` / writeFactsToFence. Custom user sections
- * survive in the remainder, which is the safe outcome — they trip
- * the not_a_stub gate.
- */
-export function stubBodyChars(compiledTruth: string | null | undefined): number {
-  if (!compiledTruth) return 0;
-  const stripped = compiledTruth
-    // Frontmatter (just in case some pipelines leave it on the body).
-    .replace(/^---\n[\s\S]*?\n---\n?/, '')
-    // The H1 title line (the stub's `# Title`).
-    .replace(/^#\s+.+\r?\n?/m, '')
-    // The ## Facts section ONLY — Timeline / other sections stay so
-    // pages with non-fact content trip the not_a_stub gate. Greedy
-    // stops at next `\n## ` to avoid swallowing adjacent sections.
-    .replace(/##\s*Facts[\s\S]*?(?=\n##\s|\s*$)/, '')
-    .trim();
-  return stripped.length;
-}
+// stubBodyChars + PHANTOM_STUB_MAX_BODY_CHARS moved to
+// src/core/entities/resolve.ts so resolveEntitySlug can also use the
+// stub-detection contract (codex round-8 P2 #2 — the resolver needs
+// to distinguish phantom stubs from real top-level pages before
+// overriding exact bare slugs). Imported above.
 
 export interface MergePhantomsResult {
   merged: PhantomMerge[];

@@ -193,10 +193,10 @@ async function pageId(eng: PGLiteEngine, slug: string, sourceId = 'default'): Pr
 }
 
 describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
-  it('prefers prefix expansion over an existing unprefixed phantom (round-7 P2)', async () => {
+  it('prefers prefix expansion over an existing STUB-shaped unprefixed phantom (round-7 P2)', async () => {
     // Codex round-7 P2 #1: when both the canonical `people/alice-example`
-    // AND an unprefixed phantom `alice` exist, resolveEntitySlug must
-    // return the canonical, NOT exact-match the phantom and keep
+    // AND an unprefixed STUB phantom `alice` exist, resolveEntitySlug
+    // must return the canonical, NOT exact-match the phantom and keep
     // splitting facts onto it.
     await engine.putPage(
       'alice-phantom-test',
@@ -213,6 +213,37 @@ describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
     // bare slug.
     const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'alice');
     expect(result).toBe('people/alice-example');
+  });
+
+  it('preserves exact bare-slug match for a REAL top-level page (round-8 P2 #2)', async () => {
+    // Codex round-8 P2 #2: when a user has a legitimate top-level
+    // `rag-real` page with real body content AND a `concepts/rag-real`
+    // prefixed page, the bare `rag-real` must NOT be overridden by
+    // prefix expansion. The bare page is intentional, not a phantom.
+    const realBody = '# RAG Real\n\nThis is a real top-level page with intentional content. '.repeat(20);
+    await engine.putPage(
+      'rag-real',
+      {
+        type: 'concept' as any,
+        title: 'RAG Real',
+        compiled_truth: realBody,
+        frontmatter: { type: 'concept', title: 'RAG Real', slug: 'rag-real' },
+      },
+      { sourceId: 'default' },
+    );
+    await engine.putPage(
+      'concepts/rag-real-example',
+      {
+        type: 'concept' as any,
+        title: 'RAG Real Example',
+        compiled_truth: '# RAG Real Example',
+        frontmatter: { type: 'concept', title: 'RAG Real Example', slug: 'concepts/rag-real-example' },
+      },
+      { sourceId: 'default' },
+    );
+    // resolveEntitySlug('rag-real') must NOT redirect to concepts/...
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'rag-real');
+    expect(result).toBe('rag-real');
   });
 
   it('resolves "Alice" to people/alice-example', async () => {
