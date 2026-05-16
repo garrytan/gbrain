@@ -101,16 +101,27 @@ export interface PhantomMerge {
 const PHANTOM_STUB_MAX_BODY_CHARS = 50;
 
 /**
- * Strip frontmatter, H1 title, and `## Facts` / `## Timeline` fenced
- * sections from a `compiled_truth` body. Returns the trimmed remainder.
- * A v0.34.5-era stub returns the empty string (or close to it). A real
- * imported entity page with paragraphs or extra sections returns
- * hundreds-to-thousands of chars.
+ * Strip frontmatter, H1 title, and the `## Facts` fence from a
+ * `compiled_truth` body. Returns the trimmed remainder. A v0.34.5-era
+ * stub with or without facts returns near-zero chars; a real
+ * imported entity page with paragraphs / sections / a `## Timeline`
+ * returns hundreds-to-thousands of chars.
  *
- * Conservative regex set: matches the canonical fence shapes produced
- * by `serializeFactsFence` / writeFactsToFence. Pages with custom
- * sections survive intact (they show up in the remainder and trip the
- * not_a_stub gate, which is the safe outcome).
+ * Why Facts is stripped but Timeline is NOT (codex rounds 6 + 7):
+ *   - Facts fence content is exactly what merge-phantoms migrates.
+ *     A pre-fix phantom that accumulated facts has its fence inlined
+ *     into compiled_truth and that fence is well over the threshold
+ *     by itself — stripping it lets the stub gate see real prose
+ *     vs. stub shape (round-6 P2 #2 fix).
+ *   - Timeline content is NOT migrated by the merge command — it's
+ *     real history. A page with a populated Timeline is by definition
+ *     not a stub; we want it to TRIP the not_a_stub gate so the page
+ *     survives intact (round-7 P2 #2 fix).
+ *
+ * Conservative regex: matches the canonical fence shapes produced by
+ * `serializeFactsFence` / writeFactsToFence. Custom user sections
+ * survive in the remainder, which is the safe outcome — they trip
+ * the not_a_stub gate.
  */
 export function stubBodyChars(compiledTruth: string | null | undefined): number {
   if (!compiledTruth) return 0;
@@ -119,13 +130,10 @@ export function stubBodyChars(compiledTruth: string | null | undefined): number 
     .replace(/^---\n[\s\S]*?\n---\n?/, '')
     // The H1 title line (the stub's `# Title`).
     .replace(/^#\s+.+\r?\n?/m, '')
-    // The ## Facts section, from the heading through the end of its
-    // fence or to the next ## heading / EOF, whichever is first.
-    // Conservative: greedy stops at next `\n## ` to avoid swallowing
-    // adjacent sections.
+    // The ## Facts section ONLY — Timeline / other sections stay so
+    // pages with non-fact content trip the not_a_stub gate. Greedy
+    // stops at next `\n## ` to avoid swallowing adjacent sections.
     .replace(/##\s*Facts[\s\S]*?(?=\n##\s|\s*$)/, '')
-    // The ## Timeline section, same shape.
-    .replace(/##\s*Timeline[\s\S]*?(?=\n##\s|\s*$)/, '')
     .trim();
   return stripped.length;
 }

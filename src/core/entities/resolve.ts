@@ -57,31 +57,36 @@ export async function resolveEntitySlug(
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
-  // 1. Exact match on slug. If raw already looks like a slug (or matches
-  //    a row exactly), use it.
-  if (looksLikeSlug(trimmed)) {
-    const exact = await tryExactSlug(engine, source_id, trimmed);
-    if (exact) return exact;
-  }
-
-  // 2. Fuzzy match against existing pages within the source. Match either
-  //    on slug fragment or on title.
-  const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
-  if (fuzzy) return fuzzy;
-
-  // 3. Prefix-expansion match: when the input looks like a bare first name
-  //    (no slash, no prefix, slugifies to a single short token), try
-  //    `<dir>/<token>-%` for each configured directory in order. Short
-  //    bare names score terribly on pg_trgm — similarity('alice',
-  //    'alice-example') is below the 0.4 threshold — so this is the
-  //    layer that catches `"Alice"` → `people/alice-example` before we
-  //    phantom-stub a bare `people/alice.md`.
+  // 1. Bare-name prefix expansion FIRST (codex round-7 P2 #1).
+  //    Brains that still have a pre-fix phantom `alice.md` alongside
+  //    the canonical `people/alice-example.md` would previously have
+  //    seen "Alice" exact-match (slug='alice') OR fuzzy-match (title
+  //    'Alice') against the phantom and silently keep adding facts to
+  //    it. Running prefix expansion before exact/fuzzy ensures the
+  //    canonical wins for any single-word input that resolves into a
+  //    configured entity directory. Prefixed slugs (`people/alice`)
+  //    and multi-word inputs (`Alice Example`) skip this layer
+  //    structurally (isBareName returns false) and continue through
+  //    the normal exact/fuzzy chain.
   if (isBareName(trimmed)) {
     const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
     if (expanded) return expanded;
   }
 
-  // 4. Fallback: deterministic slugify.
+  // 2. Exact match on slug. Catches prefixed slugs (`people/alice-example`)
+  //    that the caller passed verbatim, and bare slugs where no canonical
+  //    target was found in step 1.
+  if (looksLikeSlug(trimmed)) {
+    const exact = await tryExactSlug(engine, source_id, trimmed);
+    if (exact) return exact;
+  }
+
+  // 3. Fuzzy match against existing pages within the source. Match either
+  //    on slug fragment or on title.
+  const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
+  if (fuzzy) return fuzzy;
+
+  // 4. Fallback: deterministic slugify. NOT prefixed — caller decides.
   return slugify(trimmed);
 }
 

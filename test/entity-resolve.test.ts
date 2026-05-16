@@ -193,6 +193,28 @@ async function pageId(eng: PGLiteEngine, slug: string, sourceId = 'default'): Pr
 }
 
 describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
+  it('prefers prefix expansion over an existing unprefixed phantom (round-7 P2)', async () => {
+    // Codex round-7 P2 #1: when both the canonical `people/alice-example`
+    // AND an unprefixed phantom `alice` exist, resolveEntitySlug must
+    // return the canonical, NOT exact-match the phantom and keep
+    // splitting facts onto it.
+    await engine.putPage(
+      'alice-phantom-test',
+      {
+        type: 'concept' as any,
+        title: 'alice-phantom-test',
+        compiled_truth: '# alice-phantom-test',
+        frontmatter: { type: 'concept', title: 'alice-phantom-test', slug: 'alice-phantom-test' },
+      },
+      { sourceId: 'default' },
+    );
+    // The seed `people/alice-example` already exists from beforeAll.
+    // resolveEntitySlug('alice') must return the canonical, not the
+    // bare slug.
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'alice');
+    expect(result).toBe('people/alice-example');
+  });
+
   it('resolves "Alice" to people/alice-example', async () => {
     const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Alice');
     expect(result).toBe('people/alice-example');

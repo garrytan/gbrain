@@ -591,6 +591,56 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(phantomPage[0].deleted_at).not.toBeNull();
   });
 
+  itHomed('skips a top-level page with substantial Timeline content (round-7 P2)', async () => {
+    // Codex round-7 P2 #2: a page with a populated ## Timeline fence
+    // is not a stub — merge-phantoms only migrates facts, so the
+    // timeline would be lost if the page were soft-deleted. The
+    // not_a_stub gate must include Timeline content (Timeline does
+    // NOT get stripped from stubBodyChars).
+    const timelinePage = [
+      '# Alice Timeline',
+      '',
+      '## Timeline',
+      '<!-- timeline -->',
+      '- 2026-04-01: First meeting',
+      '- 2026-04-15: Second meeting',
+      '- 2026-05-01: Third meeting',
+      '- 2026-05-15: Investment decision',
+      '<!-- /timeline -->',
+      '',
+    ].join('\n');
+    await engine.putPage(
+      'alice-with-timeline',
+      {
+        type: 'person' as any,
+        title: 'Alice With Timeline',
+        compiled_truth: timelinePage,
+        frontmatter: { type: 'person', title: 'Alice With Timeline', slug: 'alice-with-timeline' },
+      },
+      { sourceId: 'default' },
+    );
+    // Seed a canonical that prefix-expansion would otherwise match.
+    await seedPage('people/alice-with-timeline-example', 'person');
+    await seedChunks('people/alice-with-timeline-example', 3);
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(0);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0].skipped).toBe('not_a_stub');
+
+    // Page survives with its Timeline intact.
+    const surviving = await engine.executeRaw<{ deleted_at: Date | null; compiled_truth: string }>(
+      `SELECT deleted_at, compiled_truth FROM pages WHERE slug = 'alice-with-timeline' AND source_id = 'default'`,
+      [],
+    );
+    expect(surviving[0].deleted_at).toBeNull();
+    expect(surviving[0].compiled_truth).toContain('Investment decision');
+  });
+
   itHomed('skips a top-level page that has real content (not a stub)', async () => {
     // Codex round-5 P2: a legitimate `rag.md` or imported `alice.md`
     // page with a real body must NOT be soft-deleted by the merge.
