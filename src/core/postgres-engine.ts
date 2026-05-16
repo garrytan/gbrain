@@ -1905,6 +1905,7 @@ export class PostgresEngine implements BrainEngine {
       WHERE NOT EXISTS (
         SELECT 1 FROM links l WHERE l.to_page_id = p.id
       )
+        AND p.deleted_at IS NULL
       ORDER BY p.slug
     `;
     return rows as unknown as Array<{ slug: string; title: string; domain: string | null }>;
@@ -3177,6 +3178,9 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+           -- Soft-deleted pages (v0.26.5 recovery window) aren't visible to
+           -- consumers; they shouldn't crush brain_score.
+           AND p.deleted_at IS NULL
            -- Source-type ingestions: anchored via timeline/parent record, not
            -- wikilinks. Exclude from orphan count so brain_score reflects
            -- real graph rot, not ingestion-by-design pages.

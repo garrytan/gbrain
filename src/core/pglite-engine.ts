@@ -1885,6 +1885,7 @@ export class PGLiteEngine implements BrainEngine {
        WHERE NOT EXISTS (
          SELECT 1 FROM links l WHERE l.to_page_id = p.id
        )
+         AND p.deleted_at IS NULL
        ORDER BY p.slug`
     );
     return rows as Array<{ slug: string; title: string; domain: string | null }>;
@@ -3161,12 +3162,15 @@ export class PGLiteEngine implements BrainEngine {
         ) as stale_pages,
         -- Bug 11 — orphan = islanded (no inbound AND no outbound).
         -- See BrainHealth.orphan_pages docstring; docs updated to match this.
+        -- Soft-deleted pages (v0.26.5 recovery window) aren't visible to
+        -- consumers; they shouldn't crush brain_score.
         -- Source-type ingestions (emails/attachments/0-daily/4-archive) are
         -- anchored via timeline/parent record, not wikilinks — excluded so
         -- brain_score reflects real graph rot.
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+           AND p.deleted_at IS NULL
            AND p.slug NOT LIKE 'emails/%'
            AND p.slug NOT LIKE 'attachments/%'
            AND p.slug NOT LIKE '0-daily/%'
