@@ -43,6 +43,97 @@ If your agent doesn't auto-read `AGENTS.md`, point it at that file first:
 agent operating protocol (install, read order, trust boundary, common tasks). For
 the full doc map, use `llms.txt` at the same URL root.
 
+### Individual and company brains
+
+GBrain can run as either an **individual** brain or a **company** brain. The code,
+schema, CLI, and MCP server are the same; the deployment mode changes the trust
+boundary and agent skill surface.
+
+Use one isolated `GBRAIN_HOME` and database per brain:
+
+```bash
+# Alice's private brain
+export GBRAIN_HOME=/var/lib/gbrain/alice
+export DATABASE_URL=<alice-postgres-url>
+gbrain init --mode individual --url "$DATABASE_URL" --non-interactive
+
+# Company aggregate brain
+export GBRAIN_HOME=/var/lib/gbrain/company
+export DATABASE_URL=<company-postgres-url>
+gbrain init --mode company --url "$DATABASE_URL" --non-interactive
+```
+
+Individual brains are private by default. A user opts in to company sharing with
+source defaults and page overrides:
+
+```bash
+gbrain company-share secret set --secret "$SHARED_SECRET"
+gbrain company-share set-source default --default summary
+gbrain company-share set-page notes/private --mode private
+gbrain company-share set-page notes/company-visible --mode full
+```
+
+The company brain registers each member's MCP/OAuth endpoint and pulls only the
+member's signed, sanitized export:
+
+```bash
+GBRAIN_HOME=/var/lib/gbrain/company gbrain company-share members add alice \
+  --issuer-url https://alice-gbrain.example.com \
+  --mcp-url https://alice-gbrain.example.com/mcp \
+  --oauth-client-id <alice-client-id> \
+  --oauth-client-secret <alice-client-secret> \
+  --manifest-secret "$SHARED_SECRET"
+
+GBRAIN_HOME=/var/lib/gbrain/company gbrain company-share pull --member alice
+```
+
+Imported member pages land in a dedicated source such as `member-alice`. The
+company brain never opens Alice's `GBRAIN_HOME` or database directly.
+
+Company mode also exposes a smaller remote MCP surface and a company-specific
+skill resolver. Check the active policy with:
+
+```bash
+gbrain company-share skill-policy --json
+```
+
+Company agents get query, research, synthesis, briefing, reports, and maintenance
+by default. Setup, cron, publishing, identity setup, and `skillify` are
+admin/operator actions. Personal ingestion, personal tasks, voice-note ingestion,
+archive crawling, and direct member-source mutation are not part of the normal
+company skill surface.
+
+### OpenClaw and Hermes mode selection
+
+Use the MCP server name/alias to make the target brain obvious.
+
+For **OpenClaw**, install or point the workspace at the right resolver:
+
+```text
+individual brain -> skills/RESOLVER.md
+company brain    -> skills/COMPANY_RESOLVER.md
+```
+
+At startup, OpenClaw should call `get_brain_identity`. If
+`brain_role` is `company`, route with `skills/COMPANY_RESOLVER.md` and treat
+member sources (`member-alice`, `member-bob`) as imported read-only snapshots.
+Do not configure OpenClaw with both a company and individual MCP under the same
+ambiguous name like `gbrain`; use names such as `company-gbrain` and
+`alice-gbrain`.
+
+For **Hermes**, configure the MCP connector URL according to what Hermes should
+know:
+
+```text
+Company-wide Hermes: https://company-gbrain.example.com/mcp
+Alice-only Hermes:   https://alice-gbrain.example.com/mcp
+```
+
+Most company deployments should point Hermes only at the company GBrain. That
+lets Hermes query company-owned pages and imported member summaries without
+direct access to individual databases. Configure an individual MCP connector only
+when you intentionally want Hermes to act as that user's private agent.
+
 ### Standalone CLI (no agent)
 
 ```bash
