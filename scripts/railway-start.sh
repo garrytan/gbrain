@@ -126,8 +126,10 @@ if [ "$GBRAIN_MODE" = "company" ] && [ -n "${COMPANY_SHARE_PULL_INTERVAL_SECONDS
 fi
 
 if [ -n "${BRAIN_REPO_URL:-}" ]; then
+  timeout 120s bash -c "$(declare -f prepare_brain_repo sync_brain_repo_once); sync_brain_repo_once" \
+    || echo "[gbrain] initial brain repo sync skipped or timed out"
+
   (
-    sync_brain_repo_once || true
     echo "[gbrain] starting brain repo sync loop every ${BRAIN_REPO_SYNC_INTERVAL_SECONDS}s"
     while true; do
       sleep "$BRAIN_REPO_SYNC_INTERVAL_SECONDS"
