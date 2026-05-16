@@ -16,6 +16,9 @@ If you fetched this file by URL without cloning yet, the companion files live at
 
 ## Step 1: Install GBrain
 
+This installs the GBrain **software**. It is the same code for individual and
+company deployments. The role is chosen later with `gbrain init --mode ...`.
+
 ```bash
 git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
 curl -fsSL https://bun.sh/install | bash
@@ -30,6 +33,20 @@ restart the shell or add the PATH export to the shell profile.
 > postinstall hook on global installs, so schema migrations never run and the CLI
 > aborts with `Aborted()` when it opens PGLite. Use the `git clone + bun link` path
 > above. Tracking issue: [#218](https://github.com/garrytan/gbrain/issues/218).
+
+For a company-wide deployment, do **not** create separate GBrain software forks
+for Alice, Bob, and Company. Deploy the same GBrain code multiple times with
+different runtime configuration:
+
+```text
+same GBrain code checkout/container
+  gbrain-alice   -> --mode individual, Alice DB, Alice markdown repo
+  gbrain-bob     -> --mode individual, Bob DB, Bob markdown repo
+  gbrain-company -> --mode company, Company DB, Company markdown repo
+```
+
+For Railway/Supabase, use `docs/deploy/railway-company-gbrain.md` after this
+install step.
 
 ## Step 2: API Keys
 
@@ -104,6 +121,14 @@ GBRAIN_HOME="$COMPANY_HOME" gbrain sync --repo /repos/company-brain --yes
 The company brain must not open Alice's repo or database directly. It learns
 Alice-approved content only through `gbrain company-share pull`, which imports
 into a dedicated source such as `member-alice`.
+
+If deploying as long-running cloud services, set the same role explicitly in the
+service environment:
+
+```text
+gbrain-alice:   GBRAIN_MODE=individual, DATABASE_URL=<alice-db>,   BRAIN_REPO_URL=<alice-brain-repo>
+gbrain-company: GBRAIN_MODE=company,    DATABASE_URL=<company-db>, BRAIN_REPO_URL=<company-brain-repo>
+```
 
 ## Step 3.5: Confirm search mode with the user (DO NOT SKIP)
 
