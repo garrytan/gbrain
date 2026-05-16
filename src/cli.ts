@@ -653,6 +653,9 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   // - `code-def`/`code-refs`/`code-callers`/`code-callees` have NO MCP ops
   //   in operations.ts:2630-2671; cannot be "fixed by routing" yet
   'pages', 'files', 'eval', 'code-def', 'code-refs', 'code-callers', 'code-callees',
+  // v0.34.5: merge-phantoms is destructive + DB-bound (UPDATEs facts,
+  // softDeletePage, fence-write). Thin clients have no local DB to mutate.
+  'merge-phantoms',
 ]);
 
 /**
@@ -688,6 +691,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   'code-refs': '`code-refs` has no MCP op yet. Run on the host.',
   'code-callers': '`code-callers` has no MCP op yet. Run on the host.',
   'code-callees': '`code-callees` has no MCP op yet. Run on the host.',
+  'merge-phantoms': 'merge-phantoms is a destructive local-DB cleanup (re-fences facts + soft-deletes phantom pages on disk). Run on the host machine where the brain lives.',
 };
 
 /**

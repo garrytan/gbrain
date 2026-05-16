@@ -64,6 +64,11 @@ beforeAll(async () => {
     { slug: 'people/frank-zzz-example',       title: 'Frank Zzz Example',       type: 'person' },
     // Custom-dir candidate for config-driven test (`funds`).
     { slug: 'funds/founders-x-example',       title: 'Founders X Example',      type: 'concept' },
+    // Exact-prefix-match coverage (no hyphen suffix): `companies/glob` and
+    // `concepts/rag` are the canonical shape codex flagged the resolver
+    // would miss in its post-D9 review pass.
+    { slug: 'companies/glob',                 title: 'Glob',                    type: 'company' },
+    { slug: 'concepts/rag',                   title: 'RAG',                     type: 'concept' },
   ];
 
   for (const p of pages) {
@@ -263,6 +268,22 @@ describe('resolveEntitySlug — additional coverage (D5)', () => {
     expect(result).toBe('people/frank-aaa-example');
   });
 
+  it('matches exact prefix slug (no hyphen suffix) — companies/glob', async () => {
+    // Codex review post-D9: prefix expansion previously only matched
+    // `<dir>/<token>-%` and missed canonical slugs like `companies/glob`
+    // or `people/alice`. The fix also matches `<dir>/<token>` exactly.
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Glob');
+    expect(result).toBe('companies/glob');
+  });
+
+  it('resolves bare concept names via the default concepts/ directory', async () => {
+    // Codex review post-D9: `concepts/` is documented everywhere and
+    // the default `type: concept` home, but the original default dir
+    // list omitted it.
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'RAG');
+    expect(result).toBe('concepts/rag');
+  });
+
   it('scopes prefix expansion to the requested source_id', async () => {
     // people/alice-example exists in BOTH 'default' (10 chunks) and
     // 'other-src' (50 chunks). Resolving "Alice" in 'default' must
@@ -292,6 +313,17 @@ describe('getPrefixExpansionDirs — config-driven (D2)', () => {
     } finally {
       rmSync(tmpHome, { recursive: true, force: true });
     }
+  });
+
+  it('default dir list includes concepts/ for concept entity resolution', async () => {
+    expect(DEFAULT_PREFIX_EXPANSION_DIRS).toContain('concepts');
+    expect([...DEFAULT_PREFIX_EXPANSION_DIRS]).toEqual([
+      'people',
+      'companies',
+      'deals',
+      'topics',
+      'concepts',
+    ]);
   });
 
   it('honors entities.prefix_expansion_dirs config override', async () => {

@@ -105,12 +105,15 @@ function isBareName(raw: string): boolean {
 }
 
 /**
- * Default prefix-expansion directories. Matches the stub-guard's
- * recognized prefix set in `src/core/facts/fence-write.ts` so the
- * resolver and the guard see the same world. Override per-brain via
+ * Default prefix-expansion directories. Covers the four entity types
+ * the stub-guard recognizes in `src/core/facts/fence-write.ts` plus
+ * `concepts/` which is the canonical home for `type: concept` pages
+ * across gbrain docs and example schemas (e.g. `concepts/rag`,
+ * `concepts/agentic-workflows`). Bare-name references like "RAG" or
+ * "Bitcoin" therefore resolve out of the box. Override per-brain via
  * the `entities.prefix_expansion_dirs` config key.
  */
-export const DEFAULT_PREFIX_EXPANSION_DIRS = ['people', 'companies', 'deals', 'topics'] as const;
+export const DEFAULT_PREFIX_EXPANSION_DIRS = ['people', 'companies', 'deals', 'topics', 'concepts'] as const;
 
 /**
  * Resolve the active prefix-expansion dir list. Config-first, default-fallback.
@@ -130,27 +133,23 @@ export function getPrefixExpansionDirs(): readonly string[] {
 }
 
 /**
- * Look up pages whose slug starts with `<dir>/<token>-` for each configured
- * entity directory. When multiple candidates match within a directory,
- * pick the one with the highest connection count (links_in + links_out +
- * chunk count) — the most-mentioned entity is the most likely canonical
- * target for a bare-name reference. When no candidates match in any
- * directory, returns null and the caller falls through to slugify.
+ * Look up pages whose slug is `<dir>/<token>` OR starts with
+ * `<dir>/<token>-` for each configured entity directory. When multiple
+ * candidates match within a directory, pick the one with the highest
+ * connection count (links_in + links_out + chunk count) — the most-
+ * mentioned entity is the most likely canonical target for a bare-name
+ * reference. When no candidates match in any directory, returns null
+ * and the caller falls through to slugify.
+ *
+ * Also exported so `gbrain merge-phantoms` can run the prefix step in
+ * isolation: resolveEntitySlug's exact-slug short-circuit would match
+ * a phantom against itself before reaching prefix expansion. `token`
+ * should be a pre-slugified single word (e.g. `'alice'`, not `'Alice'`).
  *
  * The connection-count subqueries are correlated (per page row) rather
  * than full table aggregates so the cost scales with the number of
- * slug-LIKE-matching candidates (typically 1-3), not with brain size.
+ * slug-matching candidates (typically 1-3), not with brain size.
  * Indexes used: `idx_links_to`, `idx_links_from`, `idx_chunks_page`.
- */
-/**
- * Run the prefix-expansion step in isolation. Skips the exact-slug and
- * fuzzy-match layers — useful for `gbrain merge-phantoms` where the
- * input IS a phantom unprefixed slug that would exact-match itself and
- * short-circuit `resolveEntitySlug` before reaching prefix expansion.
- *
- * `token` should be a pre-slugified single word (e.g. `'alice'`, not
- * `'Alice'`). Returns null when no candidate matches in any configured
- * directory.
  */
 export async function tryPrefixExpansion(
   engine: BrainEngine,
@@ -158,7 +157,13 @@ export async function tryPrefixExpansion(
   token: string,
 ): Promise<string | null> {
   for (const dir of getPrefixExpansionDirs()) {
-    const pattern = `${dir}/${token}-%`;
+    // Match BOTH `<dir>/<token>` exactly AND `<dir>/<token>-%` (hyphenated
+    // variants). Without the exact-match leg, a brain whose canonical slug
+    // is `companies/acme` (no hyphen-suffix) would never resolve bare
+    // "Acme" — codex caught this in the third /codex review pass. The
+    // ORDER BY tiebreak still applies across both candidate shapes.
+    const exact = `${dir}/${token}`;
+    const hyphen = `${dir}/${token}-%`;
     try {
       const rows = await engine.executeRaw<{
         slug: string;
@@ -166,7 +171,8 @@ export async function tryPrefixExpansion(
       }>(
         // Correlated subqueries: each per p.id, hitting the existing
         // (to_page_id), (from_page_id), (page_id) indexes. The outer
-        // WHERE p.slug LIKE $2 is highly selective, so N is small.
+        // WHERE clause uses `slug = $2 OR slug LIKE $3` so both the
+        // exact and the prefix candidates feed the same tiebreak.
         `SELECT p.slug,
                 ((SELECT COUNT(*) FROM links WHERE to_page_id = p.id) +
                  (SELECT COUNT(*) FROM links WHERE from_page_id = p.id) +
@@ -175,10 +181,10 @@ export async function tryPrefixExpansion(
          FROM pages p
          WHERE p.source_id = $1
            AND p.deleted_at IS NULL
-           AND p.slug LIKE $2
+           AND (p.slug = $2 OR p.slug LIKE $3)
          ORDER BY connection_count DESC, p.slug ASC
          LIMIT 1`,
-        [source_id, pattern],
+        [source_id, exact, hyphen],
       );
       if (rows.length === 0) continue;
       return rows[0].slug;
