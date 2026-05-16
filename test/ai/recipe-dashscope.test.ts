@@ -20,17 +20,14 @@ describe('recipe: dashscope', () => {
     expect(r!.auth_env?.required).toEqual(['DASHSCOPE_API_KEY']);
   });
 
-  test('embedding touchpoint declares text-embedding-v3 first + 1024 dims', () => {
+  test('embedding touchpoint declares text-embedding-v4 first + 1024 default dims', () => {
     const r = getRecipe('dashscope')!;
     expect(r.touchpoints.embedding).toBeDefined();
-    expect(r.touchpoints.embedding!.models[0]).toBe('text-embedding-v3');
+    expect(r.touchpoints.embedding!.models[0]).toBe('text-embedding-v4');
+    expect(r.touchpoints.embedding!.models).toContain('text-embedding-v3');
     expect(r.touchpoints.embedding!.models).toContain('text-embedding-v2');
     expect(r.touchpoints.embedding!.default_dims).toBe(1024);
-    expect(r.touchpoints.embedding!.dims_options).toEqual([64, 128, 256, 512, 768, 1024]);
-    // Matryoshka: every dims option ≤ 2000 (HNSW-compatible).
-    for (const d of r.touchpoints.embedding!.dims_options ?? []) {
-      expect(d).toBeLessThanOrEqual(2000);
-    }
+    expect(r.touchpoints.embedding!.dims_options).toEqual([64, 128, 256, 512, 768, 1024, 1536, 2048]);
   });
 
   test('default auth: DASHSCOPE_API_KEY set → "Bearer <key>"', () => {
@@ -55,17 +52,33 @@ describe('recipe: dashscope', () => {
     expect(r.touchpoints.embedding!.chars_per_token).toBeGreaterThan(0);
   });
 
-  test('dimsProviderOptions threads dimensions for text-embedding-v3 (Matryoshka)', async () => {
-    // Codex finding #1: DashScope text-embedding-v3 is Matryoshka 64-1024.
+  test('dimsProviderOptions threads dimensions for text-embedding-v3/v4 (Matryoshka)', async () => {
+    // Codex finding #1: DashScope text-embedding-v3/v4 accept dimensions.
     // Without `dimensions` on the wire, user-selected non-default dims are
     // silently ignored and the provider returns its default size.
     const { dimsProviderOptions } = await import('../../src/core/ai/dims.ts');
+    expect(dimsProviderOptions('openai-compatible', 'text-embedding-v4', 2048))
+      .toEqual({ openaiCompatible: { dimensions: 2048 } });
+    expect(dimsProviderOptions('openai-compatible', 'text-embedding-v4', 1536))
+      .toEqual({ openaiCompatible: { dimensions: 1536 } });
     expect(dimsProviderOptions('openai-compatible', 'text-embedding-v3', 512))
       .toEqual({ openaiCompatible: { dimensions: 512 } });
     expect(dimsProviderOptions('openai-compatible', 'text-embedding-v3', 1024))
       .toEqual({ openaiCompatible: { dimensions: 1024 } });
+    expect(() => dimsProviderOptions('openai-compatible', 'text-embedding-v3', 256))
+      .toThrow(AIConfigError);
+    expect(() => dimsProviderOptions('openai-compatible', 'text-embedding-v3', 2048))
+      .toThrow(AIConfigError);
     // text-embedding-v2 is fixed-dim; no passthrough.
     expect(dimsProviderOptions('openai-compatible', 'text-embedding-v2', 1024))
       .toBeUndefined();
+  });
+
+  test('DashScope shim pins encoding_format=float and is wired into embeddings', async () => {
+    const src = await Bun.file(new URL('../../src/core/ai/gateway.ts', import.meta.url)).text();
+    expect(src).toMatch(/const dashscopeCompatFetch\s*=\s*\(async \(input: RequestInfo \| URL/);
+    expect(src).toMatch(/parsed\.encoding_format\s*!==\s*['"]float['"]/);
+    expect(src).toMatch(/parsed\.encoding_format\s*=\s*['"]float['"]/);
+    expect(src).toMatch(/recipe\.id\s*===\s*['"]dashscope['"]\s*\?[\s]*dashscopeCompatFetch/);
   });
 });
