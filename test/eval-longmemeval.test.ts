@@ -21,7 +21,7 @@ import {
   withBenchmarkBrain,
 } from '../src/eval/longmemeval/harness.ts';
 import { haystackToPages, type LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
-import { runEvalLongMemEval } from '../src/commands/eval-longmemeval.ts';
+import { runEvalLongMemEval, loadResumeSet } from '../src/commands/eval-longmemeval.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { DEFAULT_SOURCE_BOOSTS } from '../src/core/search/source-boost.ts';
 import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -461,6 +461,155 @@ describe('per-question failure handling', () => {
       expect(lines[1].error.length).toBeGreaterThan(0);
       expect(lines[2].question_id).toBe('lme-ok-1');
       expect(typeof lines[2].hypothesis).toBe('string');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// 13. v0.35.1.0: --resume-from
+// ---------------------------------------------------------------------------
+
+describe('loadResumeSet (v0.35.1.0)', () => {
+  test('returns empty set when path does not exist', () => {
+    const set = loadResumeSet('/nonexistent/path/never/exists.jsonl');
+    expect(set.size).toBe(0);
+  });
+
+  test('reads question_ids from a well-formed JSONL', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'lme-resume-'));
+    const p = join(tmp, 'partial.jsonl');
+    const { writeFileSync } = await import('fs');
+    try {
+      writeFileSync(
+        p,
+        [
+          JSON.stringify({ question_id: 'a', hypothesis: 'one' }),
+          JSON.stringify({ question_id: 'b', hypothesis: 'two' }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+      const set = loadResumeSet(p);
+      expect(set.size).toBe(2);
+      expect(set.has('a')).toBe(true);
+      expect(set.has('b')).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('skips rows whose hypothesis is empty AND error is set (retry case)', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'lme-resume-'));
+    const p = join(tmp, 'with-errors.jsonl');
+    const { writeFileSync } = await import('fs');
+    try {
+      writeFileSync(
+        p,
+        [
+          JSON.stringify({ question_id: 'good', hypothesis: 'real-answer' }),
+          JSON.stringify({ question_id: 'bad', hypothesis: '', error: 'rate-limit' }),
+          JSON.stringify({ question_id: 'recovered', hypothesis: 'second-try', error: 'old-error' }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+      const set = loadResumeSet(p);
+      // 'bad' is retried; 'good' and 'recovered' are kept (hypothesis non-empty).
+      expect(set.size).toBe(2);
+      expect(set.has('good')).toBe(true);
+      expect(set.has('bad')).toBe(false);
+      expect(set.has('recovered')).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('tolerates a truncated/corrupt final line (SIGKILL recovery case)', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'lme-resume-'));
+    const p = join(tmp, 'truncated.jsonl');
+    const { writeFileSync } = await import('fs');
+    try {
+      writeFileSync(
+        p,
+        JSON.stringify({ question_id: 'a', hypothesis: 'one' }) + '\n' +
+        '{"question_id":"b","hypothesis":"two-trunc' /* no closing brace, no LF */,
+        'utf8',
+      );
+      const set = loadResumeSet(p);
+      // First line counts; second is silently skipped (stderr warn).
+      expect(set.size).toBe(1);
+      expect(set.has('a')).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('runEvalLongMemEval --resume-from (v0.35.1.0)', () => {
+  test('skips already-answered questions and appends to the same output file', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'lme-resume-'));
+    const outPath = join(tmp, 'hypothesis.jsonl');
+    try {
+      // Simulate prior run: 2 questions already answered, written to the file
+      // with hypothesis set. The fixture has 5 questions total.
+      const { writeFileSync } = await import('fs');
+      const fixture = readFileSync(FIXTURE_PATH, 'utf8')
+        .split('\n').filter(l => l.length > 0).map(l => JSON.parse(l));
+      writeFileSync(
+        outPath,
+        [
+          JSON.stringify({ question_id: fixture[0].question_id, hypothesis: 'prior-1' }),
+          JSON.stringify({ question_id: fixture[1].question_id, hypothesis: 'prior-2' }),
+        ].join('\n') + '\n',
+        'utf8',
+      );
+
+      const { client } = makeStubClient('resumed-answer');
+      await runEvalLongMemEval(
+        [FIXTURE_PATH, '--keyword-only', '--limit', '5', '--top-k', '3',
+         '--output', outPath, '--resume-from', outPath],
+        { client },
+      );
+
+      const text = readFileSync(outPath, 'utf8');
+      const lines = text.split('\n').filter(l => l.length > 0).map(l => JSON.parse(l));
+      // 2 prior rows + 3 new rows = 5 total
+      expect(lines.length).toBe(5);
+      // First two preserve their prior hypothesis (proves append, not truncate).
+      expect(lines[0].hypothesis).toBe('prior-1');
+      expect(lines[1].hypothesis).toBe('prior-2');
+      // Newly-answered three carry the canned stub.
+      for (let i = 2; i < 5; i++) {
+        expect(lines[i].hypothesis).toContain('resumed-answer');
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('all questions already done -> early return, no client calls', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'lme-resume-'));
+    const outPath = join(tmp, 'all-done.jsonl');
+    try {
+      const { writeFileSync } = await import('fs');
+      const fixture = readFileSync(FIXTURE_PATH, 'utf8')
+        .split('\n').filter(l => l.length > 0).map(l => JSON.parse(l)).slice(0, 5);
+      writeFileSync(
+        outPath,
+        fixture.map(q => JSON.stringify({ question_id: q.question_id, hypothesis: 'done' })).join('\n') + '\n',
+        'utf8',
+      );
+      const { client, calls } = makeStubClient('should-not-be-called');
+      await runEvalLongMemEval(
+        [FIXTURE_PATH, '--keyword-only', '--limit', '5',
+         '--output', outPath, '--resume-from', outPath],
+        { client },
+      );
+      // The client must not have been invoked at all — every question was skipped.
+      expect(calls.length).toBe(0);
+      // The output file is untouched (no new lines appended).
+      const lines = readFileSync(outPath, 'utf8').split('\n').filter(l => l.length > 0);
+      expect(lines.length).toBe(5);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
