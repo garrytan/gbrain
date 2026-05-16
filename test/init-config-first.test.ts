@@ -253,4 +253,59 @@ describe('resolveAIOptions: config-first resolution (closes #203)', () => {
       expect(result.embedding_dimensions).toBeUndefined();
     });
   });
+
+  /**
+   * Case 6 (added after issue #203 reporter audit, 2026-05-16):
+   * The v0.10.x nested config shape — what jamebobob actually filed the issue with —
+   * is `{embedding: {provider, model, dimensions, base_url}}`. v0.27 (PR #257)
+   * flattened to top-level fields and the migration was never written. A user
+   * carrying a config.json from before that release falls through to gateway
+   * defaults (OpenAI 1536) on every command because no code reads the nested shape.
+   *
+   * `loadConfig()` now maps the nested shape to flat fields in memory before the
+   * env-merge step, so this PR closes jamebobob's exact reproducer too — not just
+   * users who've already migrated to the flat shape.
+   */
+  test('case 6: nested v0.10.x shape (jamebobob reproducer) → mapped to flat fields', async () => {
+    const home = makeBrainHome({
+      engine: 'pglite',
+      database_path: '/tmp/x.pglite',
+      embedding: {
+        provider: 'ollama',
+        model: 'bge-m3',
+        dimensions: 1024,
+        base_url: 'http://localhost:8085/v1',
+      },
+    });
+    await withEnv({ ...isolateEnv(), GBRAIN_HOME: home }, async () => {
+      const result = await resolveAIOptions(null, null, null, null, null);
+      expect(result.embedding_model).toBe('ollama:bge-m3');
+      expect(result.embedding_dimensions).toBe(1024);
+      expect(result.provider_base_urls).toEqual({ ollama: 'http://localhost:8085/v1' });
+    });
+  });
+
+  /**
+   * Case 7: flat fields take precedence over nested if BOTH are somehow present
+   * (e.g., a user re-saved a config midway through a manual edit). The flat
+   * fields are the canonical v0.27+ shape; nested is the back-compat fallback.
+   */
+  test('case 7: flat fields win when both flat and nested present', async () => {
+    const home = makeBrainHome({
+      engine: 'pglite',
+      database_path: '/tmp/x.pglite',
+      embedding_model: 'lmstudio:text-embedding-nomic-embed-text-v1.5',
+      embedding_dimensions: 768,
+      embedding: {
+        provider: 'ollama',
+        model: 'bge-m3',
+        dimensions: 1024,
+      },
+    });
+    await withEnv({ ...isolateEnv(), GBRAIN_HOME: home }, async () => {
+      const result = await resolveAIOptions(null, null, null, null, null);
+      expect(result.embedding_model).toBe('lmstudio:text-embedding-nomic-embed-text-v1.5');
+      expect(result.embedding_dimensions).toBe(768);
+    });
+  });
 });
