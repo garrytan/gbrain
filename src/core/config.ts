@@ -37,7 +37,7 @@ export interface GBrainConfig {
   expansion_model?: string;
   /**
    * Default chat model for `gateway.chat()` callers (v0.27+).
-   * Default: "anthropic:claude-sonnet-4-6" (dateless per Anthropic's v0.31.12+ model-ID format).
+   * Default: "anthropic:claude-sonnet-4-6-20250929".
    */
   chat_model?: string;
   /**
@@ -152,6 +152,7 @@ export function loadConfig(): GBrainConfig | null {
     ...(dbUrl ? { database_path: undefined } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
     ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
+    ...(process.env.GOOGLE_GENERATIVE_AI_API_KEY ? { google_api_key: process.env.GOOGLE_GENERATIVE_AI_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
@@ -174,23 +175,16 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
       ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }
       : {}),
+    provider_base_urls: {
+      ...(fileConfig?.provider_base_urls || {}),
+      ...(process.env.OLLAMA_BASE_URL ? { ollama: process.env.OLLAMA_BASE_URL } : {}),
+      ...(process.env.LITELLM_BASE_URL ? { litellm: process.env.LITELLM_BASE_URL } : {}),
+      ...(process.env.VOYAGE_BASE_URL ? { voyage: process.env.VOYAGE_BASE_URL } : {}),
+    },
   };
   return merged as GBrainConfig;
 }
 
-/**
- * v0.27.1 — async config loader that overlays DB-plane config on top of the
- * file/env config. Used by `gbrain` CLI's connectEngine() AFTER engine.connect()
- * so flags written via `gbrain config set` actually take effect. Unlike the
- * sync loadConfig(), this needs an engine handle to read the config table.
- *
- * Precedence: env > file > DB > defaults. Env stays the operator escape hatch;
- * file is the durable per-machine config; DB is the user-mutable runtime knob.
- *
- * Today only the v0.27.1 multimodal flags participate in DB-merge. Existing
- * fields (embedding_model, etc.) keep their file/env-only loading because they
- * size the schema and must be stable across engine connect.
- */
 export async function loadConfigWithEngine(
   engine: { getConfig(key: string): Promise<string | null | undefined> },
   base?: GBrainConfig | null,
