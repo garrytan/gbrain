@@ -356,6 +356,7 @@ export async function runMergePhantomsCore(
     // and the markdown in lockstep before we soft-delete the phantom.
     const { importFromFile } = await import('../core/import-file.ts');
     const canonicalPath = join(localPath, `${canonical}.md`);
+    let importStatus: { status: string; error?: string } | null = null;
     try {
       // importFromFile signature: (engine, absPath, relativePath, opts).
       // `noEmbed: true` keeps the merge fast — re-embedding the page
@@ -363,21 +364,30 @@ export async function runMergePhantomsCore(
       // + content_chunks get refreshed regardless, which is what we
       // need to keep the next extract_facts cycle from wiping the
       // migrated rows.
-      await importFromFile(engine, canonicalPath, `${canonical}.md`, {
+      importStatus = await importFromFile(engine, canonicalPath, `${canonical}.md`, {
         sourceId: opts.sourceId,
         noEmbed: true,
         forceRechunk: true,
       });
     } catch (err) {
-      // If the re-import fails (e.g. malformed markdown post-write),
-      // skip and surface as fence_write_failed so the operator sees
-      // it. The fence-write already produced new DB rows; the next
-      // extract_facts cycle WILL clean them up via the stale-body
-      // path — so we DON'T delete the phantom rows here. The merge
-      // is effectively a no-op for this phantom.
+      importStatus = {
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    // Codex round-15 P2: importFromFile can reject the file via a
+    // normal ImportResult (`status: 'skipped' | 'error' | 'invalid'`
+    // with an `error` field) instead of throwing — e.g. when the
+    // rewritten markdown is over MAX_FILE_SIZE or the frontmatter slug
+    // no longer matches the path. Treat any non-'imported' result the
+    // same way as a throw: log + skip + leave phantom rows alone so
+    // the operator can rerun after fixing the canonical.
+    if (!importStatus || importStatus.status !== 'imported') {
+      const detail = importStatus?.error ?? 'unknown';
       // eslint-disable-next-line no-console
       console.warn(
-        `[merge-phantoms] canonical re-import failed for ${canonical}: ${err instanceof Error ? err.message : String(err)}. Phantom NOT soft-deleted; rerun the merge after fixing the markdown.`,
+        `[merge-phantoms] canonical re-import for ${canonical} did not produce status='imported' (got ${importStatus?.status ?? 'null'}: ${detail}). Phantom NOT soft-deleted; rerun the merge after fixing the markdown.`,
       );
       skipped.push({ phantom: row.slug, canonical, skipped: 'fence_write_failed' });
       continue;
