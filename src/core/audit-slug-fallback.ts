@@ -16,11 +16,14 @@
  *     for. Codex outside-voice C7 caught this drift.
  *
  * Best-effort writes. Write failures go to stderr but the import continues.
+ *
+ * 2026-05-16 refactored to use the shared `createAuditLogger` primitive
+ * from `audit-jsonl.ts`. The cross-layer import of `resolveAuditDir` from
+ * `minions/handlers/shell-audit.ts` is gone — both now resolve through the
+ * core layer where they belong.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { resolveAuditDir } from './minions/handlers/shell-audit.ts';
+import { createAuditLogger, computeIsoWeekFilename } from './audit-jsonl.ts';
 
 export interface SlugFallbackAuditEvent {
   ts: string;
@@ -34,18 +37,15 @@ export interface SlugFallbackAuditEvent {
   code: 'SLUG_FALLBACK_FRONTMATTER';
 }
 
+const logger = createAuditLogger<SlugFallbackAuditEvent>({
+  prefix: 'slug-fallback',
+  stderrTag: '[gbrain]',
+  continueMessage: 'import continues',
+});
+
 /** ISO-week-rotated filename: `slug-fallback-YYYY-Www.jsonl`. */
 export function computeSlugFallbackAuditFilename(now: Date = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7;
-  d.setUTCDate(d.getUTCDate() - dayNum + 3);
-  const isoYear = d.getUTCFullYear();
-  const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
-  const firstThursdayDayNum = (firstThursday.getUTCDay() + 6) % 7;
-  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstThursdayDayNum + 3);
-  const weekNum = Math.round((d.getTime() - firstThursday.getTime()) / (7 * 86400000)) + 1;
-  const ww = String(weekNum).padStart(2, '0');
-  return `slug-fallback-${isoYear}-W${ww}.jsonl`;
+  return computeIsoWeekFilename('slug-fallback', now);
 }
 
 /**
@@ -57,58 +57,20 @@ export function computeSlugFallbackAuditFilename(now: Date = new Date()): string
  */
 export function logSlugFallback(slug: string, sourcePath: string): void {
   process.stderr.write(`[gbrain] slug fallback: ${sourcePath} → ${slug} (frontmatter slug; path slugified empty)\n`);
-  const event: SlugFallbackAuditEvent = {
-    ts: new Date().toISOString(),
+  logger.log({
     slug,
     source_path: sourcePath,
     severity: 'info',
     code: 'SLUG_FALLBACK_FRONTMATTER',
-  };
-  const dir = resolveAuditDir();
-  const file = path.join(dir, computeSlugFallbackAuditFilename());
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(file, JSON.stringify(event) + '\n', { encoding: 'utf8' });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[gbrain] slug-fallback audit write failed (${msg}); import continues\n`);
-  }
+  });
 }
 
 /**
- * Read recent (`days` window, default 7) slug-fallback events from the
- * latest week's JSONL. Used by `gbrain doctor`'s slug_fallback_audit check.
- * Missing file / corrupt rows are skipped silently — the audit trail is
- * informational and shouldn't block doctor.
+ * Read recent (`days` window, default 7) slug-fallback events. Used by
+ * `gbrain doctor`'s slug_fallback_audit check. Missing file / corrupt rows
+ * are skipped silently — the audit trail is informational and shouldn't
+ * block doctor.
  */
 export function readRecentSlugFallbacks(days = 7, now: Date = new Date()): SlugFallbackAuditEvent[] {
-  const dir = resolveAuditDir();
-  const cutoff = now.getTime() - days * 86400000;
-  const out: SlugFallbackAuditEvent[] = [];
-  // Walk the current + previous ISO week so a 7-day window straddling
-  // Monday-midnight stays covered.
-  const filenames = [
-    computeSlugFallbackAuditFilename(now),
-    computeSlugFallbackAuditFilename(new Date(now.getTime() - 7 * 86400000)),
-  ];
-  for (const filename of filenames) {
-    const file = path.join(dir, filename);
-    let content: string;
-    try {
-      content = fs.readFileSync(file, 'utf8');
-    } catch {
-      continue;
-    }
-    for (const line of content.split('\n')) {
-      if (line.length === 0) continue;
-      try {
-        const ev = JSON.parse(line) as SlugFallbackAuditEvent;
-        const ts = Date.parse(ev.ts);
-        if (Number.isFinite(ts) && ts >= cutoff) out.push(ev);
-      } catch {
-        // Corrupt row — skip.
-      }
-    }
-  }
-  return out;
+  return logger.readRecent(days, now);
 }
