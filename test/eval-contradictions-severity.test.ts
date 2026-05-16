@@ -25,6 +25,8 @@ function mkFinding(opts: {
       source_tier: 'curated',
       holder: null,
       text: 'A',
+      effective_date: null,
+      effective_date_source: null,
     },
     b: {
       slug: opts.slugB,
@@ -33,6 +35,8 @@ function mkFinding(opts: {
       source_tier: 'bulk',
       holder: null,
       text: 'B',
+      effective_date: null,
+      effective_date_source: null,
     },
     combined_score: 1,
     severity: opts.severity,

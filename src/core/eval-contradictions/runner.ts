@@ -110,11 +110,27 @@ function searchResultToMember(r: SearchResult): PairMember {
     source_tier: classifySlugTier(r.slug),
     holder: null,
     text: r.chunk_text,
+    // Lane A1: effective_date carried through from the search projection.
+    // null when the page has no temporal anchor (judge will see `(date unknown)`).
+    effective_date: r.effective_date ?? null,
+    effective_date_source: r.effective_date_source ?? null,
   };
 }
 
-/** Convert a Take into a PairMember. */
-function takeToMember(take: { id: number; page_slug: string; claim: string; holder: string }, source_tier: ReturnType<typeof classifySlugTier>): PairMember {
+/**
+ * Convert a Take into a PairMember.
+ *
+ * Lane A1: takes are paired with a chunk from the same page, so the take's
+ * effective_date is inherited from the chunk's page-level effective_date.
+ * A future enhancement could distinguish `takes.since_date` from
+ * `pages.effective_date` here — for v1 they share the same page anchor.
+ */
+function takeToMember(
+  take: { id: number; page_slug: string; claim: string; holder: string },
+  source_tier: ReturnType<typeof classifySlugTier>,
+  effective_date: string | null,
+  effective_date_source: string | null,
+): PairMember {
   return {
     slug: take.page_slug,
     chunk_id: null,
@@ -122,6 +138,8 @@ function takeToMember(take: { id: number; page_slug: string; claim: string; hold
     source_tier,
     holder: take.holder,
     text: take.claim,
+    effective_date,
+    effective_date_source,
   };
 }
 
@@ -158,7 +176,12 @@ async function generateIntraPagePairs(
     if (takes.length === 0) continue;
     const chunkMember = searchResultToMember(r);
     for (const t of takes) {
-      const takeMember = takeToMember(t, chunkMember.source_tier);
+      const takeMember = takeToMember(
+        t,
+        chunkMember.source_tier,
+        chunkMember.effective_date,
+        chunkMember.effective_date_source,
+      );
       out.push({
         kind: 'intra_page_chunk_take',
         a: chunkMember,
@@ -295,8 +318,20 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
       try {
         const out = await judgeFn({
           query,
-          a: { slug: pair.a.slug, text: pair.a.text, source_tier: pair.a.source_tier, holder: pair.a.holder },
-          b: { slug: pair.b.slug, text: pair.b.text, source_tier: pair.b.source_tier, holder: pair.b.holder },
+          a: {
+            slug: pair.a.slug,
+            text: pair.a.text,
+            source_tier: pair.a.source_tier,
+            holder: pair.a.holder,
+            effective_date: pair.a.effective_date,
+          },
+          b: {
+            slug: pair.b.slug,
+            text: pair.b.text,
+            source_tier: pair.b.source_tier,
+            holder: pair.b.holder,
+            effective_date: pair.b.effective_date,
+          },
           model: judgeModel,
           maxPairChars,
           abortSignal: opts.abortSignal,

@@ -261,8 +261,8 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
         contradictions: [
           {
             kind: 'cross_slug_chunks',
-            a: { slug: 'companies/acme-example', chunk_id: 1, take_id: null, source_tier: 'curated', holder: null, text: 'a' },
-            b: { slug: 'openclaw/chat/x', chunk_id: 2, take_id: null, source_tier: 'bulk', holder: null, text: 'b' },
+            a: { slug: 'companies/acme-example', chunk_id: 1, take_id: null, source_tier: 'curated', holder: null, text: 'a', effective_date: null, effective_date_source: null },
+            b: { slug: 'openclaw/chat/x', chunk_id: 2, take_id: null, source_tier: 'bulk', holder: null, text: 'b', effective_date: null, effective_date_source: null },
             combined_score: 1.5,
             severity: 'high',
             axis: 'MRR figure',
@@ -272,8 +272,8 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
           },
           {
             kind: 'cross_slug_chunks',
-            a: { slug: 'people/alice-example', chunk_id: 3, take_id: null, source_tier: 'curated', holder: null, text: 'c' },
-            b: { slug: 'people/alice-smith-example', chunk_id: 4, take_id: null, source_tier: 'curated', holder: null, text: 'd' },
+            a: { slug: 'people/alice-example', chunk_id: 3, take_id: null, source_tier: 'curated', holder: null, text: 'c', effective_date: null, effective_date_source: null },
+            b: { slug: 'people/alice-smith-example', chunk_id: 4, take_id: null, source_tier: 'curated', holder: null, text: 'd', effective_date: null, effective_date_source: null },
             combined_score: 1.2,
             severity: 'low',
             axis: 'name format',

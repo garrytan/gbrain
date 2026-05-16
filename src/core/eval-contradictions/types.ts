@@ -12,8 +12,16 @@
 
 export const SCHEMA_VERSION = 1 as const;
 
-/** Bump when the judge prompt in judge.ts changes meaningfully. */
-export const PROMPT_VERSION = '1' as const;
+/**
+ * Bump when the judge prompt in judge.ts changes meaningfully. Used as part
+ * of the cache key tuple — bumping invalidates every cached verdict from
+ * prior runs, which is the point: when the prompt edits, old verdicts are
+ * no longer trustworthy.
+ *
+ * v2 (Lane A1, 2026-05): judge prompt now receives `Statement A (from: YYYY-MM-DD)`
+ *   or `(date unknown)` per side. Old v1 verdicts are silently invalidated.
+ */
+export const PROMPT_VERSION = '2' as const;
 
 /** Truncation policy string baked into the cache key. */
 export const TRUNCATION_POLICY = '1500-chars-utf8-safe' as const;
@@ -74,6 +82,14 @@ export interface PairMember {
   /** Takes-only: who holds the take (`garry`, `alice`, ...). */
   holder: string | null;
   text: string;
+  /**
+   * v0.34 / Lane A1: page-level effective_date carried through from SearchResult.
+   * Format: YYYY-MM-DD (ISO date-only). Threaded into the judge prompt so the
+   * model can classify supersession/regression/evolution. Null means "no
+   * temporal anchor for this chunk" — judge sees `(date unknown)` for this side.
+   */
+  effective_date: string | null;
+  effective_date_source: string | null;
 }
 
 export interface ContradictionPair {

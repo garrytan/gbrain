@@ -108,9 +108,26 @@ export function truncateUtf8(text: string, maxChars: number): string {
 export interface JudgeInput {
   /** The user's query for the search that retrieved both members. */
   query: string;
-  /** Statement A: slug + text + optional source-tier + holder (if take). */
-  a: { slug: string; text: string; source_tier?: string; holder?: string | null };
-  b: { slug: string; text: string; source_tier?: string; holder?: string | null };
+  /**
+   * Statement A: slug + text + optional source-tier + holder (if take) +
+   * optional effective_date (Lane A1). When effective_date is null/undefined
+   * the prompt shows `(date unknown)` for that side; the judge classifies
+   * based on chunk text alone, same as the v1 prompt did.
+   */
+  a: {
+    slug: string;
+    text: string;
+    source_tier?: string;
+    holder?: string | null;
+    effective_date?: string | null;
+  };
+  b: {
+    slug: string;
+    text: string;
+    source_tier?: string;
+    holder?: string | null;
+    effective_date?: string | null;
+  };
   /** Provider:model id; routed through gateway.chat. */
   model: string;
   /** UTF-8-safe truncation limit per pair member. C4 flag. */
@@ -194,14 +211,31 @@ export function normalizeVerdict(raw: unknown): JudgeVerdict {
  */
 export function buildJudgePrompt(opts: {
   query: string;
-  a: { slug: string; text: string; source_tier?: string; holder?: string | null };
-  b: { slug: string; text: string; source_tier?: string; holder?: string | null };
+  a: {
+    slug: string;
+    text: string;
+    source_tier?: string;
+    holder?: string | null;
+    effective_date?: string | null;
+  };
+  b: {
+    slug: string;
+    text: string;
+    source_tier?: string;
+    holder?: string | null;
+    effective_date?: string | null;
+  };
   maxPairChars: number;
 }): string {
   const a = truncateUtf8(opts.a.text, opts.maxPairChars);
   const b = truncateUtf8(opts.b.text, opts.maxPairChars);
   const aMeta = [opts.a.slug, opts.a.source_tier && `source-tier ${opts.a.source_tier}`, opts.a.holder && `holder ${opts.a.holder}`].filter(Boolean).join(', ');
   const bMeta = [opts.b.slug, opts.b.source_tier && `source-tier ${opts.b.source_tier}`, opts.b.holder && `holder ${opts.b.holder}`].filter(Boolean).join(', ');
+  // Lane A1: emit the page-level effective_date on its own line so the judge
+  // can reason temporally. `(date unknown)` keeps the v1 fallback behavior
+  // when the page has no effective_date — judge classifies on text alone.
+  const aDateTag = opts.a.effective_date ? `(from: ${opts.a.effective_date})` : '(date unknown)';
+  const bDateTag = opts.b.effective_date ? `(from: ${opts.b.effective_date})` : '(date unknown)';
   return [
     'You are a contradiction judge for a personal knowledge brain. The user',
     'ran a search and got two results back. Decide whether the two statements',
@@ -210,13 +244,17 @@ export function buildJudgePrompt(opts: {
     '',
     `User's query: ${opts.query}`,
     '',
-    `Statement A (${aMeta}):`,
+    `Statement A ${aDateTag} (${aMeta}):`,
     a,
     '',
-    `Statement B (${bMeta}):`,
+    `Statement B ${bDateTag} (${bMeta}):`,
     b,
     '',
     'Rules:',
+    '- The (from: YYYY-MM-DD) tag is the page-level effective date. Use it to',
+    '  decide whether a difference is a contradiction or a legitimate change',
+    '  over time. (date unknown) means the page has no temporal anchor — judge',
+    '  on text alone for that side.',
     '- Different timeframes for the same dynamic property are NOT contradictions',
     '  (e.g., MRR was $50K in 2024 vs $2M in 2026 — both true at their time).',
     '- Different timeframes for a static identity claim MAY BE a contradiction',
@@ -264,6 +302,8 @@ function isRefusalResponse(result: ChatResult): boolean {
  */
 export async function judgeContradiction(input: JudgeInput): Promise<JudgeOutput> {
   const maxPairChars = input.maxPairChars ?? DEFAULT_MAX_PAIR_CHARS;
+  // input.a/b carry effective_date through PairMember (Lane A1); buildJudgePrompt
+  // emits it on the Statement line or falls through to `(date unknown)`.
   const prompt = buildJudgePrompt({
     query: input.query,
     a: input.a,

@@ -793,6 +793,7 @@ export class PGLiteEngine implements BrainEngine {
       `WITH ranked AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
+           p.effective_date, p.effective_date_source,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
            CASE WHEN p.updated_at < (
@@ -902,6 +903,7 @@ export class PGLiteEngine implements BrainEngine {
         `WITH ranked AS (
            SELECT
              p.slug, p.id as page_id, p.title, p.type, p.source_id,
+             p.effective_date, p.effective_date_source,
              cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
              ${scoreExpr} AS score,
              CASE WHEN p.updated_at < (
@@ -930,6 +932,7 @@ export class PGLiteEngine implements BrainEngine {
       const { rows } = await this.db.query(
         `SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
+           p.effective_date, p.effective_date_source,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            ${scoreExpr} AS score,
            CASE WHEN p.updated_at < (
@@ -1012,6 +1015,7 @@ export class PGLiteEngine implements BrainEngine {
     const { rows } = await this.db.query(
       `SELECT
          p.slug, p.id as page_id, p.title, p.type, p.source_id,
+         p.effective_date, p.effective_date_source,
          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
          ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
          CASE WHEN p.updated_at < (
@@ -1102,6 +1106,7 @@ export class PGLiteEngine implements BrainEngine {
       `WITH hnsw_candidates AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
+           p.effective_date, p.effective_date_source,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            1 - (cc.${col} <=> $1::vector) AS raw_score
          FROM content_chunks cc
@@ -1113,6 +1118,7 @@ export class PGLiteEngine implements BrainEngine {
        )
        SELECT
          hc.slug, hc.page_id, hc.title, hc.type, hc.source_id,
+         hc.effective_date, hc.effective_date_source,
          hc.chunk_id, hc.chunk_index, hc.chunk_text, hc.chunk_source,
          hc.raw_score * ${sourceFactorCaseOnSlug} AS score,
          CASE WHEN hc.updated_at < (

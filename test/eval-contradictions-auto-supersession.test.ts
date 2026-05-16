@@ -17,8 +17,8 @@ import type {
 function mkCrossSlugPair(slugA: string, slugB: string): ContradictionPair {
   return {
     kind: 'cross_slug_chunks',
-    a: { slug: slugA, chunk_id: 1, take_id: null, source_tier: 'curated', holder: null, text: 'a' },
-    b: { slug: slugB, chunk_id: 2, take_id: null, source_tier: 'bulk', holder: null, text: 'b' },
+    a: { slug: slugA, chunk_id: 1, take_id: null, source_tier: 'curated', holder: null, text: 'a', effective_date: null, effective_date_source: null },
+    b: { slug: slugB, chunk_id: 2, take_id: null, source_tier: 'bulk', holder: null, text: 'b', effective_date: null, effective_date_source: null },
     combined_score: 1,
   };
 }
@@ -26,8 +26,8 @@ function mkCrossSlugPair(slugA: string, slugB: string): ContradictionPair {
 function mkIntraPagePair(pageSlug: string, takeId: number): ContradictionPair {
   return {
     kind: 'intra_page_chunk_take',
-    a: { slug: pageSlug, chunk_id: 5, take_id: null, source_tier: 'curated', holder: null, text: 'chunk text' },
-    b: { slug: pageSlug, chunk_id: null, take_id: takeId, source_tier: 'curated', holder: 'garry', text: 'take claim' },
+    a: { slug: pageSlug, chunk_id: 5, take_id: null, source_tier: 'curated', holder: null, text: 'chunk text', effective_date: null, effective_date_source: null },
+    b: { slug: pageSlug, chunk_id: null, take_id: takeId, source_tier: 'curated', holder: 'garry', text: 'take claim', effective_date: null, effective_date_source: null },
     combined_score: 1,
   };
 }

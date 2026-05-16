@@ -75,8 +75,8 @@ function mkReport(opts: Partial<ProbeReport> & {
         pairs_judged: findings.length,
         contradictions: findings.map((f, i) => ({
           kind: 'cross_slug_chunks' as const,
-          a: { slug: f.slugA, chunk_id: i + 1, take_id: null, source_tier: 'curated' as const, holder: null, text: 'a' },
-          b: { slug: f.slugB, chunk_id: i + 100, take_id: null, source_tier: 'bulk' as const, holder: null, text: 'b' },
+          a: { slug: f.slugA, chunk_id: i + 1, take_id: null, source_tier: 'curated' as const, holder: null, text: 'a', effective_date: null, effective_date_source: null },
+          b: { slug: f.slugB, chunk_id: i + 100, take_id: null, source_tier: 'bulk' as const, holder: null, text: 'b', effective_date: null, effective_date_source: null },
           combined_score: 1.0,
           severity: f.severity,
           axis: f.axis,

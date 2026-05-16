@@ -845,6 +845,7 @@ export class PostgresEngine implements BrainEngine {
       WITH ranked_chunks AS (
         SELECT
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
+          p.effective_date, p.effective_date_source,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
           ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score
         FROM content_chunks cc
@@ -874,6 +875,7 @@ export class PostgresEngine implements BrainEngine {
         ORDER BY slug, score DESC
       )
       SELECT slug, page_id, title, type, source_id,
+        effective_date, effective_date_source,
         chunk_id, chunk_index, chunk_text, chunk_source, score,
         false AS stale
       FROM best_per_page
@@ -973,6 +975,7 @@ export class PostgresEngine implements BrainEngine {
     const rawQuery = `
       SELECT
         p.slug, p.id as page_id, p.title, p.type, p.source_id,
+        p.effective_date, p.effective_date_source,
         cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
         ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
         false AS stale
@@ -1092,6 +1095,7 @@ export class PostgresEngine implements BrainEngine {
       WITH hnsw_candidates AS (
         SELECT
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
+          p.effective_date, p.effective_date_source,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
           1 - (cc.${col} <=> $1::vector) AS raw_score
         FROM content_chunks cc
@@ -1113,6 +1117,7 @@ export class PostgresEngine implements BrainEngine {
       )
       SELECT
         slug, page_id, title, type, source_id,
+        effective_date, effective_date_source,
         chunk_id, chunk_index, chunk_text, chunk_source,
         raw_score * ${sourceFactorCaseOnSlug} AS score,
         false AS stale
