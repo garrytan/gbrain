@@ -1,6 +1,7 @@
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, afterEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../src/core/think/index.ts';
+import { __setChatTransportForTests, resetGateway, type ChatResult } from '../src/core/ai/gateway.ts';
 import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanitize.ts';
 import { resolveCitations, parseInlineCitations, normalizeStructuredCitations } from '../src/core/think/cite-render.ts';
 import { runGather } from '../src/core/think/gather.ts';
@@ -25,6 +26,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+});
+
+afterEach(() => {
+  __setChatTransportForTests(null);
+  resetGateway();
 });
 
 describe('sanitizeTakeForPrompt', () => {
@@ -177,6 +183,51 @@ describe('runThink (with stub client)', () => {
     expect(result.warnings).not.toContain('LLM_OUTPUT_NOT_JSON');
   });
 
+  test('uses provider-neutral gateway chat when no injected client is provided', async () => {
+    let capturedModel: string | undefined;
+    let capturedSystem: string | undefined;
+    let capturedUser: string | undefined;
+    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+      capturedModel = opts.model;
+      capturedSystem = opts.system;
+      capturedUser = typeof opts.messages[0]?.content === 'string'
+        ? opts.messages[0].content
+        : JSON.stringify(opts.messages[0]?.content ?? '');
+      return {
+        text: JSON.stringify({
+          answer: 'Gateway synthesis says Alice is a strong technical founder [people/alice-example#2].',
+          citations: [{ page_slug: 'people/alice-example', row_num: 2, citation_index: 1 }],
+          gaps: [],
+        }),
+        blocks: [{ type: 'text', text: 'unused' }],
+        stopReason: 'end',
+        usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'openai:gpt-4o-mini',
+        providerId: 'openai',
+      };
+    });
+
+    const origKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const result = await runThink(engine, {
+        question: 'technical founder',
+        model: 'openai:gpt-4o-mini',
+      });
+
+      expect(result.answer).toContain('Gateway synthesis');
+      expect(result.citations).toHaveLength(1);
+      expect(result.modelUsed).toBe('openai:gpt-4o-mini');
+      expect(result.rounds).toBe(1);
+      expect(result.warnings).not.toContain('NO_ANTHROPIC_API_KEY');
+      expect(capturedModel).toBe('openai:gpt-4o-mini');
+      expect(capturedSystem).toContain("gbrain's synthesis engine");
+      expect(capturedUser).toContain('Strong technical founder');
+    } finally {
+      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
+    }
+  });
+
   test('handles malformed LLM output gracefully (regex citation fallback)', async () => {
     const stubClient: ThinkLLMClient = {
       create: async () => ({
@@ -205,17 +256,12 @@ describe('runThink (with stub client)', () => {
     expect(result.citations.length).toBeGreaterThanOrEqual(2);
   });
 
-  test('degrades gracefully without ANTHROPIC_API_KEY', async () => {
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    try {
-      const result = await runThink(engine, { question: 'no key test' });
-      expect(result.warnings).toContain('NO_ANTHROPIC_API_KEY');
-      expect(result.answer).toContain('no LLM available');
-      expect(result.rounds).toBe(0);
-    } finally {
-      if (origKey) process.env.ANTHROPIC_API_KEY = origKey;
-    }
+  test('degrades gracefully when gateway chat is unavailable', async () => {
+    resetGateway();
+    const result = await runThink(engine, { question: 'no key test' });
+    expect(result.warnings.some(w => w.startsWith('LLM_UNAVAILABLE:'))).toBe(true);
+    expect(result.answer).toContain('no LLM available');
+    expect(result.rounds).toBe(0);
   });
 
   test('persistSynthesis writes synthesis page + evidence rows', async () => {
