@@ -292,7 +292,22 @@ export async function purgeExpiredSources(
        AND archive_expires_at <= now()
      RETURNING id`,
   );
-  return rows.map((r) => r.id);
+  const sourceIds = rows.map((r) => r.id);
+  // Audit trail (#1063 follow-up): source DELETE cascades through pages
+  // (FK ON DELETE CASCADE), which in turn cascades through 8 child tables.
+  // The single audit line per call captures every source the autopilot
+  // purge phase hard-deleted, so a future "what swept default away?"
+  // becomes one grep against ~/.gbrain/audit/destructive-ops-*.jsonl.
+  if (sourceIds.length > 0) {
+    const { logDestructiveOp } = await import('./destructive-audit.ts');
+    logDestructiveOp({
+      op: 'purgeExpiredSources',
+      engine: engine.kind,
+      sources_purged: sourceIds.length,
+      source_ids: sourceIds,
+    });
+  }
+  return sourceIds;
 }
 
 // ── Display Helpers ─────────────────────────────────────────
