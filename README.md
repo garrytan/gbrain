@@ -22,6 +22,45 @@ only signed, sanitized exports into company-visible member sources.
 Install the GBrain software once. The same codebase runs both individual and
 company mode; the role is chosen by runtime configuration.
 
+### On an agent platform (recommended)
+
+GBrain is designed to be installed and operated by an AI agent. For this branch,
+tell the agent which role you are deploying:
+
+```text
+Deploy company-wide GBrain from this branch.
+Use one shared GBrain codebase, but create separate services:
+
+- gbrain-alice: individual mode, Alice DB, Alice markdown repo
+- gbrain-bob: individual mode, Bob DB, Bob markdown repo
+- gbrain-company: company mode, Company DB, Company markdown repo
+
+The company brain must learn from members only through company-share pull.
+Read README.md, AGENTS.md, and INSTALL_FOR_AGENTS.md before changing anything.
+```
+
+For hosted deployment, the agent should follow:
+
+- [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) for install and role selection
+- [`docs/deploy/railway-company-gbrain.md`](docs/deploy/railway-company-gbrain.md) for Railway/Supabase variables
+
+The important split is:
+
+```text
+same GBrain code checkout/container
+  gbrain-alice   -> --mode individual, Alice DB, Alice markdown repo
+  gbrain-bob     -> --mode individual, Bob DB, Bob markdown repo
+  gbrain-company -> --mode company, Company DB, Company markdown repo
+```
+
+Do not create separate GBrain software forks for each person and the company.
+Deploy the same GBrain code multiple times with isolated homes, databases, and
+markdown source repos.
+
+### Standalone CLI (no agent)
+
+Use this path for local testing or a manually operated server.
+
 ```bash
 git clone https://github.com/garrytan/gbrain.git ~/gbrain
 cd ~/gbrain
@@ -30,27 +69,96 @@ export PATH="$HOME/.bun/bin:$PATH"
 bun install && bun link
 ```
 
-Do not create separate GBrain software forks for each person and the company.
-Deploy the same GBrain code multiple times with isolated homes, databases, and
-markdown source repos:
-
-```text
-gbrain-alice   -> --mode individual, Alice DB, Alice markdown repo
-gbrain-bob     -> --mode individual, Bob DB, Bob markdown repo
-gbrain-company -> --mode company, Company DB, Company markdown repo
-```
-
-For local or server installs, choose the mode during init:
+Create separate homes and databases:
 
 ```bash
-GBRAIN_HOME=/var/lib/gbrain/alice \
+export ALICE_HOME=/var/lib/gbrain/alice
+export COMPANY_HOME=/var/lib/gbrain/company
+export ALICE_DATABASE_URL=<alice-postgres-url>
+export COMPANY_DATABASE_URL=<company-postgres-url>
+
+GBRAIN_HOME="$ALICE_HOME" \
   gbrain init --mode individual --url "$ALICE_DATABASE_URL" --non-interactive
 
-GBRAIN_HOME=/var/lib/gbrain/company \
+GBRAIN_HOME="$COMPANY_HOME" \
   gbrain init --mode company --url "$COMPANY_DATABASE_URL" --non-interactive
 ```
 
-For cloud deployments, set the equivalent environment variables per service:
+Sync each role's own markdown source repo:
+
+```bash
+GBRAIN_HOME="$ALICE_HOME" gbrain sync --repo /repos/alice-brain --yes
+GBRAIN_HOME="$COMPANY_HOME" gbrain sync --repo /repos/company-brain --yes
+```
+
+Configure sharing from Alice to Company:
+
+```bash
+export ALICE_COMPANY_SHARE_SECRET=$(openssl rand -hex 32)
+
+GBRAIN_HOME="$ALICE_HOME" \
+  gbrain company-share secret set --secret "$ALICE_COMPANY_SHARE_SECRET"
+
+GBRAIN_HOME="$ALICE_HOME" \
+  gbrain company-share set-page <shared-slug> --mode summary
+
+GBRAIN_HOME="$COMPANY_HOME" \
+  gbrain company-share members add alice \
+    --issuer-url https://gbrain-alice.example.com \
+    --mcp-url https://gbrain-alice.example.com/mcp \
+    --oauth-client-id <alice-client-id> \
+    --oauth-client-secret <alice-client-secret> \
+    --manifest-secret "$ALICE_COMPANY_SHARE_SECRET"
+
+GBRAIN_HOME="$COMPANY_HOME" gbrain company-share pull --member alice
+```
+
+### MCP server with company mode
+
+Run one HTTP MCP server per brain. The individual servers expose each member's
+private brain to that member's own trusted agents. The company server exposes
+only the company aggregate and imported `member-*` snapshots.
+
+Individual member MCP:
+
+```bash
+GBRAIN_HOME="$ALICE_HOME" \
+  gbrain serve --http \
+  --bind 0.0.0.0 \
+  --port 3131 \
+  --public-url https://gbrain-alice.example.com
+```
+
+Company MCP:
+
+```bash
+GBRAIN_HOME="$COMPANY_HOME" \
+  gbrain serve --http \
+  --bind 0.0.0.0 \
+  --port 3132 \
+  --public-url https://gbrain-company.example.com
+```
+
+Configure Hermes/OpenClaw against the company endpoint when you want company
+knowledge:
+
+```text
+name: company-gbrain
+issuer_url: https://gbrain-company.example.com
+mcp_url: https://gbrain-company.example.com/mcp
+oauth_client_id: <company-client-id>
+oauth_client_secret: <company-client-secret>
+```
+
+Do not also configure Alice's individual MCP endpoint in the company agent unless
+that agent is intentionally acting as Alice's private assistant.
+
+Company mode also filters the remote MCP tool list to company-safe read and
+analysis operations. Normal company agents can query company-owned pages and
+imported `member-*` snapshots; setup, private ingestion, and direct member-source
+mutation remain local/admin workflows.
+
+### Cloud Environment
 
 ```text
 gbrain-alice:
@@ -135,6 +243,76 @@ Inspect the company agent surface:
 ```bash
 GBRAIN_HOME="$COMPANY_HOME" gbrain company-share skill-policy --json
 ```
+
+## Company Skills
+
+Individual brains use the normal `skills/RESOLVER.md`. Company brains use
+`skills/COMPANY_RESOLVER.md`, which keeps the agent surface narrower because a
+company brain is an aggregate, shared knowledge system rather than a user's
+private assistant.
+
+Company mode enables skills for company-visible work:
+
+```text
+brain-ops
+query
+data-research
+perplexity-research
+concept-synthesis
+strategic-reading
+briefing
+reports
+maintain
+frontmatter-guard
+citation-fixer
+skillpack-check
+smoke-test
+ask-user
+```
+
+These are admin/operator-only on the host brain, not normal Hermes/company-agent
+skills:
+
+```text
+setup
+cold-start
+migrate
+cron-scheduler
+minion-orchestrator
+webhook-transforms
+skill-creator
+skillify
+testing
+publish
+brain-pdf
+soul-audit
+functional-area-resolver
+```
+
+These are disabled for normal company agents because they are personal-ingestion,
+personal-tasking, or direct member-source mutation workflows:
+
+```text
+ingest
+idea-ingest
+media-ingest
+meeting-ingestion
+enrich
+repo-architecture
+daily-task-manager
+daily-task-prep
+cross-modal-review
+book-mirror
+article-enrichment
+archive-crawler
+academic-verify
+voice-note-ingest
+```
+
+Company-mode MCP also filters the remote tool list to company-safe read and
+analysis operations. A company agent can query company-owned pages and imported
+`member-*` snapshots, but it cannot use member-private ingestion or setup
+skills unless an operator runs those locally with admin intent.
 
 ## Deployment
 
