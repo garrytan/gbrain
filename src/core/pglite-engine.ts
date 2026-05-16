@@ -725,6 +725,25 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as { tag: string }[]).map(r => r.tag);
   }
 
+  async getTagsForSlugs(slugs: string[]): Promise<Map<string, string[]>> {
+    const result = new Map<string, string[]>();
+    if (slugs.length === 0) return result;
+    const placeholders = slugs.map((_, i) => `$${i + 1}`).join(', ');
+    const { rows } = await this.db.query(
+      `SELECT p.slug, t.tag FROM tags t
+       JOIN pages p ON p.id = t.page_id
+       WHERE p.slug IN (${placeholders})
+       ORDER BY p.slug, t.tag`,
+      slugs
+    );
+    for (const r of rows as { slug: string; tag: string }[]) {
+      const list = result.get(r.slug) ?? [];
+      list.push(r.tag);
+      result.set(r.slug, list);
+    }
+    return result;
+  }
+
   // Timeline
   async addTimelineEntry(
     slug: string,

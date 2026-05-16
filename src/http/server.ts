@@ -195,6 +195,10 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   const listPagesOp = operationsByName['list_pages'];
   const putPageOp = operationsByName['put_page'];
   const deletePageOp = operationsByName['delete_page'];
+  const addTagOp = operationsByName['add_tag'];
+  const removeTagOp = operationsByName['remove_tag'];
+  const addLinkOp = operationsByName['add_link'];
+  const addTimelineEntryOp = operationsByName['add_timeline_entry'];
 
   const server = Bun.serve({
     port,
@@ -546,11 +550,149 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             'GET /search?lex=…&vec=…  → precision retrieval once you know the topic',
             'GET /page?slug=<slug> → fetch full page when a chunk looks promising',
           ],
+          write_endpoints: {
+            description: 'GET /write — unified write facade for GET-only LLM platforms (Claude crawler, ChatGPT browsing, Gemini url_context). All actions require OTP auth.',
+            url_limit: '8000 characters; content > 50k chars → 413; use PUT /page for large content',
+            actions: {
+              put_page: {
+                params: 'slug (required), content (required, URL-encoded, ≤50k), title, type (default: concept), tags (comma-separated), source, ai_confidence, created (YYYY-MM-DD)',
+                note: 'If content already has YAML frontmatter (starts with ---), it is used as-is. Otherwise frontmatter is built from the other params.',
+              },
+              add_tag: { params: 'slug (required), tag (required)' },
+              remove_tag: { params: 'slug (required), tag (required)' },
+              add_link: { params: 'from (required), to (required), link_type (default: mentions)' },
+              add_timeline_entry: { params: 'slug (required), date YYYY-MM-DD (required), description (required), event_type (default: note)' },
+              delete_page: { params: 'slug (required), confirm=true (required — prevents accidental deletion)' },
+            },
+            example: '/write?action=add_tag&slug=wiki/projects/foo&tag=important&otp=<code>',
+          },
         }, Date.now() - t0);
       }
 
+      // ── GET /write?action=<action>&otp=<key>&... ──────────────────────────
+      // Unified write facade for GET-only LLM platforms (Claude crawler,
+      // ChatGPT browsing, Gemini url_context). Dispatches to existing ops;
+      // no new logic — just a GET-accessible surface for each write operation.
+      if (path === '/write' && req.method === 'GET') {
+        try {
+        // Enforce URL length cap before parsing — silently truncated URLs
+        // produce confusing partial-content bugs that are hard to debug.
+        if (req.url.length > 8000) {
+          return err('too_large', 'URL exceeds 8000 character limit', 413, {
+            hint: 'Content is too long for GET /write — use PUT /page with a JSON body instead',
+          });
+        }
+
+        const action = url.searchParams.get('action');
+        if (!action) {
+          return err('missing_param', 'action is required', 400, {
+            hint: 'Supported actions: put_page, add_tag, remove_tag, add_link, add_timeline_entry, delete_page',
+          });
+        }
+
+        if (action === 'put_page') {
+          const slug = url.searchParams.get('slug');
+          const content = url.searchParams.get('content');
+          if (!slug) return err('missing_param', 'slug is required for put_page');
+          if (!content) return err('missing_param', 'content is required for put_page');
+          if (content.length > 50_000) {
+            return err('too_large', 'content exceeds 50k character limit', 413, {
+              hint: 'Use PUT /page with a JSON body for large content',
+            });
+          }
+
+          const hasfrontmatter = content.trimStart().startsWith('---');
+          let fullContent: string;
+          if (hasfrontmatter) {
+            fullContent = content;
+          } else {
+            const source = url.searchParams.get('source') ?? 'agent';
+            const type = url.searchParams.get('type') ?? 'concept';
+            const title = url.searchParams.get('title');
+            const tagsRaw = url.searchParams.get('tags');
+            const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+            const aiConf = url.searchParams.get('ai_confidence');
+            const created = url.searchParams.get('created') ?? new Date().toISOString().slice(0, 10);
+
+            const fmLines = ['---'];
+            if (title) fmLines.push(`title: ${JSON.stringify(title)}`);
+            fmLines.push(`type: ${type}`);
+            fmLines.push(`source: ${source}`);
+            if (tags.length) fmLines.push(`tags:\n${tags.map(t => `  - ${t}`).join('\n')}`);
+            if (aiConf) fmLines.push(`ai_confidence: ${aiConf}`);
+            fmLines.push(`created: ${created}`);
+            fmLines.push('---', '', content);
+            fullContent = fmLines.join('\n');
+          }
+
+          const result = await putPageOp.handler(ctx, { slug, content: fullContent });
+          return ok({ action, slug, ...(result as object) }, Date.now() - t0);
+        }
+
+        if (action === 'add_tag') {
+          const slug = url.searchParams.get('slug');
+          const tag = url.searchParams.get('tag');
+          if (!slug) return err('missing_param', 'slug is required for add_tag');
+          if (!tag) return err('missing_param', 'tag is required for add_tag');
+          await addTagOp.handler(ctx, { slug, tag });
+          return ok({ action, slug, tag }, Date.now() - t0);
+        }
+
+        if (action === 'remove_tag') {
+          const slug = url.searchParams.get('slug');
+          const tag = url.searchParams.get('tag');
+          if (!slug) return err('missing_param', 'slug is required for remove_tag');
+          if (!tag) return err('missing_param', 'tag is required for remove_tag');
+          await removeTagOp.handler(ctx, { slug, tag });
+          return ok({ action, slug, tag }, Date.now() - t0);
+        }
+
+        if (action === 'add_link') {
+          const from = url.searchParams.get('from');
+          const to = url.searchParams.get('to');
+          const link_type = url.searchParams.get('link_type') ?? 'mentions';
+          if (!from) return err('missing_param', 'from is required for add_link');
+          if (!to) return err('missing_param', 'to is required for add_link');
+          await addLinkOp.handler(ctx, { from, to, link_type });
+          return ok({ action, from, to, link_type }, Date.now() - t0);
+        }
+
+        if (action === 'add_timeline_entry') {
+          const slug = url.searchParams.get('slug');
+          const date = url.searchParams.get('date');
+          const description = url.searchParams.get('description');
+          const event_type = url.searchParams.get('event_type') ?? 'note';
+          if (!slug) return err('missing_param', 'slug is required for add_timeline_entry');
+          if (!date) return err('missing_param', 'date is required for add_timeline_entry (YYYY-MM-DD)');
+          if (!description) return err('missing_param', 'description is required for add_timeline_entry');
+          // Date format and range validated inside the operation handler
+          await addTimelineEntryOp.handler(ctx, { slug, date, summary: description, source: event_type });
+          return ok({ action, slug, date }, Date.now() - t0);
+        }
+
+        if (action === 'delete_page') {
+          const slug = url.searchParams.get('slug');
+          const confirm = url.searchParams.get('confirm');
+          if (!slug) return err('missing_param', 'slug is required for delete_page');
+          if (confirm !== 'true') {
+            return err('confirm_required', 'confirm=true is required to prevent accidental deletion', 400, {
+              hint: 'Add &confirm=true to the URL to confirm deletion',
+            });
+          }
+          await deletePageOp.handler(ctx, { slug });
+          return ok({ action, slug, deleted: true }, Date.now() - t0);
+        }
+
+        return err('invalid_action', `Unknown action: ${action}`, 400, {
+          hint: 'Supported actions: put_page, add_tag, remove_tag, add_link, add_timeline_entry, delete_page',
+        });
+        } catch (e) {
+          return err('internal_error', String(e instanceof Error ? e.message : e).slice(0, 500), 500);
+        }
+      }
+
       return err('not_found', 'Unknown endpoint', 404, {
-        hint: 'Available: GET /health, /topics, /schema, /search, /page, /pages, /pages/recent | POST /query | PUT /page | DELETE /page',
+        hint: 'Available: GET /health, /topics, /schema, /search, /page, /pages, /pages/recent, /write | POST /query, /search/batch | PUT /page | DELETE /page',
       });
     },
   });
@@ -571,6 +713,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   console.error('  PUT  /page        {content, slug?, tags?, source?}');
   console.error('  DELETE /page?slug=...&otp=<code>');
   console.error('  GET  /pages/recent?limit=50&otp=<code>');
+  console.error('  GET  /write?action=<action>&otp=<code>&...  (put_page|add_tag|remove_tag|add_link|add_timeline_entry|delete_page)');
 
   // keep alive
   process.on('SIGINT', () => { server.stop(); process.exit(0); });

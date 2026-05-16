@@ -928,3 +928,38 @@ describe('PGLiteEngine: v0.13.1 kind discriminator', () => {
     expect(engine.kind).toBe('pglite');
   });
 });
+
+describe('PGLiteEngine: getTagsForSlugs (tag-boost batch fetch)', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    await engine.putPage('pages/a', { ...testPage, title: 'A' });
+    await engine.putPage('pages/b', { ...testPage, title: 'B' });
+    await engine.putPage('pages/c', { ...testPage, title: 'C' });
+    await engine.addTag('pages/a', '業務知識');
+    await engine.addTag('pages/a', '說服力');
+    await engine.addTag('pages/b', '培訓');
+  });
+
+  test('returns map of slug → tags for given slugs', async () => {
+    const map = await engine.getTagsForSlugs(['pages/a', 'pages/b']);
+    expect(map.get('pages/a')).toEqual(expect.arrayContaining(['業務知識', '說服力']));
+    expect(map.get('pages/a')?.length).toBe(2);
+    expect(map.get('pages/b')).toEqual(['培訓']);
+  });
+
+  test('slug with no tags is absent from map', async () => {
+    const map = await engine.getTagsForSlugs(['pages/a', 'pages/c']);
+    expect(map.has('pages/a')).toBe(true);
+    expect(map.has('pages/c')).toBe(false);
+  });
+
+  test('empty input returns empty map', async () => {
+    const map = await engine.getTagsForSlugs([]);
+    expect(map.size).toBe(0);
+  });
+
+  test('unknown slug is absent from map', async () => {
+    const map = await engine.getTagsForSlugs(['does/not/exist']);
+    expect(map.size).toBe(0);
+  });
+});

@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { rrfFusion, cosineSimilarity, applyBacklinkBoost } from '../src/core/search/hybrid.ts';
+import { rrfFusion, cosineSimilarity, applyBacklinkBoost, applyTagBoost } from '../src/core/search/hybrid.ts';
 import type { SearchResult } from '../src/core/types.ts';
 
 function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -237,5 +237,63 @@ describe('applyBacklinkBoost (v0.10.1)', () => {
     expect(results[0].score).toBe(1.0);
     expect(results[1].score).toBeGreaterThan(1.0);
     expect(results[2].score).toBeGreaterThan(results[1].score);
+  });
+});
+
+describe('applyTagBoost', () => {
+  const cfg = {
+    weights: { 業務知識: 1.4, 說服力: 1.3, 日常記錄: 0.9 },
+    relations: {
+      業務知識: { 說服力: 0.15 },
+      說服力: { 業務知識: 0.15 },
+    },
+  };
+
+  test('no-op when weights map is empty', () => {
+    const results = [makeResult({ slug: 'a', score: 1.0 })];
+    applyTagBoost(results, new Map([['a', ['業務知識']]]), { weights: {}, relations: {} });
+    expect(results[0].score).toBe(1.0);
+  });
+
+  test('single high-value tag applies base multiplier', () => {
+    const results = [makeResult({ slug: 'p', score: 1.0 })];
+    applyTagBoost(results, new Map([['p', ['業務知識']]]), cfg);
+    // base=1.4, bonus=0 → 1.4 × 1.0 = 1.4
+    expect(results[0].score).toBeCloseTo(1.4, 4);
+  });
+
+  test('low-value tag applies sub-1 multiplier', () => {
+    const results = [makeResult({ slug: 'p', score: 1.0 })];
+    applyTagBoost(results, new Map([['p', ['日常記錄']]]), cfg);
+    expect(results[0].score).toBeCloseTo(0.9, 4);
+  });
+
+  test('bridge page: two related high-value tags get multiplicative bonus', () => {
+    const results = [makeResult({ slug: 'bridge', score: 1.0 })];
+    applyTagBoost(results, new Map([['bridge', ['業務知識', '說服力']]]), cfg);
+    // base = max(1.4, 1.3) = 1.4
+    // bonus = rel[業務知識][說服力] + rel[說服力][業務知識] = 0.15 + 0.15 = 0.30
+    // score = 1.4 × (1 + 0.30) = 1.82
+    expect(results[0].score).toBeCloseTo(1.4 * 1.3, 4);
+  });
+
+  test('unrecognised tag falls back to weight 1.0', () => {
+    const results = [makeResult({ slug: 'p', score: 1.0 })];
+    applyTagBoost(results, new Map([['p', ['未知標籤']]]), cfg);
+    // base=1.0, bonus=0 → 1.0
+    expect(results[0].score).toBeCloseTo(1.0, 4);
+  });
+
+  test('slug not in tagsMap: score unchanged', () => {
+    const results = [makeResult({ slug: 'ghost', score: 0.8 })];
+    applyTagBoost(results, new Map(), cfg);
+    expect(results[0].score).toBe(0.8);
+  });
+
+  test('mutates in place, returns undefined', () => {
+    const results = [makeResult({ slug: 'p', score: 1.0 })];
+    const ret = applyTagBoost(results, new Map([['p', ['業務知識']]]), cfg);
+    expect(ret).toBeUndefined();
+    expect(results[0].score).toBeGreaterThan(1.0);
   });
 });

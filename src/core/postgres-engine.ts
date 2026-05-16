@@ -817,6 +817,25 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r) => r.tag as string);
   }
 
+  async getTagsForSlugs(slugs: string[]): Promise<Map<string, string[]>> {
+    const result = new Map<string, string[]>();
+    if (slugs.length === 0) return result;
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT p.slug, t.tag
+      FROM tags t
+      JOIN pages p ON p.id = t.page_id
+      WHERE p.slug = ANY(${slugs}::text[])
+      ORDER BY p.slug, t.tag
+    ` as unknown as { slug: string; tag: string }[];
+    for (const r of rows) {
+      const list = result.get(r.slug) ?? [];
+      list.push(r.tag);
+      result.set(r.slug, list);
+    }
+    return result;
+  }
+
   // Timeline
   async addTimelineEntry(
     slug: string,
