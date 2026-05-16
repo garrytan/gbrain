@@ -191,7 +191,7 @@ export function isICloudPlaceholder(absPath: string): boolean {
 // Atomic write (same-directory temp + fsync + rename)
 // ---------------------------------------------------------------------------
 
-function atomicWriteSameDir(file: string, content: string): void {
+export function atomicWriteSameDir(file: string, content: string): void {
   const dir = dirname(file);
   const base = basename(file);
   const tmp = join(dir, `.${base}.linkify-${process.pid}-${Date.now()}.tmp`);
