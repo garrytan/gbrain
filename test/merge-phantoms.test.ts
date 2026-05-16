@@ -541,39 +541,43 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(result.skipped[0].skipped).toBe('no_local_path');
   });
 
-  itHomed('fact-bearing phantom (long compiled_truth from fence) still migrates', async () => {
-    // Codex round-6 P2 #2: a pre-fix phantom that accumulated facts has
-    // a `compiled_truth` that includes the full ## Facts fence — easily
-    // 200+ chars from fence markers + a couple of fact rows. The
-    // body-size gate must exclude fence content so these phantoms still
-    // get migrated rather than skipped as not_a_stub.
-    const factHeavyStubBody = [
-      '# Alice',
+  itHomed('fact-bearing phantom with REAL gbrain:facts markers still migrates (round-9 P1 #1)', async () => {
+    // Codex round-9 P1 #1: the stubBodyChars regex must match the
+    // actual fence markers used by writeFactsToFence —
+    // `<!--- gbrain:facts:begin -->` / `<!--- gbrain:facts:end -->`.
+    // Previously the regex used the fictional `<!-- facts -->` shape
+    // which never matched real fences, so fact-bearing phantoms
+    // exceeded the 50-char body threshold and got skipped as
+    // not_a_stub. Pin the marker shape so a renaming refactor is
+    // forced to update both sides.
+    const realFenceStub = [
+      '# Alice Real Fence',
       '',
       '## Facts',
-      '<!-- facts -->',
+      '',
+      '<!--- gbrain:facts:begin -->',
       '| row | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
       '|-----|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
-      '| 1 | Alice likes integration tests. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
+      '| 1 | Alice plays chess. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
       '| 2 | Alice attended YC W26. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
-      '<!-- /facts -->',
+      '<!--- gbrain:facts:end -->',
       '',
     ].join('\n');
-    expect(factHeavyStubBody.length).toBeGreaterThan(200); // sanity: would have tripped the round-5 gate
+    expect(realFenceStub.length).toBeGreaterThan(200);
 
     await engine.putPage(
-      'alice-fence',
+      'alice-real-fence',
       {
         type: 'concept' as any,
-        title: 'Alice',
-        compiled_truth: factHeavyStubBody,
-        frontmatter: { type: 'concept', title: 'Alice', slug: 'alice-fence' },
+        title: 'Alice Real Fence',
+        compiled_truth: realFenceStub,
+        frontmatter: { type: 'concept', title: 'Alice Real Fence', slug: 'alice-real-fence' },
       },
       { sourceId: 'default' },
     );
-    await seedPage('people/alice-fence-example', 'person');
-    await seedChunks('people/alice-fence-example', 5);
-    await seedFact('alice-fence', 'A fact about Alice.');
+    await seedPage('people/alice-real-fence-example', 'person');
+    await seedChunks('people/alice-real-fence-example', 3);
+    await seedFact('alice-real-fence', 'A fact about Alice.');
 
     const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
       sourceId: 'default',
@@ -581,15 +585,71 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     });
 
     expect(result.merged.length).toBe(1);
-    expect(result.merged[0].canonical).toBe('people/alice-fence-example');
+    expect(result.merged[0].canonical).toBe('people/alice-real-fence-example');
 
-    // Phantom soft-deleted, fact moved to canonical.
     const phantomPage = await engine.executeRaw<{ deleted_at: Date | null }>(
-      `SELECT deleted_at FROM pages WHERE slug = 'alice-fence' AND source_id = 'default'`,
+      `SELECT deleted_at FROM pages WHERE slug = 'alice-real-fence' AND source_id = 'default'`,
       [],
     );
     expect(phantomPage[0].deleted_at).not.toBeNull();
   });
+
+  itHomed('migrates ALL phantom facts even when count exceeds MAX_SEARCH_LIMIT (round-9 P1 #2)', async () => {
+    // Codex round-9 P1 #2: listFactsByEntity clamps `limit` at
+    // MAX_SEARCH_LIMIT (100). The old merge implementation used
+    // listFactsByEntity(..., { limit: 10_000 }) which silently
+    // returned only 100 rows. The merge then re-fenced those 100,
+    // deleted ALL phantom rows, soft-deleted the page — overflow
+    // facts permanently lost. The fix bypasses the listing API with
+    // a raw SQL select.
+    //
+    // Seed 150 facts on the phantom (above the 100 clamp) and verify
+    // all of them land on the canonical after merge.
+    await seedPage('alice-many-facts', 'concept');
+    await seedPage('people/alice-many-facts-example', 'person');
+    await seedChunks('people/alice-many-facts-example', 3);
+    const FACT_COUNT = 150;
+    for (let i = 0; i < FACT_COUNT; i++) {
+      await seedFact('alice-many-facts', `Fact #${i} about Alice.`);
+    }
+
+    // Sanity: the phantom has all 150 rows.
+    const beforeCount = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM facts WHERE source_id = 'default' AND entity_slug = 'alice-many-facts'`,
+      [],
+    );
+    expect(beforeCount[0].n).toBe(FACT_COUNT);
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(1);
+    expect(result.merged[0].facts_moved).toBe(FACT_COUNT);
+
+    // ALL facts landed on the canonical (no overflow loss).
+    const onCanonical = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n
+         FROM facts
+        WHERE source_id = 'default'
+          AND entity_slug = 'people/alice-many-facts-example'`,
+      [],
+    );
+    expect(onCanonical[0].n).toBe(FACT_COUNT);
+
+    // No phantom rows remain.
+    const afterPhantom = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM facts WHERE source_id = 'default' AND entity_slug = 'alice-many-facts'`,
+      [],
+    );
+    expect(afterPhantom[0].n).toBe(0);
+  });
+
+  // Round-6's "fact-bearing phantom (fictional fence markers)" test was
+  // removed when round-9 P1 #1 fixed the marker mismatch — the
+  // round-9 "fact-bearing phantom with REAL gbrain:facts markers" test
+  // above supersedes it with the correct fence shape.
 
   itHomed('skips a top-level page with prose under a non-machine ## Facts heading (round-8 P2 #1)', async () => {
     // Codex round-8 P2 #1: a page with a normal `## Facts` heading

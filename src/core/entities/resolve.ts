@@ -163,7 +163,17 @@ export function stubBodyChars(compiledTruth: string | null | undefined): number 
   const stripped = compiledTruth
     .replace(/^---\n[\s\S]*?\n---\n?/, '')
     .replace(/^#\s+.+\r?\n?/m, '')
-    .replace(/(?:^##\s*Facts\s*\n+)?<!--\s*facts\s*-->[\s\S]*?<!--\s*\/facts\s*-->\n?/m, '')
+    // Strip the canonical machine-generated facts fence. Markers MUST
+    // match the constants in src/core/facts-fence.ts exactly —
+    // `<!--- gbrain:facts:begin -->` / `<!--- gbrain:facts:end -->`.
+    // Codex round-9 P1 #1 caught a marker mismatch: an earlier
+    // version used the fictional `<!-- facts -->` shape which never
+    // matched real fences, so fact-bearing phantoms slipped past
+    // not_a_stub and merge-phantoms skipped them. The optional
+    // preceding `## Facts` heading is consumed too so the auto-
+    // generated section disappears cleanly. A user-authored
+    // `## Facts` heading WITHOUT the machine markers is preserved.
+    .replace(/(?:^##\s*Facts\s*\n+)?<!---\s*gbrain:facts:begin\s*-->[\s\S]*?<!---\s*gbrain:facts:end\s*-->\n?/m, '')
     .trim();
   return stripped.length;
 }

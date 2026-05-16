@@ -230,15 +230,37 @@ export async function runMergePhantomsCore(
       continue;
     }
 
-    // Read the phantom's active facts. listFactsByEntity defaults to
-    // activeOnly=true, which is what we want — expired/strikethrough
-    // facts stay on the phantom (it gets soft-deleted, hard-purged in
-    // 72h, taking the historical record with it). Active facts are
-    // what the user cares about migrating.
-    const phantomFacts = await engine.listFactsByEntity(opts.sourceId, row.slug, {
-      activeOnly: true,
-      limit: 10_000,
-    });
+    // Read the phantom's active facts via raw SQL so we get ALL of
+    // them. listFactsByEntity clamps `limit` at MAX_SEARCH_LIMIT (100),
+    // so a phantom with > 100 facts would lose the overflow — codex
+    // round-9 P1 #2 caught this: re-fence the first 100, then delete
+    // ALL phantom rows (deleteFactsForPage), then soft-delete the
+    // phantom. Overflow facts permanently lost. Bypassing the listing
+    // API with a raw select avoids the clamp.
+    //
+    // Columns mirror the FactRow shape so the mapping to
+    // FenceInputFact below is direct.
+    const phantomFacts = await engine.executeRaw<{
+      fact: string;
+      kind: 'fact' | 'event' | 'preference' | 'commitment' | 'belief';
+      notability: 'high' | 'medium' | 'low';
+      source: string;
+      context: string | null;
+      visibility: 'private' | 'world';
+      confidence: number;
+      valid_from: Date;
+      embedding: Float32Array | null;
+      source_session: string | null;
+    }>(
+      `SELECT fact, kind, notability, source, context, visibility,
+              confidence, valid_from, embedding, source_session
+         FROM facts
+        WHERE source_id = $1
+          AND entity_slug = $2
+          AND expired_at IS NULL
+        ORDER BY id ASC`,
+      [opts.sourceId, row.slug],
+    );
     const facts_moved = phantomFacts.length;
 
     // Feasibility check BEFORE the dry-run short-circuit (codex round-4
