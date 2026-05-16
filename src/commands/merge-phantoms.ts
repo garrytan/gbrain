@@ -59,6 +59,7 @@ import {
   PHANTOM_STUB_MAX_BODY_CHARS,
 } from '../core/entities/resolve.ts';
 import { writeFactsToFence, lookupSourceLocalPath, type FenceInputFact } from '../core/facts/fence-write.ts';
+import { tryParseEmbedding } from '../core/utils.ts';
 
 /** Phantom-resolution outcome for one row. */
 export interface PhantomMerge {
@@ -240,6 +241,12 @@ export async function runMergePhantomsCore(
     //
     // Columns mirror the FactRow shape so the mapping to
     // FenceInputFact below is direct.
+    // `embedding` column shape is driver-dependent: postgres-js returns
+    // pgvector values as a string literal like `"[0.1,0.2,...]"`, while
+    // PGLite returns a Float32Array directly. The merge maps each row
+    // through `tryParseEmbedding` below so the downstream
+    // `engine.insertFacts` call (which expects Float32Array | null)
+    // doesn't choke on the text form (codex round-12 P2).
     const phantomFacts = await engine.executeRaw<{
       fact: string;
       kind: 'fact' | 'event' | 'preference' | 'commitment' | 'belief';
@@ -250,7 +257,7 @@ export async function runMergePhantomsCore(
       confidence: number;
       valid_from: Date;
       valid_until: Date | null;
-      embedding: Float32Array | null;
+      embedding: unknown;
       source_session: string | null;
     }>(
       `SELECT fact, kind, notability, source, context, visibility,
@@ -313,7 +320,12 @@ export async function runMergePhantomsCore(
       // Preserve time-bound expiration windows across the migration —
       // codex round-10 P2.
       validUntil: fr.valid_until ?? undefined,
-      embedding: fr.embedding,
+      // Normalize driver-specific embedding shape (string from
+      // postgres-js, Float32Array from PGLite) into the
+      // Float32Array | null contract that engine.insertFacts wants.
+      // tryParseEmbedding warns + returns null on corrupt rows
+      // instead of throwing mid-merge.
+      embedding: tryParseEmbedding(fr.embedding),
       sessionId: fr.source_session,
     }));
 
