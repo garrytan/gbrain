@@ -118,25 +118,27 @@ async function tryPrefixExpansion(
       }>(
         // Connection count is a simple proxy for canonicality:
         // (incoming links) + (outgoing links) + (content chunks).
-        // No graph traversal, just three indexed counts per page.
-        // Filter is applied AFTER the aggregate so pages with zero
-        // connections still show up (a stub page is still a real page).
+        //
+        // SQL shape: correlated subqueries scoped to the slug-LIKE
+        // candidates. The pre-v0.34.5 version used derived-table JOINs
+        // (SELECT FROM links GROUP BY to_page_id, etc.) which forced the
+        // planner to aggregate the FULL links + content_chunks tables on
+        // every prefix-expansion call — O(N) per call where N is total
+        // links/chunks in the brain. On a 100K-link / 50K-chunk brain
+        // that's slow.
+        //
+        // The slug LIKE filter is already selective in practice (typical
+        // brain has 0-5 pages per prefix), so the correlated subqueries
+        // run N=3 times per matched row, hitting the indexes on
+        // links.to_page_id, links.from_page_id, and content_chunks.page_id
+        // directly. Even on a pathological prefix matching 1000+ pages,
+        // work is bounded per-candidate, not whole-table.
         `SELECT p.slug,
-                (COALESCE(li.in_count, 0) + COALESCE(lo.out_count, 0) + COALESCE(cc.chunk_count, 0))
+                ((SELECT COUNT(*)::int FROM links WHERE to_page_id = p.id)
+                 + (SELECT COUNT(*)::int FROM links WHERE from_page_id = p.id)
+                 + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
                   AS connection_count
          FROM pages p
-         LEFT JOIN (
-           SELECT to_page_id AS pid, COUNT(*)::int AS in_count
-           FROM links GROUP BY to_page_id
-         ) li ON li.pid = p.id
-         LEFT JOIN (
-           SELECT from_page_id AS pid, COUNT(*)::int AS out_count
-           FROM links GROUP BY from_page_id
-         ) lo ON lo.pid = p.id
-         LEFT JOIN (
-           SELECT page_id AS pid, COUNT(*)::int AS chunk_count
-           FROM content_chunks GROUP BY page_id
-         ) cc ON cc.pid = p.id
          WHERE p.source_id = $1
            AND p.deleted_at IS NULL
            AND p.slug LIKE $2
