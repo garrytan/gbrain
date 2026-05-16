@@ -2,6 +2,74 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.35.1.0] - 2026-05-15
+
+**The contradiction probe stops crying wolf on time. Six-member verdict enum + page-level date in the prompt + a new privacy lint for proposals.**
+
+`gbrain eval suspected-contradictions` used to treat every claim as timeless. On a brain with conversation transcripts, dated meeting pages, evolving takes, and historical entity records, that meant ~60% of residual HIGH findings were temporal false positives: a status change recorded as "trial" in April and "confirmed" in May got flagged as a contradiction; a role transition recorded in 2017 vs. an updated role in 2025 got flagged. None of those are bugs in the brain; they're features of a brain that records history.
+
+The judge now sees the page-level `effective_date` for each chunk via a `(from: YYYY-MM-DD)` tag in the prompt, and it classifies into a six-member verdict taxonomy instead of `contradicts: true/false`. The same wave adds a CI privacy lint that catches PII patterns in `docs/proposals/*.md` so future RFCs can't ship with personal-context vocabulary the way this wave's source RFC did at draft time.
+
+### What you can now do
+
+**Get verdict-aware findings out of the probe.** The judge now returns one of six verdicts: `no_contradiction`, `contradiction` (genuine conflict at the same point in time), `temporal_supersession` (newer claim updates the older), `temporal_regression` (a metric or status went backwards), `temporal_evolution` (legitimate change over time), or `negation_artifact` (judge misread an explicit negation). `gbrain eval suspected-contradictions trend` shows the per-verdict breakdown in the chart; `gbrain eval suspected-contradictions review` prints a `[verdict]` tag inline with each finding. The Wilson-CI denominator stays anchored to the strict `verdict === 'contradiction'` count so the headline metric is preserved. A new `queries_with_any_finding` sibling metric counts queries that produced any non-`no_contradiction` verdict.
+
+**Skip the >30d skip rule when both sides have dates.** The pre-judge date filter previously dropped pairs whose chunk-text-extracted dates differed by more than 30 days. That heuristic silently killed exactly the cases the new verdicts exist to surface (the 2017 vs. 2025 role-transition class). The filter now passes those pairs through when both sides have a non-null page-level `effective_date`, so the judge gets to classify them as `temporal_supersession` instead of the pair vanishing into the skip bucket. Same-paragraph dual-date override and missing-date fallback rules are preserved verbatim.
+
+**Cap the cost of the post-bump re-judge.** The `PROMPT_VERSION` change invalidates the entire judge cache (the prompt shape changed, old verdicts no longer apply). Before that re-judge spends any tokens, the runner prints an upper-bound cost estimate and waits 10 seconds in TTY for Ctrl-C; set `GBRAIN_NO_PROBE_PROMPT=1` to skip or `GBRAIN_PROBE_PROMPT_GRACE_SECONDS=0` to proceed immediately. Non-TTY (autopilot) auto-proceeds with a stderr note. `--budget-usd N` hard-caps the run when cumulative cost exceeds the cap. The judge model now resolves through `models.eval.contradictions_judge` (defaults to Haiku tier), so `gbrain config set models.eval.contradictions_judge` works the same way as every other model config key. `gbrain models doctor` surfaces the new touchpoint.
+
+**Block PII in `docs/proposals/*.md` at CI time.** A new `scripts/check-proposal-pii.sh` (wired into `bun run verify` and `bun run check:all`) catches the specific PII classes that surfaced in past RFC drafts: private repo references (`garrytan/brain`), personal-relationship vocabulary (`trial separation`, `couples session`, `divorce attorney`, etc.), death-context phrases, and the literal `Wintermute` agent name. Bare common words (`separation`, `funeral`) are intentionally not banned. The denylist names patterns rather than real names, so the script's own source doesn't re-introduce PII into the repo.
+
+### Itemized changes
+
+- `SearchResult` interface gains optional `effective_date` + `effective_date_source` fields. Eight SQL projection sites updated (3 in postgres-engine, 5 in pglite-engine — `searchKeyword`, `searchKeywordChunks`, `searchVector` across both engines). `rowToSearchResult` normalizes both Postgres `Date` and PGLite string returns to `YYYY-MM-DD`. Three-state read pattern (undefined when not selected, null when selected-but-empty, string when populated).
+- `PairMember` (`src/core/eval-contradictions/types.ts`) gets required `effective_date: string | null` and `effective_date_source: string | null`. `runner.ts` threads the fields through `searchResultToMember` and `takeToMember`; the judge call passes them via the new optional fields on `JudgeInput.a/b`.
+- `buildJudgePrompt` now emits `Statement A (from: YYYY-MM-DD)` when `effective_date` is non-null, else `(date unknown)`. Prompt instructions explain the tag and the new verdict semantics.
+- `PROMPT_VERSION` bumped `'1' → '2'`. Cache-key tuple shape unchanged (still 5 fields); old rows naturally miss on first run. Cache type guard updated to check `verdict` instead of `contradicts`.
+- `JudgeVerdict.contradicts: boolean` replaced with `verdict: Verdict` (6-member union). `Severity` extended with `'info'`. `ResolutionKind` extended with `temporal_supersede`, `flag_for_review`, `log_timeline_change`. `normalizeVerdict` applies the C1 confidence floor only to `verdict === 'contradiction'` (other verdicts are informational classifications, no floor). `defaultSeverityForVerdict` maps each verdict to its baseline severity (D7 map: supersession→info, regression→high, evolution→info, negation_artifact→low, contradiction→medium).
+- `runner.ts` emit predicate changes from `if (verdict.contradicts)` to `if (verdict.verdict !== 'no_contradiction')`. Per-verdict tally feeds `ProbeReport.verdict_breakdown`. `queries_with_contradiction` (strict, Wilson-CI denominator) and `queries_with_any_finding` (broad) tracked separately.
+- `auto-supersession.ts`: `classifyResolution` and `renderResolutionCommand` extended for new verdicts. Probe still NEVER auto-mutates — new kinds render paste-ready commands (`gbrain takes supersede --since <date>`) or informational lines (`# flag_for_review:`). The `auto-supersession.ts:4` "NEVER auto-applies" invariant preserved verbatim.
+- `date-filter.ts`: `shouldSkipForDateMismatch` accepts optional `effectiveDateA` and `effectiveDateB`. When both are non-null, returns `skip=false` with new `'both_have_effective_date'` reason. Other rules preserved.
+- `src/commands/eval-suspected-contradictions.ts`: new `--budget-usd N` hard cap (was pre-existing for runtime; help text now explains it), new cost-estimate prompt wired via `src/core/eval-contradictions/cost-prompt.ts`. `--severity` accepts `info`. `--severity` output shows `[verdict]` tag. Judge model routes through `resolveModel({configKey: 'models.eval.contradictions_judge', tier: 'utility', envVar: 'GBRAIN_CONTRADICTIONS_JUDGE_MODEL'})`. Human summary and trend chart show the per-verdict breakdown.
+- `src/commands/models.ts` registers `models.eval.contradictions_judge` as a tracked per-task model key so `gbrain models` and `gbrain models doctor` surface it.
+- `scripts/check-proposal-pii.sh` + denylist (structural patterns only, no real names) + 15-case test in `test/scripts/check-proposal-pii.test.ts`. Wired into `bun run verify`, `bun run check:all`, and as the new `bun run check:proposal-pii` standalone target. Two privacy-guard test fixtures naming `Wintermute` allowlisted in `scripts/check-test-real-names.sh`; the new privacy-guard scripts themselves allowlisted in `scripts/check-privacy.sh`.
+- Six IRON-RULE regression test suites pin the wave's invariants: R1 date-filter rule 3 relaxation preserves rules 1+2 (6 cases), R2 cache invalidation on `PROMPT_VERSION` bump, R3 verdict-enum migration (compile-time via `tsc --noEmit`), R4 runner emit predicate fires for every non-`no_contradiction` verdict (6 cases), R5 cache key tuple stays 5 fields, R6 contradiction severity unchanged (4 cases). Plus 9 cases on the cost-prompt helper.
+- The source RFC (`docs/proposals/temporal-contradiction-probe.md`) and PR title/body/commit/branch-name all scrubbed of PII at draft time. The new CI lint prevents the next one from slipping through.
+
+### Phase 2/3/4 deferred (per the plan)
+
+The RFC proposed four phases. This wave ships Phase 1 only. Deferred:
+- Phase 2 (structured claim extraction + `gbrain trajectory` view): blocked on a separate RFC that maps the existing `extract_facts` + `consolidate` cycle pipeline before extending the facts table. Codex review of the original plan caught factual errors about this pipeline; the deferral is deliberate.
+- Phase 3 (auto-write `valid_until` from `temporal_supersession` verdicts): would violate `auto-supersession.ts:4`'s "NEVER auto-applies" invariant. Reframed as paste-ready commands in Phase 1.
+- Phase 4 (founder scorecard / Argus integration): needs concrete Argus spec.
+
+## To take advantage of v0.35.1.0
+
+`gbrain upgrade` should do this automatically. The wave is schema-compatible (no migrations), so `gbrain apply-migrations` is a no-op.
+
+1. **Re-run the contradiction probe to see the new verdicts:**
+   ```bash
+   gbrain eval suspected-contradictions run --budget-usd 5
+   ```
+   Expect a one-time cost-estimate prompt + 10-second Ctrl-C window since `PROMPT_VERSION` changed; the cache is invalidated. Non-TTY runs auto-proceed.
+2. **(Optional) Pin the judge model:**
+   ```bash
+   gbrain config set models.eval.contradictions_judge anthropic:claude-haiku-4-5
+   gbrain models doctor
+   ```
+3. **(Optional) Adjust the cost-prompt grace window** for CI / autopilot:
+   ```bash
+   export GBRAIN_NO_PROBE_PROMPT=1                 # skip entirely
+   # or
+   export GBRAIN_PROBE_PROMPT_GRACE_SECONDS=0      # auto-proceed in TTY
+   ```
+4. **If `bun run verify` fails on `check:proposal-pii`,** the lint caught PII in `docs/proposals/*.md`. Replace with generic placeholders (alice-example, acme-corp, fund-a) per CLAUDE.md "Privacy rule: scrub real names from public docs."
+5. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
 ## [0.35.0.0] - 2026-05-15
 
 **ZeroEntropy in the box: zembed-1 embeddings + zerank-2 cross-encoder reranking, on by default for tokenmax mode.**
