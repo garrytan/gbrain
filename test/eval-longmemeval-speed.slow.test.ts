@@ -53,7 +53,10 @@ describe('warm-create speed gate', () => {
       samples.push(performance.now() - t0);
     }
     samples.sort((a, b) => a - b);
-    // p75 index for n=20: samples[Math.floor(20 * 0.75)] = samples[15]
+    // For n=20, floor(20 * 0.75) = 15, which is the 16th sorted value — closer
+    // to nearest-rank p80 than p75. Inherited from the prior p50 indexing; kept
+    // because it's strictly more conservative (the gate is harder to pass than
+    // the "p75" label suggests, which fails safely toward catching regressions).
     const p75 = samples[Math.floor(samples.length * 0.75)];
     const p99 = samples[Math.floor(samples.length * 0.99)];
     process.stderr.write(
