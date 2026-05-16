@@ -38,6 +38,14 @@ interface ParsedArgs {
   outputPath?: string;
   /** v0.32.3 — search-lite mode to evaluate under. Resolves through resolveSearchMode. */
   mode?: 'conservative' | 'balanced' | 'tokenmax';
+  /**
+   * v0.35.1.0 — path to a previous run's hypothesis JSONL. Question IDs
+   * already present in the file are skipped on this run; the run resumes
+   * with the remaining questions. Typically set to the same path as
+   * --output so a re-run continues writing to the same file in append mode.
+   * Recovery path for mid-run aborts (rate-limit, cost-cap, OS interrupt).
+   */
+  resumeFromPath?: string;
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -58,6 +66,7 @@ function parseArgs(args: string[]): ParsedArgs {
     if (a === '--model') { out.model = args[++i]; continue; }
     if (a === '--top-k') { out.topK = Number(args[++i]); continue; }
     if (a === '--output') { out.outputPath = args[++i]; continue; }
+    if (a === '--resume-from') { out.resumeFromPath = args[++i]; continue; }
     if (a === '--mode') {
       const v = args[++i];
       if (v === 'conservative' || v === 'balanced' || v === 'tokenmax') {
@@ -93,6 +102,10 @@ function printHelp(): void {
     `                            behavior matches what production gets under that mode.\n` +
     `                            --mode tokenmax implies --expansion unless overridden.\n` +
     `  --output FILE             Write JSONL to FILE instead of stdout.\n` +
+    `  --resume-from FILE        Skip question_ids already present in FILE; resume the\n` +
+    `                            remaining questions. Typically the same path as --output\n` +
+    `                            so the run continues writing in append mode. Recovery for\n` +
+    `                            mid-run aborts (rate-limit, cost-cap, OS interrupt).\n` +
     `  -h, --help                Show this help.\n\n` +
     `Note: a full 500-question run takes ~20-60 minutes depending on flags. Use\n` +
     `--limit during development.\n`,
@@ -104,7 +117,7 @@ interface JsonlEmitter {
   close(): void;
 }
 
-function makeEmitter(outputPath?: string): JsonlEmitter {
+function makeEmitter(outputPath?: string, append: boolean = false): JsonlEmitter {
   if (!outputPath) {
     return {
       emit(obj) {
@@ -115,7 +128,10 @@ function makeEmitter(outputPath?: string): JsonlEmitter {
       close() { /* stdout stays open */ },
     };
   }
-  const fd = openSync(outputPath, 'w');
+  // v0.35.1.0: append mode used by --resume-from when output path overlaps the
+  // resume file. Truncating ('w') would erase the already-answered questions
+  // we just loaded into resumeSet.
+  const fd = openSync(outputPath, append ? 'a' : 'w');
   return {
     emit(obj) {
       const json = JSON.stringify(obj);
@@ -124,6 +140,42 @@ function makeEmitter(outputPath?: string): JsonlEmitter {
     },
     close() { closeSync(fd); },
   };
+}
+
+/**
+ * v0.35.1.0: Load the set of question_ids already present in `resumePath`.
+ *
+ * One row per line; we only care about the `question_id` field. Rows whose
+ * `hypothesis` is empty AND have an `error` field are NOT skipped — those
+ * are previous-run failures that should be retried, not preserved. A row
+ * with non-empty `hypothesis` (regardless of mode) counts as "done."
+ *
+ * Returns an empty Set if the file doesn't exist (first run with the flag
+ * acts identically to no flag).
+ */
+export function loadResumeSet(resumePath: string): Set<string> {
+  const done = new Set<string>();
+  if (!existsSync(resumePath)) return done;
+  const raw = readFileSync(resumePath, 'utf8');
+  let lineNo = 0;
+  for (const line of raw.split('\n')) {
+    lineNo++;
+    if (!line.trim()) continue;
+    let row: { question_id?: string; hypothesis?: string; error?: string };
+    try {
+      row = JSON.parse(line);
+    } catch {
+      // Corrupt line — log to stderr and continue; a partial JSONL from a
+      // SIGKILL'd writer is the normal recovery case.
+      process.stderr.write(`[longmemeval] resume: skipping corrupt line ${lineNo}\n`);
+      continue;
+    }
+    if (typeof row.question_id !== 'string') continue;
+    // Skip rows that recorded an error with no hypothesis — retry these.
+    if (row.error && (!row.hypothesis || row.hypothesis === '')) continue;
+    done.add(row.question_id);
+  }
+  return done;
 }
 
 function loadDataset(datasetPath: string): LongMemEvalQuestion[] {
@@ -270,6 +322,24 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     return;
   }
 
+  // v0.35.1.0 --resume-from: filter out already-answered question_ids before
+  // any model/brain setup so a no-op resume costs ~zero. Append-mode emitter
+  // is only triggered when resume and output point at the same file.
+  let appendOutput = false;
+  if (opts.resumeFromPath) {
+    const done = loadResumeSet(opts.resumeFromPath);
+    const before = questions.length;
+    questions = questions.filter(q => !done.has(q.question_id));
+    process.stderr.write(`[longmemeval] resume: ${done.size} already done; ${questions.length}/${before} remaining\n`);
+    if (opts.outputPath && opts.resumeFromPath === opts.outputPath) {
+      appendOutput = true;
+    }
+    if (questions.length === 0) {
+      process.stderr.write(`[longmemeval] resume: nothing to do (all questions already answered).\n`);
+      return;
+    }
+  }
+
   const model = await resolveModel(null, {
     cliFlag: opts.model,
     configKey: 'models.eval.longmemeval',
@@ -288,7 +358,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   process.stderr.write(`[longmemeval] connecting in-memory brain...\n`);
   process.stderr.write(`[longmemeval] starting (questions: ${questions.length}, model: ${model}, expansion: ${opts.expansion ? 'on' : 'off'}${opts.mode ? `, mode: ${opts.mode}` : ''})\n`);
 
-  const emitter = makeEmitter(opts.outputPath);
+  const emitter = makeEmitter(opts.outputPath, appendOutput);
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('eval.longmemeval', questions.length);
 
