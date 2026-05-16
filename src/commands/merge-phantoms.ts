@@ -131,9 +131,13 @@ const ENTITY_TYPES = ['person', 'company', 'deal', 'topic', 'concept'] as const;
 export async function listPhantomEntityPages(
   engine: BrainEngine,
   sourceId: string,
-): Promise<Array<{ id: number; slug: string; type: string; compiled_truth: string | null }>> {
-  return engine.executeRaw<{ id: number; slug: string; type: string; compiled_truth: string | null }>(
-    `SELECT id, slug, type, compiled_truth
+): Promise<Array<{ id: number; slug: string; type: string; compiled_truth: string | null; timeline: string | null }>> {
+  // Codex round-16 P2 #1: include `timeline` so the not_a_stub gate
+  // can also veto pages whose only substantive content lives in the
+  // ## Timeline section. merge-phantoms doesn't migrate timeline
+  // content, so soft-deleting such a page would lose the history.
+  return engine.executeRaw<{ id: number; slug: string; type: string; compiled_truth: string | null; timeline: string | null }>(
+    `SELECT id, slug, type, compiled_truth, timeline
        FROM pages
       WHERE source_id = $1
         AND slug NOT LIKE '%/%'
@@ -162,12 +166,15 @@ export async function runMergePhantomsCore(
   const dirs = getPrefixExpansionDirs();
 
   for (const row of phantoms) {
-    // Content-size gate (codex round-5 P2 + round-6 P2 #2): skip pages
-    // whose body looks like a user-imported entity page rather than a
-    // v0.34.5-era stub. We must count BODY chars only (paragraphs +
-    // non-fence sections), not the fence payload — round-6 caught
-    // that fact-bearing phantoms exceed any total-length threshold.
-    if (stubBodyChars(row.compiled_truth) > PHANTOM_STUB_MAX_BODY_CHARS) {
+    // Content-size gate (codex rounds 5 + 6 + 16): skip pages whose
+    // body OR timeline carries real content. We count compiled_truth
+    // body chars (excluding the machine fence — round-6 P2 #2) plus
+    // any timeline content (codex round-16 P2 #1: merge-phantoms
+    // doesn't migrate timeline rows, so soft-deleting a timeline-only
+    // page would lose history).
+    const bodyChars = stubBodyChars(row.compiled_truth);
+    const timelineChars = (row.timeline ?? '').trim().length;
+    if (bodyChars > PHANTOM_STUB_MAX_BODY_CHARS || timelineChars > 0) {
       skipped.push({ phantom: row.slug, canonical: null, skipped: 'not_a_stub' });
       continue;
     }
@@ -385,6 +392,22 @@ export async function runMergePhantomsCore(
     // the operator can rerun after fixing the canonical.
     if (!importStatus || importStatus.status !== 'imported') {
       const detail = importStatus?.error ?? 'unknown';
+      // Codex round-15 P2 + round-16 P2 #2: when re-import fails AFTER
+      // writeFactsToFence has already mutated the canonical fence + DB,
+      // we leave the phantom rows intact so the operator can rerun.
+      // Rerun is structurally idempotent:
+      //   - writeFactsToFence → upsertFactRow updates fence rows by
+      //     `(claim, kind, source)` key, so re-running doesn't append
+      //     duplicates in the markdown.
+      //   - engine.insertFacts is dedup'd against the partial UNIQUE
+      //     index on (source_id, source_markdown_slug, row_num), so
+      //     re-running doesn't double-insert DB rows.
+      // The visible cost between the failed run and the rerun is that
+      // `pages.compiled_truth` stays stale (the import didn't refresh
+      // it), so the next autopilot extract_facts cycle MAY reconcile
+      // against the old body. The operator should rerun
+      // merge-phantoms (or invoke `gbrain import` against the canonical
+      // page) before the next cycle to avoid that window.
       // eslint-disable-next-line no-console
       console.warn(
         `[merge-phantoms] canonical re-import for ${canonical} did not produce status='imported' (got ${importStatus?.status ?? 'null'}: ${detail}). Phantom NOT soft-deleted; rerun the merge after fixing the markdown.`,

@@ -749,6 +749,41 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(surviving[0].compiled_truth).toContain('Byzantine consensus algorithms');
   });
 
+  itHomed('skips a page whose only content lives in the pages.timeline column (round-16 P2 #1)', async () => {
+    // Codex round-16 P2 #1: pages.timeline is a SEPARATE DB column
+    // from pages.compiled_truth. A phantom-shaped compiled_truth +
+    // populated timeline column would slip past the body-only gate.
+    // Seed via raw SQL because engine.putPage may not let us set the
+    // timeline column directly through the API.
+    await engine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
+       VALUES ('default', 'alice-tl-col', 'person', 'markdown', 'Alice TL Col', '# Alice TL Col',
+               '- 2026-04-01: First meeting\n- 2026-05-01: Investment decision',
+               $1::jsonb, 'hash-test', now())
+       ON CONFLICT (source_id, slug) DO UPDATE SET timeline = EXCLUDED.timeline`,
+      [JSON.stringify({ type: 'person', title: 'Alice TL Col', slug: 'alice-tl-col' })],
+    );
+    await seedPage('people/alice-tl-col-example', 'person');
+    await seedChunks('people/alice-tl-col-example', 3);
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(0);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0].skipped).toBe('not_a_stub');
+
+    // Page survives with its timeline column intact.
+    const surviving = await engine.executeRaw<{ deleted_at: Date | null; timeline: string }>(
+      `SELECT deleted_at, timeline FROM pages WHERE slug = 'alice-tl-col' AND source_id = 'default'`,
+      [],
+    );
+    expect(surviving[0].deleted_at).toBeNull();
+    expect(surviving[0].timeline).toContain('Investment decision');
+  });
+
   itHomed('skips a top-level page with substantial Timeline content (round-7 P2)', async () => {
     // Codex round-7 P2 #2: a page with a populated ## Timeline fence
     // is not a stub — merge-phantoms only migrates facts, so the
