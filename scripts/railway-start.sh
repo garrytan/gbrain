@@ -46,6 +46,26 @@ if [ "$GBRAIN_MODE" = "company" ] && [ -n "${COMPANY_SHARE_MEMBER_ID:-}" ]; then
     --json >/dev/null
 fi
 
+if [ "$GBRAIN_MODE" = "company" ] && [ -n "${COMPANY_SHARE_PULL_INTERVAL_SECONDS:-}" ]; then
+  if ! [[ "$COMPANY_SHARE_PULL_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || [ "$COMPANY_SHARE_PULL_INTERVAL_SECONDS" -lt 60 ]; then
+    echo "COMPANY_SHARE_PULL_INTERVAL_SECONDS must be an integer >= 60; got: $COMPANY_SHARE_PULL_INTERVAL_SECONDS" >&2
+    exit 2
+  fi
+
+  echo "[gbrain] starting company-share pull loop every ${COMPANY_SHARE_PULL_INTERVAL_SECONDS}s"
+  (
+    while true; do
+      sleep "$COMPANY_SHARE_PULL_INTERVAL_SECONDS"
+      echo "[gbrain] running company-share pull"
+      if [ -n "${COMPANY_SHARE_MEMBER_ID:-}" ]; then
+        bun src/cli.ts company-share pull --member "$COMPANY_SHARE_MEMBER_ID" --json || true
+      else
+        bun src/cli.ts company-share pull --json || true
+      fi
+    done
+  ) &
+fi
+
 echo "[gbrain] serving $GBRAIN_MODE brain on 0.0.0.0:$PORT as $PUBLIC_URL"
 exec bun src/cli.ts serve \
   --http \

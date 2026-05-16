@@ -76,6 +76,18 @@ gbrain init --mode "$GBRAIN_MODE" --url "$DATABASE_URL" --non-interactive
 gbrain serve --http --bind 0.0.0.0 --port "$PORT" --public-url "$PUBLIC_URL"
 ```
 
+For a single member, the company service can also bootstrap the member registry
+from Railway variables at startup:
+
+```bash
+COMPANY_SHARE_MEMBER_ID=alice
+COMPANY_SHARE_MEMBER_ISSUER_URL=https://gbrain-alice.up.railway.app
+COMPANY_SHARE_MEMBER_MCP_URL=https://gbrain-alice.up.railway.app/mcp
+COMPANY_SHARE_MEMBER_OAUTH_CLIENT_ID=<alice-client-id>
+COMPANY_SHARE_MEMBER_OAUTH_CLIENT_SECRET=<alice-client-secret>
+COMPANY_SHARE_MEMBER_MANIFEST_SECRET=<ALICE_COMPANY_SHARE_SECRET>
+```
+
 ## First-Time Member Wiring
 
 After `gbrain-alice` and `gbrain-bob` are live, create a company-pull OAuth
@@ -141,7 +153,17 @@ act as that user's private agent.
 
 ## Recurring Pull
 
-Run this on a Railway cron service or external scheduler:
+For the simple Railway deployment, set this variable on `gbrain-company`:
+
+```bash
+COMPANY_SHARE_PULL_INTERVAL_SECONDS=900
+```
+
+The web service will run a background pull loop every 15 minutes. The loop uses
+the member registered by `COMPANY_SHARE_MEMBER_ID` when present; otherwise it
+pulls every registered member.
+
+You can also run this from a Railway cron service or external scheduler:
 
 ```bash
 bun src/cli.ts company-share pull
