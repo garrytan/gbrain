@@ -1971,6 +1971,63 @@ export interface RetrieveContextCandidate {
   read_selector: RetrievalSelector;
 }
 
+export type CandidateSignalPolicyMode = 'normal' | 'expanded' | 'strict' | 'audit';
+
+export type CandidateSignalAuthority =
+  | 'unreviewed_candidate'
+  | 'approved_pending_canonicalization';
+
+export type CandidateSignalRelationToCanonical =
+  | 'same_target'
+  | 'updates'
+  | 'conflicts'
+  | 'supports'
+  | 'adjacent'
+  | 'unknown';
+
+export type CandidateSignalPromotionHint =
+  | 'no_action'
+  | 'inspect_candidate'
+  | 'advance_to_review'
+  | 'consider_preflight'
+  | 'needs_provenance'
+  | 'needs_target'
+  | 'needs_scope_decision'
+  | 'already_promoted_needs_handoff'
+  | 'handoff_ready_for_curated_update';
+
+export type CandidateSignalDispositionHint =
+  | 'keep_candidate'
+  | 'reject_low_value'
+  | 'reject_missing_provenance'
+  | 'reject_scope_conflict'
+  | 'supersede_with_newer_candidate'
+  | 'revalidate_stale_claim'
+  | 'hide_from_default_retrieval'
+  | 'requires_redaction_review';
+
+export interface CandidateSignalPolicy {
+  mode: CandidateSignalPolicyMode;
+  reason_codes: string[];
+  included_count: number;
+  suppressed_count: number;
+}
+
+export interface CandidateSignal {
+  candidate_id: string;
+  status: MemoryCandidateStatus;
+  authority: CandidateSignalAuthority;
+  activation: 'candidate_only';
+  target_object_type: MemoryCandidateTargetObjectType | null;
+  target_object_id: string | null;
+  relation_to_canonical: CandidateSignalRelationToCanonical;
+  score: number;
+  score_reasons: string[];
+  promotion_hint: CandidateSignalPromotionHint;
+  disposition_hint: CandidateSignalDispositionHint;
+  summary: string;
+}
+
 export interface RetrieveContextAnswerability {
   answerable_from_probe: boolean;
   allowed_probe_answer_kind: ProbeAnswerKind;
@@ -2001,6 +2058,8 @@ export interface RetrieveContextResult {
   candidates: RetrieveContextCandidate[];
   required_reads: RetrievalSelector[];
   orientation: RetrieveContextOrientation;
+  candidate_signal_policy: CandidateSignalPolicy;
+  candidate_signals: CandidateSignal[];
   warnings: string[];
   trace?: RetrievalTrace | null;
 }

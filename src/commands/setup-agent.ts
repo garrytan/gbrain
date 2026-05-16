@@ -168,7 +168,6 @@ function parseClaudeMcpScope(args: string[]): { scope: ClaudeMcpScope } | { erro
 
 function loadAgentRules(): string | null {
   const candidates = [
-    join(process.cwd(), 'docs', 'MBRAIN_AGENT_RULES.md'),
     join(__dirname, '..', '..', 'docs', 'MBRAIN_AGENT_RULES.md'),
     join(__dirname, '..', 'docs', 'MBRAIN_AGENT_RULES.md'),
   ];

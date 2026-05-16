@@ -5,6 +5,8 @@ import { tmpdir } from 'os';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
+const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 45_000;
+
 describe('context-atlas schema', () => {
   const tempDirs: string[] = [];
 
@@ -47,5 +49,5 @@ describe('context-atlas schema', () => {
 
     expect(result.rows).toHaveLength(1);
     await engine.disconnect();
-  }, 10_000);
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 });

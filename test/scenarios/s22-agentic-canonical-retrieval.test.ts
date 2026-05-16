@@ -230,6 +230,63 @@ describe('S22 — agentic canonical retrieval transcript', () => {
     }
   });
 
+  test('candidate signals surface without canonical evidence when no canonical read exists', async () => {
+    const handle = await allocateSqliteBrain('s22-candidate-signal-only');
+
+    try {
+      await handle.engine.createMemoryCandidateEntry({
+        id: 'candidate:noncanonical-direction',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Candidate signals are an auxiliary retrieval lane for non-canonical direction changes.',
+        source_refs: ['Source: User, direct message, 2026-05-16 12:00 KST'],
+        generated_by: 'manual',
+        extraction_kind: 'manual',
+        confidence_score: 0.7,
+        importance_score: 0.6,
+        recurrence_score: 0.1,
+        sensitivity: 'work',
+        status: 'candidate',
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+      });
+      await handle.engine.createMemoryCandidateEntry({
+        id: 'candidate:unrelated-direction',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Garden planning notes cover irrigation timing and soil moisture.',
+        source_refs: ['Source: User, direct message, 2026-05-16 12:05 KST'],
+        generated_by: 'manual',
+        extraction_kind: 'manual',
+        confidence_score: 0.2,
+        importance_score: 0.2,
+        recurrence_score: 0,
+        sensitivity: 'work',
+        status: 'candidate',
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/garden-planning',
+      });
+
+      const retrieve = await operationsByName.retrieve_context.handler(opContext(handle.engine), {
+        query: 'candidate signals auxiliary retrieval lane',
+        include_orientation: false,
+      }) as RetrieveContextResult;
+
+      expect(retrieve.required_reads).toEqual([]);
+      expect(retrieve.answerability.reason_codes).toContain('no_canonical_evidence_candidate_signals_present');
+      expect(retrieve.warnings).toContain(
+        'No canonical read candidate was found; non-canonical Memory Inbox candidate signals are available.',
+      );
+      const signalIds = retrieve.candidate_signals.map((signal) => signal.candidate_id);
+      expect(retrieve.candidate_signals).toHaveLength(1);
+      expect(signalIds).toContain('candidate:noncanonical-direction');
+      expect(signalIds).not.toContain('candidate:unrelated-direction');
+      expect(retrieve.candidate_signals[0]!.activation).toBe('candidate_only');
+    } finally {
+      await handle.teardown();
+    }
+  });
+
   test('README registers S22 in the scenario contract table', async () => {
     const readme = await Bun.file(new URL('./README.md', import.meta.url)).text();
 

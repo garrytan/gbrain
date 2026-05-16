@@ -39,9 +39,9 @@ exit 0
   Bun.spawnSync(['chmod', '+x', scriptPath]);
 }
 
-async function runSetupAgent(args: string[]) {
-  const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'setup-agent', ...args], {
-    cwd: repoRoot,
+async function runSetupAgent(args: string[], options: { cwd?: string } = {}) {
+  const proc = Bun.spawn(['bun', 'run', join(repoRoot, 'src/cli.ts'), 'setup-agent', ...args], {
+    cwd: options.cwd ?? repoRoot,
     env: {
       ...process.env,
       HOME: tempHome,
@@ -106,8 +106,11 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('Read First When MBrain Is Relevant');
     expect(result.stdout).toContain('lightweight scan for durable knowledge signals');
     expect(result.stdout).toContain('retrieve_context');
+    expect(result.stdout).toContain('candidate_signals');
+    expect(result.stdout).toContain('Memory Inbox has non-canonical signals');
     expect(result.stdout).toContain('read_context');
-    expect(result.stdout).toContain('chunks are not answer evidence');
+    expect(result.stdout).toMatch(/both pointers,\s+not answer evidence/);
+    expect(result.stdout).toMatch(/canonical evidence boundary before\s+factual claims/);
     expect(result.stdout).toContain('Route Durable Writeback');
     expect(result.stdout).toContain('route_memory_writeback');
     expect(result.stdout).toContain('canonical_write_allowed');
@@ -124,6 +127,28 @@ describe('setup-agent', () => {
     expect(wordCount).toBeLessThan(720);
   });
 
+  test('setup-agent --print ignores stale cwd-local rule files', async () => {
+    const staleCwd = mkdtempSync(join(tmpdir(), 'mbrain-stale-rules-cwd-'));
+    try {
+      mkdirSync(join(staleCwd, 'docs'), { recursive: true });
+      writeFileSync(
+        join(staleCwd, 'docs', 'MBRAIN_AGENT_RULES.md'),
+        '<!-- mbrain-agent-rules-version: 9.9.9 -->\nSTALE CWD RULES\n',
+        'utf-8',
+      );
+
+      const result = await runSetupAgent(['--print'], { cwd: staleCwd });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('mbrain-agent-rules-version: 0.5.8');
+      expect(result.stdout).toContain('candidate_signals');
+      expect(result.stdout).not.toContain('STALE CWD RULES');
+      expect(result.stdout).not.toContain('9.9.9');
+    } finally {
+      rmSync(staleCwd, { recursive: true, force: true });
+    }
+  });
+
   test('setup-agent --claude installs the Claude stop hook assets and registration', async () => {
     const result = await runSetupAgent(['--claude', '--skip-mcp']);
 
@@ -133,8 +158,11 @@ describe('setup-agent', () => {
     const claudeMd = readFileSync(join(tempHome, '.claude', 'CLAUDE.md'), 'utf-8');
     expect(claudeMd).toContain('MBRAIN:RULES:START');
     expect(claudeMd).toContain('retrieve_context');
+    expect(claudeMd).toContain('candidate_signals');
+    expect(claudeMd).toContain('Memory Inbox has non-canonical signals');
     expect(claudeMd).toContain('read_context');
-    expect(claudeMd).toContain('chunks are not answer evidence');
+    expect(claudeMd).toMatch(/both pointers,\s+not answer evidence/);
+    expect(claudeMd).toMatch(/canonical evidence boundary before\s+factual claims/);
     expect(claudeMd).toContain('route_memory_writeback');
 
     expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'stop-mbrain-check.sh'))).toBe(true);
@@ -160,12 +188,15 @@ describe('setup-agent', () => {
     const agentsMd = readFileSync(join(tempHome, '.codex', 'AGENTS.md'), 'utf-8');
     expect(agentsMd).toContain('MBRAIN:RULES:START');
     expect(agentsMd).toContain('retrieve_context');
+    expect(agentsMd).toContain('candidate_signals');
+    expect(agentsMd).toContain('Memory Inbox has non-canonical signals');
     expect(agentsMd).toContain('read_context');
-    expect(agentsMd).toContain('chunks are not answer evidence');
+    expect(agentsMd).toMatch(/both pointers,\s+not answer evidence/);
+    expect(agentsMd).toMatch(/canonical evidence boundary before\s+factual claims/);
     expect(agentsMd).toContain('route_memory_writeback');
   });
 
-  test('setup-agent --codex replaces older same-file rules when rules version changes', async () => {
+  test('setup-agent --codex replaces previous same-file rules when rules version changes', async () => {
     mkdirSync(join(tempHome, '.codex'), { recursive: true });
     writeFileSync(
       join(tempHome, '.codex', 'AGENTS.md'),
@@ -173,7 +204,7 @@ describe('setup-agent', () => {
         '# Existing Local Rules',
         '',
         '<!-- MBRAIN:RULES:START -->',
-        '<!-- mbrain-agent-rules-version: 0.5.5 -->',
+        '<!-- mbrain-agent-rules-version: 0.5.7 -->',
         '## 3. Write Back Durable Knowledge',
         'Call put_page directly for durable facts.',
         '<!-- MBRAIN:RULES:END -->',
@@ -189,7 +220,7 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('Rules: updated');
 
     const agentsMd = readFileSync(join(tempHome, '.codex', 'AGENTS.md'), 'utf-8');
-    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.7');
+    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.8');
     expect(agentsMd).toContain('Route Durable Writeback');
     expect(agentsMd).toContain('route_memory_writeback');
     expect(agentsMd).toContain('expected_content_hash');

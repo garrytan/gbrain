@@ -40,7 +40,8 @@ or general programming.
   `MCP_INSTRUCTIONS` stays short; the detailed tool choice lives in operation
   descriptions and skills.
 - `retrieve_context` is the agent probe: it discovers candidates, applies route
-  and scope context, and returns required canonical reads.
+  and scope context, returns required canonical reads, and may include
+  non-canonical Memory Inbox `candidate_signals`.
 - `read_context` is the evidence boundary: it reads bounded canonical selectors
   before factual answers.
 - `search` and `query` remain lower-level candidate discovery tools; `get_page`

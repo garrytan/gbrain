@@ -994,11 +994,15 @@ export function formatResult(
         ...formatSelectorLines(resultValue.required_reads),
         'Candidates:',
         ...formatCandidateLines(resultValue.candidates),
+        `Candidate signal policy: mode=${resultValue.candidate_signal_policy?.mode ?? 'none'} included=${resultValue.candidate_signal_policy?.included_count ?? 0} suppressed=${resultValue.candidate_signal_policy?.suppressed_count ?? 0} reasons=${formatCsv(resultValue.candidate_signal_policy?.reason_codes)}`,
+        'Candidate signals:',
+        ...formatCandidateSignalLines(resultValue.candidate_signals),
         ...(resultValue.warnings?.length ? [
           'Warnings:',
           ...resultValue.warnings.map((warning: string) => `- ${warning}`),
         ] : []),
         'Chunks are candidate pointers; call read_context before answering.',
+        'Candidate signals are non-canonical; do not use them as answer evidence.',
       ].join('\n') + '\n';
     }
     case 'read_context': {
@@ -1295,6 +1299,16 @@ function formatCandidateLines(candidates: unknown): string[] {
       `- ${value.candidate_id ?? 'candidate'} -> ${formatSelectorId(selector)}`,
       `[${selector.kind ?? target.kind ?? 'unknown'} target=${targetLabel} activation=${value.activation ?? 'unknown'} score=${topScore}]`,
     ].join(' ');
+  });
+}
+
+function formatCandidateSignalLines(signals: unknown): string[] {
+  if (!Array.isArray(signals) || signals.length === 0) return ['- none'];
+  return signals.map((signal) => {
+    const value = signal as Record<string, any>;
+    const target = value.target_object_id ?? value.target_object_type ?? 'unknown';
+    const score = typeof value.score === 'number' ? value.score.toFixed(4) : '?';
+    return `- ${value.candidate_id ?? 'candidate'} [status=${value.status ?? 'unknown'} target=${target} authority=${value.authority ?? 'unknown'} relation=${value.relation_to_canonical ?? 'unknown'} score=${score} promotion=${value.promotion_hint ?? 'unknown'} disposition=${value.disposition_hint ?? 'unknown'}] ${value.summary ?? ''}`.trim();
   });
 }
 
@@ -4705,7 +4719,7 @@ const plan_retrieval_request: Operation = {
 
 const retrieve_context: Operation = {
   name: 'retrieve_context',
-  description: 'Agentic MBrain retrieval probe. Returns candidate pointers and required canonical reads; chunks are not answer evidence. Call read_context on required_reads before answering factual questions.',
+  description: 'Agentic MBrain retrieval probe. Returns required canonical reads plus non-canonical candidate_signals from Memory Inbox; chunks and candidate signals are not answer evidence. Call read_context on required_reads before answering factual questions.',
   params: {
     query: { type: 'string', description: 'Raw user request or memory query' },
     selectors: {

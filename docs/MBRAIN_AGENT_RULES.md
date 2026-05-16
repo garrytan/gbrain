@@ -1,4 +1,4 @@
-<!-- mbrain-agent-rules-version: 0.5.7 -->
+<!-- mbrain-agent-rules-version: 0.5.8 -->
 <!-- source: https://raw.githubusercontent.com/meghendra6/mbrain/master/docs/MBRAIN_AGENT_RULES.md -->
 # MBrain Agent Rules
 
@@ -29,11 +29,11 @@ only use MBrain when one of the triggers above is present.
 
 ## 2. Lookup Order
 
-Use the lightest lookup that can answer the question:
+Use the lightest lookup:
 
 1. `retrieve_context` / `mbrain retrieve-context "question"` - agent probe.
-   It finds candidates, applies route/scope context, and returns
-   `required_reads`.
+   It returns `required_reads` and may include non-canonical Memory Inbox
+   `candidate_signals`.
 2. `read_context` / `mbrain read-context --selectors '<json>'` - evidence
    boundary. Use the probe's `required_reads` before answering factual
    questions.
@@ -44,10 +44,14 @@ Use the lightest lookup that can answer the question:
 5. `get_page` / `mbrain get <slug>` - full-page canonical read when the slug is
    known or a bounded read is insufficient.
 
-`search` and `query` chunks are not answer evidence. Treat them as candidate
-pointers, then call `retrieve_context` or `read_context` before making factual
-claims. For exact known selectors or slugs, skip fuzzy discovery and go directly
-to `read_context` or `get_page`.
+`search`/`query` chunks and Memory Inbox `candidate_signals` are both pointers,
+not answer evidence; `read_context` is the canonical evidence boundary before
+factual claims. If canonical reads do not support an answer but
+`candidate_signals` exist, say canonical evidence is absent or different and
+that Memory Inbox has non-canonical signals. Do not use them as answer-grounding
+truth; use memory candidate/review operations when asked to inspect, promote,
+reject, or supersede them. For known selectors or slugs, go directly to
+`read_context` or `get_page`.
 
 Stop once you have enough context. Use web search, external APIs, or codebase
 search only for gaps MBrain cannot answer.

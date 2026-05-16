@@ -8,7 +8,7 @@ import { buildStructuralContextMapEntry } from '../src/core/services/context-map
 import { retrieveContext } from '../src/core/services/retrieve-context-service.ts';
 import { retrievalSelectorId } from '../src/core/services/retrieval-selector-service.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
-import type { SearchResult } from '../src/core/types.ts';
+import type { MemoryCandidateEntryInput, SearchResult } from '../src/core/types.ts';
 
 async function withEngine<T>(label: string, fn: (engine: SQLiteEngine) => Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), `mbrain-retrieve-context-${label}-`));
@@ -25,9 +25,36 @@ async function withEngine<T>(label: string, fn: (engine: SQLiteEngine) => Promis
   }
 }
 
+function makeMemoryCandidate(
+  id: string,
+  overrides: Partial<MemoryCandidateEntryInput> = {},
+): MemoryCandidateEntryInput {
+  return {
+    id,
+    scope_id: 'workspace:default',
+    candidate_type: 'fact',
+    proposed_content: `Candidate ${id} points to MBrain retrieval direction changes.`,
+    source_refs: ['Source: User, direct message, 2026-05-16 12:00 KST'],
+    generated_by: 'manual',
+    extraction_kind: 'manual',
+    confidence_score: 0.8,
+    importance_score: 0.7,
+    recurrence_score: 0.2,
+    sensitivity: 'work',
+    status: 'candidate',
+    target_object_type: 'curated_note',
+    target_object_id: 'systems/mbrain',
+    ...overrides,
+  };
+}
+
 describe('retrieve context service', () => {
   test('turns exact selectors into required reads without candidate search', async () => {
     await withEngine('exact', async (engine) => {
+      await engine.createMemoryCandidateEntry(makeMemoryCandidate('candidate-exact-selector', {
+        proposed_content: 'Exact selector retrieval should still expose MBrain direction candidates.',
+      }));
+
       const result = await retrieveContext(engine, {
         query: 'systems/mbrain',
         selectors: [{ kind: 'compiled_truth', slug: 'systems/mbrain' }],
@@ -45,6 +72,7 @@ describe('retrieve context service', () => {
       expect(result.candidates).toHaveLength(1);
       expect(result.candidates[0]!.read_selector.selector_id).toBe(result.required_reads[0]!.selector_id);
       expect(result.candidates[0]!.activation).toBe('candidate_only');
+      expect(result.candidate_signals.map((signal) => signal.candidate_id)).toContain('candidate-exact-selector');
     });
   });
 
@@ -172,6 +200,51 @@ describe('retrieve context service', () => {
       expect(result.warnings).toContain(
         'Search/query chunks are candidate pointers; call read_context before answering factual questions.',
       );
+    });
+  });
+
+  test('returns candidate signals alongside canonical reads in default retrieval', async () => {
+    await withEngine('candidate-signals-default', async (engine) => {
+      await importFromContent(engine, 'systems/mbrain', [
+        '---',
+        'type: system',
+        'title: MBrain',
+        '---',
+        '# Compiled Truth',
+        'MBrain retrieval direction is grounded by canonical required reads.',
+        '[Source: User, direct message, 2026-05-16 12:00 KST]',
+      ].join('\n'), { path: 'systems/mbrain.md' });
+      await engine.createMemoryCandidateEntry(makeMemoryCandidate('candidate-mbrain-direction', {
+        proposed_content: 'MBrain direction should expose Memory Inbox candidate signals beside canonical reads.',
+      }));
+
+      const searchResults: SearchResult[] = [{
+        slug: 'systems/mbrain',
+        page_id: 1,
+        title: 'MBrain',
+        type: 'system',
+        chunk_text: 'MBrain retrieval direction is grounded by canonical required reads.',
+        chunk_source: 'compiled_truth',
+        score: 10,
+        stale: false,
+      }];
+
+      const result = await retrieveContext(engine, {
+        query: 'mbrain retrieval direction',
+        include_orientation: false,
+        requested_scope: 'work',
+        limit: 5,
+      }, {
+        candidateSearch: async () => searchResults,
+      });
+
+      expect(result.required_reads.some((selector) => selector.slug === 'systems/mbrain')).toBe(true);
+      expect(JSON.stringify(result.required_reads)).not.toContain('candidate-mbrain-direction');
+      expect(result.candidate_signal_policy.mode).toBe('expanded');
+      expect(result.candidate_signals.map((signal) => signal.candidate_id)).toContain('candidate-mbrain-direction');
+      const signal = result.candidate_signals.find((entry) => entry.candidate_id === 'candidate-mbrain-direction');
+      expect(signal?.activation).toBe('candidate_only');
+      expect(signal?.authority).toBe('unreviewed_candidate');
     });
   });
 
@@ -403,6 +476,11 @@ describe('retrieve context service', () => {
 
   test('scope denial or defer returns no candidates or snippets', async () => {
     await withEngine('scope', async (engine) => {
+      await engine.createMemoryCandidateEntry(makeMemoryCandidate('candidate-scope-blocked', {
+        proposed_content: 'Remember my personal routine candidate should not scan after a scope block.',
+        target_object_id: 'personal/routine',
+      }));
+
       const result = await retrieveContext(engine, {
         query: 'Remember my personal routine',
         requested_scope: 'work',
@@ -414,6 +492,9 @@ describe('retrieve context service', () => {
       expect(result.answerability.answerable_from_probe).toBe(false);
       expect(result.answerability.must_read_context).toBe(false);
       expect(result.answerability.reason_codes).toContain(`scope_gate_${result.scope_gate!.policy}`);
+      expect(result.candidate_signal_policy.mode).toBe('strict');
+      expect(result.candidate_signal_policy.reason_codes).toContain('scope_gate_blocked');
+      expect(result.candidate_signals).toEqual([]);
     });
   });
 });

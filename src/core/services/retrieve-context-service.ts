@@ -1,4 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
+import { buildCandidateSignals, emptyCandidateSignalResult } from './candidate-signal-service.ts';
+import type { BuildCandidateSignalsInput, CandidateSignalResult } from './candidate-signal-service.ts';
 import type {
   MemoryScenario,
   RetrieveContextCandidate,
@@ -29,8 +31,14 @@ export type RetrieveContextCandidateSearch = (
   options: { limit: number },
 ) => Promise<SearchResult[]>;
 
+export type RetrieveContextCandidateSignalBuilder = (
+  engine: BrainEngine,
+  input: BuildCandidateSignalsInput,
+) => Promise<CandidateSignalResult>;
+
 export interface RetrieveContextDependencies {
   candidateSearch?: RetrieveContextCandidateSearch;
+  candidateSignalBuilder?: RetrieveContextCandidateSignalBuilder;
 }
 
 const DEFAULT_CANDIDATE_LIMIT = 5;
@@ -49,6 +57,7 @@ export async function retrieveContext(
 
   const requestId = crypto.randomUUID();
   const classification = classifyMemoryScenario(input);
+  const candidateSignalBuilder = dependencies.candidateSignalBuilder ?? buildCandidateSignals;
   const normalizedSelectors = (input.selectors ?? []).map((selector) => normalizeRetrievalSelector(selector));
   const scopeGate = await maybeEvaluateScopeGate(engine, input, classification.scenario, normalizedSelectors);
 
@@ -61,6 +70,18 @@ export async function retrieveContext(
   }
 
   if (normalizedSelectors.length > 0) {
+    const candidates = normalizedSelectors.map((selector, index) => candidateFromSelector(selector, index + 1));
+    const requiredReads = normalizedSelectors;
+    const candidateSignals = await buildRetrieveContextCandidateSignals(
+      candidateSignalBuilder,
+      engine,
+      input,
+      classification.scenario,
+      requiredReads,
+      candidates,
+      limit,
+    );
+
     return maybePersistRetrieveTrace(engine, {
       request_id: requestId,
       scenario: classification.scenario,
@@ -72,9 +93,10 @@ export async function retrieveContext(
         must_read_context: true,
         reason_codes: ['exact_selectors_require_canonical_read'],
       },
-      candidates: normalizedSelectors.map((selector, index) => candidateFromSelector(selector, index + 1)),
-      required_reads: normalizedSelectors,
+      candidates,
+      required_reads: requiredReads,
       orientation: emptyOrientation(),
+      ...candidateSignals,
       warnings: ['Exact selector supplied; call read_context for canonical evidence.'],
     }, input);
   }
@@ -86,6 +108,18 @@ export async function retrieveContext(
       object_id: input.task_id,
       freshness: 'current',
     });
+    const candidates = [candidateFromSelector(selector, 1)];
+    const requiredReads = [selector];
+    const candidateSignals = await buildRetrieveContextCandidateSignals(
+      candidateSignalBuilder,
+      engine,
+      input,
+      classification.scenario,
+      requiredReads,
+      candidates,
+      limit,
+    );
+
     return maybePersistRetrieveTrace(engine, {
       request_id: requestId,
       scenario: classification.scenario,
@@ -97,9 +131,10 @@ export async function retrieveContext(
         must_read_context: true,
         reason_codes: ['task_continuation_requires_task_state'],
       },
-      candidates: [candidateFromSelector(selector, 1)],
-      required_reads: [selector],
+      candidates,
+      required_reads: requiredReads,
       orientation: emptyOrientation(),
+      ...candidateSignals,
       warnings: ['Task continuation must read task state before raw files or graph orientation.'],
     }, input);
   }
@@ -116,6 +151,15 @@ export async function retrieveContext(
     ...candidates.map((candidate) => candidate.read_selector),
     ...orientation.recommended_reads,
   ]).slice(0, limit);
+  const candidateSignals = await buildRetrieveContextCandidateSignals(
+    candidateSignalBuilder,
+    engine,
+    input,
+    classification.scenario,
+    requiredReads,
+    candidates,
+    limit,
+  );
 
   return maybePersistRetrieveTrace(engine, {
     request_id: requestId,
@@ -126,16 +170,20 @@ export async function retrieveContext(
       answerable_from_probe: false,
       allowed_probe_answer_kind: 'none',
       must_read_context: requiredReads.length > 0,
-      reason_codes: requiredReads.length > 0
-        ? ['probe_candidates_are_not_answer_ground']
-        : ['no_candidate'],
+      reason_codes: broadRetrievalReasonCodes(requiredReads, candidateSignals),
     },
     candidates,
     required_reads: requiredReads,
     orientation,
+    ...candidateSignals,
     warnings: [
       ...(searchResults.length > 0 ? [SEARCH_CHUNK_WARNING] : []),
-      ...(requiredReads.length === 0 ? ['No canonical read candidate was found.'] : []),
+      ...(requiredReads.length === 0 && candidateSignals.candidate_signals.length > 0
+        ? ['No canonical read candidate was found; non-canonical Memory Inbox candidate signals are available.']
+        : []),
+      ...(requiredReads.length === 0 && candidateSignals.candidate_signals.length === 0
+        ? ['No canonical read candidate was found.']
+        : []),
     ],
   }, input);
 }
@@ -181,8 +229,46 @@ function blockedByScopeGate(
     candidates: [],
     required_reads: [],
     orientation: emptyOrientation(),
+    ...emptyCandidateSignalResult('strict', ['scope_gate_blocked']),
     warnings: scopeGate.summary_lines,
   };
+}
+
+async function buildRetrieveContextCandidateSignals(
+  candidateSignalBuilder: RetrieveContextCandidateSignalBuilder,
+  engine: BrainEngine,
+  input: RetrieveContextInput,
+  scenario: MemoryScenario,
+  requiredReads: RetrievalSelector[],
+  canonicalCandidates: RetrieveContextCandidate[],
+  limit: number,
+): Promise<CandidateSignalResult> {
+  return candidateSignalBuilder(engine, {
+    query: input.query?.trim(),
+    requested_scope: input.requested_scope,
+    scope_id: candidateSignalScopeId(input, requiredReads),
+    scenario,
+    known_subjects: input.known_subjects,
+    required_reads: requiredReads,
+    canonical_candidates: canonicalCandidates,
+    limit,
+  });
+}
+
+function candidateSignalScopeId(input: RetrieveContextInput, requiredReads: RetrievalSelector[]): string {
+  const selectorScope = requiredReads.find(selector => selector.scope_id)?.scope_id;
+  if (selectorScope) return selectorScope;
+  if (input.requested_scope === 'personal') return 'personal:default';
+  return DEFAULT_NOTE_MANIFEST_SCOPE_ID;
+}
+
+function broadRetrievalReasonCodes(
+  requiredReads: RetrievalSelector[],
+  candidateSignals: CandidateSignalResult,
+): string[] {
+  if (requiredReads.length > 0) return ['probe_candidates_are_not_answer_ground'];
+  if (candidateSignals.candidate_signals.length > 0) return ['no_canonical_evidence_candidate_signals_present'];
+  return ['no_candidate'];
 }
 
 async function groupCandidatesByCanonicalPage(

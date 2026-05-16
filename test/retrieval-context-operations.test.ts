@@ -4,7 +4,7 @@ import {
   OperationError,
   operationsByName,
 } from '../src/core/operations.ts';
-import type { SearchResult } from '../src/core/types.ts';
+import type { MemoryCandidateEntry, SearchResult } from '../src/core/types.ts';
 
 function opContext(engine: any) {
   return {
@@ -64,6 +64,30 @@ describe('agentic retrieval context operations', () => {
         content_hash: 'hash-1',
         section_text: 'Retrieval chunks are candidate pointers, not answer evidence.',
       }],
+      listMemoryCandidateEntries: async ({ status }: { status?: MemoryCandidateEntry['status'] } = {}) => {
+        const candidates: MemoryCandidateEntry[] = [{
+          id: 'candidate:operation-output',
+          scope_id: 'workspace:default',
+          candidate_type: 'fact',
+          proposed_content: 'Candidate signal for retrieval operation output should stay non-canonical.',
+          source_refs: ['Source: User, direct message, 2026-05-16 12:00 KST'],
+          generated_by: 'manual',
+          extraction_kind: 'manual',
+          confidence_score: 0.8,
+          importance_score: 0.6,
+          recurrence_score: 0.1,
+          sensitivity: 'work',
+          status: 'candidate',
+          target_object_type: 'curated_note',
+          target_object_id: 'concepts/retrieval',
+          reviewed_at: null,
+          review_reason: null,
+          created_at: new Date('2026-05-16T03:00:00.000Z'),
+          updated_at: new Date('2026-05-16T03:00:00.000Z'),
+        }];
+        return status ? candidates.filter(candidate => candidate.status === status) : candidates;
+      },
+      listCanonicalHandoffEntries: async () => [],
     };
 
     const result = await op.handler(opContext(engine), {
@@ -87,6 +111,11 @@ describe('agentic retrieval context operations', () => {
     expect(output).toContain('Chunks are candidate pointers; call read_context before answering.');
     expect(output).toContain('Required reads:');
     expect(output).toContain('section:workspace:default:concepts/retrieval#compiled-truth');
+    expect(output).toContain('Candidate signal policy:');
+    expect(output).toContain('candidate:operation-output');
+    expect(output).toContain('promotion=advance_to_review');
+    expect(output).toContain('disposition=keep_candidate');
+    expect(output).toContain('Candidate signals are non-canonical; do not use them as answer evidence.');
   });
 
   test('read_context parses JSON selectors and preserves char offsets for bounded reads', async () => {

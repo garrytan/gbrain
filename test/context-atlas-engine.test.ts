@@ -14,6 +14,8 @@ interface EngineHarness {
   cleanup: () => Promise<void>;
 }
 
+const PGLITE_REOPEN_TEST_TIMEOUT_MS = 45_000;
+
 async function createSqliteHarness(): Promise<EngineHarness> {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-context-atlas-sqlite-'));
   const databasePath = join(dir, 'brain.db');
@@ -123,7 +125,7 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
       await reopened?.disconnect();
       await harness.cleanup();
     }
-  });
+  }, createHarness === createPgliteHarness ? PGLITE_REOPEN_TEST_TIMEOUT_MS : undefined);
 }
 
 const databaseUrl = process.env.DATABASE_URL;

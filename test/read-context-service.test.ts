@@ -457,6 +457,11 @@ describe('read context service', () => {
 
       expect(result.answer_ready.ready).toBe(true);
       expect(result.canonical_reads).toHaveLength(1);
+      expect(result.answer_ready.answer_ground).toHaveLength(1);
+      expect(result.answer_ready.answer_ground[0]!.selector_id).toBe(
+        result.canonical_reads[0]!.selector.selector_id,
+      );
+      expect(result.answer_ready.answer_ground.every((selector) => selector.kind !== 'source_ref')).toBe(true);
       expect(result.canonical_reads[0]!.text).toContain('Auto read canonical evidence');
       expect(result.warnings).toContain('Auto reads selected from retrieve_context required_reads.');
     });
