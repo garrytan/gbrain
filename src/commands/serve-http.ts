@@ -794,6 +794,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const mcpOperations = operations.filter(op => !op.localOnly);
 
+  // MCP Streamable HTTP spec: GET /mcp opens an optional SSE backchannel for
+  // server-initiated messages. gbrain's transport is stateless and doesn't push
+  // server-initiated messages, so per spec we MUST return 405 (not 404) here so
+  // probing clients (claude.ai, others) recognize this as an MCP endpoint.
+  app.get('/mcp', (_req: Request, res: Response) => {
+    res.set('Allow', 'POST, DELETE');
+    res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
+  });
+
   app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
