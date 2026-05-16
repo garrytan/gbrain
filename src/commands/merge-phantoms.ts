@@ -50,6 +50,7 @@
  * Plan: ~/.claude/plans/mossy-popping-crown.md D7 + D9 (codex P2).
  */
 
+import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import {
   tryPrefixExpansion,
@@ -341,6 +342,43 @@ export async function runMergePhantomsCore(
       // the canonical fence is the writer's existing canonical state.
       // If something goes wrong, log+skip so we don't double-delete
       // facts the canonical doesn't own.
+      skipped.push({ phantom: row.slug, canonical, skipped: 'fence_write_failed' });
+      continue;
+    }
+
+    // Re-import the canonical page so `pages.compiled_truth` reflects
+    // the on-disk markdown we just rewrote (codex round-14 P1).
+    // Without this, the next extract_facts cycle phase reads the
+    // STALE canonical body via engine.getPage(), parses its fence
+    // (which doesn't include the migrated facts because compiled_truth
+    // never got refreshed), calls deleteFactsForPage(canonical), and
+    // wipes the migrated DB rows. Importing here keeps the DB index
+    // and the markdown in lockstep before we soft-delete the phantom.
+    const { importFromFile } = await import('../core/import-file.ts');
+    const canonicalPath = join(localPath, `${canonical}.md`);
+    try {
+      // importFromFile signature: (engine, absPath, relativePath, opts).
+      // `noEmbed: true` keeps the merge fast — re-embedding the page
+      // can wait for the autopilot cycle's embed phase. compiled_truth
+      // + content_chunks get refreshed regardless, which is what we
+      // need to keep the next extract_facts cycle from wiping the
+      // migrated rows.
+      await importFromFile(engine, canonicalPath, `${canonical}.md`, {
+        sourceId: opts.sourceId,
+        noEmbed: true,
+        forceRechunk: true,
+      });
+    } catch (err) {
+      // If the re-import fails (e.g. malformed markdown post-write),
+      // skip and surface as fence_write_failed so the operator sees
+      // it. The fence-write already produced new DB rows; the next
+      // extract_facts cycle WILL clean them up via the stale-body
+      // path — so we DON'T delete the phantom rows here. The merge
+      // is effectively a no-op for this phantom.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[merge-phantoms] canonical re-import failed for ${canonical}: ${err instanceof Error ? err.message : String(err)}. Phantom NOT soft-deleted; rerun the merge after fixing the markdown.`,
+      );
       skipped.push({ phantom: row.slug, canonical, skipped: 'fence_write_failed' });
       continue;
     }
