@@ -29,6 +29,23 @@ if [ "$GBRAIN_MODE" = "individual" ] && [ -n "${COMPANY_SHARE_SECRET:-}" ]; then
   bun src/cli.ts company-share secret set --secret "$COMPANY_SHARE_SECRET" --json >/dev/null
 fi
 
+if [ "$GBRAIN_MODE" = "company" ] && [ -n "${COMPANY_SHARE_MEMBER_ID:-}" ]; then
+  : "${COMPANY_SHARE_MEMBER_ISSUER_URL:?COMPANY_SHARE_MEMBER_ISSUER_URL is required when COMPANY_SHARE_MEMBER_ID is set}"
+  : "${COMPANY_SHARE_MEMBER_MCP_URL:?COMPANY_SHARE_MEMBER_MCP_URL is required when COMPANY_SHARE_MEMBER_ID is set}"
+  : "${COMPANY_SHARE_MEMBER_OAUTH_CLIENT_ID:?COMPANY_SHARE_MEMBER_OAUTH_CLIENT_ID is required when COMPANY_SHARE_MEMBER_ID is set}"
+  : "${COMPANY_SHARE_MEMBER_OAUTH_CLIENT_SECRET:?COMPANY_SHARE_MEMBER_OAUTH_CLIENT_SECRET is required when COMPANY_SHARE_MEMBER_ID is set}"
+  : "${COMPANY_SHARE_MEMBER_MANIFEST_SECRET:?COMPANY_SHARE_MEMBER_MANIFEST_SECRET is required when COMPANY_SHARE_MEMBER_ID is set}"
+
+  echo "[gbrain] registering company-share member $COMPANY_SHARE_MEMBER_ID"
+  bun src/cli.ts company-share members add "$COMPANY_SHARE_MEMBER_ID" \
+    --issuer-url "$COMPANY_SHARE_MEMBER_ISSUER_URL" \
+    --mcp-url "$COMPANY_SHARE_MEMBER_MCP_URL" \
+    --oauth-client-id "$COMPANY_SHARE_MEMBER_OAUTH_CLIENT_ID" \
+    --oauth-client-secret "$COMPANY_SHARE_MEMBER_OAUTH_CLIENT_SECRET" \
+    --manifest-secret "$COMPANY_SHARE_MEMBER_MANIFEST_SECRET" \
+    --json >/dev/null
+fi
+
 echo "[gbrain] serving $GBRAIN_MODE brain on 0.0.0.0:$PORT as $PUBLIC_URL"
 exec bun src/cli.ts serve \
   --http \
