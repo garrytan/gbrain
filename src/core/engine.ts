@@ -1139,4 +1139,17 @@ export interface BrainEngine {
    * skipped. Soft-deleted pages are always excluded from this count.
    */
   countAutoStubsExcludedFromLinkify(): Promise<number>;
+
+  /**
+   * Return all non-deleted person pages (broader than queryPersonsForLinkify
+   * — drops the linkable/auto-stub filters). Used by gbrain audit-name-links
+   * to validate explicit author-supplied [Display](people/Slug) links and
+   * [[people/Slug|Display]] wikilinks against the canonical name set.
+   *
+   * Includes pages from all source_ids — the audit is brain-wide.
+   */
+  queryPersonsForAudit(): Promise<Array<{
+    slug: string;
+    frontmatter: Record<string, unknown>;
+  }>>;
 }

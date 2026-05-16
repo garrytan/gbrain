@@ -1749,6 +1749,23 @@ export class PostgresEngine implements BrainEngine {
     return Number(rows[0].count);
   }
 
+  async queryPersonsForAudit(): Promise<Array<{
+    slug: string;
+    frontmatter: Record<string, unknown>;
+  }>> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT p.slug, p.frontmatter
+      FROM pages p
+      WHERE p.type = 'person'
+        AND p.deleted_at IS NULL
+    `;
+    return rows.map((r) => ({
+      slug: r.slug as string,
+      frontmatter: (r.frontmatter ?? {}) as Record<string, unknown>,
+    }));
+  }
+
   // Tags
   async addTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void> {
     const sql = this.sql;

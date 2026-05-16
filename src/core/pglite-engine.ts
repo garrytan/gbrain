@@ -1608,6 +1608,22 @@ export class PGLiteEngine implements BrainEngine {
     return Number((rows[0] as { count: string | number }).count);
   }
 
+  async queryPersonsForAudit(): Promise<Array<{
+    slug: string;
+    frontmatter: Record<string, unknown>;
+  }>> {
+    const { rows } = await this.db.query(
+      `SELECT p.slug, p.frontmatter
+       FROM pages p
+       WHERE p.type = 'person'
+         AND p.deleted_at IS NULL`
+    );
+    return (rows as Array<{ slug: string; frontmatter: Record<string, unknown> }>).map((r) => ({
+      slug: r.slug,
+      frontmatter: (r.frontmatter ?? {}) as Record<string, unknown>,
+    }));
+  }
+
   // Tags
   async addTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void> {
     const sourceId = opts?.sourceId ?? 'default';
