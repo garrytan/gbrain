@@ -2,6 +2,10 @@ FROM oven/bun:1.3.13
 
 WORKDIR /app
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git openssh-client ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY package.json bun.lock tsconfig.json ./
 RUN bun install --frozen-lockfile
 

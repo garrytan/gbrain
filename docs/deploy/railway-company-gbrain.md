@@ -8,8 +8,9 @@ gbrain-bob        individual mode
 gbrain-company    company mode
 ```
 
-Each service must have its own `GBRAIN_HOME`, Supabase Postgres database, and
-public MCP/OAuth issuer URL. Do not point two services at the same database.
+Each service must have its own `GBRAIN_HOME`, Supabase Postgres database,
+markdown brain repo, and public MCP/OAuth issuer URL. Do not point two services
+at the same database or the same markdown source-of-truth repo.
 
 ## Required Inputs
 
@@ -34,6 +35,9 @@ Create one Railway project with three services from this repository/branch.
 Use the same Dockerfile for all three services and set different environment
 variables per service.
 
+The GBrain code repo is shared. The markdown source-of-truth repos are separate
+and are configured per service with `BRAIN_REPO_URL`.
+
 ### gbrain-alice
 
 ```text
@@ -41,6 +45,11 @@ GBRAIN_HOME=/data/gbrain
 GBRAIN_MODE=individual
 DATABASE_URL=<ALICE_DATABASE_URL>
 PUBLIC_URL=https://gbrain-alice.up.railway.app
+BRAIN_REPO_URL=git@github.com:<org>/gbrain-alice-brain.git
+BRAIN_REPO_BRANCH=main
+BRAIN_REPO_PATH=/data/brain-repo
+BRAIN_REPO_SYNC_INTERVAL_SECONDS=300
+BRAIN_REPO_SSH_KEY=<read-only-deploy-key-private-key>
 COMPANY_SHARE_SECRET=<ALICE_COMPANY_SHARE_SECRET>
 ```
 
@@ -51,6 +60,11 @@ GBRAIN_HOME=/data/gbrain
 GBRAIN_MODE=individual
 DATABASE_URL=<BOB_DATABASE_URL>
 PUBLIC_URL=https://gbrain-bob.up.railway.app
+BRAIN_REPO_URL=git@github.com:<org>/gbrain-bob-brain.git
+BRAIN_REPO_BRANCH=main
+BRAIN_REPO_PATH=/data/brain-repo
+BRAIN_REPO_SYNC_INTERVAL_SECONDS=300
+BRAIN_REPO_SSH_KEY=<read-only-deploy-key-private-key>
 COMPANY_SHARE_SECRET=<BOB_COMPANY_SHARE_SECRET>
 ```
 
@@ -61,6 +75,11 @@ GBRAIN_HOME=/data/gbrain
 GBRAIN_MODE=company
 DATABASE_URL=<COMPANY_DATABASE_URL>
 PUBLIC_URL=https://gbrain-company.up.railway.app
+BRAIN_REPO_URL=git@github.com:<org>/gbrain-company-brain.git
+BRAIN_REPO_BRANCH=main
+BRAIN_REPO_PATH=/data/brain-repo
+BRAIN_REPO_SYNC_INTERVAL_SECONDS=300
+BRAIN_REPO_SSH_KEY=<read-only-deploy-key-private-key>
 ```
 
 The container start command is:
@@ -73,8 +92,15 @@ It runs:
 
 ```bash
 gbrain init --mode "$GBRAIN_MODE" --url "$DATABASE_URL" --non-interactive
+gbrain sync --repo "$BRAIN_REPO_PATH" --yes
 gbrain serve --http --bind 0.0.0.0 --port "$PORT" --public-url "$PUBLIC_URL"
 ```
+
+When `BRAIN_REPO_URL` is set, startup clones or refreshes that markdown repo,
+syncs it into the service's own database, and runs a background sync loop. This
+does not change the company-share boundary: `gbrain-company` still only learns
+from Alice through the signed export/import path unless the company markdown
+repo itself contains company-authored pages.
 
 For a single member, the company service can also bootstrap the member registry
 from Railway variables at startup:

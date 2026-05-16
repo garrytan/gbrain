@@ -18,6 +18,38 @@ esac
 
 mkdir -p "$GBRAIN_HOME"
 
+if [ -n "${BRAIN_REPO_URL:-}" ]; then
+  BRAIN_REPO_PATH="${BRAIN_REPO_PATH:-/data/brain-repo}"
+  BRAIN_REPO_BRANCH="${BRAIN_REPO_BRANCH:-main}"
+  BRAIN_REPO_SYNC_INTERVAL_SECONDS="${BRAIN_REPO_SYNC_INTERVAL_SECONDS:-300}"
+
+  if ! [[ "$BRAIN_REPO_SYNC_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || [ "$BRAIN_REPO_SYNC_INTERVAL_SECONDS" -lt 60 ]; then
+    echo "BRAIN_REPO_SYNC_INTERVAL_SECONDS must be an integer >= 60; got: $BRAIN_REPO_SYNC_INTERVAL_SECONDS" >&2
+    exit 2
+  fi
+
+  if [ -n "${BRAIN_REPO_SSH_KEY:-}" ]; then
+    mkdir -p "$GBRAIN_HOME/ssh"
+    chmod 700 "$GBRAIN_HOME/ssh"
+    printf '%s\n' "$BRAIN_REPO_SSH_KEY" > "$GBRAIN_HOME/ssh/id_brain_repo"
+    chmod 600 "$GBRAIN_HOME/ssh/id_brain_repo"
+    ssh-keyscan github.com > "$GBRAIN_HOME/ssh/known_hosts" 2>/dev/null
+    export GIT_SSH_COMMAND="ssh -i $GBRAIN_HOME/ssh/id_brain_repo -o IdentitiesOnly=yes -o UserKnownHostsFile=$GBRAIN_HOME/ssh/known_hosts"
+  fi
+
+  mkdir -p "$(dirname "$BRAIN_REPO_PATH")"
+  if [ -d "$BRAIN_REPO_PATH/.git" ]; then
+    echo "[gbrain] updating brain repo at $BRAIN_REPO_PATH"
+    git -C "$BRAIN_REPO_PATH" fetch origin "$BRAIN_REPO_BRANCH"
+    git -C "$BRAIN_REPO_PATH" checkout "$BRAIN_REPO_BRANCH"
+    git -C "$BRAIN_REPO_PATH" reset --hard "origin/$BRAIN_REPO_BRANCH"
+  else
+    echo "[gbrain] cloning brain repo into $BRAIN_REPO_PATH"
+    rm -rf "$BRAIN_REPO_PATH"
+    git clone --branch "$BRAIN_REPO_BRANCH" --depth 1 "$BRAIN_REPO_URL" "$BRAIN_REPO_PATH"
+  fi
+fi
+
 echo "[gbrain] initializing $GBRAIN_MODE brain at $GBRAIN_HOME"
 bun src/cli.ts init \
   --mode "$GBRAIN_MODE" \
@@ -62,6 +94,23 @@ if [ "$GBRAIN_MODE" = "company" ] && [ -n "${COMPANY_SHARE_PULL_INTERVAL_SECONDS
       else
         bun src/cli.ts company-share pull --json || true
       fi
+    done
+  ) &
+fi
+
+if [ -n "${BRAIN_REPO_URL:-}" ]; then
+  echo "[gbrain] syncing brain repo from $BRAIN_REPO_PATH"
+  bun src/cli.ts sync --repo "$BRAIN_REPO_PATH" --yes || true
+
+  echo "[gbrain] starting brain repo sync loop every ${BRAIN_REPO_SYNC_INTERVAL_SECONDS}s"
+  (
+    while true; do
+      sleep "$BRAIN_REPO_SYNC_INTERVAL_SECONDS"
+      echo "[gbrain] updating and syncing brain repo"
+      git -C "$BRAIN_REPO_PATH" fetch origin "$BRAIN_REPO_BRANCH" || true
+      git -C "$BRAIN_REPO_PATH" checkout "$BRAIN_REPO_BRANCH" || true
+      git -C "$BRAIN_REPO_PATH" reset --hard "origin/$BRAIN_REPO_BRANCH" || true
+      bun src/cli.ts sync --repo "$BRAIN_REPO_PATH" --yes || true
     done
   ) &
 fi
