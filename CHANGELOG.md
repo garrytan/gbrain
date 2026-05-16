@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.35.2.0] - 2026-05-15
+## [0.35.3.0] - 2026-05-15
 
 **Fix wave: 19 stale community PRs land as one bisect-friendly PR with the architectural fix none of them surfaced.**
 
@@ -20,19 +20,19 @@ Two real bugs, both in shipping code on master since v0.28+, both fixed at the a
 
 ### Itemized changes
 
-- `src/mcp/tool-defs.ts` exports new recursive `paramDefToSchema(p: ParamDef)` helper. Key ordering (type, description, enum, default, items) is intentional — matches the pre-v0.35.2 inline mappers so JSON.stringify output stays byte-stable for every operation that doesn't use nested arrays.
+- `src/mcp/tool-defs.ts` exports new recursive `paramDefToSchema(p: ParamDef)` helper. Key ordering (type, description, enum, default, items) is intentional — matches the pre-v0.35.3 inline mappers so JSON.stringify output stays byte-stable for every operation that doesn't use nested arrays.
 - `src/commands/serve-http.ts:837-849` swaps the inline ParamDef destructure for `paramDefToSchema(v)`. Closes the HTTP MCP `tools/list` bug. OAuth-authenticated remote agents (Claude Desktop, ChatGPT, Perplexity over HTTP MCP) now see `items` on every array param.
 - `src/core/minions/tools/brain-allowlist.ts:84-97` swaps the inline destructure inside `paramsToInputSchema()` for `paramDefToSchema(v)`. Preserves the `required:` aggregation at `:95` (that's at the tool-def level, not the param level — codex explicitly out-of-scope).
 - `src/core/operations.ts:2699` adds `items: { type: 'string' }` to `entity_hints`. The handler at `:2733` already coerced with `Array.isArray(...)` so runtime shape is unchanged; only the schema declaration was broken.
 - `src/core/resolvers/builtin/x-api/handle-to-tweet.ts:102` replaces `candidates: { type: 'array' }` with full-spec items matching the `XTweetCandidate` interface 10 lines above, including `required: [all 5 fields]` and `additionalProperties: false` (D5 decision: without `required`, schema permits `{}`).
 - `src/core/git-remote.ts:29-44` splits `GIT_SSRF_FLAGS` (3 `-c` config flags, spread BEFORE the verb) from new exported `GIT_SSRF_SUBCOMMAND_FLAGS = ['--no-recurse-submodules']` (spread AFTER). `cloneRepo:156` and `pullRepo:182` now spread the new constant in subcommand position.
 - `test/mcp-tool-defs.test.ts` adds: (a) explicit fixture for `extract_facts.entity_hints.items.type === 'string'`, (b) synthetic nested-array ParamDef pinning `items.items.type` recursion, (c) `findArrayWithoutItems` walker that fails the suite with a property path on any `type: 'array'` lacking `items.type`. `legacyInlineMap` reference mirrors the new recursive helper.
-- `test/git-remote.test.ts` snapshot split: `GIT_SSRF_FLAGS` pins to 3 elements (no submodules), new `GIT_SSRF_SUBCOMMAND_FLAGS` snapshot pins to 1. `cloneRepo` + `pullRepo` argv tests assert `indexOf(--no-recurse-submodules) > indexOf(verb)` — position-anchored regression guard. Pre-v0.35.2 the existing test at `:233` baked the bug in via `argv.slice(0, GIT_SSRF_FLAGS.length)`.
+- `test/git-remote.test.ts` snapshot split: `GIT_SSRF_FLAGS` pins to 3 elements (no submodules), new `GIT_SSRF_SUBCOMMAND_FLAGS` snapshot pins to 1. `cloneRepo` + `pullRepo` argv tests assert `indexOf(--no-recurse-submodules) > indexOf(verb)` — position-anchored regression guard. Pre-v0.35.3 the existing test at `:233` baked the bug in via `argv.slice(0, GIT_SSRF_FLAGS.length)`.
 - `test/resolvers.test.ts` (existing file) gets a new `describe` block. Explicitly imports `xHandleToTweetResolver` + `urlReachableResolver` and walks both `inputSchema` AND `outputSchema` recursively. Negative coverage guard asserts `builtins.length >= 2` so a future autoformatter dropping the array can't silently turn the walk into a no-op.
 - `test/e2e/zeroentropy-live.test.ts` raises rerank test timeouts to handle ZeroEntropy's cold-start latency (observed ~5-6s on Tier 2 runners; subsequent calls < 500ms). Passes explicit `timeoutMs: 25000` to each rerank() call and a 30s bun:test per-test timeout. Production `DEFAULT_RERANK_TIMEOUT_MS = 5000` in `gateway.ts` stays put for the search hot path.
 - Contributed by: @DmitryBMsk (PR #910 — deepest variant of the entity_hints + candidates double-fix); cleanest naming from PR #846 (`GIT_SSRF_SUBCOMMAND_FLAGS`). 17 superseded PRs being closed with thank-you notes after this merge: #1028, #1023, #1020, #999, #985, #980, #979, #963, #904, #863, #862, #847, #846, #842, #832, #812.
 
-## To take advantage of v0.35.2.0
+## To take advantage of v0.35.3.0
 
 `gbrain upgrade` is all you need. There's no schema migration, no config change, no manual action.
 
