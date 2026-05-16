@@ -3161,9 +3161,16 @@ export class PGLiteEngine implements BrainEngine {
         ) as stale_pages,
         -- Bug 11 — orphan = islanded (no inbound AND no outbound).
         -- See BrainHealth.orphan_pages docstring; docs updated to match this.
+        -- Source-type ingestions (emails/attachments/0-daily/4-archive) are
+        -- anchored via timeline/parent record, not wikilinks — excluded so
+        -- brain_score reflects real graph rot.
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+           AND p.slug NOT LIKE 'emails/%'
+           AND p.slug NOT LIKE 'attachments/%'
+           AND p.slug NOT LIKE '0-daily/%'
+           AND p.slug NOT LIKE '4-archive/%'
         ) as orphan_pages,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)

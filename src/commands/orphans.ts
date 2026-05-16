@@ -50,6 +50,14 @@ const DENY_PREFIXES = [
   'scripts/',
   'templates/',
   'openclaw/config/',
+  // Source-type ingestions: no inbound wikilinks is the healthy default.
+  // These pages are anchored via timeline entries / parent records, not by
+  // being cited from concept pages. Without exclusion they dominate orphan
+  // counts and crush no_orphans_score for reasons unrelated to graph rot.
+  'emails/',
+  'attachments/',
+  '0-daily/',
+  '4-archive/',
 ];
 
 /** First slug segments where no inbound links is expected */

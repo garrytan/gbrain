@@ -3177,6 +3177,13 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+           -- Source-type ingestions: anchored via timeline/parent record, not
+           -- wikilinks. Exclude from orphan count so brain_score reflects
+           -- real graph rot, not ingestion-by-design pages.
+           AND p.slug NOT LIKE 'emails/%'
+           AND p.slug NOT LIKE 'attachments/%'
+           AND p.slug NOT LIKE '0-daily/%'
+           AND p.slug NOT LIKE '4-archive/%'
         ) as orphan_pages,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
