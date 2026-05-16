@@ -4,6 +4,46 @@ All notable changes to GBrain will be documented in this file.
 
 ## [Unreleased]
 
+- Added `gbrain audit-name-links` CLI for detecting AI-mediated misnames in
+  producer markdown. Scans `[Display](people/Slug)` markdown links and
+  `[[people/Slug|Display]]` qualified wikilinks, validates Display against
+  the canonical-name set for Slug (same rules as `linkify`'s alias map),
+  emits diagnostics for mismatches. Detective-only by default — the
+  producer pipeline keeps running even when mismatches are present.
+  Optional `--fix-display-names` auto-corrects the safe Mode-1 class
+  (right slug, wrong display) in place; Mode-2 misattributions stay
+  human-review-only because re-attributing to the wrong canonical name
+  would silently lock the bug in. Adds the new fourth step to the
+  producer pipeline: `produce → stamp → linkify → extract-links →
+  audit-name-links`. See `docs/guides/linkify.md` for the full flag
+  matrix, diagnostic format, and the operator-facing vault migration
+  runbook.
+- New flags on `gbrain audit-name-links`: `--path`, `--dir`,
+  `--since`, `--filename-prefix`, `--all`, `--fix-display-names`,
+  `--dry-run`, `--strict`, `--json-diagnostics`, `--verbose-diagnostics`,
+  plus the `abi-version` and `--help` subcommands. Exit codes:
+  `0` success, `1` `--strict` failure, `2` usage error, `3` engine
+  unavailable. ABI version 1.
+- New diagnostic kinds on `audit-name-links`: `name_mismatch`,
+  `unknown_target`, `malformed_target`, `display_fixed`,
+  `concurrent_modification_skipped`, `icloud_placeholder_skipped`,
+  `enoent`. `malformed_target` is always informational and never trips
+  `--strict` (a missing `name:` field is a gbrain data-quality issue,
+  not a producer bug). JSON output uses camelCase field names
+  (`canonicalNames`, `linkForm`, `oldDisplay`, `newDisplay`) consistent
+  with the rest of gbrain's JSON surfaces.
+- New `BrainEngine` method `queryPersonsForAudit`. Broader than the
+  existing `queryPersonsForLinkify`: returns every non-deleted person
+  page regardless of `linkable:` flag, auto-stub status, or `source_id`,
+  so explicit author-supplied links to opt-out pages and cross-source
+  slugs still validate. Implemented for both `pglite-engine` and
+  `postgres-engine`.
+- Exported `caseFold`, `expandApostropheVariants`, `APOSTROPHE_STRAIGHT`,
+  `APOSTROPHE_CURLY`, and `atomicWriteSameDir` from `src/commands/linkify.ts`
+  so the new `audit-name-links` command and its tests can share one
+  case-folding and atomic-write implementation with linkify rather than
+  duplicating either.
+
 - Added context-keyword disambiguation to `gbrain linkify`. New optional
   frontmatter field `linkify_context_keywords:` on person pages lets the
   linkifier resolve same-domain alias collisions using ±500-char window

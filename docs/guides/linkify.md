@@ -444,3 +444,327 @@ esac
 
 The `2>>"$LOG"` redirect captures stderr diagnostics into the log without
 affecting `$?`. This is the same pattern recommended for `linkify` above.
+
+---
+
+## Auditing name links
+
+`gbrain audit-name-links` is the **fourth and final step** in the producer
+pipeline. It scans `[Display](people/Slug)` markdown links and
+`[[people/Slug|Display]]` qualified wikilinks already in the file, validates
+that Display is a legitimate canonical name for Slug, and emits diagnostics
+for mismatches. It exists because LLM-mediated producers hallucinate names —
+the slug is right but the display string drifts from any real name on the
+person page, or the slug itself is wrong.
+
+The audit reuses the same canonical-name rules linkify uses for its alias map
+(`name`, first token, last token, every entry in `linkify_aliases`,
+case-folded, apostrophe-variant-expanded). One validator, one source of
+truth.
+
+```
+produce → stamp → linkify → extract-links → audit-name-links
+```
+
+### Mode 1 vs Mode 2
+
+The audit distinguishes two failure modes:
+
+- **Mode 1 — Misnamed link** (right target, wrong display). The producer
+  writes `[Calvin Waytek](people/cwaytek-aseva)` for a section that is
+  actually about Christopher Waytek. The slug is correct; the display string
+  is hallucinated. Auto-fixable: rewrite the display string to the page's
+  canonical `name`. Surfaces as the `name_mismatch` diagnostic kind.
+
+- **Mode 2 — Misattributed link** (wrong target). The producer writes
+  `[Leedy Allen](people/lallen-aseva)`, fusing two participants. The display
+  matches no canonical person and the slug attributes the whole section to
+  the wrong human. **Detective-only — never auto-fixed.** Surfaces as
+  `unknown_target` (slug not in the brain) or, if the slug exists but no
+  display can possibly match, `malformed_target` (the page is missing its
+  `name:` frontmatter).
+
+Mode 1 is mechanical: the slug is the producer's "vote" for who this is,
+and the canonical name is the lookup answer. Substituting one for the other
+is safe.
+
+Mode 2 is a judgement call. The right slug is unknown — could be a typo,
+could be a fused attribution, could be a name the LLM invented whole-cloth.
+Auto-rewriting Display to match the wrong slug's canonical name would
+silently make the section look correct while attributing it to the wrong
+person. The audit refuses to guess and leaves Mode 2 for human review.
+This is the same posture linkify takes for `ambiguous_unresolved` matches.
+
+### CLI surface
+
+```bash
+# Single-file mode.
+gbrain audit-name-links --path <file>
+
+# Directory batch (mtime + filename prefix filter).
+gbrain audit-name-links --dir <dir> --since <ISO8601> --filename-prefix <prefix>
+
+# Whole-vault scan (no mtime or prefix filter). Required for migration runs.
+gbrain audit-name-links --dir <dir> --all
+
+# Auto-fix Mode 1 in place. Mode 2 is never touched.
+gbrain audit-name-links --path <file> --fix-display-names
+
+# Preview auto-fixes without writing.
+gbrain audit-name-links --path <file> --fix-display-names --dry-run
+
+# CI gate — exit 1 on Mode 1 or unknown_target (not on malformed_target).
+gbrain audit-name-links --path <file> --strict
+
+# ABI probe.
+gbrain audit-name-links abi-version   # emits: 1
+
+# Help.
+gbrain audit-name-links --help
+```
+
+### Flag matrix
+
+| Flag | Behavior |
+|------|----------|
+| `--path <file>` | Scan a single absolute file path. Mutually exclusive with `--dir`. |
+| `--dir <dir>` | Scan a directory non-recursively. Requires `--since` + `--filename-prefix` (or `--all`). |
+| `--since <ISO8601>` | With `--dir`: only files whose `mtime > since`. |
+| `--filename-prefix <prefix>` | With `--dir`: only files whose basename starts with `prefix`. |
+| `--all` | With `--dir`: shorthand for `--since 1970-01-01T00:00:00Z --filename-prefix ""`. Used by the migration runbook to sweep an entire vault. Mutually exclusive with explicit `--since` / `--filename-prefix`. |
+| `--fix-display-names` | Rewrite Mode-1 (`name_mismatch`) display strings to the page's canonical name. Idempotent. Atomic write via temp-file + rename. Mode 2 is never touched. |
+| `--dry-run` | With `--fix-display-names`: emit `display_fixed` diagnostics without writing the file. |
+| `--strict` | Exit 1 if any `name_mismatch` or `unknown_target` diagnostic survives the (optional) fix pass. `malformed_target` is always informational and never trips `--strict`. |
+| `--json-diagnostics` | One JSON object per diagnostic on stderr, plus a trailing `{"kind":"summary",...}` line. |
+| `--verbose-diagnostics` | One human-readable line per diagnostic on stderr. |
+| (default) | Counts-only summary line on stderr. |
+| `abi-version` | Print `1\n`, exit 0. No engine required. |
+| `--help` / `-h` | Print usage, exit 0. |
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success (clean or mismatches present — mismatches alone do not fail). |
+| 1 | `--strict` failure: a `name_mismatch` or `unknown_target` survived the fix pass. |
+| 2 | Usage error (bad flags, missing arguments). |
+| 3 | Engine unavailable — gbrain cannot reach its database; retry later. |
+
+The default is **detective-only**: mismatches accumulate in the log but
+the pipeline keeps running. `--strict` opts in to a hard fail for CI gates
+or post-merge checks.
+
+### Diagnostic kinds
+
+| Kind | Meaning |
+|------|---------|
+| `name_mismatch` | Mode 1. Slug is valid; Display is not in the canonical name set. Fixable with `--fix-display-names`. |
+| `unknown_target` | Mode 2. Slug is not a known person page (deleted, never existed, or wrong type). Hand-fix. |
+| `malformed_target` | Slug exists but the person page lacks a usable `name:` frontmatter field. Fix the person page, not the briefing. Never trips `--strict`. |
+| `display_fixed` | `--fix-display-names` rewrote a Mode-1 display. Emitted both in dry-run and apply mode. |
+| `concurrent_modification_skipped` | File's `mtime` changed between read and write; the audit refuses to clobber. Rerun later. |
+| `icloud_placeholder_skipped` | iCloud Drive placeholder detected; the file is not materialized locally. |
+| `enoent` | File disappeared between directory enumeration and read. |
+
+### Diagnostic format
+
+**Counts-only summary (default):**
+
+```
+audit-name-links: files=42 name_mismatch=3 unknown_target=1 malformed_target=0 display_fixed=0 dry_run=false
+```
+
+The summary line is always written, even when no mismatches were found.
+
+**`--verbose-diagnostics`:**
+
+```
+[name_mismatch] /vault/Briefings/2026-05-11.md:113 [Calvin Waytek](people/cwaytek-aseva) — canonical: [christopher, christopher waytek, chris, waytek] [2x]
+[unknown_target] /vault/Briefings/2026-05-11.md:240 [Leedy Allen](people/lallen-aseva) — slug not found [1x]
+[display_fixed] /vault/Briefings/2026-05-11.md:113 people/cwaytek-aseva "Calvin Waytek" -> "Christopher Waytek" (markdown)
+audit-name-links: files=1 name_mismatch=0 unknown_target=1 malformed_target=0 display_fixed=2 dry_run=false
+```
+
+The `[Nx]` suffix is the occurrence count after dedup by
+`(file, slug, display)`.
+
+**`--json-diagnostics`:**
+
+```jsonl
+{"kind":"name_mismatch","file":"/vault/Briefings/2026-05-11.md","line":113,"slug":"people/cwaytek-aseva","display":"Calvin Waytek","canonicalNames":["chris","christopher","christopher waytek","waytek"],"linkForm":"markdown","occurrences":2}
+{"kind":"unknown_target","file":"/vault/Briefings/2026-05-11.md","line":240,"slug":"people/lallen-aseva","display":"Leedy Allen","canonicalNames":[],"linkForm":"markdown","occurrences":1}
+{"kind":"display_fixed","file":"/vault/Briefings/2026-05-11.md","line":113,"slug":"people/cwaytek-aseva","oldDisplay":"Calvin Waytek","newDisplay":"Christopher Waytek","linkForm":"markdown"}
+{"kind":"summary","filesProcessed":1,"nameMismatch":0,"unknownTarget":1,"malformedTarget":0,"displayFixed":2,"dryRun":false}
+```
+
+Diagnostic JSON fields use camelCase (`canonicalNames`, `linkForm`,
+`oldDisplay`, `newDisplay`) for consistency with the rest of gbrain's
+JSON outputs.
+
+### Producer integration
+
+Both runner shapes used by `linkify` and `extract-links` apply unchanged.
+Add one extra step after extract-links.
+
+**Shell (bash):**
+
+```bash
+gbrain audit-name-links --path "$BRIEFING_PATH" 2>>"$LOG"
+case $? in
+  0) ;;
+  3) echo "[$(date)] audit-name-links: engine unavailable" >>"$LOG" ;;
+  *) echo "[$(date)] audit-name-links: failed" >>"$LOG" ;;
+esac
+```
+
+Add an ABI assertion at producer startup alongside the existing linkify and
+extract-links checks:
+
+```bash
+AUDIT_ABI=$(gbrain audit-name-links abi-version 2>/dev/null) || AUDIT_ABI=0
+if [ "$AUDIT_ABI" -lt 1 ]; then
+  echo "gbrain audit-name-links ABI too old (got $AUDIT_ABI, need >= 1)" >&2
+  exit 1
+fi
+```
+
+**Node.js (`execFile`, no shell):**
+
+```ts
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFilePromise = promisify(execFile);
+
+try {
+  await execFilePromise('gbrain', ['audit-name-links', '--path', filePath]);
+} catch (e: any) {
+  if (e.code === 3) {
+    // Engine unavailable — retry next run.
+  } else {
+    // Unexpected failure — log e.stderr.
+  }
+}
+```
+
+Producers that already iterate over a required-subcommand list at startup
+(checking the ABI of each one) should add `'audit-name-links'` to the
+list. Same shape as the existing checks for `frontmatter`, `linkify`, and
+`extract-links`.
+
+### Choosing a mode
+
+| Situation | Recommended invocation |
+|-----------|------------------------|
+| Producer post-write step, default pipeline | `--path <file>` — detective-only, exit 0, log accumulates patterns. |
+| CI gate on a vault PR | `--path <file> --strict` — exit 1 on Mode 1 or `unknown_target`. |
+| Operator running scheduled vault sweep | `--dir <dir> --all --verbose-diagnostics 2>/tmp/audit.txt` — capture for review. |
+| Operator applying a Mode-1 cleanup pass | `--dir <dir> --all --fix-display-names --dry-run` first, then drop `--dry-run`. |
+
+### Migration runbook for an existing vault
+
+If you are adding `audit-name-links` to a vault that has been accumulating
+producer-mediated briefings for months, run the following procedure to
+backfill the vault to a clean state. The end state: every
+`[X](people/Y)` and `[[people/Y|X]]` has `X` in the canonical name set
+for `Y`.
+
+1. **Stop producers** (or pause the runner scripts) so no new files land
+   during the migration. The audit's mtime-based filters tolerate concurrent
+   writes, but a quiet vault makes step 7 (re-audit) deterministic.
+
+2. **Snapshot the vault.** `git -C "$VAULT" status` to confirm a clean
+   baseline. Stash or commit anything in-flight.
+
+3. **Full-vault audit (read-only):**
+
+   ```bash
+   gbrain audit-name-links --verbose-diagnostics --dir "$VAULT/Briefings" --all \
+     2>/tmp/audit-briefings.txt
+   gbrain audit-name-links --verbose-diagnostics --dir "$VAULT/podcasts" --all \
+     2>/tmp/audit-podcasts.txt
+   # ... repeat per top-level dir that contains producer-mediated content.
+   ```
+
+   Inspect each output file. Counts at the bottom tell you how big each
+   bucket is before you start.
+
+4. **Categorize** the diagnostics by `kind`:
+
+   - `name_mismatch` → candidates for `--fix-display-names` (step 6).
+   - `unknown_target` → orphan link, likely a slug typo or deleted page.
+     Hand-fix in step 5.
+   - `malformed_target` → the person page itself lacks a `name:` frontmatter
+     field. Fix the **person page**, not the briefing.
+
+5. **Hand-fix Mode 2.** For each `unknown_target` or fused-attribution
+   case, read the surrounding briefing text and decide the correct slug
+   (or whether the link should be removed entirely). The audit cannot do
+   this for you — see the Mode 1 vs Mode 2 section above for why.
+
+6. **Preview then apply Mode 1 auto-fix:**
+
+   ```bash
+   # Dry-run first — emits display_fixed diagnostics, writes nothing.
+   gbrain audit-name-links --fix-display-names --dry-run --dir "$VAULT/Briefings" --all \
+     2>/tmp/proposed-display-fixes.txt
+
+   # Review /tmp/proposed-display-fixes.txt. When ready:
+   gbrain audit-name-links --fix-display-names --dir "$VAULT/Briefings" --all
+   ```
+
+   The fix is idempotent — re-running it on already-fixed files is a
+   no-op. Atomic writes preserve mtime semantics so concurrent edits
+   surface as `concurrent_modification_skipped` rather than silent
+   clobber.
+
+7. **Re-extract links for all changed files (mandatory).** `extract-links`
+   stores the surrounding text snippet as the edge's `context` field. After
+   `--fix-display-names` rewrites a display string, that stored `context`
+   is stale until `extract-links` runs again. Skipping this step leaves
+   outdated text in the graph.
+
+   ```bash
+   gbrain extract-links --dir "$VAULT/Briefings" --all
+   ```
+
+8. **Re-audit until clean:** loop steps 3–7 until `audit-name-links`
+   reports zero `name_mismatch` and zero `unknown_target` events. Some
+   `malformed_target` diagnostics may persist if the person pages they
+   reference legitimately lack a `name:` field (e.g., stubs created for
+   conference-room aliases); treat per case.
+
+9. **Commit the vault diff** in logical chunks (per top-level directory)
+   so a `git log` reads as readable history rather than one monolithic
+   "audit pass" commit.
+
+10. **Restart producers** with the audit step now wired into their
+    post-write pipeline (see "Producer integration" above).
+
+### Edge cases
+
+- **Skip zones.** The audit masks frontmatter, fenced code blocks, and
+  inline code before scanning — the same logic linkify uses. Code samples
+  that contain `[Foo](people/bar)` examples are not flagged.
+
+- **Bare wikilinks `[[people/Y]]`.** Skipped. Obsidian renders the slug
+  tail unconditionally; there is no author-chosen display text to validate.
+
+- **Display contains markdown formatting** (`[**Justin**](people/jthompson-aseva)`).
+  The display captured is `**Justin**`, which does not match canonical
+  `justin`. v1 emits `name_mismatch`; v1.x may strip formatting before
+  compare. Hand-fix for now.
+
+- **Cross-source slugs.** `queryPersonsForAudit` is brain-wide and includes
+  every non-deleted person page regardless of `source_id`. A link like
+  `[Alice](people/alice-fund-a)` validates whether `fund-a` is the default
+  source or not.
+
+- **`linkable: false` pages.** Excluded from linkify's alias map but
+  **included** in the audit's canonical-name set. Explicit author-supplied
+  links to opt-out pages should still validate; the opt-out is about
+  auto-creation, not about author-chosen links.
+
+- **iCloud Drive placeholders.** Skipped with
+  `icloud_placeholder_skipped`, same as linkify. Materialize via Finder
+  "Download Now" and rerun.
