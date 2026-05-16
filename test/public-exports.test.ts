@@ -49,6 +49,7 @@ const EXPECTED_EXPORTS: ExpectedExport[] = [
   { subpath: 'gbrain/backoff', canary: [] },
   { subpath: 'gbrain/search/hybrid', canary: ['hybridSearch', 'rrfFusion'] },
   { subpath: 'gbrain/search/expansion', canary: ['expandQuery'] },
+  { subpath: 'gbrain/ai/gateway', canary: ['configureGateway', 'embed'] },
   { subpath: 'gbrain/extract', canary: [] },
 ];
 
@@ -65,7 +66,7 @@ describe('public exports — package.json exports map', () => {
     // Adding new exports: increment this + add to EXPECTED_EXPORTS below.
     // Removing exports: see CLAUDE.md "Removing any of these is a
     // breaking change going forward" — bump minor and update this count.
-    expect(count).toBe(17);
+    expect(count).toBe(18);
   });
 
   test('EXPECTED_EXPORTS list matches the exports map exactly (no drift)', () => {
