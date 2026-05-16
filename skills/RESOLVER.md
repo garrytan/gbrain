@@ -2,6 +2,14 @@
 
 This is the dispatcher. Skills are the implementation. **Read the skill file before acting.** If two skills could match, read both. They are designed to chain (e.g., ingest then enrich for each entity).
 
+## Company mode
+
+If `get_brain_identity.brain_role` is `company`, use `skills/COMPANY_RESOLVER.md`
+instead of this personal-brain resolver. Company mode intentionally exposes a
+smaller skill surface: query, research, synthesis, briefing, reports, maintenance,
+and admin-gated setup/skillify. Member sources such as `member-alice` are imported
+snapshots; do not mutate them or open an individual member DB directly.
+
 ## Always-on (every message)
 
 | Trigger | Skill |
@@ -124,4 +132,3 @@ These apply to ALL brain-writing skills:
 | "verify this academic claim", "check this study", "academic verify", "validate citation", "is this study real" | `skills/academic-verify/SKILL.md` |
 | "make pdf from brain", "brain pdf", "convert brain page to pdf", "publish this page as pdf", "export brain page" | `skills/brain-pdf/SKILL.md` |
 | "voice note", "ingest this voice memo", "transcribe and file", "voice note ingest", "save this audio note" | `skills/voice-note-ingest/SKILL.md` |
-

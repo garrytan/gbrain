@@ -18,7 +18,7 @@ export async function startMcpServer(engine: BrainEngine) {
   // the subagent tool registry (v0.15+) can call the same mapper against a
   // filtered OPERATIONS subset instead of duplicating this shape.
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: buildToolDefs(operations),
+    tools: buildToolDefs(await operationsForCurrentBrain(engine)),
   }));
 
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
@@ -76,6 +76,13 @@ export async function startMcpServer(engine: BrainEngine) {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGHUP', () => shutdown('SIGHUP'));
+}
+
+async function operationsForCurrentBrain(engine: BrainEngine) {
+  const { getCompanyShareRole } = await import('../core/company-share.ts');
+  const { filterOperationsForBrainRole } = await import('../core/company-skill-policy.ts');
+  const role = await getCompanyShareRole(engine);
+  return filterOperationsForBrainRole(operations, role);
 }
 
 // Backward compat: used by `gbrain call` command (trusted local path).
