@@ -4,10 +4,15 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 /**
- * v0.34.5 — entity resolution prefix expansion tests.
+ * Entity resolution prefix expansion tests.
  *
  * Validates that bare first names resolve to existing pages via prefix
  * expansion, preventing phantom stub creation.
+ *
+ * Fixture names use the `alice-example` / `bob-example` / `charlie-example`
+ * / `dave-example` placeholder pattern per CLAUDE.md privacy rule.
+ * `stripe` and `stripe-atlas` are intentional — household-brand exception
+ * exercises the two-word company prefix case.
  */
 
 let engine: PGLiteEngine;
@@ -17,14 +22,18 @@ beforeAll(async () => {
   await engine.connect({ database_url: '' });
   await engine.initSchema();
 
-  // Seed test pages.
+  // Seed test pages. Naming pattern:
+  //   - alice-example: single-match case (only people/alice-*)
+  //   - bob-example vs bob-rosenstein: multi-match tiebreaker (bob-example wins on connections)
+  //   - charlie-example vs charlie-bankcroft: multi-match tiebreaker (charlie-example wins on connections)
+  //   - dave-example: single-match case
   const pages = [
-    { slug: 'people/jared-friedman', title: 'Jared Friedman', type: 'person' },
-    { slug: 'people/diana-hu', title: 'Diana Hu', type: 'person' },
-    { slug: 'people/diana-ross', title: 'Diana Ross', type: 'person' },
-    { slug: 'people/sam-altman', title: 'Sam Altman', type: 'person' },
-    { slug: 'people/sam-bankman-fried', title: 'Sam Bankman-Fried', type: 'person' },
-    { slug: 'people/garry-tan', title: 'Garry Tan', type: 'person' },
+    { slug: 'people/alice-example', title: 'Alice Example', type: 'person' },
+    { slug: 'people/bob-example', title: 'Bob Example', type: 'person' },
+    { slug: 'people/bob-rosenstein', title: 'Bob Rosenstein', type: 'person' },
+    { slug: 'people/charlie-example', title: 'Charlie Example', type: 'person' },
+    { slug: 'people/charlie-bankcroft', title: 'Charlie Bankcroft', type: 'person' },
+    { slug: 'people/dave-example', title: 'Dave Example', type: 'person' },
     { slug: 'companies/stripe', title: 'Stripe', type: 'company' },
     { slug: 'companies/stripe-atlas', title: 'Stripe Atlas', type: 'company' },
   ];
@@ -38,47 +47,47 @@ beforeAll(async () => {
     }, { sourceId: 'default' });
   }
 
-  // Give jared-friedman more connections (chunks) to win tiebreakers
-  const jaredPage = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM pages WHERE slug = 'people/jared-friedman' AND source_id = 'default'`,
+  // Give alice-example 10 chunks (single match, ensures it's the resolved target)
+  const alicePage = await engine.executeRaw<{ id: string }>(
+    `SELECT id FROM pages WHERE slug = 'people/alice-example' AND source_id = 'default'`,
     [],
   );
-  if (jaredPage.length > 0) {
+  if (alicePage.length > 0) {
     for (let i = 0; i < 10; i++) {
       await engine.executeRaw(
         `INSERT INTO content_chunks (page_id, chunk_index, chunk_text)
          VALUES ($1, $2, $3)`,
-        [jaredPage[0].id, i, `Chunk ${i} about Jared Friedman`],
+        [alicePage[0].id, i, `Chunk ${i} about Alice Example`],
       );
     }
   }
 
-  // Give sam-altman more connections than sam-bankman-fried
-  const samPage = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM pages WHERE slug = 'people/sam-altman' AND source_id = 'default'`,
+  // Give charlie-example more connections than charlie-bankcroft (20 vs 0)
+  const charliePage = await engine.executeRaw<{ id: string }>(
+    `SELECT id FROM pages WHERE slug = 'people/charlie-example' AND source_id = 'default'`,
     [],
   );
-  if (samPage.length > 0) {
+  if (charliePage.length > 0) {
     for (let i = 0; i < 20; i++) {
       await engine.executeRaw(
         `INSERT INTO content_chunks (page_id, chunk_index, chunk_text)
          VALUES ($1, $2, $3)`,
-        [samPage[0].id, i, `Chunk ${i} about Sam Altman`],
+        [charliePage[0].id, i, `Chunk ${i} about Charlie Example`],
       );
     }
   }
 
-  // Give diana-hu more connections than diana-ross
-  const dianaPage = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM pages WHERE slug = 'people/diana-hu' AND source_id = 'default'`,
+  // Give bob-example more connections than bob-rosenstein (15 vs 0)
+  const bobPage = await engine.executeRaw<{ id: string }>(
+    `SELECT id FROM pages WHERE slug = 'people/bob-example' AND source_id = 'default'`,
     [],
   );
-  if (dianaPage.length > 0) {
+  if (bobPage.length > 0) {
     for (let i = 0; i < 15; i++) {
       await engine.executeRaw(
         `INSERT INTO content_chunks (page_id, chunk_index, chunk_text)
          VALUES ($1, $2, $3)`,
-        [dianaPage[0].id, i, `Chunk ${i} about Diana Hu`],
+        [bobPage[0].id, i, `Chunk ${i} about Bob Example`],
       );
     }
   }
@@ -88,30 +97,30 @@ afterAll(async () => {
   await engine.disconnect();
 });
 
-describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
-  it('resolves "Jared" to people/jared-friedman', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Jared');
-    expect(result).toBe('people/jared-friedman');
+describe('resolveEntitySlug — prefix expansion', () => {
+  it('resolves "Alice" to people/alice-example', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Alice');
+    expect(result).toBe('people/alice-example');
   });
 
-  it('resolves "jared" (lowercase) to people/jared-friedman', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'jared');
-    expect(result).toBe('people/jared-friedman');
+  it('resolves "alice" (lowercase) to people/alice-example', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'alice');
+    expect(result).toBe('people/alice-example');
   });
 
-  it('resolves "Diana" to people/diana-hu (more connections)', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Diana');
-    expect(result).toBe('people/diana-hu');
+  it('resolves "Bob" to people/bob-example (more connections)', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Bob');
+    expect(result).toBe('people/bob-example');
   });
 
-  it('resolves "Sam" to people/sam-altman (more connections)', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Sam');
-    expect(result).toBe('people/sam-altman');
+  it('resolves "Charlie" to people/charlie-example (more connections)', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Charlie');
+    expect(result).toBe('people/charlie-example');
   });
 
-  it('resolves "Garry" to people/garry-tan (single match)', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Garry');
-    expect(result).toBe('people/garry-tan');
+  it('resolves "Dave" to people/dave-example (single match)', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Dave');
+    expect(result).toBe('people/dave-example');
   });
 
   it('falls through to slugify for unknown names', async () => {
@@ -120,20 +129,20 @@ describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
   });
 
   it('exact match still works for fully-qualified slugs', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'people/jared-friedman');
-    expect(result).toBe('people/jared-friedman');
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'people/alice-example');
+    expect(result).toBe('people/alice-example');
   });
 
   it('multi-word input does NOT trigger prefix expansion', async () => {
-    // "Jared Friedman" should go through fuzzy match, not prefix expansion
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Jared Friedman');
+    // "Alice Example" should go through fuzzy match, not prefix expansion
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Alice Example');
     // Should resolve via fuzzy match to the same page
-    expect(result).toContain('jared-friedman');
+    expect(result).toContain('alice-example');
   });
 
   it('hyphenated input does NOT trigger prefix expansion', async () => {
-    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'jared-friedman');
-    expect(result).toBe('people/jared-friedman');
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'alice-example');
+    expect(result).toBe('people/alice-example');
   });
 
   it('returns null for empty input', async () => {
@@ -144,11 +153,11 @@ describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
 
 describe('slugify', () => {
   it('lowercases and hyphenates', () => {
-    expect(slugify('Jared Friedman')).toBe('jared-friedman');
+    expect(slugify('Alice Example')).toBe('alice-example');
   });
 
   it('handles single word', () => {
-    expect(slugify('Jared')).toBe('jared');
+    expect(slugify('Alice')).toBe('alice');
   });
 
   it('strips accents', () => {

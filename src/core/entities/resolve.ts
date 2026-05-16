@@ -2,7 +2,7 @@
  * v0.31 Hot Memory — entity slug canonicalization.
  *
  * Per /plan-eng-review D4: at extract time, resolve a free-form entity name
- * (e.g. "Sam") against `pages.slug` so that hot memory + the existing graph
+ * (e.g. "Alice") against `pages.slug` so that hot memory + the existing graph
  * see the same canonical id. Falls back to a slugified form when no page
  * matches.
  *
@@ -10,12 +10,12 @@
  * Lives under `src/core/entities/` so signal-detector can reuse it for the
  * Sonnet pass too without circular import through facts/.
  *
- * v0.34.5 — added a prefix-expansion step between fuzzy
- * match and slugify fallback. Bare first names like "Jared" scored too
- * low on pg_trgm (short strings have terrible trigram overlap), so they
- * fell through to slugify("Jared") → "jared", which then spawned a
- * phantom `people/jared.md` stub instead of resolving to the existing
- * `people/jared-friedman` page. The fix queries `slug LIKE 'people/X-%'`
+ * Prefix-expansion step lives between fuzzy match and slugify fallback.
+ * Bare first names like "Alice" score too low on pg_trgm (short strings
+ * have terrible trigram overlap), so without this step they fall through
+ * to slugify("Alice") → "alice", which spawns a phantom `people/alice.md`
+ * stub at brain root instead of resolving to the existing
+ * `people/alice-example` page. The fix queries `slug LIKE 'people/X-%'`
  * (then `companies/X-%`) when fuzzy fails on a single-word bare name, and
  * uses connection count (links + chunks) as the tiebreaker when multiple
  * candidates match.
@@ -62,10 +62,10 @@ export async function resolveEntitySlug(
   // 3. Prefix-expansion match: when the input looks like a bare first name
   //    (no slash, no prefix, slugifies to a single short token), try
   //    `people/<token>-%` then `companies/<token>-%`. Short bare names
-  //    score terribly on pg_trgm — similarity('jared', 'jared-friedman')
+  //    score terribly on pg_trgm — similarity('alice', 'alice-example')
   //    is below the 0.4 threshold — so this is the layer that catches
-  //    `"Jared"` → `people/jared-friedman` before we phantom-stub a
-  //    bare `people/jared.md`.
+  //    `"Alice"` → `people/alice-example` before we phantom-stub a bare
+  //    `people/alice.md`.
   if (isBareName(trimmed)) {
     const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
     if (expanded) return expanded;
@@ -78,17 +78,17 @@ export async function resolveEntitySlug(
 /**
  * "Bare name" detector — true when the input is a single word with no
  * slash, no embedded prefix marker, and slugifies to a non-empty token.
- * Multi-word inputs (e.g. "Jared Friedman") are handled by fuzzy match;
+ * Multi-word inputs (e.g. "Alice Example") are handled by fuzzy match;
  * this gate only fires for short first-name-shaped tokens.
  */
 function isBareName(raw: string): boolean {
   if (raw.includes('/')) return false;
-  // One-token input. Whitespace-tokenize: "Jared" → 1, "Jared Friedman" → 2.
+  // One-token input. Whitespace-tokenize: "Alice" → 1, "Alice Example" → 2.
   const tokens = raw.trim().split(/\s+/).filter(Boolean);
   if (tokens.length !== 1) return false;
   const slug = slugify(raw);
   if (!slug) return false;
-  // Reject hyphenated multi-token slugs like "jared-friedman" — those
+  // Reject hyphenated multi-token slugs like "alice-example" — those
   // should hit the exact-slug or fuzzy path, not prefix expansion.
   if (slug.includes('-')) return false;
   return true;
