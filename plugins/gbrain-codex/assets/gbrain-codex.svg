@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="GBrain">
+  <rect width="128" height="128" rx="28" fill="#0f172a"/>
+  <path d="M36 71c-10-4-16-12-16-23 0-15 12-27 28-27 6 0 12 2 17 6 5-4 11-6 17-6 16 0 28 12 28 27 0 11-6 19-16 23" fill="none" stroke="#60a5fa" stroke-width="8" stroke-linecap="round"/>
+  <path d="M35 75c4 18 16 29 29 29s25-11 29-29" fill="none" stroke="#34d399" stroke-width="8" stroke-linecap="round"/>
+  <path d="M45 48h38M45 64h38M53 80h22" fill="none" stroke="#e2e8f0" stroke-width="7" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,46 @@
+{
+  "name": "gbrain-codex",
+  "version": "0.33.0",
+  "description": "Full-surface Codex Desktop adapter for a local GBrain install.",
+  "author": {
+    "name": "GBrain",
+    "url": "https://github.com/garrytan/gbrain"
+  },
+  "homepage": "https://github.com/garrytan/gbrain",
+  "repository": "https://github.com/garrytan/gbrain",
+  "license": "MIT",
+  "keywords": [
+    "gbrain",
+    "codex",
+    "mcp",
+    "knowledge-base",
+    "search",
+    "agent"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "GBrain",
+    "shortDescription": "Use a local GBrain from Codex Desktop",
+    "longDescription": "GBrain for Codex Desktop is a thin local adapter over an already-installed GBrain CLI. It launches `gbrain serve`, exposes the same MCP tools GBrain already serves to other hosts, and uses the repo's current skillpack so Codex can search, write, sync, and operate the brain with upstream behavior.",
+    "developerName": "GBrain",
+    "category": "Engineering",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/garrytan/gbrain",
+    "privacyPolicyURL": "https://github.com/garrytan/gbrain/blob/master/SECURITY.md",
+    "termsOfServiceURL": "https://github.com/garrytan/gbrain/blob/master/LICENSE",
+    "defaultPrompt": [
+      "Search my GBrain for prior context on this topic",
+      "Write this note into GBrain and link it correctly",
+      "Sync the brain and tell me what changed"
+    ],
+    "brandColor": "#2563EB",
+    "composerIcon": "./assets/gbrain-codex.svg",
+    "logo": "./assets/gbrain-codex.svg",
+    "screenshots": []
+  }
+}
