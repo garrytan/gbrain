@@ -413,28 +413,39 @@ gbrain check-resolvable --verbose
 First run on a real OpenClaw deployment found 15 unreachable skills out of 102 — about 15%
 of the tree was dark. The essay's "skills the agent can never reach" footgun, now visible.
 
-### `gbrain skillpack install` — drop 25 curated skills into your OpenClaw
+### `gbrain skillpack scaffold` — drop the curated skills into your agent repo (v0.36)
 
-The skills gbrain ships are a curated bundle. Install them into your workspace with
-dependency closure (shared conventions come along), per-file diff protection (your local
-edits are never clobbered without `--overwrite-local`), a file lock that serializes
-concurrent installers, and an atomic managed-block update to your AGENTS.md so you can
-see exactly what gbrain wrote.
+The skills gbrain ships are a reference library. `scaffold` does a one-time additive
+copy into your repo — your `~/git/wintermute`, `~/git/neuromancer`, or any other agent
+workspace with a `skills/` dir. After the copy, you OWN the files. Edit freely; gbrain
+becomes a reference, not a force-update gate.
 
 ```bash
-gbrain skillpack list                          # 25 curated skills
-gbrain skillpack install brain-ops             # one skill + its shared conventions
-gbrain skillpack install --all                 # the full bundle
-gbrain skillpack install brain-ops --dry-run   # preview; no writes
-gbrain skillpack diff brain-ops                # compare bundle vs your local copy
+cd ~/git/wintermute
+gbrain skillpack list                          # what's in the bundle
+gbrain skillpack scaffold brain-ops            # one skill + its shared conventions
+gbrain skillpack scaffold --all                # the full bundle (no prune)
+gbrain skillpack scaffold brain-ops --dry-run  # preview; no writes
+gbrain skillpack reference brain-ops           # diff vs gbrain's current bundle
 ```
 
-Re-running is safe. The managed-block markers in your AGENTS.md let `skillpack install`
-accumulate rows across separate single-skill installs instead of overwriting each other.
-A receipt comment inside the fence (`<!-- gbrain:skillpack:manifest cumulative-slugs="..." -->`)
-tracks what gbrain has installed across runs. `install --all` is the only path that prunes;
-per-skill install never deletes what it didn't install. If you hand-add a row inside the fence,
-gbrain preserves it on reinstall and emits a stderr notice telling your agent to investigate.
+Re-running scaffold is a no-op — existing files are preserved. `reference` is the
+read-only update lens: it prints per-file status + unified diffs framed for an agent to
+decide what to integrate. Routing happens via each skill's frontmatter `triggers:`
+array — gbrain does NOT touch your `RESOLVER.md` or `AGENTS.md`. See
+[docs/guides/skillpacks-as-scaffolding.md](docs/guides/skillpacks-as-scaffolding.md)
+for the full model.
+
+**Upgrading from v0.35 or earlier?** Run `gbrain skillpack migrate-fence` once to
+strip the old managed-block fence (rows preserved verbatim as user-owned routing).
+Then `scrub-legacy-fence-rows` once your agent walks frontmatter `triggers:` for
+routing. `install` and `uninstall` are removed in v0.36 — they exit non-zero with a
+hint pointing at `scaffold` / `migrate-fence`.
+
+**Want to lift your fork's skill back into gbrain?** `gbrain skillpack harvest <slug>
+--from ~/git/wintermute` is the inverse loop. Default privacy linter scans for
+`Wintermute`, emails, Slack channels; companion editorial skill `skillpack-harvest`
+walks the genericization checklist.
 
 **Skillify is the piece that makes the skills tree survive six months of compounding work.**
 Read [`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) for the full 10-item checklist
@@ -751,16 +762,24 @@ JOBS (Minions)
   gbrain jobs smoke                                     One-command health check
   gbrain jobs work [--queue Q] [--concurrency N]        Start worker daemon
 
-SKILLS (v0.19)
-  gbrain skillify scaffold <name>       Create 5 stub files + idempotent resolver row
-  gbrain skillify check [path]          10-item audit of a skill
-  gbrain skillpack list                 Print the 25 curated skills in the bundle
-  gbrain skillpack install <name>       Copy one skill + its shared conventions into target
-  gbrain skillpack install --all        Install the full curated bundle
-  gbrain skillpack diff <name>          Per-file diff: bundle vs target workspace
-  gbrain check-resolvable [--strict]    Resolver audit (reachability, MECE, DRY, routing, filing,
-                                        SKILLIFY_STUB). Accepts RESOLVER.md OR AGENTS.md.
-  gbrain routing-eval [--llm] [--json]  Intent→skill routing accuracy on fixtures
+SKILLS (v0.36 — scaffold + reference model)
+  gbrain skillify scaffold <name>          Create 5 stub files + idempotent resolver row
+  gbrain skillify check [path]             10-item audit of a skill
+  gbrain skillpack list                    Print the curated skills in the bundle
+  gbrain skillpack scaffold <name>         Copy one skill into your agent repo (additive)
+  gbrain skillpack scaffold --all          Scaffold the full bundle (no prune)
+  gbrain skillpack reference <name>        Read-only diff vs bundle + framing
+  gbrain skillpack reference --apply-clean-hunks <name>
+                                            Auto-apply non-conflicting hunks (two-way)
+  gbrain skillpack migrate-fence           One-shot strip of legacy managed-block fence
+  gbrain skillpack scrub-legacy-fence-rows Opt-in cleanup of preserved legacy rows
+  gbrain skillpack harvest <slug> --from <host-repo-root>
+                                            Lift a host skill upstream into gbrain
+  gbrain skillpack check [--strict]        Health report; --strict exits non-zero on drift
+  gbrain skillpack diff <name>             (Informational) per-file status; exit 0 always
+  gbrain check-resolvable [--strict]       Resolver audit (reachability, MECE, DRY, routing, filing,
+                                            SKILLIFY_STUB). Accepts RESOLVER.md OR AGENTS.md.
+  gbrain routing-eval [--llm] [--json]     Intent→skill routing accuracy on fixtures
 
 EVAL
   gbrain eval --qrels <path>            Legacy IR-eval (P@k, R@k, MRR, nDCG@k against ground truth)
@@ -854,7 +873,7 @@ The skills in this repo are those patterns, generalized. What took 11 days to bu
 
 **For agents:**
 - **[skills/RESOLVER.md](skills/RESOLVER.md)** ... Start here. The skill dispatcher.
-- [Individual skill files](skills/) ... 28 standalone instruction sets (25 ship in the curated `gbrain skillpack install` bundle)
+- [Individual skill files](skills/) ... standalone instruction sets (most ship in the curated `gbrain skillpack scaffold` bundle)
 - [GBRAIN_SKILLPACK.md](docs/GBRAIN_SKILLPACK.md) ... Legacy reference architecture
 - [Getting Data In](docs/integrations/README.md) ... Integration recipes and data flow
 - [GBRAIN_VERIFY.md](docs/GBRAIN_VERIFY.md) ... Installation verification

@@ -222,7 +222,7 @@ strict behavior when unset.
 - `src/commands/skillify.ts` + `src/core/skillify/{generator,templates}.ts` (v0.19) — `gbrain skillify scaffold <name>` creates all stubs for a new skill in one command: SKILL.md, script, tests, routing-eval.jsonl, resolver entry, filing-rules pointer. `gbrain skillify check <script>` runs the 10-step checklist (LLM evals, routing evals, check-resolvable gate, filing audit) against a candidate skill before it lands.
 - `src/commands/skillify-check.ts` (v0.19) — `gbrain skillpack-check` agent-readable health report. Exit 0/1/2 for CI pipeline gating; JSON for debugging. Wraps `check-resolvable --json`, `doctor --json`, and migration ledger into one payload so agents can decide whether a human action is required.
 - `src/commands/book-mirror.ts` (v0.25.1) — `gbrain book-mirror --chapters-dir <path> --slug <slug> [flags]`. Flagship of the v0.25.1 skills wave. Submits N read-only subagent jobs (one per chapter; `allowed_tools: ['get_page', 'search']`), waits for all via `waitForCompletion`, reads each child's `job.result`, assembles two-column markdown CLI-side, writes a single operator-trust `put_page` to `media/books/<slug>-personalized.md`. Codex HIGH-1 fix applied: trust narrowing happens at the tool-allowlist layer (subagents can't call put_page) instead of allowedSlugPrefixes — untrusted EPUB content cannot prompt-inject any people page. Cost-estimate prompt before launching; refuses to spend in non-TTY without `--yes`. Per-chapter idempotency keys (`book-mirror:<slug>:ch-<N>`) for retry-friendly re-runs. Partial-failure handling: assembles with completed chapters and a `## Failed chapters` section listing retries. Test surface: `test/book-mirror.test.ts` (9 cases — CLI registration + source invariants).
-- `src/commands/skillpack.ts` + `src/core/skillpack/{bundle,installer}.ts` (v0.19) — `gbrain skillpack install` drops gbrain's curated 25-skill bundle into a host workspace, managed-block style. Never clobbers local edits; tracks a skill manifest so subsequent `install --update` diffs cleanly. Bundle builder (`skillpack/bundle.ts`) packages the set from `skills/` into a versioned payload. **v0.24.0:** managed block embeds a `<!-- gbrain:skillpack:manifest cumulative-slugs="..." version="..." -->` receipt inside the fence. Per-skill installs accumulate via `union(prior_receipt, this_call)`; `install --all` is the only path that prunes (drops slugs no longer in the bundle). Rows inside the fence whose slug is in neither the new cumulative set nor the bundle survive as user-added with a stderr `[skillpack] unknown row in managed block: "<slug>" — Investigate: ...` warning. Pre-v0.24 fences upgrade silently on first install (extracted slugs become the prior cumulative set). **v0.25.1:** `gbrain skillpack uninstall <name>` lands as a real CLI subcommand. Inverse of install with symmetric data-loss posture: D8 refuses if the slug isn't in the cumulative-slugs receipt (won't nuke a hand-added row); D11 content-hash guard refuses if any installed file diverges from the bundle (you've edited it locally) unless `--overwrite-local` is passed. `applyUninstall` enforces an atomic-refusal contract: pre-scans ALL files for divergence; refuses BEFORE any unlink fires if anything is blocked. The bug fix landed via `test/skillpack-uninstall.test.ts`'s D11 case — the test was written with the contract in mind, the original implementation interleaved hash-check + unlink, and the lie surfaced immediately.
+- `src/commands/skillpack.ts` + `src/core/skillpack/{bundle,scaffold,reference,migrate-fence,scrub-legacy,harvest,harvest-lint,copy,apply-hunks,diff-text,installer}.ts` (v0.19 → v0.36) — **v0.36 contract change**: managed-block install model retired. `install` and `uninstall` removed (clean break, no alias; both exit non-zero with a hint pointing at the replacement command). New surface: `scaffold` (one-time additive copy via shared `copyArtifacts` helper in `copy.ts`; refuses to overwrite existing files; partial-state fills missing paired sources declared in SKILL.md frontmatter `sources:`), `reference` (read-only diff lens with agent-readable framing line + `--apply-clean-hunks` two-way auto-apply via pure-JS unified-diff parser/applier in `apply-hunks.ts` + `diff-text.ts`), `migrate-fence` (one-shot strip of legacy fence; cumulative-slugs receipt → row-parsing fallback; preserves rows verbatim as user-owned routing), `scrub-legacy-fence-rows` (opt-in row cleanup with skill-present + non-empty-triggers gate), `harvest` (host→gbrain inverse with symlink-reject + canonical-path containment via `validateUploadPath`-style gate + default-on privacy linter in `harvest-lint.ts` against `~/.gbrain/harvest-private-patterns.txt` plus built-in `\bWintermute\b` + email + Slack-channel patterns; rollback on match). Paired-source declarations moved from `openclaw.plugin.json` to each SKILL.md's frontmatter `sources:` array (D2; validated by `loadSkillSources` in `bundle.ts`). `autoDetectSkillsDir` (in `src/core/repo-root.ts`) gains a `cwd_walk_up` tier ahead of `~/.openclaw/workspace` (D3; non-OpenClaw hosts like `~/git/wintermute` auto-detect; R5 regression preserves `$OPENCLAW_WORKSPACE` precedence). `gbrain skillpack check --strict` exits non-zero on drift (CI gate); top-level `gbrain skillpack-check` keeps exit-1-on-issues for cron compat. Companion editorial skill `skills/skillpack-harvest/SKILL.md` drives the genericization checklist before the CLI runs. Design + workflow doc: `docs/guides/skillpacks-as-scaffolding.md`. ~600 LOC of managed-block machinery deleted; ~400 LOC of new modules + ~1000 LOC of new test coverage across `test/skillpack-{copy,scaffold,reference,reference-apply,apply-hunks,migrate-fence,scrub-legacy,harvest,harvest-lint,frontmatter-sources}.test.ts` + 9-case E2E in `test/e2e/skillpack-flow.test.ts`. `installer.ts` + `test/skillpack-install.test.ts` survive for now — `gbrain skillpack diff` still uses `diffSkill` from there; slated for v0.37 cleanup. **Historical (v0.19-v0.35.1):** managed-block model with `<!-- gbrain:skillpack:begin -->`/`end -->` fence, `cumulative-slugs="..."` receipt, content-hash gates, lockfile; `install --all` prune; `uninstall` with D8 receipt gate + D11 atomic-refusal content-hash pre-scan. Replaced wholesale in v0.36.
 - `src/core/archive-crawler-config.ts` (v0.25.1) — D12 + codex HIGH-4 safety gate for the `archive-crawler` skill. Refuses to run unless `archive-crawler.scan_paths:` is explicitly set in the brain repo's `gbrain.yml`. Mirrors the storage-config.ts parsing pattern (sibling file; separate concern from storage tiering). `loadArchiveCrawlerConfig(repoPath)` throws `ArchiveCrawlerConfigError(missing_section | empty_scan_paths | invalid_path | parse_error)`. `normalizeAndValidateArchiveCrawlerConfig` rejects relative paths and `..` traversal; `~` is expanded; trailing-slash normalized for unambiguous prefix matching. `isPathAllowed(candidate, config)` is the runtime per-file gate (scan_paths prefix-match with directory-boundary correctness; deny_paths overrides). Tests in `test/archive-crawler-config.test.ts` (19 cases).
 - `test/helpers/cli-pty-runner.ts` (v0.25.1) — generic real-PTY harness ported from gstack and trimmed to ~470 lines. Uses pure `Bun.spawn({terminal:})` (Bun 1.3.10+; engines.bun pin in package.json). Generic primitives only — no plan-mode orchestrators. Exports: `launchPty`, `resolveBinary`, `stripAnsi`, `parseNumberedOptions`, `optionsSignature`, `isNumberedOptionListVisible`, `isTrustDialogVisible`. Self-tests in `test/cli-pty-runner.test.ts` (24 cases).
 - `src/core/skill-manifest.ts` (v0.19) — parser for `skill-manifest.json` records. Used by skillpack installer to detect drift between the shipped bundle and the user's local edits, so updates merge instead of overwriting.
@@ -2008,6 +2008,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Skillify this", "is this a skill?", "make this proper" | `skills/skillify/SKILL.md` |
 | "Compress my resolver", "AGENTS.md too large", "RESOLVER.md too big", "functional area dispatcher", "shrink routing table" | `skills/functional-area-resolver/SKILL.md` |
 | "Is gbrain healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
+| "harvest this skill into gbrain", "publish this skill to gbrain", "lift this skill upstream", "share this skill with other gbrain clients", "promote my skill to gbrain" | `skills/skillpack-harvest/SKILL.md` |
 | Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
 | "Validate skills", skill health check | `skills/testing/SKILL.md` |
@@ -2495,28 +2496,39 @@ gbrain check-resolvable --verbose
 First run on a real OpenClaw deployment found 15 unreachable skills out of 102 — about 15%
 of the tree was dark. The essay's "skills the agent can never reach" footgun, now visible.
 
-### `gbrain skillpack install` — drop 25 curated skills into your OpenClaw
+### `gbrain skillpack scaffold` — drop the curated skills into your agent repo (v0.36)
 
-The skills gbrain ships are a curated bundle. Install them into your workspace with
-dependency closure (shared conventions come along), per-file diff protection (your local
-edits are never clobbered without `--overwrite-local`), a file lock that serializes
-concurrent installers, and an atomic managed-block update to your AGENTS.md so you can
-see exactly what gbrain wrote.
+The skills gbrain ships are a reference library. `scaffold` does a one-time additive
+copy into your repo — your `~/git/wintermute`, `~/git/neuromancer`, or any other agent
+workspace with a `skills/` dir. After the copy, you OWN the files. Edit freely; gbrain
+becomes a reference, not a force-update gate.
 
 ```bash
-gbrain skillpack list                          # 25 curated skills
-gbrain skillpack install brain-ops             # one skill + its shared conventions
-gbrain skillpack install --all                 # the full bundle
-gbrain skillpack install brain-ops --dry-run   # preview; no writes
-gbrain skillpack diff brain-ops                # compare bundle vs your local copy
+cd ~/git/wintermute
+gbrain skillpack list                          # what's in the bundle
+gbrain skillpack scaffold brain-ops            # one skill + its shared conventions
+gbrain skillpack scaffold --all                # the full bundle (no prune)
+gbrain skillpack scaffold brain-ops --dry-run  # preview; no writes
+gbrain skillpack reference brain-ops           # diff vs gbrain's current bundle
 ```
 
-Re-running is safe. The managed-block markers in your AGENTS.md let `skillpack install`
-accumulate rows across separate single-skill installs instead of overwriting each other.
-A receipt comment inside the fence (`<!-- gbrain:skillpack:manifest cumulative-slugs="..." -->`)
-tracks what gbrain has installed across runs. `install --all` is the only path that prunes;
-per-skill install never deletes what it didn't install. If you hand-add a row inside the fence,
-gbrain preserves it on reinstall and emits a stderr notice telling your agent to investigate.
+Re-running scaffold is a no-op — existing files are preserved. `reference` is the
+read-only update lens: it prints per-file status + unified diffs framed for an agent to
+decide what to integrate. Routing happens via each skill's frontmatter `triggers:`
+array — gbrain does NOT touch your `RESOLVER.md` or `AGENTS.md`. See
+[docs/guides/skillpacks-as-scaffolding.md](docs/guides/skillpacks-as-scaffolding.md)
+for the full model.
+
+**Upgrading from v0.35 or earlier?** Run `gbrain skillpack migrate-fence` once to
+strip the old managed-block fence (rows preserved verbatim as user-owned routing).
+Then `scrub-legacy-fence-rows` once your agent walks frontmatter `triggers:` for
+routing. `install` and `uninstall` are removed in v0.36 — they exit non-zero with a
+hint pointing at `scaffold` / `migrate-fence`.
+
+**Want to lift your fork's skill back into gbrain?** `gbrain skillpack harvest <slug>
+--from ~/git/wintermute` is the inverse loop. Default privacy linter scans for
+`Wintermute`, emails, Slack channels; companion editorial skill `skillpack-harvest`
+walks the genericization checklist.
 
 **Skillify is the piece that makes the skills tree survive six months of compounding work.**
 Read [`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) for the full 10-item checklist
@@ -2833,16 +2845,24 @@ JOBS (Minions)
   gbrain jobs smoke                                     One-command health check
   gbrain jobs work [--queue Q] [--concurrency N]        Start worker daemon
 
-SKILLS (v0.19)
-  gbrain skillify scaffold <name>       Create 5 stub files + idempotent resolver row
-  gbrain skillify check [path]          10-item audit of a skill
-  gbrain skillpack list                 Print the 25 curated skills in the bundle
-  gbrain skillpack install <name>       Copy one skill + its shared conventions into target
-  gbrain skillpack install --all        Install the full curated bundle
-  gbrain skillpack diff <name>          Per-file diff: bundle vs target workspace
-  gbrain check-resolvable [--strict]    Resolver audit (reachability, MECE, DRY, routing, filing,
-                                        SKILLIFY_STUB). Accepts RESOLVER.md OR AGENTS.md.
-  gbrain routing-eval [--llm] [--json]  Intent→skill routing accuracy on fixtures
+SKILLS (v0.36 — scaffold + reference model)
+  gbrain skillify scaffold <name>          Create 5 stub files + idempotent resolver row
+  gbrain skillify check [path]             10-item audit of a skill
+  gbrain skillpack list                    Print the curated skills in the bundle
+  gbrain skillpack scaffold <name>         Copy one skill into your agent repo (additive)
+  gbrain skillpack scaffold --all          Scaffold the full bundle (no prune)
+  gbrain skillpack reference <name>        Read-only diff vs bundle + framing
+  gbrain skillpack reference --apply-clean-hunks <name>
+                                            Auto-apply non-conflicting hunks (two-way)
+  gbrain skillpack migrate-fence           One-shot strip of legacy managed-block fence
+  gbrain skillpack scrub-legacy-fence-rows Opt-in cleanup of preserved legacy rows
+  gbrain skillpack harvest <slug> --from <host-repo-root>
+                                            Lift a host skill upstream into gbrain
+  gbrain skillpack check [--strict]        Health report; --strict exits non-zero on drift
+  gbrain skillpack diff <name>             (Informational) per-file status; exit 0 always
+  gbrain check-resolvable [--strict]       Resolver audit (reachability, MECE, DRY, routing, filing,
+                                            SKILLIFY_STUB). Accepts RESOLVER.md OR AGENTS.md.
+  gbrain routing-eval [--llm] [--json]     Intent→skill routing accuracy on fixtures
 
 EVAL
   gbrain eval --qrels <path>            Legacy IR-eval (P@k, R@k, MRR, nDCG@k against ground truth)
@@ -2936,7 +2956,7 @@ The skills in this repo are those patterns, generalized. What took 11 days to bu
 
 **For agents:**
 - **[skills/RESOLVER.md](skills/RESOLVER.md)** ... Start here. The skill dispatcher.
-- [Individual skill files](skills/) ... 28 standalone instruction sets (25 ship in the curated `gbrain skillpack install` bundle)
+- [Individual skill files](skills/) ... standalone instruction sets (most ship in the curated `gbrain skillpack scaffold` bundle)
 - [GBRAIN_SKILLPACK.md](docs/GBRAIN_SKILLPACK.md) ... Legacy reference architecture
 - [Getting Data In](docs/integrations/README.md) ... Integration recipes and data flow
 - [GBRAIN_VERIFY.md](docs/GBRAIN_VERIFY.md) ... Installation verification
