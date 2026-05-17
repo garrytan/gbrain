@@ -2,6 +2,16 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.35.3.2] - 2026-05-15
+
+**Design retrospective: why `gbrain merge-phantoms` is harder than it looks.**
+
+After 30 rounds of codex review on a stripped-and-deferred operator cleanup command (closed PR #1010), the failure mode is documented as a guide for the next implementer. The fence is the system of record; a destructive cleanup command that mutates fence + DB independently has to re-implement reconciliation logic that already lives in `extract_facts`. The doc captures the full round-by-round bug cascade (4 P1 data-loss paths + ~40 P2 correctness issues), three alternative-design options (Alpha report-only / Beta extract_facts hook / Gamma `canonical_of` schema), and a regression checklist for whichever shape ships next.
+
+### Itemized changes
+
+- `docs/designs/MERGE_PHANTOMS.md` — 482-line design retrospective. Problem statement, what was tried, why it became a bug farm, recommended next-implementation shape (Option Beta — hook into the existing `extract_facts` cycle phase). The codex iteration commits from the closed PR remain available in git as a regression checklist (real fence markers, MAX_SEARCH_LIMIT clamping, stale compiled_truth, embedding shape variance, source resolution chain, bi-directional fence drift, etc).
+
 ## [0.35.3.1] - 2026-05-15
 
 **The contradiction probe stops crying wolf on time. Six-member verdict enum + page-level date in the prompt + a new privacy lint for proposals.**
