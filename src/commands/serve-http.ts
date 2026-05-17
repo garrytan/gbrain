@@ -178,8 +178,31 @@ interface ServeHttpOptions {
   bind?: string;
 }
 
+function resolvePublicUrl(rawPublicUrl: string | undefined, port: number): string {
+  const candidates = [
+    rawPublicUrl,
+    process.env.VERCEL_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.PUBLIC_URL,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const trimmed = String(candidate).trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed.replace(/\/+$/u, '');
+    }
+    return `https://${trimmed}`.replace(/\/+$/u, '');
+  }
+
+  return `http://localhost:${port}`;
+}
+
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
+  const resolvedPublicUrl = resolvePublicUrl(publicUrl, port);
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
   // gbrain's primary use case is a personal-knowledge brain on a laptop;
   // the pre-v0.34 default exposed brains on every interface. Server
@@ -313,7 +336,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // match the URL clients actually hit, or strict OAuth clients reject tokens
   // (RFC 8414 §3.3). Honor --public-url for production deployments behind
   // reverse proxies / tunnels; default to localhost for dev.
-  const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
+  const issuerUrl = new URL(resolvedPublicUrl);
 
   // F9: cookie `secure` flag honors both the request's TLS state (req.secure
   // is set when express trust-proxy lands an X-Forwarded-Proto: https) AND
@@ -473,7 +496,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     pruneExpiredNonces();
     const nonce = randomBytes(32).toString('hex');
     magicLinkNonces.set(nonce, Date.now() + NONCE_TTL_MS);
-    const baseUrl = publicUrl || `http://localhost:${port}`;
+    const baseUrl = resolvedPublicUrl;
     res.json({ url: `${baseUrl}/admin/auth/${nonce}`, expires_in: NONCE_TTL_MS / 1000 });
   });
 
@@ -1099,9 +1122,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ║  DCR:       ${(enableDcr ? 'enabled' : 'disabled').padEnd(40)}║
 ║  Token TTL: ${(tokenTtl + 's').padEnd(40)}║
 ╠══════════════════════════════════════════════════════╣
-║  Admin:     http://localhost:${port}/admin${' '.repeat(Math.max(0, 19 - String(port).length))}║
-║  MCP:       http://localhost:${port}/mcp${' '.repeat(Math.max(0, 21 - String(port).length))}║
-║  Health:    http://localhost:${port}/health${' '.repeat(Math.max(0, 18 - String(port).length))}║
+║  Admin:     ${`${resolvedPublicUrl}/admin`.padEnd(54)}║
+║  MCP:       ${`${resolvedPublicUrl}/mcp`.padEnd(54)}║
+║  Health:    ${`${resolvedPublicUrl}/health`.padEnd(54)}║
 ╠══════════════════════════════════════════════════════╣
 ║  Admin Token (paste into /admin login):              ║
 ║  ${bootstrapToken.substring(0, 50)}  ║
