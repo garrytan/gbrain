@@ -137,14 +137,34 @@ function isLocalPathDirty(localPath: string): boolean {
   try {
     const out = execFileSync('git', ['-C', localPath, 'status', '--porcelain'], {
       encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 10_000,
     });
     return out.trim().length > 0;
-  } catch {
+  } catch (err) {
     // Not a git repo OR git not on PATH → treat as "not dirty" (the
     // user opted out of git tracking, which is allowed). The fence
-    // writes are still atomic via .tmp + rename.
-    return false;
+    // writes are still atomic via .tmp + rename. Unknown git failures
+    // fail closed by bubbling up to Phase B.
+    const error = err as {
+      code?: unknown;
+      status?: unknown;
+      stderr?: unknown;
+      message?: unknown;
+    };
+    const code = typeof error.code === 'string' ? error.code : '';
+    const status = typeof error.status === 'number' ? error.status : undefined;
+    const stderr = Buffer.isBuffer(error.stderr)
+      ? error.stderr.toString('utf-8')
+      : typeof error.stderr === 'string'
+        ? error.stderr
+        : '';
+    const message = typeof error.message === 'string' ? error.message : '';
+    const text = `${message}\n${stderr}`;
+    if (code === 'ENOENT' || (status === 128 && /not a git repository/i.test(text))) {
+      return false;
+    }
+    throw err;
   }
 }
 
@@ -179,24 +199,6 @@ async function phaseBFenceFacts(
   }
 
   try {
-    // Look up all sources + their local_paths.
-    const sources = await engine.executeRaw<SourceLookup>(
-      `SELECT id, local_path FROM sources`,
-    );
-    const localPathById = new Map<string, string | null>();
-    for (const s of sources) localPathById.set(s.id, s.local_path);
-
-    // Dirty-tree refusal: check every source's local_path before writing.
-    for (const [id, localPath] of localPathById) {
-      if (localPath && isLocalPathDirty(localPath)) {
-        return {
-          name: 'fence_facts',
-          status: 'failed',
-          detail: `source "${id}" has uncommitted changes in ${localPath}. Commit or stash, then re-run.`,
-        };
-      }
-    }
-
     // Walk legacy rows in (source_id, entity_slug) groups for per-page
     // atomic writes.
     const legacy = await engine.executeRaw<LegacyFactRow>(
@@ -206,7 +208,6 @@ async function phaseBFenceFacts(
         WHERE row_num IS NULL
         ORDER BY source_id, entity_slug, id`,
     );
-
     const outcome: PhaseBOutcome = {
       scanned: legacy.length,
       fenced: 0,
@@ -215,6 +216,24 @@ async function phaseBFenceFacts(
       pages_touched: 0,
       failed_pages: [],
     };
+
+    if (legacy.length === 0) {
+      return {
+        name: 'fence_facts',
+        status: 'complete',
+        detail: `scanned=${outcome.scanned} fenced=${outcome.fenced} ` +
+          `pages=${outcome.pages_touched} skipped_no_entity=${outcome.skipped_no_entity} ` +
+          `skipped_no_local_path=${outcome.skipped_no_local_path}`,
+      };
+    }
+
+    // Look up sources after confirming there is legacy work. Dirty-tree
+    // refusal only applies to source worktrees that will actually be written.
+    const sources = await engine.executeRaw<SourceLookup>(
+      `SELECT id, local_path FROM sources`,
+    );
+    const localPathById = new Map<string, string | null>();
+    for (const s of sources) localPathById.set(s.id, s.local_path);
 
     // Group by (source_id, entity_slug) so each page's fence is updated
     // atomically with all its legacy rows.
@@ -233,6 +252,20 @@ async function phaseBFenceFacts(
       const list = groups.get(key) ?? [];
       list.push(row);
       groups.set(key, list);
+    }
+
+    const sourceIdsToCheck = new Set<string>();
+    for (const key of groups.keys()) sourceIdsToCheck.add(key.split('\0', 1)[0]);
+
+    for (const sourceId of sourceIdsToCheck) {
+      const localPath = localPathById.get(sourceId);
+      if (localPath && isLocalPathDirty(localPath)) {
+        return {
+          name: 'fence_facts',
+          status: 'failed',
+          detail: `source "${sourceId}" has uncommitted changes in ${localPath}. Commit or stash, then re-run.`,
+        };
+      }
     }
 
     for (const [key, group] of groups) {
