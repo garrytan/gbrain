@@ -257,6 +257,55 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(body).toContain('Fact two about Alice.');
   });
 
+  itHomed('skips fence-drift when DB has some facts but disk fence has MORE (round-29 P1)', async () => {
+    // Codex round-29 P1: a phantom with 1 DB row but 3 active fence
+    // rows on disk would previously migrate the 1 and unlink the
+    // file — losing the other 2. The drift check now runs for all
+    // file-backed phantoms, not just factless.
+    await seedPage('drift-mixed', 'person');
+    await seedPage('people/drift-mixed-canonical', 'person');
+    await seedChunks('people/drift-mixed-canonical', 3);
+    await seedFact('drift-mixed', 'DB fact 1.');
+
+    const phantomFile = join(brainDir, 'drift-mixed.md');
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    mkdirSync(dirname(phantomFile), { recursive: true });
+    writeFileSync(
+      phantomFile,
+      [
+        '---', 'type: person', 'title: drift-mixed', 'slug: drift-mixed', '---',
+        '', '# drift-mixed', '', '## Facts', '',
+        '<!--- gbrain:facts:begin -->',
+        '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+        '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
+        '| 1 | DB fact 1. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
+        '| 2 | Disk-only fact 2. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
+        '| 3 | Disk-only fact 3. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
+        '<!--- gbrain:facts:end -->', '',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(0);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0].skipped).toBe('fence_drift');
+
+    // Phantom file + DB row survive intact.
+    expect(existsSync(phantomFile)).toBe(true);
+    const phantomDb = await engine.executeRaw<{ deleted_at: Date | null; n: number }>(
+      `SELECT (SELECT deleted_at FROM pages WHERE slug = 'drift-mixed' AND source_id = 'default') AS deleted_at,
+              (SELECT COUNT(*)::int FROM facts WHERE entity_slug = 'drift-mixed' AND source_id = 'default') AS n`,
+      [],
+    );
+    expect(phantomDb[0].deleted_at).toBeNull();
+    expect(phantomDb[0].n).toBe(1);
+  });
+
   itHomed('dry-run reports fence-drift skip just like the real run (round-28 P2)', async () => {
     // Codex round-28 P2: the dry-run preview must match what a real
     // run would do. A phantom with stale DB + populated on-disk

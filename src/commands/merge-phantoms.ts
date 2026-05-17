@@ -318,37 +318,44 @@ export async function runMergePhantomsCore(
     }
 
     // Fence-drift check runs BEFORE the dry-run short-circuit (codex
-    // round-28 P2: otherwise dry-run reports a merge that the real
-    // run would skip as fence_drift, making the preview misleading
-    // for the exact data-loss case the guard catches).
-    let factlessLocalPath: string | null = null;
+    // round-28 P2 — preview must match real-run outcome) and for ANY
+    // file-backed phantom, not just factless (codex round-29 P1 — a
+    // phantom with 3 DB rows but 5 active fence rows would otherwise
+    // migrate the 3 and unlink the file, losing the other 2 forever).
+    //
+    // Drift = on-disk active fence row count > active DB row count.
+    // The fence is the v0.32.2 system of record, so any disk-only
+    // rows are unreconciled facts that need extract_facts to land in
+    // the DB before merge-phantoms can safely migrate them.
+    let cachedLocalPath: string | null = null;
     let hasFenceDrift = false;
-    if (facts_moved === 0) {
-      factlessLocalPath = await lookupSourceLocalPath(engine, opts.sourceId);
-      if (factlessLocalPath !== null) {
-        const phantomFile = join(factlessLocalPath, `${row.slug}.md`);
-        if (existsSync(phantomFile)) {
-          try {
-            const onDisk = readFileSync(phantomFile, 'utf-8');
-            const { parseFactsFence } = await import('../core/facts-fence.ts');
-            const parsed = parseFactsFence(onDisk);
-            const activeFenceFacts = parsed.facts.filter(f => f.active);
-            if (activeFenceFacts.length > 0) {
-              skipped.push({ phantom: row.slug, canonical, skipped: 'fence_drift' });
-              // eslint-disable-next-line no-console
-              console.warn(
-                `[merge-phantoms] phantom ${row.slug} has ${activeFenceFacts.length} unreconciled fact(s) in its on-disk fence but no active DB rows. Skipped to prevent data loss. Run \`gbrain dream --phase extract_facts\` or remove the unsynced facts manually, then re-run merge-phantoms.`,
-              );
-              hasFenceDrift = true;
-            }
-          } catch {
+    cachedLocalPath = await lookupSourceLocalPath(engine, opts.sourceId);
+    if (cachedLocalPath !== null) {
+      const phantomFile = join(cachedLocalPath, `${row.slug}.md`);
+      if (existsSync(phantomFile)) {
+        try {
+          const onDisk = readFileSync(phantomFile, 'utf-8');
+          const { parseFactsFence } = await import('../core/facts-fence.ts');
+          const parsed = parseFactsFence(onDisk);
+          const activeFenceCount = parsed.facts.filter(f => f.active).length;
+          if (activeFenceCount > facts_moved) {
             skipped.push({ phantom: row.slug, canonical, skipped: 'fence_drift' });
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[merge-phantoms] phantom ${row.slug} has ${activeFenceCount} active fact(s) in its on-disk fence but only ${facts_moved} active DB row(s). Skipped to prevent data loss. Run \`gbrain dream --phase extract_facts\` to reconcile, then re-run merge-phantoms.`,
+            );
             hasFenceDrift = true;
           }
+        } catch {
+          skipped.push({ phantom: row.slug, canonical, skipped: 'fence_drift' });
+          hasFenceDrift = true;
         }
       }
-      if (hasFenceDrift) continue;
     }
+    if (hasFenceDrift) continue;
+    // Alias retained so the factless-branch unlink path below still
+    // reads correctly.
+    const factlessLocalPath = cachedLocalPath;
 
     if (opts.dryRun) {
       merged.push({ phantom: row.slug, canonical, facts_moved });
