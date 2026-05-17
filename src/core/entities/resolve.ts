@@ -71,13 +71,22 @@ export async function resolveEntitySlug(
   if (isBareName(trimmed)) {
     const token = slugify(trimmed);
     const bareBody = await tryExactSlugBody(engine, source_id, token);
-    if (bareBody !== 'missing' && isStubBody(bareBody)) {
-      // Phantom-shaped bare slug exists — redirect to canonical.
-      const expanded = await tryPrefixExpansion(engine, source_id, token);
-      if (expanded) return expanded;
+    if (bareBody !== 'missing') {
+      if (isStubBody(bareBody)) {
+        // Phantom-shaped bare slug exists — redirect to canonical.
+        const expanded = await tryPrefixExpansion(engine, source_id, token);
+        if (expanded) return expanded;
+        // Prefix expansion found nothing; fall through to fuzzy/etc.
+      } else {
+        // Real bare page (intentional top-level entity). Return the
+        // token NOW so a capitalized input like `Alice` doesn't bounce
+        // through fuzzy/prefix expansion and get misrouted to a
+        // sibling `people/alice-*` page. Codex round-25 P2.
+        return token;
+      }
     }
-    // bareBody is either 'missing' (no bare slug yet) or real
-    // (intentional bare page). Fall through.
+    // bareBody === 'missing': no page yet. Fall through to exact,
+    // fuzzy, and catch-all prefix expansion (in that order).
   }
 
   // 2. Exact match on slug. Catches prefixed slugs (`people/alice-example`)

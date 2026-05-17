@@ -253,6 +253,45 @@ describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
     expect(result).toBe('people/alice-example');
   });
 
+  it('returns a real bare page for capitalized input without fuzzy/prefix detours (round-25 P2)', async () => {
+    // Codex round-25 P2: when pg_trgm is unavailable and the input
+    // is a capitalized real-bare-page name (`Alice` with `alice` real
+    // page), the old code fell through to fuzzy (null on no pg_trgm)
+    // then catch-all prefix expansion → people/alice-* (wrong; user
+    // meant the bare `alice` page). The fix returns the token NOW
+    // when bareBody is real (non-stub).
+    const realBody = '# Realbare\n\nIntentional top-level page with prose.';
+    await engine.putPage(
+      'realbare',
+      {
+        type: 'concept' as any,
+        title: 'Realbare',
+        compiled_truth: realBody,
+        frontmatter: { type: 'concept', title: 'Realbare', slug: 'realbare' },
+      },
+      { sourceId: 'default' },
+    );
+    await engine.putPage(
+      'people/realbare-other-example',
+      {
+        type: 'person' as any,
+        title: 'Realbare Other Example',
+        compiled_truth: '# Realbare Other',
+        frontmatter: { type: 'person', title: 'Realbare Other Example', slug: 'people/realbare-other-example' },
+      },
+      { sourceId: 'default' },
+    );
+    await seedChunks(engine, 'people/realbare-other-example', 50);
+
+    // Capitalized single-word bare name `Realbare`. isBareName→true,
+    // slugify('Realbare')→'realbare'. The bare `realbare` page exists
+    // and is real (non-stub). Must return 'realbare' from step 1
+    // directly — without bouncing through fuzzy/catch-all prefix
+    // expansion that could mis-route to people/realbare-*.
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Realbare');
+    expect(result).toBe('realbare');
+  });
+
   it('preserves a bare page whose content lives in the timeline column (round-18 P2)', async () => {
     // Codex round-18 P2: tryExactSlugBody must look at BOTH
     // compiled_truth AND timeline when deciding whether a bare slug
