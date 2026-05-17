@@ -2655,6 +2655,23 @@ export interface AuditCandidateStatusEventCounts {
   traces_with_candidate_events: number;
 }
 
+export interface AuditCandidatePressureCounts {
+  review_priority_candidate_count: number;
+  missing_provenance_count: number;
+  stale_promoted_without_handoff_count: number;
+  unresolved_exposed_candidate_count: number;
+}
+
+export interface AuditCandidateLifecycleMetrics {
+  candidate_signal_exposure_count: number;
+  signal_to_status_event_rate: number;
+  median_time_to_disposition_ms: number | null;
+  stale_unresolved_signal_count: number;
+  promoted_without_handoff_count: number;
+  handoff_without_canonical_update_count: number;
+  pressure: AuditCandidatePressureCounts;
+}
+
 export interface AuditTaskCompliance {
   tasks_with_traces: number;
   tasks_without_traces: number;
@@ -2672,6 +2689,7 @@ export interface AuditBrainLoopInput {
   task_id?: string;
   scope?: ScopeGateScope;
   limit?: number;
+  candidate_review_window_days?: number;
 }
 
 export interface AuditBrainLoopReport {
@@ -2688,6 +2706,7 @@ export interface AuditBrainLoopReport {
   };
   linked_writes: AuditLinkedWriteCounts;
   candidate_status_events: AuditCandidateStatusEventCounts;
+  candidate_lifecycle: AuditCandidateLifecycleMetrics;
   approximate: AuditApproximateCounts;
   task_compliance: AuditTaskCompliance;
   summary_lines: string[];
