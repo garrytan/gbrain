@@ -50,8 +50,8 @@ Subcommands:
                              once frontmatter discovery is the norm.
 
   harvest <slug> --from <host-repo-root>
-                             Lift a proven skill from a host repo
-                             (e.g. ~/git/wintermute) back into gbrain.
+                             Lift a proven skill from a host agent repo
+                             back into gbrain.
 
   diff <name>                (Informational) per-file status; exit 0 always.
 

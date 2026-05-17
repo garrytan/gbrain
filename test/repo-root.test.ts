@@ -265,39 +265,39 @@ describe('findRepoRoot', () => {
   });
 
   // ─── v0.33 cwd_walk_up tier (D3) ──────────────────────────────
-  // Non-OpenClaw hosts (wintermute, neuromancer, zion) own their
-  // skills/ dir directly. The new tier resolves these without
+  // Non-OpenClaw hosts (any agent repo with a bare skills/ dir) own
+  // their skills/ directly. The new tier resolves these without
   // requiring a resolver file or gbrain-shape `src/cli.ts`.
 
-  it('v0.33 cwd_walk_up: cwd has skills/ but no resolver, no src/cli.ts (wintermute shape)', () => {
-    const wintermute = scratch();
-    mkdirSync(join(wintermute, 'skills'));
+  it('v0.33 cwd_walk_up: cwd has skills/ but no resolver, no src/cli.ts (bare-skills-dir shape)', () => {
+    const agentRepo = scratch();
+    mkdirSync(join(agentRepo, 'skills'));
     // Intentionally: no RESOLVER.md / AGENTS.md, no src/cli.ts.
-    const found = autoDetectSkillsDir(wintermute, {});
-    expect(found.dir).toBe(join(wintermute, 'skills'));
+    const found = autoDetectSkillsDir(agentRepo, {});
+    expect(found.dir).toBe(join(agentRepo, 'skills'));
     expect(found.source).toBe('cwd_walk_up');
   });
 
   it('v0.33 cwd_walk_up: walks up from nested cwd to first ancestor with skills/', () => {
-    const wintermute = scratch();
-    mkdirSync(join(wintermute, 'skills'));
-    const nested = join(wintermute, 'src', 'commands');
+    const agentRepo = scratch();
+    mkdirSync(join(agentRepo, 'skills'));
+    const nested = join(agentRepo, 'src', 'commands');
     mkdirSync(nested, { recursive: true });
     const found = autoDetectSkillsDir(nested, {});
-    expect(found.dir).toBe(join(wintermute, 'skills'));
+    expect(found.dir).toBe(join(agentRepo, 'skills'));
     expect(found.source).toBe('cwd_walk_up');
   });
 
   it('R5 regression: $OPENCLAW_WORKSPACE still wins when both env and cwd-skills exist', () => {
     // Pre-v0.33 R5: explicit env beats implicit cwd. The new cwd_walk_up
     // tier MUST NOT regress this — explicit operator intent always wins.
-    const wintermute = scratch();
-    mkdirSync(join(wintermute, 'skills'));
+    const agentRepo = scratch();
+    mkdirSync(join(agentRepo, 'skills'));
     const openclawWs = scratch();
     mkdirSync(join(openclawWs, 'skills'));
     writeFileSync(join(openclawWs, 'skills', 'AGENTS.md'), '# agents\n');
 
-    const found = autoDetectSkillsDir(wintermute, { OPENCLAW_WORKSPACE: openclawWs });
+    const found = autoDetectSkillsDir(agentRepo, { OPENCLAW_WORKSPACE: openclawWs });
     expect(found.dir).toBe(join(openclawWs, 'skills'));
     expect(found.source).toBe('openclaw_workspace_env');
   });

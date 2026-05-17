@@ -36,7 +36,7 @@ frontmatter `triggers:` array — gbrain does NOT touch your `RESOLVER.md`
 or `AGENTS.md` (see "How agents discover scaffolded skills" below).
 
 ```bash
-cd ~/git/wintermute
+cd ~/git/your-agent-repo
 gbrain skillpack scaffold book-mirror
 # files in skills/book-mirror/ + (if the skill declares paired source)
 # src/commands/book-mirror.ts land in your workspace
@@ -94,7 +94,7 @@ user-owned routing the agent can still see during the transition to
 frontmatter-based discovery.
 
 ```bash
-cd ~/git/wintermute
+cd ~/git/your-agent-repo
 gbrain skillpack migrate-fence
 # migrate-fence: fence_stripped
 #   resolver: /your/workspace/skills/RESOLVER.md
@@ -129,7 +129,7 @@ into gbrain so other clients can scaffold it. Default behavior:
   confinement).
 - Privacy linter scans the harvested files against
   `~/.gbrain/harvest-private-patterns.txt` plus built-in defaults
-  (`\bWintermute\b`, common email regex, Slack channel pattern). Any
+  (canonical private fork name, common email regex, Slack channel pattern). Any
   match → rollback (delete the harvested files) and exit non-zero.
 - `openclaw.plugin.json` updated with the new slug, sorted.
 - `--no-lint` bypasses the linter (after a manual editorial scrub).

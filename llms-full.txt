@@ -2503,12 +2503,12 @@ of the tree was dark. The essay's "skills the agent can never reach" footgun, no
 ### `gbrain skillpack scaffold` — drop the curated skills into your agent repo (v0.36)
 
 The skills gbrain ships are a reference library. `scaffold` does a one-time additive
-copy into your repo — your `~/git/wintermute`, `~/git/neuromancer`, or any other agent
-workspace with a `skills/` dir. After the copy, you OWN the files. Edit freely; gbrain
-becomes a reference, not a force-update gate.
+copy into your repo — your OpenClaw workspace, or any other agent repo with a
+`skills/` dir. After the copy, you OWN the files. Edit freely; gbrain becomes a
+reference, not a force-update gate.
 
 ```bash
-cd ~/git/wintermute
+cd ~/git/your-agent-repo
 gbrain skillpack list                          # what's in the bundle
 gbrain skillpack scaffold brain-ops            # one skill + its shared conventions
 gbrain skillpack scaffold --all                # the full bundle (no prune)
@@ -2530,9 +2530,10 @@ routing. `install` and `uninstall` are removed in v0.36 — they exit non-zero w
 hint pointing at `scaffold` / `migrate-fence`.
 
 **Want to lift your fork's skill back into gbrain?** `gbrain skillpack harvest <slug>
---from ~/git/wintermute` is the inverse loop. Default privacy linter scans for
-`Wintermute`, emails, Slack channels; companion editorial skill `skillpack-harvest`
-walks the genericization checklist.
+--from <your-agent-repo-root>` is the inverse loop. Default privacy linter scans
+harvested files against `~/.gbrain/harvest-private-patterns.txt` (plus built-in
+defaults that catch the canonical private fork name, emails, Slack channels);
+companion editorial skill `skillpack-harvest` walks the genericization checklist.
 
 **Skillify is the piece that makes the skills tree survive six months of compounding work.**
 Read [`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) for the full 10-item checklist

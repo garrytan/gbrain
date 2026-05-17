@@ -35,7 +35,7 @@ import type { ScaffoldEntry } from './bundle.ts';
 export interface ScaffoldOptions {
   /** Absolute path to gbrain repo root (source-of-truth bundle). */
   gbrainRoot: string;
-  /** Absolute path to the target workspace (e.g. ~/git/wintermute). */
+  /** Absolute path to the target agent-repo workspace. */
   targetWorkspace: string;
   /** Single skill slug, or `null` for --all. */
   skillSlug: string | null;

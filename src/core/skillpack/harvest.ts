@@ -1,9 +1,8 @@
 /**
  * skillpack/harvest.ts — `gbrain skillpack harvest <slug> --from <host-repo-root>`.
  *
- * Inverse of scaffold: lifts a skill from a host repo (e.g. wintermute)
- * into gbrain's tree so other clients can scaffold it via the normal
- * path.
+ * Inverse of scaffold: lifts a skill from a host agent repo into
+ * gbrain's tree so other clients can scaffold it via the normal path.
  *
  * Source contract (D11): `--from` points at the host repo root.
  * `<from>/skills/<slug>/` is the skill dir. Paired source files
@@ -43,7 +42,7 @@ import { runPrivacyLint, PrivacyLintError } from './harvest-lint.ts';
 export interface HarvestOptions {
   /** Slug of the skill to harvest (e.g. "my-fork-skill"). */
   slug: string;
-  /** Absolute path to the host repo root (e.g. ~/git/wintermute). */
+  /** Absolute path to the host agent repo root. */
   hostRepoRoot: string;
   /** Absolute path to gbrain repo root (destination). */
   gbrainRoot: string;

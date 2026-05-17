@@ -140,13 +140,13 @@ export function autoDetectSkillsDir(
   }
 
   // 1b. (v0.33) Walk up from cwd looking for any `skills/` dir. No
-  //     resolver-file gating — this is for non-OpenClaw hosts
-  //     (~/git/wintermute, ~/git/neuromancer, ~/git/zion) that own
-  //     their `skills/` directly. Stops at the first ancestor with a
-  //     `skills/` subdirectory. Comes after $OPENCLAW_WORKSPACE so
-  //     R5 (precedence regression) holds: explicit env still wins.
-  //     Comes before ~/.openclaw/workspace so that `cd ~/git/wintermute
-  //     && gbrain skillpack scaffold X` finds wintermute, not an
+  //     resolver-file gating — this is for non-OpenClaw hosts (any
+  //     agent repo with a bare `skills/` directory, before a resolver
+  //     file is written). Stops at the first ancestor with a `skills/`
+  //     subdirectory. Comes after $OPENCLAW_WORKSPACE so R5
+  //     (precedence regression) holds: explicit env still wins. Comes
+  //     before ~/.openclaw/workspace so that `cd ~/git/your-agent-repo
+  //     && gbrain skillpack scaffold X` finds the agent repo, not an
   //     implicit fallback to OpenClaw's default install.
   {
     let dir = startDir;
