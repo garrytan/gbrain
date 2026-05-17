@@ -240,7 +240,7 @@ export async function writeFactsToFence(
         const existingPage = await engine.getPage(target.slug, {
           sourceId: target.sourceId,
         });
-        const { isStubBody, stubBodyChars } = await import('../entities/resolve.ts');
+        const { isStubBody } = await import('../entities/resolve.ts');
         const hasRealContent =
           existingPage !== null &&
           (!isStubBody(existingPage.compiled_truth ?? '') ||
@@ -275,8 +275,6 @@ export async function writeFactsToFence(
           // a new entity page (the path that always worked).
           body = stubEntityPage(target.slug);
         }
-        // Silence unused-import warnings on stubBodyChars.
-        void stubBodyChars;
       }
 
       // 2. Upsert each fact onto the fence in input order. row_num
