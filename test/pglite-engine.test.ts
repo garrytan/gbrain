@@ -1280,6 +1280,15 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     const h2 = await engine.getHealth();
     expect(h2.orphan_pages).toBe(1);
   });
+
+  test('orphan_pages excludes templates/ and navigation/ pseudo-pages', async () => {
+    // Adding pseudo-pages should not bump orphan_pages — they are wayfinding /
+    // source pages by design, not graph rot.
+    await engine.putPage('templates/meeting-note', { ...testPage, type: 'concept', title: 'Meeting Template' });
+    await engine.putPage('navigation/ai', { ...testPage, type: 'note', title: 'AI Hub' });
+    const h = await engine.getHealth();
+    expect(h.orphan_pages).toBe(3);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────

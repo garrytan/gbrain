@@ -58,6 +58,13 @@ const DENY_PREFIXES = [
   'attachments/',
   '0-daily/',
   '4-archive/',
+  // Navigation pages are vault-level hub-target pages (Obsidian graph-view
+  // clustering anchors — body literally reads "Notes linking here appear in
+  // the graph view as connected to this hub"). They exist to organize the
+  // graph, not to carry content; missing inbound = sparse [[wikilink]] usage
+  // in the vault, not graph rot. Excluding them keeps brain_score focused on
+  // real content rot.
+  'navigation/',
 ];
 
 /** First slug segments where no inbound links is expected */

@@ -3188,6 +3188,12 @@ export class PostgresEngine implements BrainEngine {
            AND p.slug NOT LIKE 'attachments/%'
            AND p.slug NOT LIKE '0-daily/%'
            AND p.slug NOT LIKE '4-archive/%'
+           -- Pseudo-pages: templates/ are vault sources (already in CLI DENY,
+           -- aligned here); navigation/ are graph-view hub-target pages
+           -- (intentionally wayfinding, not content). Missing inbound on a
+           -- nav page reflects vault [[wikilink]] sparsity, not graph rot.
+           AND p.slug NOT LIKE 'templates/%'
+           AND p.slug NOT LIKE 'navigation/%'
         ) as orphan_pages,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)

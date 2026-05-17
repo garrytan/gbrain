@@ -66,6 +66,10 @@ describe('shouldExclude', () => {
     expect(shouldExclude('templates/meeting-note')).toBe(true);
   });
 
+  test('excludes deny-prefix: navigation/', () => {
+    expect(shouldExclude('navigation/ai')).toBe(true);
+  });
+
   test('excludes deny-prefix: openclaw/config/', () => {
     expect(shouldExclude('openclaw/config/agent')).toBe(true);
   });
