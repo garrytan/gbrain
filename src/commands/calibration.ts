@@ -197,11 +197,17 @@ export async function runCalibration(
   }
 
   if (opts.abReport) {
-    // D19 A/B harness report wired in Lane D (T18). Placeholder.
-    process.stderr.write(
-      `[calibration] ab-report: implementation lands in Lane D (T18 — A/B harness for think).\n`,
-    );
-    process.exit(2);
+    // T18 / D19 — A/B harness report.
+    const { buildAbReport, formatAbReport } = await import('../core/calibration/think-ab.ts');
+    const daysArg = args[args.indexOf('--days') + 1];
+    const days = daysArg ? Math.max(1, parseInt(daysArg, 10) || 30) : 30;
+    const report = await buildAbReport(engine, { days });
+    if (opts.json) {
+      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    } else {
+      process.stdout.write(formatAbReport(report, days) + '\n');
+    }
+    return;
   }
 
   if (opts.regenerate) {

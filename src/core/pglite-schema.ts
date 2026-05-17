@@ -651,6 +651,22 @@ CREATE INDEX IF NOT EXISTS take_nudge_log_proposal_cooldown_idx
 CREATE INDEX IF NOT EXISTS take_nudge_log_wave_idx
   ON take_nudge_log (wave_version, fired_at DESC);
 
+-- think_ab_results (v0.36.0.0 T18 / D19): A/B harness data.
+CREATE TABLE IF NOT EXISTS think_ab_results (
+  id              BIGSERIAL PRIMARY KEY,
+  source_id       TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  wave_version    TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+  ran_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  question        TEXT         NOT NULL,
+  baseline_answer TEXT         NOT NULL,
+  with_calibration_answer TEXT NOT NULL,
+  preferred       TEXT         NOT NULL CHECK (preferred IN ('baseline','with_calibration','neither','tie')),
+  model_id        TEXT,
+  notes           TEXT
+);
+CREATE INDEX IF NOT EXISTS think_ab_results_recent_idx
+  ON think_ab_results (source_id, ran_at DESC);
+
 -- ============================================================
 -- access_tokens: legacy bearer tokens for remote MCP access
 -- ============================================================
