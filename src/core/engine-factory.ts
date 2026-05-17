@@ -17,9 +17,13 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
       const { PostgresEngine } = await import('./postgres-engine.ts');
       return new PostgresEngine();
     }
+    case 'graphbrain': {
+      const { GraphBrainRestEngine } = await import('./graphbrain-engine.ts');
+      return new GraphBrainRestEngine();
+    }
     default:
       throw new Error(
-        `Unknown engine type: "${engineType}". Supported engines: postgres, pglite.` +
+        `Unknown engine type: "${engineType}". Supported engines: postgres, pglite, graphbrain.` +
         (engineType === 'sqlite' ? ' SQLite is not supported. Use pglite instead.' : '')
       );
   }
