@@ -137,16 +137,19 @@ async function runTest(args: string[]): Promise<void> {
     const [providerId, ...modelParts] = modelArg.split(':');
     const modelId = modelParts.join(':');
     const recipe = getRecipe(providerId);
+    const config = loadConfig();
     if (tpArg === 'embedding') {
       const dims = recipe?.touchpoints.embedding?.default_dims ?? 1536;
       configureGateway({
         embedding_model: modelArg,
         embedding_dimensions: dims,
+        base_urls: config?.provider_base_urls,
         env: { ...process.env },
       });
     } else {
       configureGateway({
         chat_model: modelArg,
+        base_urls: config?.provider_base_urls,
         env: { ...process.env },
       });
     }

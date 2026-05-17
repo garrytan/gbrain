@@ -720,6 +720,31 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
 }) as unknown as typeof fetch;
 
 /**
+ * DashScope compatibility shim. Alibaba's OpenAI-compatible embeddings
+ * endpoint supports only `encoding_format: 'float'`. The AI SDK currently
+ * sends float for generic OpenAI-compatible embeddings, but pinning it here
+ * keeps DashScope insulated from SDK default changes and mirrors the
+ * provider-specific shim pattern used for Voyage and ZeroEntropy.
+ */
+const dashscopeCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      const parsed = JSON.parse(init.body);
+      if (parsed && typeof parsed === 'object' && parsed.encoding_format !== 'float') {
+        parsed.encoding_format = 'float';
+        const headers = new Headers(init.headers ?? {});
+        headers.delete('content-length');
+        init = { ...init, body: JSON.stringify(parsed), headers };
+      }
+    } catch {
+      // Body wasn't JSON — pass through untouched.
+    }
+  }
+
+  return fetch(input, init);
+}) as unknown as typeof fetch;
+
+/**
  * ZeroEntropy compatibility shim. ZE's `/v1/models/embed` endpoint is NOT
  * OpenAI-compatible at the wire level:
  *  - Path: AI SDK adapter calls `${base_url}/embeddings`; ZE wants
@@ -937,6 +962,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         compat.fetch ??
         (recipe.id === 'voyage'
           ? voyageCompatFetch
+          : recipe.id === 'dashscope'
+          ? dashscopeCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
           : undefined);

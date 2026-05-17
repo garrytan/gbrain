@@ -65,6 +65,24 @@ export function isValidZeroEntropyDim(dims: number): boolean {
   return (ZEROENTROPY_VALID_DIMS as readonly number[]).includes(dims);
 }
 
+// DashScope text-embedding-v3/v4 flexible-dim allowlists. Alibaba's
+// OpenAI-compatible endpoint accepts `dimensions`; v4 has the full
+// 64..2048 Matryoshka ladder, while v3 is limited to 512/768/1024.
+const DASHSCOPE_DIM_MODELS = new Set(['text-embedding-v4', 'text-embedding-v3']);
+export const DASHSCOPE_V3_VALID_DIMS = [512, 768, 1024] as const;
+export const DASHSCOPE_V4_VALID_DIMS = [64, 128, 256, 512, 768, 1024, 1536, 2048] as const;
+
+export function supportsDashScopeDimension(modelId: string): boolean {
+  return DASHSCOPE_DIM_MODELS.has(modelId);
+}
+
+export function isValidDashScopeDim(modelId: string, dims: number): boolean {
+  const valid = modelId === 'text-embedding-v4'
+    ? DASHSCOPE_V4_VALID_DIMS
+    : DASHSCOPE_V3_VALID_DIMS;
+  return (valid as readonly number[]).includes(dims);
+}
+
 /**
  * Build the providerOptions blob for embedMany() that pins output dimensions.
  *
@@ -167,12 +185,28 @@ export function dimsProviderOptions(
       if (modelId.startsWith('text-embedding-3')) {
         return { openaiCompatible: { dimensions: dims } };
       }
-      // DashScope text-embedding-v3 (Matryoshka 64-1024) and Zhipu
-      // embedding-3 (Matryoshka 256-2048) both accept `dimensions` on the
+      // DashScope text-embedding-v3/v4 both accept `dimensions` on the
       // OpenAI-compat path. Without this, user-selected non-default dims are
-      // silently ignored and the provider returns its default size.
+      // silently ignored and the provider returns its default size. Validate
+      // locally so v3 doesn't reach Alibaba with v4-only 1536/2048 requests.
       // Symmetric retrieval — inputType ignored.
-      if (modelId === 'text-embedding-v3' || modelId === 'embedding-3') {
+      if (supportsDashScopeDimension(modelId)) {
+        if (!isValidDashScopeDim(modelId, dims)) {
+          const valid = modelId === 'text-embedding-v4'
+            ? DASHSCOPE_V4_VALID_DIMS
+            : DASHSCOPE_V3_VALID_DIMS;
+          throw new AIConfigError(
+            `DashScope model "${modelId}" supports dimensions only in ` +
+            `{${valid.join(', ')}}, got ${dims}.`,
+            `Set \`embedding_dimensions\` to one of ${valid.join('/')} in your gbrain config, ` +
+            `or switch to dashscope:text-embedding-v4 for 1536/2048 dimensions.`,
+          );
+        }
+        return { openaiCompatible: { dimensions: dims } };
+      }
+      // Zhipu embedding-3 (Matryoshka 256-2048) accepts `dimensions` on the
+      // OpenAI-compat path. Symmetric retrieval — inputType ignored.
+      if (modelId === 'embedding-3') {
         return { openaiCompatible: { dimensions: dims } };
       }
       // MiniMax embo-01 takes a `type: 'db' | 'query'` field for asymmetric
