@@ -288,7 +288,13 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema='public' AND table_name='ingest_log') AS ingest_log_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='ingest_log' AND column_name='source_id') AS ingest_log_source_id_exists
+                WHERE table_schema='public' AND table_name='ingest_log' AND column_name='source_id') AS ingest_log_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='oauth_clients') AS oauth_clients_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='source_id') AS oauth_clients_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='federated_read') AS oauth_clients_federated_read_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -309,6 +315,9 @@ export class PGLiteEngine implements BrainEngine {
       subagent_provider_id_exists: boolean;
       ingest_log_exists: boolean;
       ingest_log_source_id_exists: boolean;
+      oauth_clients_exists: boolean;
+      oauth_clients_source_id_exists: boolean;
+      oauth_clients_federated_read_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -332,12 +341,22 @@ export class PGLiteEngine implements BrainEngine {
     // references source_id. Old brains have ingest_log without source_id;
     // bootstrap adds the column before SCHEMA_SQL replay creates the index.
     const needsIngestLogSourceId = probe.ingest_log_exists && !probe.ingest_log_source_id_exists;
+    // v0.34.1 (#861, #876): oauth_clients gained source_id (v60) and
+    // federated_read (v61). PGLITE_SCHEMA_SQL declares both columns inline
+    // in CREATE TABLE oauth_clients AND emits CREATE INDEX statements that
+    // reference them. CREATE TABLE IF NOT EXISTS is a no-op on existing
+    // tables so upgrade brains skip the column adds and crash on the index
+    // creation. Bootstrap adds them; v60-v62 backfill and install FK + GIN
+    // index later via runMigrations (all ADD COLUMN IF NOT EXISTS, idempotent).
+    const needsOauthClientsBootstrap = probe.oauth_clients_exists
+      && (!probe.oauth_clients_source_id_exists || !probe.oauth_clients_federated_read_exists);
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsChunksEmbeddingImage
         && !needsMcpLogBootstrap && !needsSubagentProviderId
-        && !needsPagesRecency && !needsIngestLogSourceId) return;
+        && !needsPagesRecency && !needsIngestLogSourceId
+        && !needsOauthClientsBootstrap) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -463,6 +482,19 @@ export class PGLiteEngine implements BrainEngine {
       // DEFAULT 'default' so the index can build cleanly.
       await this.db.exec(`
         ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS source_id TEXT NOT NULL DEFAULT 'default';
+      `);
+    }
+
+    if (needsOauthClientsBootstrap) {
+      // v60-v61: oauth_clients.source_id + federated_read. See the
+      // `needsOauthClientsBootstrap` declaration above for the upgrade-path
+      // explanation. v60 later backfills source_id='default' and installs the
+      // FK; v62 backfills federated_read=ARRAY[source_id]; both run via
+      // runMigrations with ADD COLUMN IF NOT EXISTS so this bootstrap is
+      // idempotent.
+      await this.db.exec(`
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS source_id TEXT;
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS federated_read TEXT[] NOT NULL DEFAULT '{}';
       `);
     }
   }

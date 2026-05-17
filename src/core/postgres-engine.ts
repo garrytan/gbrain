@@ -319,6 +319,9 @@ export class PostgresEngine implements BrainEngine {
       subagent_provider_id_exists: boolean;
       ingest_log_exists: boolean;
       ingest_log_source_id_exists: boolean;
+      oauth_clients_exists: boolean;
+      oauth_clients_source_id_exists: boolean;
+      oauth_clients_federated_read_exists: boolean;
     }[]>`
       SELECT
         EXISTS (SELECT 1 FROM information_schema.tables
@@ -356,7 +359,13 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema = current_schema() AND table_name = 'ingest_log') AS ingest_log_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'ingest_log' AND column_name = 'source_id') AS ingest_log_source_id_exists
+                WHERE table_schema = current_schema() AND table_name = 'ingest_log' AND column_name = 'source_id') AS ingest_log_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = 'oauth_clients') AS oauth_clients_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'source_id') AS oauth_clients_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'federated_read') AS oauth_clients_federated_read_exists
     `;
     const probe = probeRows[0]!;
 
@@ -386,6 +395,19 @@ export class PostgresEngine implements BrainEngine {
     // source_id. Old brains have ingest_log without source_id; bootstrap adds
     // the column before SCHEMA_SQL replay creates the index.
     const needsIngestLogSourceId = probe.ingest_log_exists && !probe.ingest_log_source_id_exists;
+
+    // v0.34.1 (#861, #876): oauth_clients gained `source_id` (v60) and
+    // `federated_read` (v61). schema.sql / schema-embedded.ts now declare both
+    // columns inline in CREATE TABLE oauth_clients AND emit `CREATE INDEX
+    // idx_oauth_clients_source_id ON oauth_clients(source_id)` +
+    // `idx_oauth_clients_federated_read ON oauth_clients USING GIN (federated_read)`
+    // as standalone statements. Upgrade brains skip the inline column adds
+    // because CREATE TABLE IF NOT EXISTS is a no-op on the existing table, and
+    // the standalone CREATE INDEX statements then crash with "column source_id
+    // does not exist". Bootstrap adds the columns so initSchema completes; v60-v62
+    // run later via runMigrations and are idempotent (ADD COLUMN IF NOT EXISTS).
+    const needsOauthClientsBootstrap = probe.oauth_clients_exists
+      && (!probe.oauth_clients_source_id_exists || !probe.oauth_clients_federated_read_exists);
 
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
@@ -516,6 +538,20 @@ export class PostgresEngine implements BrainEngine {
       // so the index can build cleanly.
       await conn.unsafe(`
         ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS source_id TEXT NOT NULL DEFAULT 'default';
+      `);
+    }
+
+    if (needsOauthClientsBootstrap) {
+      // v60-v61 (oauth_clients_source_id_fk + oauth_clients_federated_read_column)
+      // add the two columns and standalone CREATE INDEX statements that
+      // reference them. SCHEMA_SQL replay fails on upgrade because
+      // CREATE TABLE IF NOT EXISTS is a no-op on the pre-existing table while
+      // the CREATE INDEX statements run unconditionally. Add the columns
+      // here so initSchema completes; v60 backfills source_id='default' and
+      // v62 backfills federated_read=ARRAY[source_id] later via runMigrations.
+      await conn.unsafe(`
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS source_id TEXT;
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS federated_read TEXT[] NOT NULL DEFAULT '{}';
       `);
     }
   }
