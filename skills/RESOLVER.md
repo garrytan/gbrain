@@ -159,7 +159,7 @@ enrich-sweep wraps upstream `skills/enrich/` in bulk mode.
 > set on 0 / 2477 pages, `evidence_level` on 1 / 2477, `confidence` on
 > 2470 / 2477 but values are hardcoded template strings from
 > `kos-compat-api.ts` (not script-computed). No production caller in
-> `kos-compat-api.ts` / `workers/notion-poller/` / `kos-patrol/run.ts`
+> `kos-compat-api.ts` / `workers/_archived/notion-poller/` / `kos-patrol/run.ts`
 > ever spawned the triplet's `run.ts`. Replacement for cross-page
 > synthesis: upstream `gbrain dream` + `concept-synthesis` skill (v0.25.1).
 >

@@ -27,13 +27,14 @@
   https://kos.chenge.ink  →  kos-compat-api:7225 on Mac
         │ gbrain CLI
         ▼
-  gbrain (pglite + Gemini embeds)  ←  enrich-sweep / kos-patrol 周期任务
-        ▲
-        │ 另一条通道
-  notion-poller (launchd cron, 每 5 分钟)  ←  监听指定 Notion DB
+  gbrain (Postgres + Gemini embeds)  ←  enrich-sweep / kos-patrol 周期任务
 ```
 
-你和 `notion-poller` **互不影响**:poller 自动把指定 DB 的每个新/更新页都推进 brain,不需要你参与。你负责的是**非 DB 来源**(用户对话中临时提到的 URL、粘贴的正文、需要入库的 meeting notes)+ 任何时候的**查询**。
+> **2026-05-17 update**: `notion-poller` 已 **RETIRED**(production probe
+> 显示 24+ h × 0 net ingest, 详 `docs/JARVIS-ARCHITECTURE.md` §6.27)。
+> 邮件路径将由 mailagent v4 SQLite SSoT 直接推送到 `/ingest`(方案 B,
+> tracked in GitHub issue)。除邮件之外的非 DB 来源(URL / 粘贴正文 /
+> meeting notes)和**任何查询**仍然由你(kos-worker)负责。
 
 ## 工具清单
 

@@ -1,23 +1,23 @@
 ---
 name: notion-ingest-delta
-version: 2.0.0
+version: 3.0.0
 description: |
-  Notion → gbrain incremental sync. Design only — real implementation lives
-  in workers/notion-poller/run.ts (5-min cron) + the /ingest endpoint in
-  server/kos-compat-api.ts. This SKILL.md is a redirect; the original design
-  rationale moved to the worker's header comment.
+  RETIRED 2026-05-17. The Notion → gbrain delta poller produced 0 net pages
+  for at least 24 h (10.4 MB of "0 ingested (empty)" logs); brain has 0 pages
+  with source_of_truth=notion and 0 pages tagged notion-ingest. Worker moved
+  to workers/_archived/notion-poller/. Replacement: mailagent v4 SQLite SSoT
+  push to kos-compat-api/ingest directly (方案 B), tracked in GitHub issue
+  on ChenyqThu/jarvis-knowledge-os-v2. Story in §6.27.
 mutating: false
 ---
 
-# notion-ingest-delta — moved
+# notion-ingest-delta — RETIRED 2026-05-17
 
-The actual sync code lives at:
+The Notion → brain delta-poll path is dead code. See:
 
-- **Worker**: [`workers/notion-poller/run.ts`](../../../workers/notion-poller/run.ts) — 5-min cron, `last_edited_time > cursor` delta, blocks → markdown → POST `/ingest`
-- **Endpoint**: [`server/kos-compat-api.ts`](../../../server/kos-compat-api.ts) `/ingest` — accepts `{markdown, title, source:"notion:<id>", notion_id, kind}` payload, skips fetch when markdown is present
-- **Cursor / failure modes / config**: [`workers/notion-poller/README.md`](../../../workers/notion-poller/README.md)
+- **Archived worker**: [`workers/_archived/notion-poller/run.ts`](../../../workers/_archived/notion-poller/run.ts)
+- **Endpoint still alive**: [`server/kos-compat-api.ts`](../../../server/kos-compat-api.ts) `/ingest` — still accepts `{markdown, title, source, kind}` for any pusher; this is the entry mailagent push (方案 B) will use
+- **Retire story**: [`docs/JARVIS-ARCHITECTURE.md`](../../../docs/JARVIS-ARCHITECTURE.md) §6.27 — production evidence (24+ h × 0 ingest) + replacement design
 
-The original design contract (two-sync pattern, trigger filter, payload
-shape, failure modes) was inlined into the worker's file header on
-2026-05-10 (M1). See git history for the pre-shrink SKILL.md if you need
-the full design narrative.
+Original design contract preserved in git history at the v2 SKILL.md and
+in `workers/_archived/notion-poller/run.ts` header comment.

@@ -42,9 +42,11 @@ Chip at the orphan pile (`gbrain orphans --count` is currently ~1800 on
 
 - **Manually, weekly cadence** until orphans stabilize (<500). Each sweep
   is bounded (`--limit 100` default, `--per-orphan 3`).
-- **Never in notion-poller or dream cron.** PGLite single-writer;
-  orphan-reducer's concurrent reads are fine but writes should be
-  sequenced.
+- **Never in dream cron** (notion-poller retired 2026-05-17). PGLite
+  single-writer constraint: orphan-reducer's concurrent reads are fine
+  but writes should be sequenced. (Note: production is Postgres since
+  Path 3 cutover 2026-04-29, but the constraint mindset still applies
+  for any PGLite contract test runs.)
 - **Budget-aware.** `--limit 100` ≈ 100 Haiku calls ≈ $0.08. `--limit > 500`
   requires `--i-know` to protect against Haiku-budget footguns.
 

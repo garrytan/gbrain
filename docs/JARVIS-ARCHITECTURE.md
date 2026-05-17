@@ -3395,6 +3395,121 @@ ALTER was amortized: this sync became a "free ride" on that work.
 
 ---
 
+## 6.27 notion-poller retire + 方案 B 设计 (2026-05-17)
+
+**Trigger**: During post-sync fork patch review, Lucien asked whether the
+mailagent CLI (v4 SQLite SSoT, agent-friendly typer-based commands)
+could replace the existing Notion-as-relay wire. Production probe showed
+**notion-poller was already dead**:
+
+- launchd cron 5-min trigger, last exit code 0, runs cleanly
+- 24+ h of consecutive runs: every Summary line was
+  `2 DBs, 2 seen, 0 ingested, 0 skipped` — net zero new pages
+- `~/brain/.agent/notion-poller-state.json` cursors current
+  (2026-05-17 / 2026-05-16) but unmoved between runs
+- 10.4 MB of stdout log since 2026-05-16 with no successful ingest
+- **Postgres counter**: `pages` filtered `frontmatter->'tags' ? 'notion-ingest'`
+  → 0; `frontmatter->>'source_of_truth' = 'notion'` → 0; `ingest_log` table
+  has no `notion-poller` source_type rows
+- Brain page source breakdown (3138 total): `raw` 70 % (v1 KOS historical
+  markdown import), `brain-synthesis` 25 %, `tavily+brain` 3 %, others
+  <2 %. Notion path contributed essentially nothing.
+
+Likely root cause (not deep-probed since the path is retired anyway):
+the 2 monitored Notion DB IDs
+(`2df15375...` email inbox, `2f015375...` calendar event) are the
+mailagent-mirrored targets. Mailagent writes metadata + body to those
+DBs as Notion blocks; notion-poller pulled the metadata page but
+flattened-block body came back empty, so the poller logged
+`0 ingested, 0 skipped (empty)`. Whatever the precise reason, the
+result is: this wire produced zero brain value.
+
+**Retire action** (commit this session):
+- `launchctl bootout gui/$UID/com.jarvis.notion-poller`
+- `rm ~/Library/LaunchAgents/com.jarvis.notion-poller.plist`
+- `git mv workers/notion-poller workers/_archived/notion-poller`
+- `git mv scripts/launchd/com.jarvis.notion-poller.plist.template
+   scripts/launchd/_archived/`
+- `rm ~/brain/.agent/notion-poller-state.json`
+- `.env.local` `NOTION_TOKEN` + `NOTION_DATABASE_IDS` commented out
+  with historical-context note
+- `skills/kos-jarvis/notion-ingest-delta/SKILL.md` rewritten as a
+  RETIRED stub pointing at this section
+- Inactive cross-refs updated: RESOLVER (M2-A archive note path),
+  orphan-reducer ("never in dream cron" wording), dream-wrap (lint
+  noise attribution shifted to "historic notion-poller pages from
+  before retire")
+
+**Active fork dirs** (under `skills/kos-jarvis/`): unchanged at **10**
+because `notion-ingest-delta/` was already a 5-line redirect stub from
+M1 (now updated to a retire stub, still 1 dir). The real surface
+shrinkage is in `workers/`: 2 → 1 active (`kos-worker` kept; it's the
+Notion-side worker hosting AI tools for Notion Custom Agents, alive
+independent of the brain-side poller).
+
+### 方案 B — mailagent push to kos-compat-api/ingest
+
+**Owner-side work** (Lucien's MailAgent project, tracked via GitHub
+issue on `ChenyqThu/jarvis-knowledge-os-v2`):
+
+Add a new resource group to the mailagent typer CLI:
+- `mailagent kos push <internal_id> [--dry]` — push one email's
+  markdown body + metadata to `kos-compat-api /ingest`
+- `mailagent kos sync [--since YYYY-MM-DD] [--limit N]` — batch push
+  the unpushed delta
+- `mailagent kos selftest` — verify endpoint reachability + token
+  + payload roundtrip on a dummy email
+
+Payload shape (matches existing `/ingest` `markdown` path):
+```json
+{
+  "markdown": "<email body, Mailagent v4 already stores both HTML + Markdown>",
+  "title":    "<subject>",
+  "source":   "mailagent:<message_id>",
+  "source_of_truth": "mailagent-sqlite",
+  "source_refs":     ["<notion_url if mirrored>"],
+  "kind":     "source",
+  "tags":     ["mailagent-ingest", "email"],
+  "frontmatter": {
+    "date_received": "...",
+    "sender":        "...",
+    "mailbox":       "..."
+  }
+}
+```
+
+Trigger options for mailagent side (pick one):
+- (a) **Fire-and-forget hook inside mail-sync** — every email
+  successfully stored to SQLite triggers a non-blocking
+  `mailagent kos push <internal_id>`; SQLite gains a `kos_pushed_at`
+  column + `(message_id, kos_pushed_at IS NULL)` index for
+  `--since-unpushed` recovery
+- (b) **Independent pm2/cron loop** — `mailagent kos sync
+  --since-unpushed` every 5 min, decoupled from mail-sync's hot
+  path
+
+Brain-side work: **zero**. `server/kos-compat-api.ts` `/ingest`
+already accepts the `markdown` body shape; the existing Bearer auth
+(KOS_API_TOKEN) covers it. Once mailagent starts pushing, ingest_log
+will show `git_sync` rows tagged `mailagent-ingest` and brain pages
+will land under `~/brain/sources/<slug>.md` with the frontmatter
+above.
+
+**Latency win**: ~5-6 min (Notion sync + 5-min poll cron) → ~1-5 s
+(direct push). The Notion-as-relay round-trip is fully cut.
+
+**Network**: cross-host via Tailscale (mbp-office → kos.chenge.ink
+public HTTPS via cloudflared; mailagent doesn't need to know it's
+talking through Tailscale).
+
+**Spec lives on**: GitHub issue on `ChenyqThu/jarvis-knowledge-os-v2`,
+labeled `enhancement` + `mailagent` + `ingestion`. Brain repo
+treats this as upstream-of-self: the issue tracks fork's desired
+behavior, but the implementation lives in the MailAgent repo on
+mbp-office.
+
+---
+
 ## 8. Cost and performance snapshot
 
 | Metric | v1 | v2 |

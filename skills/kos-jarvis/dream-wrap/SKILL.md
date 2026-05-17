@@ -23,9 +23,10 @@ Step 2.3 of the filesystem-canonical track (see
    - wrapper-level errors (binary missing, archive write failed) → exit 2
 
 `partial` is the common case here today: lint flags 144 issues on
-73 disk-resident pages (notion-poller frontmatter omits `title:` and
-`type:`; KOS uses `kind:`), and orphans flags ~1800/1930 (legacy v1
-wiki was imported flat). Both are tracked as P1 follow-ups.
+73 disk-resident pages (historic notion-poller pages from before the
+2026-05-17 retire omit `title:` and `type:`; KOS uses `kind:`), and
+orphans flags ~1800/1930 (legacy v1 wiki was imported flat). Both are
+tracked as P1 follow-ups.
 
 ## Files
 

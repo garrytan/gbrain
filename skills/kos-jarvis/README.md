@@ -56,7 +56,7 @@ skills/kos-jarvis/
 │   └── timeline-page.md
 ├── kos-patrol/                     # Week 2(phase 2 lint 已 noop,kos-lint archived 2026-05-10)
 ├── digest-to-memory/               # Week 3(保留澄清点)
-├── notion-ingest-delta/            # Week 3 — SKILL.md 是 redirect,实现在 workers/notion-poller/
+├── notion-ingest-delta/            # 2026-05-17 RETIRED — workers/notion-poller/ → _archived/ (death by 0 net ingest, §6.27); replaced by planned mailagent kos push (方案 B, GitHub issue #TBD)
 ├── enrich-sweep/                   # Phase 3 (2026-04-17) — G1 主收益
 └── _archived/                      # 退役 dirs(只读冷备)
     ├── feishu-bridge/              # 2026-05-05 — OpenClaw 飞书 command-mapping
@@ -85,8 +85,12 @@ skills/kos-jarvis/
 3. 每月对 upstream CHANGELOG.md 做一次 review，评估是否有 upstream 新能力
    可以替代本 pack 某一项扩展（扩展应随时间自愿退场，而非永久膨胀）
 
-## 当前状态(2026-05-10 更新)
+## 当前状态(2026-05-17 更新)
 
+- [x] **2026-05-17 v0.35.6.0 sync + notion-poller retire**: 上游 sync 9 个版本 (v0.34.4 → v0.35.6.0)
+      最干净一次 (~1 h, 2 真冲突), 详 §6.26。同 session 退役 notion-poller (production probe
+      确认 24+ h × 0 net ingest, 详 §6.27), 移到 `workers/_archived/`。
+      替代设计: 方案 B mailagent CLI 直推 `kos-compat-api /ingest` (issue 在 ChenyqThu/jarvis-knowledge-os-v2)。
 - [x] **M3 (2026-05-10)**: gemini-embed-shim 退役,production cutover —
       5 plists 切到 native v0.27 Vercel AI SDK gateway(GOOGLE_GENERATIVE_AI_API_KEY +
       GBRAIN_EMBEDDING_MODEL=google:gemini-embedding-001 + 1536 dim),
