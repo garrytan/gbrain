@@ -184,6 +184,26 @@ export async function writeFactsToFence(
       let body: string;
       if (existsSync(filePath)) {
         body = readFileSync(filePath, 'utf-8');
+        // Codex round-24 P2: an existing phantom .md file on disk
+        // (pre-v0.34.5 era) would previously slip past the stub-guard
+        // because the missing-file branch was the only place that
+        // checked. resolveEntitySlug can still hand us an unprefixed
+        // slug when prefix expansion finds no canonical (the "bare
+        // name with no matching people/* page" case). Without this
+        // second check, future facts keep appending to the existing
+        // phantom and the split keeps growing.
+        if (!target.slug.includes('/')) {
+          const { isStubBody } = await import('../entities/resolve.ts');
+          if (isStubBody(body)) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[facts] refusing to append to existing stub-shaped phantom slug=${target.slug} (file present but body is stub-shape). Routing to dropped-audit so future facts don't keep splitting onto this page.`,
+            );
+            return { inserted: 0, ids: [], stubGuardBlocked: true };
+          }
+          // Body is non-stub (intentional bare page) — let the
+          // append continue.
+        }
       } else {
         // The stub-creation guard prevents v0.34.5-era phantom entity
         // pages (`jared.md`, `alice.md` at brain root) from being

@@ -647,6 +647,49 @@ describe('stub-guard + backstop integration (D5 regression — IRON RULE)', () =
     }
   });
 
+  it('writeFactsToFence blocks appends to an existing stub-shaped phantom file (round-24 P2)', async () => {
+    // Codex round-24 P2: a pre-v0.34.5 phantom file on disk would
+    // previously slip past the stub-guard because the guard only
+    // fired on missing files. New facts kept appending to the
+    // phantom, growing the split.
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-existing-phantom-'));
+    const gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-existing-phantom-home-'));
+    try {
+      // Seed a stub-shaped phantom file on disk (no machine fence yet).
+      const phantomFile = join(brainDir, 'zoltan-phantom.md');
+      writeFileSync(
+        phantomFile,
+        '---\ntype: person\ntitle: zoltan-phantom\nslug: zoltan-phantom\n---\n\n# zoltan-phantom\n',
+        'utf-8',
+      );
+
+      const result = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
+        writeFactsToFence(
+          engine as unknown as BrainEngine,
+          { sourceId: 'default', localPath: brainDir, slug: 'zoltan-phantom' },
+          [
+            {
+              fact: 'A fact about Zoltan.',
+              kind: 'fact' as const,
+              notability: 'medium' as const,
+              source: 'test:regression',
+              visibility: 'private' as const,
+              embedding: null,
+              sessionId: null,
+            },
+          ],
+        ),
+      );
+
+      // Stub-guard fired, no insert.
+      expect(result.stubGuardBlocked).toBe(true);
+      expect(result.inserted).toBe(0);
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+      rmSync(gbrainHome, { recursive: true, force: true });
+    }
+  });
+
   it('writeFactsToFence materializes a real DB-only unprefixed page instead of firing stub-guard (round-18 P1)', async () => {
     // Codex round-18 P1: when an unprefixed slug has a real DB body
     // (put_page MCP created it on a source with local_path but never
