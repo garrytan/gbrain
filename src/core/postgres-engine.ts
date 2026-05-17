@@ -232,7 +232,12 @@ export class PostgresEngine implements BrainEngine {
       // Pre-schema bootstrap: add forward-referenced state the embedded schema
       // blob requires but that older brains don't have yet (issues #366/#375/
       // #378/#396 + #266/#357). Idempotent on fresh installs and modern brains.
-      await this.applyForwardReferenceBootstrap();
+      // Threads the DDL connection (same one holding the advisory lock above)
+      // so bootstrap probes run on the locked connection — without this, the
+      // probes ran through `this.sql` (the pooler/instance pool) outside the
+      // lock, opening a concurrent-bootstrap race for Supabase users on the
+      // transaction pooler. Codex P1 finding from v0.36 dreamy-thompson wave.
+      await this.applyForwardReferenceBootstrap(conn);
 
       await conn.unsafe(sqlText);
 
@@ -294,8 +299,13 @@ export class PostgresEngine implements BrainEngine {
    * `test/schema-bootstrap-coverage.test.ts` (PGLite side) and
    * `test/e2e/postgres-bootstrap.test.ts` (Postgres side).
    */
-  private async applyForwardReferenceBootstrap(): Promise<void> {
-    const conn = this.sql;
+  private async applyForwardReferenceBootstrap(injectedConn?: postgres.Sql): Promise<void> {
+    // Use the caller-provided connection (DDL pool, holding the advisory lock
+    // from initSchema) when available — falls back to this.sql for backward
+    // compatibility with any unit-test path that still calls bootstrap directly.
+    // Production path always passes the DDL conn so bootstrap probes run inside
+    // the same lock scope as SCHEMA_SQL replay.
+    const conn = injectedConn ?? this.sql;
 
     // Single round-trip probe for every forward-reference target.
     // current_schema() resolves to whatever search_path the connection uses,
