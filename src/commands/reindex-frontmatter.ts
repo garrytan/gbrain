@@ -141,7 +141,7 @@ export async function runReindexFrontmatter(
 }
 
 /** CLI entrypoint. Argv shape matches reindex-code for consistency. */
-export async function reindexFrontmatterCli(args: string[]): Promise<void> {
+export async function reindexFrontmatterCli(args: string[], existingEngine?: BrainEngine): Promise<void> {
   const opts: ReindexFrontmatterOpts = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -157,14 +157,23 @@ export async function reindexFrontmatterCli(args: string[]): Promise<void> {
     }
   }
 
-  const { createEngine } = await import('../core/engine-factory.ts');
-  const { loadConfig, toEngineConfig } = await import('../core/config.ts');
-  const cfg = loadConfig();
-  if (!cfg) {
-    console.error('No gbrain config; run `gbrain init` first.');
-    process.exit(1);
+  let ownsEngine = false;
+  let engine = existingEngine;
+  if (!engine) {
+    const { createEngine } = await import('../core/engine-factory.ts');
+    const { loadConfig, toEngineConfig } = await import('../core/config.ts');
+    const cfg = loadConfig();
+    if (!cfg) {
+      console.error('No gbrain config; run `gbrain init` first.');
+      process.exit(1);
+    }
+    const engineConfig = toEngineConfig(cfg);
+    engine = await createEngine(engineConfig);
+    if ('connect' in engine && typeof engine.connect === 'function') {
+      await engine.connect(engineConfig);
+    }
+    ownsEngine = true;
   }
-  const engine = await createEngine(toEngineConfig(cfg));
 
   try {
     const result = await runReindexFrontmatter(engine, opts);
@@ -179,7 +188,7 @@ export async function reindexFrontmatterCli(args: string[]): Promise<void> {
     }
     if (result.status === 'cancelled') process.exit(1);
   } finally {
-    if ('disconnect' in engine && typeof engine.disconnect === 'function') {
+    if (ownsEngine && engine && 'disconnect' in engine && typeof engine.disconnect === 'function') {
       await engine.disconnect();
     }
   }
