@@ -86,6 +86,7 @@ describe('v0.22.4 migration (B11)', () => {
             total: 8,
             errors_by_code: { NESTED_QUOTES: 8 },
             sample: [],
+            ignoredMissingOpen: 0,
           },
           {
             source_id: 'archive',
@@ -93,6 +94,7 @@ describe('v0.22.4 migration (B11)', () => {
             total: 4,
             errors_by_code: { NULL_BYTES: 4 },
             sample: [],
+            ignoredMissingOpen: 0,
           },
           {
             source_id: 'clean-source',
@@ -100,6 +102,7 @@ describe('v0.22.4 migration (B11)', () => {
             total: 0,
             errors_by_code: {},
             sample: [],
+            ignoredMissingOpen: 0,
           },
         ],
         scanned_at: new Date().toISOString(),
