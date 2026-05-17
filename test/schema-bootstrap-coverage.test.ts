@@ -108,6 +108,15 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // created_at DESC)`. Old brains have ingest_log without source_id; bootstrap
   // adds the column before SCHEMA_SQL replay creates the index.
   { kind: 'column', table: 'ingest_log', column: 'source_id' },
+
+  // v0.34.1 (#861, #876) — oauth_clients.source_id + federated_read.
+  // Declared inline in CREATE TABLE oauth_clients in PGLITE_SCHEMA_SQL but
+  // CREATE TABLE IF NOT EXISTS is a no-op on upgrade so the new columns are
+  // not added by schema replay. Standalone CREATE INDEX statements that
+  // reference both columns crash without bootstrap. v60-v62 add them via
+  // ADD COLUMN IF NOT EXISTS, so bootstrap is idempotent.
+  { kind: 'column', table: 'oauth_clients', column: 'source_id' },
+  { kind: 'column', table: 'oauth_clients', column: 'federated_read' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
