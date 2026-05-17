@@ -27,11 +27,14 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { loadConfig } from '../config.ts';
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
+import { MinionWorker } from '../minions/worker.ts';
+import { makeSubagentHandler } from '../minions/handlers/subagent.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { discoverTranscripts, type DiscoveredTranscript } from './transcript-discovery.ts';
@@ -430,24 +433,44 @@ export async function runPhaseSynthesize(
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
+    // PGLite has no separate worker process; jobs must be executed inline in
+    // this process. Without this, the queue stays at "waiting" forever and
+    // no Anthropic Sonnet calls are made. Postgres deployments can keep using
+    // their persistent worker/supervisor.
+    let inlineWorker: MinionWorker | null = null;
+    let inlineWorkerPromise: Promise<void> | null = null;
+    if (engine.kind === 'pglite') {
+      process.stderr.write('[cycle.synthesize] PGLite detected; running subagent worker inline\n');
+      inlineWorker = new MinionWorker(engine, { queue: 'default', pollInterval: 100, healthCheckInterval: 0 });
+      inlineWorker.register('subagent', makeSubagentHandler({ engine }));
+      inlineWorkerPromise = inlineWorker.start();
+    }
+
     const childOutcomes: Array<{ jobId: number; status: string }> = [];
-    for (const jobId of childIds) {
-      try {
-        const job = await waitForCompletion(queue, jobId, {
-          timeoutMs: 35 * 60 * 1000,
-          pollMs: 5 * 1000,
-        });
-        childOutcomes.push({ jobId, status: job.status });
-      } catch (e) {
-        if (e instanceof TimeoutError) {
-          childOutcomes.push({ jobId, status: 'timeout' });
-        } else {
-          throw e;
+    try {
+      for (const jobId of childIds) {
+        try {
+          const job = await waitForCompletion(queue, jobId, {
+            timeoutMs: 35 * 60 * 1000,
+            pollMs: 5 * 1000,
+          });
+          childOutcomes.push({ jobId, status: job.status });
+        } catch (e) {
+          if (e instanceof TimeoutError) {
+            childOutcomes.push({ jobId, status: 'timeout' });
+          } else {
+            throw e;
+          }
+        }
+        // After each child terminal, give the cycle lock + worker job lock a chance.
+        if (opts.yieldDuringPhase) {
+          try { await opts.yieldDuringPhase(); } catch { /* best-effort */ }
         }
       }
-      // After each child terminal, give the cycle lock + worker job lock a chance.
-      if (opts.yieldDuringPhase) {
-        try { await opts.yieldDuringPhase(); } catch { /* best-effort */ }
+    } finally {
+      if (inlineWorker) {
+        inlineWorker.stop();
+        if (inlineWorkerPromise) await inlineWorkerPromise;
       }
     }
 
@@ -640,8 +663,9 @@ export interface JudgeClient {
 }
 
 function makeHaikuClient(): JudgeClient | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  const client = new Anthropic();
+  const config = loadConfig();
+  if (!config?.anthropic_api_key) return null;
+  const client = new Anthropic({ apiKey: config.anthropic_api_key });
   return { create: client.messages.create.bind(client.messages) };
 }
 

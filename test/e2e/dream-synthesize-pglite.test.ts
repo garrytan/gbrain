@@ -45,18 +45,25 @@ async function setupRig(): Promise<TestRig> {
 }
 
 /**
- * Run `body` with ANTHROPIC_API_KEY temporarily cleared, restoring the
- * prior value (set or unset) on return — even on throw — so this never
- * leaks state to sibling test files in the suite.
+ * Run `body` with Anthropic credentials temporarily cleared from both env
+ * and file-plane config. `loadConfig()` reads ~/.gbrain/config.json, so on a
+ * developer machine with `anthropic_api_key` configured, clearing only
+ * ANTHROPIC_API_KEY is not enough to exercise the no-key path.
  */
 async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
   const saved = process.env.ANTHROPIC_API_KEY;
+  const savedGbrainHome = process.env.GBRAIN_HOME;
+  const tempHome = mkdtempSync(join(tmpdir(), 'gbrain-no-anthropic-home-'));
   delete process.env.ANTHROPIC_API_KEY;
+  process.env.GBRAIN_HOME = tempHome;
   try {
     return await body();
   } finally {
     if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
     else process.env.ANTHROPIC_API_KEY = saved;
+    if (savedGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+    else process.env.GBRAIN_HOME = savedGbrainHome;
+    try { rmSync(tempHome, { recursive: true, force: true }); } catch { /* best-effort */ }
   }
 }
 
