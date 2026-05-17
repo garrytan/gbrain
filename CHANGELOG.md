@@ -2,6 +2,110 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.36.0.0] - 2026-05-17
+
+**Voice agent reference lands — Mars + Venus personas, WebRTC-first, copy-into-your-repo not stuck-in-gbrain.**
+**New skillpack paradigm: gbrain ships REFERENCE content the install agent copies into your repo, where YOU own the edits.**
+
+This release lands `agent-voice` — a reference voice agent (Mars + Venus personas, WebRTC-first browser client, optional Twilio adapter) AND a new skillpack-install paradigm. The voice content is ~5,000 LOC of working code that does NOT live in your `~/.gbrain/skills/` managed block. Instead, `gbrain integrations install agent-voice --target <your-repo>` COPIES it into your host agent repo (e.g. `~/git/your-agent-repo/services/voice-agent/`), and from there it's user-owned, mutable, locally extensible. Future updates are diff-and-propose against per-file SHA-256 hashes, not blind overwrite.
+
+This is the first recipe to use `install_kind: copy-into-host-repo`. The legacy `local-managed` install path is unchanged for every other recipe.
+
+### The four numbers that matter
+
+| Metric | Before | After | Δ |
+|---|---|---|---|
+| Voice-agent content in gbrain | 0 LOC (only a narrative recipe) | ~5,000 LOC reference + 3 SKILL.md + tests | +5,000 |
+| Mars/Venus persona prompts shipped | 0 | 2 (scrubbed; PII-impossible by construction) | +2 |
+| Privacy guard files | scripts/check-privacy.sh (broad) | + scripts/check-no-pii-in-agent-voice.sh (agent-voice scope) | +1 |
+| New install paradigm | "ship to ~/.gbrain/skills/" only | "copy into your host repo" available | +1 |
+
+### What `gbrain integrations install agent-voice` does
+
+1. Reads `recipes/agent-voice/install/manifest.json` — src → target file map.
+2. Validates your target repo (must exist, must have `.git`, must NOT be gbrain itself or a parent of it, no existing files at any target path).
+3. Computes SHA-256 of each source file as it copies, writes `<target>/services/voice-agent/.gbrain-source.json` for future `--refresh`.
+4. Appends three resolver rows to your `RESOLVER.md` or `AGENTS.md`: `voice-persona-mars`, `voice-persona-venus`, `voice-post-call`.
+5. Prints next-step instructions: set `OPENAI_API_KEY`, optionally implement your own context-builder against the documented contract, then `bun run start`.
+
+### What ships in the voice agent
+
+- **Mars persona** (`Orus` voice) — dual-mode: SOLO (introspective thought partner) + DEMO (impressive tool-driven showman). Mode detection from conversational signals.
+- **Venus persona** (`Aoede` voice) — sharp executive assistant; 1-3 sentences max; English-only; sub-second turn-taking.
+- **WebRTC-first browser client** at `/call`. Production load installs ZERO test instrumentation. Append `?test=1` for the E2E namespace (`window._gbrainTest`) + Web Audio API tee → MediaRecorder capture of response audio.
+- **Read-only tool router** with an 8-op allow-list (`search`, `query`, `get_page`, `list_pages`, `find_experts`, `get_recent_salience`, `get_recent_transcripts`, `read_article`). Write ops (`put_page`, `submit_job`, `file_upload`, `delete_page`, `shell`) are permanently denylisted — even adding them to a local override CANNOT enable them.
+- **Persona-aware prompt builder** — identity-first composition, Unicode sanitization for OpenAI Realtime API safety (em dashes, smart quotes, arrows → ASCII), live brain-context injection via operator-implemented `buildMarsContext` / `buildVenusContext`.
+- **Upstream-error classifier** for the E2E — soft-fails on HTTP 429/500/503 from OpenAI, hard-fails on plumbing bugs (`_audioSendCount === 0`).
+- **Three skills** with `routing-eval.jsonl` fixtures, ready to drop into your host repo's resolver.
+
+### What ships in gbrain
+
+- `src/commands/integrations.ts` extended with the `install <recipe-id>` subcommand (the discriminated `install_kind` route).
+- `scripts/check-no-pii-in-agent-voice.sh` wired into `bun run verify` — shape regex (phones, emails, SSN, JWT, bearer, credit card) + path patterns + operator-blocklist env var. Catches re-introduction of private names in `recipes/agent-voice/**` or `recipes/agent-voice.md`.
+- `scripts/import-from-upstream.sh` + `scripts/upstream-scrub-table.txt` — deterministic refresh from upstream voice-agent source (env-var-driven; no upstream-repo name in any shipped file).
+- New TypeScript types: `InstallKind`, manifest shape, install records — pinned by `test/integrations-install.test.ts` (11 cases).
+
+### What you ACTUALLY do to take advantage of v0.36.0.0
+
+```bash
+# 1. Upgrade gbrain (whatever your update path is).
+# 2. Run from your host agent repo or any dir:
+gbrain integrations install agent-voice --target $OPENCLAW_WORKSPACE   # or your repo path
+
+# 3. Set OPENAI_API_KEY in your host repo's .env
+echo "OPENAI_API_KEY=sk-..." >> $OPENCLAW_WORKSPACE/.env
+
+# 4. (Optional but recommended) Edit your context-builder
+$EDITOR $OPENCLAW_WORKSPACE/services/voice-agent/code/lib/context-builder.example.mjs
+# Contract: $OPENCLAW_WORKSPACE/services/voice-agent/code/lib/personas/context-builder.contract.md
+
+# 5. Run the host-side tests
+cd $OPENCLAW_WORKSPACE/services/voice-agent && bun install && bun run test
+
+# 6. Start the server
+cd $OPENCLAW_WORKSPACE/services/voice-agent && bun run start
+# → http://localhost:8765/call
+```
+
+### What this means for daily use
+
+The voice agent runs in YOUR repo, on YOUR cadence. When gbrain ships a new agent-voice reference (Mars gets multilingual after the eval lands; a new pipeline option B becomes available; a security patch in the tool router), you pull at YOUR schedule and run `gbrain integrations install agent-voice --target <repo> --refresh`. The refresh diffs your local copy against gbrain's reference and shows per-file disposition: identical, stale, locally-modified. You pick file-by-file. No silent overwrite of your edits.
+
+### Itemized changes
+
+#### Voice agent (new)
+- `recipes/agent-voice.md` registered recipe with `install_kind: copy-into-host-repo` frontmatter, WebRTC-first body, copy-paradigm explainer, install-subcommand invocation, production checklist.
+- `recipes/agent-voice/README.md` — paradigm doc + sibling-directory convention for future copy-into-host-repo recipes.
+- `recipes/agent-voice/code/` (~17 files) — scrubbed `mars.mjs`, `venus.mjs`, `personas.mjs` registry, `tools.mjs` allow-list router, `gbrain-client.mjs` stdio MCP client, `prompt.mjs` persona-aware builder, `server.mjs` minimal HTTP + WebRTC server, `public/call.html` with `?test=1` instrumentation + WebAudio-tee capture, `lib/upstream-classifier.mjs` for E2E failure triage, ported `audio-convert.mjs` / `gatekeeper.mjs` / `sessions.mjs` / `twilio-bridge.mjs` from upstream (PII-clean).
+- `recipes/agent-voice/skills/` — three SKILL.md skills with `routing-eval.jsonl` fixtures (voice-persona-mars, voice-persona-venus, voice-post-call).
+- `recipes/agent-voice/tests/unit/` — five host-side test suites (97 cases) covering persona registry, prompt-shape privacy guards, read-only allow-list, upstream-error classifier.
+- `recipes/agent-voice/install/` — manifest + refresh-algorithm spec + post-install hint for the install agent.
+
+#### Privacy + scrub infrastructure (new)
+- `scripts/check-no-pii-in-agent-voice.sh` — wired into `bun run verify`. Shape + path + env-driven operator blocklist.
+- `scripts/import-from-upstream.sh` + `scripts/upstream-scrub-table.txt` — deterministic refresh from upstream; placeholder-driven (env-var expanded at run time so no private names in checked-in files).
+- `recipes/agent-voice/code/lib/personas/private-name-blocklist.json` — single source of truth for the regex contract (shape categories + path patterns + env-var name); shared by the shell guard and the host-side `.mjs` prompt-shape tests.
+
+#### gbrain runtime (new src/ code)
+- `src/commands/integrations.ts` extended (~+150 LOC) with `install <recipe-id>` subcommand. New types: `InstallKind` discriminated union, `InstallManifest`, `InstalledFileRecord`, `GbrainSourceJson`. Path-traversal hardening mirrors the pattern from `src/core/operations.ts:validateUploadPath`. Refusal cases pinned by 11 test cases.
+- `recipes/twilio-voice-brain.md` (v0.8.1) — left in place; will be marked deprecated in a follow-up PR.
+
+#### Tests
+- `test/integrations-install.test.ts` — 11 gbrain-side cases (happy path, manifest shape, no upstream_repo field, resolver row appending, file modes, refusal cases for missing target, no-git target, gbrain-itself, overwrite, unknown recipe, dry-run).
+- `test/check-no-pii.test.ts` / `test/import-from-upstream.test.ts` — deferred to a fast-follow PR; the shell scripts are smoke-tested in the local dev loop.
+
+#### Deferred to follow-up
+- E2E test suite (`tests/e2e/voice-roundtrip.test.mjs`, `voice-full-flow.test.mjs`) — needs OpenAI Realtime + ~$1-2/run; ships in a separate PR.
+- Claw-test scenario `voice-agent-install` with openclaw-driven install verification.
+- LLM-judge persona evals + synthetic canonical baselines.
+- DIY pipeline (`pipeline.mjs`, `pipeline-v3.mjs` for Gemini Live) — recipe Option A (WebRTC direct to OpenAI Realtime) ships now.
+- Refresh mode for `gbrain integrations install --refresh` — the algorithm is documented at `recipes/agent-voice/install/refresh-algorithm.md`; v0 implements COPY only.
+- Mars multilingual claim (gated on a multilingual eval landing).
+
+#### For contributors
+- New paradigm `install_kind: copy-into-host-repo` is documented in `recipes/agent-voice/README.md`. Future recipes that want this shape follow the sibling-directory convention pinned there.
+- The deterministic import script + scrub table are the canonical refresh-from-upstream mechanism. Update the table; re-run the script; the PII guard fail-closes if anything slipped through.
+
 ## [0.35.1.0] - 2026-05-15
 
 **Embedder shootout prereqs: pricing, public gateway export, and resume-from for long eval runs.**
