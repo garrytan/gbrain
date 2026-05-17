@@ -1,0 +1,29 @@
+{
+  "name": "openclaw-gbrain",
+  "version": "0.1.0",
+  "description": "OpenClaw native plugin for GBrain search, query, and OAuth-backed media extraction.",
+  "type": "module",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/garrytan/gbrain.git",
+    "directory": "plugins/openclaw-gbrain"
+  },
+  "files": [
+    "index.js",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.5.3"
+    },
+    "build": {
+      "openclawVersion": ">=2026.5.3"
+    }
+  },
+  "license": "MIT"
+}

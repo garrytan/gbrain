@@ -1,0 +1,65 @@
+{
+  "id": "gbrain",
+  "name": "GBrain",
+  "description": "GBrain tools and OpenClaw OAuth-backed media extraction route.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "gbrain_status",
+      "gbrain_search",
+      "gbrain_query"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "gbrainBin": {
+        "type": "string",
+        "description": "Path to the gbrain executable. Defaults to gbrain on PATH."
+      },
+      "openclawBin": {
+        "type": "string",
+        "description": "Path to the openclaw executable. Defaults to openclaw on PATH."
+      },
+      "workingDir": {
+        "type": "string",
+        "description": "Working directory for spawned gbrain/openclaw commands."
+      },
+      "envFile": {
+        "type": "string",
+        "description": "Optional dotenv-style env file loaded into spawned commands. Defaults to ~/.gbrain/gbrain.env."
+      },
+      "extractionModel": {
+        "type": "string",
+        "description": "OpenClaw provider/model used for OAuth-backed extraction."
+      },
+      "timeoutMs": {
+        "type": "number",
+        "description": "Maximum milliseconds for GBrain/OpenClaw subprocess calls."
+      },
+      "maxConcurrentExtractions": {
+        "type": "number",
+        "description": "Maximum extraction subprocesses running at once. Defaults to 1."
+      },
+      "extractionQueueLimit": {
+        "type": "number",
+        "description": "Maximum queued extraction requests before returning a busy response. Defaults to 8."
+      },
+      "extractionQueueTimeoutMs": {
+        "type": "number",
+        "description": "Maximum time an extraction request can wait in queue. Defaults to 30000."
+      },
+      "minExtractionIntervalMs": {
+        "type": "number",
+        "description": "Minimum delay between extraction starts. Defaults to 0."
+      },
+      "maxExtractionFileBytes": {
+        "type": "number",
+        "description": "Maximum decoded bytes accepted for a file passed to /plugins/gbrain/extract. Defaults to 8000000 and is capped at 20MiB."
+      }
+    }
+  }
+}
