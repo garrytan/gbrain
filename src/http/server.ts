@@ -2,10 +2,74 @@ import type { BrainEngine } from '../core/engine.ts';
 import { hybridSearch, rrfFusion } from '../core/search/hybrid.ts';
 import type { SearchResult } from '../core/types.ts';
 import { embed } from '../core/embedding.ts';
-import { operationsByName } from '../core/operations.ts';
+import { operationsByName, OperationError } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
-import { createHmac, randomBytes } from 'crypto';
+import { createHash, createHmac, randomBytes } from 'crypto';
 import pkg from '../../package.json' with { type: 'json' };
+
+// ── In-process async job tracking ─────────────────────────────────────────────
+// Used by PUT /page?async=1 so callers with short socket timeouts can fire-and-
+// forget the embed and poll GET /job?id=... for completion. Jobs expire after
+// ASYNC_JOB_TTL_MS so the map stays bounded without a GC daemon.
+const ASYNC_JOB_TTL_MS = 5 * 60 * 1000; // 5 min — matches idempotency window
+
+interface AsyncJobState {
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  slug: string;
+  content_hash: string;
+  result?: object;
+  error?: string;
+  created: number;
+}
+
+const asyncJobs = new Map<string, AsyncJobState>();
+
+function newJobId(): string {
+  return randomBytes(8).toString('hex');
+}
+
+// Maps OperationError codes to HTTP status codes for consistent API responses.
+const OPERATION_ERROR_STATUS: Partial<Record<string, number>> = {
+  page_not_found: 404,
+  not_found: 404,
+  permission_denied: 403,
+  too_large: 413,
+  invalid_slug: 400,
+  invalid_frontmatter: 400,
+};
+
+function opErrToResponse(e: OperationError): Response {
+  const status = OPERATION_ERROR_STATUS[e.code] ?? 400;
+  return Response.json(
+    { ok: false, code: e.code, error: e.message, ...(e.suggestion ? { hint: e.suggestion } : {}) },
+    { status },
+  );
+}
+
+function sweepJobs(): void {
+  const cutoff = Date.now() - ASYNC_JOB_TTL_MS;
+  for (const [id, job] of asyncJobs) {
+    if (job.created < cutoff) asyncJobs.delete(id);
+  }
+}
+
+// ── Idempotency cache ─────────────────────────────────────────────────────────
+// Keyed by caller-supplied idempotency_key. Expires after ASYNC_JOB_TTL_MS.
+interface IdempotencyRecord {
+  slug: string;
+  content_hash: string;
+  result: object;
+  created: number;
+}
+
+const idempotencyCache = new Map<string, IdempotencyRecord>();
+
+function sweepIdempotency(): void {
+  const cutoff = Date.now() - ASYNC_JOB_TTL_MS;
+  for (const [k, rec] of idempotencyCache) {
+    if (rec.created < cutoff) idempotencyCache.delete(k);
+  }
+}
 
 const ALLOWED_TAGS = ['preference', 'fact', 'method', 'project', 'person', 'decision'] as const;
 const VERSION = pkg.version as string;
@@ -405,7 +469,13 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           return ok({ slug: page.slug ?? slug, chunk: lean, total_chunks: chunks.length }, Date.now() - t0);
         }
 
-        const page = await getPageOp.handler(ctx, { slug });
+        let page: unknown;
+        try {
+          page = await getPageOp.handler(ctx, { slug });
+        } catch (e) {
+          if (e instanceof OperationError) return opErrToResponse(e);
+          throw e;
+        }
         if (!page) return err('not_found', `Page not found: ${slug}`, 404);
         return ok({ page }, Date.now() - t0);
       }
@@ -419,7 +489,11 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         return ok({ pages }, Date.now() - t0);
       }
 
-      // ── PUT /page  { content, slug?, tags?, source? } ────────────────────
+      // ── PUT /page  { content, slug?, tags?, source?, async?, idempotency_key? } ──
+      // ?async=1  → returns 202 immediately; background task runs embed.
+      //             Poll GET /job?id=<job_id> for completion.
+      // idempotency_key → within a 5-min window, same key returns the first
+      //             response without re-running the write. Safe to retry on timeout.
       if (path === '/page' && req.method === 'PUT') {
         let body: Record<string, unknown>;
         try { body = await req.json(); } catch { return err('invalid_json', 'Body must be JSON'); }
@@ -434,6 +508,9 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
 
         const source = (body.source as string | undefined) ?? 'agent';
         const slug = (body.slug as string | undefined) || `mem/${new Date().toISOString().slice(0, 10)}/${randomBytes(3).toString('hex')}`;
+        const idempotencyKey = (body.idempotency_key as string | undefined) ?? null;
+        const asyncMode = body.async === true || body.async === 1 || body.async === '1'
+          || url.searchParams.get('async') === '1';
 
         // Prepend frontmatter unless content already has it
         const hasfrontmatter = content.trimStart().startsWith('---');
@@ -447,8 +524,54 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           content,
         ].filter(l => l !== null).join('\n');
 
-        const result = await putPageOp.handler(ctx, { slug, content: fullContent });
-        return ok({ slug, ...(result as object) }, Date.now() - t0);
+        // Idempotency check — return cached result within the TTL window.
+        if (idempotencyKey) {
+          sweepIdempotency();
+          const cached = idempotencyCache.get(idempotencyKey);
+          if (cached && cached.slug === slug) {
+            return ok({ slug, content_hash: cached.content_hash, idempotent: true, ...cached.result }, Date.now() - t0);
+          }
+        }
+
+        if (asyncMode) {
+          sweepJobs();
+          const jobId = newJobId();
+          // Placeholder hash filled in once the background task resolves.
+          const jobState: AsyncJobState = { status: 'pending', slug, content_hash: '', created: Date.now() };
+          asyncJobs.set(jobId, jobState);
+
+          // Fire-and-forget — never awaited here.
+          (async () => {
+            jobState.status = 'running';
+            try {
+              const result = await putPageOp.handler(ctx, { slug, content: fullContent }) as { content_hash?: string } & object;
+              const resolvedHash = result.content_hash ?? '';
+              jobState.status = 'completed';
+              jobState.content_hash = resolvedHash;
+              jobState.result = result;
+              if (idempotencyKey) {
+                idempotencyCache.set(idempotencyKey, { slug, content_hash: resolvedHash, result, created: Date.now() });
+              }
+            } catch (e) {
+              jobState.status = 'failed';
+              jobState.error = e instanceof Error ? e.message : String(e);
+            }
+          })();
+
+          return Response.json(
+            { ok: true, job_id: jobId, slug, status: 'pending' },
+            { status: 202 },
+          );
+        }
+
+        const result = await putPageOp.handler(ctx, { slug, content: fullContent }) as { content_hash?: string } & object;
+        const contentHash = result.content_hash ?? '';
+        if (idempotencyKey) {
+          sweepIdempotency();
+          idempotencyCache.set(idempotencyKey, { slug, content_hash: contentHash, result, created: Date.now() });
+        }
+        const SEARCH_INDEX_LAG_MS = 2000;
+        return ok({ slug, content_hash: contentHash, search_indexed_at: new Date(Date.now() + SEARCH_INDEX_LAG_MS).toISOString(), ...result }, Date.now() - t0);
       }
 
       // ── DELETE /page?slug=... ─────────────────────────────────────────────
@@ -553,9 +676,25 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           write_endpoints: {
             description: 'GET /write — unified write facade for GET-only LLM platforms (Claude crawler, ChatGPT browsing, Gemini url_context). All actions require OTP auth.',
             url_limit: '8000 characters; content > 50k chars → 413; use PUT /page for large content',
+            async_write: {
+              description: 'Non-blocking write for callers with short socket timeouts (Genspark, ChatGPT browsing).',
+              how: 'Add &async=1 to GET /write?action=put_page or ?async=1 / body async=1 to PUT /page.',
+              response: '202 { ok, job_id, slug, content_hash, status:"pending" }',
+              poll: 'GET /job?id=<job_id> → { status: pending|running|completed|failed, result?, error? }. Jobs expire after 5 min.',
+              verify: 'After completed: GET /page?slug=<slug> and compare content_hash to confirm write landed.',
+            },
+            idempotency: {
+              description: 'Pass idempotency_key (URL param or JSON body field) to make retries safe within a 5-min window.',
+              key_format: 'Recommended: first 8 hex chars of SHA-256 of (slug + content). Changes on edit; prevents suppressing intentional re-writes.',
+              behavior: 'Server returns cached first-response for same key+slug. add_link and add_timeline_entry are NOT idempotent — do not retry those blindly.',
+            },
+            content_hash: {
+              description: 'SHA-256 hex of the full markdown (including frontmatter) returned in every PUT /page and GET /write?action=put_page response.',
+              use: 'Compare against GET /page response to verify the correct version landed after a timeout.',
+            },
             actions: {
               put_page: {
-                params: 'slug (required), content (required, URL-encoded, ≤50k), title, type (default: concept), tags (comma-separated), source, ai_confidence, created (YYYY-MM-DD)',
+                params: 'slug (required), content (required, URL-encoded, ≤50k), title, type (default: concept), tags (comma-separated), source, ai_confidence, created (YYYY-MM-DD), async (0|1), idempotency_key',
                 note: 'If content already has YAML frontmatter (starts with ---), it is used as-is. Otherwise frontmatter is built from the other params.',
               },
               add_tag: { params: 'slug (required), tag (required)' },
@@ -592,9 +731,15 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
 
         if (action === 'put_page') {
           const slug = url.searchParams.get('slug');
-          const content = url.searchParams.get('content');
+          // content_b64 takes priority over content — base64 is ~3× more URL-space-
+          // efficient than percent-encoding for CJK text (9 bytes/char → 3 bytes/char).
+          const contentB64 = url.searchParams.get('content_b64');
+          const rawContent = contentB64
+            ? Buffer.from(contentB64, 'base64').toString('utf8')
+            : url.searchParams.get('content');
+          const content = rawContent;
           if (!slug) return err('missing_param', 'slug is required for put_page');
-          if (!content) return err('missing_param', 'content is required for put_page');
+          if (!content) return err('missing_param', 'content or content_b64 is required for put_page');
           if (content.length > 50_000) {
             return err('too_large', 'content exceeds 50k character limit', 413, {
               hint: 'Use PUT /page with a JSON body for large content',
@@ -625,8 +770,52 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             fullContent = fmLines.join('\n');
           }
 
-          const result = await putPageOp.handler(ctx, { slug, content: fullContent });
-          return ok({ action, slug, ...(result as object) }, Date.now() - t0);
+          const writeIdempotencyKey = url.searchParams.get('idempotency_key');
+          const writeAsync = url.searchParams.get('async') === '1';
+
+          if (writeIdempotencyKey) {
+            sweepIdempotency();
+            const cached = idempotencyCache.get(writeIdempotencyKey);
+            if (cached && cached.slug === slug) {
+              return ok({ action, slug, content_hash: cached.content_hash, idempotent: true, ...cached.result }, Date.now() - t0);
+            }
+          }
+
+          if (writeAsync) {
+            sweepJobs();
+            const jobId = newJobId();
+            const jobState: AsyncJobState = { status: 'pending', slug, content_hash: '', created: Date.now() };
+            asyncJobs.set(jobId, jobState);
+            (async () => {
+              jobState.status = 'running';
+              try {
+                const result = await putPageOp.handler(ctx, { slug, content: fullContent }) as { content_hash?: string } & object;
+                const resolvedHash = result.content_hash ?? '';
+                jobState.status = 'completed';
+                jobState.content_hash = resolvedHash;
+                jobState.result = result;
+                if (writeIdempotencyKey) {
+                  idempotencyCache.set(writeIdempotencyKey, { slug, content_hash: resolvedHash, result, created: Date.now() });
+                }
+              } catch (e) {
+                jobState.status = 'failed';
+                jobState.error = e instanceof Error ? e.message : String(e);
+              }
+            })();
+            return Response.json(
+              { ok: true, action, job_id: jobId, slug, status: 'pending' },
+              { status: 202 },
+            );
+          }
+
+          const result = await putPageOp.handler(ctx, { slug, content: fullContent }) as { content_hash?: string } & object;
+          const writeContentHash = result.content_hash ?? '';
+          if (writeIdempotencyKey) {
+            sweepIdempotency();
+            idempotencyCache.set(writeIdempotencyKey, { slug, content_hash: writeContentHash, result, created: Date.now() });
+          }
+          const SEARCH_INDEX_LAG_MS = 2000;
+          return ok({ action, slug, content_hash: writeContentHash, search_indexed_at: new Date(Date.now() + SEARCH_INDEX_LAG_MS).toISOString(), ...result }, Date.now() - t0);
         }
 
         if (action === 'add_tag') {
@@ -691,8 +880,30 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         }
       }
 
+      // ── GET /job?id=<job_id> — poll async put_page status ────────────────────
+      // Returns the current state of a job submitted via PUT /page?async=1.
+      // Jobs expire after 5 minutes; a 404 means expired or never existed.
+      if (path === '/job' && req.method === 'GET') {
+        const jobId = url.searchParams.get('id');
+        if (!jobId) return err('missing_param', 'id is required');
+        const job = asyncJobs.get(jobId);
+        if (!job) return err('not_found', `Job not found or expired: ${jobId}`, 404, {
+          hint: 'Jobs expire after 5 minutes. If the job completed, the result is gone — re-read the page with GET /page?slug=...',
+        });
+        const payload: Record<string, unknown> = {
+          job_id: jobId,
+          slug: job.slug,
+          content_hash: job.content_hash,
+          status: job.status,
+          created: new Date(job.created).toISOString(),
+        };
+        if (job.result) payload.result = job.result;
+        if (job.error) payload.error = job.error;
+        return ok(payload, Date.now() - t0);
+      }
+
       return err('not_found', 'Unknown endpoint', 404, {
-        hint: 'Available: GET /health, /topics, /schema, /search, /page, /pages, /pages/recent, /write | POST /query, /search/batch | PUT /page | DELETE /page',
+        hint: 'Available: GET /health, /topics, /schema, /search, /page, /pages, /pages/recent, /write, /job | POST /query, /search/batch | PUT /page | DELETE /page',
       });
     },
   });
@@ -710,7 +921,9 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   console.error('  POST /search/batch  {queries: [{lex?,vec?,hyde?,q?,limit?}, ...]}  (multi-topic sweep, max 20)');
   console.error('  GET  /page?slug=...&otp=<code>');
   console.error('  GET  /pages?domain=...&limit=20&otp=<code>');
-  console.error('  PUT  /page        {content, slug?, tags?, source?}');
+  console.error('  PUT  /page        {content, slug?, tags?, source?, async?, idempotency_key?}');
+  console.error('  PUT  /page?async=1 → 202 {job_id, slug, content_hash, status:"pending"}  (non-blocking embed)');
+  console.error('  GET  /job?id=<job_id>   → poll async job status');
   console.error('  DELETE /page?slug=...&otp=<code>');
   console.error('  GET  /pages/recent?limit=50&otp=<code>');
   console.error('  GET  /write?action=<action>&otp=<code>&...  (put_page|add_tag|remove_tag|add_link|add_timeline_entry|delete_page)');

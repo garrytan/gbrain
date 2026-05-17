@@ -25,6 +25,8 @@ export interface ImportResult {
   slug: string;
   status: 'imported' | 'skipped' | 'error';
   chunks: number;
+  /** The content_hash stored in the DB (SHA-256 of parsed canonical fields). */
+  content_hash?: string;
   error?: string;
   /**
    * Parsed page content. Present for status='imported' AND status='skipped'
@@ -93,7 +95,7 @@ export async function importFromContent(
 
   const existing = await engine.getPage(slug);
   if (existing?.content_hash === hash) {
-    return { slug, status: 'skipped', chunks: 0, parsedPage };
+    return { slug, status: 'skipped', chunks: 0, content_hash: hash, parsedPage };
   }
 
   // Chunk compiled_truth and timeline
@@ -153,7 +155,7 @@ export async function importFromContent(
     }
   });
 
-  return { slug, status: 'imported', chunks: chunks.length, parsedPage };
+  return { slug, status: 'imported', chunks: chunks.length, content_hash: hash, parsedPage };
 }
 
 /**
