@@ -13,7 +13,11 @@
 #
 # Env overrides:
 #   SHARDS=N                     same as --shards
-#   GBRAIN_TEST_SHARD_TIMEOUT    per-shard wallclock cap, seconds (default 600)
+#   GBRAIN_TEST_SHARD_TIMEOUT    per-shard wallclock cap, seconds (default 1200).
+#                                Raised from 600s in 2026-05-16 — the suite legitimately
+#                                takes 700-900s per shard on the heaviest 2 of 4 by
+#                                stable-hash distribution (verified on Apple M-series).
+#                                The 600s default silently marked clean runs as OVERTIME.
 #   GBRAIN_TEST_MAX_CONCURRENCY  passed through to bun test (default 4)
 #
 # Output files (workspace-local; falls back to /tmp if .context/ unwritable):
@@ -61,7 +65,7 @@ fi
 [ "$N" -gt 8 ] && N=8
 
 INTRA_CONC="${MAX_CONCURRENCY_OVERRIDE:-${GBRAIN_TEST_MAX_CONCURRENCY:-4}}"
-SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-600}"
+SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-1200}"
 
 # ──────────────────────────────────────────────────────────────────────────
 # Output directories. Prefer workspace-local .context/, fall back to /tmp.
@@ -78,7 +82,7 @@ else
   mkdir -p "$LOG_DIR" || { echo "ERROR: cannot create log dir" >&2; exit 2; }
 fi
 # Clear from prior run.
-rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.wedged 2>/dev/null
+rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.overtime 2>/dev/null
 : > "$FAILURES_LOG"
 : > "$SUMMARY_FILE"
 
@@ -130,7 +134,7 @@ for i in $(seq 1 "$N"); do
     fi
     rc=$?
     echo "$rc" > "$LOG_DIR/shard-$i.exit"
-    [ "$rc" = "124" ] && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
+    [ "$rc" = "124" ] && echo "OVERTIME" > "$LOG_DIR/shard-$i.overtime"
   ) &
   SHARD_PIDS+=($!)
 done
@@ -215,7 +219,7 @@ TOTAL_RC=0
 for i in $(seq 1 "$N"); do
   SHARD_LOG="$LOG_DIR/shard-$i.log"
   EXIT_FILE="$LOG_DIR/shard-$i.exit"
-  WEDGED_FILE="$LOG_DIR/shard-$i.wedged"
+  OVERTIME_FILE="$LOG_DIR/shard-$i.overtime"
   rc=1
   [ -f "$EXIT_FILE" ] && rc=$(cat "$EXIT_FILE" 2>/dev/null || echo 1)
 
@@ -226,14 +230,14 @@ for i in $(seq 1 "$N"); do
   TOTAL_FAILURES=$((TOTAL_FAILURES + fail_count))
   TOTAL_SKIP=$((TOTAL_SKIP + skip_count))
 
-  if [ -f "$WEDGED_FILE" ]; then
+  if [ -f "$OVERTIME_FILE" ]; then
     TOTAL_RC=1
     {
-      echo "--- shard $i: WEDGED after ${SHARD_TIMEOUT}s ---"
+      echo "--- shard $i: OVERTIME after ${SHARD_TIMEOUT}s (shard did not finish within cap; partial output below) ---"
       [ -f "$SHARD_LOG" ] && tail -50 "$SHARD_LOG"
       echo ""
     } >> "$FAILURES_LOG"
-    echo "shard $i/$N: WEDGED after ${SHARD_TIMEOUT}s (rc=$rc)" >> "$SUMMARY_FILE"
+    echo "shard $i/$N: OVERTIME after ${SHARD_TIMEOUT}s (rc=$rc)" >> "$SUMMARY_FILE"
     continue
   fi
 
