@@ -1905,6 +1905,63 @@ export class PostgresEngine implements BrainEngine {
       WHERE NOT EXISTS (
         SELECT 1 FROM links l WHERE l.to_page_id = p.id
       )
+        AND p.deleted_at IS NULL
+      ORDER BY p.slug
+    `;
+    return rows as unknown as Array<{ slug: string; title: string; domain: string | null }>;
+  }
+
+  async findIslandedPages(opts?: { includePseudo?: boolean }): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
+    // Single authoritative predicate — keep parallel to getHealth.orphan_pages
+    // SQL above and pglite-engine.ts:findIslandedPages. Both surfaces use this
+    // so find_orphans count == get_health.orphan_pages.
+    //
+    // includePseudo=true relaxes the exclusion set (sources/wayfinding/pseudo
+    // slugs/suffix patterns/first-segment) but does NOT change the islanded
+    // graph predicate (per Codex pre-impl P1: --include-pseudo relaxes
+    // filters, not graph semantics).
+    const sql = this.sql;
+    if (opts?.includePseudo) {
+      const rows = await sql`
+        SELECT
+          p.slug,
+          COALESCE(p.title, p.slug) AS title,
+          p.frontmatter->>'domain' AS domain
+        FROM pages p
+        WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+          AND p.deleted_at IS NULL
+        ORDER BY p.slug
+      `;
+      return rows as unknown as Array<{ slug: string; title: string; domain: string | null }>;
+    }
+    const rows = await sql`
+      SELECT
+        p.slug,
+        COALESCE(p.title, p.slug) AS title,
+        p.frontmatter->>'domain' AS domain
+      FROM pages p
+      WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+        AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+        AND p.deleted_at IS NULL
+        AND p.slug NOT IN ('_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude')
+        AND p.slug NOT LIKE '%/#_index' ESCAPE '#'
+        AND p.slug NOT LIKE '%/log'
+        AND p.slug NOT LIKE '%/raw/%'
+        AND p.slug NOT LIKE 'emails/%'
+        AND p.slug NOT LIKE 'attachments/%'
+        AND p.slug NOT LIKE '0-daily/%'
+        AND p.slug NOT LIKE '4-archive/%'
+        AND p.slug NOT LIKE 'templates/%'
+        AND p.slug NOT LIKE 'navigation/%'
+        AND p.slug NOT LIKE 'output/%'
+        AND p.slug NOT LIKE 'dashboards/%'
+        AND p.slug NOT LIKE 'scripts/%'
+        AND p.slug NOT LIKE 'openclaw/config/%'
+        AND p.slug NOT LIKE 'scratch/%' AND p.slug != 'scratch'
+        AND p.slug NOT LIKE 'thoughts/%' AND p.slug != 'thoughts'
+        AND p.slug NOT LIKE 'catalog/%' AND p.slug != 'catalog'
+        AND p.slug NOT LIKE 'entities/%' AND p.slug != 'entities'
       ORDER BY p.slug
     `;
     return rows as unknown as Array<{ slug: string; title: string; domain: string | null }>;
@@ -3174,9 +3231,50 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM pages p
          WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
         ) as stale_pages,
+        -- Islanded orphan predicate (v0.33+ step-4 alignment):
+        -- Single authoritative WHERE used by BOTH getHealth.orphan_pages
+        -- AND findIslandedPages(). The CLI/MCP find_orphans surface uses
+        -- findIslandedPages so its count == get_health.orphan_pages by
+        -- construction. The JS mirror lives at shouldExclude in
+        -- commands/orphans.ts (kept exported for backwards-compat tests
+        -- only — SQL is the runtime authority).
+        --
+        -- Predicate components:
+        --   • Graph: no inbound AND no outbound (islanded)
+        --   • Visibility: soft-deleted (v0.26.5) excluded
+        --   • Source-type ingestions (emails/attachments/0-daily/4-archive):
+        --     anchored via timeline/parent record, not wikilinks
+        --   • Vault wayfinding (templates/navigation/output/dashboards/
+        --     scripts/openclaw-config): intentionally non-content
+        --   • Pseudo-page exact slugs + suffix/segment patterns
+        --   • First-segment exclusions (scratch/thoughts/catalog/entities)
+        --
+        -- LIKE escape note: '%/#_index' ESCAPE '#' matches literal '_index'
+        -- suffix. Bare '_' is a single-char wildcard in LIKE and would
+        -- otherwise match e.g. '_zindex'. Same trap that bit the
+        -- 1-projects/_% migration on 2026-05-15.
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+           AND p.deleted_at IS NULL
+           AND p.slug NOT IN ('_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude')
+           AND p.slug NOT LIKE '%/#_index' ESCAPE '#'
+           AND p.slug NOT LIKE '%/log'
+           AND p.slug NOT LIKE '%/raw/%'
+           AND p.slug NOT LIKE 'emails/%'
+           AND p.slug NOT LIKE 'attachments/%'
+           AND p.slug NOT LIKE '0-daily/%'
+           AND p.slug NOT LIKE '4-archive/%'
+           AND p.slug NOT LIKE 'templates/%'
+           AND p.slug NOT LIKE 'navigation/%'
+           AND p.slug NOT LIKE 'output/%'
+           AND p.slug NOT LIKE 'dashboards/%'
+           AND p.slug NOT LIKE 'scripts/%'
+           AND p.slug NOT LIKE 'openclaw/config/%'
+           AND p.slug NOT LIKE 'scratch/%' AND p.slug != 'scratch'
+           AND p.slug NOT LIKE 'thoughts/%' AND p.slug != 'thoughts'
+           AND p.slug NOT LIKE 'catalog/%' AND p.slug != 'catalog'
+           AND p.slug NOT LIKE 'entities/%' AND p.slug != 'entities'
         ) as orphan_pages,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)

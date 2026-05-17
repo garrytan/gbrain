@@ -711,10 +711,32 @@ export interface BrainEngine {
   /**
    * Return every page with no inbound links (from any source).
    * Domain comes from the frontmatter `domain` field (null if unset).
-   * The caller filters pseudo-pages + derives display domain.
-   * Used by `gbrain orphans` and `runCycle`'s orphan sweep phase.
+   *
+   * NOTE (v0.33+ step-4 alignment): this is the "no-inbound candidate"
+   * surface, kept for enrichment/sweep use (runCycle reachability checks,
+   * future link-recovery tools). The user-facing `gbrain orphans` /
+   * `find_orphans` MCP no longer routes through here — they call
+   * `findIslandedPages()` so their count == `getHealth.orphan_pages`.
+   * Soft-deleted pages excluded.
    */
   findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
+
+  /**
+   * Return every "islanded" page — no inbound AND no outbound links —
+   * after applying the authoritative exclusion set (source-type prefixes,
+   * vault wayfinding, pseudo-page slugs, suffix/segment patterns,
+   * first-segment exclusions). The SQL predicate is the SAME as
+   * `getHealth.orphan_pages`, so the user-visible `find_orphans` count
+   * equals `get_health.orphan_pages` by construction.
+   *
+   * `opts.includePseudo=true` relaxes the exclusion set (returns ALL
+   * islanded pages including pseudo/source/wayfinding slugs) but does
+   * NOT change the islanded graph predicate — surface auto-generated
+   * pages without redefining what counts as an orphan.
+   *
+   * Used by `gbrain orphans` and the `find_orphans` MCP operation.
+   */
+  findIslandedPages(opts?: { includePseudo?: boolean }): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
 
   // Tags
   /**

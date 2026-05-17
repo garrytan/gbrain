@@ -938,11 +938,10 @@ async function runPhaseOrphans(engine: BrainEngine): Promise<PhaseResult> {
       phase: 'orphans',
       status: count > 20 ? 'warn' : 'ok',
       duration_ms: 0,
-      summary: `${count} orphan page(s) out of ${result.total_pages} total`,
+      summary: `${count} islanded page(s) out of ${result.total_pages} total`,
       details: {
         total_orphans: count,
         total_pages: result.total_pages,
-        excluded: result.excluded,
       },
     };
   } catch (e) {

@@ -103,9 +103,7 @@ mock.module('../../src/commands/orphans.ts', () => ({
     return {
       orphans: [],
       total_orphans: 1,
-      total_linkable: 20,
       total_pages: 20,
-      excluded: 0,
     };
   },
   queryOrphanPages: async () => [],
