@@ -199,6 +199,20 @@ describe('inferFrontmatter', () => {
     expect(result.type).toBe('note');
     expect(result.title).toBe('Empty');
   });
+
+  test('receipts/ directory: infers receipt type for operational evidence', () => {
+    const result = inferFrontmatter(
+      'receipts/2026-05-09-gstack-retry-after.md',
+      '# GStack Retry-After execution failure\n\nOperational receipt...',
+    );
+
+    expect(result.type).toBe('receipt');
+    expect(result.source).toBe('pitstop-truth');
+    expect(result.tags).toContain('receipt');
+    expect(result.tags).toContain('execution-failure');
+    expect(result.tags).toContain('operational-evidence');
+    expect(result.date).toBe('2026-05-09');
+  });
 });
 
 // ── Serialization ────────────────────────────────────────────────────

@@ -232,6 +232,14 @@ export const DIRECTORY_RULES: DirectoryRule[] = [
   { pathPrefix: 'events/', type: 'event', titleStrategy: 'heading', datePattern: 'filename' },
   { pathPrefix: 'meetings/', type: 'meeting', titleStrategy: 'heading', datePattern: 'filename' },
   { pathPrefix: 'media/', type: 'media', titleStrategy: 'heading' },
+  {
+    pathPrefix: 'receipts/',
+    type: 'receipt',
+    source: 'pitstop-truth',
+    tags: ['receipt', 'execution-failure', 'operational-evidence'],
+    datePattern: 'filename',
+    titleStrategy: 'filename-full',
+  },
 
   // Catch-all for any remaining files
   { pathPrefix: '', type: 'note', titleStrategy: 'heading' },
