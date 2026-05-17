@@ -2,8 +2,8 @@
  * v0.28: `gbrain think <question>` CLI.
  *
  * Thin wrapper around runThink + persistSynthesis. Local CLI = remote=false,
- * so --save and --take are honored. Reads ANTHROPIC_API_KEY from the env;
- * degrades to gather-only output with a warning if missing.
+ * so --save and --take are honored. Synthesis routes through the AI gateway;
+ * degrades to gather-only output with a warning if no chat provider is configured.
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { runThink, persistSynthesis } from '../core/think/index.ts';
@@ -38,8 +38,9 @@ Options:
 Without --save, the synthesis is printed to stdout and discarded. With --save,
 the synthesis page is persisted AND printed.
 
-Set ANTHROPIC_API_KEY in the environment to run real synthesis. Without it,
-the gather phase still runs and prints what would have been the input.
+Set a chat-capable AI gateway model/key (for example OPENAI_API_KEY with
+--model openai:gpt-4o-mini, or ANTHROPIC_API_KEY with the default Claude tier)
+to run real synthesis. Without one, the gather phase still runs.
 `);
     return;
   }

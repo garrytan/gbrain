@@ -1,9 +1,9 @@
 /**
  * v0.28: `gbrain think` — INTENT → GATHER → SYNTHESIZE → (optional) COMMIT.
  *
- * v0.28.0 ships the full pipeline. The Anthropic call is dependency-injected
- * (MessagesClient interface) so tests can stub it without an API key. Live
- * runs require ANTHROPIC_API_KEY in the environment.
+ * v0.28.0 ships the full pipeline. The synthesis call is dependency-injected
+ * so tests can stub it without an API key. Live runs route through the
+ * provider-neutral AI gateway unless a legacy test client is supplied.
  *
  * --rounds scaffolding: round 1 is the only round actually exercised in
  * v0.28. Round N+1 fed by gaps from round N is the v0.29 follow-up; the
@@ -17,15 +17,16 @@
  * for those flags per Codex P1 #7.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import type { BrainEngine, SynthesisEvidenceInput } from '../engine.ts';
+import type Anthropic from '@anthropic-ai/sdk';
+import { chat } from '../ai/gateway.ts';
 import { runGather, renderPagesBlock, takesHitToTakeForPrompt } from './gather.ts';
 import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveModel } from '../model-config.ts';
 
-/** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
+/** Legacy Messages-style client interface retained for tests and custom callers. */
 export interface ThinkLLMClient {
   create(params: Anthropic.MessageCreateParamsNonStreaming, opts?: { signal?: AbortSignal }): Promise<Anthropic.Message>;
 }
@@ -47,7 +48,7 @@ export interface RunThinkOpts {
   until?: string;
   /** When set, MCP-bound calls forward this to the gather phase (server-side filter). */
   takesHoldersAllowList?: string[];
-  /** Inject an LLM client (for tests). Defaults to a fresh Anthropic SDK client. */
+  /** Inject an LLM client (for tests). Defaults to provider-neutral gateway chat. */
   client?: ThinkLLMClient;
   /** Inject a question-embedding function. When omitted, vector takes search is skipped. */
   embedQuestion?: (q: string) => Promise<Float32Array | null>;
@@ -107,6 +108,15 @@ function tryParseJSON(text: string): unknown {
     }
     return null;
   }
+}
+
+function modelForGatewayChat(model: string): string {
+  const trimmed = model.trim();
+  // resolveModel() returns bare model ids for built-in aliases/tier defaults
+  // (claude-opus-4-7, claude-sonnet-4-6, ...). gateway.chat() requires the
+  // provider:model form, so preserve explicit provider overrides and treat
+  // legacy bare defaults as Anthropic.
+  return trimmed.includes(':') ? trimmed : `anthropic:${trimmed}`;
 }
 
 /**
@@ -222,41 +232,48 @@ export async function runThink(
   if (opts.stubResponse) {
     response = opts.stubResponse;
   } else {
-    if (!opts.client && !process.env.ANTHROPIC_API_KEY) {
-      warnings.push('NO_ANTHROPIC_API_KEY');
-      // Degrade gracefully: return the gather without synthesis. Better than throwing.
-      return {
-        question: opts.question,
-        answer: '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)',
-        citations: [],
-        gaps: ['no LLM available; gather succeeded but synthesis skipped'],
-        pagesGathered: gather.pages.length,
-        takesGathered: gather.takes.length,
-        graphHits: gather.graphSlugs.length,
-        modelUsed,
-        rounds: 0,
-        warnings,
-        diagnostics: {
-          pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
-          takesFromKeyword: gather.diagnostics.takesFromKeyword,
-          takesFromVector: gather.diagnostics.takesFromVector,
-          graphHits: gather.diagnostics.graphHits,
-        },
-      };
+    let text = '';
+    if (opts.client) {
+      const result = await opts.client.create({
+        model: modelUsed,
+        max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      });
+      const block = result.content.find(b => b.type === 'text');
+      text = block && typeof block.text === 'string' ? block.text : '';
+    } else {
+      try {
+        const result = await chat({
+          model: modelForGatewayChat(modelUsed),
+          maxTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userMessage }],
+        });
+        text = result.text;
+      } catch (err) {
+        warnings.push(`LLM_UNAVAILABLE: ${err instanceof Error ? err.message : String(err)}`);
+        // Degrade gracefully: return the gather without synthesis. Better than throwing.
+        return {
+          question: opts.question,
+          answer: '(no LLM available — configure an AI gateway chat provider or pass `client`)',
+          citations: [],
+          gaps: ['no LLM available; gather succeeded but synthesis skipped'],
+          pagesGathered: gather.pages.length,
+          takesGathered: gather.takes.length,
+          graphHits: gather.graphSlugs.length,
+          modelUsed,
+          rounds: 0,
+          warnings,
+          diagnostics: {
+            pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
+            takesFromKeyword: gather.diagnostics.takesFromKeyword,
+            takesFromVector: gather.diagnostics.takesFromVector,
+            graphHits: gather.diagnostics.graphHits,
+          },
+        };
+      }
     }
-    // Anthropic SDK exposes the create method via .messages — match the structural signature.
-    const realClient = new Anthropic();
-    const client: ThinkLLMClient = opts.client ?? {
-      create: (params, opts2) => realClient.messages.create(params, opts2),
-    };
-    const result = await client.create({
-      model: modelUsed,
-      max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    });
-    const block = result.content.find(b => b.type === 'text');
-    const text = block && 'text' in block ? block.text : '';
     const parsed = tryParseJSON(text);
     if (!parsed || typeof parsed !== 'object') {
       warnings.push('LLM_OUTPUT_NOT_JSON');
