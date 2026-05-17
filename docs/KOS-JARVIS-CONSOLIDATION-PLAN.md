@@ -2,7 +2,9 @@
 
 > **Owner**: Lucien
 > **Created**: 2026-05-02 (post v0.25.0 sync)
-> **Last reviewed**: 2026-05-04 (post v0.26.7 sync — 4 new M2 candidates)
+> **Last reviewed**: 2026-05-17 (post v0.35.6.0 sync — fork shape stable
+> at 10 active dirs; M2-A/B/C/D all closed in prior rounds; upstream
+> PR #1017 superseded by v0.35.5.0 fixwave; M4 candidates queued)
 > **Cadence**: Re-evaluate after every upstream sync that lands a feature
 > potentially overlapping a fork skill (next checkpoint: v0.27.x)
 > **Companion docs**: [`skills/kos-jarvis/README.md`](../skills/kos-jarvis/README.md)

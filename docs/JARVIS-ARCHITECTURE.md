@@ -3262,6 +3262,139 @@ including the diagnostic-correction detour and 8 TODO writeups.
 
 ---
 
+## 6.26 Upstream v0.35.6.0 sync (2026-05-17)
+
+**Scope**: v0.34.4 → v0.35.6.0 (9 versions: v0.35.0/1/1.1/3/3.1/4/5/5.1/6),
+108 upstream commits, 200+ files touched. Two weeks after §6.24 v0.34.4.
+
+**Merge cleanliness**: best sync to date. Only **2 real conflicts**
+(`.gitignore` + `CLAUDE.md`, both mechanical fork-only block reorder).
+The remaining 79 modified files + 32 new files all auto-merged cleanly:
+- `src/core/pglite-engine.ts` — auto-merged. WAL fork patch
+  (`SELECT pg_switch_wal()` on disconnect, lines 187-200) sat in a
+  different region than the upstream +50-line bootstrap probe expansion
+  (`needsFilesBootstrap`, `needsOauthClientsBootstrap`,
+  `needsSourcesArchive`). Both survived.
+- `src/core/postgres-engine.ts` — auto-merged. Fork has no WAL patch
+  here; upstream added matching bootstrap probes + DDL connection
+  threading. Pure take-upstream.
+- `src/core/ai/recipes/google.ts` — auto-merged. Fork's
+  `max_batch_tokens: 20_000 / chars_per_token: 2` patch (lines 17-23)
+  survived; upstream hasn't touched that block (PR #1016 still OPEN
+  on upstream, fork-side patch still needed).
+- `package.json` — auto-merged. `@electric-sql/pglite 0.4.4` override
+  preserved.
+- `skills/RESOLVER.md` + `skills/manifest.json` — both auto-merged
+  without touching the `## KOS-Jarvis extensions` section.
+
+**Key value of this sync wave**:
+
+- **v0.35.5.0 bootstrap fixwave (#1111, commit `4446e9f9`) SUPERSEDES
+  fork PR #1017** (oauth_clients bootstrap). Upstream adds 7
+  forward-reference probes (`files.source_id`, `files.page_id`,
+  `oauth_clients.source_id`, `oauth_clients.federated_read`,
+  `sources.archived`, `sources.archived_at`, `sources.archive_expires_at`)
+  + DDL connection threading (Codex-P1 catch — bootstrap probes now
+  run inside the advisory lock instead of on `this.sql`) + a
+  MIGRATIONS-source introspection contract test that catches the
+  entire column-only forward-ref bug class at PR time. Strict superset
+  of fork PR #1017. Closed as superseded (same pattern as PR #627 →
+  v0.31.1.1 fixwave, §6.22).
+- **v0.35.4.0 entity bare-name resolver 58x perf**. The fork's
+  `enrich-sweep` (weekly Sun 22:13 cron) hits the entity resolver per
+  ingest; 58x speedup is a real cost cut.
+- **v0.35.5.0 walker `pruneDir` + descent-time exclusion**. Sync
+  walkers (`walkMarkdownFiles`, `listTextFiles`) skip `node_modules`
+  / dot-prefix / `*.raw` directories at descent rather than at
+  file-emit; per-pass IO saved scales with brain size. At 3138 pages
+  the effect is noticeable on every `gbrain sync` round-trip.
+- **v0.35.5.0 orphans soft-delete leak fix (closes #1021)**. Both
+  candidate-side and link-source-side `deleted_at IS NULL` filters
+  now applied. Fork's `orphan-reducer` cron will see slightly fewer
+  false-positive orphans.
+- **v0.35.5.0 think MCP runs through gateway.chat adapter (closes
+  #952)**. Reads API key from `~/.gbrain/config.json` not just env;
+  benefits any future MCP-stdio usage on the fork (kos-compat-api
+  doesn't go through MCP, so no immediate fork impact).
+- **v0.35.5.1 supervisor clean-exit (code=0 watchdog) reclassification**.
+  Reduces `gbrain doctor` false-WARN on launchd-managed cron exits.
+- **v0.35.6.0 search floor-ratio gate for metadata boost**. Closes
+  search-quality issue #1091; metadata boost stages now respect a
+  floor ratio to prevent over-boost on sparse-corpus matches. Useful
+  for the fork's mixed Notion (60%) + structured-source (40%) brain.
+- **v0.35.0.0 ZeroEntropy `zembed-1` embedder + `zerank-2` reranker**.
+  Opt-in. Fork stays on `google:gemini-embedding-001 / 1536-dim` —
+  no production reembed.
+- **v0.35.1.0 / v0.35.1.1 embedder shootout prereqs + longmemeval fix
+  wave**. Additive eval-framework, no production impact.
+- **v0.35.3.0 extract_facts MCP `items` field + facts:absorb-related
+  hardening**. Fork's `kos-compat-api` doesn't go through MCP, so the
+  MCP schema fix is neutral here. The fork P1 entry on `facts:absorb`
+  sub-process DB connection (`src/core/facts/absorb-log.ts` warning)
+  is **NOT covered** by this wave (different layer — the absorb writer
+  is best-effort with `try/catch + console.warn`; the underlying
+  sub-process init-gap remains open).
+
+**Validation**:
+- `bun run typecheck` clean (~3 s)
+- `bun test test/ai/ test/bootstrap.test.ts test/schema-bootstrap-coverage.test.ts`
+  **221 pass / 0 fail** in 8.42 s; 62 migrations applied across hermetic
+  per-test PGLite DBs.
+- `bun run build` produces `bin/gbrain` reporting `0.35.6.0`.
+- `bun install` postinstall: `All migrations up to date.` —
+  production schema already at v66; upstream v0.35.5.0 bootstrap
+  probes are no-ops because the manual ALTERs from §6.24 already
+  landed the same columns. **No manual ALTER needed this round.**
+
+**Production state (post-sync)**:
+- `kos-compat-api` cycled, PID 9074, `/status` returns 3138 pages
+  (unchanged from pre-sync; §6.24 reported 2718, since then +420
+  pages from continuing notion-poller + signal-detector ingest).
+- `kos.chenge.ink/status` remote returns identical payload —
+  cloudflared tunnel intact, external boundary unaffected.
+- 4 cron services (`dream-cycle`, `enrich-sweep`, `kos-patrol`,
+  `notion-poller`) bootout/bootstrap clean; idle waiting for their
+  next launchd-scheduled fire.
+- `kos-patrol` kickstart smoke: wrote fresh
+  `~/brain/.agent/dashboards/knowledge-health-2026-05-17.md` (5667
+  bytes) at 16:07.
+- `gbrain doctor`: connection OK, schema_version 66 (latest),
+  RLS 41/41 tables, brain_score **80/100** (embed 35/35, links 25/25,
+  timeline 2/15, orphans 8/15, dead-links 10/10) — unchanged from
+  pre-sync. Three known WARNings unchanged:
+  - `resolver_health`: 57 issues, still all `~/.openclaw/workspace`
+    cross-boundary refs, not fork responsibility
+  - `graph_coverage`: 0% entity link coverage — design property
+    for markdown-only brain (see §6.19)
+  - `skill_conformance`: `manifest.json not found` — likely a
+    stricter upstream check looking in a path that moved; manifest
+    exists at `skills/manifest.json` (250 lines, 10 fork entries).
+    Non-blocking, file as P3 if it recurs.
+
+**Backups retained** (24h):
+- `~/.gbrain/config.json.pre-sync-v0.35.6.0` (180 bytes)
+- `/tmp/pg-pre-sync-v0.35.6.0.dump.gz` (110 MB)
+
+**Fork-side PR ledger after this sync**:
+- **CLOSED as superseded** by upstream v0.35.5.0: [PR #1017](https://github.com/garrytan/gbrain/pull/1017)
+- **Still OPEN**: [PR #1016](https://github.com/garrytan/gbrain/pull/1016)
+  (google.ts `max_batch_tokens`). Fork-side patch in
+  `src/core/ai/recipes/google.ts` survives the sync clean; no action
+  needed until upstream merges or supersedes.
+
+**Active fork dirs**: unchanged at **10** under `skills/kos-jarvis/`
+(7 active skills + 2 helpers + `_archived/`). No archives this round.
+Net `master..upstream` diff dropped from 108 to **0 upstream commits
+divergence** (now matched at v0.35.6.0); fork-local commit count is
+**~12** (8 pre-sync + 4 sync round).
+
+**Sync time**: ~1 h end-to-end (vs the 3-3.5 h plan estimate). The
+auto-merge cleanliness — only 2 real conflicts — accounts for most
+of the saved time. Cost of v0.34.4's full PR-#1017-bootstrap manual
+ALTER was amortized: this sync became a "free ride" on that work.
+
+---
+
 ## 8. Cost and performance snapshot
 
 | Metric | v1 | v2 |

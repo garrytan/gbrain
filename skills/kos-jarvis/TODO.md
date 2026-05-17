@@ -1,16 +1,25 @@
-# kos-jarvis — Outstanding Work (post v0.34.4 sync, 2026-05-15)
+# kos-jarvis — Outstanding Work (post v0.35.6.0 sync, 2026-05-17)
 
-> **Updated 2026-05-15**: v0.34.4 upstream sync landed (29 commits,
-> v0.31.3 → v0.34.4). Story in `docs/JARVIS-ARCHITECTURE.md` §6.24.
-> Schema upgraded v45 → v66 (21 migrations + 1 manual bootstrap for
-> `oauth_clients.{source_id, federated_read}`). Production smoke
-> green: kos-compat-api Chinese query round-trip 0.95+ scores.
+> **Updated 2026-05-17**: v0.35.6.0 upstream sync landed (108 commits,
+> 9 versions, v0.34.4 → v0.35.6.0). Story in
+> `docs/JARVIS-ARCHITECTURE.md` §6.26. **PR #1017 (oauth_clients
+> bootstrap) CLOSED as superseded** by upstream v0.35.5.0 `4446e9f9` —
+> upstream's fix is a strict superset (7 probes vs our 2, + DDL conn
+> threading + MIGRATIONS introspection guard). Production schema
+> unchanged at v66; `bun install` postinstall confirmed "All migrations
+> up to date" with no manual ALTER. Only 2 real merge conflicts
+> (.gitignore + CLAUDE.md, both mechanical). brain_score 80/100,
+> 3138 pages preserved.
 >
-> **3 new P1 evaluations** queued for the next session — see "Post-
-> v0.34.4 sync follow-ups" section below.
+> **Active fork dirs**: **10** (7 skills + 2 helpers + _archived) —
+> unchanged from §6.24. M2-A/B/C/D all closed in prior rounds.
 >
-> **Active fork dirs**: still 11 (no archives this round; M2-B reopen
-> pending v0.32.5 gbrain-context evaluation).
+> ---
+>
+> **Updated 2026-05-15** (v0.34.4 sync): 29 commits, v0.31.3 → v0.34.4.
+> Story in §6.24. Schema upgraded v45 → v66 (21 migrations + 1 manual
+> bootstrap for `oauth_clients.{source_id, federated_read}` — the
+> bootstrap PR that v0.35.5.0 has since superseded).
 >
 > ---
 >
@@ -124,7 +133,7 @@ COLUMN IF NOT EXISTS …` 过了,生产 schema v34, 不依赖此 PR merge。
 
 ## P1 — Post-v0.34.4 sync follow-ups (added 2026-05-15)
 
-### [x] (PR-2) Upstream PR: extend forward-bootstrap to cover oauth_clients.{source_id, federated_read} — FILED 2026-05-15
+### [x] (PR-2) Upstream PR: extend forward-bootstrap to cover oauth_clients.{source_id, federated_read} — CLOSED 2026-05-17 (superseded by v0.35.5.0 #1111)
 
 **[garrytan/gbrain#1017](https://github.com/garrytan/gbrain/pull/1017)**.
 Branch `upstream-fix/bootstrap-oauth-clients-cols` cut from
