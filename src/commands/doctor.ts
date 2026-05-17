@@ -2563,7 +2563,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
 
   progress.finish();
 
-  const hasFail = outputResults(checks, jsonOutput);
+  const hasFail = outputResults(checks, jsonOutput, autoFixReport);
 
   // Features teaser (non-JSON, non-failing only)
   if (!jsonOutput && !hasFail && engine) {
@@ -2653,7 +2653,7 @@ function checkSkillConformance(skillsDir: string): Check {
   }
 }
 
-function outputResults(checks: Check[], json: boolean): boolean {
+function outputResults(checks: Check[], json: boolean, autoFixReport?: AutoFixReport | null): boolean {
   const hasFail = checks.some(c => c.status === 'fail');
   const hasWarn = checks.some(c => c.status === 'warn');
 
@@ -2667,7 +2667,11 @@ function outputResults(checks: Check[], json: boolean): boolean {
 
   if (json) {
     const status = hasFail ? 'unhealthy' : hasWarn ? 'warnings' : 'healthy';
-    console.log(JSON.stringify({ schema_version: 2, status, health_score: score, checks }));
+    // Fix 6 (v0.20.1): include auto_fix report in JSON output so agents
+    // calling `doctor --fix --json` can read fix outcomes alongside checks.
+    const payload: Record<string, unknown> = { schema_version: 2, status, health_score: score, checks };
+    if (autoFixReport) payload.auto_fix = autoFixReport;
+    console.log(JSON.stringify(payload));
     return hasFail;
   }
 
