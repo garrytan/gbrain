@@ -184,25 +184,46 @@ export async function writeFactsToFence(
       let body: string;
       if (existsSync(filePath)) {
         body = readFileSync(filePath, 'utf-8');
-        // Codex round-24 P2: an existing phantom .md file on disk
-        // (pre-v0.34.5 era) would previously slip past the stub-guard
-        // because the missing-file branch was the only place that
-        // checked. resolveEntitySlug can still hand us an unprefixed
-        // slug when prefix expansion finds no canonical (the "bare
-        // name with no matching people/* page" case). Without this
-        // second check, future facts keep appending to the existing
-        // phantom and the split keeps growing.
+        // Codex round-24 + round-26 stub-guard: an existing phantom
+        // .md file on disk should block fact appends so future facts
+        // don't keep accumulating on a v0.34.5-era phantom. But the
+        // check must also consult the DB row — if disk is stale-stub
+        // while pages.compiled_truth has real content (e.g. a
+        // subsequent put_page / MCP update never re-synced to disk),
+        // the page is intentional and the fact must land.
         if (!target.slug.includes('/')) {
           const { isStubBody } = await import('../entities/resolve.ts');
           if (isStubBody(body)) {
-            // eslint-disable-next-line no-console
-            console.warn(
-              `[facts] refusing to append to existing stub-shaped phantom slug=${target.slug} (file present but body is stub-shape). Routing to dropped-audit so future facts don't keep splitting onto this page.`,
+            // Disk says stub. Check the DB body too before dropping.
+            const dbPage = await engine.getPage(target.slug, {
+              sourceId: target.sourceId,
+            });
+            const dbStub =
+              dbPage === null ||
+              (isStubBody(dbPage.compiled_truth ?? '') &&
+                (dbPage.timeline ?? '').trim().length === 0);
+            if (dbStub) {
+              // eslint-disable-next-line no-console
+              console.warn(
+                `[facts] refusing to append to existing stub-shaped phantom slug=${target.slug} (file present, body stub-shape, DB also empty/stub). Routing to dropped-audit.`,
+              );
+              return { inserted: 0, ids: [], stubGuardBlocked: true };
+            }
+            // DB has real content; disk is stale. Materialize the DB
+            // body over the stale stub so the fence write appends to
+            // real content rather than a stub.
+            const { serializeMarkdown } = await import('../markdown.ts');
+            const tags = Array.isArray(dbPage.frontmatter?.tags)
+              ? (dbPage.frontmatter!.tags as string[])
+              : [];
+            body = serializeMarkdown(
+              (dbPage.frontmatter as Record<string, unknown>) ?? {},
+              dbPage.compiled_truth ?? '',
+              dbPage.timeline ?? '',
+              { type: dbPage.type, title: dbPage.title, tags },
             );
-            return { inserted: 0, ids: [], stubGuardBlocked: true };
           }
-          // Body is non-stub (intentional bare page) — let the
-          // append continue.
+          // Body is non-stub (intentional bare page) — append below.
         }
       } else {
         // The stub-creation guard prevents v0.34.5-era phantom entity

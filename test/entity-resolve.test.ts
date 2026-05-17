@@ -686,6 +686,64 @@ describe('stub-guard + backstop integration (D5 regression — IRON RULE)', () =
     }
   });
 
+  it('writeFactsToFence appends to a real DB page even when the .md file is stale-stub (round-26 P2)', async () => {
+    // Codex round-26 P2: when the .md file on disk is a stale stub
+    // but pages.compiled_truth has real content (e.g. subsequent
+    // put_page / MCP write never re-synced to disk), facts must
+    // land on the real page rather than dropping to the audit log.
+    const realBody = '# Real Stale-Disk Page\n\nIntentional real DB content that the disk file lost.';
+    await engine.putPage(
+      'stale-disk-real',
+      {
+        type: 'concept' as any,
+        title: 'Real Stale-Disk Page',
+        compiled_truth: realBody,
+        frontmatter: { type: 'concept', title: 'Real Stale-Disk Page', slug: 'stale-disk-real' },
+      },
+      { sourceId: 'default' },
+    );
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-stale-disk-'));
+    const gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-stale-disk-home-'));
+    try {
+      // Stub-shaped .md on disk (out of sync with DB).
+      writeFileSync(
+        join(brainDir, 'stale-disk-real.md'),
+        '---\ntype: concept\ntitle: Stale\nslug: stale-disk-real\n---\n\n# Stale\n',
+        'utf-8',
+      );
+
+      const result = await withEnv({ GBRAIN_HOME: gbrainHome }, () =>
+        writeFactsToFence(
+          engine as unknown as BrainEngine,
+          { sourceId: 'default', localPath: brainDir, slug: 'stale-disk-real' },
+          [
+            {
+              fact: 'A new fact for the stale-disk real page.',
+              kind: 'fact' as const,
+              notability: 'medium' as const,
+              source: 'test:regression',
+              visibility: 'private' as const,
+              embedding: null,
+              sessionId: null,
+            },
+          ],
+        ),
+      );
+
+      // No stub-guard fire; fact landed.
+      expect(result.stubGuardBlocked).toBeUndefined();
+      expect(result.inserted).toBe(1);
+
+      // Markdown reconciled to DB body + appended fact.
+      const onDisk = readFileSync(join(brainDir, 'stale-disk-real.md'), 'utf-8');
+      expect(onDisk).toContain('Intentional real DB content');
+      expect(onDisk).toContain('A new fact for the stale-disk real page.');
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+      rmSync(gbrainHome, { recursive: true, force: true });
+    }
+  });
+
   it('writeFactsToFence blocks appends to an existing stub-shaped phantom file (round-24 P2)', async () => {
     // Codex round-24 P2: a pre-v0.34.5 phantom file on disk would
     // previously slip past the stub-guard because the guard only
