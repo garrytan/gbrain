@@ -375,16 +375,22 @@ describe('startup warning for recipes missing max_batch_tokens', () => {
       console.warn = original;
     }
 
-    // The warning text should match the documented contract.
+    // The warning text contract is still documented; after v0.34.5 (google
+    // declared max_batch_tokens) every first-party native/openai-compat
+    // recipe is capped, so the canary set is empty. The mechanism itself
+    // is still exercised by the once-per-process suppression check above
+    // (firstCallCount stability across re-configure).
     const contractMatch = warnings.filter(w =>
       w.includes('[ai.gateway]') && w.includes('declares an embedding touchpoint'),
     );
-    expect(contractMatch.length).toBeGreaterThan(0);
+    expect(contractMatch.length).toBe(0);
 
     // Voyage declares max_batch_tokens → suppressed. OpenAI is the
     // canonical fast-path recipe → also suppressed by id. Both must be
     // absent from the warnings.
     expect(warnings.find(w => w.includes('"voyage"'))).toBeUndefined();
     expect(warnings.find(w => w.includes('"openai"'))).toBeUndefined();
+    // After v0.34.5 google also declares max_batch_tokens.
+    expect(warnings.find(w => w.includes('"google"'))).toBeUndefined();
   });
 });

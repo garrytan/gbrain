@@ -14,6 +14,13 @@ export const google: Recipe = {
       models: ['gemini-embedding-001'],
       default_dims: 768,
       dims_options: [768, 1536, 3072],
+      // Per-text cap is 2048 tokens; per-request total ~20k tokens before
+      // gemini-embedding-001 starts 429-ing. chars_per_token: 2 covers
+      // CJK-dense corpora (English averages ~4, CJK ~1.5); safety_factor
+      // stays at the gateway default 0.8 so pre-split lands at ~8 000
+      // chars/batch — well under any per-request floor Google publishes.
+      max_batch_tokens: 20_000,
+      chars_per_token: 2,
       cost_per_1m_tokens_usd: 0.15,
       price_last_verified: '2026-04-20',
     },
