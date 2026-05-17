@@ -85,7 +85,13 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
   } else if (action === 'set' && key && value) {
     await engine.setConfig(key, value);
-    console.log(`Set ${key} = ${value}`);
+    const isSensitive = key.includes('key') || key.includes('secret') || key.includes('token') || key.includes('password');
+    const displayValue = typeof value === 'string' && value.includes('postgresql://')
+      ? redactUrl(value)
+      : isSensitive
+        ? '***'
+        : value;
+    console.log(`Set ${key} = ${displayValue}`);
   } else {
     console.error('Usage: gbrain config [show|get|set|unset] <key> [value]');
     console.error('       gbrain config unset --pattern <prefix>');
