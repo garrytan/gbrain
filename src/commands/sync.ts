@@ -230,6 +230,19 @@ function git(repoPath: string, args: string[], configs: string[] = []): string {
   }).trim();
 }
 
+function hasOriginRemote(repoPath: string): boolean {
+  try {
+    execFileSync('git', buildGitInvocation(repoPath, ['remote', 'get-url', 'origin']), {
+      encoding: 'utf-8',
+      timeout: 30000,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isDetachedHead(repoPath: string): boolean {
   try {
     git(repoPath, ['symbolic-ref', '--quiet', 'HEAD']);
@@ -450,7 +463,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // hardening that cloneRepo applies. Route through pullRepo from
   // git-remote.ts so the flag set is consistent across initial clone and
   // ongoing pulls — single source of truth for the defensive flags.
-  if (!opts.noPull && !detachedHead) {
+  const originRemotePresent = !opts.noPull && !detachedHead ? hasOriginRemote(repoPath) : false;
+  if (!opts.noPull && !detachedHead && !originRemotePresent) {
+    console.error(`No origin remote on ${repoPath}; skipping git pull. Syncing from local working tree.`);
+  }
+
+  if (!opts.noPull && !detachedHead && originRemotePresent) {
     const _t0 = Date.now();
     console.error(`[gbrain phase] sync.git_pull start`);
     try {
