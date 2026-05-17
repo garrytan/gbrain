@@ -803,7 +803,9 @@ HANDLER TYPES (built in)
         const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
         const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
         // Shared classifier — same code path runs in `gbrain doctor` so the
-        // two surfaces cannot drift on what counts as a crash.
+        // two surfaces cannot drift on what counts as a crash. Supersedes
+        // v0.35.4.0's binary `classifyWorkerExit({code})` on this surface;
+        // see doctor.ts for the layering rationale.
         const summary = summarizeCrashes(events);
         const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 

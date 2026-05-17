@@ -634,3 +634,44 @@ describe('supervisor crash classifier wiring (v0.35.x)', () => {
     expect(source).toContain('clean_exits_24h');
   });
 });
+
+// v0.34.5 stub-guard observability tests (from v0.35.4.0). Doctor surfaces
+// the 24h fire count for the resolver-stub-guard. WARN at >10 hits is the
+// signal that prefix-expansion in resolveEntitySlug is missing a case.
+describe('stub_guard_24h check (v0.34.5)', () => {
+  test('doctor source defines the stub_guard_24h check', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain("name: 'stub_guard_24h'");
+  });
+
+  test('WARN threshold is >10 hits/24h', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The WARN gate must fire above 10, not at or below — that's the threshold
+    // the v0.36 sunset criterion is calibrated against.
+    expect(source).toMatch(/events\.length\s*>\s*10/);
+  });
+
+  test('fix hint points operators at the audit log', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain('stub-guard-*.jsonl');
+    expect(source).toContain('prefix-expansion in resolveEntitySlug');
+  });
+
+  test('check reads via the dual-week-aware reader (NOT supervisor-audit pattern)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The point of the divergence from supervisor-audit.ts is this reader
+    // reads both current and previous ISO-week files. If the check ever
+    // gets re-pointed at readSupervisorEvents-style single-week, this test
+    // fails — protecting the cross-week-boundary correctness.
+    expect(source).toContain('readRecentStubGuardEvents');
+    expect(source).not.toMatch(/from .*\/stub-guard-audit\.ts.*readSupervisorEvents/);
+  });
+
+  test('zero hits emits no check (keeps doctor output clean on healthy brains)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // The implementation falls through silently when events.length === 0.
+    // Codify this in source-grep form so a future refactor doesn't add an
+    // "ok: 0 hits" line that pollutes every doctor run.
+    expect(source).toMatch(/events\.length === 0|Zero hits is the goal/);
+  });
+});
