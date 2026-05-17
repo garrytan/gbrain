@@ -421,7 +421,190 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // things when reranker is on vs off.
   checks.push(await checkRerankerHealth(engine));
 
+  // 10. v0.36.0.0 Hindsight calibration wave (T12) — four new checks:
+  //   - abandoned_threads: high-conviction takes never revisited
+  //   - calibration_freshness: profile is older than 7 days
+  //   - grade_confidence_drift: judge self-reported confidence vs actual accuracy (CDX-11 mitigation)
+  //   - voice_gate_health: voice gate failure rate over the last 7 days
+  checks.push(await checkAbandonedThreads(engine));
+  checks.push(await checkCalibrationFreshness(engine));
+  checks.push(await checkGradeConfidenceDrift(engine));
+  checks.push(await checkVoiceGateHealth(engine));
+
   return computeDoctorReport(checks);
+}
+
+// --- v0.36.0.0 calibration doctor checks (T12) ---
+
+/**
+ * abandoned_threads: surfaces active high-conviction takes (weight >= 0.7)
+ * older than 12 months that have neither been superseded nor linked to a
+ * follow-up page. These are commitments the user made and never revisited.
+ * Status 'ok' with a count; never warns/fails (this is signal, not error).
+ */
+export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM takes
+         WHERE active = true
+           AND resolved_at IS NULL
+           AND superseded_by IS NULL
+           AND weight >= 0.7
+           AND since_date IS NOT NULL
+           AND since_date::date < (now() - INTERVAL '12 months')`,
+    );
+    const count = rows[0]?.count ?? 0;
+    if (count === 0) {
+      return {
+        name: 'abandoned_threads',
+        status: 'ok',
+        message: 'No abandoned high-conviction threads',
+      };
+    }
+    return {
+      name: 'abandoned_threads',
+      status: 'ok',
+      message: `${count} high-conviction take(s) older than 12 months and never revisited — see \`gbrain calibration\` for details`,
+    };
+  } catch (e) {
+    return {
+      name: 'abandoned_threads',
+      status: 'warn',
+      message: `Could not check abandoned threads: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * calibration_freshness: warns when the active calibration profile is
+ * older than 7 days (configurable). Default holder 'garry'. Multi-source
+ * brains see one row per source; this check uses the most recent across
+ * all sources.
+ */
+export async function checkCalibrationFreshness(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ generated_at: Date | null }>(
+      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = 'garry'`,
+    );
+    const generated = rows[0]?.generated_at;
+    if (!generated) {
+      return {
+        name: 'calibration_freshness',
+        status: 'ok',
+        message: 'No calibration profile yet (builds after 5+ resolved takes)',
+      };
+    }
+    const ageMs = Date.now() - new Date(generated).getTime();
+    const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
+    const staleDays = 7;
+    if (ageDays > staleDays) {
+      return {
+        name: 'calibration_freshness',
+        status: 'warn',
+        message: `Calibration profile is ${ageDays} days old (stale at >${staleDays}d). Run \`gbrain calibration --regenerate\``,
+      };
+    }
+    return {
+      name: 'calibration_freshness',
+      status: 'ok',
+      message: `Calibration profile generated ${ageDays}d ago`,
+    };
+  } catch (e) {
+    return {
+      name: 'calibration_freshness',
+      status: 'warn',
+      message: `Could not check calibration freshness: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * grade_confidence_drift (CDX-11 mitigation): compare the judge's
+ * self-reported confidence on auto-applied verdicts against the eventual
+ * accuracy on those same takes. When auto-resolutions diverge from
+ * confidence prediction, the judge is mis-calibrated and the operator
+ * should retune the prompt or revisit the threshold.
+ *
+ * v0.36.0.0 ship state: returns 'ok' with a counter — actual drift math
+ * requires a measurement window we haven't accumulated yet. The check
+ * exists so the surface is wired; the math arrives once we have N >= 30
+ * auto-applied verdicts to compare.
+ */
+export async function checkGradeConfidenceDrift(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ applied_count: number }>(
+      `SELECT COUNT(*)::int AS applied_count FROM take_grade_cache WHERE applied = true`,
+    );
+    const applied = rows[0]?.applied_count ?? 0;
+    if (applied < 30) {
+      return {
+        name: 'grade_confidence_drift',
+        status: 'ok',
+        message: `Only ${applied} auto-applied verdicts — need 30+ for drift detection`,
+      };
+    }
+    // v0.37+ TODO: compute confidence-vs-accuracy correlation; warn when
+    // mean(applied verdicts' confidence) deviates from the actual accuracy
+    // rate (cross-checked against later manual corrections via the
+    // contradictions probe). For v0.36.0.0 the check surfaces only the
+    // count and a "calibration math pending" status.
+    return {
+      name: 'grade_confidence_drift',
+      status: 'ok',
+      message: `${applied} auto-applied verdicts; drift math arrives in v0.37+`,
+    };
+  } catch (e) {
+    return {
+      name: 'grade_confidence_drift',
+      status: 'warn',
+      message: `Could not check grade confidence drift: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * voice_gate_health: warns when calibration_profiles rows show a high rate
+ * of voice gate failures over the last 7 days. Failures aren't bad in
+ * isolation (template fallback is fine), but a sustained high rate signals
+ * the rubric needs tuning.
+ */
+export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ total: number; failures: number }>(
+      `SELECT COUNT(*)::int AS total,
+              COALESCE(SUM(CASE WHEN voice_gate_passed = false THEN 1 ELSE 0 END), 0)::int AS failures
+         FROM calibration_profiles
+         WHERE generated_at >= (now() - INTERVAL '7 days')`,
+    );
+    const total = rows[0]?.total ?? 0;
+    const failures = rows[0]?.failures ?? 0;
+    if (total === 0) {
+      return {
+        name: 'voice_gate_health',
+        status: 'ok',
+        message: 'No calibration profile generation in the last 7 days',
+      };
+    }
+    const failRate = failures / total;
+    if (failRate >= 0.3) {
+      return {
+        name: 'voice_gate_health',
+        status: 'warn',
+        message: `Voice gate failed ${failures}/${total} (${Math.round(failRate * 100)}%) in last 7 days. Review src/core/calibration/voice-gate.ts rubric.`,
+      };
+    }
+    return {
+      name: 'voice_gate_health',
+      status: 'ok',
+      message: `Voice gate ${failures}/${total} failed in last 7 days (${Math.round(failRate * 100)}%)`,
+    };
+  } catch (e) {
+    return {
+      name: 'voice_gate_health',
+      status: 'warn',
+      message: `Could not check voice gate health: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
 }
 
 /**
