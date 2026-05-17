@@ -153,6 +153,12 @@ export interface RerankerTouchpoint {
 
 export interface ChatTouchpoint {
   models: string[];
+  /**
+   * When true, recipe accepts user-supplied chat model ids not known at
+   * compile time (e.g. OpenAI-compatible local proxies). Mirrors the
+   * embedding touchpoint flag.
+   */
+  user_provided_models?: true;
   /** Provider returns native function/tool calling. */
   supports_tools: boolean;
   /**

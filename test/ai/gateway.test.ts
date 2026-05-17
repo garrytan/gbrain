@@ -99,6 +99,15 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
     });
     expect(isAvailable('expansion')).toBe(true);
   });
+
+  test('chat available for LiteLLM user-provided models with no API key', () => {
+    configureGateway({
+      chat_model: 'litellm:any-upstream-model',
+      base_urls: { litellm: 'http://localhost:4000/v1' },
+      env: {},
+    });
+    expect(isAvailable('chat')).toBe(true);
+  });
 });
 
 describe('model-resolver', () => {
