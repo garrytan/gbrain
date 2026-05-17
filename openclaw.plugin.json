@@ -69,6 +69,7 @@
   ],
   "shared_deps": [
     "skills/conventions",
+    "skills/_AGENT_README.md",
     "skills/_brain-filing-rules.md",
     "skills/_brain-filing-rules.json",
     "skills/_output-rules.md"

@@ -231,6 +231,14 @@ async function cmdScaffold(args: string[]): Promise<void> {
       console.log(
         `${dryRun ? 'scaffold --dry-run' : 'scaffold'}: ${result.summary.wroteNew} wrote, ${result.summary.skippedExisting} skipped (already present), ${result.summary.pairedSourcesWritten} paired source(s)`,
       );
+      // Next-action hint for the agent + the operator. Print only on
+      // actual writes (re-runs that just skip are noise-quieter).
+      if (!dryRun && result.summary.wroteNew > 0) {
+        const onboardingPath = join(targetWorkspace, 'skills', '_AGENT_README.md');
+        console.log(
+          `\nNext: your agent walks \`skills/*/SKILL.md\` frontmatter \`triggers:\` for routing.\nIf this is a fresh install, read ${onboardingPath} for the agent contract.\nWhen gbrain ships an update later, run \`gbrain skillpack reference --all\` to sweep.`,
+        );
+      }
     }
     process.exit(0);
   } catch (err) {
@@ -286,6 +294,18 @@ async function cmdReference(args: string[]): Promise<void> {
         );
         process.exit(2);
       }
+      // Two-way merge warning fires BEFORE the apply (not after). Skipped
+      // in --json mode so machine consumers aren't drowned, but always
+      // printed to stderr regardless of mode so the warning survives
+      // stdout redirection.
+      const twoWayWarning =
+        'WARNING: --apply-clean-hunks is a two-way diff against gbrain\'s CURRENT bundle.\n' +
+        '         gbrain does NOT have access to the version you originally scaffolded.\n' +
+        '         Hunks where your LOCAL edits differ from gbrain WILL be aligned to gbrain.\n' +
+        '         If you have intentional local edits, run `gbrain skillpack reference ' + name + '`\n' +
+        '         (read-only) first to inspect, OR pass --dry-run on this command.';
+      if (!dryRun) console.error(twoWayWarning);
+
       const result = runReferenceApply({ gbrainRoot, targetWorkspace, skillSlug: name!, dryRun });
       if (json) console.log(JSON.stringify(result, null, 2));
       else {
@@ -297,6 +317,11 @@ async function cmdReference(args: string[]): Promise<void> {
           if (f.status === 'identical') continue;
           console.log(`  ${f.status.padEnd(15)} ${f.target}`);
           for (const c of f.conflicts) console.log(`    ${c}`);
+        }
+        if (result.summary.totalHunksConflicted > 0) {
+          console.log(
+            '\nConflicts left in place. Run `gbrain skillpack reference ' + name + '` to inspect\nthe unified diffs and patch by hand. The conflict_missing / conflict_ambiguous\nlabels above indicate WHY the hunk could not be applied automatically.',
+          );
         }
       }
       process.exit(0);
@@ -327,6 +352,20 @@ async function cmdReference(args: string[]): Promise<void> {
         if (f.status === 'identical') continue;
         console.log(`\n  ${f.status.padEnd(10)} ${f.target}`);
         if (f.unifiedDiff) console.log(f.unifiedDiff);
+      }
+      // Per-category action hints for the agent.
+      if (result.summary.missing > 0 || result.summary.differs > 0) {
+        console.log('\nAgent decision policy per file:');
+        if (result.summary.missing > 0) {
+          console.log(
+            '  missing → gbrain has a file you don\'t. Usually safe to `gbrain skillpack scaffold ' + name + '` again to land it.',
+          );
+        }
+        if (result.summary.differs > 0) {
+          console.log(
+            '  differs → was your local edit intentional? Keep it (gbrain is reference, not law).\n            Accidental drift? Patch by hand, or `gbrain skillpack reference ' + name + ' --apply-clean-hunks`\n            (READ the two-way merge warning in that command\'s output first).',
+          );
+        }
       }
     }
     process.exit(0);
@@ -373,6 +412,12 @@ async function cmdMigrateFence(args: string[]): Promise<void> {
       console.log(`  already present: ${result.skillsAlreadyPresent.join(', ')}`);
     if (result.usedRowFallback)
       console.log('  (used row-parsing fallback — receipt was missing or drifted)');
+    // Next-action hint for the agent on a successful strip.
+    if (result.status === 'fence_stripped' && !dryRun) {
+      console.log(
+        '\nNext: your routing model just changed. The managed-block fence is gone.\nYour agent should walk `skills/*/SKILL.md` frontmatter `triggers:` for routing.\nPreserved table rows are a transitional bridge — once frontmatter walking is\nconfirmed working, run `gbrain skillpack scrub-legacy-fence-rows` to clean up.\nFresh install? Read `skills/_AGENT_README.md` for the full agent contract.',
+      );
+    }
   }
   process.exit(result.status === 'fence_malformed' ? 2 : 0);
 }
