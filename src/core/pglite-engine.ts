@@ -1882,9 +1882,14 @@ export class PGLiteEngine implements BrainEngine {
          COALESCE(p.title, p.slug) AS title,
          p.frontmatter->>'domain' AS domain
        FROM pages p
-       WHERE NOT EXISTS (
-         SELECT 1 FROM links l WHERE l.to_page_id = p.id
-       )
+       WHERE p.deleted_at IS NULL
+         AND NOT EXISTS (
+           SELECT 1
+             FROM links l
+             JOIN pages from_p ON from_p.id = l.from_page_id
+            WHERE l.to_page_id = p.id
+              AND from_p.deleted_at IS NULL
+         )
        ORDER BY p.slug`
     );
     return rows as Array<{ slug: string; title: string; domain: string | null }>;
@@ -3162,7 +3167,14 @@ export class PGLiteEngine implements BrainEngine {
         -- Bug 11 — orphan = islanded (no inbound AND no outbound).
         -- See BrainHealth.orphan_pages docstring; docs updated to match this.
         (SELECT count(*) FROM pages p
-         WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+         WHERE p.deleted_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1
+               FROM links l
+               JOIN pages from_p ON from_p.id = l.from_page_id
+              WHERE l.to_page_id = p.id
+                AND from_p.deleted_at IS NULL
+           )
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
         ) as orphan_pages,
         (SELECT count(*) FROM links l

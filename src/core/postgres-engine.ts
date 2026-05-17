@@ -1902,9 +1902,14 @@ export class PostgresEngine implements BrainEngine {
         COALESCE(p.title, p.slug) AS title,
         p.frontmatter->>'domain' AS domain
       FROM pages p
-      WHERE NOT EXISTS (
-        SELECT 1 FROM links l WHERE l.to_page_id = p.id
-      )
+      WHERE p.deleted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+            FROM links l
+            JOIN pages from_p ON from_p.id = l.from_page_id
+           WHERE l.to_page_id = p.id
+             AND from_p.deleted_at IS NULL
+        )
       ORDER BY p.slug
     `;
     return rows as unknown as Array<{ slug: string; title: string; domain: string | null }>;
@@ -3175,7 +3180,14 @@ export class PostgresEngine implements BrainEngine {
          WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
         ) as stale_pages,
         (SELECT count(*) FROM pages p
-         WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+         WHERE p.deleted_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1
+               FROM links l
+               JOIN pages from_p ON from_p.id = l.from_page_id
+              WHERE l.to_page_id = p.id
+                AND from_p.deleted_at IS NULL
+           )
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
         ) as orphan_pages,
         (SELECT count(*) FROM links l
