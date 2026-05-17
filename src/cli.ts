@@ -169,6 +169,10 @@ async function main() {
     const result = JSON.parse(JSON.stringify(rawResult));
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
+    if (op.name === 'query') {
+      const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
+      await awaitPendingSearchCacheWrites();
+    }
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       console.error(`Error [${e.code}]: ${e.message}`);
