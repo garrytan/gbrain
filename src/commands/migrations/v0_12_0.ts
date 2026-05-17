@@ -33,6 +33,19 @@
 import { execSync } from 'child_process';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { childGlobalFlags } from '../../core/cli-options.ts';
+
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
+// Use pooler URL from config so subprocess calls skip the direct IPv6 connection.
+function _childEnv(): NodeJS.ProcessEnv {
+  try {
+    const cfg = JSON.parse(readFileSync(join(process.env.HOME || '', '.gbrain', 'config.json'), 'utf8'));
+    const u = cfg.database_url || process.env.GBRAIN_DATABASE_URL;
+    return { ...process.env, ...(u ? { GBRAIN_DATABASE_URL: u } : {}), GBRAIN_DISABLE_DIRECT_POOL: '1' };
+  } catch { return process.env; }
+}
+
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 // ── Phase A — Schema ────────────────────────────────────────
@@ -43,7 +56,7 @@ function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // 10-minute budget. Migrations v8/v9 dedup with helper-index should be sub-second
     // even on 80K-duplicate brains, but the outer wall-clock cap shouldn't be the
     // failure mode (the prior 60s ceiling tripped Garry's production upgrade).
-    execSync('gbrain init --migrate-only' + childGlobalFlags(), { stdio: 'inherit', timeout: 600_000, env: process.env });
+    execSync('gbrain init --migrate-only' + childGlobalFlags(), { stdio: 'inherit', timeout: 600_000, env: _childEnv() });
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -67,7 +80,7 @@ function phaseBConfigCheck(opts: OrchestratorOpts): OrchestratorPhaseResult & { 
   // Default behavior when unset = enabled (per isAutoLinkEnabled).
   let raw = '';
   try {
-    raw = execSync('gbrain config get auto_link', { encoding: 'utf-8', timeout: 10_000, env: process.env }).trim();
+    raw = execSync('gbrain config get auto_link', { encoding: 'utf-8', timeout: 10_000, env: _childEnv() }).trim();
   } catch {
     // get exits non-zero when the key isn't set — that's fine, defaults to enabled.
     raw = '';
@@ -93,7 +106,7 @@ function phaseCBackfillLinks(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // --source db is idempotent: the UNIQUE constraint on
     // (from_page_id, to_page_id, link_type) and ON CONFLICT DO NOTHING
     // make re-runs cheap. Empty brains return 0/0 quickly.
-    execSync('gbrain extract links --source db' + childGlobalFlags(), { stdio: 'inherit', timeout: 600_000, env: process.env });
+    execSync('gbrain extract links --source db' + childGlobalFlags(), { stdio: 'inherit', timeout: 600_000, env: _childEnv() });
     return { name: 'backfill_links', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -104,7 +117,7 @@ function phaseCBackfillLinks(opts: OrchestratorOpts): OrchestratorPhaseResult {
 function phaseDBackfillTimeline(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'backfill_timeline', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain extract timeline --source db' + childGlobalFlags(), { stdio: 'inherit', timeout: 600_000, env: process.env });
+    execSync('gbrain extract timeline --source db' + childGlobalFlags(), { stdio: 'inherit', timeout: 600_000, env: _childEnv() });
     return { name: 'backfill_timeline', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -123,7 +136,7 @@ interface StatsSnapshot {
 function readStats(): StatsSnapshot | null {
   try {
     const out = execSync('gbrain get_stats --json 2>/dev/null || gbrain stats', {
-      encoding: 'utf-8', timeout: 30_000, env: process.env,
+      encoding: 'utf-8', timeout: 30_000, env: _childEnv(),
     });
     // The fallback `gbrain stats` prints human-readable output; parse loosely.
     const pages = parseInt((out.match(/Pages:\s+(\d+)/) || ['', '0'])[1], 10);

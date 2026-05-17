@@ -27,6 +27,9 @@
 
 import { execSync } from 'child_process';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts). The
 // orchestrator returns its result and the runner persists it.
 
@@ -44,10 +47,18 @@ import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhase
 // upgrade mid-migration. The shim is already the canonical wrapper; trust
 // it. Regression guarded by test/migrations-v0_13_0.test.ts.
 
+
+function _childEnv(): NodeJS.ProcessEnv {
+  try {
+    const cfg = JSON.parse(readFileSync(join(process.env.HOME || '', '.gbrain', 'config.json'), 'utf8'));
+    const u = cfg.database_url || process.env.GBRAIN_DATABASE_URL;
+    return { ...process.env, ...(u ? { GBRAIN_DATABASE_URL: u } : {}), GBRAIN_DISABLE_DIRECT_POOL: '1' };
+  } catch { return process.env; }
+}
 function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync('gbrain init --migrate-only', { stdio: 'inherit', timeout: 600_000, env: process.env });
+    execSync('gbrain init --migrate-only', { stdio: 'inherit', timeout: 600_000, env: _childEnv() });
     return { name: 'schema', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -67,7 +78,7 @@ function phaseBBackfill(opts: OrchestratorOpts): OrchestratorPhaseResult {
     execSync('gbrain extract links --source db --include-frontmatter', {
       stdio: 'inherit',
       timeout: 1_800_000,  // 30 min hard cap; typical 2-5 min on 46K pages
-      env: process.env,
+      env: _childEnv(),
     });
     return { name: 'frontmatter_backfill', status: 'complete' };
   } catch (e) {
@@ -90,7 +101,7 @@ function phaseCVerify(opts: OrchestratorOpts): OrchestratorPhaseResult {
     // produce 0. Phase B's own stdout shows `Links: created N` which is
     // the authoritative signal — user sees it during upgrade.
     const out = execSync('gbrain call get_stats', {
-      encoding: 'utf-8', timeout: 60_000, env: process.env,
+      encoding: 'utf-8', timeout: 60_000, env: _childEnv(),
     });
     const parsed = JSON.parse(out) as { link_count?: number; page_count?: number };
     const linkCount = parsed.link_count ?? 0;
