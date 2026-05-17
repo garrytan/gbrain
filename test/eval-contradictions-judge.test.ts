@@ -109,27 +109,58 @@ describe('buildJudgePrompt', () => {
 });
 
 describe('normalizeVerdict', () => {
-  test('valid input passes through', () => {
+  test('valid contradiction verdict passes through', () => {
     const v = normalizeVerdict({
-      contradicts: true,
+      verdict: 'contradiction',
       severity: 'medium',
       axis: 'MRR figure',
       confidence: 0.85,
       resolution_kind: 'dream_synthesize',
     });
-    expect(v.contradicts).toBe(true);
+    expect(v.verdict).toBe('contradiction');
     expect(v.severity).toBe('medium');
     expect(v.confidence).toBe(0.85);
     expect(v.resolution_kind).toBe('dream_synthesize');
   });
 
-  test('throws on missing contradicts field', () => {
+  test('valid temporal_supersession verdict passes through (Lane A2)', () => {
+    const v = normalizeVerdict({
+      verdict: 'temporal_supersession',
+      severity: 'info',
+      axis: 'role over time',
+      confidence: 0.9,
+      resolution_kind: 'temporal_supersede',
+    });
+    expect(v.verdict).toBe('temporal_supersession');
+    expect(v.severity).toBe('info');
+    expect(v.resolution_kind).toBe('temporal_supersede');
+  });
+
+  test('all 6 verdict members accepted by parser', () => {
+    for (const verdict of [
+      'no_contradiction',
+      'contradiction',
+      'temporal_supersession',
+      'temporal_regression',
+      'temporal_evolution',
+      'negation_artifact',
+    ] as const) {
+      const v = normalizeVerdict({ verdict, severity: 'medium', confidence: 0.8 });
+      expect(v.verdict).toBe(verdict);
+    }
+  });
+
+  test('throws on missing verdict field', () => {
     expect(() => normalizeVerdict({ confidence: 0.9 })).toThrow();
   });
 
+  test('throws on invalid verdict string', () => {
+    expect(() => normalizeVerdict({ verdict: 'maybe', confidence: 0.9 })).toThrow();
+  });
+
   test('throws on invalid confidence', () => {
-    expect(() => normalizeVerdict({ contradicts: true, confidence: 'high' })).toThrow();
-    expect(() => normalizeVerdict({ contradicts: true, confidence: NaN })).toThrow();
+    expect(() => normalizeVerdict({ verdict: 'contradiction', confidence: 'high' })).toThrow();
+    expect(() => normalizeVerdict({ verdict: 'contradiction', confidence: NaN })).toThrow();
   });
 
   test('throws on missing or non-object input', () => {
@@ -138,49 +169,68 @@ describe('normalizeVerdict', () => {
     expect(() => normalizeVerdict('json string')).toThrow();
   });
 
-  test('C1 double-enforce: contradicts:true + confidence<0.7 downgrades to false', () => {
+  test('C1 double-enforce: verdict:contradiction + confidence<0.7 downgrades to no_contradiction', () => {
     const v = normalizeVerdict({
-      contradicts: true,
+      verdict: 'contradiction',
       severity: 'high',
       axis: 'something',
       confidence: 0.6,
       resolution_kind: 'takes_supersede',
     });
-    expect(v.contradicts).toBe(false);
+    expect(v.verdict).toBe('no_contradiction');
     expect(v.axis).toBe('');
     expect(v.resolution_kind).toBeNull();
   });
 
-  test('C1 boundary: confidence exactly 0.7 stays as contradicts:true', () => {
+  test('C1 boundary: confidence exactly 0.7 stays as verdict:contradiction', () => {
     const v = normalizeVerdict({
-      contradicts: true,
+      verdict: 'contradiction',
       severity: 'medium',
       axis: 'something',
       confidence: 0.7,
     });
-    expect(v.contradicts).toBe(true);
+    expect(v.verdict).toBe('contradiction');
     expect(v.confidence).toBe(0.7);
   });
 
+  test('C1 floor does NOT downgrade other verdicts on low confidence (Lane A2)', () => {
+    const v = normalizeVerdict({
+      verdict: 'temporal_supersession',
+      severity: 'info',
+      confidence: 0.4,
+    });
+    // Non-contradiction verdicts have no confidence floor; they survive at 0.4.
+    expect(v.verdict).toBe('temporal_supersession');
+  });
+
   test('clamps confidence into [0, 1]', () => {
-    const v1 = normalizeVerdict({ contradicts: false, severity: 'low', confidence: -0.5 });
+    const v1 = normalizeVerdict({ verdict: 'no_contradiction', severity: 'low', confidence: -0.5 });
     expect(v1.confidence).toBe(0);
-    const v2 = normalizeVerdict({ contradicts: false, severity: 'low', confidence: 1.5 });
+    const v2 = normalizeVerdict({ verdict: 'no_contradiction', severity: 'low', confidence: 1.5 });
     expect(v2.confidence).toBe(1);
   });
 
-  test('garbage severity defaults to low', () => {
+  test('garbage severity falls back to defaultSeverityForVerdict (no_contradiction → info)', () => {
     const v = normalizeVerdict({
-      contradicts: false,
+      verdict: 'no_contradiction',
       severity: 'critical',
       confidence: 0.5,
     });
-    expect(v.severity).toBe('low');
+    expect(v.severity).toBe('info');
   });
 
-  test('unknown resolution_kind on contradicts:true falls back to manual_review', () => {
+  test('garbage severity falls back to defaultSeverityForVerdict (contradiction → medium)', () => {
     const v = normalizeVerdict({
-      contradicts: true,
+      verdict: 'contradiction',
+      severity: 'critical',
+      confidence: 0.85,
+    });
+    expect(v.severity).toBe('medium');
+  });
+
+  test('unknown resolution_kind on contradiction falls back to manual_review (legacy)', () => {
+    const v = normalizeVerdict({
+      verdict: 'contradiction',
       severity: 'medium',
       axis: 'X',
       confidence: 0.85,
@@ -189,9 +239,9 @@ describe('normalizeVerdict', () => {
     expect(v.resolution_kind).toBe('manual_review');
   });
 
-  test('axis cleared when contradicts:false', () => {
+  test('axis cleared when verdict:no_contradiction', () => {
     const v = normalizeVerdict({
-      contradicts: false,
+      verdict: 'no_contradiction',
       severity: 'low',
       axis: 'some axis',
       confidence: 0.4,
@@ -212,14 +262,14 @@ describe('judgeContradiction', () => {
     const out = await judgeContradiction({
       ...baseInput,
       chatFn: stubChat(mkResult(JSON.stringify({
-        contradicts: true,
+        verdict: 'contradiction',
         severity: 'medium',
         axis: 'MRR figure',
         confidence: 0.85,
         resolution_kind: 'dream_synthesize',
       }))),
     });
-    expect(out.verdict.contradicts).toBe(true);
+    expect(out.verdict.verdict).toBe('contradiction');
     expect(out.verdict.severity).toBe('medium');
     expect(out.usage.inputTokens).toBe(100);
     expect(out.usage.outputTokens).toBe(50);
@@ -227,15 +277,15 @@ describe('judgeContradiction', () => {
 
   test('fence-wrapped JSON: parseModelJSON 4-strategy fallback', async () => {
     const fenced = '```json\n' + JSON.stringify({
-      contradicts: false,
-      severity: 'low',
+      verdict: 'no_contradiction',
+      severity: 'info',
       confidence: 0.3,
     }) + '\n```';
     const out = await judgeContradiction({
       ...baseInput,
       chatFn: stubChat(mkResult(fenced)),
     });
-    expect(out.verdict.contradicts).toBe(false);
+    expect(out.verdict.verdict).toBe('no_contradiction');
   });
 
   test('throws on parse failure (counted in judge_errors)', async () => {
@@ -276,7 +326,7 @@ describe('judgeContradiction', () => {
         const userMsg = opts.messages.find((m) => m.role === 'user');
         capturedPrompt = typeof userMsg?.content === 'string' ? userMsg.content : '';
         return mkResult(JSON.stringify({
-          contradicts: false, severity: 'low', confidence: 0.5,
+          verdict: 'no_contradiction', severity: 'info', confidence: 0.5,
         }));
       }),
     });
@@ -287,17 +337,17 @@ describe('judgeContradiction', () => {
     expect(DEFAULT_MAX_PAIR_CHARS).toBe(1500);
   });
 
-  test('C1 enforcement reaches the verdict (low-confidence true → false)', async () => {
+  test('C1 enforcement reaches the verdict (low-confidence contradiction → no_contradiction)', async () => {
     const out = await judgeContradiction({
       ...baseInput,
       chatFn: stubChat(mkResult(JSON.stringify({
-        contradicts: true,
+        verdict: 'contradiction',
         severity: 'high',
         axis: 'something',
         confidence: 0.5,
       }))),
     });
-    expect(out.verdict.contradicts).toBe(false);
+    expect(out.verdict.verdict).toBe('no_contradiction');
   });
 
   test('query appears in the rendered prompt (Codex fix)', async () => {
@@ -308,7 +358,7 @@ describe('judgeContradiction', () => {
       chatFn: stubChat(async (opts) => {
         const m = opts.messages[0]?.content;
         capturedQuery = typeof m === 'string' ? m : '';
-        return mkResult(JSON.stringify({ contradicts: false, severity: 'low', confidence: 0.4 }));
+        return mkResult(JSON.stringify({ verdict: 'no_contradiction', severity: 'info', confidence: 0.4 }));
       }),
     });
     expect(capturedQuery).toContain('distinctive-query-marker-12345');

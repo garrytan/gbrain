@@ -105,6 +105,335 @@ The voice agent runs in YOUR repo, on YOUR cadence. When gbrain ships a new agen
 #### For contributors
 - New paradigm `install_kind: copy-into-host-repo` is documented in `recipes/agent-voice/README.md`. Future recipes that want this shape follow the sibling-directory convention pinned there.
 - The deterministic import script + scrub table are the canonical refresh-from-upstream mechanism. Update the table; re-run the script; the PII guard fail-closes if anything slipped through.
+## [0.35.5.1] - 2026-05-16
+
+**`gbrain doctor` stops counting clean supervisor exits as crashes — the "120x/24h" alarm finally reflects real crashes, with per-cause breakdown for operator triage.**
+
+`doctor.ts:1013` and `gbrain jobs supervisor status` at `jobs.ts:805` both counted every `worker_exited` audit event as a crash, regardless of cause. After v0.34.3.0's RSS-watchdog work added more code=0 worker drains, the count inflated to 120+/day on a healthy brain — the exact alarm pattern users started seeing ("Supervisor crashes: 120x/24h, was 62x — nearly doubled"). The classifier upstream in `child-worker-supervisor.ts:309-321` was already stamping a five-value `likely_cause` field on every exit (clean_exit, graceful_shutdown, runtime_error, oom_or_external_kill, unknown); neither read site looked at it. v0.35.5.1 ships a shared `summarizeCrashes(events)` helper colocated with `readSupervisorEvents`, denylist semantics so future failure modes surface by default, threshold dropped from `>3` to `>=1`, and per-cause breakdown in the messages so an operator triages in one glance.
+
+**Relationship to v0.35.4.0:** that release shipped a binary `classifyWorkerExit({code})` helper (clean if `code === 0`, crash otherwise). It correctly stopped counting RSS-watchdog drains as crashes, but treated SIGTERM-driven graceful shutdowns as crashes (because `null !== 0`) and lost the cause distinction operators need to triage. v0.35.5.1 layers on top: reads `likely_cause` so `graceful_shutdown` is correctly clean, and bucketizes real crashes into `runtime_error` (code bugs), `oom_or_external_kill` (memory pressure), `unknown` (other), `legacy` (pre-v0.34 or future unrecognized). The `classifyWorkerExit` helper from v0.35.4.0 remains in use by the supervisor's internal restart policy where the binary check is the right shape; the doctor + jobs surfaces use the richer classifier.
+
+### What you can now do
+
+**Trust the doctor's supervisor count.** `gbrain doctor` reports actual crashes, not RSS-watchdog drains or SIGTERM stops. The "120x/24h" alarm class is dead.
+
+**See per-cause breakdown at a glance.** The warn message reads `Worker crashed Nx in last 24h (runtime=A oom=B unknown=C legacy=D)` — distinguishes memory pressure (oom) from code bugs (runtime) without grep'ing the JSONL audit.
+
+**Hook `crashes_by_cause` into monitoring.** `gbrain jobs supervisor status --json` now exposes `crashes_by_cause: {runtime_error, oom_or_external_kill, unknown, legacy}` and `clean_exits_24h` fields. Dashboards bind to named buckets.
+
+**Future failure modes surface by default.** Denylist semantics: only `clean_exit` and `graceful_shutdown` are non-crashes; everything else (including new `likely_cause` values added upstream in future releases) counts as a crash. The bug we just fixed cannot silently recur on the next schema addition.
+
+### Itemized changes
+
+- `src/core/minions/handlers/supervisor-audit.ts` exports new `isCrashExit(event)`, `summarizeCrashes(events)`, `CrashSummary` type, and `CLEAN_EXIT_CAUSES` constant. Single regression point — both CLI surfaces import from here so they cannot drift.
+- `src/commands/doctor.ts:1011-1043` replaces the ad-hoc `events.filter(e => e.event === 'worker_exited').length` with `summarizeCrashes(events)`. Drops the warn threshold from `>3` to `>=1` (any real crash is signal now that the counter is calibrated). Widens the ok message with `clean_exits_24h=N` and the warn message with `runtime=N oom=M unknown=K legacy=L`.
+- `src/commands/jobs.ts:803-826` same wiring. JSON output adds `crashes_by_cause` and `clean_exits_24h` fields. Human output gains a per-cause line under `Crashes (24h)` plus a `Clean exits (24h)` line.
+- `test/supervisor-audit.test.ts` (new) — 14 unit cases: 9-case `isCrashExit` branch matrix (every `likely_cause` value, denylist regression guard for unrecognized future causes, legacy fallback paths for pre-v0.34 entries, non-exit-event defensive case), 5-case `summarizeCrashes` aggregator (mixed-stream bucket assertions, empty input, non-exit-only, unrecognized-cause routing to legacy, null-code edge case).
+- `test/doctor.test.ts` — 4 source-grep wiring assertions guarding both surfaces against drift: doctor + jobs.ts use `summarizeCrashes`, the ad-hoc filter pattern is gone, threshold is `>=1`, per-cause breakdown substrings (`runtime=`, `oom=`, `unknown=`, `legacy=`, `clean_exits_24h=`, `crashes_by_cause`) appear in both files.
+- Why denylist semantics (codex outside-voice catch during `/plan-eng-review`): the set of clean-exit causes is small and explicit (the worker exited because we asked it to); the set of crash causes is open-ended. Allowlist would silently underreport future failure modes; denylist surfaces them by default. The bug being fixed today is itself an allowlist-of-event-names — the denylist shape forecloses the recurrence.
+- Plan + review trail: `/plan-eng-review` cleared the plan with 3 substantive findings resolved (shared helper extraction, denylist over allowlist, threshold rebaseline pulled into scope). Codex outside-voice surfaced the duplicate bug at `jobs.ts:805` (would have shipped doctor-only otherwise and let the two surfaces drift). Coverage audit reports 100% on the 22 logical branches the diff introduces. Adversarial review surfaced 13 follow-up observations, all either pre-existing surfaces or accepted plan trade-offs — none in-scope for this PR.
+
+## To take advantage of v0.35.5.1
+
+`gbrain upgrade` is all you need. No schema migration, no config change, no manual action.
+
+1. Run `gbrain upgrade`.
+2. Verify the count:
+   ```bash
+   gbrain doctor 2>&1 | grep -i supervisor
+   gbrain jobs supervisor status --json | jq '{crashes_24h, clean_exits_24h, crashes_by_cause}'
+   ```
+   Both commands MUST report identical `crashes_24h` (cross-surface parity is the regression guard). If the new count is still high, the watchdog OOMs / SIGKILLs are real — investigate via `~/.gbrain/audit/supervisor-*.jsonl` or check the per-cause breakdown in the warn message.
+3. Cross-check with raw JSONL if you want ground truth:
+   ```bash
+   jq -r 'select(.event=="worker_exited") | .likely_cause' ~/.gbrain/audit/supervisor-*.jsonl | sort | uniq -c
+   ```
+4. If anything looks wrong, file an issue: https://github.com/garrytan/gbrain/issues with the doctor output and the relevant lines from the audit JSONL.
+
+## [0.35.5.0] - 2026-05-16
+
+**Upgrade goes through on stuck Supabase brains. Orphan counts get honest. `gbrain think` over MCP actually answers. Worktrees stop being misclassified. node_modules stops leaking.**
+
+A correctness wave. Five user-visible bugs closed; one structural CI guard added so the bootstrap class can't bite the same shape again. The shape of the change: `applyForwardReferenceBootstrap` now probes for seven previously-missing columns (files.source_id/page_id, oauth_clients.source_id/federated_read, sources.archived/archived_at/archive_expires_at) AND runs on the same DDL connection that holds the advisory lock, `findOrphanPages` filters soft-deleted pages on BOTH the candidate side AND the link-source side, `runThink` routes through `gateway.chat()` so the API key configured via `gbrain config set` actually reaches MCP stdio launches, `manageGitignore` distinguishes worktrees from submodules via Git's documented `/modules/` vs `/worktrees/` path segments, and walkers in `extract.ts` + `transcript-discovery.ts` consult a new `pruneDir()` helper at descent time so they don't recurse into vendor directories.
+
+### What you can now do
+
+**Upgrade gbrain cleanly on Supabase brains stuck at pre-v0.18, pre-v0.26.5, or pre-v0.34 schemas.** The bootstrap forward-reference class (eleven incidents in two years per the test file's own comment block) loses its largest remaining lineage. Pre-v0.18 brains had `files` without `source_id`/`page_id`, so the `idx_files_source_id` index creation crashed before any migration could run. Pre-v0.26.5 brains had `sources` without the archive lifecycle columns (`archived`, `archived_at`, `archive_expires_at`), but `CREATE TABLE IF NOT EXISTS sources` is a no-op on existing tables so the schema-blob replay couldn't add them — every downstream visibility filter in search/list_pages tripped. Pre-v0.34 brains had `oauth_clients` without the source-scoping columns (`source_id` FK, `federated_read` GIN-indexed array) so the v60+v61+v65 chain failed the same way. All seven columns now have explicit `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` probes in both engines. **And the probes now run on the DDL connection that holds the advisory lock** — pre-fix they ran through the instance pool while the lock sat on a different connection, opening a concurrent-bootstrap race for anyone on Supabase's transaction pooler. Codex caught that during pre-landing review.
+
+**Trust orphan counts again.** `gbrain orphans` filtered nothing on `deleted_at` — soft-deleted pages (v0.26.5 soft-delete shipped without updating this query) appeared as orphans, inflating counts. Worse, links from soft-deleted source pages still counted as inbound, so a live page could hide from orphan results purely because a deleted page linked to it. The query now filters BOTH sides: `p.deleted_at IS NULL` on the candidate, `src.deleted_at IS NULL` on the inbound-link JOIN. The structural correctness rule for soft-delete (active relationships only) lands the same shape across both engines.
+
+**`gbrain think` answers over MCP when you've set the key via `gbrain config`.** Before this release, MCP stdio launches (Claude Desktop, Cursor, etc.) returned `(no LLM available — set ANTHROPIC_API_KEY or pass client)` regardless of whether `gbrain config set anthropic_api_key sk-...` had been run, because `runThink` instantiated `new Anthropic()` directly and the Anthropic SDK only reads `process.env.ANTHROPIC_API_KEY`. Stdio launches from desktop apps don't inherit shell env, so the gbrain-config-set key never reached the SDK. `runThink` now routes through `gateway.chat()` — the canonical AI seam per CLAUDE.md that v0.31.12 established for chat/embed/expansion. The gateway reads `anthropic_api_key` from `~/.gbrain/config.json` AND from env, so both paths work. Existing `opts.client` injection is preserved (the test seam stays unchanged); `opts.stubResponse` continues to bypass the LLM call entirely. When neither the key nor a client is available, the graceful "no LLM available" stub still fires with the same `NO_ANTHROPIC_API_KEY` warning — the legacy diagnostic signal lives.
+
+**Use gbrain inside Conductor worktrees without `.gitignore` management silently breaking.** `manageGitignore` (the storage-tiering helper that updates `.gitignore` to exclude `db_only:` paths) treated every `.git`-as-file as a submodule and skipped management. Both submodules AND worktrees use `.git` as a file (worktrees just have a different file content). The discriminator now matches the gitdir path segment: `/modules/<name>` = submodule, `/worktrees/<name>` = worktree. Worktrees are first-class repos and now get `.gitignore` management. Handles all four combinations of {relative, absolute} × {modules, worktrees} including the absorbed-submodule case from `git submodule absorbgitdirs` that the legacy absolute-vs-relative discriminator would have misclassified.
+
+**Walkers stop wasting IO on `node_modules` (and frontmatter scans stop emitting false MISSING_OPEN warnings from inside vendor packages).** The canonical `isSyncable` filter had only a dot-prefix exclusion — `.git` and `.obsidian` were blocked but `node_modules` slipped through (no leading dot). A new `pruneDir()` helper centralizes the directory-exclusion logic at single-segment granularity: blocks `node_modules`, dot-prefix dirs, `ops`, and `*.raw` sidecars. Both walkers (`walkMarkdownFiles` in extract.ts, `listTextFiles` in transcript-discovery.ts) consult it at descent time BEFORE recursing, so the IO cost of walking thousands of vendor files is saved. `isSyncable` itself also gains node_modules exclusion — verified blast radius across every existing caller (sync, frontmatter, brain-writer, import) confirms node_modules exclusion was already the desired behavior. `transcript-discovery` also moves from non-recursive to recursive walking with the same pruneDir guard, so transcripts in nested corpus subdirectories (`corpus/2026/...`) become discoverable.
+
+### Itemized changes
+
+#### Closed issues
+- **#1018** PGLite upgrade wedge: applyForwardReferenceBootstrap missing v60 oauth_clients forward refs
+- **#974** Bootstrap gap: applyForwardReferenceBootstrap misses files.source_id + files.page_id
+- **#820** v0.13.0 migration files.page_id forward-reference cascade on pre-v0.18 brains
+- **#1021** orphans: soft-deleted pages still counted in orphan scan
+- **#952** think over MCP returns "no LLM available" even when ANTHROPIC_API_KEY configured via gbrain config
+- **#889** Git worktrees misclassified as submodules — breaks .gitignore management on Conductor workflows
+- **#923** gbrain frontmatter validate walks node_modules, inflating MISSING_OPEN counts in doctor
+- **#202** extract --source fs walker does not respect isSyncable prefix exclusions
+
+#### Bootstrap structural fix
+- Seven new probes in `applyForwardReferenceBootstrap` (both engines): `files.source_id`, `files.page_id`, `oauth_clients.source_id`, `oauth_clients.federated_read`, `sources.archived`, `sources.archived_at`, `sources.archive_expires_at`.
+- Bootstrap now accepts the DDL connection from `initSchema` and runs probes inside the advisory-lock scope (Codex pre-landing review P1).
+- New MIGRATIONS-source introspection contract test in `test/schema-bootstrap-coverage.test.ts`: parses `src/core/migrate.ts` for every `ALTER TABLE ... ADD COLUMN`, asserts each (table, column) pair is covered by the bootstrap OR by the schema blob's CREATE TABLE bodies. Catches the column-only forward-reference class (sources.archived* shape) that the pre-existing CREATE INDEX parser couldn't see. Source-text introspection covers all three migration shapes: top-level `sql:`, `sqlFor.{postgres,pglite}` overrides, and handler-body `engine.runMigration(N, \`ALTER TABLE ...\`)`.
+- Pre-existing parser bug in `parseBaseTableColumns` fixed: now strips SQL line comments (`-- ...`) and block comments (`/* ... */`) before identifying column names. Pre-fix, any column preceded by a comment line inside the CREATE TABLE body was silently dropped (e.g. `page_kind`, `deleted_at`, `emotional_weight`, `effective_date` — all dropped from coverage).
+
+#### Walker correctness
+- New exported `pruneDir(name: string): boolean` helper in `src/core/sync.ts`. Blocks `node_modules`, dot-prefix directories, `ops`, and `*.raw` sidecars.
+- `isSyncable` now applies `pruneDir` per path segment (legacy dot-prefix + `.raw/` + `ops/` checks consolidated).
+- `walkMarkdownFiles` (extract.ts) consults `pruneDir` at descent + uses `isSyncable({strategy: 'markdown'})` at file emit. Pre-fix the walker had ad-hoc dot-prefix exclusion and didn't call isSyncable at all.
+- `listTextFiles` (transcript-discovery.ts) now recursive with `pruneDir`-guarded descent. Uses its own `.txt`/`.md` predicate rather than the markdown-strategy isSyncable that would have rejected `.txt` and applied markdown-only README/ops exclusions.
+
+#### Soft-delete correctness
+- `findOrphanPages` (both engines) filters `p.deleted_at IS NULL` on the candidate side AND adds `JOIN pages src ON src.id = l.from_page_id WHERE src.deleted_at IS NULL` to the EXISTS subquery on the link-source side.
+
+#### MCP think gateway routing
+- `runThink` (`src/core/think/index.ts`) drops the direct `new Anthropic()` instantiation. New `tryBuildGatewayClient` probes recipe availability + ANTHROPIC_API_KEY presence (reads BOTH `process.env` and `loadConfig()`'s gbrain config). Returns null on miss, preserving the legacy graceful-degradation path.
+- New `chatResultToMessage` adapter converts gateway's `ChatResult` to an Anthropic-Message-shaped object. `mapStopReason` translates provider-neutral stop reasons (`end` / `length` / `tool_calls` / `refusal` / `content_filter` / `other`) to Anthropic's `stop_reason` enum.
+
+#### Git worktree discriminator
+- `manageGitignore` (`src/commands/sync.ts`) reads the `.git` file content and matches the gitdir path segment: `/modules/<name>` → skip (submodule, parent-managed), `/worktrees/<name>` → MANAGE (worktree, first-class repo). Malformed `.git` file (no `gitdir:` prefix, IO error) defaults to MANAGE preserving pre-fix catch{} semantics.
+
+#### Tests
+- `test/helpers/extract-added-columns.ts` (NEW): MIGRATIONS source introspection helper with internal test seam for the regex.
+- `test/schema-bootstrap-coverage.test.ts`: extended `REQUIRED_BOOTSTRAP_COVERAGE` with 7 new entries + 4 new test cases (MIGRATIONS contract, sanity check, regex shape variants, planted-bug regression).
+- `test/orphans.test.ts`: 3 new cases pinning the both-sides soft-delete filter — soft-deleted candidate excluded, codex C11 link-source case, live-link smoke regression.
+- `test/think-gateway-adapter.test.ts` (NEW): 9 cases covering response-shape conversion, stop-reason mapping, model-id normalization (bare + prefixed), unknown-provider fallback, no-API-key fallback, hasAnthropicKey env read.
+- `test/storage-sync.test.ts`: 5 new cases for worktree/submodule discrimination (relative + absolute × modules + worktrees, malformed `.git` file).
+- `test/sync.test.ts`: 7 new isSyncable + 6 new pruneDir cases including the node_modules CRITICAL regression.
+
+#### Critical files
+- `src/core/{pglite,postgres}-engine.ts` — `applyForwardReferenceBootstrap` (extended; Postgres engine threads DDL connection); `findOrphanPages` (both sides filter).
+- `src/core/think/index.ts` — gateway adapter + ThinkLLMClient backward compat.
+- `src/core/sync.ts` — new `pruneDir` export; `isSyncable` per-segment pruning.
+- `src/commands/{extract,sync}.ts` — walker pruneDir adoption; worktree discriminator.
+- `src/core/cycle/transcript-discovery.ts` — recursive walker with pruneDir.
+- `test/helpers/extract-added-columns.ts` — NEW.
+- `test/schema-bootstrap-coverage.test.ts` — extended.
+
+#### Follow-ups filed
+- `TODOS.md`: runThink full rewrite to drop ThinkLLMClient indirection now that the gateway adapter is in place. Supabase parity test fixture for the bootstrap connection-threading (the bug is fixed; the test fixture proving it under real pooler topology is the residual).
+
+## To take advantage of v0.35.5.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration on a pre-v0.18 / pre-v0.26.5 / pre-v0.34 brain:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the bootstrap landed:**
+   ```bash
+   gbrain doctor --json | grep -E 'schema_version|bootstrap'
+   ```
+3. **Confirm the new columns exist on Supabase brains** (the wave's primary target):
+   ```bash
+   psql "$DATABASE_URL" -c "\d sources" | grep -E 'archived|archive_expires_at'
+   psql "$DATABASE_URL" -c "\d files" | grep -E 'source_id|page_id'
+   psql "$DATABASE_URL" -c "\d oauth_clients" | grep -E 'source_id|federated_read'
+   ```
+4. **If `gbrain think` was returning "no LLM available" over MCP** despite a configured key, no manual action needed — the gateway adapter activates as soon as v0.35.5.0 is installed.
+5. **If any step fails**, file an issue with the output of `gbrain doctor` and contents of `~/.gbrain/upgrade-errors.jsonl` at https://github.com/garrytan/gbrain/issues.
+
+## [0.35.4.0] - 2026-05-16
+
+**Doctor stops crying wolf on clean worker restarts. Entity resolver stops spawning phantom pages. Prefix-expansion gets 58x faster.**
+
+A fix-wave shipping privacy work, bug fixes, observability, and one big perf win. The shape of the change: `gbrain doctor`'s supervisor check no longer counts `code === 0` clean exits as crashes (matching the actual v0.34.3.0 supervisor restart-policy logic), `resolveEntitySlug` catches bare first names like `"Alice"` before the slugify-fallback can spawn an unparented `alice.md` at brain root, a new `stub_guard_24h` doctor surface tells operators when the resolver IS missing a case, and the `tryPrefixExpansion` query rewrites against the correlated-subquery shape that's 58x faster on the perf-regression benchmark.
+
+### What you can now do
+
+**Stop seeing false-positive crash WARNs in `gbrain doctor` after autopilot drain.** Before this release, every clean worker exit (drain + respawn, graceful shutdown, queue completion — anything with `code === 0`) was counted as a crash. On a busy brain that drains the worker every few hours, the doctor's supervisor check would WARN "Supervisor running but worker crashed 8x in last 24h" even though zero crashes happened. The v0.34.3.0 supervisor's restart policy already used the right rule (don't increment `crashCount` on `code === 0`); doctor and `jobs supervisor status` were reading the same audit events but applying their own filter. All three sites now share one `classifyWorkerExit()` helper — same rule, one source of truth.
+
+**Stop seeing phantom `jared.md` pages at brain root.** When the fact-extraction pipeline produced a bare entity name (e.g. `"Alice"`) and `pg_trgm` scored too low to fuzzy-match against `people/alice-example`, the slugify fallback returned `"alice"` and `writeFactsToFence` would happily create `alice.md` at the brain root — orphan, no people/ prefix, never linked to the real Alice page. The resolver now runs a prefix-expansion step between fuzzy match and slugify fallback: when the input looks like a single bare-name token, query `people/<token>-%` then `companies/<token>-%`, pick the highest-connection candidate as the tiebreaker. The same fix layer adds a defensive second wall in `writeFactsToFence` itself — refuses to spawn unprefixed entity pages — with the fact still landing in the DB via the legacy fallback so nothing gets dropped.
+
+**See when the resolver is missing a case.** New `stub_guard_24h` check in `gbrain doctor` reads the new stub-guard audit log and WARNs at >10 fires/24h. The fix hint points operators directly at `~/.gbrain/audit/stub-guard-*.jsonl` so the offending slugs are one `cat` away. The check stays silent on zero hits (clean brain output) and shows count + below-threshold OK status when hits happen but stay reasonable. The sunset criterion is also wired in: when the 24h reads stay below 5/week for 3 consecutive weeks, the guard can be removed in v0.36 (the resolver fix has earned the trust).
+
+**Extract facts ~58x faster on brains with substantial link/chunk counts.** The pre-fix `tryPrefixExpansion` SQL did three derived-table aggregations (`LEFT JOIN (SELECT FROM links GROUP BY to_page_id)`) that pre-aggregated the ENTIRE links and content_chunks tables on every call. On the v0.35.4.0 perf benchmark (5K pages, 50K links, 25K chunks): old median 18.16ms, new median 0.31ms, speedup **58.22x**. The new shape uses correlated subqueries scoped to the slug-LIKE candidates — PostgreSQL hits the indexes on `links.to_page_id`, `links.from_page_id`, and `content_chunks.page_id` exactly N=3 times per candidate, not N=1 time across the whole table. Behavior is preserved; tiebreaker semantics unchanged.
+
+### Itemized changes
+
+- `src/core/entities/resolve.ts` adds `isBareName()` + `tryPrefixExpansion()` between fuzzy and slugify fallback. Token slug shape: people/`X`-%, companies/`X`-% prefix patterns. SQL uses correlated subqueries (no CTE cap, no whole-table aggregation). The slug-LIKE filter is already selective in practice (typical brain has 0-5 pages per prefix). `PREFIX_EXPANSION_DIRS = ['people', 'companies']` — extend in a follow-up when new entity directories prove necessary.
+- `src/core/facts/fence-write.ts` adds the stub-creation guard at line 190: when `target.slug` lacks a `/`, return `{inserted: 0, ids: [], stubGuardBlocked: true}` and fire `logStubGuardEvent`. JSDoc names v0.36 as the retire target.
+- `src/core/facts/backstop.ts` routes `stubGuardBlocked: true` results to `engine.insertFact()` (legacy DB-only path) so facts aren't silently dropped — they land in the facts table with the bare entity_slug, `source_markdown_slug` stays null.
+- `src/core/facts/stub-guard-audit.ts` (new) is the JSONL audit writer for stub-guard fires. ISO-week rotation at `~/.gbrain/audit/stub-guard-YYYY-Www.jsonl`. Reader `readRecentStubGuardEvents` deliberately diverges from `supervisor-audit.ts:readSupervisorEvents` — reads BOTH the current AND the previous ISO-week file before filtering by `ts`. The supervisor reader only reads the current week, losing 24h-window correctness across Monday 00:00 UTC. Follow-up TODO filed: fix the supervisor reader the same way.
+- `src/core/minions/exit-classification.ts` (new) is the pure `classifyWorkerExit({code: number | null}): 'crash' | 'clean_exit'` helper. Signature consumes audit-JSON shape (not Node callback shape) — the supervisor wraps Node's `(code, signal)` into `{code}` before calling. Three call sites use it: supervisor restart policy, doctor's supervisor check, `gbrain jobs supervisor status`.
+- `src/commands/doctor.ts` adds the `stub_guard_24h` check between supervisor and sync_failures. Replaces the inline `code !== 0 && code !== undefined` filter with `classifyWorkerExit()`.
+- `src/commands/jobs.ts` same inline-filter replacement on the `supervisor status` subcommand.
+- `docs/issues/doctor-auto-heal-and-scoring.md` (new) specs 7 follow-up improvements to the doctor health score system: frontmatter severity levels, temporal contradiction awareness, multi-source drift baseline, image asset acknowledgment, auto-heal mode, score delta tracking, weighted scoring. None implemented in this release; documenting the scope for the next wave.
+- `.gitignore` adds `reports/network-intelligence/` as defense-in-depth (private-brain export dir).
+- Test infrastructure: `test/exit-classification.test.ts` (17 cases — helper unit tests + consumer wire-up + audit-shape round-trip + inline-filter regression guards), `test/stub-guard-audit.test.ts` (9 cases — filename math + writer error tolerance + dual-week boundary read), `test/entity-resolve.test.ts` (13 cases — bare name resolution + tiebreaker + edge cases, fixtures use `alice-example`/`bob-example`/`charlie-example`/`dave-example` placeholders per CLAUDE.md privacy rule), `test/entity-resolve-perf.slow.test.ts` (1 case — baseline-ratio regression guard, 58x speedup measured), plus extensions in `test/fence-write.test.ts` (+3), `test/facts-backstop.test.ts` (+1), `test/doctor.test.ts` (+5).
+
+## To take advantage of v0.35.4.0
+
+`gbrain upgrade` handles everything automatically. No migration, no config changes, no manual action needed.
+
+1. **Run the upgrade:**
+   ```bash
+   gbrain upgrade
+   ```
+2. **Verify the doctor check is in the new shape:**
+   ```bash
+   gbrain doctor --json | jq '.checks[] | select(.name == "supervisor" or .name == "stub_guard_24h")'
+   ```
+   The supervisor check should show `clean_restarts=N` in the message when applicable, and `stub_guard_24h` should appear only if the guard has fired.
+3. **If `gbrain doctor` warns about something unexpected,** please file an issue at
+   https://github.com/garrytan/gbrain/issues with the doctor output.
+## [0.35.3.1] - 2026-05-15
+
+**The contradiction probe stops crying wolf on time. Six-member verdict enum + page-level date in the prompt + a new privacy lint for proposals.**
+
+`gbrain eval suspected-contradictions` used to treat every claim as timeless. On a brain with conversation transcripts, dated meeting pages, evolving takes, and historical entity records, that meant ~60% of residual HIGH findings were temporal false positives: a status change recorded as "trial" in April and "confirmed" in May got flagged as a contradiction; a role transition recorded in 2017 vs. an updated role in 2025 got flagged. None of those are bugs in the brain; they're features of a brain that records history.
+
+The judge now sees the page-level `effective_date` for each chunk via a `(from: YYYY-MM-DD)` tag in the prompt, and it classifies into a six-member verdict taxonomy instead of `contradicts: true/false`. The same wave adds a CI privacy lint that catches PII patterns in `docs/proposals/*.md` so future RFCs can't ship with personal-context vocabulary the way this wave's source RFC did at draft time.
+
+### What you can now do
+
+**Get verdict-aware findings out of the probe.** The judge now returns one of six verdicts: `no_contradiction`, `contradiction` (genuine conflict at the same point in time), `temporal_supersession` (newer claim updates the older), `temporal_regression` (a metric or status went backwards), `temporal_evolution` (legitimate change over time), or `negation_artifact` (judge misread an explicit negation). `gbrain eval suspected-contradictions trend` shows the per-verdict breakdown in the chart; `gbrain eval suspected-contradictions review` prints a `[verdict]` tag inline with each finding. The Wilson-CI denominator stays anchored to the strict `verdict === 'contradiction'` count so the headline metric is preserved. A new `queries_with_any_finding` sibling metric counts queries that produced any non-`no_contradiction` verdict.
+
+**Skip the >30d skip rule when both sides have dates.** The pre-judge date filter previously dropped pairs whose chunk-text-extracted dates differed by more than 30 days. That heuristic silently killed exactly the cases the new verdicts exist to surface (the 2017 vs. 2025 role-transition class). The filter now passes those pairs through when both sides have a non-null page-level `effective_date`, so the judge gets to classify them as `temporal_supersession` instead of the pair vanishing into the skip bucket. Same-paragraph dual-date override and missing-date fallback rules are preserved verbatim.
+
+**Cap the cost of the post-bump re-judge.** The `PROMPT_VERSION` change invalidates the entire judge cache (the prompt shape changed, old verdicts no longer apply). Before that re-judge spends any tokens, the runner prints an upper-bound cost estimate and waits 10 seconds in TTY for Ctrl-C; set `GBRAIN_NO_PROBE_PROMPT=1` to skip or `GBRAIN_PROBE_PROMPT_GRACE_SECONDS=0` to proceed immediately. Non-TTY (autopilot) auto-proceeds with a stderr note. `--budget-usd N` hard-caps the run when cumulative cost exceeds the cap. The judge model now resolves through `models.eval.contradictions_judge` (defaults to Haiku tier), so `gbrain config set models.eval.contradictions_judge` works the same way as every other model config key. `gbrain models doctor` surfaces the new touchpoint.
+
+**Block PII in `docs/proposals/*.md` at CI time.** A new `scripts/check-proposal-pii.sh` (wired into `bun run verify` and `bun run check:all`) catches the specific PII classes that surfaced in past RFC drafts: private repo references (`garrytan/brain`), personal-relationship vocabulary (`trial separation`, `couples session`, `divorce attorney`, etc.), death-context phrases, and the literal `Wintermute` agent name. Bare common words (`separation`, `funeral`) are intentionally not banned. The denylist names patterns rather than real names, so the script's own source doesn't re-introduce PII into the repo.
+
+### Itemized changes
+
+- `SearchResult` interface gains optional `effective_date` + `effective_date_source` fields. Eight SQL projection sites updated (3 in postgres-engine, 5 in pglite-engine — `searchKeyword`, `searchKeywordChunks`, `searchVector` across both engines). `rowToSearchResult` normalizes both Postgres `Date` and PGLite string returns to `YYYY-MM-DD`. Three-state read pattern (undefined when not selected, null when selected-but-empty, string when populated).
+- `PairMember` (`src/core/eval-contradictions/types.ts`) gets required `effective_date: string | null` and `effective_date_source: string | null`. `runner.ts` threads the fields through `searchResultToMember` and `takeToMember`; the judge call passes them via the new optional fields on `JudgeInput.a/b`.
+- `buildJudgePrompt` now emits `Statement A (from: YYYY-MM-DD)` when `effective_date` is non-null, else `(date unknown)`. Prompt instructions explain the tag and the new verdict semantics.
+- `PROMPT_VERSION` bumped `'1' → '2'`. Cache-key tuple shape unchanged (still 5 fields); old rows naturally miss on first run. Cache type guard updated to check `verdict` instead of `contradicts`.
+- `JudgeVerdict.contradicts: boolean` replaced with `verdict: Verdict` (6-member union). `Severity` extended with `'info'`. `ResolutionKind` extended with `temporal_supersede`, `flag_for_review`, `log_timeline_change`. `normalizeVerdict` applies the C1 confidence floor only to `verdict === 'contradiction'` (other verdicts are informational classifications, no floor). `defaultSeverityForVerdict` maps each verdict to its baseline severity (D7 map: supersession→info, regression→high, evolution→info, negation_artifact→low, contradiction→medium).
+- `runner.ts` emit predicate changes from `if (verdict.contradicts)` to `if (verdict.verdict !== 'no_contradiction')`. Per-verdict tally feeds `ProbeReport.verdict_breakdown`. `queries_with_contradiction` (strict, Wilson-CI denominator) and `queries_with_any_finding` (broad) tracked separately.
+- `auto-supersession.ts`: `classifyResolution` and `renderResolutionCommand` extended for new verdicts. Probe still NEVER auto-mutates — new kinds render paste-ready commands (`gbrain takes supersede --since <date>`) or informational lines (`# flag_for_review:`). The `auto-supersession.ts:4` "NEVER auto-applies" invariant preserved verbatim.
+- `date-filter.ts`: `shouldSkipForDateMismatch` accepts optional `effectiveDateA` and `effectiveDateB`. When both are non-null, returns `skip=false` with new `'both_have_effective_date'` reason. Other rules preserved.
+- `src/commands/eval-suspected-contradictions.ts`: new `--budget-usd N` hard cap (was pre-existing for runtime; help text now explains it), new cost-estimate prompt wired via `src/core/eval-contradictions/cost-prompt.ts`. `--severity` accepts `info`. `--severity` output shows `[verdict]` tag. Judge model routes through `resolveModel({configKey: 'models.eval.contradictions_judge', tier: 'utility', envVar: 'GBRAIN_CONTRADICTIONS_JUDGE_MODEL'})`. Human summary and trend chart show the per-verdict breakdown.
+- `src/commands/models.ts` registers `models.eval.contradictions_judge` as a tracked per-task model key so `gbrain models` and `gbrain models doctor` surface it.
+- `scripts/check-proposal-pii.sh` + denylist (structural patterns only, no real names) + 15-case test in `test/scripts/check-proposal-pii.test.ts`. Wired into `bun run verify`, `bun run check:all`, and as the new `bun run check:proposal-pii` standalone target. Two privacy-guard test fixtures naming `Wintermute` allowlisted in `scripts/check-test-real-names.sh`; the new privacy-guard scripts themselves allowlisted in `scripts/check-privacy.sh`.
+- Six IRON-RULE regression test suites pin the wave's invariants: R1 date-filter rule 3 relaxation preserves rules 1+2 (6 cases), R2 cache invalidation on `PROMPT_VERSION` bump, R3 verdict-enum migration (compile-time via `tsc --noEmit`), R4 runner emit predicate fires for every non-`no_contradiction` verdict (6 cases), R5 cache key tuple stays 5 fields, R6 contradiction severity unchanged (4 cases). Plus 9 cases on the cost-prompt helper.
+- The source RFC (`docs/proposals/temporal-contradiction-probe.md`) and PR title/body/commit/branch-name all scrubbed of PII at draft time. The new CI lint prevents the next one from slipping through.
+
+### Phase 2/3/4 deferred (per the plan)
+
+The RFC proposed four phases. This wave ships Phase 1 only. Deferred:
+- Phase 2 (structured claim extraction + `gbrain trajectory` view): blocked on a separate RFC that maps the existing `extract_facts` + `consolidate` cycle pipeline before extending the facts table. Codex review of the original plan caught factual errors about this pipeline; the deferral is deliberate.
+- Phase 3 (auto-write `valid_until` from `temporal_supersession` verdicts): would violate `auto-supersession.ts:4`'s "NEVER auto-applies" invariant. Reframed as paste-ready commands in Phase 1.
+- Phase 4 (founder scorecard / Argus integration): needs concrete Argus spec.
+
+## To take advantage of v0.35.3.1
+
+`gbrain upgrade` should do this automatically. The wave is schema-compatible (no migrations), so `gbrain apply-migrations` is a no-op.
+
+1. **Re-run the contradiction probe to see the new verdicts:**
+   ```bash
+   gbrain eval suspected-contradictions run --budget-usd 5
+   ```
+   Expect a one-time cost-estimate prompt + 10-second Ctrl-C window since `PROMPT_VERSION` changed; the cache is invalidated. Non-TTY runs auto-proceed.
+2. **(Optional) Pin the judge model:**
+   ```bash
+   gbrain config set models.eval.contradictions_judge anthropic:claude-haiku-4-5
+   gbrain models doctor
+   ```
+3. **(Optional) Adjust the cost-prompt grace window** for CI / autopilot:
+   ```bash
+   export GBRAIN_NO_PROBE_PROMPT=1                 # skip entirely
+   # or
+   export GBRAIN_PROBE_PROMPT_GRACE_SECONDS=0      # auto-proceed in TTY
+   ```
+4. **If `bun run verify` fails on `check:proposal-pii`,** the lint caught PII in `docs/proposals/*.md`. Replace with generic placeholders (alice-example, acme-corp, fund-a) per CLAUDE.md "Privacy rule: scrub real names from public docs."
+5. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+## [0.35.3.0] - 2026-05-15
+
+**Fix wave: 19 stale community PRs land as one bisect-friendly PR with the architectural fix none of them surfaced.**
+
+Two real bugs, both in shipping code on master since v0.28+, both fixed at the architecture level instead of one site at a time. The first: `extract_facts.entity_hints` and the X-API resolver's `candidates` output schema both declared `type: 'array'` without `items`, so strict-mode validators (Gemini Pro structured outputs, OpenAI strict tool defs) rejected the entire tool schema. Twelve community PRs converged on the entity_hints fix; only one (#910 from @DmitryBMsk) caught the candidates side. The second: every remote-source `git clone` and `git pull` invocation has been broken for ~7 months because `--no-recurse-submodules` was spliced BEFORE the subcommand verb in `GIT_SSRF_FLAGS`. Real git rejects this with exit 129 ("unknown option"); the fake-git test harness exits 0 regardless of argv shape, so CI never caught it. Seven community PRs flagged this. Codex outside-voice review on top of all 19 PRs surfaced the structural finding none of them saw: three duplicate `ParamDef→JSON Schema` mappers existed across the MCP surface, not one. The live HTTP MCP `tools/list` path (`serve-http.ts:837`) and the subagent brain-tool registry (`brain-allowlist.ts:84`) would both have stayed broken after a `buildToolDefs`-only patch.
+
+### What you can now do
+
+**Use `extract_facts` from strict-mode agents again.** Gemini Pro structured outputs and OpenAI strict tool definitions both reject `type: 'array'` without `items`. The `entity_hints` param now declares `items: { type: 'string' }` and the resolver `candidates` output declares the full `XTweetCandidate` interface with `required: [tweet_id, text, created_at, score, url]` and `additionalProperties: false`. The schema matches the TypeScript interface byte-for-byte — single source of truth.
+
+**Clone and pull remote sources over real git again.** `cloneRepo` and `pullRepo` now spread `--no-recurse-submodules` AFTER the verb where it belongs. Real git stops rejecting the call with exit 129. Constant naming signals the position rule so future flag additions land in the right place: `GIT_SSRF_FLAGS` is global config (spread before the verb), `GIT_SSRF_SUBCOMMAND_FLAGS` is subcommand-scoped (spread after).
+
+**Get one canonical ParamDef→schema mapper.** New `paramDefToSchema(p: ParamDef)` helper exported from `src/mcp/tool-defs.ts`. Three consumers now share one source of truth: `buildToolDefs` (stdio MCP), `serve-http.ts:837` (HTTP MCP `tools/list`), and `brain-allowlist.ts:84` (subagent tool registry). Recursive on `items` so nested array-of-arrays preserves inner shape on the wire — closes the same bug class one layer deeper.
+
+**Trust structural guards in CI.** Three new tests fail loudly with property paths if any future array drift reintroduces the bug class. `test/mcp-tool-defs.test.ts` walks every operation's `inputSchema` recursively. `test/git-remote.test.ts` asserts `--no-recurse-submodules` indexOf > verb indexOf — position-anchored, not just inclusion. `test/resolvers.test.ts` explicitly imports `xHandleToTweetResolver` + `urlReachableResolver` and walks both `inputSchema` AND `outputSchema` (the previously planned `getDefaultRegistry()` walk would have silently passed against zero resolvers — codex catch).
+
+### Itemized changes
+
+- `src/mcp/tool-defs.ts` exports new recursive `paramDefToSchema(p: ParamDef)` helper. Key ordering (type, description, enum, default, items) is intentional — matches the pre-v0.35.3 inline mappers so JSON.stringify output stays byte-stable for every operation that doesn't use nested arrays.
+- `src/commands/serve-http.ts:837-849` swaps the inline ParamDef destructure for `paramDefToSchema(v)`. Closes the HTTP MCP `tools/list` bug. OAuth-authenticated remote agents (Claude Desktop, ChatGPT, Perplexity over HTTP MCP) now see `items` on every array param.
+- `src/core/minions/tools/brain-allowlist.ts:84-97` swaps the inline destructure inside `paramsToInputSchema()` for `paramDefToSchema(v)`. Preserves the `required:` aggregation at `:95` (that's at the tool-def level, not the param level — codex explicitly out-of-scope).
+- `src/core/operations.ts:2699` adds `items: { type: 'string' }` to `entity_hints`. The handler at `:2733` already coerced with `Array.isArray(...)` so runtime shape is unchanged; only the schema declaration was broken.
+- `src/core/resolvers/builtin/x-api/handle-to-tweet.ts:102` replaces `candidates: { type: 'array' }` with full-spec items matching the `XTweetCandidate` interface 10 lines above, including `required: [all 5 fields]` and `additionalProperties: false` (D5 decision: without `required`, schema permits `{}`).
+- `src/core/git-remote.ts:29-44` splits `GIT_SSRF_FLAGS` (3 `-c` config flags, spread BEFORE the verb) from new exported `GIT_SSRF_SUBCOMMAND_FLAGS = ['--no-recurse-submodules']` (spread AFTER). `cloneRepo:156` and `pullRepo:182` now spread the new constant in subcommand position.
+- `test/mcp-tool-defs.test.ts` adds: (a) explicit fixture for `extract_facts.entity_hints.items.type === 'string'`, (b) synthetic nested-array ParamDef pinning `items.items.type` recursion, (c) `findArrayWithoutItems` walker that fails the suite with a property path on any `type: 'array'` lacking `items.type`. `legacyInlineMap` reference mirrors the new recursive helper.
+- `test/git-remote.test.ts` snapshot split: `GIT_SSRF_FLAGS` pins to 3 elements (no submodules), new `GIT_SSRF_SUBCOMMAND_FLAGS` snapshot pins to 1. `cloneRepo` + `pullRepo` argv tests assert `indexOf(--no-recurse-submodules) > indexOf(verb)` — position-anchored regression guard. Pre-v0.35.3 the existing test at `:233` baked the bug in via `argv.slice(0, GIT_SSRF_FLAGS.length)`.
+- `test/resolvers.test.ts` (existing file) gets a new `describe` block. Explicitly imports `xHandleToTweetResolver` + `urlReachableResolver` and walks both `inputSchema` AND `outputSchema` recursively. Negative coverage guard asserts `builtins.length >= 2` so a future autoformatter dropping the array can't silently turn the walk into a no-op.
+- `test/e2e/zeroentropy-live.test.ts` raises rerank test timeouts to handle ZeroEntropy's cold-start latency (observed ~5-6s on Tier 2 runners; subsequent calls < 500ms). Passes explicit `timeoutMs: 25000` to each rerank() call and a 30s bun:test per-test timeout. Production `DEFAULT_RERANK_TIMEOUT_MS = 5000` in `gateway.ts` stays put for the search hot path.
+- Contributed by: @DmitryBMsk (PR #910 — deepest variant of the entity_hints + candidates double-fix); cleanest naming from PR #846 (`GIT_SSRF_SUBCOMMAND_FLAGS`). 17 superseded PRs being closed with thank-you notes after this merge: #1028, #1023, #1020, #999, #985, #980, #979, #963, #904, #863, #862, #847, #846, #842, #832, #812.
+
+## To take advantage of v0.35.3.0
+
+`gbrain upgrade` is all you need. There's no schema migration, no config change, no manual action.
+
+1. Run `gbrain upgrade` — the new tool schemas reach your MCP clients on next restart.
+2. Restart your MCP clients (Claude Code, Claude Desktop, ChatGPT, Cursor, etc.) so they re-fetch `tools/list`.
+3. Verify `extract_facts` works from strict-mode agents:
+   ```bash
+   gbrain --tools-json | jq '.tools[] | select(.name == "extract_facts") | .inputSchema.properties.entity_hints'
+   ```
+   Should show `{"type":"array","items":{"type":"string"},...}` — pre-fix, `items` was missing.
+4. If you use remote-source git clones (`gbrain config get sources` shows any with a remote URL), they'll start working again on the next `gbrain sync`. Pre-fix, every clone of a remote-source repository was silently failing with git exit 129.
+
+If `gbrain doctor` flags anything after upgrade, please file an issue with the doctor output. This was a 7-month silent bug — the doctor's structural guards should catch the next one before it ships.
+
+## [0.35.1.1] - 2026-05-16
+
+**Fix wave: `gbrain eval longmemeval` actually runs against the public _s split.**
+
+A pre-spend smoke for the upcoming embedder shootout caught three tightly-coupled bugs that would have made all 7 cells fail. Shipping the fixes before anyone burns judge tokens.
+
+### What this fixes
+
+**The longmemeval adapter accepts the public _s dataset shape.** Pre-v0.35.1.1 assumed every dataset used the oracle `{session_id, turns}` shape, but the HuggingFace _s split serializes sessions as a parallel `haystack_session_ids: string[]` + a `LongMemEvalTurn[][]` (each inner array is one session's turns directly). The old adapter crashed `session.turns is undefined` on every question. New `normalizeSessions` helper accepts both shapes, mirroring the proven path in `gbrain-evals/eval/runner/longmemeval.ts`.
+
+**Session IDs that contain underscores or uppercase letters now produce valid slugs.** The _s split's IDs look like `sharegpt_yywfIrx_0`, both of which the v0.32.7 CJK-wave slug validator rejects. New `sanitizeSessionIdForSlug` lowercases and rewrites disallowed chars to `-`. The frontmatter `session_id:` line still carries the original verbatim, so downstream JSONL emit + LongMemEval correctness scoring work unchanged — only the slug gets rewritten to satisfy the validator.
+
+**`gbrain eval longmemeval` now configures the AI gateway before running.** v0.28.8 deliberately skipped `connectEngine()` for this subcommand so it would run on machines without a configured brain. Side effect: the gateway never got configured either, so the first embed call inside `importFromContent` crashed with "AI gateway is not configured." Fix: explicit `configureGateway()` before `runEvalLongMemEval`, reading `~/.gbrain/config.json` if present and falling back to env vars (`GBRAIN_EMBEDDING_MODEL`, `GBRAIN_EMBEDDING_DIMENSIONS`, etc.) when there's no config — preserving the "runs on a fresh machine" property.
+
+### Itemized changes
+
+- `src/eval/longmemeval/adapter.ts`: new `normalizeSessions` accepts both oracle (`{session_id, turns}`) and _s (`Turn[][]` + parallel `haystack_session_ids`) shapes; new `sanitizeSessionIdForSlug` rewrites underscores + uppercase + other disallowed chars to `-`; `LongMemEvalQuestion.haystack_sessions` typed as the union, `haystack_session_ids?: string[]` field added with documentation.
+- `src/cli.ts`: gateway configure step added before the `eval longmemeval` dispatch path, gated on `--help` short-circuit so help still works without a configured gateway.
+- `test/eval-longmemeval.test.ts`: 2 new regression cases pinning the _s shape normalization end-to-end (slugs sanitized, frontmatter preserves original session_id, dates flow through) and the missing-haystack_session_ids fallback to synthesized `lme_<question_id>_<i>` ids.
+
+## To take advantage of v0.35.1.1
+
+`gbrain upgrade` handles the fix transparently. Re-run any LongMemEval-against-_s-split commands that had been crashing.
+
+1. **Upgrade:**
+   ```bash
+   gbrain upgrade
+   ```
+2. **(If you hit the prior crash) re-run with `--resume-from` to skip any questions already scored:**
+   ```bash
+   gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s.json \
+     --output results.jsonl --resume-from results.jsonl --mode tokenmax
+   ```
+3. **No migration, no schema change, no breaking semantics.**
 
 ## [0.35.1.0] - 2026-05-15
 

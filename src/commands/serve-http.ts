@@ -28,6 +28,7 @@ import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
+import { paramDefToSchema } from '../mcp/tool-defs.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
@@ -840,12 +841,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           inputSchema: {
             type: 'object' as const,
             properties: Object.fromEntries(
-              Object.entries(op.params).map(([k, v]) => [k, {
-                type: v.type,
-                description: v.description,
-                ...(v.enum ? { enum: v.enum } : {}),
-                ...(v.default !== undefined ? { default: v.default } : {}),
-              }]),
+              Object.entries(op.params).map(([k, v]) => [k, paramDefToSchema(v)]),
             ),
             required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k),
           },

@@ -288,7 +288,27 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema='public' AND table_name='ingest_log') AS ingest_log_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='ingest_log' AND column_name='source_id') AS ingest_log_source_id_exists
+                WHERE table_schema='public' AND table_name='ingest_log' AND column_name='source_id') AS ingest_log_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='files') AS files_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='files' AND column_name='source_id') AS files_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='files' AND column_name='page_id') AS files_page_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='oauth_clients') AS oauth_clients_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='source_id') AS oauth_clients_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='federated_read') AS oauth_clients_federated_read_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='sources') AS sources_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='sources' AND column_name='archived') AS sources_archived_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='sources' AND column_name='archived_at') AS sources_archived_at_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='sources' AND column_name='archive_expires_at') AS sources_archive_expires_at_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -309,6 +329,16 @@ export class PGLiteEngine implements BrainEngine {
       subagent_provider_id_exists: boolean;
       ingest_log_exists: boolean;
       ingest_log_source_id_exists: boolean;
+      files_exists: boolean;
+      files_source_id_exists: boolean;
+      files_page_id_exists: boolean;
+      oauth_clients_exists: boolean;
+      oauth_clients_source_id_exists: boolean;
+      oauth_clients_federated_read_exists: boolean;
+      sources_exists: boolean;
+      sources_archived_exists: boolean;
+      sources_archived_at_exists: boolean;
+      sources_archive_expires_at_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -332,27 +362,55 @@ export class PGLiteEngine implements BrainEngine {
     // references source_id. Old brains have ingest_log without source_id;
     // bootstrap adds the column before SCHEMA_SQL replay creates the index.
     const needsIngestLogSourceId = probe.ingest_log_exists && !probe.ingest_log_source_id_exists;
+    // v0.18 (v18): files.source_id + files.page_id added; idx_files_source_id
+    // and idx_files_page_id in PGLITE_SCHEMA_SQL crash without them.
+    const needsFilesBootstrap = probe.files_exists
+      && (!probe.files_source_id_exists || !probe.files_page_id_exists);
+    // v0.34.1 (v60+v61+v65): oauth_clients.source_id + federated_read added;
+    // FK to sources(id) + GIN index idx_oauth_clients_federated_read in
+    // PGLITE_SCHEMA_SQL crash without them.
+    const needsOauthClientsBootstrap = probe.oauth_clients_exists
+      && (!probe.oauth_clients_source_id_exists || !probe.oauth_clients_federated_read_exists);
+    // v0.26.5 (v34): sources.archived + archived_at + archive_expires_at added
+    // for soft-delete lifecycle. Not directly referenced by indexes BUT
+    // PGLITE_SCHEMA_SQL's `CREATE TABLE IF NOT EXISTS sources` is a no-op on
+    // pre-existing sources tables (won't add columns), so visibility filters
+    // referencing these columns trip on old brains. The bootstrap closes the
+    // gap before any visibility-filter SQL runs.
+    const needsSourcesArchive = probe.sources_exists
+      && (!probe.sources_archived_exists
+          || !probe.sources_archived_at_exists
+          || !probe.sources_archive_expires_at_exists);
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsChunksEmbeddingImage
         && !needsMcpLogBootstrap && !needsSubagentProviderId
-        && !needsPagesRecency && !needsIngestLogSourceId) return;
+        && !needsPagesRecency && !needsIngestLogSourceId
+        && !needsFilesBootstrap && !needsOauthClientsBootstrap
+        && !needsSourcesArchive) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
     if (needsPagesBootstrap) {
       // Mirror schema-embedded.ts shape for `sources` so the subsequent
       // PGLITE_SCHEMA_SQL CREATE TABLE IF NOT EXISTS is a true no-op.
+      // Archive columns (v34) are folded in here so a pre-v18 brain doesn't
+      // need needsSourcesArchive to also fire — bootstrap creates a complete
+      // v34-shape sources in one go. needsSourcesArchive then only fires on
+      // the pre-v34 case (sources exists, archive cols don't).
       await this.db.exec(`
         CREATE TABLE IF NOT EXISTS sources (
-          id            TEXT PRIMARY KEY,
-          name          TEXT NOT NULL UNIQUE,
-          local_path    TEXT,
-          last_commit   TEXT,
-          last_sync_at  TIMESTAMPTZ,
-          config        JSONB NOT NULL DEFAULT '{}'::jsonb,
-          created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+          id                 TEXT PRIMARY KEY,
+          name               TEXT NOT NULL UNIQUE,
+          local_path         TEXT,
+          last_commit        TEXT,
+          last_sync_at       TIMESTAMPTZ,
+          config             JSONB NOT NULL DEFAULT '{}'::jsonb,
+          archived           BOOLEAN NOT NULL DEFAULT FALSE,
+          archived_at        TIMESTAMPTZ,
+          archive_expires_at TIMESTAMPTZ,
+          created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
         );
         INSERT INTO sources (id, name, config)
           VALUES ('default', 'default', '{"federated": true}'::jsonb)
@@ -463,6 +521,50 @@ export class PGLiteEngine implements BrainEngine {
       // DEFAULT 'default' so the index can build cleanly.
       await this.db.exec(`
         ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS source_id TEXT NOT NULL DEFAULT 'default';
+      `);
+    }
+
+    if (needsFilesBootstrap) {
+      // v18 (files_provenance_columns) adds source_id + page_id to files plus
+      // idx_files_source_id and idx_files_page_id in PGLITE_SCHEMA_SQL. Pre-v18
+      // brains crash on the CREATE INDEX. Bootstrap adds both columns; v18
+      // runs later via runMigrations and is idempotent.
+      await this.db.exec(`
+        ALTER TABLE files ADD COLUMN IF NOT EXISTS source_id TEXT
+          NOT NULL DEFAULT 'default' REFERENCES sources(id) ON DELETE CASCADE;
+        ALTER TABLE files ADD COLUMN IF NOT EXISTS page_id INTEGER
+          REFERENCES pages(id) ON DELETE SET NULL;
+      `);
+    }
+
+    if (needsOauthClientsBootstrap) {
+      // v60+v61+v65 (oauth_clients_source_id_fk, oauth_clients_federated_read_column,
+      // oauth_clients_federated_read_gin_index) add source_id + federated_read
+      // and the GIN index idx_oauth_clients_federated_read. PGLITE_SCHEMA_SQL's
+      // FK + index references crash on pre-v60 brains. Bootstrap mirrors the
+      // v60+v61 column shape; v60-v65 run later via runMigrations and are
+      // idempotent (and handle backfill + RESTRICT-flip).
+      await this.db.exec(`
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS source_id TEXT
+          DEFAULT 'default' REFERENCES sources(id) ON DELETE SET NULL;
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS federated_read TEXT[]
+          NOT NULL DEFAULT '{}';
+      `);
+    }
+
+    if (needsSourcesArchive) {
+      // v34 (destructive_guard_columns) promotes archive lifecycle from JSONB
+      // config to real columns on sources. PGLITE_SCHEMA_SQL's
+      // `CREATE TABLE IF NOT EXISTS sources` is a no-op against an existing
+      // pre-v34 sources table, so the column-add never lands until the v34
+      // migration runs. v34's UPDATE statements + downstream visibility filters
+      // (search/query/list_pages) need the columns to exist on the table
+      // schema. Bootstrap adds the three columns; v34 runs later via
+      // runMigrations and is idempotent (and handles JSONB → column backfill).
+      await this.db.exec(`
+        ALTER TABLE sources ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE sources ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+        ALTER TABLE sources ADD COLUMN IF NOT EXISTS archive_expires_at TIMESTAMPTZ;
       `);
     }
   }
@@ -805,6 +907,7 @@ export class PGLiteEngine implements BrainEngine {
       `WITH ranked AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
+           p.effective_date, p.effective_date_source,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
            CASE WHEN p.updated_at < (
@@ -922,6 +1025,7 @@ export class PGLiteEngine implements BrainEngine {
         `WITH ranked AS (
            SELECT
              p.slug, p.id as page_id, p.title, p.type, p.source_id,
+             p.effective_date, p.effective_date_source,
              cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
              ${scoreExpr} AS score,
              CASE WHEN p.updated_at < (
@@ -950,6 +1054,7 @@ export class PGLiteEngine implements BrainEngine {
       const { rows } = await this.db.query(
         `SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id,
+           p.effective_date, p.effective_date_source,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            ${scoreExpr} AS score,
            CASE WHEN p.updated_at < (
@@ -1042,6 +1147,7 @@ export class PGLiteEngine implements BrainEngine {
     const { rows } = await this.db.query(
       `SELECT
          p.slug, p.id as page_id, p.title, p.type, p.source_id,
+         p.effective_date, p.effective_date_source,
          cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
          ts_rank(cc.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score,
          CASE WHEN p.updated_at < (
@@ -1142,6 +1248,7 @@ export class PGLiteEngine implements BrainEngine {
       `WITH hnsw_candidates AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
+           p.effective_date, p.effective_date_source,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            1 - (cc.${col} <=> $1::vector) AS raw_score
          FROM content_chunks cc
@@ -1153,6 +1260,7 @@ export class PGLiteEngine implements BrainEngine {
        )
        SELECT
          hc.slug, hc.page_id, hc.title, hc.type, hc.source_id,
+         hc.effective_date, hc.effective_date_source,
          hc.chunk_id, hc.chunk_index, hc.chunk_text, hc.chunk_source,
          hc.raw_score * ${sourceFactorCaseOnSlug} AS score,
          CASE WHEN hc.updated_at < (
@@ -1876,15 +1984,25 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
+    // Soft-delete filter on BOTH sides:
+    //   - candidate: p.deleted_at IS NULL — soft-deleted pages aren't orphan candidates
+    //   - link source: src.deleted_at IS NULL — links FROM soft-deleted pages don't count as inbound
+    // Without the link-source filter, a live page can hide from orphan results purely
+    // because a soft-deleted page links to it. v0.26.5 invariant; codex C11.
     const { rows } = await this.db.query(
       `SELECT
          p.slug,
          COALESCE(p.title, p.slug) AS title,
          p.frontmatter->>'domain' AS domain
        FROM pages p
-       WHERE NOT EXISTS (
-         SELECT 1 FROM links l WHERE l.to_page_id = p.id
-       )
+       WHERE p.deleted_at IS NULL
+         AND NOT EXISTS (
+           SELECT 1
+           FROM links l
+           JOIN pages src ON src.id = l.from_page_id
+           WHERE l.to_page_id = p.id
+             AND src.deleted_at IS NULL
+         )
        ORDER BY p.slug`
     );
     return rows as Array<{ slug: string; title: string; domain: string | null }>;

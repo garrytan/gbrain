@@ -38,6 +38,7 @@
 
 import { spawn, type ChildProcess } from 'child_process';
 import { buildSpawnInvocation, detectTini } from './spawn-helpers.ts';
+import { classifyWorkerExit } from './exit-classification.ts';
 import { calculateBackoffMs } from './supervisor.ts';
 
 export type ChildSupervisorEvent =
@@ -286,9 +287,11 @@ export class ChildWorkerSupervisor {
         // D1: code=0 is a clean exit (watchdog drain, graceful stop, etc.).
         // Don't touch crashCount — preserves flap detection across mixed
         // exit sequences. D2: record the clean-restart timestamp for budget
-        // tracking and prune entries outside the sliding window.
+        // tracking and prune entries outside the sliding window. Routes
+        // through the shared `classifyWorkerExit` helper so doctor.ts and
+        // jobs.ts (audit-log consumers) read the same rule.
         this._lastExitCode = code;
-        if (code === 0) {
+        if (classifyWorkerExit({ code }) === 'clean_exit') {
           const nowMs = this.now();
           this._cleanRestartTimestamps.push(nowMs);
           const windowMs = this.opts.cleanRestartWindowMs ?? DEFAULTS.cleanRestartWindowMs;
