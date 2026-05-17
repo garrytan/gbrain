@@ -90,6 +90,88 @@ export type JudgeFn = (input: {
   modelHint?: string;
 }) => Promise<JudgeVerdict>;
 
+/**
+ * Multi-judge ensemble verdict aggregation (E2, T5).
+ *
+ * Per D17 + D12 conservative posture: an ensemble verdict auto-applies only
+ * when ALL three model verdicts agree AND the minimum confidence across the
+ * three is >= the ensemble threshold (default 0.85). Anything less → cache
+ * with applied=false (review-queue posture).
+ *
+ * 'unresolvable' verdicts NEVER count toward consensus (a single
+ * 'unresolvable' result drops the agreement count). This is intentional —
+ * one model saying "I can't tell" plus two saying "correct" should NOT
+ * auto-apply 'correct'.
+ */
+export interface EnsembleVerdict {
+  verdict: JudgeVerdict['verdict'];
+  minConfidence: number;
+  agreement: number; // 0..3, count of models that returned this verdict
+  modelVerdicts: Array<{ modelId: string; verdict: JudgeVerdict['verdict']; confidence: number; failed?: boolean }>;
+}
+
+/**
+ * Aggregate per-model verdicts into an EnsembleVerdict. Pure function.
+ *
+ * Algorithm:
+ *  1. Filter out failed model responses (rejected promises in the caller).
+ *  2. Tally verdict labels.
+ *  3. Winner = label with the most votes. Ties: 'unresolvable' loses; any
+ *     other label wins via deterministic alphabetical order.
+ *  4. agreement = count of models that returned the winning label.
+ *  5. minConfidence = MIN across the models that returned the winning label.
+ *
+ * Caller decides whether to auto-apply based on the (agreement === 3 AND
+ * minConfidence >= threshold) rule.
+ */
+export function aggregateEnsemble(
+  results: Array<{ modelId: string; verdict: JudgeVerdict | null }>,
+): EnsembleVerdict {
+  const modelVerdicts: EnsembleVerdict['modelVerdicts'] = results.map(r =>
+    r.verdict
+      ? { modelId: r.modelId, verdict: r.verdict.verdict, confidence: r.verdict.confidence }
+      : { modelId: r.modelId, verdict: 'unresolvable', confidence: 0, failed: true },
+  );
+
+  // Tally only the non-failed verdicts.
+  const tally = new Map<JudgeVerdict['verdict'], number>();
+  for (const r of results) {
+    if (!r.verdict) continue;
+    tally.set(r.verdict.verdict, (tally.get(r.verdict.verdict) ?? 0) + 1);
+  }
+
+  // Pick the winner. Tie-break: prefer non-unresolvable, then alphabetical
+  // for determinism.
+  let winner: JudgeVerdict['verdict'] = 'unresolvable';
+  let bestCount = 0;
+  for (const [v, n] of tally.entries()) {
+    if (n > bestCount) {
+      winner = v;
+      bestCount = n;
+    } else if (n === bestCount) {
+      // Tie. Prefer non-unresolvable.
+      if (winner === 'unresolvable' && v !== 'unresolvable') {
+        winner = v;
+      } else if (v !== 'unresolvable' && winner !== 'unresolvable' && v < winner) {
+        winner = v;
+      }
+    }
+  }
+
+  // minConfidence: min across the models that returned the winning label.
+  let minConfidence = 1;
+  let agreementCount = 0;
+  for (const r of results) {
+    if (r.verdict && r.verdict.verdict === winner) {
+      agreementCount += 1;
+      if (r.verdict.confidence < minConfidence) minConfidence = r.verdict.confidence;
+    }
+  }
+  if (agreementCount === 0) minConfidence = 0;
+
+  return { verdict: winner, minConfidence, agreement: agreementCount, modelVerdicts };
+}
+
 /** Evidence retriever signature — injected for tests. */
 export type EvidenceRetrieverFn = (take: Take, scope: ScopedReadOpts) => Promise<string>;
 
@@ -121,6 +203,33 @@ export interface GradeTakesOpts extends BasePhaseOpts {
   autoResolveThreshold?: number;
   /** Identifier recorded as resolved_by when auto-applying. Default 'gbrain:grade_takes'. */
   resolvedByLabel?: string;
+  /**
+   * E2 ensemble (T5): when true, borderline single-model verdicts
+   * (0.6 <= confidence < 0.95) fire a 3-model ensemble tiebreaker. Default
+   * false (single-model only).
+   */
+  useEnsemble?: boolean;
+  /**
+   * E2 ensemble judges. When useEnsemble=true and the single-model verdict
+   * is borderline, all three judges are called in parallel via Promise.allSettled.
+   * Defaults to [openai:gpt-4o, anthropic:claude-sonnet-4-6, google:gemini-1.5-pro]
+   * via defaultJudge with model-string overrides. Tests inject deterministic
+   * judges.
+   */
+  ensembleJudges?: Array<{ modelId: string; fn: JudgeFn }>;
+  /**
+   * E2 ensemble auto-apply threshold. Default 0.85 (D12 conservative): MIN
+   * confidence across the agreeing models must be >= this AND agreement
+   * must be 3/3 unanimous.
+   */
+  ensembleThreshold?: number;
+  /**
+   * E2 ensemble TRIGGER band [lower, upper). Single-model verdicts whose
+   * confidence falls in this band invoke the ensemble. Default [0.6, 0.95).
+   * Below the lower bound: single is clearly unresolvable / review-only.
+   * Above the upper bound: single is sufficient.
+   */
+  ensembleTriggerBand?: [number, number];
 }
 
 export interface GradeTakesResult {
@@ -131,6 +240,10 @@ export interface GradeTakesResult {
   too_recent: number;
   budget_exhausted: boolean;
   warnings: string[];
+  /** E2 ensemble (T5): count of takes where the ensemble tiebreaker fired. */
+  ensemble_invoked: number;
+  /** E2 ensemble (T5): count of takes where ensemble produced 3/3 unanimous. */
+  ensemble_unanimous: number;
 }
 
 /**
@@ -277,6 +390,10 @@ class GradeTakesPhase extends BaseCyclePhase {
     const resolvedByLabel = opts.resolvedByLabel ?? 'gbrain:grade_takes';
     const judgeModelId = opts.model ?? 'claude-sonnet-4-6';
 
+    const useEnsemble = opts.useEnsemble ?? false;
+    const ensembleThreshold = opts.ensembleThreshold ?? 0.85;
+    const ensembleTriggerBand = opts.ensembleTriggerBand ?? [0.6, 0.95];
+
     const result: GradeTakesResult = {
       takes_scanned: 0,
       cache_hits: 0,
@@ -285,6 +402,8 @@ class GradeTakesPhase extends BaseCyclePhase {
       too_recent: 0,
       budget_exhausted: false,
       warnings: [],
+      ensemble_invoked: 0,
+      ensemble_unanimous: 0,
     };
 
     // Load unresolved active takes, oldest-first.
@@ -339,7 +458,7 @@ class GradeTakesPhase extends BaseCyclePhase {
         break;
       }
 
-      // Call the judge. Errors on a single take log warning + continue.
+      // Call the single-model judge. Errors on a single take log warning + continue.
       let verdict: JudgeVerdict;
       try {
         verdict = await judge({ take, evidence, modelHint: opts.model });
@@ -349,13 +468,69 @@ class GradeTakesPhase extends BaseCyclePhase {
         continue;
       }
 
+      // T5 — ensemble tiebreaker for borderline single-model verdicts.
+      let recordedJudgeModelId = judgeModelId;
+      let recordedVerdict = verdict;
+      let ensembleApplyEligible = false;
+      const inBorderlineBand =
+        verdict.confidence >= ensembleTriggerBand[0] &&
+        verdict.confidence < ensembleTriggerBand[1] &&
+        verdict.verdict !== 'unresolvable';
+
+      if (useEnsemble && inBorderlineBand && opts.ensembleJudges && opts.ensembleJudges.length > 0) {
+        result.ensemble_invoked += 1;
+        const ensembleResults = await Promise.allSettled(
+          opts.ensembleJudges.map(j => j.fn({ take, evidence, modelHint: j.modelId })),
+        );
+        const collected: Array<{ modelId: string; verdict: JudgeVerdict | null }> = opts.ensembleJudges.map((j, i) => {
+          const res = ensembleResults[i];
+          if (res && res.status === 'fulfilled') return { modelId: j.modelId, verdict: res.value };
+          return { modelId: j.modelId, verdict: null };
+        });
+        const ensemble = aggregateEnsemble(collected);
+
+        // Record the ensemble verdict in the cache row instead of the single-model
+        // verdict. The judge_model_id becomes 'ensemble:<modelA>+<modelB>+<modelC>'
+        // so a future re-run with different ensemble membership doesn't collide.
+        recordedJudgeModelId = `ensemble:${opts.ensembleJudges.map(j => j.modelId).join('+')}`;
+        recordedVerdict = {
+          verdict: ensemble.verdict,
+          confidence: ensemble.minConfidence,
+          reasoning: `ensemble agreement ${ensemble.agreement}/3; per-model: ${
+            ensemble.modelVerdicts.map(m => `${m.modelId}=${m.verdict}@${m.confidence.toFixed(2)}${m.failed ? '(failed)' : ''}`).join(', ')
+          }`,
+        };
+        if (ensemble.agreement === 3) result.ensemble_unanimous += 1;
+
+        // Ensemble auto-apply eligibility: 3/3 unanimous AND min confidence
+        // >= ensembleThreshold AND verdict not 'unresolvable'.
+        ensembleApplyEligible =
+          ensemble.agreement === 3 &&
+          ensemble.minConfidence >= ensembleThreshold &&
+          ensemble.verdict !== 'unresolvable';
+      }
+
       // Decide auto-resolve eligibility BEFORE writing to cache so the
-      // `applied` column reflects the decision.
-      const resolution = verdictToResolution(verdict, resolvedByLabel);
-      const shouldApply =
-        autoResolve &&
-        resolution !== null &&
-        verdict.confidence >= autoResolveThreshold;
+      // `applied` column reflects the decision. Two paths:
+      //   - Ensemble path: requires 3/3 unanimous + min conf >= ensembleThreshold
+      //   - Single-model path: requires confidence >= autoResolveThreshold
+      // 'unresolvable' verdict NEVER auto-applies either way.
+      const resolution = verdictToResolution(recordedVerdict, resolvedByLabel);
+      let shouldApply = false;
+      if (autoResolve && resolution !== null) {
+        if (recordedJudgeModelId.startsWith('ensemble:')) {
+          shouldApply = ensembleApplyEligible;
+        } else {
+          shouldApply = recordedVerdict.confidence >= autoResolveThreshold;
+        }
+      }
+
+      // Compute a NEW evidence_signature when ensemble fires, since the
+      // cache composite key includes judge_model_id. (sig was computed
+      // against the single-model judge_model_id earlier.)
+      const recordedSig = recordedJudgeModelId === judgeModelId
+        ? sig
+        : evidenceSignature(evidence, recordedJudgeModelId);
 
       // Write the verdict to the cache. Idempotency conflict means another
       // run beat us to it; either way the row exists with consistent state.
@@ -364,7 +539,7 @@ class GradeTakesPhase extends BaseCyclePhase {
            (take_id, prompt_version, judge_model_id, evidence_signature, verdict, confidence, applied)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (take_id, prompt_version, judge_model_id, evidence_signature) DO NOTHING`,
-        [take.id, promptVersion, judgeModelId, sig, verdict.verdict, verdict.confidence, shouldApply],
+        [take.id, promptVersion, recordedJudgeModelId, recordedSig, recordedVerdict.verdict, recordedVerdict.confidence, shouldApply],
       );
       result.verdicts_written += 1;
 
@@ -378,6 +553,9 @@ class GradeTakesPhase extends BaseCyclePhase {
           result.warnings.push(`auto-apply failed on take ${take.id}: ${msg}`);
         }
       }
+
+      // Tally is silent — the caller surfaces it via the GradeTakesResult.
+      void recordedVerdict;
     }
 
     if (opts.reporter) opts.reporter.finish();
@@ -412,4 +590,5 @@ export const __testing = {
   evidenceSignature,
   takeIsOldEnough,
   verdictToResolution,
+  aggregateEnsemble,
 };
