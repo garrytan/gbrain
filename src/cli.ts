@@ -1539,7 +1539,7 @@ CODE INDEXING (v0.19.0 / v0.20.0 Cathedral II)
   query <q> --symbol-kind <k>        Filter to symbol type (function|class|method|...) (v0.20.0)
   reconcile-links [--dry-run]        Batch-recompute doc↔impl edges (v0.20.0)
   reindex-code [--source id] [--yes] Explicit code-page reindex (v0.20.0)
-  sync --strategy code               Sync code files into the brain
+  sync --strategy code               Sync code files into the brain (honors gbrain.yml code_index filters)
 
 JOBS (Minions)
   jobs submit <name> [--params JSON]  Submit background job [--follow] [--dry-run]

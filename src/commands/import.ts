@@ -11,6 +11,7 @@ import {
   isCodeFilePath,
   isMarkdownFilePath,
   isImageFilePath as isImageFilePathFromSync,
+  matchesPathFilters,
   type SyncStrategy,
 } from '../core/sync.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
@@ -20,6 +21,7 @@ import {
   clearCheckpoint,
   resumeFilter,
 } from '../core/import-checkpoint.ts';
+import { loadCodeIndexConfig } from '../core/code-index-config.ts';
 
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
@@ -83,15 +85,28 @@ export async function runImport(
   // silently no-op'd because no code file ever made it through walker
   // enumeration (codex C11 confirms dispatch was correct; bug was here).
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
+  const codeIndexConfig = strategy === 'code' ? loadCodeIndexConfig(dir) : null;
   const _walkT0 = Date.now();
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
-  const allFiles = collectSyncableFiles(dir, { strategy });
+  const allFiles = collectSyncableFiles(dir, {
+    strategy,
+    include: codeIndexConfig?.include,
+    exclude: codeIndexConfig?.exclude,
+  });
   console.error(
     `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
   const fileTypeLabel = strategy === 'code' ? 'code'
     : strategy === 'auto' ? 'syncable' : 'markdown';
-  console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
+  if (strategy === 'code') {
+    console.log(
+      `Code import filters: ${codeIndexConfig?.include.length ?? 0} include globs, ` +
+      `${codeIndexConfig?.exclude.length ?? 0} exclude globs`,
+    );
+    console.log(`Found ${allFiles.length} code files after filtering`);
+  } else {
+    console.log(`Found ${allFiles.length} ${fileTypeLabel} files`);
+  }
 
   // Sort newest-first so date-prefixed brain paths get embedded before older ones.
   // See src/core/sort-newest-first.ts for the policy.
@@ -358,6 +373,8 @@ function resolveMaxWalkDepth(): number {
 
 interface CollectOpts {
   strategy?: SyncStrategy;
+  include?: string[];
+  exclude?: string[];
 }
 
 /**
@@ -452,6 +469,8 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
         walk(full, depth + 1);
       } else if (stat.isFile()) {
         if (!isCollectibleForWalker(entry, strategy, multimodalOn)) continue;
+        const rel = relative(dir, full).replace(/\\/g, '/');
+        if (!matchesPathFilters(rel, opts)) continue;
         files.push(full);
       }
     }
