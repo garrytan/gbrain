@@ -147,15 +147,23 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   }
 
   function corsPreflightHeaders(origin: string | null): Record<string, string> {
-    const headers: Record<string, string> = {
+    // Mirror corsHeaders' default-deny posture for the preflight surface
+    // (OPTIONS requests). When the request Origin isn't in the allowlist,
+    // return Vary: Origin only so cached preflights stay cache-correct,
+    // and emit zero CORS-permission headers. Previously the preflight
+    // unconditionally returned Allow-Methods + Allow-Headers regardless
+    // of Origin, which let an unallowed caller learn the method + header
+    // surface even though the actual request would be blocked by the
+    // missing Allow-Origin. Same default-deny posture, applied symmetrically.
+    if (!corsAllowlist || !origin || !corsAllowlist.has(origin)) {
+      return { 'Vary': 'Origin' };
+    }
+    return {
+      'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
+      'Vary': 'Origin',
     };
-    if (corsAllowlist && origin && corsAllowlist.has(origin)) {
-      headers['Access-Control-Allow-Origin'] = origin;
-      headers['Vary'] = 'Origin';
-    }
-    return headers;
   }
 
   async function validateToken(authHeader: string | null): Promise<AuthResult> {
