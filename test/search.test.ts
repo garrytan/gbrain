@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { rrfFusion, cosineSimilarity, applyBacklinkBoost } from '../src/core/search/hybrid.ts';
+import { rrfFusion, cosineSimilarity, applyBacklinkBoost, applySalienceBoost } from '../src/core/search/hybrid.ts';
 import type { SearchResult } from '../src/core/types.ts';
 
 function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -237,5 +237,95 @@ describe('applyBacklinkBoost (v0.10.1)', () => {
     expect(results[0].score).toBe(1.0);
     expect(results[1].score).toBeGreaterThan(1.0);
     expect(results[2].score).toBeGreaterThan(results[1].score);
+  });
+});
+
+describe('floor-ratio gate (opt-in, default off)', () => {
+  test('floorRatio undefined: no gate, all eligible pages get boost (existing behavior)', () => {
+    const results: SearchResult[] = [
+      makeResult({ slug: 'top', score: 1.0 }),
+      makeResult({ slug: 'weak', score: 0.3 }),
+    ];
+    applyBacklinkBoost(results, new Map([['top', 10], ['weak', 10]]));
+    const expectedFactor = 1 + 0.05 * Math.log(11);
+    expect(results[0].score).toBeCloseTo(1.0 * expectedFactor, 6);
+    expect(results[1].score).toBeCloseTo(0.3 * expectedFactor, 6);
+  });
+
+  test('floorRatio 0.85: weak page (score 0.3, topScore 1.0) gets no boost', () => {
+    const results: SearchResult[] = [
+      makeResult({ slug: 'top', score: 1.0 }),
+      makeResult({ slug: 'weak', score: 0.3 }),
+    ];
+    applyBacklinkBoost(results, new Map([['top', 10], ['weak', 10]]), 0.85);
+    const expectedFactor = 1 + 0.05 * Math.log(11);
+    expect(results[0].score).toBeCloseTo(1.0 * expectedFactor, 6);
+    expect(results[1].score).toBe(0.3); // gated out, unchanged
+  });
+
+  test('floorRatio 0.85: borderline page (score 0.85, topScore 1.0) is eligible', () => {
+    const results: SearchResult[] = [
+      makeResult({ slug: 'top', score: 1.0 }),
+      makeResult({ slug: 'edge', score: 0.85 }),
+    ];
+    applyBacklinkBoost(results, new Map([['top', 10], ['edge', 10]]), 0.85);
+    const expectedFactor = 1 + 0.05 * Math.log(11);
+    expect(results[1].score).toBeCloseTo(0.85 * expectedFactor, 6);
+  });
+
+  test('regression scenario: weak-overlap page cannot leapfrog strong primary', () => {
+    // Models the failure mode the gate exists to prevent: a weak-overlap
+    // page (low raw score, high metadata signal) climbing above a strong
+    // primary hit (high raw score, no metadata signal). Without the gate
+    // the weak page's metadata boost is enough to overtake; with the gate
+    // it isn't eligible for the boost at all.
+    const withoutGate: SearchResult[] = [
+      makeResult({ slug: 'strong-primary', score: 1.0 }),
+      makeResult({ slug: 'weak-with-signal', score: 0.5 }),
+    ];
+    applyBacklinkBoost(withoutGate, new Map([['weak-with-signal', 1000]]));
+    // Even though strong-primary started 2x higher, weak's huge backlink
+    // count is enough to push it close (or potentially past) on score —
+    // sort the array to inspect rank order.
+    withoutGate.sort((a, b) => b.score - a.score);
+
+    const withGate: SearchResult[] = [
+      makeResult({ slug: 'strong-primary', score: 1.0 }),
+      makeResult({ slug: 'weak-with-signal', score: 0.5 }),
+    ];
+    applyBacklinkBoost(withGate, new Map([['weak-with-signal', 1000]]), 0.85);
+    withGate.sort((a, b) => b.score - a.score);
+    // With the gate, strong-primary is unambiguously first; weak's score
+    // is unchanged from its raw 0.5 since it's below 0.85 * 1.0.
+    expect(withGate[0].slug).toBe('strong-primary');
+    expect(withGate[1].slug).toBe('weak-with-signal');
+    expect(withGate[1].score).toBe(0.5);
+  });
+
+  test('applySalienceBoost honors floorRatio gate', () => {
+    const results: SearchResult[] = [
+      makeResult({ slug: 'top', score: 1.0, source_id: undefined }),
+      makeResult({ slug: 'weak', score: 0.3, source_id: undefined }),
+    ];
+    const scores = new Map([
+      ['default::top', 5],
+      ['default::weak', 5],
+    ]);
+    applySalienceBoost(results, scores, 'on', 0.85);
+    const expectedFactor = 1 + 0.15 * Math.log(6);
+    expect(results[0].score).toBeCloseTo(1.0 * expectedFactor, 6);
+    expect(results[1].score).toBe(0.3); // gated out
+  });
+
+  test('empty results: gate is a no-op (no divide-by-zero)', () => {
+    const results: SearchResult[] = [];
+    expect(() => applyBacklinkBoost(results, new Map(), 0.85)).not.toThrow();
+  });
+
+  test('single result: gate eligibility is trivially true (page is its own top)', () => {
+    const results: SearchResult[] = [makeResult({ slug: 'only', score: 0.5 })];
+    applyBacklinkBoost(results, new Map([['only', 10]]), 0.85);
+    const expectedFactor = 1 + 0.05 * Math.log(11);
+    expect(results[0].score).toBeCloseTo(0.5 * expectedFactor, 6);
   });
 });

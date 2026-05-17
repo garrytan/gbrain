@@ -47,14 +47,72 @@ const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
  * Apply backlink boost to a result list in place. Mutates each result's score
  * by (1 + BACKLINK_BOOST_COEF * log(1 + count)). Pure data transform; no DB call.
  * Caller fetches counts via engine.getBacklinkCounts.
+ *
+ * `floorRatio` (optional, opt-in): when set, the boost only fires for
+ * results whose pre-boost score is ≥ `floorRatio * topScore`. Pages
+ * below the gate keep their unboosted score. Default undefined → no gate
+ * (preserves existing behavior). See `computeFloorThreshold` for rationale.
  */
-export function applyBacklinkBoost(results: SearchResult[], counts: Map<string, number>): void {
+export function applyBacklinkBoost(
+  results: SearchResult[],
+  counts: Map<string, number>,
+  floorRatio?: number,
+): void {
+  const threshold = computeFloorThreshold(results, floorRatio);
   for (const r of results) {
+    if (r.score < threshold) continue;
     const count = counts.get(r.slug) ?? 0;
     if (count > 0) {
       r.score *= (1.0 + BACKLINK_BOOST_COEF * Math.log(1 + count));
     }
   }
+}
+
+/**
+ * Floor-ratio gate (opt-in, default off).
+ *
+ * Returns `-Infinity` when `floorRatio` is undefined → the gate never
+ * fires (existing behavior preserved). When provided → returns
+ * `topScore * floorRatio`; callers skip the boost for any result with
+ * `r.score < threshold`.
+ *
+ * **Why this exists.** gbrain's bounded boosts (the `[1.0, ~1.6]` clip
+ * range from log-compressed salience, the log-scaled backlink factor,
+ * the half-life-decayed recency factor) keep any single boost from
+ * catastrophically flipping rankings. That guarantee holds for small
+ * curated corpora.
+ *
+ * On larger corpora indexed with real high-dimensional embedders
+ * (text-embedding-3-large, Voyage 3-large, Voyage 4, etc.) the baseline
+ * vector similarity between topically-unrelated "professional content"
+ * is non-trivial. Weak-overlap pages land in a query's top-K via vector
+ * overlap alone, receive the multiplicative boost, and leapfrog the
+ * legitimate primary hit. The boost magnitudes are small enough that
+ * any single comparison still feels "safe," but in the long tail of
+ * top-K shuffles the regression is visible.
+ *
+ * The gate cuts each boost's reach. With `floorRatio: 0.85`, only
+ * results within 85% of `topScore` are eligible; the long tail keeps
+ * its unboosted score and original rank. A truly-strong primary
+ * always wins regardless of boost magnitude on weaker candidates.
+ *
+ * Empirical motivation comes from a labeled-retrieval ablation we ran
+ * in the SkyTwin twin-memory layer that consumes gbrain
+ * (https://github.com/jayzalowitz/skytwin/pull/272 — switched to a
+ * real OpenAI-shape embedder, observed weak-overlap authored pages
+ * climbing into top-K via vector overlap, added the floor-ratio gate
+ * to fix it). Default-off because we cannot reproduce the failure mode
+ * from outside on gbrain's own eval fixtures — surfacing it as an
+ * opt-in lets adopters with large dense corpora opt in without
+ * changing the default behavior anyone else relies on.
+ */
+function computeFloorThreshold(results: SearchResult[], floorRatio?: number): number {
+  if (floorRatio === undefined) return Number.NEGATIVE_INFINITY;
+  let top = Number.NEGATIVE_INFINITY;
+  for (const r of results) {
+    if (r.score > top) top = r.score;
+  }
+  return top * floorRatio;
 }
 
 /**
@@ -72,9 +130,12 @@ export function applySalienceBoost(
   results: SearchResult[],
   scores: Map<string, number>,
   strength: 'on' | 'strong',
+  floorRatio?: number,
 ): void {
   const k = strength === 'strong' ? 0.30 : 0.15;
+  const threshold = computeFloorThreshold(results, floorRatio);
   for (const r of results) {
+    if (r.score < threshold) continue;
     const key = `${r.source_id ?? 'default'}::${r.slug}`;
     const score = scores.get(key);
     if (!score || score <= 0) continue;
@@ -101,12 +162,15 @@ export function applyRecencyBoost(
   decayMap: import('./recency-decay.ts').RecencyDecayMap,
   fallback: import('./recency-decay.ts').RecencyDecayConfig,
   nowMs: number = Date.now(),
+  floorRatio?: number,
 ): void {
   const strengthMul = strength === 'strong' ? 1.5 : 1.0;
+  const threshold = computeFloorThreshold(results, floorRatio);
   // Sort prefixes longest-first so 'media/articles/' matches before 'media/'.
   const prefixes = Object.keys(decayMap).sort((a, b) => b.length - a.length);
 
   for (const r of results) {
+    if (r.score < threshold) continue;
     const key = `${r.source_id ?? 'default'}::${r.slug}`;
     const d = dates.get(key);
     if (!d) continue;
@@ -143,6 +207,18 @@ export interface PostFusionOpts {
   recency: 'off' | 'on' | 'strong';
   decayMap?: import('./recency-decay.ts').RecencyDecayMap;
   fallback?: import('./recency-decay.ts').RecencyDecayConfig;
+  /**
+   * Opt-in floor-ratio gate applied to every boost stage. When set, each
+   * stage skips results whose pre-boost score is below
+   * `floorRatio * topScore` *at the moment that stage runs* (so stages
+   * compose: salience-boosted scores set the floor for the recency stage,
+   * etc). Default undefined → no gate, exact prior behavior.
+   *
+   * Sensible values: 0.85–0.95 for dense embedder corpora; undefined
+   * (default) for everything else. See `computeFloorThreshold` for
+   * empirical motivation.
+   */
+  floorRatio?: number;
 }
 
 export async function runPostFusionStages(
@@ -157,7 +233,7 @@ export async function runPostFusionStages(
     try {
       const slugs = Array.from(new Set(results.map(r => r.slug)));
       const counts = await engine.getBacklinkCounts(slugs);
-      applyBacklinkBoost(results, counts);
+      applyBacklinkBoost(results, counts, opts.floorRatio);
     } catch {
       // Non-fatal; preserves the existing pre-v0.29.1 contract.
     }
@@ -174,7 +250,7 @@ export async function runPostFusionStages(
   if (opts.salience !== 'off') {
     try {
       const scores = await engine.getSalienceScores(refs);
-      applySalienceBoost(results, scores, opts.salience);
+      applySalienceBoost(results, scores, opts.salience, opts.floorRatio);
     } catch {
       // Non-fatal.
     }
@@ -191,6 +267,8 @@ export async function runPostFusionStages(
         opts.recency,
         opts.decayMap ?? DEFAULT_RECENCY_DECAY,
         opts.fallback ?? DEFAULT_FALLBACK,
+        Date.now(),
+        opts.floorRatio,
       );
     } catch {
       // Non-fatal.
