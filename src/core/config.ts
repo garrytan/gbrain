@@ -129,6 +129,32 @@ export function loadConfig(): GBrainConfig | null {
     fileConfig = JSON.parse(raw) as GBrainConfig;
   } catch { /* no config file */ }
 
+  // Back-compat: v0.10.x nested embedding shape → flat fields (closes #203
+  // for users still carrying the pre-v0.27 config shape). PR #257 flattened
+  // `{embedding: {provider, model, dimensions, base_url}}` to top-level
+  // `embedding_model` / `embedding_dimensions` / `provider_base_urls`.
+  // Configs written before that release silently fall through to gateway
+  // defaults (OpenAI 1536) because no code path reads the nested shape.
+  // This block maps the nested shape to flat fields IN MEMORY only — the
+  // config.json file is not rewritten here. The next `saveConfig` call
+  // (e.g. from `gbrain init`) serializes only declared flat fields, so the
+  // nested object naturally drops out on the next save.
+  if (fileConfig) {
+    const nested = (fileConfig as { embedding?: unknown }).embedding;
+    if (nested && typeof nested === 'object') {
+      const n = nested as { provider?: string; model?: string; dimensions?: number; base_url?: string };
+      if (!fileConfig.embedding_model && n.model) {
+        fileConfig.embedding_model = n.provider ? `${n.provider}:${n.model}` : n.model;
+      }
+      if (!fileConfig.embedding_dimensions && typeof n.dimensions === 'number' && n.dimensions > 0) {
+        fileConfig.embedding_dimensions = n.dimensions;
+      }
+      if (!fileConfig.provider_base_urls && n.base_url && n.provider) {
+        fileConfig.provider_base_urls = { [n.provider]: n.base_url };
+      }
+    }
+  }
+
   // Try env vars
   const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
 
