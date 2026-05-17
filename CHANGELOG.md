@@ -2,6 +2,99 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.35.5.0] - 2026-05-16
+
+**Upgrade goes through on stuck Supabase brains. Orphan counts get honest. `gbrain think` over MCP actually answers. Worktrees stop being misclassified. node_modules stops leaking.**
+
+A correctness wave. Five user-visible bugs closed; one structural CI guard added so the bootstrap class can't bite the same shape again. The shape of the change: `applyForwardReferenceBootstrap` now probes for seven previously-missing columns (files.source_id/page_id, oauth_clients.source_id/federated_read, sources.archived/archived_at/archive_expires_at) AND runs on the same DDL connection that holds the advisory lock, `findOrphanPages` filters soft-deleted pages on BOTH the candidate side AND the link-source side, `runThink` routes through `gateway.chat()` so the API key configured via `gbrain config set` actually reaches MCP stdio launches, `manageGitignore` distinguishes worktrees from submodules via Git's documented `/modules/` vs `/worktrees/` path segments, and walkers in `extract.ts` + `transcript-discovery.ts` consult a new `pruneDir()` helper at descent time so they don't recurse into vendor directories.
+
+### What you can now do
+
+**Upgrade gbrain cleanly on Supabase brains stuck at pre-v0.18, pre-v0.26.5, or pre-v0.34 schemas.** The bootstrap forward-reference class (eleven incidents in two years per the test file's own comment block) loses its largest remaining lineage. Pre-v0.18 brains had `files` without `source_id`/`page_id`, so the `idx_files_source_id` index creation crashed before any migration could run. Pre-v0.26.5 brains had `sources` without the archive lifecycle columns (`archived`, `archived_at`, `archive_expires_at`), but `CREATE TABLE IF NOT EXISTS sources` is a no-op on existing tables so the schema-blob replay couldn't add them — every downstream visibility filter in search/list_pages tripped. Pre-v0.34 brains had `oauth_clients` without the source-scoping columns (`source_id` FK, `federated_read` GIN-indexed array) so the v60+v61+v65 chain failed the same way. All seven columns now have explicit `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` probes in both engines. **And the probes now run on the DDL connection that holds the advisory lock** — pre-fix they ran through the instance pool while the lock sat on a different connection, opening a concurrent-bootstrap race for anyone on Supabase's transaction pooler. Codex caught that during pre-landing review.
+
+**Trust orphan counts again.** `gbrain orphans` filtered nothing on `deleted_at` — soft-deleted pages (v0.26.5 soft-delete shipped without updating this query) appeared as orphans, inflating counts. Worse, links from soft-deleted source pages still counted as inbound, so a live page could hide from orphan results purely because a deleted page linked to it. The query now filters BOTH sides: `p.deleted_at IS NULL` on the candidate, `src.deleted_at IS NULL` on the inbound-link JOIN. The structural correctness rule for soft-delete (active relationships only) lands the same shape across both engines.
+
+**`gbrain think` answers over MCP when you've set the key via `gbrain config`.** Before this release, MCP stdio launches (Claude Desktop, Cursor, etc.) returned `(no LLM available — set ANTHROPIC_API_KEY or pass client)` regardless of whether `gbrain config set anthropic_api_key sk-...` had been run, because `runThink` instantiated `new Anthropic()` directly and the Anthropic SDK only reads `process.env.ANTHROPIC_API_KEY`. Stdio launches from desktop apps don't inherit shell env, so the gbrain-config-set key never reached the SDK. `runThink` now routes through `gateway.chat()` — the canonical AI seam per CLAUDE.md that v0.31.12 established for chat/embed/expansion. The gateway reads `anthropic_api_key` from `~/.gbrain/config.json` AND from env, so both paths work. Existing `opts.client` injection is preserved (the test seam stays unchanged); `opts.stubResponse` continues to bypass the LLM call entirely. When neither the key nor a client is available, the graceful "no LLM available" stub still fires with the same `NO_ANTHROPIC_API_KEY` warning — the legacy diagnostic signal lives.
+
+**Use gbrain inside Conductor worktrees without `.gitignore` management silently breaking.** `manageGitignore` (the storage-tiering helper that updates `.gitignore` to exclude `db_only:` paths) treated every `.git`-as-file as a submodule and skipped management. Both submodules AND worktrees use `.git` as a file (worktrees just have a different file content). The discriminator now matches the gitdir path segment: `/modules/<name>` = submodule, `/worktrees/<name>` = worktree. Worktrees are first-class repos and now get `.gitignore` management. Handles all four combinations of {relative, absolute} × {modules, worktrees} including the absorbed-submodule case from `git submodule absorbgitdirs` that the legacy absolute-vs-relative discriminator would have misclassified.
+
+**Walkers stop wasting IO on `node_modules` (and frontmatter scans stop emitting false MISSING_OPEN warnings from inside vendor packages).** The canonical `isSyncable` filter had only a dot-prefix exclusion — `.git` and `.obsidian` were blocked but `node_modules` slipped through (no leading dot). A new `pruneDir()` helper centralizes the directory-exclusion logic at single-segment granularity: blocks `node_modules`, dot-prefix dirs, `ops`, and `*.raw` sidecars. Both walkers (`walkMarkdownFiles` in extract.ts, `listTextFiles` in transcript-discovery.ts) consult it at descent time BEFORE recursing, so the IO cost of walking thousands of vendor files is saved. `isSyncable` itself also gains node_modules exclusion — verified blast radius across every existing caller (sync, frontmatter, brain-writer, import) confirms node_modules exclusion was already the desired behavior. `transcript-discovery` also moves from non-recursive to recursive walking with the same pruneDir guard, so transcripts in nested corpus subdirectories (`corpus/2026/...`) become discoverable.
+
+### Itemized changes
+
+#### Closed issues
+- **#1018** PGLite upgrade wedge: applyForwardReferenceBootstrap missing v60 oauth_clients forward refs
+- **#974** Bootstrap gap: applyForwardReferenceBootstrap misses files.source_id + files.page_id
+- **#820** v0.13.0 migration files.page_id forward-reference cascade on pre-v0.18 brains
+- **#1021** orphans: soft-deleted pages still counted in orphan scan
+- **#952** think over MCP returns "no LLM available" even when ANTHROPIC_API_KEY configured via gbrain config
+- **#889** Git worktrees misclassified as submodules — breaks .gitignore management on Conductor workflows
+- **#923** gbrain frontmatter validate walks node_modules, inflating MISSING_OPEN counts in doctor
+- **#202** extract --source fs walker does not respect isSyncable prefix exclusions
+
+#### Bootstrap structural fix
+- Seven new probes in `applyForwardReferenceBootstrap` (both engines): `files.source_id`, `files.page_id`, `oauth_clients.source_id`, `oauth_clients.federated_read`, `sources.archived`, `sources.archived_at`, `sources.archive_expires_at`.
+- Bootstrap now accepts the DDL connection from `initSchema` and runs probes inside the advisory-lock scope (Codex pre-landing review P1).
+- New MIGRATIONS-source introspection contract test in `test/schema-bootstrap-coverage.test.ts`: parses `src/core/migrate.ts` for every `ALTER TABLE ... ADD COLUMN`, asserts each (table, column) pair is covered by the bootstrap OR by the schema blob's CREATE TABLE bodies. Catches the column-only forward-reference class (sources.archived* shape) that the pre-existing CREATE INDEX parser couldn't see. Source-text introspection covers all three migration shapes: top-level `sql:`, `sqlFor.{postgres,pglite}` overrides, and handler-body `engine.runMigration(N, \`ALTER TABLE ...\`)`.
+- Pre-existing parser bug in `parseBaseTableColumns` fixed: now strips SQL line comments (`-- ...`) and block comments (`/* ... */`) before identifying column names. Pre-fix, any column preceded by a comment line inside the CREATE TABLE body was silently dropped (e.g. `page_kind`, `deleted_at`, `emotional_weight`, `effective_date` — all dropped from coverage).
+
+#### Walker correctness
+- New exported `pruneDir(name: string): boolean` helper in `src/core/sync.ts`. Blocks `node_modules`, dot-prefix directories, `ops`, and `*.raw` sidecars.
+- `isSyncable` now applies `pruneDir` per path segment (legacy dot-prefix + `.raw/` + `ops/` checks consolidated).
+- `walkMarkdownFiles` (extract.ts) consults `pruneDir` at descent + uses `isSyncable({strategy: 'markdown'})` at file emit. Pre-fix the walker had ad-hoc dot-prefix exclusion and didn't call isSyncable at all.
+- `listTextFiles` (transcript-discovery.ts) now recursive with `pruneDir`-guarded descent. Uses its own `.txt`/`.md` predicate rather than the markdown-strategy isSyncable that would have rejected `.txt` and applied markdown-only README/ops exclusions.
+
+#### Soft-delete correctness
+- `findOrphanPages` (both engines) filters `p.deleted_at IS NULL` on the candidate side AND adds `JOIN pages src ON src.id = l.from_page_id WHERE src.deleted_at IS NULL` to the EXISTS subquery on the link-source side.
+
+#### MCP think gateway routing
+- `runThink` (`src/core/think/index.ts`) drops the direct `new Anthropic()` instantiation. New `tryBuildGatewayClient` probes recipe availability + ANTHROPIC_API_KEY presence (reads BOTH `process.env` and `loadConfig()`'s gbrain config). Returns null on miss, preserving the legacy graceful-degradation path.
+- New `chatResultToMessage` adapter converts gateway's `ChatResult` to an Anthropic-Message-shaped object. `mapStopReason` translates provider-neutral stop reasons (`end` / `length` / `tool_calls` / `refusal` / `content_filter` / `other`) to Anthropic's `stop_reason` enum.
+
+#### Git worktree discriminator
+- `manageGitignore` (`src/commands/sync.ts`) reads the `.git` file content and matches the gitdir path segment: `/modules/<name>` → skip (submodule, parent-managed), `/worktrees/<name>` → MANAGE (worktree, first-class repo). Malformed `.git` file (no `gitdir:` prefix, IO error) defaults to MANAGE preserving pre-fix catch{} semantics.
+
+#### Tests
+- `test/helpers/extract-added-columns.ts` (NEW): MIGRATIONS source introspection helper with internal test seam for the regex.
+- `test/schema-bootstrap-coverage.test.ts`: extended `REQUIRED_BOOTSTRAP_COVERAGE` with 7 new entries + 4 new test cases (MIGRATIONS contract, sanity check, regex shape variants, planted-bug regression).
+- `test/orphans.test.ts`: 3 new cases pinning the both-sides soft-delete filter — soft-deleted candidate excluded, codex C11 link-source case, live-link smoke regression.
+- `test/think-gateway-adapter.test.ts` (NEW): 9 cases covering response-shape conversion, stop-reason mapping, model-id normalization (bare + prefixed), unknown-provider fallback, no-API-key fallback, hasAnthropicKey env read.
+- `test/storage-sync.test.ts`: 5 new cases for worktree/submodule discrimination (relative + absolute × modules + worktrees, malformed `.git` file).
+- `test/sync.test.ts`: 7 new isSyncable + 6 new pruneDir cases including the node_modules CRITICAL regression.
+
+#### Critical files
+- `src/core/{pglite,postgres}-engine.ts` — `applyForwardReferenceBootstrap` (extended; Postgres engine threads DDL connection); `findOrphanPages` (both sides filter).
+- `src/core/think/index.ts` — gateway adapter + ThinkLLMClient backward compat.
+- `src/core/sync.ts` — new `pruneDir` export; `isSyncable` per-segment pruning.
+- `src/commands/{extract,sync}.ts` — walker pruneDir adoption; worktree discriminator.
+- `src/core/cycle/transcript-discovery.ts` — recursive walker with pruneDir.
+- `test/helpers/extract-added-columns.ts` — NEW.
+- `test/schema-bootstrap-coverage.test.ts` — extended.
+
+#### Follow-ups filed
+- `TODOS.md`: runThink full rewrite to drop ThinkLLMClient indirection now that the gateway adapter is in place. Supabase parity test fixture for the bootstrap connection-threading (the bug is fixed; the test fixture proving it under real pooler topology is the residual).
+
+## To take advantage of v0.35.5.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration on a pre-v0.18 / pre-v0.26.5 / pre-v0.34 brain:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the bootstrap landed:**
+   ```bash
+   gbrain doctor --json | grep -E 'schema_version|bootstrap'
+   ```
+3. **Confirm the new columns exist on Supabase brains** (the wave's primary target):
+   ```bash
+   psql "$DATABASE_URL" -c "\d sources" | grep -E 'archived|archive_expires_at'
+   psql "$DATABASE_URL" -c "\d files" | grep -E 'source_id|page_id'
+   psql "$DATABASE_URL" -c "\d oauth_clients" | grep -E 'source_id|federated_read'
+   ```
+4. **If `gbrain think` was returning "no LLM available" over MCP** despite a configured key, no manual action needed — the gateway adapter activates as soon as v0.35.5.0 is installed.
+5. **If any step fails**, file an issue with the output of `gbrain doctor` and contents of `~/.gbrain/upgrade-errors.jsonl` at https://github.com/garrytan/gbrain/issues.
+
 ## [0.35.4.0] - 2026-05-16
 
 **Doctor stops crying wolf on clean worker restarts. Entity resolver stops spawning phantom pages. Prefix-expansion gets 58x faster.**
