@@ -86,6 +86,12 @@ describe('shouldExclude', () => {
     expect(shouldExclude('entities/product-hunt')).toBe(true);
   });
 
+  test('excludes first-segment: daily (calendar sync, journals)', () => {
+    expect(shouldExclude('daily/calendar/2026-05-12')).toBe(true);
+    expect(shouldExclude('daily/morning-briefing/2026-05-12')).toBe(true);
+    expect(shouldExclude('daily/2026-05-12')).toBe(true);
+  });
+
   test('does NOT exclude a normal content page', () => {
     expect(shouldExclude('companies/acme')).toBe(false);
     expect(shouldExclude('people/jane-doe')).toBe(false);
