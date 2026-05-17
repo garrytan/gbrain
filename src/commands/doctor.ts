@@ -8,7 +8,6 @@ import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { classifyWorkerExit } from '../core/minions/exit-classification.ts';
 import type { DbUrlSource } from '../core/config.ts';
 import { join } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
@@ -994,7 +993,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // Does NOT run the supervisor itself — this is a read-only health check.
   try {
     const { DEFAULT_PID_FILE } = await import('../core/minions/supervisor.ts');
-    const { readSupervisorEvents } = await import('../core/minions/handlers/supervisor-audit.ts');
+    const { readSupervisorEvents, summarizeCrashes } = await import('../core/minions/handlers/supervisor-audit.ts');
 
     let supervisorPid: number | null = null;
     let running = false;
@@ -1011,12 +1010,20 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
 
     const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
     const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
-    // Only count non-zero exits as crashes; clean restarts (code 0) are normal
-    // worker lifecycle — the worker finishes its queue and exits cleanly.
-    const allExits = events.filter(e => e.event === 'worker_exited');
-    const realCrashes = allExits.filter(e => classifyWorkerExit(e as { code?: number | null }) === 'crash');
-    const cleanRestarts = allExits.length - realCrashes.length;
-    const crashes24h = realCrashes.length;
+    // Shared classifier — same code path runs in `gbrain jobs supervisor
+    // status` (src/commands/jobs.ts). Counts only events whose `likely_cause`
+    // is NOT in the clean denylist (clean_exit, graceful_shutdown). Pre-v0.34
+    // entries lacking `likely_cause` fall back to `code !== 0`. Supersedes
+    // v0.35.4.0's binary `classifyWorkerExit({code})` on this surface: the
+    // `likely_cause` read correctly classifies SIGTERM (code=null,
+    // likely_cause='graceful_shutdown') as clean, and produces per-cause
+    // buckets so operators triage memory pressure (oom) vs code bugs
+    // (runtime) without grep'ing JSONL. `classifyWorkerExit` is still
+    // used by the supervisor's internal restart policy where the binary
+    // shape is the right contract.
+    const summary = summarizeCrashes(events);
+    const crashes24h = summary.total;
+    const causeStr = `runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy}`;
     const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 
     // Only surface a Check if the supervisor was ever observed (stops the
@@ -1034,17 +1041,20 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
           status: 'warn',
           message: `Supervisor not running (last_start=${lastStart ?? 'unknown'}). Restart with: gbrain jobs supervisor start --detach`,
         });
-      } else if (crashes24h > 3) {
+      } else if (crashes24h >= 1) {
+        // Threshold dropped from `>3` (pre-fix, inflated by clean exits being
+        // miscounted) to `>=1` (any real crash is signal). Per-cause breakdown
+        // gives operators triage context without grep'ing the JSONL.
         checks.push({
           name: 'supervisor',
           status: 'warn',
-          message: `Supervisor running but worker crashed ${crashes24h}x in last 24h (${cleanRestarts} clean restarts excluded). Check ~/.gbrain/audit/supervisor-*.jsonl for causes.`,
+          message: `Worker crashed ${crashes24h}x in last 24h (${causeStr}). Check ~/.gbrain/audit/supervisor-*.jsonl for context.`,
         });
       } else {
         checks.push({
           name: 'supervisor',
           status: 'ok',
-          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes=${crashes24h}${cleanRestarts > 0 ? ` clean_restarts=${cleanRestarts}` : ''}`,
+          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h} clean_exits_24h=${summary.clean_exits}`,
         });
       }
     }

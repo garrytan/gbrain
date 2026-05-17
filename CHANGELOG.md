@@ -2,6 +2,51 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.35.5.1] - 2026-05-16
+
+**`gbrain doctor` stops counting clean supervisor exits as crashes — the "120x/24h" alarm finally reflects real crashes, with per-cause breakdown for operator triage.**
+
+`doctor.ts:1013` and `gbrain jobs supervisor status` at `jobs.ts:805` both counted every `worker_exited` audit event as a crash, regardless of cause. After v0.34.3.0's RSS-watchdog work added more code=0 worker drains, the count inflated to 120+/day on a healthy brain — the exact alarm pattern users started seeing ("Supervisor crashes: 120x/24h, was 62x — nearly doubled"). The classifier upstream in `child-worker-supervisor.ts:309-321` was already stamping a five-value `likely_cause` field on every exit (clean_exit, graceful_shutdown, runtime_error, oom_or_external_kill, unknown); neither read site looked at it. v0.35.5.1 ships a shared `summarizeCrashes(events)` helper colocated with `readSupervisorEvents`, denylist semantics so future failure modes surface by default, threshold dropped from `>3` to `>=1`, and per-cause breakdown in the messages so an operator triages in one glance.
+
+**Relationship to v0.35.4.0:** that release shipped a binary `classifyWorkerExit({code})` helper (clean if `code === 0`, crash otherwise). It correctly stopped counting RSS-watchdog drains as crashes, but treated SIGTERM-driven graceful shutdowns as crashes (because `null !== 0`) and lost the cause distinction operators need to triage. v0.35.5.1 layers on top: reads `likely_cause` so `graceful_shutdown` is correctly clean, and bucketizes real crashes into `runtime_error` (code bugs), `oom_or_external_kill` (memory pressure), `unknown` (other), `legacy` (pre-v0.34 or future unrecognized). The `classifyWorkerExit` helper from v0.35.4.0 remains in use by the supervisor's internal restart policy where the binary check is the right shape; the doctor + jobs surfaces use the richer classifier.
+
+### What you can now do
+
+**Trust the doctor's supervisor count.** `gbrain doctor` reports actual crashes, not RSS-watchdog drains or SIGTERM stops. The "120x/24h" alarm class is dead.
+
+**See per-cause breakdown at a glance.** The warn message reads `Worker crashed Nx in last 24h (runtime=A oom=B unknown=C legacy=D)` — distinguishes memory pressure (oom) from code bugs (runtime) without grep'ing the JSONL audit.
+
+**Hook `crashes_by_cause` into monitoring.** `gbrain jobs supervisor status --json` now exposes `crashes_by_cause: {runtime_error, oom_or_external_kill, unknown, legacy}` and `clean_exits_24h` fields. Dashboards bind to named buckets.
+
+**Future failure modes surface by default.** Denylist semantics: only `clean_exit` and `graceful_shutdown` are non-crashes; everything else (including new `likely_cause` values added upstream in future releases) counts as a crash. The bug we just fixed cannot silently recur on the next schema addition.
+
+### Itemized changes
+
+- `src/core/minions/handlers/supervisor-audit.ts` exports new `isCrashExit(event)`, `summarizeCrashes(events)`, `CrashSummary` type, and `CLEAN_EXIT_CAUSES` constant. Single regression point — both CLI surfaces import from here so they cannot drift.
+- `src/commands/doctor.ts:1011-1043` replaces the ad-hoc `events.filter(e => e.event === 'worker_exited').length` with `summarizeCrashes(events)`. Drops the warn threshold from `>3` to `>=1` (any real crash is signal now that the counter is calibrated). Widens the ok message with `clean_exits_24h=N` and the warn message with `runtime=N oom=M unknown=K legacy=L`.
+- `src/commands/jobs.ts:803-826` same wiring. JSON output adds `crashes_by_cause` and `clean_exits_24h` fields. Human output gains a per-cause line under `Crashes (24h)` plus a `Clean exits (24h)` line.
+- `test/supervisor-audit.test.ts` (new) — 14 unit cases: 9-case `isCrashExit` branch matrix (every `likely_cause` value, denylist regression guard for unrecognized future causes, legacy fallback paths for pre-v0.34 entries, non-exit-event defensive case), 5-case `summarizeCrashes` aggregator (mixed-stream bucket assertions, empty input, non-exit-only, unrecognized-cause routing to legacy, null-code edge case).
+- `test/doctor.test.ts` — 4 source-grep wiring assertions guarding both surfaces against drift: doctor + jobs.ts use `summarizeCrashes`, the ad-hoc filter pattern is gone, threshold is `>=1`, per-cause breakdown substrings (`runtime=`, `oom=`, `unknown=`, `legacy=`, `clean_exits_24h=`, `crashes_by_cause`) appear in both files.
+- Why denylist semantics (codex outside-voice catch during `/plan-eng-review`): the set of clean-exit causes is small and explicit (the worker exited because we asked it to); the set of crash causes is open-ended. Allowlist would silently underreport future failure modes; denylist surfaces them by default. The bug being fixed today is itself an allowlist-of-event-names — the denylist shape forecloses the recurrence.
+- Plan + review trail: `/plan-eng-review` cleared the plan with 3 substantive findings resolved (shared helper extraction, denylist over allowlist, threshold rebaseline pulled into scope). Codex outside-voice surfaced the duplicate bug at `jobs.ts:805` (would have shipped doctor-only otherwise and let the two surfaces drift). Coverage audit reports 100% on the 22 logical branches the diff introduces. Adversarial review surfaced 13 follow-up observations, all either pre-existing surfaces or accepted plan trade-offs — none in-scope for this PR.
+
+## To take advantage of v0.35.5.1
+
+`gbrain upgrade` is all you need. No schema migration, no config change, no manual action.
+
+1. Run `gbrain upgrade`.
+2. Verify the count:
+   ```bash
+   gbrain doctor 2>&1 | grep -i supervisor
+   gbrain jobs supervisor status --json | jq '{crashes_24h, clean_exits_24h, crashes_by_cause}'
+   ```
+   Both commands MUST report identical `crashes_24h` (cross-surface parity is the regression guard). If the new count is still high, the watchdog OOMs / SIGKILLs are real — investigate via `~/.gbrain/audit/supervisor-*.jsonl` or check the per-cause breakdown in the warn message.
+3. Cross-check with raw JSONL if you want ground truth:
+   ```bash
+   jq -r 'select(.event=="worker_exited") | .likely_cause' ~/.gbrain/audit/supervisor-*.jsonl | sort | uniq -c
+   ```
+4. If anything looks wrong, file an issue: https://github.com/garrytan/gbrain/issues with the doctor output and the relevant lines from the audit JSONL.
+
 ## [0.35.5.0] - 2026-05-16
 
 **Upgrade goes through on stuck Supabase brains. Orphan counts get honest. `gbrain think` over MCP actually answers. Worktrees stop being misclassified. node_modules stops leaking.**
