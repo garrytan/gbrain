@@ -388,6 +388,62 @@ describe('authorization code flow', () => {
     await expect(provider.exchangeAuthorizationCode(client, expiredCode)).rejects.toThrow();
   });
 
+  // F-AUTHZ regression. The MCP SDK's authorize handler splits `?scope=...`
+  // verbatim and forwards the raw list to the provider, so the provider must
+  // clamp against the client's registered grant. Pre-fix the INSERT into
+  // oauth_codes used `params.scopes || []` raw, so a `read`-registered client
+  // requesting `?scope=admin` got an admin access token at /token exchange.
+  // This pins the parallel posture to client_credentials' filter pattern
+  // (line 513-515) and refresh's F3 subset enforcement (RFC 6749 §6).
+  test('authorize clamps requested scopes against client.scope (RFC 6749 §3.3)', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'authz-clamp-test', ['authorization_code'], 'read',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+
+    // Read-only client requests admin via the SDK's parsed scopes array.
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['read', 'write', 'admin'],
+    }, mockRes);
+
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    const tokens = await provider.exchangeAuthorizationCode(client, code);
+
+    // The token's stored scopes must equal the clamped subset.
+    const auth = await provider.verifyAccessToken(tokens.access_token);
+    expect(auth.scopes).toEqual(['read']);
+    expect(auth.scopes).not.toContain('write');
+    expect(auth.scopes).not.toContain('admin');
+  });
+
+  test('authorize subset request returns subset', async () => {
+    const { clientId } = await provider.registerClientManual(
+      'authz-subset-test', ['authorization_code'], 'read write',
+      ['http://localhost:3000/callback'],
+    );
+    const client = (await provider.clientsStore.getClient(clientId))!;
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+
+    await provider.authorize(client, {
+      codeChallenge: 'challenge',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['read'],
+    }, mockRes);
+
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const auth = await provider.verifyAccessToken(tokens.access_token);
+    expect(auth.scopes).toEqual(['read']);
+  });
+
   // CSO finding #2 regression. The pre-fix SELECT-then-DELETE pattern let two
   // concurrent token requests with the same code both pass the SELECT, both
   // running DELETE (no-op on second) and both calling issueTokens. The fix is
@@ -1090,5 +1146,108 @@ describe('F12 dcrDisabled constructor option', () => {
     );
     expect(result.clientId).toStartWith('gbrain_cl_');
     expect(result.clientSecret).toStartWith('gbrain_cs_');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.34.1 (#909) — PKCE public-client DCR (RFC 7591 §3.2.1)
+// ---------------------------------------------------------------------------
+//
+// Per RFC 7591 §3.2.1, when a DCR client declares
+// `token_endpoint_auth_method: "none"` (PKCE-only public clients like Claude
+// Code, Cursor), the authorization server MUST NOT issue a client_secret.
+// Pre-fix, unconditional secret generation made the MCP SDK's clientAuth
+// middleware reject valid public-client flows on /token.
+
+describe('PKCE DCR public-client gate (#909)', () => {
+  test("registerClient with token_endpoint_auth_method='none' omits client_secret", async () => {
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'public-pkce-client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'none',
+    });
+    expect(result.client_id).toStartWith('gbrain_cl_');
+    // RFC 7591 §3.2.1: public clients get NO client_secret in the response.
+    expect(result.client_secret).toBeUndefined();
+    expect(result.token_endpoint_auth_method).toBe('none');
+  });
+
+  test('default auth_method (omitted) still issues a client_secret', async () => {
+    // Regression guard: confidential clients (the existing default) must
+    // keep their secret-issuing behavior unchanged.
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'confidential-default',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      // token_endpoint_auth_method omitted; falls back to 'client_secret_post'
+    });
+    expect(result.client_id).toStartWith('gbrain_cl_');
+    expect(result.client_secret).toStartWith('gbrain_cs_');
+  });
+
+  test('explicit client_secret_post still issues a client_secret', async () => {
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'confidential-explicit',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'client_secret_post',
+    });
+    expect(result.client_id).toStartWith('gbrain_cl_');
+    expect(result.client_secret).toStartWith('gbrain_cs_');
+  });
+
+  test('getClient on a public client returns client_secret=undefined (NULL normalized)', async () => {
+    // The SDK's clientAuth middleware checks `client.client_secret === undefined`
+    // (not `=== null`) to decide whether to enforce secret comparison on /token.
+    // Without normalization, Postgres NULL would reach the SDK as JS null and
+    // the secret check would mis-fire on every public client.
+    const reg = await provider.clientsStore.registerClient!({
+      client_name: 'public-getclient-norm',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'none',
+    });
+    const stored = await provider.clientsStore.getClient(reg.client_id);
+    expect(stored).toBeDefined();
+    expect(stored!.client_secret).toBeUndefined();
+    expect(stored!.token_endpoint_auth_method).toBe('none');
+  });
+
+  test('PKCE flow end-to-end: public client /authorize then /token, no secret needed', async () => {
+    // Full F7 regression #15: public client completes auth_code → token
+    // exchange without ever presenting a client_secret.
+    const reg = await provider.clientsStore.registerClient!({
+      client_name: 'pkce-roundtrip',
+      redirect_uris: ['http://localhost:3000/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'none',
+    });
+
+    // Re-fetch via getClient to mirror what the SDK middleware sees.
+    const client = (await provider.clientsStore.getClient(reg.client_id))!;
+    expect(client.client_secret).toBeUndefined();
+
+    let redirectUrl = '';
+    const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
+    await provider.authorize(client, {
+      codeChallenge: 'test-challenge-value',
+      redirectUri: 'http://localhost:3000/callback',
+      scopes: ['read'],
+    }, mockRes);
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    expect(code).toMatch(/^gbrain_code_/);
+
+    // Exchange the code — public client; no secret on the wire.
+    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    expect(tokens.access_token).toStartWith('gbrain_at_');
+    // SDK normalizes token_type per RFC 6750 §6.1.1 (case-insensitive);
+    // implementations may emit "bearer" lowercase.
+    expect(String(tokens.token_type).toLowerCase()).toBe('bearer');
   });
 });

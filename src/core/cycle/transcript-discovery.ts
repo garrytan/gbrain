@@ -12,6 +12,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { createHash } from 'node:crypto';
+import { pruneDir } from '../sync.ts';
 
 export interface DiscoveredTranscript {
   /** Absolute path to the transcript file. */
@@ -119,22 +120,38 @@ function matchesAnyExclude(text: string, patterns: RegExp[]): boolean {
 }
 
 function listTextFiles(dir: string): string[] {
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return [];
-  }
+  // Recursive walk with descent-time pruning (closes codex C12/C13 spec gap).
+  // Accepts BOTH .txt and .md per transcript-discovery's domain rules — does
+  // NOT use isSyncable({strategy:'markdown'}) because that predicate rejects
+  // .txt and applies markdown-only README/ops exclusions transcripts don't share.
+  //
+  // pruneDir at descent time skips node_modules / .git / .obsidian / .raw /
+  // .cache / ops / etc. before recursion — saves the IO cost of walking
+  // vendor subtrees.
   const out: string[] = [];
-  for (const name of entries) {
-    if (!name.endsWith('.txt')) continue;
-    const full = join(dir, name);
+  function walk(d: string) {
+    let entries: string[];
     try {
-      if (statSync(full).isFile()) out.push(full);
+      entries = readdirSync(d);
     } catch {
-      // skip unreadable entries
+      return;
+    }
+    for (const name of entries) {
+      const full = join(d, name);
+      try {
+        const st = statSync(full);
+        if (st.isDirectory()) {
+          if (!pruneDir(name)) continue;
+          walk(full);
+        } else if (st.isFile() && (name.endsWith('.txt') || name.endsWith('.md'))) {
+          out.push(full);
+        }
+      } catch {
+        // skip unreadable entries
+      }
     }
   }
+  walk(dir);
   return out.sort();
 }
 
@@ -161,7 +178,8 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
   const results: DiscoveredTranscript[] = [];
   for (const dir of dirs) {
     for (const filePath of listTextFiles(dir)) {
-      const baseName = basename(filePath, '.txt');
+      const ext = filePath.endsWith('.md') ? '.md' : '.txt';
+      const baseName = basename(filePath, ext);
       const dateMatch = DATE_RE.exec(baseName);
       const inferredDate = dateMatch ? dateMatch[1] : null;
       if (!isInDateRange(inferredDate, opts)) continue;
@@ -214,12 +232,14 @@ export function readSingleTranscript(
   }
   if (content.length < minChars) return null;
   if (isDreamOutput(content, bypass)) {
-    const baseName = basename(filePath, '.txt');
+    const ext = filePath.endsWith('.md') ? '.md' : '.txt';
+      const baseName = basename(filePath, ext);
     process.stderr.write(`[dream] readSingleTranscript skipped ${baseName}: dream_generated marker (self-consumption guard)\n`);
     return null;
   }
   if (matchesAnyExclude(content, excludeRes)) return null;
-  const baseName = basename(filePath, '.txt');
+  const ext = filePath.endsWith('.md') ? '.md' : '.txt';
+      const baseName = basename(filePath, ext);
   const dateMatch = DATE_RE.exec(baseName);
   return {
     filePath,

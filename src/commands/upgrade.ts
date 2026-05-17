@@ -1,6 +1,6 @@
-import { execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync, lstatSync } from 'fs';
-import { join, dirname } from 'path';
+import { execSync, execFileSync } from 'child_process';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
+import { join, dirname, resolve } from 'path';
 import { VERSION } from '../version.ts';
 
 const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
@@ -19,17 +19,23 @@ export async function runUpgrade(args: string[]) {
 
   let upgraded = false;
   switch (method) {
-    case 'bun-link':
-      // v0.28.5: bun-link installs are source clones. Pull + bun install
-      // is the upgrade path; npm/bun's update mechanism doesn't apply.
-      console.log('Upgrading via bun-link source clone...');
-      console.log('  cd into your gbrain checkout, then run:');
-      console.log('    git pull');
-      console.log('    bun install');
-      console.log('    bun link');
-      console.log('');
-      console.log('  (auto-detect can\'t do this for you because it doesn\'t know which checkout to update.)');
+    case 'bun-link': {
+      const linkInfo = detectBunLink();
+      if (!linkInfo) {
+        console.error('bun-link detected but could not resolve repo root.');
+        break;
+      }
+      console.log(`Upgrading bun-link source clone at ${linkInfo.repoRoot}...`);
+      try {
+        execFileSync('git', ['-C', linkInfo.repoRoot, 'pull', '--ff-only'], { stdio: 'inherit', timeout: 120_000 });
+        execFileSync('bun', ['install'], { cwd: linkInfo.repoRoot, stdio: 'inherit', timeout: 120_000 });
+        upgraded = true;
+      } catch {
+        console.error('Auto-upgrade failed. Try manually:');
+        console.error(`  cd ${linkInfo.repoRoot} && git pull && bun install`);
+      }
       break;
+    }
 
     case 'bun':
       console.log('Upgrading via bun...');
@@ -250,6 +256,71 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         await engine.connect(toCfgSchema(cfgSchema));
         await engine.initSchema();
         console.log('  Schema up to date.');
+
+        // v0.32.3 search-lite mode banner. One-shot: fires at most once per
+        // install (state persisted via `search.mode_upgrade_notice_shown`).
+        // Reframes from "behavior is regressing" to "named modes available"
+        // per [CDX-1+2+3]: the production query op still defaults expand=true
+        // and limit=20 — Garry's behavior is NOT regressing.
+        try {
+          const shown = await engine.getConfig('search.mode_upgrade_notice_shown');
+          const existingMode = await engine.getConfig('search.mode');
+          if (shown !== 'true' && !existingMode) {
+            console.log('');
+            console.log('═══════════════════════════════════════════════════════════════');
+            console.log('[gbrain] v0.32.3 added named search modes (conservative/balanced/tokenmax).');
+            console.log('[gbrain] Your current behavior is unchanged — the `query` op still defaults');
+            console.log('[gbrain] expand=true and limit=20, same as v0.31.x.');
+            console.log('═══════════════════════════════════════════════════════════════');
+            console.log('');
+            console.log('[AGENT] Relay this matrix to your operator and ask which mode they want.');
+            console.log('[AGENT] Recommended default: tokenmax (preserves current retrieval shape).');
+            console.log('[AGENT] Run `gbrain config set search.mode <mode>` after they decide.');
+            console.log('');
+            console.log('Per-query cost @ 10K queries/mo (typical single-user volume):');
+            console.log('');
+            console.log('                  Haiku 4.5    Sonnet 4.6   Opus 4.7');
+            console.log('                  ($1/M)       ($3/M)       ($5/M)');
+            console.log('  conservative    $40/mo       $120/mo      $200/mo');
+            console.log('  balanced        $100/mo      $300/mo      $500/mo');
+            console.log('  tokenmax        $200/mo      $600/mo      $1,000/mo');
+            console.log('');
+            console.log('  (scales linearly — multiply by 10 for 100K/mo)');
+            console.log('  25x corner-to-corner spread. Natural diagonal pairings span ~4x.');
+            console.log('');
+            console.log('To pick:');
+            console.log('  gbrain search modes              # see what is running');
+            console.log('  gbrain config set search.mode <conservative|balanced|tokenmax>');
+            console.log('  gbrain search tune               # data-driven recommendations');
+            console.log('');
+            console.log('tokenmax bumps limit to 50 (current default is 20). To preserve');
+            console.log('your EXACT current shape:');
+            console.log('  gbrain config set search.mode tokenmax');
+            console.log('  gbrain config set search.searchLimit 20');
+            console.log('');
+            await engine.setConfig('search.mode_upgrade_notice_shown', 'true');
+          }
+        } catch {
+          // Banner is cosmetic; never block the upgrade.
+        }
+
+        // v0.32.7 CJK wave: chunker-version bump → re-embed sweep.
+        // Idempotent — `runReindex` short-circuits when no pages are pending.
+        try {
+          const { runPostUpgradeReembedPrompt } = await import('../core/post-upgrade-reembed.ts');
+          const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
+          let modelString = 'openai:text-embedding-3-large';
+          try { modelString = getEmbeddingModel(); } catch { /* gateway not configured — keep default */ }
+          const promptResult = await runPostUpgradeReembedPrompt(engine, modelString);
+          if (promptResult.proceeded) {
+            const { runReindex } = await import('./reindex.ts');
+            await runReindex(engine, ['--markdown']);
+          }
+        } catch (re) {
+          const msg = re instanceof Error ? re.message : String(re);
+          console.warn(`\nChunker-bump reindex skipped: ${msg}`);
+          console.warn('Run `gbrain reindex --markdown` manually when ready.');
+        }
       } finally {
         try { await engine.disconnect(); } catch { /* best-effort */ }
       }
@@ -298,7 +369,7 @@ export function detectInstallMethod(): 'bun' | 'bun-link' | 'binary' | 'clawhub'
   // resolves into a directory we can walk up from to find a .git/config
   // pointing at our repo.
   const bunLinkResult = detectBunLink();
-  if (bunLinkResult === 'bun-link') return 'bun-link';
+  if (bunLinkResult) return 'bun-link';
 
   // Check if running from node_modules (bun/npm install). Could be canonical
   // (we publish under garrytan/gbrain) OR the squatter (npm `gbrain@1.3.x`).
@@ -328,51 +399,39 @@ export function detectInstallMethod(): 'bun' | 'bun-link' | 'binary' | 'clawhub'
 }
 
 /**
- * v0.28.5 cluster D, signal 1 — bun-link detection (closes #656).
+ * Detect bun-link source-clone installs (closes #656, fixes #368).
  *
- * argv[1] is what `bun /path/to/cli.ts` was invoked with. When `bun link`
- * is in play, that path is typically a symlink (~/.bun/bin/gbrain) to
- * either the source repo's compiled binary or src/cli.ts directly.
- * Walk up from the realpath looking for a `.git/config` whose remote
- * url contains `garrytan/gbrain` (case-insensitive substring).
+ * Walk up from argv[1] looking for a `.git/config` whose remote url
+ * contains `garrytan/gbrain` (case-insensitive substring).
  *
- * Returns 'bun-link' when we're confident; null otherwise (caller falls
- * through to the existing detection chain). Best-effort: forks, tarball
- * installs, detached source trees, and `.git`-less installs all fall
- * through, which is acceptable per codex's plan-review feedback.
+ * v0.28.5 gated on lstatSync(argv1).isSymbolicLink(), but bun resolves
+ * the entire symlink chain before setting process.argv[1], so the check
+ * always returned false and short-circuited detection. Now we skip the
+ * symlink check and use argv[1] directly — it is already the real path
+ * inside the checkout, which is exactly what the git-config walk needs.
+ *
+ * Returns { repoRoot } when confident; null otherwise (caller falls
+ * through to the existing detection chain).
  */
-function detectBunLink(): 'bun-link' | null {
+function detectBunLink(): { repoRoot: string } | null {
   try {
     const argv1 = process.argv[1];
     if (!argv1) return null;
 
-    // Symlink check first: `bun link` always creates one.
-    let isSymlink = false;
-    try {
-      isSymlink = lstatSync(argv1).isSymbolicLink();
-    } catch {
-      return null;
-    }
-    if (!isSymlink) return null;
-
-    const resolved = realpathSync(argv1);
-    let dir = dirname(resolved);
-    // Walk up at most 6 levels looking for .git/config.
+    let dir = dirname(resolve(argv1));
     for (let i = 0; i < 6; i++) {
       const gitConfigPath = join(dir, '.git', 'config');
       if (existsSync(gitConfigPath)) {
         try {
           const cfg = readFileSync(gitConfigPath, 'utf-8');
-          // Loose substring match: covers https://, git@, ssh://, fork URLs
-          // that mention upstream in [remote "upstream"], and case variants.
           if (cfg.toLowerCase().includes(GBRAIN_GITHUB_REPO.toLowerCase())) {
-            return 'bun-link';
+            return { repoRoot: dir };
           }
         } catch { /* unreadable config — not our case */ }
-        return null; // found .git/config but no match → not our repo
+        return null;
       }
       const parent = dirname(dir);
-      if (parent === dir) break; // reached filesystem root
+      if (parent === dir) break;
       dir = parent;
     }
     return null;

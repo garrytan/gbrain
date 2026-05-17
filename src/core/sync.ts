@@ -11,6 +11,8 @@
  *   pathToSlug()  →  convert file paths to page slugs
  */
 
+import { CJK_SLUG_CHARS } from './cjk.ts';
+
 export interface SyncManifest {
   added: string[];
   modified: string[];
@@ -130,10 +132,6 @@ export function isCodeFilePath(path: string): boolean {
   return false;
 }
 
-function isMarkdownFilePath(path: string): boolean {
-  return path.endsWith('.md') || path.endsWith('.mdx');
-}
-
 /**
  * v0.27.1: image extensions are admitted only when the multimodal config
  * gate is on. The runtime gate flips through `process.env.GBRAIN_EMBEDDING_MULTIMODAL`
@@ -141,7 +139,7 @@ function isMarkdownFilePath(path: string): boolean {
  * (or env directly when the operator overrides). When the gate is off,
  * existing brains keep their current "markdown + code only" sync behavior.
  */
-function isImageFilePath(path: string): boolean {
+export function isImageFilePath(path: string): boolean {
   const lower = path.toLowerCase();
   return (
     lower.endsWith('.png') ||
@@ -153,6 +151,10 @@ function isImageFilePath(path: string): boolean {
     lower.endsWith('.heif') ||
     lower.endsWith('.avif')
   );
+}
+
+export function isMarkdownFilePath(path: string): boolean {
+  return path.endsWith('.md') || path.endsWith('.mdx');
 }
 
 function isMultimodalEnabled(): boolean {
@@ -207,6 +209,47 @@ function matchesAnyGlob(path: string, patterns?: string[]): boolean {
 }
 
 /**
+ * Directory names that walkers must NEVER descend into. Used at descent
+ * time (before recursion) to prune entire subtrees — saves the IO cost of
+ * walking thousands of vendor / generated / hidden files only to filter
+ * them at file-emit time. Used by every walker in gbrain (sync, extract,
+ * transcript-discovery, etc.).
+ *
+ * Pattern: dirname matching at single path-segment granularity. Walkers
+ * call `pruneDir(entry.name)` on each subdirectory before recursing.
+ *
+ * `node_modules` lacks a leading dot so the dot-prefix exclusion in
+ * isSyncable below doesn't catch it; explicit entry here closes the
+ * latent walker bug (#923, #202).
+ */
+const PRUNE_DIR_NAMES = new Set<string>([
+  'node_modules',
+  '.raw',
+  'ops',
+]);
+
+/**
+ * Should this directory be descended into? Returns `false` for vendor / hidden /
+ * generated dirs that walkers should skip BEFORE recursing. Catches
+ * `node_modules` (latent bug — no leading dot), dot-prefix dirs (`.git`,
+ * `.obsidian`, `.raw`, `.cache`, etc. via the leading-dot heuristic), and the
+ * explicit `PRUNE_DIR_NAMES` set above.
+ *
+ * `name` is a single path segment (basename of the directory entry), NOT a
+ * full path. Walkers consult this on each subdirectory entry during recursion.
+ */
+export function pruneDir(name: string): boolean {
+  if (!name) return true;
+  if (name.startsWith('.')) return false;
+  if (PRUNE_DIR_NAMES.has(name)) return false;
+  // `.raw` is the literal directory name; `*.raw` is the gbrain sidecar
+  // convention (e.g. `people/pedro.raw/` holds raw source for pedro.md).
+  // Both forms should be skipped at descent time.
+  if (name.endsWith('.raw')) return false;
+  return true;
+}
+
+/**
  * Filter a file path to determine if it should be synced to GBrain.
  * Strategy-aware: 'markdown' (default) = .md/.mdx only, 'code' = code files only, 'auto' = both.
  */
@@ -215,19 +258,16 @@ export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
 
   if (!isAllowedByStrategy(path, strategy)) return false;
 
-  // Skip hidden directories
-  if (path.split('/').some(p => p.startsWith('.'))) return false;
-
-  // Skip .raw/ sidecar directories
-  if (path.includes('.raw/')) return false;
+  // Skip every path segment that pruneDir would block walkers from descending
+  // into. Catches hidden dirs (`.git`, `.obsidian`), `.raw/` sidecars,
+  // `node_modules/` (latent bug fix), and `ops/` at any depth.
+  const segments = path.split('/');
+  if (segments.some(p => !pruneDir(p))) return false;
 
   // Skip meta files that aren't pages
   const skipFiles = ['schema.md', 'index.md', 'log.md', 'README.md'];
-  const basename = path.split('/').pop() || '';
+  const basename = segments[segments.length - 1] || '';
   if (skipFiles.includes(basename)) return false;
-
-  // Skip ops/ directory
-  if (path.startsWith('ops/')) return false;
 
   if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return false;
   if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return false;
@@ -236,14 +276,33 @@ export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
 }
 
 /**
- * Slugify a single path segment: lowercase, strip special chars, spaces → hyphens.
+ * Character class for the lowercase-canonical form of a slug segment after
+ * slugifySegment() has run. Lowercase letters, digits, dots, underscores,
+ * hyphens. Exposed so adjacent code (e.g. takes-fence holder validation,
+ * v0.32 EXP-4) can reuse the actual repo slug grammar instead of inventing
+ * a stricter parallel one and emitting false-positive warnings on legitimate
+ * `companies/acme.io` / `people/foo_bar` slugs (codex review #3).
+ *
+ * Pattern is the inner character class only (no anchors); callers wrap it
+ * in `^...$` or compose it with prefixes like `(?:people|companies)/...`.
  */
+export const SLUG_SEGMENT_PATTERN = new RegExp(`[a-z0-9._\\-${CJK_SLUG_CHARS}]+`);
+
+/**
+ * Slugify a single path segment: lowercase, strip special chars, spaces → hyphens.
+ * CJK ranges (Han / Hiragana / Katakana / Hangul Syllables) are preserved (v0.32.7).
+ * NFC re-normalize after the NFD-strip-accents pass so Hangul Jamo recomposes back
+ * into precomposed syllables that fall inside the whitelist.
+ */
+const SLUGIFY_KEEP_RE = new RegExp(`[^a-z0-9.\\s_\\-${CJK_SLUG_CHARS}]`, 'g');
+
 export function slugifySegment(segment: string): string {
   return segment
     .normalize('NFD')                     // Decompose accented chars
     .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
+    .normalize('NFC')                     // Recompose Hangul Jamo back to Syllables (v0.32.7)
     .toLowerCase()
-    .replace(/[^a-z0-9.\s_-]/g, '')      // Keep alphanumeric, dots, spaces, underscores, hyphens
+    .replace(SLUGIFY_KEEP_RE, '')         // Keep alnum, dots, spaces, _-, and CJK (v0.32.7)
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
     .replace(/-+/g, '-')                 // Collapse multiple hyphens
     .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens
@@ -395,6 +454,18 @@ export function classifyErrorCode(errorMsg: string): string {
   // (lines 199, 347, 352, 401) that previously bucketed to UNKNOWN.
   if (/file too large|content too large|FILE_TOO_LARGE/i.test(errorMsg)) return 'FILE_TOO_LARGE';
   if (/skipping symlink|symlink|SYMLINK_NOT_ALLOWED/i.test(errorMsg)) return 'SYMLINK_NOT_ALLOWED';
+
+  // v0.32 takes-v2 additions: malformed fence rows + holder-grammar failures.
+  // TAKES_TABLE_MALFORMED and TAKES_ROW_NUM_COLLISION are produced by
+  // parseTakesFence (src/core/takes-fence.ts); TAKES_HOLDER_INVALID lands
+  // in v0.32 (EXP-4) when a holder doesn't match the world|brain|people/...|
+  // companies/... grammar. Wired into sync-failures.jsonl by the v0_28_0
+  // migration's phaseBBackfill (one-time backfill emission).
+  if (/TAKES_TABLE_MALFORMED|TAKES_ROW_NUM_COLLISION|TAKES_FENCE_UNBALANCED/i.test(errorMsg)) {
+    return 'TAKES_TABLE_MALFORMED';
+  }
+  if (/TAKES_HOLDER_INVALID/i.test(errorMsg)) return 'TAKES_HOLDER_INVALID';
+
   return 'UNKNOWN';
 }
 

@@ -24,13 +24,12 @@ import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/serv
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
+import type { SqlQuery, SqlValue } from './sql-query.ts';
+export type { SqlQuery, SqlValue };
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/** Raw SQL query function — works with both PGLite and postgres tagged templates */
-export type SqlQuery = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
 
 /**
  * Convert a JS array to a PostgreSQL array literal for PGLite compat.
@@ -140,9 +139,15 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     `;
     if (rows.length === 0) return undefined;
     const r = rows[0];
+    // v0.34.1 (#909): public clients (token_endpoint_auth_method='none')
+    // have client_secret_hash = NULL. Normalize SQL NULL to JS undefined
+    // so SDK middleware that checks `client.client_secret === undefined`
+    // (not `=== null`) correctly identifies the client as public and
+    // skips the secret-comparison branch on /token.
+    const rawSecret = r.client_secret_hash;
     return {
       client_id: r.client_id as string,
-      client_secret: r.client_secret_hash as string | undefined,
+      client_secret: rawSecret == null ? undefined : (rawSecret as string),
       client_name: r.client_name as string,
       redirect_uris: (r.redirect_uris as string[]) || [],
       grant_types: (r.grant_types as string[]) || ['client_credentials'],
@@ -171,27 +176,97 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     assertAllowedScopes(parseScopeString(client.scope));
 
     const clientId = generateToken('gbrain_cl_');
-    const clientSecret = generateToken('gbrain_cs_');
-    const secretHash = hashToken(clientSecret);
+    // v0.34.1 (#909): RFC 7591 §2 — clients that authenticate at the token
+    // endpoint via PKCE alone declare `token_endpoint_auth_method: "none"`.
+    // For those clients the authorization server MUST NOT issue a client
+    // secret. Pre-fix, unconditional secret generation made the MCP SDK's
+    // clientAuth middleware check `client.client_secret` on every request,
+    // rejecting valid public-client (Claude Code, Cursor) flows.
+    //
+    // We persist secret_hash = NULL for public clients so `getClient` and
+    // the SDK's clientAuth path can detect them via `client_secret_hash IS
+    // NULL` and skip the secret comparison. Confidential clients (default
+    // `client_secret_post` and explicit `client_secret_basic`) still mint
+    // a secret as before.
+    const authMethod = client.token_endpoint_auth_method || 'client_secret_post';
+    const isPublicClient = authMethod === 'none';
+    const clientSecret = isPublicClient ? undefined : generateToken('gbrain_cs_');
+    const secretHash = clientSecret ? hashToken(clientSecret) : null;
     const now = Math.floor(Date.now() / 1000);
 
-    await this.sql`
-      INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                  grant_types, scope, token_endpoint_auth_method,
-                                  client_id_issued_at)
-      VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
-              ${pgArray((client.redirect_uris || []).map(String))},
-              ${pgArray(client.grant_types || ['client_credentials'])},
-              ${client.scope || ''}, ${client.token_endpoint_auth_method || 'client_secret_post'},
-              ${now})
-    `;
+    // v0.34.1 (#861, D2 + D13 + #876): DCR clients get source_id='default'
+    // (matches legacy fallback) and federated_read=['default'] (read scope
+    // == write scope). Operators who need narrower / wider scope rescope
+    // via the CLI later. Pre-v60/v61 brain falls through to the legacy
+    // projection (no source_id / federated_read column yet).
+    try {
+      await this.sql`
+        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                    grant_types, scope, token_endpoint_auth_method,
+                                    client_id_issued_at, source_id, federated_read)
+        VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                ${pgArray((client.redirect_uris || []).map(String))},
+                ${pgArray(client.grant_types || ['client_credentials'])},
+                ${client.scope || ''}, ${authMethod},
+                ${now}, ${'default'}, ${pgArray(['default'])})
+      `;
+    } catch (err) {
+      if (isUndefinedColumnError(err, 'federated_read')) {
+        try {
+          await this.sql`
+            INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                        grant_types, scope, token_endpoint_auth_method,
+                                        client_id_issued_at, source_id)
+            VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                    ${pgArray((client.redirect_uris || []).map(String))},
+                    ${pgArray(client.grant_types || ['client_credentials'])},
+                    ${client.scope || ''}, ${authMethod},
+                    ${now}, ${'default'})
+          `;
+        } catch (err2) {
+          if (isUndefinedColumnError(err2, 'source_id')) {
+            await this.sql`
+              INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                          grant_types, scope, token_endpoint_auth_method,
+                                          client_id_issued_at)
+              VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                      ${pgArray((client.redirect_uris || []).map(String))},
+                      ${pgArray(client.grant_types || ['client_credentials'])},
+                      ${client.scope || ''}, ${authMethod},
+                      ${now})
+            `;
+          } else {
+            throw err2;
+          }
+        }
+      } else if (isUndefinedColumnError(err, 'source_id')) {
+        await this.sql`
+          INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                      grant_types, scope, token_endpoint_auth_method,
+                                      client_id_issued_at)
+          VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                  ${pgArray((client.redirect_uris || []).map(String))},
+                  ${pgArray(client.grant_types || ['client_credentials'])},
+                  ${client.scope || ''}, ${authMethod},
+                  ${now})
+        `;
+      } else {
+        throw err;
+      }
+    }
 
-    return {
+    // Public clients: omit `client_secret` entirely from the response so
+    // the wire payload matches RFC 7591 §3.2.1 ("if the client is a
+    // public client, the authorization server MUST NOT issue a client
+    // secret"). Confidential clients return the freshly-generated secret
+    // exactly once — same shape as before.
+    const response: OAuthClientInformationFull = {
       ...client,
       client_id: clientId,
-      client_secret: clientSecret,
       client_id_issued_at: now,
     };
+    if (clientSecret) response.client_secret = clientSecret;
+    return response;
   }
 }
 
@@ -241,11 +316,24 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const codeHash = hashToken(code);
     const expiresAt = Math.floor(Date.now() / 1000) + 600; // 10 minute TTL
 
+    // Scope clamp (RFC 6749 §3.3): the SDK's authorize handler splits
+    // `?scope=...` verbatim and forwards the raw list to the provider, so
+    // the provider MUST clamp against the client's registered grant. Without
+    // this, a `read`-registered client requesting `?scope=admin` would have
+    // `['admin']` stored in oauth_codes and returned by exchangeAuthorizationCode
+    // as a fully-admin access token. Mirrors the filter pattern already used
+    // by exchangeClientCredentials (this file) and exchangeRefreshToken's F3
+    // subset enforcement (RFC 6749 §6) so all three grant entry points clamp
+    // consistently. Empty/omitted requested scope inherits the empty-stored
+    // shape (existing behavior; not a security boundary).
+    const allowedScopes = parseScopeString(client.scope);
+    const grantedScopes = (params.scopes || []).filter(s => hasScope(allowedScopes, s));
+
     await this.sql`
       INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
                                 code_challenge_method, redirect_uri, state, resource, expires_at)
       VALUES (${codeHash}, ${client.client_id},
-              ${pgArray(params.scopes || [])},
+              ${pgArray(grantedScopes)},
               ${params.codeChallenge}, ${'S256'},
               ${params.redirectUri}, ${params.state || null},
               ${params.resource?.toString() || null}, ${expiresAt})
@@ -391,15 +479,57 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const now = Math.floor(Date.now() / 1000);
 
     // Try OAuth tokens first. JOIN oauth_clients in the same query so
-    // verifyAccessToken returns client_name in AuthInfo — eliminates the
-    // separate per-request lookup at serve-http.ts that was the N+1 hot
-    // path (see PR #586 review D14=B).
-    const oauthRows = await this.sql`
-      SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
-      FROM oauth_tokens t
-      LEFT JOIN oauth_clients c ON c.client_id = t.client_id
-      WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
-    `;
+    // verifyAccessToken returns client_name AND source_id in AuthInfo —
+    // eliminates the separate per-request lookup at serve-http.ts that
+    // was the N+1 hot path (see PR #586 review D14=B; v0.34.1 #861 D2
+    // adds the source_id thread on the same JOIN).
+    //
+    // v0.34.1 (#861): the JOIN guards on a c.source_id column that
+    // migration v60 adds. Pre-v60 brains throw a "column does not exist"
+    // error here — caught at the boundary via isUndefinedColumnError so
+    // unmigrated brains degrade to "no source scope" rather than refusing
+    // every token verification.
+    let oauthRows: Record<string, unknown>[];
+    try {
+      oauthRows = await this.sql`
+        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
+               c.source_id, c.federated_read
+        FROM oauth_tokens t
+        LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+        WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+      `;
+    } catch (err) {
+      // v0.34.1: pre-v60 brain → source_id column missing. Pre-v61 brain →
+      // federated_read column missing. Both classes degrade to legacy
+      // projection so auth keeps working until the operator runs
+      // apply-migrations. Probe both column names so partial-upgrade brains
+      // (v60 applied but v61 didn't yet) also fall through cleanly.
+      if (isUndefinedColumnError(err, 'source_id') || isUndefinedColumnError(err, 'federated_read')) {
+        // Try the v60-only projection first (source_id but no federated_read).
+        try {
+          oauthRows = await this.sql`
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.source_id
+            FROM oauth_tokens t
+            LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+            WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+          `;
+        } catch (err2) {
+          if (isUndefinedColumnError(err2, 'source_id')) {
+            // Truly pre-v60: no source_id either. Pre-v0.34 projection.
+            oauthRows = await this.sql`
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
+              FROM oauth_tokens t
+              LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+              WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+            `;
+          } else {
+            throw err2;
+          }
+        }
+      } else {
+        throw err;
+      }
+    }
 
     if (oauthRows.length > 0) {
       const row = oauthRows[0];
@@ -410,6 +540,15 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       if (expiresAt === undefined || expiresAt < now) {
         throw new Error('Token expired');
       }
+      // v0.34.1 (#876): federated_read normalization. SELECT returns
+      // either a JS array (Postgres / PGLite text[] driver mapping) or
+      // undefined when the legacy projection ran (pre-v61 brain). Empty
+      // array vs undefined matters: empty array = explicit no-federated-
+      // read; undefined = column missing on this brain.
+      const federatedRaw = row.federated_read;
+      const allowedSources = Array.isArray(federatedRaw)
+        ? (federatedRaw as string[])
+        : undefined;
       return {
         token,
         clientId: row.client_id as string,
@@ -417,6 +556,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         scopes: (row.scopes as string[]) || [],
         expiresAt,
         resource: row.resource ? new URL(row.resource as string) : undefined,
+        // v0.34.1 (#861, D2): source-isolation scope from oauth_clients.
+        // Undefined when the row predates v60 or when the brain itself
+        // predates v60 (fell through to the legacy projection above).
+        sourceId: (row.source_id as string | null) ?? undefined,
+        // v0.34.1 (#876): federated read scope. sourceScopeOpts in
+        // operations.ts prefers this array over scalar sourceId when set
+        // and non-empty.
+        allowedSources,
       } as AuthInfo;
     }
 
@@ -440,6 +587,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         clientName: name,
         scopes: ['read', 'write', 'admin'],
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
+        // v0.34.1 (#861, D13): legacy bearer tokens default to 'default'
+        // source — matches the pre-v0.34 effective behavior where the
+        // serve-http transport fell back to GBRAIN_SOURCE/'default' for
+        // any caller without explicit scope. Operators who want a
+        // narrower scope for legacy tokens migrate to OAuth.
+        sourceId: 'default',
       } as AuthInfo;
     }
 
@@ -558,6 +711,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     grantTypes: string[],
     scopes: string,
     redirectUris: string[] = [],
+    sourceId: string = 'default',
+    federatedRead?: string[],
   ): Promise<{ clientId: string; clientSecret: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
@@ -570,12 +725,56 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const secretHash = hashToken(clientSecret);
     const now = Math.floor(Date.now() / 1000);
 
-    await this.sql`
-      INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                  grant_types, scope, client_id_issued_at)
-      VALUES (${clientId}, ${secretHash}, ${name},
-              ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now})
-    `;
+    // v0.34.1 (#861 + #876): persist source_id AND federated_read so
+    // verifyAccessToken can populate both AuthInfo fields. Defaults:
+    //   source_id = 'default' (matches v60 backfill)
+    //   federated_read = [source_id] when omitted (a non-federated client
+    //                    has read scope == write scope, the v0.33 default)
+    const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
+    try {
+      await this.sql`
+        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                    grant_types, scope, client_id_issued_at,
+                                    source_id, federated_read)
+        VALUES (${clientId}, ${secretHash}, ${name},
+                ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now},
+                ${sourceId}, ${pgArray(federated)})
+      `;
+    } catch (err) {
+      // Pre-v60 / pre-v61 brain: column missing. Fall back through both
+      // projections so registration still works until apply-migrations.
+      if (isUndefinedColumnError(err, 'federated_read')) {
+        // v60-only brain: source_id but no federated_read.
+        try {
+          await this.sql`
+            INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                        grant_types, scope, client_id_issued_at, source_id)
+            VALUES (${clientId}, ${secretHash}, ${name},
+                    ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now}, ${sourceId})
+          `;
+        } catch (err2) {
+          if (isUndefinedColumnError(err2, 'source_id')) {
+            await this.sql`
+              INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                          grant_types, scope, client_id_issued_at)
+              VALUES (${clientId}, ${secretHash}, ${name},
+                      ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now})
+            `;
+          } else {
+            throw err2;
+          }
+        }
+      } else if (isUndefinedColumnError(err, 'source_id')) {
+        await this.sql`
+          INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                      grant_types, scope, client_id_issued_at)
+          VALUES (${clientId}, ${secretHash}, ${name},
+                  ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${now})
+        `;
+      } else {
+        throw err;
+      }
+    }
 
     return { clientId, clientSecret };
   }

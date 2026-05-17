@@ -12,6 +12,8 @@ import { embedBatch, embedMultimodal } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
+import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
+import { logSlugFallback } from './audit-slug-fallback.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -188,14 +190,38 @@ export async function importFromContent(
   content: string,
   opts: {
     noEmbed?: boolean;
+    sourceId?: string;
     /**
      * v0.29.1: basename without extension for filename-date precedence on
      * `daily/`, `meetings/` slugs. importFromFile threads this from the
      * disk path; the put_page MCP op derives it from the slug tail.
      */
     filename?: string;
+    /**
+     * v0.32.7 CJK wave: repo-relative path captured at import. Stored on
+     * `pages.source_path` so sync's delete/rename code can look up the
+     * page slug by path when the slug isn't derivable (frontmatter
+     * fallback). MCP `put_page` callers leave undefined (no file).
+     */
+    sourcePath?: string;
+    /**
+     * v0.32.7 CJK wave (codex post-merge F1): bypass the
+     * `existing.content_hash === hash` short-circuit and ALWAYS re-chunk +
+     * re-embed. Used by `gbrain reindex --markdown` so a chunker version
+     * bump actually reaches unchanged-source pages. Without this, the
+     * sweep silently no-ops on every page whose markdown body hasn't
+     * been edited since the last import — defeating the whole purpose of
+     * the version bump.
+     */
+    forceRechunk?: boolean;
   } = {},
 ): Promise<ImportResult> {
+  // v0.18.0+ multi-source: when caller is syncing under a non-default source,
+  // every per-page tx call must carry `sourceId` so writes target the right
+  // (source_id, slug) row. Pre-fix, putPage relied on the schema DEFAULT and
+  // silently fabricated a duplicate at (default, slug) — causing later
+  // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
+  const sourceId = opts.sourceId;
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
@@ -232,8 +258,8 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
-  const existing = await engine.getPage(slug);
-  if (existing?.content_hash === hash) {
+  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+  if (existing?.content_hash === hash && !opts.forceRechunk) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };
   }
 
@@ -268,9 +294,13 @@ export async function importFromContent(
     }
   }
 
-  // Transaction wraps all DB writes
+  // Transaction wraps all DB writes. Every per-page tx call carries the
+  // caller's sourceId so writes target (sourceId, slug) rather than the
+  // schema DEFAULT — required for multi-source brains; harmless ('default')
+  // for single-source callers.
+  const txOpts = sourceId ? { sourceId } : undefined;
   await engine.transaction(async (tx) => {
-    if (existing) await tx.createVersion(slug);
+    if (existing) await tx.createVersion(slug, txOpts);
 
     // v0.29.1 — compute effective_date from frontmatter precedence chain.
     // Filename comes from importFromFile path (basename) or the slug tail
@@ -299,23 +329,29 @@ export async function importFromContent(
       effective_date: effectiveDate,
       effective_date_source: effectiveDateSource,
       import_filename: filenameForChain,
-    });
+      // v0.32.7 CJK wave: stamp the chunker version so the post-upgrade
+      // reindex sweep can find pre-bump pages via `chunker_version < 2`.
+      // Also capture the repo-relative source path so sync's delete/rename
+      // code can resolve frontmatter-fallback slugs back to their files.
+      chunker_version: MARKDOWN_CHUNKER_VERSION,
+      source_path: opts.sourcePath ?? null,
+    }, txOpts);
 
     // Tag reconciliation: remove stale, add current
-    const existingTags = await tx.getTags(slug);
+    const existingTags = await tx.getTags(slug, txOpts);
     const newTags = new Set(parsed.tags);
     for (const old of existingTags) {
-      if (!newTags.has(old)) await tx.removeTag(slug, old);
+      if (!newTags.has(old)) await tx.removeTag(slug, old, txOpts);
     }
     for (const tag of parsed.tags) {
-      await tx.addTag(slug, tag);
+      await tx.addTag(slug, tag, txOpts);
     }
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks);
+      await tx.upsertChunks(slug, chunks, txOpts);
     } else {
       // Content is empty — delete stale chunks so they don't ghost in search results
-      await tx.deleteChunks(slug);
+      await tx.deleteChunks(slug, txOpts);
     }
 
     // v0.19.0 E1 — doc↔impl linking: if this markdown page cites code paths
@@ -325,6 +361,15 @@ export async function importFromContent(
     // before their code repo syncs are common, and the missing edges land
     // later via `gbrain reconcile-links` (Layer 8 D3, v0.21.0).
     const codeRefs = extractCodeRefs(parsed.compiled_truth + '\n' + (parsed.timeline || ''));
+    // For doc↔impl edges, both endpoints are within the same source as the
+    // markdown page being imported. Cross-source edges (markdown in one
+    // source, code in another) currently fail with "page not found" — a
+    // faster failure mode than the pre-fix cross-product fan-out, which
+    // silently wired edges to whichever same-slug page Postgres returned
+    // first across sources.
+    const linkOpts = sourceId
+      ? { fromSourceId: sourceId, toSourceId: sourceId, originSourceId: sourceId }
+      : undefined;
     for (const ref of codeRefs) {
       const codeSlug = slugifyCodePath(ref.path);
       // Forward: markdown guide → code page (this guide documents that code)
@@ -333,6 +378,7 @@ export async function importFromContent(
           slug, codeSlug,
           ref.line ? `cited at ${ref.path}:${ref.line}` : ref.path,
           'documents', 'markdown', slug, 'compiled_truth',
+          linkOpts,
         );
       } catch { /* code page not yet imported — reconcile-links will catch it */ }
       // Reverse: code page → markdown guide (this code is documented by the guide)
@@ -340,6 +386,7 @@ export async function importFromContent(
         await tx.addLink(
           codeSlug, slug,
           ref.path, 'documented_by', 'markdown', slug, 'compiled_truth',
+          linkOpts,
         );
       } catch { /* same reason — silent skip */ }
     }
@@ -362,7 +409,7 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean; inferFrontmatter?: boolean } = {},
+  opts: { noEmbed?: boolean; inferFrontmatter?: boolean; sourceId?: string; forceRechunk?: boolean } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
@@ -379,7 +426,10 @@ export async function importFromFile(
 
   // Route code files through the code import path
   if (isCodeFilePath(relativePath)) {
-    return importCodeFile(engine, relativePath, content, opts);
+    return importCodeFile(engine, relativePath, content, {
+      noEmbed: opts.noEmbed,
+      sourceId: opts.sourceId,
+    });
   }
 
   // v0.22.8 — Frontmatter inference: if the file has no frontmatter and
@@ -401,8 +451,37 @@ export async function importFromFile(
   // Enforce path-authoritative slug. parseMarkdown prefers frontmatter.slug over
   // the path-derived slug, so a mismatch here means the frontmatter is trying
   // to rewrite a page whose filesystem location says something different.
+  //
+  // parsed.slug is `frontmatter.slug || inferSlug(filePath)` where inferSlug
+  // falls back to slugifyPath(). So parsed.slug.length > 0 with empty
+  // expectedSlug = frontmatter provided one; both empty = no usable slug.
   const expectedSlug = slugifyPath(relativePath);
-  if (parsed.slug !== expectedSlug) {
+  let resolvedSlug = expectedSlug;
+  let usedFrontmatterFallback = false;
+
+  if (expectedSlug === '') {
+    if (parsed.slug && parsed.slug.length > 0) {
+      // v0.32.7 CJK wave (PR #598 + codex C1/C6): path-derived slug is empty
+      // (emoji / Thai / Arabic / exotic-script filename). Frontmatter slug
+      // takes over. logSlugFallback fires below once we know the import
+      // isn't going to short-circuit.
+      resolvedSlug = parsed.slug;
+      usedFrontmatterFallback = true;
+    } else {
+      // No path slug, no frontmatter slug — friendlier error (D6=B).
+      return {
+        slug: '',
+        status: 'skipped',
+        chunks: 0,
+        error:
+          `Filename "${relativePath}" produces no usable slug. ` +
+          `Add a "slug:" to the frontmatter, or rename the file to use ` +
+          `ASCII / Chinese / Japanese / Korean characters.`,
+      };
+    }
+  } else if (parsed.slug !== expectedSlug) {
+    // Anti-spoof preserved: path DOES derive a slug, but the frontmatter slug
+    // claims a different one. Reject.
     return {
       slug: expectedSlug,
       status: 'skipped',
@@ -413,13 +492,23 @@ export async function importFromFile(
     };
   }
 
-  // Pass the path-derived slug explicitly so that any future change to
+  // Emit the dual-channel audit entry AFTER we know we're not going to
+  // short-circuit, so we don't log noise for failed imports.
+  if (usedFrontmatterFallback) {
+    logSlugFallback(resolvedSlug, relativePath);
+  }
+
+  // Pass the resolved slug explicitly so that any future change to
   // parseMarkdown's precedence rules cannot re-introduce this bug.
   // v0.29.1: thread the basename (without extension) for filename-date
   // precedence in computeEffectiveDate. e.g. `daily/2024-03-15.md` →
   // filename `2024-03-15`.
   const fileBasename = basename(relativePath, '.md');
-  return importFromContent(engine, expectedSlug, content, { ...opts, filename: fileBasename });
+  return importFromContent(engine, resolvedSlug, content, {
+    ...opts,
+    filename: fileBasename,
+    sourcePath: relativePath,
+  });
 }
 
 /**
@@ -427,15 +516,34 @@ export async function importFromFile(
  * Uses tree-sitter code chunker for semantic splitting.
  * Page type is 'code', slug includes file extension.
  */
+/**
+ * v0.31.2 (PR1 commit 10): facts backstop wiring decision.
+ *
+ * Code pages have `type: 'code'` which the `isFactsBackstopEligible`
+ * predicate (src/core/facts/eligibility.ts) rejects with `kind:code`.
+ * Wiring `runFactsBackstop` here would always produce a no-op envelope.
+ * The wiring is intentionally omitted — when README extraction or
+ * doc-comment extraction is added in a future release, the eligibility
+ * predicate is the single place to update.
+ *
+ * Sibling decisions: `file_upload` doesn't write a page (uploads to
+ * storage; the page itself is written via separate put_page); `gbrain
+ * import` (bulk markdown import) intentionally skips the backstop to
+ * avoid a cost spike on first-time imports of large brain repos. The
+ * user runs `gbrain dream` or the consolidate phase to backfill facts
+ * from bulk-imported pages.
+ */
 export async function importCodeFile(
   engine: BrainEngine,
   relativePath: string,
   content: string,
-  opts: { noEmbed?: boolean; force?: boolean } = {},
+  opts: { noEmbed?: boolean; force?: boolean; sourceId?: string } = {},
 ): Promise<ImportResult> {
   const slug = slugifyCodePath(relativePath);
   const lang = detectCodeLanguage(relativePath) || 'unknown';
   const title = `${relativePath} (${lang})`;
+  const sourceId = opts.sourceId;
+  const txOpts = sourceId ? { sourceId } : undefined;
 
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_FILE_SIZE) {
@@ -448,7 +556,7 @@ export async function importCodeFile(
     .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION }))
     .digest('hex');
 
-  const existing = await engine.getPage(slug);
+  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
   if (!opts.force && existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0 };
   }
@@ -486,7 +594,7 @@ export async function importCodeFile(
   // OpenAI API. Order matters: our chunk_index is semantic (tree-sitter
   // order), so a matching (chunk_index, text_hash) means a verbatim
   // preserved symbol.
-  const existingChunks = existing ? await engine.getChunks(slug) : [];
+  const existingChunks = existing ? await engine.getChunks(slug, sourceId ? { sourceId } : undefined) : [];
   const existingByKey = new Map<string, typeof existingChunks[number]>();
   for (const ec of existingChunks) {
     existingByKey.set(`${ec.chunk_index}:${ec.chunk_text}`, ec);
@@ -519,9 +627,11 @@ export async function importCodeFile(
     }
   }
 
-  // Store
+  // Store. Every per-page tx call carries `txOpts.sourceId` so multi-source
+  // brains write to the correct (source_id, slug) row instead of duplicating
+  // under the schema DEFAULT.
   await engine.transaction(async (tx) => {
-    if (existing) await tx.createVersion(slug);
+    if (existing) await tx.createVersion(slug, txOpts);
 
     await tx.putPage(slug, {
       type: 'code' as PageType,
@@ -531,15 +641,15 @@ export async function importCodeFile(
       timeline: '',
       frontmatter: { language: lang, file: relativePath },
       content_hash: hash,
-    });
+    }, txOpts);
 
-    await tx.addTag(slug, 'code');
-    await tx.addTag(slug, lang);
+    await tx.addTag(slug, 'code', txOpts);
+    await tx.addTag(slug, lang, txOpts);
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks);
+      await tx.upsertChunks(slug, chunks, txOpts);
     } else {
-      await tx.deleteChunks(slug);
+      await tx.deleteChunks(slug, txOpts);
     }
   });
 
@@ -550,7 +660,7 @@ export async function importCodeFile(
   // chunk IDs are stable.
   if (extractedEdges.length > 0 && chunks.length > 0) {
     try {
-      const persistedChunks = await engine.getChunks(slug);
+      const persistedChunks = await engine.getChunks(slug, sourceId ? { sourceId } : undefined);
       const byIndex = new Map<number, { id?: number; symbol_name_qualified?: string | null; start_line?: number | null; end_line?: number | null }>();
       for (const pc of persistedChunks) {
         byIndex.set(pc.chunk_index, pc);
@@ -857,6 +967,12 @@ export interface ImportImageOptions {
   ocrConcurrency?: number;
   /** Skip the embed call (for tests that want fast metadata-only inserts). */
   noEmbed?: boolean;
+  /**
+   * v0.30.x follow-up to PR #707: route image-page writes to a named source.
+   * Mirrors importFromContent's threading; without this, runImport callers
+   * with sourceId would TS-error on the importImageFile branch.
+   */
+  sourceId?: string;
 }
 
 /** Module-level limiter so concurrent imports across files share the budget. */

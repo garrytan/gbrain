@@ -14,6 +14,8 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import { loadConfig, isThinClient } from '../core/config.ts';
+import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 
 interface RunOpts {
   days?: number;
@@ -67,11 +69,27 @@ export async function runSalience(engine: BrainEngine, args: string[]): Promise<
     console.log(HELP);
     return;
   }
-  const rows = await engine.getRecentSalience({
-    days: parsed.days,
-    limit: parsed.limit,
-    slugPrefix: parsed.slugPrefix,
-  });
+
+  // v0.31.1 (Issue #734): on thin-client installs, route the engine call
+  // through the remote `get_recent_salience` MCP op. Output format is
+  // identical because both paths return the same shape (the op handler IS
+  // engine.getRecentSalience).
+  let rows;
+  const cfg = loadConfig();
+  if (isThinClient(cfg)) {
+    const raw = await callRemoteTool(cfg!, 'get_recent_salience', {
+      days: parsed.days,
+      limit: parsed.limit,
+      slugPrefix: parsed.slugPrefix,
+    }, { timeoutMs: 30_000 });
+    rows = unpackToolResult<Awaited<ReturnType<BrainEngine['getRecentSalience']>>>(raw);
+  } else {
+    rows = await engine.getRecentSalience({
+      days: parsed.days,
+      limit: parsed.limit,
+      slugPrefix: parsed.slugPrefix,
+    });
+  }
   if (parsed.json) {
     console.log(JSON.stringify(rows, null, 2));
     return;

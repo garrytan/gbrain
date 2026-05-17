@@ -475,6 +475,77 @@ export interface ChunkAndEdgeResult {
   edges: import('./edge-extractor.ts').ExtractedEdge[];
 }
 
+/**
+ * Thrown when tree-sitter's wall-clock cap (set via setTimeoutMicros)
+ * fires and `parser.parse(source)` returns null. The caller is expected
+ * to fall back to recursive chunking and continue. v0.31.2 closes the
+ * 99%-CPU-no-I/O hang class where a single pathological file wedged
+ * the entire sync because tree-sitter's WASM loop is opaque to JS.
+ */
+export class ChunkerTimeoutError extends Error {
+  readonly filePath: string;
+  readonly timeoutMs: number;
+  constructor(filePath: string, timeoutMs: number) {
+    super(`Tree-sitter parse timeout on ${filePath} after ${timeoutMs}ms`);
+    this.name = 'ChunkerTimeoutError';
+    this.filePath = filePath;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+interface ParserLike {
+  setTimeoutMicros(t: number): void;
+  parse(source: string): unknown;
+}
+
+/**
+ * Parse `source` with a wall-clock cap, throwing `ChunkerTimeoutError`
+ * when the parser returns null. Pure function — caller owns parser
+ * construction AND parser/tree cleanup. Callers MUST wrap the
+ * parser+tree lifecycle in try/finally so a thrown timeout still
+ * reaps the WASM allocation.
+ *
+ * Test seam: `parser` is `ParserLike` so unit tests can pass a stub
+ * whose `parse()` returns null deterministically without depending on
+ * machine speed. The runtime path always passes a real
+ * web-tree-sitter Parser instance.
+ *
+ * @internal exported for tests; production callers go through
+ *   chunkCodeTextFull.
+ */
+export function parseWithTimeout(
+  parser: ParserLike,
+  source: string,
+  timeoutMs: number,
+  filePath: string,
+): unknown {
+  if (typeof parser.setTimeoutMicros !== 'function') {
+    // Fail loud at the seam if a future web-tree-sitter upgrade drops
+    // the API — better than silently regressing to no-timeout behavior.
+    throw new Error(
+      `web-tree-sitter Parser is missing setTimeoutMicros (required for chunker timeout). ` +
+      `Pin in package.json may be too new (deprecated 0.25.0+) or too old.`,
+    );
+  }
+  parser.setTimeoutMicros(timeoutMs * 1000);
+  const tree = parser.parse(source);
+  if (tree === null || tree === undefined) {
+    throw new ChunkerTimeoutError(filePath, timeoutMs);
+  }
+  return tree;
+}
+
+const DEFAULT_CHUNKER_TIMEOUT_MS = 30_000;
+
+function resolveChunkerTimeoutMs(): number {
+  const raw = process.env.GBRAIN_CHUNKER_TIMEOUT_MS;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return DEFAULT_CHUNKER_TIMEOUT_MS;
+}
+
 export async function chunkCodeTextFull(
   source: string,
   filePath: string,
@@ -489,29 +560,41 @@ export async function chunkCodeTextFull(
 
   const largeThreshold = opts.largeChunkThresholdTokens ?? 1000;
   const chunkTarget = opts.chunkSizeTokens ?? 300;
+  const timeoutMs = resolveChunkerTimeoutMs();
 
+  // v0.31.2: parser + tree are always reaped via finally. Pre-fix, the
+  // catch block returned without delete() — a leak Codex flagged
+  // (C4) as soon as the timeout path could throw before the manual
+  // mid-function deletes ran.
+  let parser: any = null;
+  let tree: any = null;
   try {
     await ensureInit();
     const P = await getParser();
-    const parser = new (P as any)();
+    parser = new (P as any)();
     const grammar = await loadLanguage(language);
     parser.setLanguage(grammar);
 
-    const tree = parser.parse(source);
-    if (!tree) {
-      parser.delete();
-      return { chunks: fallbackChunks(source, filePath, language, opts), edges: [] };
+    try {
+      tree = parseWithTimeout(parser as ParserLike, source, timeoutMs, filePath);
+    } catch (e: unknown) {
+      if (e instanceof ChunkerTimeoutError) {
+        console.warn(
+          `[gbrain chunker] timeout parsing ${filePath} after ${timeoutMs}ms; ` +
+          `falling back to recursive chunks`,
+        );
+        return { chunks: fallbackChunks(source, filePath, language, opts), edges: [] };
+      }
+      throw e;
     }
 
-    const root = tree.rootNode;
+    const root = (tree as any).rootNode;
     const topLevelTypes = TOP_LEVEL_TYPES[language];
     const semanticNodes = topLevelTypes
       ? root.namedChildren.filter((n: any) => topLevelTypes.has(n.type))
       : [];
 
     if (semanticNodes.length === 0) {
-      tree.delete();
-      parser.delete();
       return { chunks: fallbackChunks(source, filePath, language, opts), edges: [] };
     }
 
@@ -590,8 +673,12 @@ export async function chunkCodeTextFull(
     // chunker throughput measurably.
     let rawEdges: import('./edge-extractor.ts').ExtractedEdge[] = [];
     try {
-      const { extractCallEdges } = await import('./edge-extractor.ts');
-      rawEdges = extractCallEdges(tree, language);
+      // v0.34 W2: switched to extractAllEdges so imports + references edges
+      // get emitted alongside calls. JS/TS/TSX + Python emit imports;
+      // TS only emits references. Other langs still get bare-token calls
+      // (v0.20 baseline).
+      const { extractAllEdges } = await import('./edge-extractor.ts');
+      rawEdges = extractAllEdges(tree, language);
     } catch {
       // Edge extraction is best-effort — failure here must not break
       // chunking. Syntactically invalid code or a grammar quirk should
@@ -599,15 +686,20 @@ export async function chunkCodeTextFull(
       rawEdges = [];
     }
 
-    tree.delete();
-    parser.delete();
-
     if (chunks.length === 0) {
       return { chunks: fallbackChunks(source, filePath, language, opts), edges: rawEdges };
     }
     return { chunks: mergeSmallSiblings(chunks, chunkTarget), edges: rawEdges };
   } catch {
     return { chunks: fallbackChunks(source, filePath, language, opts), edges: [] };
+  } finally {
+    // v0.31.2 (codex C4): single cleanup site so a thrown
+    // ChunkerTimeoutError, edge-extraction failure, or any other
+    // exception still reaps parser+tree WASM objects. Pre-fix, the
+    // catch block returned without delete() — a guaranteed leak
+    // whenever a code file failed to parse.
+    try { tree?.delete?.(); } catch { /* ignore double-delete */ }
+    try { parser?.delete?.(); } catch { /* ignore double-delete */ }
   }
 }
 

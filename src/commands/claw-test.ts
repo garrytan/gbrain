@@ -131,32 +131,68 @@ export async function runClawTest(args: string[]): Promise<number> {
 // Scripted mode
 // ---------------------------------------------------------------------------
 
+/**
+ * v0.32.x: env vars that, when inherited from the parent process, would
+ * break the claw-test scripted harness's "hermetic PGLite tempdir"
+ * contract. The harness runs `gbrain init --pglite` then a sequence of
+ * subsequent phases that ALL must hit the same tempdir brain. If the
+ * parent process (e.g. a CI runner with DATABASE_URL set for OTHER e2e
+ * tests) leaks DATABASE_URL into the children, loadConfig sees the env
+ * var and silently flips inferredEngine to 'postgres' (config.ts:143-145),
+ * forcing every phase to hit the parent's test Postgres instead of the
+ * hermetic PGLite. Result: phases race against each other (multi-tenant
+ * effects on the shared DB) and the harness hangs.
+ *
+ * Strip these on entry so the child env carries no Postgres-pointing
+ * variable. PGLite-only by design.
+ */
+const POSTGRES_POLLUTION_ENV_VARS = ['DATABASE_URL', 'GBRAIN_DATABASE_URL'];
+
 async function runScripted(
   opts: HarnessOpts,
   scenario: ScenarioConfig,
   ctx: { runId: string; runRoot: string; gbrainHome: string },
 ): Promise<number> {
-  const childEnv: Record<string, string> = {
-    ...process.env as Record<string, string>,
-    GBRAIN_HOME: ctx.gbrainHome,
-    GBRAIN_FRICTION_RUN_ID: ctx.runId,
-  };
+  // Filter out Postgres-pointing env vars before forwarding to children.
+  // The harness is PGLite-only by design; an inherited DATABASE_URL
+  // would force loadConfig() to flip the engine to 'postgres' at the
+  // next phase boundary and break the hermetic-tempdir contract.
+  const parentEnv = process.env as Record<string, string | undefined>;
+  const childEnv: Record<string, string> = { GBRAIN_HOME: ctx.gbrainHome, GBRAIN_FRICTION_RUN_ID: ctx.runId };
+  for (const [k, v] of Object.entries(parentEnv)) {
+    if (v === undefined) continue;
+    if (POSTGRES_POLLUTION_ENV_VARS.includes(k)) continue;
+    childEnv[k] = v;
+  }
+  // Re-apply the explicit overrides so a parent GBRAIN_HOME / GBRAIN_FRICTION_RUN_ID
+  // can't accidentally win the merge.
+  childEnv.GBRAIN_HOME = ctx.gbrainHome;
+  childEnv.GBRAIN_FRICTION_RUN_ID = ctx.runId;
 
   const phases: { name: string; argv: string[] }[] = [];
   // Phase 2: install_brain
   phases.push({ name: 'install_brain', argv: ['init', '--pglite'] });
 
   // Phase 3: import (only when scenario has a brain dir)
+  // Capture brainDir for downstream phases that need an explicit --dir
+  // (extract requires it post-#688 — defaults to configured source, and
+  // gbrain init --pglite doesn't register a fs source).
+  let brainDir: string | undefined;
   if (scenario.brainRelative) {
-    const brainDir = join(scenario.dir, scenario.brainRelative);
+    brainDir = join(scenario.dir, scenario.brainRelative);
     phases.push({ name: 'import', argv: ['import', brainDir, '--no-embed', '--progress-json'] });
   }
 
   // Phase 4: query (best-effort sanity)
   phases.push({ name: 'query', argv: ['query', 'the'] });
 
-  // Phase 5: extract (positional argument is required: 'all' covers links + timeline)
-  phases.push({ name: 'extract', argv: ['extract', 'all', '--source', 'fs', '--progress-json'] });
+  // Phase 5: extract (positional argument is required: 'all' covers links + timeline).
+  // Pass --dir explicitly because the install_brain phase doesn't register
+  // a fs source; without --dir, post-#688 extract refuses with "No brain
+  // directory configured." When the scenario has no brain dir, skip.
+  if (brainDir) {
+    phases.push({ name: 'extract', argv: ['extract', 'all', '--source', 'fs', '--dir', brainDir, '--progress-json'] });
+  }
 
   // Phase 6: verify
   phases.push({ name: 'verify', argv: ['doctor', '--json', '--progress-json'] });

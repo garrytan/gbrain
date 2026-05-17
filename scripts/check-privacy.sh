@@ -128,6 +128,23 @@ ALLOW_LIST=(
   # CHANGELOG.md, and CLAUDE.md (meta-rule enforcement requires
   # mentioning what the rule forbids).
   'test/recency-decay.test.ts'
+  # v0.32.5: the sibling check-test-real-names.sh enforces the same
+  # privacy rule for test fixtures and lists the banned names literally
+  # (Wintermute, Hermes, etc) inside its BANNED_NAMES + ALLOWLIST arrays.
+  # Same meta-rule-enforcement exception as scripts/check-privacy.sh itself.
+  'scripts/check-test-real-names.sh'
+  # v0.34 / Lane CI: scripts/check-proposal-pii.sh and its test list the
+  # banned literal as part of the structural denylist they enforce against
+  # docs/proposals/*.md. Same meta-rule-enforcement exception as the two
+  # entries above — describing what the rule forbids requires naming it.
+  'scripts/check-proposal-pii.sh'
+  'test/scripts/check-proposal-pii.test.ts'
+  # v0.32.3.0: the functional-area-resolver skill's behavior-contract
+  # section describes the privacy guarantees the skill preserves and
+  # references the banned literals while doing so (line 306). Same
+  # meta-rule-enforcement exception as scripts/check-privacy.sh and
+  # CHANGELOG.md — describing what the rule forbids requires naming it.
+  'skills/functional-area-resolver/SKILL.md'
 )
 
 is_allowed() {

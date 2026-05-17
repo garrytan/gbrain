@@ -11,6 +11,7 @@
  */
 
 import { expand as gatewayExpand, isAvailable as gatewayIsAvailable } from '../ai/gateway.ts';
+import { countCJKAwareWords } from '../cjk.ts';
 
 const MAX_QUERIES = 3;
 const MIN_WORDS = 3;
@@ -54,10 +55,7 @@ export function sanitizeExpansionOutput(alternatives: unknown[]): string[] {
 }
 
 export async function expandQuery(query: string): Promise<string[]> {
-  // CJK text is not space-delimited.
-  const hasCJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(query);
-  const wordCount = hasCJK ? query.replace(/\s/g, '').length : (query.match(/\S+/g) || []).length;
-  if (wordCount < MIN_WORDS) return [query];
+  if (countCJKAwareWords(query) < MIN_WORDS) return [query];
 
   // Skip LLM call entirely if gateway has no expansion provider configured.
   if (!gatewayIsAvailable('expansion')) return [query];

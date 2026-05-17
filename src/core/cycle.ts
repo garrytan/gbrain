@@ -53,7 +53,11 @@ import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
-export type CyclePhase = 'lint' | 'backlinks' | 'sync' | 'synthesize' | 'extract' | 'patterns' | 'recompute_emotional_weight' | 'embed' | 'orphans' | 'purge';
+export type CyclePhase =
+  | 'lint' | 'backlinks' | 'sync' | 'synthesize' | 'extract' | 'extract_facts'
+  | 'resolve_symbol_edges'
+  | 'patterns' | 'recompute_emotional_weight' | 'consolidate'
+  | 'embed' | 'orphans' | 'purge';
 
 export const ALL_PHASES: CyclePhase[] = [
   'lint',
@@ -61,10 +65,29 @@ export const ALL_PHASES: CyclePhase[] = [
   'sync',
   'synthesize',
   'extract',
+  // v0.32.2 — reconcile DB facts index from the `## Facts` fence on
+  // every affected entity page. Runs AFTER extract (link/timeline
+  // materialization) and BEFORE patterns (which reads graph state).
+  // The empty-fence guard refuses to run if pre-v51 legacy facts are
+  // pending the v0_32_2 backfill (Codex R2-#7).
+  'extract_facts',
+  // v0.33.3 W0c — within-file two-pass symbol resolution. Runs AFTER
+  // extract + extract_facts so any code edges sync emitted (still bare-token)
+  // get resolved into {resolved_chunk_id: N} / {ambiguous: true,
+  // candidates: [...]} edge_metadata entries before downstream phases read
+  // the graph. Quick-cycle compatible: each invocation walks at most
+  // BATCH_SIZE*10 chunks where edges_backfilled_at IS NULL or stale.
+  'resolve_symbol_edges',
   'patterns',
   // v0.29 — runs AFTER extract + synthesize so it sees the union of
   // sync-touched + synthesize-written pages with fresh tag + take state.
   'recompute_emotional_weight',
+  // v0.31: cluster unconsolidated facts per (source_id, entity_slug);
+  // Sonnet-synthesize one take per cluster; INSERT into takes(kind='fact');
+  // mark facts consolidated_at + consolidated_into. Never DELETE — facts
+  // stay as audit trail. Placed AFTER patterns (graph-fresh) and BEFORE
+  // embed (so the new takes get embedded same-cycle).
+  'consolidate',
   'embed',
   'orphans',
   // v0.26.5: hard-deletes soft-deleted pages and expired archived sources past
@@ -78,7 +101,8 @@ export const ALL_PHASES: CyclePhase[] = [
  * coordinate via the cycle lock. Only orphans is truly read-only
  * and skips the lock. patterns mutates DB (writes pattern pages) so
  * it acquires the lock; synthesize too. v0.26.5 adds purge (DELETE-cascade
- * across pages and sources).
+ * across pages and sources). v0.31 adds consolidate (writes takes rows
+ * + facts UPDATEs).
  */
 const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'lint',
@@ -86,9 +110,14 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'sync',
   'synthesize',
   'extract',
+  // v0.32.2 — wipes + re-inserts facts per affected page.
+  'extract_facts',
+  // v0.33.3 W0c — writes code_edges_symbol.edge_metadata + content_chunks.edges_backfilled_at.
+  'resolve_symbol_edges',
   'patterns',
   // v0.29 — writes pages.emotional_weight column.
   'recompute_emotional_weight',
+  'consolidate',
   'embed',
   'purge',
 ]);
@@ -152,10 +181,18 @@ export interface CycleReport {
     patterns_written: number;
     /** v0.29: number of pages whose emotional_weight was (re)computed. */
     pages_emotional_weight_recomputed: number;
+    /** v0.34: number of code edges resolved (1 candidate) by the resolve_symbol_edges phase. */
+    edges_resolved: number;
+    /** v0.34: number of code edges marked ambiguous (2+ candidates) by the resolve_symbol_edges phase. */
+    edges_ambiguous: number;
     /** v0.26.5: number of source rows hard-deleted by the purge phase. */
     purged_sources_count: number;
     /** v0.26.5: number of page rows hard-deleted by the purge phase. */
     purged_pages_count: number;
+    /** v0.31: number of facts promoted to takes by the consolidate phase. */
+    facts_consolidated: number;
+    /** v0.31: number of new takes created by the consolidate phase. */
+    consolidate_takes_written: number;
   };
 }
 
@@ -638,6 +675,128 @@ async function runPhaseExtract(
   }
 }
 
+async function runPhaseExtractFacts(
+  engine: BrainEngine,
+  dryRun: boolean,
+  changedSlugs?: string[],
+): Promise<PhaseResult> {
+  try {
+    const { runExtractFacts } = await import('./cycle/extract-facts.ts');
+    const result = await runExtractFacts(engine, {
+      slugs: changedSlugs,
+      dryRun,
+    });
+
+    // Empty-fence guard: pre-v51 legacy rows pending the v0_32_2 backfill.
+    // Surface as 'warn' so doctor + the cycle report can see it; don't fail
+    // the cycle because the workaround is well-defined (run apply-migrations).
+    if (result.guardTriggered) {
+      return {
+        phase: 'extract_facts',
+        status: 'warn',
+        duration_ms: 0,
+        summary: `extract_facts skipped: ${result.legacyRowsPending} legacy v0.31 facts pending fence backfill`,
+        details: {
+          legacyRowsPending: result.legacyRowsPending,
+          hint: 'gbrain apply-migrations --yes',
+          warnings: result.warnings,
+        },
+      };
+    }
+
+    return {
+      phase: 'extract_facts',
+      status: result.warnings.length > 0 ? 'warn' : 'ok',
+      duration_ms: 0,
+      summary: `${result.factsInserted} fact(s) reconciled across ${result.pagesScanned} page(s)` +
+        (result.warnings.length > 0 ? ` (${result.warnings.length} warning(s))` : ''),
+      details: {
+        pagesScanned: result.pagesScanned,
+        pagesWithFacts: result.pagesWithFacts,
+        factsInserted: result.factsInserted,
+        factsDeleted: result.factsDeleted,
+        warnings: result.warnings.slice(0, 5),
+      },
+    };
+  } catch (e) {
+    return {
+      phase: 'extract_facts',
+      status: 'fail',
+      duration_ms: 0,
+      summary: 'extract_facts phase failed',
+      details: {},
+      error: makeErrorFromException(e),
+    };
+  }
+}
+
+/**
+ * v0.33.3 W0c — resolve_symbol_edges phase.
+ *
+ * Walks at most BATCH_SIZE*10 chunks per invocation where
+ * `edges_backfilled_at` is NULL or older than EDGE_EXTRACTOR_VERSION_TS.
+ * Resumable across cycles via the watermark; quick-cycle compatible.
+ *
+ * Source scoping: walks every registered source. Pre-v0.33.3 silently
+ * crossed sources; now each source is walked independently so symbol
+ * resolution stays within its source boundary (matches the W0a fix).
+ */
+async function runPhaseResolveSymbolEdges(
+  engine: BrainEngine,
+  dryRun: boolean,
+): Promise<PhaseResult> {
+  if (dryRun) {
+    return {
+      phase: 'resolve_symbol_edges',
+      status: 'skipped',
+      duration_ms: 0,
+      summary: 'dry-run: resolve_symbol_edges phase skipped',
+      details: { dryRun: true, reason: 'no_dry_run_support' },
+    };
+  }
+  try {
+    const { resolveSymbolEdgesIncremental } = await import('./chunkers/symbol-resolver.ts');
+    const { listSources } = await import('./sources-ops.ts');
+    const sources = await listSources(engine);
+    let totalChunks = 0;
+    let totalResolved = 0;
+    let totalAmbiguous = 0;
+    let totalUnmatched = 0;
+    for (const s of sources) {
+      const stats = await resolveSymbolEdgesIncremental(engine, { sourceId: s.id });
+      totalChunks += stats.chunks_walked;
+      totalResolved += stats.edges_resolved;
+      totalAmbiguous += stats.edges_ambiguous;
+      totalUnmatched += stats.edges_unmatched;
+    }
+    return {
+      phase: 'resolve_symbol_edges',
+      status: 'ok',
+      duration_ms: 0,
+      summary:
+        totalChunks === 0
+          ? 'no chunks needed symbol resolution'
+          : `${totalChunks} chunk(s) walked; resolved ${totalResolved}, ambiguous ${totalAmbiguous}, unmatched ${totalUnmatched}`,
+      details: {
+        chunks_walked: totalChunks,
+        edges_resolved: totalResolved,
+        edges_ambiguous: totalAmbiguous,
+        edges_unmatched: totalUnmatched,
+        sources_walked: sources.length,
+      },
+    };
+  } catch (e) {
+    return {
+      phase: 'resolve_symbol_edges',
+      status: 'fail',
+      duration_ms: 0,
+      summary: 'resolve_symbol_edges phase failed',
+      details: {},
+      error: makeErrorFromException(e),
+    };
+  }
+}
+
 async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean): Promise<PhaseResult> {
   try {
     const { runEmbedCore } = await import('../commands/embed.ts');
@@ -982,6 +1141,59 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
+    // ── Phase 5b: extract_facts (v0.32.2) ───────────────────────
+    // Reconcile DB facts index from the `## Facts` fence on every
+    // affected entity page. Runs AFTER extract (link/timeline
+    // materialization) and BEFORE patterns/recompute_emotional_weight
+    // so downstream phases see fresh DB facts. Empty-fence guard
+    // refuses to run while v0.31 legacy facts are pending the
+    // v0_32_2 backfill (Codex R2-#7).
+    if (phases.includes('extract_facts')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'extract_facts',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.extract_facts');
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseExtractFacts(engine, dryRun, syncPagesAffected));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── v0.33.3 W0c: resolve_symbol_edges (between extract_facts + patterns) ──
+    // Walks chunks whose edges_backfilled_at is null/stale. Resumable
+    // across cycles via the watermark. Quick-cycle compatible — caps at
+    // BATCH_SIZE * 10 chunks per invocation so a 60s watchdog tick stays
+    // responsive even on a 100K-chunk brain.
+    if (phases.includes('resolve_symbol_edges')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'resolve_symbol_edges',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.resolve_symbol_edges');
+        const { result, duration_ms } = await timePhase(() => runPhaseResolveSymbolEdges(engine, dryRun));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
     // ── Phase 6: patterns (v0.23) ───────────────────────────────
     // MUST run after extract so the graph state reads fresh — subagent
     // put_page calls in synthesize set ctx.remote=true, so auto-link
@@ -1044,6 +1256,34 @@ export async function runCycle(
             affectedSlugs: incremental,
           }),
         );
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── Phase 8 (v0.31): consolidate facts → takes ──────────────
+    // Cluster unconsolidated facts per entity, Sonnet-synthesize one take
+    // per cluster, INSERT into takes(kind='fact'), mark facts as
+    // consolidated_into. Never DELETE — facts are the audit trail.
+    if (phases.includes('consolidate')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'consolidate',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.consolidate');
+        const { runPhaseConsolidate } = await import('./cycle/phases/consolidate.ts');
+        const { result, duration_ms } = await timePhase(() => runPhaseConsolidate(engine, {
+          dryRun,
+          yieldDuringPhase: opts.yieldDuringPhase,
+        }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1151,8 +1391,12 @@ function emptyTotals(): CycleReport['totals'] {
     synth_pages_written: 0,
     patterns_written: 0,
     pages_emotional_weight_recomputed: 0,
+    edges_resolved: 0,
+    edges_ambiguous: 0,
     purged_sources_count: 0,
     purged_pages_count: 0,
+    facts_consolidated: 0,
+    consolidate_takes_written: 0,
   };
 }
 
@@ -1182,9 +1426,15 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
       t.patterns_written = Number(p.details.patterns_written ?? 0);
     } else if (p.phase === 'recompute_emotional_weight' && p.details) {
       t.pages_emotional_weight_recomputed = Number(p.details.pages_recomputed ?? 0);
+    } else if (p.phase === 'resolve_symbol_edges' && p.details) {
+      t.edges_resolved = Number(p.details.edges_resolved ?? 0);
+      t.edges_ambiguous = Number(p.details.edges_ambiguous ?? 0);
     } else if (p.phase === 'purge' && p.details) {
       t.purged_sources_count = Number(p.details.purged_sources_count ?? 0);
       t.purged_pages_count = Number(p.details.purged_pages_count ?? 0);
+    } else if (p.phase === 'consolidate' && p.details) {
+      t.facts_consolidated = Number(p.details.facts_consolidated ?? 0);
+      t.consolidate_takes_written = Number(p.details.takes_written ?? 0);
     }
   }
   return t;

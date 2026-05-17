@@ -1,5 +1,275 @@
 # TODOS
 
+
+## dreamy-thompson wave follow-ups (v0.36.x)
+
+- [ ] **v0.36.x: runThink full rewrite — drop ThinkLLMClient indirection.** v0.36's fix(think) wave landed a gateway-backed adapter at `src/core/think/index.ts:225-251` so `gbrain config set anthropic_api_key` works over MCP stdio (closed #952). The adapter routes through `gateway.chat()` but `runThink` still carries the `ThinkLLMClient` interface as the test seam — it's the last LLM-using path that doesn't use the canonical `__setChatTransportForTests` seam v0.31.12 established for chat/embed. Cleanup: drop `ThinkLLMClient`, drop the `opts.client` injection point, migrate the 12+ existing tests (`test/think-pipeline.serial.test.ts:144,181,222`, `test/think-gateway-adapter.test.ts`, plus 9+ others that stub the interface) to `__setChatTransportForTests`. Pros: codebase consistency, one fewer test-stub pattern, easier to add provider switching for think once it routes through gateway natively. Cons: 12+ test files need migration. Blocked by: v0.36 wave landing on master (so the adapter exists to lean on while migrating tests). Plan reference: D5 + D7 in `~/.claude/plans/ok-i-spun-up-dreamy-thompson.md`.
+
+- [ ] **v0.36.x: Supabase parity test fixture for `applyForwardReferenceBootstrap`.** v0.36 fixed the underlying bug (bootstrap now uses the DDL connection from `initSchema` so probes run inside the advisory-lock scope) per codex P1 from /ship adversarial review. What remains is the TEST FIXTURE that proves it: the new pre-v18/pre-v34/pre-v60 E2E tests run against local Docker Postgres but not against Supabase-shape pooler topology (transaction pooler + statement_timeout). Real Supabase upgrades have failed multiple times on this exact connection-topology divergence (#699, #820 lineage). Fix: a test fixture that exercises the probe path against deriveDirectUrl + transaction pooler + statement_timeout. Cons: requires Supabase fixture infra OR careful mocking of the connection-selection logic in `db.ts`'s `getDDLConnection` path.
+
+
+## kinshasa-v3 follow-ups (v0.35.4.0)
+
+- [ ] **v0.36.x: Fix `supervisor-audit.ts:77` `readSupervisorEvents` to use the dual-week-aware pattern from `stub-guard-audit.ts:readRecentStubGuardEvents`.** The supervisor reader only reads the current ISO-week file, so a 24h sliding window across Monday 00:00 UTC silently loses Sunday's events (they're in last week's file). The new stub-guard reader in v0.35.4.0 fixes this for its own audit log by reading BOTH current and previous week files before timestamp-filtering — the supervisor reader should adopt the same shape. Pin with a unit test that uses a fake-clock fixture set to "Monday 00:01 UTC" with a Sunday 23:55 event in the prior file. Filed during v0.35.4.0 kinshasa-v3 codex outside-voice review.
+
+- [ ] **v0.36.x: Decommission the stub-guard at `fence-write.ts:190` once the sunset criterion holds.** The guard's purpose is defense-in-depth behind the resolver's prefix-expansion fix. Sunset rule: when `stub_guard_24h` reads <5 hits/week for 3 consecutive weeks across production brains, the prefix-expansion is doing its job and the guard can be removed. The JSDoc names v0.36 as the target — re-check this against actual operator-brain data when planning v0.36.
+
+- [ ] **v0.36.x: `PREFIX_EXPANSION_DIRS` is hardcoded to `['people', 'companies']` in `src/core/entities/resolve.ts:97`.** New entity directories (funds, advisors, deals, etc.) require a code change to opt in. Consider a config-driven list (`entities.prefix_expansion_dirs: [...]` in `gbrain.yml`) so operators can extend without forking. Filed during v0.35.4.0 plan-eng-review.
+
+- [ ] **v0.36.x: Sweep the banned private-agent-name references out of `CHANGELOG.md`.** Three pre-existing lines in `CHANGELOG.md` (around lines 2537, 2606, 3304) reference the name that `scripts/check-privacy.sh` enforces against. Pre-existing on master, not introduced by v0.35.4.0; `CHANGELOG.md` is on the script's allow-list so master CI is green, but they still violate the spirit of CLAUDE.md's privacy rule (the allow-list is a meta-documentation exception, not a license to add new references). Replace with `your OpenClaw` or `Garry's OpenClaw` per the script's own suggestion text. Trivial cleanup PR. Filed during v0.35.4.0 privacy audit.
+
+
+## embed --stale follow-ups (v0.34.4.0)
+
+- [ ] **v0.35.x: Concurrent NULL→non-NULL upsert race in `embed.ts:429-443` + `postgres-engine.ts:1231`'s `COALESCE(EXCLUDED.embedding, content_chunks.embedding)`.** Two `embed --stale` workers (or `embed --stale` racing with a sync that re-embeds the same chunk) can have the slower writer overwrite the faster one's fresher embedding. Window is small (20 workers, all from the same `listStaleChunks` snapshot) but exists. Tractable fix: a `WHERE content_chunks.embedded_at < EXCLUDED.embedded_at OR content_chunks.embedding IS NULL` predicate on the upsert. Out of scope for v0.34.4.0 because the upsert is not in the diff; pre-existing bug. Filed during v0.34.4.0 codex outside-voice review.
+
+- [ ] **v0.35.x: New stale rows inserted behind the keyset cursor.** A sync or `gbrain put_page` mid-`embed --stale` creates chunks with `embedding IS NULL` at `(page_id, chunk_index)` already passed by the cursor. Picked up on next run via the partial index; documented limitation. Possible fix: a second pass at end-of-run that does a fresh `countStaleChunks()` and re-enters the loop while count > 0 and budget allows. Filed during v0.34.4.0 codex outside-voice review.
+
+## MCP fix wave follow-ups (v0.34.1)
+
+- [ ] **v0.34.x: Source-scope `takes_*` ops (pre-existing leak surfaced during v0.34.1 adversarial review).** `takes_list`, `takes_search`, `takes_scorecard`, `takes_calibration` in `src/core/operations.ts:1248-1335` thread `ctx.takesHoldersAllowList` but never `ctx.sourceId`. An auth'd OAuth client scoped to `source_id='canon-a'` can call `takes_list --page_slug=foo` (slug in `canon-b`) and read takes attached to foreign-source pages. Pre-existing, not introduced by v0.34.1, but the wave was framed as "P0 source-isolation seal on the read path" and `takes_*` surfaces were missed. Fix: extend `TakesListOpts` in `src/core/engine.ts:186` with `sourceId?: string` + `sourceIds?: string[]`; thread `sourceScopeOpts(ctx)` at each op handler; engine `listTakes`/`searchTakes` filter via the `pages` JOIN.
+
+- [ ] **v0.34.x: Extend `sourceScopeOpts(ctx)` to the 14 read-side ops PR #861 didn't touch.** `get_page`, `get_tags`, `get_links`, `get_backlinks`, `get_timeline`, `list_files`, `get_file`, and the four `takes_*` ops (above) still use the v0.31.8-era `const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {}` pattern. NOT a leak (scalar `ctx.sourceId` IS threaded), but federated_read (#876, `ctx.auth?.allowedSources`) is silently dropped. A "WeCare L3 dept" client gets correct federated results from `search`/`query`/`list_pages`/`traverse_graph`/`find_experts` but only sees its scalar `source_id` for `get_page`/`get_tags`/etc. Fix: route all 14 sites through `sourceScopeOpts(ctx)`.
+
+- [ ] **v0.34.x: Migration v60 idempotency guard against `--force-retry` race with v64.** `gbrain apply-migrations --force-retry 58` after v64 has already run will re-install the FK with `ON DELETE SET NULL`, silently downgrading the v64 RESTRICT posture. Probability low (operator has to explicitly force-retry 58) but failure mode is invisible. Fix: v60 should probe `pg_constraint.confdeltype` before re-adding and refuse to clobber `'r'` (RESTRICT) with `'n'` (SET NULL).
+
+- [ ] **v0.34.x: `embedMultimodalOpenAICompat` batching + partial-failure handling.** `src/core/ai/gateway.ts:1180-1255` sends one HTTP request per input. Multi-input callers (10 images) get 10 sequential round-trips with no parallelism; a 401 on input #5 throws and discards inputs #1-#4's already-computed embeddings (wasted spend, no surfacing of the partial array). Voyage's existing path batches. Fix: batch via the provider's `input: [...]` array shape; on partial failure, return successful embeddings + failed-index array.
+
+- [ ] **v0.34.x: Doctor check `oauth_orphan_source_id`** — surfaces OAuth clients whose source_id was nulled by the v60 D10 silent-widen path (`GBRAIN_ACCEPT_SILENT_WIDEN=1`). Closes the observability gap from v0.34.1's D4 decision. Sibling to the `rls_event_trigger` check pattern in `src/commands/doctor.ts`.
+
+- [ ] **v0.34.x: `gbrain sources purge` FK error UX.** Post-v0.34, deleting a source is refused if any oauth_client references it (v64 ON DELETE RESTRICT). The CLI currently surfaces the raw Postgres FK violation. Fix: pre-check via `SELECT client_id, client_name FROM oauth_clients WHERE source_id = $1`, print "N OAuth clients reference this source: ... Revoke first via `gbrain auth revoke-client <id>`." Mirrors `assessDestructiveImpact` in destructive-guard.ts (v0.26.5).
+
+- [ ] **v0.34.x: `hybrid.ts:223` explicit-pick refactor.** The SearchOpts rebuild manually picks fields from HybridSearchOpts. This is the bug shape that caused the original v0.34.1 P0 leak — a new SearchOpts field is silently dropped if not manually added here. The wave added `sourceId` + `sourceIds` to the pick; future fields will keep hitting this footgun. Fix: refactor to spread + TypeScript `Pick<>` helper that narrows HybridSearchOpts → SearchOpts type-safely.
+
+
+## functional-area-resolver follow-ups (v0.32.3.0)
+
+- [ ] **v0.33.x: Dogfood `functional-area-resolver` on gbrain's own `skills/RESOLVER.md`** when it crosses ~12KB (currently 8KB). Apply the pattern to the Operational section first (largest). Filed during v0.32.3.0 CEO review.
+
+- [ ] **v0.33.x: Promote `evals/functional-area-resolver/harness.mjs` to a first-class CLI command** `gbrain routing-eval --ab-compare <variant-dir>`. Removes the one-off harness as maintenance debt; gives every pattern-skill a way to ship its eval. Replaces the placeholder `--llm` flag in `src/core/routing-eval.ts:17-20`. Filed during v0.32.3.0 CEO review.
+
+- [ ] **v0.33.x: Expand held-out corpus to >=20 fixtures.** The current n=5 saturates at 100% across most cells and can't distinguish "100%" from "95% with one nondeterministic miss." Author independently (don't see variants while authoring). Filed during v0.32.3.0 boil-the-ocean push after codex outside-voice review.
+
+- [ ] **v0.33.x: Cross-vendor model verification.** Run the harness on Gemini 2.5 Pro and GPT-4o/5 in addition to the three Anthropic models we already covered. Compression gains may not transfer across vendor families (the `(dispatcher for: ...)` clause is interpreted differently by different prompt-tuned models). Wire through the existing gbrain gateway (recipes already exist for both vendors).
+
+- [ ] **v0.33.x: Per-row description length sweep.** Anthropic's Agent Skills median is ~80 tokens of frontmatter per skill ([Anthropic engineering blog](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills)). Sweep functional-areas at {20, 40, 80, 160} tokens per dispatcher row, eval each. Novel published contribution — no public data exists. ~$5 in API spend. Filed during v0.32.3.0 web research.
+
+- [ ] **v0.33.x: Structural compression of functional-areas (`(dispatcher for: ...)` → `dispatcher: [...]` YAML form, trim verbose triggers, separate hard gates to sibling file).** Target 13KB → 9-10KB without accuracy regression. Requires another full re-baseline run (~$3 across 3 models) to confirm no regression.
+
+- [ ] **v0.33.x: Hierarchical compression (area-of-areas).** Two-level: top-level mega-areas (knowledge / ops / comms) pointing to functional-area files loaded lazily. Predicted 13KB → 4-6KB. Risks resolver-of-resolvers-style collapse on the top-level layer. Worth an A/B but its own piece of work. Cross-reference AnyTool ([arXiv:2402.04253](https://arxiv.org/abs/2402.04253)) which formalizes this hierarchy at runtime.
+
+- [ ] **v0.33.x: Embedding-based area pre-router.** RAG-MCP shape ([arXiv:2505.03275](https://arxiv.org/html/2505.03275v1)) — cheap embedding model picks the area; only that area's sub-skills get sent to the LLM. Dramatic per-call payload reduction (~80%). Significant new code surface but big production cost win. Wire through the existing gateway's voyage or openai embedding recipes.
+
+- [ ] **v0.33.x: Adversarial-intent fixtures.** Intents specifically designed to test dispatcher-vs-subskill behavior on edge cases ("I want to do something brain-related" without specifying what). Targets the prompt-design failure mode (run-1 collapse) that our current 25 fixtures don't surface. ~10-15 fixtures, authored without looking at variant content.
+
+- [ ] **v0.33.x: Run-2 vs Run-1 prompt-design ablation.** Document the difference between the naive classifier prompt (run-1, every variant 30-60% training) and the dispatcher-aware prompt (run-2+, functional-areas 88-100% training) as a reproducible result. This is the strongest empirical finding from v0.32.3.0 and deserves its own callout in SKILL.md or a sibling METHODOLOGY.md.
+
+## Embedding-provider follow-ups (v0.32.0)
+
+- [ ] **v0.32.x: Vertex AI ADC embedding provider (#729 originally).** lucha0404
+  prototyped this with single-source-JSON via `GOOGLE_APPLICATION_CREDENTIALS`.
+  Real ADC is the full chain (metadata server, gcloud creds, service-account
+  JSON). The recipe needs to either use `@ai-sdk/google-vertex` (one new
+  dep, native fit) or implement the chain via Bun.crypto.subtle for RS256
+  JWT signing (zero dep, ~150 lines + RS256 spike). Original Q3 chose
+  zero-dep; revisit the dep budget when scoping.
+
+- [ ] **v0.32.x: GitHub Copilot embeddings (#691 originally).** tonyxu-io
+  proposed adding Copilot's Metis embedding endpoint as a sidecar recipe.
+  Codex review caught that this is not a recipe-add — it's an outbound OAuth
+  product surface (login flow, browser/device flow, refresh, UX). Needs its
+  own design pass: where does the token live? `~/.gbrain/oauth/copilot.json`
+  mode 0600 was the v0.32 plan; revisit + write `gbrain auth login copilot`.
+
+- [ ] **v0.32.x: OpenAI Codex OAuth chat provider (#698 originally).** perlantir
+  proposed a chat-only provider that reuses ChatGPT subscription auth instead
+  of API keys. Same OAuth-product-surface argument as #691. Same shared
+  infra: `~/.gbrain/oauth/<provider>.json` + `gbrain auth login <provider>`.
+  Build alongside #691 in one OAuth-subsystem wave.
+
+- [x] **v0.32.7: CJK PGLite keyword fallback (#765 extracted).** Landed
+  in the CJK fix wave. `hasCJK` + `escapeLikePattern` live in
+  `src/core/cjk.ts`; the CJK branch in `pglite-engine.ts:searchKeyword`
+  uses ILIKE + bigram-frequency-count ranking. Postgres path deferred
+  (see new follow-up below).
+
+- [ ] **v0.33+: Postgres CJK FTS via pgroonga / zhparser / ngram trigrams.**
+  v0.32.7 only fixed CJK keyword search on PGLite. Multi-tenant Postgres
+  deployments still hit empty results for CJK queries because
+  `to_tsvector('english', ...)` can't segment Chinese / Japanese / Korean.
+  Installing pgroonga or zhparser is an operator decision (extension
+  install permission, multi-tenant rollout), so gbrain can't default it.
+  Plan: doctor advisory pointing at the relevant extension docs;
+  searchKeyword / searchKeywordChunks fall through to PGLite-style ILIKE
+  when the extension isn't installed. Defer until users complain.
+
+- [ ] **v0.33+: widen CJK ranges to Unicode property escapes.** v0.32.7
+  uses BMP-only ranges (Han `4e00-9fff`, Hiragana `3040-309f`, Katakana
+  `30a0-30ff`, Hangul Syllables `ac00-d7af`). Misses Han Extensions A/B/C,
+  halfwidth katakana, compatibility ideographs, compatibility Jamo, and
+  iteration marks `々` / `〇`. Switch to `\p{Script=Han}` / `\p{Script=Hiragana}` /
+  `\p{Script=Katakana}` / `\p{Script=Hangul}` (TS supports unicode property
+  escapes with the `u` flag). Astral-plane support also requires
+  `Array.from(str)`-style codepoint iteration in the chunker's char-slice
+  fallback (current `String.prototype.slice` splits surrogate pairs).
+  Defer until first user hits the gap.
+
+- [ ] **v0.33+: `git diff --name-status -z` + NUL framing.** v0.32.7
+  added `core.quotepath=false` which handles non-ASCII paths but doesn't
+  cover tabs, newlines, or quotes in filenames. The `-z` flag with
+  NUL-byte path framing is the robust fix for the whole encoding class.
+  Affects `src/commands/sync.ts:buildDetachedWorkingTreeManifest` +
+  `buildSyncManifest`. Defer until someone files a tab-in-filename issue.
+
+- [ ] **v0.33+: CJK-aware overlap context in chunker.** v0.32.7
+  `extractTrailingContext` is still whitespace-token-based, so CJK chunks
+  under the maxChars cap have no useful overlap with the previous chunk.
+  Search continuity across chunk boundaries degrades for pure CJK content.
+  The maxChars sliding-window in v0.32.7 IS overlap-protected for the
+  hard-cap path, so this only affects normal-size chunks. Plan: switch
+  `extractTrailingContext` to char-count when `countCJKAwareWords` would
+  have triggered the CJK branch.
+
+- [ ] **v0.33+: other non-Latin scripts (Thai, Arabic, Cyrillic,
+  Devanagari).** Same five-layer fix pattern as CJK applies: slugify
+  needs the script range, chunker needs density-threshold counting,
+  PGLite keyword fallback would benefit from script-aware tokenization.
+  Defer until first issue.
+
+- [ ] **v0.33+: embedding pricing refresh mechanism.** v0.32.7 added
+  `src/core/embedding-pricing.ts` as a static lookup table sibling to
+  `anthropic-pricing.ts`. Both drift when providers change rates. Plan:
+  a `gbrain prices refresh` skill that diffs against a published canonical
+  source (OpenAI pricing page, Anthropic pricing page) and proposes an
+  update PR. Or a release-cadence audit checklist item. Today: when the
+  estimate looks off, hand-edit the constants.
+
+- [ ] **v0.32.x: interactive provider chooser in `gbrain init`.** The full
+  wizard piece of the v0.32 discoverability lane was deferred. Today
+  `gbrain init` (no flags, TTY) silently uses OpenAI default. Plan: hook
+  into `init.ts:resolveAIOptions`, when no `--model` AND TTY AND not
+  `--non-interactive`, call `runExplain([])` (non-JSON path) from
+  `providers.ts:233-350` to print the provider matrix, then prompt with
+  readline (mirror `supabaseWizard()` at `init.ts:108`). Suggest
+  recommended based on env detection. Refuse `user_provided_models`
+  shorthand (already done in v0.32.0). Tests:
+  `test/init-provider-wizard.test.ts` (TTY → prompt fires; non-TTY →
+  falls through; invalid choice → re-prompts).
+
+- [ ] **v0.32.x: real-credentials per-recipe smoke-test CI matrix.** Codex
+  finding #6 noted that unit tests via `__setEmbedTransportForTests` prove
+  routing but not contract correctness with the actual provider HTTP
+  shape. Provider APIs change quietly (Voyage encoding-format, MiniMax
+  type field, Azure header). One real-call per recipe per month catches
+  drift before users do; <$1/run estimated. Requires API-key budget
+  approval + repo secrets.
+
+- [ ] **v0.32.x: MiniMax asymmetric retrieval support.** v0.32 ships
+  `embo-01` with `type: 'db'` for both indexing and queries (symmetric
+  retrieval). True asymmetric needs a query/document signal threaded
+  through the embed seam. Worth it for MiniMax users who care about
+  retrieval quality on Chinese content; defer until users complain.
+
+- [ ] **v0.32.x: un-hardcode the multimodal dispatch at gateway.ts:583.**
+  Currently `recipe.id !== 'voyage'` is hardcoded — harmless until a
+  second multimodal recipe lands. Make it table-driven via
+  `Recipe.touchpoints.embedding.supports_multimodal` +
+  `multimodal_models`. ~10 lines + a contract test.
+
+## v0.31.2 follow-ups
+
+### Investigate: `gbrain query <common-keyword>` infinite loop
+**Priority:** P1
+**Filed:** 2026-05-08 from v0.31.2 bug report (separate from the sync hang).
+
+**Evidence:** Two `bun /Users/garrytan/.bun/bin/gbrain query the` processes
+(PIDs 39429, 46624) on the user's Mac were pegged at 99% CPU for 7
+straight days before being killed manually. Each used 6+ GB resident
+memory. Originated from the `algiers-v3` worktree. Not walker-related
+(query path doesn't traverse files), so the v0.31.2 fix doesn't address
+it.
+
+**Likely candidates:**
+- Query-expansion regex catastrophic backtracking on common single words
+  (`src/core/search/expansion.ts` calls Haiku then post-processes with
+  regex; a one-token query plus an unhelpful expansion could feed a
+  pathological input back into the search pipeline)
+- Hybrid-search RRF reciprocal-rank-fusion loop iterating over a result
+  set that never shrinks (`src/core/search/hybrid.ts`)
+- `postgres.js` cursor that never closes when the result set is large
+  (the 6GB RES on `query` smells like accumulated rows in JS memory, not
+  WASM allocation)
+
+**To reproduce:** create a brain with at least a few thousand pages, run
+`gbrain query the` and watch CPU + RSS. If it pegs and grows, capture
+`process.report.getReport()` and a stack trace via `kill -SIGUSR2 <pid>`
+before killing.
+
+**Out of scope for v0.31.2** because the user's primary symptom (sync
+hang) was the higher-evidence bug. Pick this up as v0.31.3 once the
+sync fix is verified working in production.
+
+### v0.31.3: PGLite + Postgres E2E for amarillo-shape regression
+**Priority:** P2
+**Filed:** 2026-05-08 from v0.31.2 plan (deferred).
+
+**What:** Plan called for two regression tests pinning the user's exact
+repro topology: `test/sync-walker-amarillo-shape.test.ts` (PGLite,
+fast-loop) and `test/e2e/sync-amarillo-shape.test.ts` (real-Postgres,
+skip-on-no-DB). Unit-level walker + chunker tests landed in v0.31.2
+(`test/sync-walker-symlink.test.ts` + `test/chunker-timeout.test.ts`),
+but the engine-integrated regression for the user's exact 1500-file
+self-symlink topology is still pending. Add when the next sync-related
+PR is in flight.
+
+## Thin-client mode follow-ups (v0.31.1, Issue #734)
+
+- [ ] **v0.31.x: routed-call timing telemetry.** `GBRAIN_TIMING=1` prints
+  `token_mint=Xms http=Yms server=Zms total=Wms` per routed MCP call.
+  Audit log at `~/.gbrain/audit/routed-calls-YYYY-Www.jsonl`. Cherry-pick
+  C from #734 plan; deferred from v0.31.1 to keep scope tight.
+
+- [ ] **v0.31.2: job-submission routing for `gbrain dream` etc.** Route
+  long-running ops (`dream`, `embed --stale`, `extract`) via `submit_job`
+  + poll, mirroring the existing `gbrain remote ping` autopilot-cycle
+  pattern. Cherry-pick D from #734 plan. Adds a thin-client async-job
+  render layer (progress events + spinner).
+
+- [ ] **Per-subcommand thin-client routing for `takes` and `sources`.**
+  CDX-2 audit identified the READ subcommands (`takes_list`, `takes_search`,
+  `sources_list`, `sources_status`) as routable; mutate subcommands edit
+  local files. v0.31.1 refuses both at the top level with hints. Split
+  is a v0.31.x release.
+
+- [ ] **Privacy decision: lift `localOnly: true` on `get_recent_transcripts`?**
+  Raw chat exports leaving the host is a real tradeoff. Needs explicit
+  per-token scope (`scope: 'transcripts'`) and consent UX. Out of v0.31.1.
+
+- [ ] **Trust-boundary policy review for remote-caller gates.** Server
+  intentionally disables `think.--save`/`--take` for remote callers
+  (operations.ts:1103-1135) and skips `put_page` auto-link/auto-timeline
+  for remote callers without `trustedWorkspace` (operations.ts:434-451).
+  Subagent-isolation reasons; blocks full thin-client parity. Policy
+  decision, not a routing fix.
+
+- [ ] **v0.32.0: flip `gbrain auth register-client` default scope from
+  `read` to `read,write,admin`.** Breaking for existing read-only scrapers;
+  ship deprecation warning in v0.31.x. The v0.31.1 `oauth_client_scopes_probe`
+  doctor check surfaces the gap with pinpoint remediation in the meantime.
+
+- [ ] **v0.31.x: cross-process OAuth token cache at
+  `~/.gbrain/oauth-token-cache.json`.** Cuts ~200ms cold-start cost for
+  shell-loop usage on thin-client installs. Today the in-memory cache is
+  per-process; every `gbrain` invocation pays a fresh token mint.
+
+- [ ] **v0.31.x: parity test (`test/thin-client-parity.test.ts`).** Plan
+  called for ~400 LOC byte-equal stdout assertions for 12+ ops via an
+  in-process MCP server pointed at the same PGLite as the local-engine
+  path. Harder than expected because it needs MCP server setup that the
+  current test infrastructure doesn't expose. v0.31.1 ships without it;
+  ENG-2's JSON-shape normalization + per-command test coverage is the
+  interim guard.
+
 ## LongMemEval benchmark follow-ups (v0.28.12)
 
 ### Closed: full 500-question 4-adapter run published
@@ -1611,3 +1881,166 @@ doesn't gate on scopes. Adding per-tool scope enforcement would let
 **Effort estimate:** M (human: ~1 day / CC: ~30 min for the schema-aware gate).
 **Priority:** P3.
 **Depends on:** Nothing.
+
+---
+
+### `@garrytan/gbrain` scoped-name npm publishing
+**What:** Publish gbrain to npm under the scoped name `@garrytan/gbrain`
+instead of the bare `gbrain` name. Provides structural defense against the
+unrelated `gbrain@1.x` squatter package on npm.
+
+**Why:** `classifyBunInstall()` at `src/commands/upgrade.ts:395` does a
+best-effort fingerprint check on `repository.url` + `src/cli.ts` marker, with
+the comment explicitly accepting that signals are spoofable by a determined
+squatter. Scoped publishing is the structural answer that closes the loop:
+`bun add -g @garrytan/gbrain` cannot collide with any non-`@garrytan` package.
+
+**Pros:** closes the squatter vector; consistent with how high-trust npm
+packages are published; allows removing `classifyBunInstall`'s spoofable
+signals later.
+
+**Cons:** multi-week effort; needs reverse-compatible upgrade path for users
+on the bare-name install (`bun add -g gbrain` → recovery message pointing
+at the new scoped name); npm publishing flow changes; CI publish step needs
+scope-aware tagging.
+
+**Context:** tracked at `src/commands/upgrade.ts:392-394` since v0.29; reaffirmed
+during v0.31.8 codex outside-voice review. Issue #658 has the surface-level
+history.
+
+**Effort estimate:** L (human: ~1 week / CC: ~half a day for the publishing
+flow + recovery messaging).
+**Priority:** P2.
+**Depends on:** decision on whether to deprecate the bare name or dual-publish
+during a transition window.
+
+
+## v0.32.6 follow-ups from PR #880 (gbrain-context post-Codex recalibration)
+
+These items were demoted from the PR #880 scope because they depend on
+infrastructure (clock-injection seam, public-API design) that's not in this PR.
+Filed for a future fix wave.
+
+### Clock-injection seam in `src/core/context-engine.ts`
+
+**Status:** Prerequisite for re-promoting perf-budget + snapshot tests.
+
+**What:** Inject a `now: () => Date` into the engine factory so all `new Date()`
+call sites (lines 207, 371, and Date.now() at 354) read through one source.
+~10 lines.
+
+**Why:** The plan proposed two test infrastructure items (perf budget at p99 <
+50ms, full-block snapshot for format-drift) that both depend on a stable clock.
+Without injection, snapshot tests flake on the time field and perf tests
+double-call `Date` non-deterministically.
+
+**Effort:** S (CC: ~30 min).
+
+### Perf-budget assertion (T-NEW2)
+
+**Depends on:** clock-injection seam above.
+
+**What:** New test asserting `assemble()` p99 stays under 50ms over 50 warm
+runs. The headline claim of the engine is "<5ms per turn"; right now nothing
+ratchets that in.
+
+**Codex F2 note for the implementation:** Use `Math.floor(50 × 0.95)` (index
+47) for p95 or the actual sorted-percentile method, NOT `Math.floor(50 ×
+0.99)` which returns index 49 = the MAX sample and fails on one scheduler
+pause.
+
+### Full-block snapshot test (T-NEW3)
+
+**Depends on:** clock-injection seam above.
+
+**What:** `expect(result.systemPromptAddition).toMatchSnapshot()` with a
+deterministic clock + fixture workspace. Pins the wire format so a reorder of
+fields or rename of `**Location:**` to `**Where:**` is caught.
+
+### `exports` map entry for `./context-engine` (C-NEW2)
+
+**Codex F8 note:** Adding `"./context-engine": "./src/core/context-engine.ts"`
+creates premature public-API obligations around types, lazy SDK loading, `.ts`
+imports, and engine-version semantics. Plugin loading via
+`openclaw.extensions` doesn't need it. Revisit when external consumers
+(gbrain-evals harness, etc) actually need direct engine import.
+
+### `.ts`-extension import resolution coupling (A3)
+
+**What:** `src/openclaw-context-engine.ts:25` imports
+`./core/context-engine.ts` with explicit `.ts` extension. Bun handles natively;
+standard `tsc` emit + Node ESM require `.js`. If OpenClaw ever transpiles
+before loading, this breaks.
+
+**Defer until:** OpenClaw integration fails on this path.
+
+### Typed `openclaw/plugin-sdk` ambient module shim (A5)
+
+**What:** Replace `@ts-ignore` at the lazy SDK import in
+`src/core/context-engine.ts` with `types/openclaw-shim.d.ts` declaring
+ambient module signatures. ~30 lines. Lets typecheck catch typos and
+signature changes in the SDK that `@ts-ignore` silences.
+
+### `loadJsonFile` parse-error warning (C-prior C5)
+
+**What:** Add `console.warn` on JSON parse failure so the heartbeat cron's
+mistakes surface in stderr instead of silently degrading to defaults.
+
+### Fractional-hour timezone offset (C-prior C3)
+
+**What:** `getTimeInTz` rounds offsets at lines 217-224 (integer
+`localH - utcH` math). India (UTC+5:30), Nepal (UTC+5:45), Newfoundland
+(UTC-3:30), Chatham Islands (UTC+12:45) all round to the wrong whole hour
+in the emitted ISO. `dayOfWeek` and `hour` are correct via `Intl`; only the
+embedded offset string is wrong. Fix: use `Intl.DateTimeFormat` with
+`timeZoneName: 'longOffset'`.
+
+### DST-boundary test (deferred)
+
+**What:** Lock in `getTimeInTz` behavior across spring-forward / fall-back
+transitions. Edge case but real if Garry travels during a transition window.
+
+### Multibyte sanitizer test (deferred)
+
+**What:** `sanitizeForPrompt(s, 100)` clamps at 100 chars via `.slice(0, 100)`
+which operates on UTF-16 code units. A surrogate pair could be split mid-pair.
+Very low likelihood (real attendees are <50 chars) but the test surface is
+empty.
+
+### Dynamic airport-tz lookup (Codex parenthetical)
+
+**What:** `AIRPORT_TZ` as a 30-entry static map is the wrong long-term
+primitive. Either pull from a small tz library (e.g., `@vvo/tzdb`) keyed on
+IATA code, or require the heartbeat producer to supply
+`flights.destinationTimezone` in the JSON shape directly.
+
+### Workspace contract documentation (DOC1)
+
+**What:** New `docs/openclaw-context-engine.md` explaining which workspace
+files the engine reads, their schemas, who's expected to write them, and the
+atomic-rename concurrency contract. The interface is implicit in the test
+fixtures today.
+
+### CLAUDE.md "Key files" annotations (DOC2)
+
+**What:** Add one-line entries under CLAUDE.md's "Key files" section for
+`src/core/context-engine.ts` and `src/openclaw-context-engine.ts`. Per
+project convention for new architectural files.
+
+### Repo-wide privacy scrub
+
+**Status:** Out of scope for PR #880 (which scrubbed `test/context-engine.test.ts`
+and added the new CI guard). The guard surfaced 4 additional pre-existing
+references in other test files plus ~24 references in non-test files
+(CHANGELOG entries, docs, skill READMEs). Each entry needs case-by-case
+judgment.
+
+**What:** Dedicated pass across:
+- Non-allowlisted pre-existing test-file matches (extract.test.ts,
+  serve-stdio-lifecycle.test.ts — currently allowlisted as pre-existing
+  but warrant a real scrub).
+- 24 doc/skill/CHANGELOG matches (most are historical and may not be
+  retroactively rewriteable, but should be triaged).
+
+**Depends on:** human judgment on which historical CHANGELOG entries to
+leave intact vs scrub.

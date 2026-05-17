@@ -14,17 +14,26 @@ import {
 } from '../src/core/preferences.ts';
 
 let origHome: string | undefined;
+let origGbrainHome: string | undefined;
 let tmp: string;
 
 beforeEach(() => {
   origHome = process.env.HOME;
+  origGbrainHome = process.env.GBRAIN_HOME;
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-prefs-test-'));
+  // preferences.ts's gbrainDir() returns `$HOME/.gbrain` when GBRAIN_HOME
+  // is unset. Test fixtures write to `$tmp/.gbrain/...`, so set HOME only
+  // and clear GBRAIN_HOME — setting GBRAIN_HOME would route prefs to $tmp
+  // directly (no .gbrain suffix), which doesn't match the fixture layout.
   process.env.HOME = tmp;
+  delete process.env.GBRAIN_HOME;
 });
 
 afterEach(() => {
   if (origHome === undefined) delete process.env.HOME;
   else process.env.HOME = origHome;
+  if (origGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+  else process.env.GBRAIN_HOME = origGbrainHome;
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 

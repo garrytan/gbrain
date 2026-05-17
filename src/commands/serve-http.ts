@@ -27,11 +27,14 @@ import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST } from '../core/scope.ts';
-import { summarizeMcpParams } from '../mcp/dispatch.ts';
+import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
+import { paramDefToSchema } from '../mcp/tool-defs.ts';
+import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
+import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
 
 /**
  * /health endpoint timeout. 3s rather than 5s: Fly.io's default
@@ -160,10 +163,31 @@ interface ServeHttpOptions {
    * at startup so the privacy posture change is visible.
    */
   logFullParams?: boolean;
+  /**
+   * Network interface(s) to bind. Defaults to `127.0.0.1` (loopback only) in
+   * v0.34.1+ — gbrain's primary use case is a personal-knowledge brain on a
+   * laptop, and the pre-v0.34 default of `0.0.0.0` made it one accidental
+   * `--http` invocation away from publishing the brain to a LAN.
+   *
+   * Server operators who DO want to accept remote connections pass
+   * `--bind 0.0.0.0` (or a specific interface IP). When `--public-url` is
+   * set but `--bind` is unset, a stderr WARN fires at startup recommending
+   * the explicit flag — defaulting to loopback while declaring a public URL
+   * is almost always a misconfiguration.
+   */
+  bind?: string;
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
+  // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
+  // gbrain's primary use case is a personal-knowledge brain on a laptop;
+  // the pre-v0.34 default exposed brains on every interface. Server
+  // operators who need remote access pass `--bind 0.0.0.0` (or a specific
+  // interface). Declaring `--public-url` without `--bind` is almost always
+  // a misconfiguration; we WARN to stderr at startup in that case rather
+  // than silently binding loopback only.
+  const bind = options.bind ?? '127.0.0.1';
   const config = loadConfig() || { engine: 'pglite' as const };
 
   if (logFullParams) {
@@ -172,8 +196,18 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     );
   }
 
-  // Get raw SQL connection for OAuth provider
-  const sql = db.getConnection() as SqlQuery;
+  if (publicUrl && options.bind === undefined) {
+    console.error(
+      '[serve-http] WARNING: --public-url is set but --bind is not. Default bind changed to 127.0.0.1 in v0.34.1; remote clients reaching the public URL will be refused. Pass --bind 0.0.0.0 to accept all interfaces.',
+    );
+  }
+
+  // Engine-aware SQL adapter. Routes through engine.executeRaw on both
+  // Postgres and PGLite — the OAuth/admin/auth surface no longer requires
+  // a postgres.js singleton, so `gbrain serve --http` works against PGLite
+  // brains too. The narrow SqlQuery contract is scalar-binds-only; JSONB
+  // writes use executeRawJsonb (see mcp_request_log INSERT sites below).
+  const sql = sqlQueryForEngine(engine);
 
   // Initialize OAuth provider. F12 cleanup: DCR-disable now flips a
   // constructor option instead of monkey-patching `_clientsStore` after
@@ -595,27 +629,44 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const operation = req.query.operation as string;
       const status = req.query.status as string;
 
-      // Dynamic filtering via postgres.js tagged-template fragments.
-      // Each filter expands to either `AND col = $N` (parameterized) or
-      // an empty fragment. `WHERE 1=1` lets us always have a WHERE clause
-      // and unconditionally append AND-prefixed fragments — no string
-      // interpolation, no manual escaping, no sql.unsafe.
-      const agentFilter = agent && agent !== 'all' ? sql`AND token_name = ${agent}` : sql``;
-      const opFilter = operation && operation !== 'all' ? sql`AND operation = ${operation}` : sql``;
-      const statusFilter = status && status !== 'all' ? sql`AND status = ${status}` : sql``;
+      // Dynamic filtering: SqlQuery is deliberately scalar-only and does not
+      // support fragment composition (the prior `sql\`AND ... = ${v}\`` shape).
+      // Build the WHERE clause with positional placeholders + a params array.
+      // `WHERE 1=1` lets us always have a WHERE clause and conditionally
+      // append `AND col = $N` fragments — still parameterized, still escaped
+      // by the driver, no sql.unsafe.
+      const filters: string[] = [];
+      const params: (string | number)[] = [];
+      if (agent && agent !== 'all') {
+        filters.push(`AND token_name = $${params.length + 1}`);
+        params.push(agent);
+      }
+      if (operation && operation !== 'all') {
+        filters.push(`AND operation = $${params.length + 1}`);
+        params.push(operation);
+      }
+      if (status && status !== 'all') {
+        filters.push(`AND status = $${params.length + 1}`);
+        params.push(status);
+      }
+      const filterSql = filters.join(' ');
+      const limitParam = `$${params.length + 1}`;
+      const offsetParam = `$${params.length + 2}`;
 
-      const rows = await sql`
-        SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
-               operation, latency_ms, status, params, error_message, created_at
-        FROM mcp_request_log
-        WHERE 1=1 ${agentFilter} ${opFilter} ${statusFilter}
-        ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}
-      `;
-      const [countResult] = await sql`
-        SELECT count(*)::int as total FROM mcp_request_log
-        WHERE 1=1 ${agentFilter} ${opFilter} ${statusFilter}
-      `;
-      res.json({ rows, total: (countResult as any).total, page, pages: Math.ceil((countResult as any).total / limit) });
+      const rows = await engine.executeRaw(
+        `SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
+                operation, latency_ms, status, params, error_message, created_at
+         FROM mcp_request_log
+         WHERE 1=1 ${filterSql}
+         ORDER BY created_at DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
+        [...params, limit, offset],
+      );
+      const [countResult] = await engine.executeRaw<{ total: number }>(
+        `SELECT count(*)::int as total FROM mcp_request_log
+         WHERE 1=1 ${filterSql}`,
+        params,
+      );
+      res.json({ rows, total: countResult.total, page, pages: Math.ceil(countResult.total / limit) });
     } catch {
       res.status(503).json({ error: 'service_unavailable' });
     }
@@ -767,8 +818,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // asserting >= 2 rows after tools/list + tools/call was unreachable.
       const latency = Date.now() - startTime;
       try {
-        await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-                  VALUES (${authInfo.clientId}, ${agentName}, ${'tools/list'}, ${latency}, ${'success'}, ${null})`;
+        await executeRawJsonb(
+          engine,
+          `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+          [authInfo.clientId, agentName, 'tools/list', latency, 'success'],
+          [null],
+        );
       } catch { /* best effort */ }
       broadcastEvent({
         agent: agentName,
@@ -785,12 +841,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           inputSchema: {
             type: 'object' as const,
             properties: Object.fromEntries(
-              Object.entries(op.params).map(([k, v]) => [k, {
-                type: v.type,
-                description: v.description,
-                ...(v.enum ? { enum: v.enum } : {}),
-                ...(v.default !== undefined ? { default: v.default } : {}),
-              }]),
+              Object.entries(op.params).map(([k, v]) => [k, paramDefToSchema(v)]),
             ),
             required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k),
           },
@@ -807,8 +858,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // valid-op success/error.
         const latency = Date.now() - startTime;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${null}, ${`unknown_operation: ${name}`})`;
+          await executeRawJsonb(
+            engine,
+            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+            [authInfo.clientId, agentName, name, latency, 'error', `unknown_operation: ${name}`],
+            [null],
+          );
         } catch { /* best effort */ }
         broadcastEvent({
           agent: agentName,
@@ -834,8 +890,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // persistence regression test reliable across both rejection paths.
         const latency = Date.now() - startTime;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${null}, ${`insufficient_scope: requires '${requiredScope}'`})`;
+          await executeRawJsonb(
+            engine,
+            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+            [authInfo.clientId, agentName, name, latency, 'error', `insufficient_scope: requires '${requiredScope}'`],
+            [null],
+          );
         } catch { /* best effort */ }
         broadcastEvent({
           agent: agentName,
@@ -859,79 +920,80 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         };
       }
 
-      const ctx: OperationContext = {
-        engine,
-        config,
-        logger: {
-          info: (msg: string) => console.error(`[INFO] ${msg}`),
-          warn: (msg: string) => console.error(`[WARN] ${msg}`),
-          error: (msg: string) => console.error(`[ERROR] ${msg}`),
-        },
-        dryRun: !!(params?.dry_run),
-        // F7: HTTP MCP is the untrusted/agent-facing transport. Stdio MCP at
-        // src/mcp/dispatch.ts:61 sets this; the inlined HTTP context-builder
-        // forgot it for several releases, which let HTTP MCP callers with a
-        // read+write token submit `shell` jobs and execute arbitrary commands
-        // on the host (RCE). The fail-closed contract in operations.ts is the
-        // belt; this is the suspenders.
-        remote: true,
-        auth: authInfo,
-      };
-
       // F8: redact request payload by default (declared keys only via the
       // op's `params` allow-list; values + attacker-controlled key names
       // never written to mcp_request_log or the SSE feed). --log-full-params
       // bypasses this for operators debugging on their own laptop, with the
       // startup warning printed earlier.
+      //
+      // D1 (v0.31 wave): mcp_request_log.params is JSONB. Pre-v0.31 wrote
+      // a JSON-string into that JSONB column via the postgres.js template
+      // tag's loose typing — readable but semantically wrong (params->>'op'
+      // would return the encoded string, not the value). Post-v0.31 we
+      // pass the OBJECT through executeRawJsonb with an explicit ::jsonb
+      // cast, so reads return real objects and `params->>'op'` returns
+      // 'tools/list'. Pre-existing string-shaped rows are normalized by
+      // migration v41 in src/core/migrate.ts.
       const safeParamsSummary = summarizeMcpParams(name, params);
-      const logParams = logFullParams
-        ? (params ? JSON.stringify(params) : null)
-        : (safeParamsSummary ? JSON.stringify(safeParamsSummary) : null);
+      const logParamsObj: unknown = logFullParams
+        ? (params || null)
+        : (safeParamsSummary || null);
       const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
 
+      // v0.31 (D12 / eE1): refactor the inlined op.handler call to go through
+      // src/mcp/dispatch.ts so HTTP MCP shares the same dispatch path as
+      // stdio MCP. The dispatcher does param validation, OperationContext
+      // build, error envelope unification, and (new) `_meta.brain_hot_memory`
+      // injection via the metaHook. HTTP-specific concerns (mcp_request_log
+      // persistence + SSE broadcast) stay here; the dispatcher returns the
+      // ToolResult and we read isError + _meta to pick the right branch.
+      const tokenAllowList = (authInfo as AuthInfo & { takesHoldersAllowList?: string[] }).takesHoldersAllowList
+        ?? ['world'];
+      // v0.34.1 (#861, D13): AuthInfo.sourceId is now a real typed field
+      // populated from oauth_clients.source_id (migration v60 backfilled
+      // NULL → 'default'). Pre-fix this site cast through AuthInfo and
+      // fell back to GBRAIN_SOURCE env / 'default' — the silent-fallback
+      // path codex flagged in plan review. Post-v60, every OAuth client
+      // has source_id set; legacy bearer tokens default to 'default' in
+      // verifyAccessToken. The env-fallback is gone.
+      const tokenSourceId = authInfo.sourceId ?? 'default';
+
+      let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {
-        const result = await op.handler(ctx, (params || {}) as Record<string, unknown>);
-        const latency = Date.now() - startTime;
-
-        try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'success'}, ${logParams})`;
-        } catch { /* best effort */ }
-
-        broadcastEvent({
-          agent: agentName,
-          operation: name,
-          params: broadcastParams,
-          scopes: authInfo.scopes.join(','),
-          latency_ms: latency,
-          status: 'success',
-          timestamp: new Date().toISOString(),
+        toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
+          remote: true,
+          takesHoldersAllowList: tokenAllowList,
+          sourceId: tokenSourceId,
+          metaHook: getBrainHotMemoryMeta,
+          // v0.31 follow-up fix: thread auth so the whoami op (and any
+          // future scope-aware handlers) can introspect the caller. The
+          // original D12/eE1 refactor moved dispatch into dispatchToolCall
+          // but forgot to pass authInfo; whoami fell through to the
+          // unknown_transport throw because ctx.auth was undefined.
+          auth: authInfo,
+          logger: {
+            info: (msg: string) => console.error(`[INFO] ${msg}`),
+            warn: (msg: string) => console.error(`[WARN] ${msg}`),
+            error: (msg: string) => console.error(`[ERROR] ${msg}`),
+          },
         });
-
-        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       } catch (e) {
+        // dispatchToolCall absorbs OperationError + Error and returns
+        // isError:true; only an unexpected throw lands here. Treat as the
+        // F15 unified envelope. v0.31 wave (D1): mcp_request_log.params is
+        // JSONB — write the object via executeRawJsonb so reads return a
+        // real object, not a JSON-encoded string.
         const latency = Date.now() - startTime;
-        // F15: unify error envelope. Both OperationError and unexpected
-        // exceptions go through src/core/errors.ts so clients see a single
-        // shape ({class, code, message, hint}). Pre-fix, OperationError
-        // serialized via e.toJSON() and other exceptions used a hand-rolled
-        // {error, message} envelope — a client couldn't pattern-match
-        // reliably across the two.
-        const errorPayload = e instanceof OperationError
-          ? buildError({
-              class: 'OperationError',
-              code: e.code,
-              message: e.message,
-              hint: e.suggestion,
-              docs_url: e.docs,
-            })
-          : serializeError(e);
-        const errMsg = errorPayload.message;
+        const errorPayload = serializeError(e);
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errMsg})`;
+          await executeRawJsonb(
+            engine,
+            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+            [authInfo.clientId, agentName, name, latency, 'error', errorPayload.message],
+            [logParamsObj],
+          );
         } catch { /* best effort */ }
-
         broadcastEvent({
           agent: agentName,
           operation: name,
@@ -942,9 +1004,60 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           error: errorPayload,
           timestamp: new Date().toISOString(),
         });
-
         return { content: [{ type: 'text', text: JSON.stringify({ error: errorPayload }) }], isError: true };
       }
+
+      const latency = Date.now() - startTime;
+      if (toolResult.isError) {
+        // dispatchToolCall serializes the error into the content text;
+        // for the audit log we re-extract a message string for the
+        // mcp_request_log error_message column. Best-effort parse.
+        let errMsg = 'unknown_error';
+        try {
+          const parsed = JSON.parse(toolResult.content[0]?.text ?? '{}');
+          errMsg = parsed.error?.message ?? parsed.message ?? errMsg;
+        } catch { /* ignore */ }
+        try {
+          await executeRawJsonb(
+            engine,
+            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+            [authInfo.clientId, agentName, name, latency, 'error', errMsg],
+            [logParamsObj],
+          );
+        } catch { /* best effort */ }
+        broadcastEvent({
+          agent: agentName,
+          operation: name,
+          params: broadcastParams,
+          scopes: authInfo.scopes.join(','),
+          latency_ms: latency,
+          status: 'error',
+          error: { code: 'op_error', message: errMsg },
+          timestamp: new Date().toISOString(),
+        });
+        return toolResult;
+      }
+
+      try {
+        await executeRawJsonb(
+          engine,
+          `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+          [authInfo.clientId, agentName, name, latency, 'success'],
+          [logParamsObj],
+        );
+      } catch { /* best effort */ }
+      broadcastEvent({
+        agent: agentName,
+        operation: name,
+        params: broadcastParams,
+        scopes: authInfo.scopes.join(','),
+        latency_ms: latency,
+        status: 'success',
+        timestamp: new Date().toISOString(),
+      });
+      return toolResult;
     });
 
     // F14: wrap transport setup + handleRequest in try/catch. Without this,
@@ -973,12 +1086,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
 
-  app.listen(port, () => {
+  app.listen(port, bind, () => {
     console.error(`
 ╔══════════════════════════════════════════════════════╗
 ║  GBrain MCP Server v${VERSION.padEnd(37)}║
 ╠══════════════════════════════════════════════════════╣
 ║  Port:      ${String(port).padEnd(40)}║
+║  Bind:      ${bind.padEnd(40)}║
 ║  Engine:    ${(config.engine || 'pglite').padEnd(40)}║
 ║  Issuer:    ${issuerUrl.origin.padEnd(40)}║
 ║  Clients:   ${String((clientCount[0] as any).count).padEnd(40)}║

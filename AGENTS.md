@@ -10,7 +10,15 @@ start here.
 2. Install: `bun install`
 3. Init the brain: `gbrain init` (defaults to PGLite, zero-config). For 1000+ files or
    multi-machine sync, init suggests Postgres + pgvector via Supabase.
-4. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full 9-step flow
+4. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
+   default but printed a 9-cell cost matrix (mode × downstream model)
+   preceded by `[AGENT]` markers. You MUST relay the matrix to the operator
+   and confirm their choice before continuing. Cost spread between corners
+   is 25x — silent acceptance is the wrong default. See
+   [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) Step 3.5 for the
+   exact ask-the-user protocol. Same banner fires on `gbrain post-upgrade`
+   for existing users (search modes were added in v0.32.3).
+5. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full 9-step flow
    (API keys, identity, cron, verification).
 
 ## Read this order

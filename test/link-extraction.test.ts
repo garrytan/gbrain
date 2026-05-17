@@ -595,7 +595,7 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
   const pages = {
     'people/pedro': 'people/pedro',
     'people/garry': 'people/garry',
-    'people/diana-hu': 'people/diana-hu',
+    'people/alice-example': 'people/alice-example',
     'companies/stripe': 'companies/stripe',
     'companies/brex': 'companies/brex',
     'companies/sequoia': 'companies/sequoia',

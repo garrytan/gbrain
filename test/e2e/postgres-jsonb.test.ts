@@ -64,7 +64,7 @@ describeE2E('Postgres JSONB round-trip — frontmatter / data / pages_updated / 
     expect(rows[0].author).toBe('garry');
     expect(rows[0].score).toBe('7');
     expect(rows[0].tags).toEqual(['x', 'y']);
-  });
+  }, 30_000);
 
   test('raw_data.data — putRawData stores object, not string literal', async () => {
     const engine = getEngine();

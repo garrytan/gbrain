@@ -15,6 +15,12 @@ import { litellmProxy } from './litellm-proxy.ts';
 import { deepseek } from './deepseek.ts';
 import { groq } from './groq.ts';
 import { together } from './together.ts';
+import { llamaServer } from './llama-server.ts';
+import { minimax } from './minimax.ts';
+import { dashscope } from './dashscope.ts';
+import { zhipu } from './zhipu.ts';
+import { azureOpenAI } from './azure-openai.ts';
+import { zeroentropyai } from './zeroentropyai.ts';
 
 const ALL: Recipe[] = [
   openai,
@@ -26,6 +32,12 @@ const ALL: Recipe[] = [
   deepseek,
   groq,
   together,
+  llamaServer,
+  minimax,
+  dashscope,
+  zhipu,
+  azureOpenAI,
+  zeroentropyai,
 ];
 
 /** Map from `provider:id` key to recipe. */

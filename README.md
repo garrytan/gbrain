@@ -16,6 +16,10 @@ GBrain is those patterns, generalized. 34 skills. Install in 30 minutes. Your ag
 
 > **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
 
+> **Embedding providers:** OpenAI is the default, but gbrain ships with **14 recipes** covering Voyage, Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy (universal), and 5 more. Run `gbrain providers list` to see them, or read [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for setup, pricing, and a decision tree. `gbrain doctor` will surface alternative providers whose env vars you already have set.
+
+> **New in v0.32.3.0 — compress your AGENTS.md without losing accuracy:** if your downstream agent fork has grown a 25KB+ `AGENTS.md` / `RESOLVER.md`, the new [`functional-area-resolver`](skills/functional-area-resolver/SKILL.md) skill ships a two-layer dispatch pattern that compresses 25KB → 13KB (48% the size) while **beating** the verbose baseline by +13 to +17pp across Opus 4.7, Sonnet 4.6, and Haiku 4.5. A/B eval harness, cross-model receipts, and reproduction instructions live at [`evals/functional-area-resolver/`](evals/functional-area-resolver/). The static-prompt analog of AnyTool / RAG-MCP / Anthropic Agent Skills progressive disclosure — single-LLM-pass dispatch, no second routing call.
+
 ## Install
 
 ### On an agent platform (recommended)
@@ -44,9 +48,31 @@ the full doc map, use `llms.txt` at the same URL root.
 ```bash
 git clone https://github.com/garrytan/gbrain.git && cd gbrain && bun install && bun link
 gbrain init                     # local brain, ready in 2 seconds
+                                # picks a search mode (conservative / balanced / tokenmax)
 gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
+gbrain search modes             # see the active search mode + per-knob attribution
+gbrain search stats             # cache hit rate + intent mix after some real usage
 ```
+
+**v0.32.3 — named search modes.** `gbrain init` asks once which mode fits
+your workload. The cost spread depends on BOTH the mode AND your downstream
+model — 25x corner-to-corner. Per-query cost @ 10K queries/month (typical
+single-user volume; multiply by 10 for heavy / multi-user fleets):
+
+| Mode \ Downstream | Haiku 4.5 (\$1/M) | Sonnet 4.6 (\$3/M) | Opus 4.7 (\$5/M) |
+|---|---|---|---|
+| `conservative` (~4K) | **\$40/mo** | \$120/mo | \$200/mo |
+| `balanced` (~10K) | \$100/mo | \$300/mo | \$500/mo |
+| `tokenmax` (~20K) | \$200/mo | \$600/mo | **\$1,000/mo** |
+
+Natural pairings (corner-diagonal) span ~4x at realistic single-user
+volume. Auto-suggests based on your configured `models.tier.subagent`.
+Non-TTY installs auto-pick `balanced` and print a hint pointing at
+`gbrain config set search.mode <m>`. After some real usage, run
+`gbrain search stats` for observability and `gbrain search tune` for
+data-driven recommendations. Methodology + eval results live at
+[docs/eval/SEARCH_MODE_METHODOLOGY.md](docs/eval/SEARCH_MODE_METHODOLOGY.md).
 
 **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
 postinstall hook on global installs, so schema migrations never run and the CLI
@@ -113,7 +139,9 @@ pick scopes, save the credentials shown once in the reveal modal. Programmatic
 registration via `oauthProvider.registerClientManual(...)` and the
 `gbrain auth register-client` CLI are also available.
 
-- **OAuth 2.1 via the MCP SDK** — client credentials (machine-to-machine: Perplexity, Claude), authorization code + PKCE (browser-based: ChatGPT), refresh token rotation, revocation, protected resource metadata. Optional Dynamic Client Registration behind `--enable-dcr` (DCR redirect_uris must be `https://` or loopback per RFC 6749 §3.1.2.1).
+- **OAuth 2.1 via the MCP SDK** — client credentials (machine-to-machine: Perplexity, Claude), authorization code + PKCE (browser-based: ChatGPT), refresh token rotation, revocation, protected resource metadata. PKCE-only public clients (`token_endpoint_auth_method: "none"`) register without a secret per RFC 7591 §3.2.1 (v0.34). Optional Dynamic Client Registration behind `--enable-dcr` (DCR redirect_uris must be `https://` or loopback per RFC 6749 §3.1.2.1).
+- **Source-scoped OAuth clients (v0.34)** — `gbrain auth register-client my-agent --source dept-x` ties the client's write authority to one source; read paths only return rows matching that source. `--federated-read S1,S2,S3` adds an orthogonal read-scope axis for shared brains (departments writing to one canon while reading the union). Pre-v0.34 clients are backfilled to `source_id='default'` on upgrade.
+- **Loopback default for `serve --http` (v0.34)** — listens on `127.0.0.1` unless `--bind 0.0.0.0` (or a specific interface IP). Personal-laptop installs no longer publish the brain to the LAN by accident. A stderr WARN fires when `--public-url` is set without `--bind` so the operator sees the binding before the first request.
 - **Scoped operations** — 30 operations tagged `read | write | admin`. `sync_brain` and `file_upload` are `localOnly`, rejected over HTTP.
 - **React admin dashboard** — 7 screens baked into the binary (~65KB gzip). Live SSE activity feed, agents table, credential reveal, filterable request log, per-client config export.
 - **Legacy bearer tokens still work** — pre-v0.26 `gbrain auth create` tokens continue to authenticate as `read+write+admin`. v0.22.7's simpler `src/mcp/http-transport.ts` path stays compiled in for backward compat callers; v0.26+ deployments use the OAuth-aware `serve-http.ts`.
@@ -748,14 +776,30 @@ ADMIN
   gbrain doctor --fix [--dry-run]       Auto-fix DRY violations (delegate inlined rules to conventions)
   gbrain doctor --locks                 List idle-in-tx backends (57014 diagnostic, Postgres only)
   gbrain stats                          Brain statistics
+  gbrain models                         Show live model routing (tier defaults,
+                                        per-task overrides, alias map, source-of-truth).
+                                        v0.31.12: tier system + recipe-models merge.
+                                        Power-user override:
+                                          gbrain config set models.default opus
+                                          gbrain config set models.tier.deep opus
+  gbrain models doctor                  1-token reachability probe for each configured
+                                        chat/expansion model + a zero-token embedding_config
+                                        probe (catches Voyage flexible-dim misconfigs before
+                                        first embed). Catches `model_not_found` before the
+                                        next agent run silently degrades.
+                                        [--skip=<provider>] [--json]
   gbrain serve                          MCP server (stdio)
   gbrain serve --http [--port 3131]     HTTP MCP server with OAuth 2.1 + admin dashboard
+                                        [--bind HOST] (v0.34: default 127.0.0.1; pass
+                                        --bind 0.0.0.0 for LAN/remote access)
                                         [--token-ttl 3600] [--enable-dcr]
                                         [--public-url URL] [--log-full-params]
   gbrain auth create|list|revoke|test   Legacy bearer token management
   gbrain auth register-client <name>    Register an OAuth 2.1 client
         --grant-types client_credentials,authorization_code
         --scopes "read write admin"
+        --source <id>                   v0.34: write authority for source-scoped clients
+        --federated-read <S1,S2,...>    v0.34: read scope across multiple sources
   gbrain auth revoke-client <client_id> Revoke an OAuth 2.1 client (cascade purges
                                         active tokens + auth codes via FK CASCADE)
   # OAuth 2.1 clients can also be registered from the /admin dashboard or
@@ -767,11 +811,26 @@ ADMIN
                                         $GBRAIN_HOME/clones/<id>/ and re-cloned on sync if
                                         it goes missing. Also exposed via MCP for remote
                                         agent setup (whoami + sources_{add,list,remove,status}).
-  gbrain dream [--dry-run] [--phase N]  8-phase maintenance cycle (lint→backlinks→sync→synthesize
-                                        →extract→patterns→embed→orphans). v0.23 added synthesize +
-                                        patterns: transcripts → reflections + cross-session themes.
+  gbrain dream [--dry-run] [--phase N]  11-phase maintenance cycle (lint→backlinks→sync→synthesize
+                                        →extract→patterns→recompute_emotional_weight→consolidate
+                                        →embed→orphans→purge). v0.23 added synthesize + patterns.
+                                        v0.29 added emotional-weight recompute. v0.30.2: synthesize
+                                        chunks fat transcripts. v0.31: consolidate promotes hot facts
+                                        into takes overnight.
   gbrain dream --input <file>           Ad-hoc transcript synthesis (implies --phase synthesize)
   gbrain dream --date YYYY-MM-DD        Synthesize a single day; --from/--to for backfill ranges
+
+  # v0.31 Hot Memory: cross-session facts queryable in real time.
+  gbrain recall <entity>                List active facts for an entity (newest first)
+  gbrain recall --since "1h ago"        Recency-filtered recall
+  gbrain recall --session <id>          Facts captured in a session id
+  gbrain recall --today                 Markdown render with kind icons (📅🎯🤝💭📌)
+  gbrain recall --supersessions         Audit log of auto-overwritten facts
+  gbrain recall --grep <text>           Substring filter (case-insensitive)
+  gbrain recall --as-context            Prompt-injection-ready markdown for headless agents
+  gbrain recall --json                  Structured output with effective_confidence per row
+  gbrain forget <fact-id>               Expire a fact (soft delete; never hard-DELETE)
+
   gbrain check-backlinks check|fix      Back-link enforcement
   gbrain lint [--fix]                   LLM artifact detection
   gbrain repair-jsonb [--dry-run]       Repair v0.12.0 double-encoded JSONB (Postgres)

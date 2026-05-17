@@ -7,18 +7,30 @@ import type { BrainEngine } from '../src/core/engine.ts';
 let activeEmbedCalls = 0;
 let maxConcurrentEmbedCalls = 0;
 let totalEmbedCalls = 0;
+// D5: capture per-call opts so tests can assert maxRetries / abortSignal
+// passthrough into the gateway path.
+let lastEmbedBatchOpts: unknown = undefined;
+// D5: pluggable behavior for tests that need to simulate 429s or aborts.
+let embedBatchBehavior: ((texts: string[], opts?: unknown) => Promise<Float32Array[]>) | null = null;
 
 mock.module('../src/core/embedding.ts', () => ({
-  embedBatch: async (texts: string[]) => {
+  embedBatch: async (texts: string[], opts?: unknown) => {
     activeEmbedCalls++;
     totalEmbedCalls++;
+    lastEmbedBatchOpts = opts;
     if (activeEmbedCalls > maxConcurrentEmbedCalls) {
       maxConcurrentEmbedCalls = activeEmbedCalls;
     }
-    // Simulate API latency so concurrent workers actually overlap.
-    await new Promise(r => setTimeout(r, 30));
-    activeEmbedCalls--;
-    return texts.map(() => new Float32Array(1536));
+    try {
+      if (embedBatchBehavior) {
+        return await embedBatchBehavior(texts, opts);
+      }
+      // Default: simulate API latency so concurrent workers actually overlap.
+      await new Promise(r => setTimeout(r, 30));
+      return texts.map(() => new Float32Array(1536));
+    } finally {
+      activeEmbedCalls--;
+    }
   },
 }));
 
@@ -47,10 +59,13 @@ beforeEach(() => {
   activeEmbedCalls = 0;
   maxConcurrentEmbedCalls = 0;
   totalEmbedCalls = 0;
+  lastEmbedBatchOpts = undefined;
+  embedBatchBehavior = null;
 });
 
 afterEach(() => {
   delete process.env.GBRAIN_EMBED_CONCURRENCY;
+  delete process.env.GBRAIN_EMBED_TIME_BUDGET_MS;
 });
 
 describe('runEmbed --all (parallel)', () => {
@@ -111,8 +126,9 @@ describe('runEmbed --all (parallel)', () => {
       ['stale', [{ chunk_index: 0, chunk_text: 'hi', chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 }]],
     ]);
     // Stale path uses countStaleChunks + listStaleChunks (SQL-side filter), not listPages.
+    // D5a: source_id + page_id required on StaleChunkRow as of v0.33.3 cursor pagination.
     const stale = [
-      { slug: 'stale', chunk_index: 0, chunk_text: 'hi', chunk_source: 'compiled_truth', model: null, token_count: 1 },
+      { slug: 'stale', chunk_index: 0, chunk_text: 'hi', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 1 },
     ];
 
     const engine = mockEngine({
@@ -150,9 +166,10 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
       ]),
     );
     // SQL-side stale path: 6 stale rows across 3 pages.
-    const stale = pages.flatMap(p => [
-      { slug: p.slug, chunk_index: 0, chunk_text: 'a', chunk_source: 'compiled_truth', model: null, token_count: 1 },
-      { slug: p.slug, chunk_index: 1, chunk_text: 'b', chunk_source: 'compiled_truth', model: null, token_count: 1 },
+    // D5a: source_id + page_id required on StaleChunkRow.
+    const stale = pages.flatMap((p, pi) => [
+      { slug: p.slug, chunk_index: 0, chunk_text: 'a', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: pi + 1 },
+      { slug: p.slug, chunk_index: 1, chunk_text: 'b', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: pi + 1 },
     ]);
 
     const upserts: string[] = [];
@@ -177,17 +194,21 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     // skipped is 0 in the new SQL-side path: we never considered non-stale chunks.
     expect(result.skipped).toBe(0);
     expect(result.total_chunks).toBe(6); // only stale chunks counted in SQL-side path
-    expect(result.pages_processed).toBe(3);
+    // v0.33.3 cherry-pick: dry-run skips the cursor walk and only does a
+    // countStaleChunks call. pages_processed is 0 because we don't enumerate
+    // pages in dry-run (cheaper pre-flight).
+    expect(result.pages_processed).toBe(0);
   });
 
   test('dry-run --stale correctly identifies stale chunks (SQL-side path)', async () => {
     const { runEmbedCore } = await import('../src/commands/embed.ts');
     // SQL-side stale: only the 3 chunks where embedding IS NULL come back,
     // grouped by slug. 'fresh' page has no stale rows so it's not in the result.
+    // D5a: source_id + page_id required on StaleChunkRow.
     const stale = [
-      { slug: 'partial', chunk_index: 1, chunk_text: 'b', chunk_source: 'compiled_truth', model: null, token_count: 1 },
-      { slug: 'all-stale', chunk_index: 0, chunk_text: 'a', chunk_source: 'compiled_truth', model: null, token_count: 1 },
-      { slug: 'all-stale', chunk_index: 1, chunk_text: 'b', chunk_source: 'compiled_truth', model: null, token_count: 1 },
+      { slug: 'partial', chunk_index: 1, chunk_text: 'b', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 1 },
+      { slug: 'all-stale', chunk_index: 0, chunk_text: 'a', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 2 },
+      { slug: 'all-stale', chunk_index: 1, chunk_text: 'b', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 2 },
     ];
 
     const engine = mockEngine({
@@ -205,7 +226,9 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     // Callers wanting full coverage should call engine.getStats()/getHealth() afterward.
     expect(result.skipped).toBe(0);
     expect(result.total_chunks).toBe(3);
-    expect(result.pages_processed).toBe(2); // 'partial' + 'all-stale'
+    // v0.33.3 cherry-pick: pages_processed=0 in dry-run because we skip
+    // the cursor walk (countStaleChunks-only pre-flight).
+    expect(result.pages_processed).toBe(0);
   });
 
   test('dry-run --slugs on a single page counts stale chunks, no API calls', async () => {
@@ -241,10 +264,11 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
         { chunk_index: 1, chunk_text: 'y', chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 },
       ]],
     ]);
+    // D5a: source_id + page_id required on StaleChunkRow.
     const stale = [
-      { slug: 'a', chunk_index: 0, chunk_text: 'a', chunk_source: 'compiled_truth', model: null, token_count: 1 },
-      { slug: 'b', chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth', model: null, token_count: 1 },
-      { slug: 'b', chunk_index: 1, chunk_text: 'y', chunk_source: 'compiled_truth', model: null, token_count: 1 },
+      { slug: 'a', chunk_index: 0, chunk_text: 'a', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 1 },
+      { slug: 'b', chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 2 },
+      { slug: 'b', chunk_index: 1, chunk_text: 'y', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'default', page_id: 2 },
     ];
 
     const engine = mockEngine({
@@ -300,10 +324,11 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
     const { runEmbedCore } = await import('../src/commands/embed.ts');
     let listPagesCalled = false;
 
+    // D5a: source_id + page_id required on StaleChunkRow.
     const stale = [
-      { slug: 'page-a', chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth' as const, model: null, token_count: null },
-      { slug: 'page-b', chunk_index: 1, chunk_text: 'y', chunk_source: 'compiled_truth' as const, model: null, token_count: null },
-      { slug: 'page-b', chunk_index: 2, chunk_text: 'z', chunk_source: 'compiled_truth' as const, model: null, token_count: null },
+      { slug: 'page-a', chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth' as const, model: null, token_count: null, source_id: 'default', page_id: 1 },
+      { slug: 'page-b', chunk_index: 1, chunk_text: 'y', chunk_source: 'compiled_truth' as const, model: null, token_count: null, source_id: 'default', page_id: 2 },
+      { slug: 'page-b', chunk_index: 2, chunk_text: 'z', chunk_source: 'compiled_truth' as const, model: null, token_count: null, source_id: 'default', page_id: 2 },
     ];
     // page-b has a FRESH chunk at index 0 that must be preserved through the upsert.
     const fullChunks: Record<string, any[]> = {
@@ -348,16 +373,17 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
     expect(staleChunkInUpsert.embedding).toBeInstanceOf(Float32Array);
   });
 
-  test('--stale dry-run: counts stale via countStaleChunks, reports via listStaleChunks, no embedBatch or upsertChunks', async () => {
+  test('--stale dry-run: counts stale via countStaleChunks (no listStaleChunks call), no embedBatch or upsertChunks', async () => {
     const { runEmbedCore } = await import('../src/commands/embed.ts');
-    const stale = [
-      { slug: 'page-a', chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth' as const, model: null, token_count: null },
-      { slug: 'page-b', chunk_index: 0, chunk_text: 'y', chunk_source: 'compiled_truth' as const, model: null, token_count: null },
-    ];
+    // v0.33.3 cherry-pick contract: dry-run path uses countStaleChunks
+    // ONLY — it does not call listStaleChunks. The pre-flight count is
+    // what gets reported; pages_processed stays at 0 because we
+    // intentionally skip the cursor walk in dry-run.
+    let listStaleCalled = false;
     const upserts: string[] = [];
     const engine = mockEngine({
       countStaleChunks: async () => 2,
-      listStaleChunks: async () => stale,
+      listStaleChunks: async () => { listStaleCalled = true; return []; },
       upsertChunks: async (slug: string) => { upserts.push(slug); },
     });
 
@@ -366,7 +392,9 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
     expect(totalEmbedCalls).toBe(0);
     expect(upserts).toEqual([]);
     expect(result.would_embed).toBe(2);
-    expect(result.pages_processed).toBe(2);
+    // Cheaper dry-run: skips the cursor walk entirely.
+    expect(listStaleCalled).toBe(false);
+    expect(result.pages_processed).toBe(0);
     expect(result.dryRun).toBe(true);
   });
 
@@ -502,5 +530,300 @@ describe('runEmbed preserves code-chunk metadata across re-embed (regression for
     expect(upsertChunkArgs).not.toBeNull();
     expect(upsertChunkArgs!).toHaveLength(1);
     expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// D5: embedBatchWithBackoff retry wrapper — 8 cases per plan
+// (D2 jitter, D4 cause-unwrap, D4a maxRetries:0 passthrough,
+// D8 abortSignal threading, plus the pure helpers).
+// ────────────────────────────────────────────────────────────────
+
+describe('embedBatchWithBackoff (D2/D4/D4a/D8)', () => {
+  test('case 1: parses "try again in 248ms" form and retries', async () => {
+    const { embedBatchWithBackoff } = await import('../src/commands/embed.ts');
+    let calls = 0;
+    embedBatchBehavior = async () => {
+      calls++;
+      if (calls === 1) {
+        const err = new Error('Rate limit reached. Please try again in 50ms.');
+        (err as any).cause = { status: 429 };
+        throw err;
+      }
+      return [new Float32Array(1536)];
+    };
+    const result = await embedBatchWithBackoff(['x']);
+    expect(calls).toBe(2);
+    expect(result).toHaveLength(1);
+  });
+
+  test('case 2: parses "try again in 1.5s" form and retries', async () => {
+    const { embedBatchWithBackoff, parseRetryDelayMs, RATE_LIMIT_JITTER, RATE_LIMIT_PAD_MS } = await import('../src/commands/embed.ts');
+    let calls = 0;
+    embedBatchBehavior = async () => {
+      calls++;
+      if (calls === 1) {
+        const err = new Error('429 — please try again in 0.05s');
+        (err as any).cause = { status: 429 };
+        throw err;
+      }
+      return [new Float32Array(1536)];
+    };
+    const result = await embedBatchWithBackoff(['x']);
+    expect(calls).toBe(2);
+    expect(result).toHaveLength(1);
+    // Pure-helper sanity check on the "s" form path while we're here.
+    const delay = parseRetryDelayMs('try again in 1.5s', () => 0.5);
+    // 1.5s = 1500ms + 500ms pad = 2000ms; jitter at rng=0.5 → 1.0 multiplier.
+    const expected = (1500 + RATE_LIMIT_PAD_MS) * (1 + (0.5 * 2 - 1) * RATE_LIMIT_JITTER);
+    expect(delay).toBe(Math.floor(expected));
+  });
+
+  test('case 3: unparseable rate-limit message uses RATE_LIMIT_FALLBACK_MS', async () => {
+    const { parseRetryDelayMs, RATE_LIMIT_FALLBACK_MS, RATE_LIMIT_JITTER } = await import('../src/commands/embed.ts');
+    // Min delay = fallback × (1 - jitter); max = fallback × (1 + jitter).
+    const minExpected = Math.floor(RATE_LIMIT_FALLBACK_MS * (1 - RATE_LIMIT_JITTER));
+    const maxExpected = Math.floor(RATE_LIMIT_FALLBACK_MS * (1 + RATE_LIMIT_JITTER));
+    for (let i = 0; i < 20; i++) {
+      const d = parseRetryDelayMs('429 too many requests');
+      expect(d).toBeGreaterThanOrEqual(minExpected);
+      expect(d).toBeLessThanOrEqual(maxExpected);
+    }
+  });
+
+  test('case 4: non-rate-limit error rethrows immediately without retry', async () => {
+    const { embedBatchWithBackoff } = await import('../src/commands/embed.ts');
+    let calls = 0;
+    embedBatchBehavior = async () => {
+      calls++;
+      throw new Error('500 internal server error');
+    };
+    await expect(embedBatchWithBackoff(['x'])).rejects.toThrow('500 internal server error');
+    // Single attempt — no retries on non-429.
+    expect(calls).toBe(1);
+  });
+
+  test('case 5: jitter range — same parsed delay produces non-identical sleeps across runs', async () => {
+    const { parseRetryDelayMs } = await import('../src/commands/embed.ts');
+    const samples = new Set<number>();
+    for (let i = 0; i < 50; i++) {
+      samples.add(parseRetryDelayMs('try again in 100ms'));
+    }
+    // 50 random samples with ±30% jitter should yield many distinct values.
+    expect(samples.size).toBeGreaterThan(5);
+  });
+
+  test('case 6: wall-clock budget mid-batch wakes the retry sleep and cancels mid-fetch', async () => {
+    const { embedBatchWithBackoff } = await import('../src/commands/embed.ts');
+    const controller = new AbortController();
+    let calls = 0;
+    embedBatchBehavior = async (_texts, opts) => {
+      calls++;
+      // The wrapper MUST pass the abortSignal into the gateway opts.
+      expect((opts as { abortSignal?: AbortSignal } | undefined)?.abortSignal).toBe(controller.signal);
+      if (calls === 1) {
+        const err = new Error('Rate limit reached. Please try again in 5000ms.');
+        (err as any).cause = { status: 429 };
+        throw err;
+      }
+      return [new Float32Array(1536)];
+    };
+    // Fire the budget abort during the retry sleep — abortableSleep should
+    // wake up early instead of waiting the full 5000ms.
+    setTimeout(() => controller.abort(), 50);
+    const t0 = Date.now();
+    await expect(embedBatchWithBackoff(['x'], { abortSignal: controller.signal })).rejects.toThrow();
+    const elapsed = Date.now() - t0;
+    // Should exit within ~200ms, not the 5000ms+ the retry-after would suggest.
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  test('case 7: AITransientError-shaped wrap with 429 cause triggers retry; 500 cause does not', async () => {
+    const { embedBatchWithBackoff, detect429FromCause } = await import('../src/commands/embed.ts');
+
+    // Pure helper checks first.
+    expect(detect429FromCause({ cause: { status: 429 } })).toBe(true);
+    expect(detect429FromCause({ cause: { statusCode: 429 } })).toBe(true);
+    expect(detect429FromCause({ cause: { status: 500 } })).toBe(false);
+    expect(detect429FromCause({ status: 500 })).toBe(false);
+    expect(detect429FromCause(undefined)).toBe(false);
+    expect(detect429FromCause(null)).toBe(false);
+    // Deep wrap (defensive — current normalizeAIError wraps once).
+    expect(detect429FromCause({ cause: { cause: { status: 429 } } })).toBe(true);
+
+    // End-to-end: 429 wrapped as AITransientError-like shape → retry.
+    // Use a small retry-after in the wrapper message so the parsed delay
+    // is fast (keeps the test under the 5s timeout). The fallback delay
+    // of 60s would otherwise dominate.
+    let calls = 0;
+    embedBatchBehavior = async () => {
+      calls++;
+      if (calls === 1) {
+        // Simulate normalizeAIError wrap: message has a parseable retry-after,
+        // status only on cause (the structural detection path under test).
+        const wrapper = new Error('try again in 10ms');
+        (wrapper as any).cause = { status: 429 };
+        throw wrapper;
+      }
+      return [new Float32Array(1536)];
+    };
+    const result = await embedBatchWithBackoff(['x']);
+    expect(calls).toBe(2);
+    expect(result).toHaveLength(1);
+
+    // 500 wrapped → no retry, rethrow immediately.
+    embedBatchBehavior = async () => {
+      const wrapper = new Error('AI transient error');
+      (wrapper as any).cause = { status: 500 };
+      throw wrapper;
+    };
+    await expect(embedBatchWithBackoff(['x'])).rejects.toThrow('AI transient error');
+  });
+
+  test('case 8: wrapper passes maxRetries:0 through to embedBatch (no SDK retry stack)', async () => {
+    const { embedBatchWithBackoff } = await import('../src/commands/embed.ts');
+    embedBatchBehavior = async () => [new Float32Array(1536)];
+    await embedBatchWithBackoff(['x']);
+    expect(lastEmbedBatchOpts).toBeDefined();
+    expect((lastEmbedBatchOpts as { maxRetries?: number }).maxRetries).toBe(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// D5/D7: embedAllStale sourceId threading — invariant tests
+// ────────────────────────────────────────────────────────────────
+
+// ────────────────────────────────────────────────────────────────
+// Gap scan: CLI flag wiring + end-to-end budget firing (beyond plan)
+// ────────────────────────────────────────────────────────────────
+
+describe('runEmbed CLI flag wiring (--stale --source)', () => {
+  test('--source <id> on CLI threads sourceId into countStaleChunks', async () => {
+    let receivedOpts: unknown;
+    const engine = mockEngine({
+      countStaleChunks: async (opts: unknown) => {
+        receivedOpts = opts;
+        return 0; // short-circuit so we don't hit listStaleChunks
+      },
+    });
+    await runEmbed(engine, ['--stale', '--source', 'media-corpus']);
+    expect(receivedOpts).toEqual({ sourceId: 'media-corpus' });
+  });
+
+  test('--stale without --source passes undefined opts (back-compat fast path)', async () => {
+    let receivedOpts: unknown;
+    const engine = mockEngine({
+      countStaleChunks: async (opts: unknown) => {
+        receivedOpts = opts;
+        return 0;
+      },
+    });
+    await runEmbed(engine, ['--stale']);
+    expect(receivedOpts).toBeUndefined();
+  });
+});
+
+describe('embedAllStale wall-clock budget end-to-end (D3 + D3a)', () => {
+  test('GBRAIN_EMBED_TIME_BUDGET_MS=N cuts the outer loop short on stuck workers', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    // Tiny budget: 100ms. Each embed call sleeps 50ms; with budget + multiple
+    // small batches, the second listStaleChunks call should see the abort
+    // signal AND the worker loop should not claim further keys.
+    process.env.GBRAIN_EMBED_TIME_BUDGET_MS = '100';
+    process.env.GBRAIN_EMBED_CONCURRENCY = '1';
+
+    let listCallCount = 0;
+    let totalRowsReturned = 0;
+    // Return rows in chunks of 1 so the outer while-loop ticks frequently.
+    // 10 rows total across 10 "batches"; the budget should kill the loop
+    // partway through.
+    const allRows = Array.from({ length: 10 }, (_, i) => ({
+      slug: `b-${i}`,
+      chunk_index: 0,
+      chunk_text: `t${i}`,
+      chunk_source: 'compiled_truth' as const,
+      model: null,
+      token_count: 1,
+      source_id: 'default',
+      page_id: i + 1,
+    }));
+
+    const engine = mockEngine({
+      countStaleChunks: async () => allRows.length,
+      listStaleChunks: async (opts: { afterPageId?: number } = {}) => {
+        listCallCount++;
+        const startIdx = (opts.afterPageId ?? 0); // 0 means start
+        const idx = allRows.findIndex(r => r.page_id > startIdx);
+        if (idx === -1) return [];
+        const row = allRows[idx];
+        totalRowsReturned++;
+        return [row];
+      },
+      getChunks: async () => [],
+      upsertChunks: async () => {},
+    });
+
+    // embedBatch takes 80ms per call — budget exhausts after ~1 page.
+    embedBatchBehavior = async (texts) => {
+      await new Promise(r => setTimeout(r, 80));
+      return texts.map(() => new Float32Array(1536));
+    };
+
+    const t0 = Date.now();
+    const result = await runEmbedCore(engine, { stale: true });
+    const elapsed = Date.now() - t0;
+
+    // Should not have visited all 10 pages.
+    expect(result.pages_processed).toBeLessThan(10);
+    // Total wall-clock should be roughly the budget + the time for in-flight
+    // workers to drain (1 worker × 80ms latency). Generous upper bound: 1500ms.
+    expect(elapsed).toBeLessThan(1500);
+  });
+});
+
+describe('embedAllStale --source threading (D7)', () => {
+  test('countStaleChunks receives the sourceId opt', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    let receivedOpts: unknown;
+    const engine = mockEngine({
+      countStaleChunks: async (opts: unknown) => {
+        receivedOpts = opts;
+        return 0; // short-circuit
+      },
+    });
+    await runEmbedCore(engine, { stale: true, sourceId: 'media-corpus' });
+    expect(receivedOpts).toEqual({ sourceId: 'media-corpus' });
+  });
+
+  test('countStaleChunks receives undefined opts when --source omitted (back-compat)', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    let receivedOpts: unknown;
+    const engine = mockEngine({
+      countStaleChunks: async (opts: unknown) => {
+        receivedOpts = opts;
+        return 0;
+      },
+    });
+    await runEmbedCore(engine, { stale: true });
+    expect(receivedOpts).toBeUndefined();
+  });
+
+  test('listStaleChunks receives the sourceId in opts when running source-scoped', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    let firstCallOpts: unknown;
+    const stale = [
+      { slug: 'p', chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth' as const, model: null, token_count: 1, source_id: 'media-corpus', page_id: 1 },
+    ];
+    const engine = mockEngine({
+      countStaleChunks: async () => 1,
+      listStaleChunks: async (opts: unknown) => {
+        if (firstCallOpts === undefined) firstCallOpts = opts;
+        return stale;
+      },
+      getChunks: async () => stale.map(s => ({ chunk_index: s.chunk_index, chunk_text: s.chunk_text, chunk_source: s.chunk_source, embedded_at: null, token_count: 1 })),
+      upsertChunks: async () => {},
+    });
+    await runEmbedCore(engine, { stale: true, sourceId: 'media-corpus' });
+    expect((firstCallOpts as { sourceId?: string }).sourceId).toBe('media-corpus');
   });
 });

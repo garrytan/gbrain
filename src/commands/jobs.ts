@@ -7,6 +7,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
+import { loadConfig, isThinClient } from '../core/config.ts';
+import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -369,10 +371,23 @@ HANDLER TYPES (built in)
       const queueName = parseFlag(args, '--queue');
       const limit = parseInt(parseFlag(args, '--limit') ?? '20', 10);
 
-      try { await queue.ensureSchema(); }
-      catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
-
-      const jobs = await queue.getJobs({ status, queue: queueName, limit });
+      // v0.32: thin-client routing. The `list_jobs` MCP op is admin-scoped
+      // but not localOnly, so a thin-client install with admin access can
+      // see the remote brain's job queue. Without this branch we'd query
+      // the empty local PGLite and report "No jobs found" for an actively-
+      // running host brain.
+      const cfg = loadConfig();
+      let jobs: MinionJob[];
+      if (isThinClient(cfg)) {
+        const raw = await callRemoteTool(cfg!, 'list_jobs', {
+          status, queue: queueName, limit,
+        }, { timeoutMs: 30_000 });
+        jobs = unpackToolResult<MinionJob[]>(raw);
+      } else {
+        try { await queue.ensureSchema(); }
+        catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
+        jobs = await queue.getJobs({ status, queue: queueName, limit });
+      }
 
       if (jobs.length === 0) {
         console.log('No jobs found.');
@@ -390,10 +405,28 @@ HANDLER TYPES (built in)
       const id = parseInt(args[1], 10);
       if (isNaN(id)) { console.error('Error: job ID required. Usage: gbrain jobs get <id>'); process.exit(1); }
 
-      try { await queue.ensureSchema(); }
-      catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
-
-      const job = await queue.getJob(id);
+      // v0.32: thin-client routing (mirrors `list` branch above).
+      const cfg = loadConfig();
+      let job: MinionJob | null;
+      if (isThinClient(cfg)) {
+        try {
+          const raw = await callRemoteTool(cfg!, 'get_job', { id }, { timeoutMs: 30_000 });
+          job = unpackToolResult<MinionJob | null>(raw);
+        } catch (e) {
+          // The remote op throws `invalid_params` on not-found; surface as
+          // the same "Job not found" exit-1 the local path produces.
+          const msg = e instanceof Error ? e.message : String(e);
+          if (/not found/i.test(msg)) {
+            console.error(`Job #${id} not found.`);
+            process.exit(1);
+          }
+          throw e;
+        }
+      } else {
+        try { await queue.ensureSchema(); }
+        catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
+        job = await queue.getJob(id);
+      }
       if (!job) { console.error(`Job #${id} not found.`); process.exit(1); }
       console.log(formatJobDetail(job));
       break;
@@ -752,7 +785,7 @@ HANDLER TYPES (built in)
       // ----- status subcommand -----
       if (isStatusCmd) {
         const { existsSync, readFileSync } = await import('fs');
-        const { readSupervisorEvents } = await import('../core/minions/handlers/supervisor-audit.ts');
+        const { readSupervisorEvents, summarizeCrashes } = await import('../core/minions/handlers/supervisor-audit.ts');
 
         let supervisorPid: number | null = null;
         let running = false;
@@ -769,7 +802,11 @@ HANDLER TYPES (built in)
 
         const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
         const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
-        const crashes24h = events.filter(e => e.event === 'worker_exited').length;
+        // Shared classifier — same code path runs in `gbrain doctor` so the
+        // two surfaces cannot drift on what counts as a crash. Supersedes
+        // v0.35.4.0's binary `classifyWorkerExit({code})` on this surface;
+        // see doctor.ts for the layering rationale.
+        const summary = summarizeCrashes(events);
         const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 
         const status = {
@@ -777,7 +814,9 @@ HANDLER TYPES (built in)
           supervisor_pid: supervisorPid,
           pid_file: pidFile,
           last_start: lastStart,
-          crashes_24h: crashes24h,
+          crashes_24h: summary.total,
+          clean_exits_24h: summary.clean_exits,
+          crashes_by_cause: summary.by_cause,
           max_crashes_exceeded: !!maxCrashesEvent,
         };
 
@@ -788,7 +827,8 @@ HANDLER TYPES (built in)
           if (supervisorPid) console.log(`  PID:           ${supervisorPid}`);
           console.log(`  PID file:      ${pidFile}`);
           if (lastStart) console.log(`  Last start:    ${lastStart}`);
-          console.log(`  Crashes (24h): ${crashes24h}`);
+          console.log(`  Crashes (24h):     ${summary.total} (runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy})`);
+          console.log(`  Clean exits (24h): ${summary.clean_exits}`);
           if (maxCrashesEvent) console.log(`  ⚠ Max crashes exceeded at ${maxCrashesEvent.ts}`);
         }
         process.exit(running ? 0 : 1);

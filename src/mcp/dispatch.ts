@@ -8,12 +8,23 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
-import type { Operation, OperationContext } from '../core/operations.ts';
+import type { Operation, OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
   isError?: boolean;
+  /**
+   * v0.31 (eD3): MCP spec-blessed metadata slot for server-supplied data.
+   * The dispatcher injects `_meta.brain_hot_memory` here when an op succeeds
+   * and the configured `metaHook` returns a payload.
+   *
+   * Existing clients ignore unknown `_meta` fields; capable clients (Claude
+   * Code, Claude Desktop) read it. NOT a wrapper around the result body —
+   * `content` stays the same shape it always had. Best-effort: any error in
+   * the meta hook is absorbed and the tool call still succeeds.
+   */
+  _meta?: Record<string, unknown>;
 }
 
 export interface DispatchOpts {
@@ -29,6 +40,36 @@ export interface DispatchOpts {
    * callers leave this unset (no filter — they own the brain).
    */
   takesHoldersAllowList?: string[];
+  /**
+   * v0.31 (eD4): tenancy axis for facts hot memory ops (extract_facts,
+   * recall, forget_fact). When set, the OperationContext receives a
+   * matching `sourceId`. CLI dispatch resolves this from --source flag /
+   * GBRAIN_SOURCE / .gbrain-source / 'default'; HTTP MCP transport
+   * resolves it from the per-token allow-list (eE3).
+   */
+  sourceId?: string;
+  /**
+   * v0.31 (eD3): hook called by the dispatcher AFTER op.handler succeeds
+   * to compute `_meta.brain_hot_memory` for the response. Wrapped in its
+   * own try/catch (eE4) so a DB blip in the helper degrades to no _meta
+   * rather than flipping the whole tool call to error.
+   *
+   * Returning undefined means "no _meta to inject"; the dispatcher
+   * preserves the existing response shape.
+   */
+  metaHook?: (
+    name: string,
+    ctx: OperationContext,
+  ) => Promise<Record<string, unknown> | undefined>;
+  /**
+   * OAuth auth info threaded through from the HTTP MCP transport. Set so
+   * the whoami op (and any future scope-aware op handlers) can introspect
+   * the calling identity. Without this, every whoami call from HTTP
+   * transports throws unknown_transport — the v0.31 D12 / eE1 refactor
+   * silently dropped this field when the inlined OperationContext literal
+   * was replaced by dispatchToolCall.
+   */
+  auth?: AuthInfo;
 }
 
 /**
@@ -163,6 +204,12 @@ export function buildOperationContext(
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    // v0.34 D4: sourceId is REQUIRED at the type level. Auto-fill 'default'
+    // for single-source brains and any caller who didn't resolve a sourceId.
+    // CLI / HTTP / stdio transports SHOULD pass an explicit sourceId via opts;
+    // this fallback covers code paths that historically passed undefined.
+    sourceId: opts.sourceId ?? 'default',
+    auth: opts.auth,
   };
 }
 
@@ -180,7 +227,15 @@ export async function dispatchToolCall(
 ): Promise<ToolResult> {
   const op = operations.find(o => o.name === name);
   if (!op) {
-    return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
+    // Always return JSON-shaped error content. v0.31 e2e tests
+    // (sources-remote-mcp.test.ts) parse content via JSON.parse so a
+    // plain `Error: ...` string here breaks the contract on every
+    // unknown-op path and the resulting test failure looked like a
+    // transport bug.
+    return {
+      content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_tool', message: `Unknown tool: ${name}` }, null, 2) }],
+      isError: true,
+    };
   }
 
   const safeParams = params || {};
@@ -196,12 +251,33 @@ export async function dispatchToolCall(
 
   try {
     const result = await op.handler(ctx, safeParams);
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
+    // The hook is wrapped in its own try/catch — any DB blip / cache miss /
+    // helper crash degrades to no `_meta` rather than flipping the whole
+    // tool call to error.
+    if (opts.metaHook) {
+      try {
+        const meta = await opts.metaHook(name, ctx);
+        if (meta && Object.keys(meta).length > 0) out._meta = meta;
+      } catch (metaErr) {
+        const msg = metaErr instanceof Error ? metaErr.message : String(metaErr);
+        ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no-_meta`);
+      }
+    }
+    return out;
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       return { content: [{ type: 'text', text: JSON.stringify(e.toJSON(), null, 2) }], isError: true };
     }
+    // Non-OperationError (uncaught throws) — wrap in the same shape so
+    // every error response is JSON-parseable. The pre-v0.31 path emitted
+    // plain `Error: ${msg}` strings here, which broke any caller that
+    // tried JSON.parse(content).
     const msg = e instanceof Error ? e.message : String(e);
-    return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+    return {
+      content: [{ type: 'text', text: JSON.stringify({ error: 'internal_error', message: msg }, null, 2) }],
+      isError: true,
+    };
   }
 }

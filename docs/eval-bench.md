@@ -291,3 +291,40 @@ p50 25.9ms / p99 30.3ms warm reset+import+search on Apple Silicon (per the
 `test/eval-longmemeval.test.ts` perf gate). Per-question cost well under the
 500ms speed gate. 500 questions = ~13s of overhead plus your retrieval and
 LLM latency.
+
+## Measuring brain consistency over time (v0.32.6)
+
+`gbrain eval suspected-contradictions` is a complementary measurement
+instrument: it samples retrieval results for unmarked semantic
+contradictions (e.g., compiled_truth vs chat content, intra-page chunk
+vs active take). Where LongMemEval measures retrieval correctness on a
+fixed labeled set, the contradiction probe measures how often a real
+brain surfaces conflicting answers.
+
+### Recommended nightly cadence
+
+```bash
+# Once a day, against your top 50 most-frequent queries:
+gbrain eval suspected-contradictions \
+  --queries-file ~/.gbrain/queries.jsonl \
+  --top-k 5 \
+  --budget-usd 5 \
+  --output ~/.gbrain/probe-runs/$(date +%Y-%m-%d).json
+```
+
+Persistent cache (`eval_contradictions_cache`) makes re-runs near-zero
+cost until you bump `PROMPT_VERSION`. Trend-track via:
+
+```bash
+gbrain eval suspected-contradictions trend --days 30
+```
+
+The ASCII bar chart shows total flagged per day. Headline % surfaces in
+`gbrain doctor`'s `contradictions` check with paste-ready resolution
+commands per high-severity finding.
+
+### See also
+
+- `docs/contradictions.md` — architecture, severity rubric, action criteria.
+- CHANGELOG `## [0.32.6]` — full release notes including the bigger-swing
+  decision criteria gated on Wilson CI lower-bound.
