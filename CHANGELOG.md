@@ -94,13 +94,14 @@ The voice agent runs in YOUR repo, on YOUR cadence. When gbrain ships a new agen
 - `test/integrations-install.test.ts` — 11 gbrain-side cases (happy path, manifest shape, no upstream_repo field, resolver row appending, file modes, refusal cases for missing target, no-git target, gbrain-itself, overwrite, unknown recipe, dry-run).
 - `test/check-no-pii.test.ts` / `test/import-from-upstream.test.ts` — deferred to a fast-follow PR; the shell scripts are smoke-tested in the local dev loop.
 
-#### Deferred to follow-up
-- E2E test suite (`tests/e2e/voice-roundtrip.test.mjs`, `voice-full-flow.test.mjs`) — needs OpenAI Realtime + ~$1-2/run; ships in a separate PR.
-- Claw-test scenario `voice-agent-install` with openclaw-driven install verification.
-- LLM-judge persona evals + synthetic canonical baselines.
-- DIY pipeline (`pipeline.mjs`, `pipeline-v3.mjs` for Gemini Live) — recipe Option A (WebRTC direct to OpenAI Realtime) ships now.
-- Refresh mode for `gbrain integrations install --refresh` — the algorithm is documented at `recipes/agent-voice/install/refresh-algorithm.md`; v0 implements COPY only.
-- Mars multilingual claim (gated on a multilingual eval landing).
+#### Also shipped in this PR (wave 2 — closes original deferred list)
+- E2E test suite — `tests/e2e/voice-roundtrip.test.mjs` (server + puppeteer + fake-audio + Whisper-judge; ~$0.10/run; env-gated on `AGENT_VOICE_E2E=1`) and `tests/e2e/voice-full-flow.test.mjs` (openclaw-driven install + roundtrip; ~$1-2/run; env-gated on `AGENT_VOICE_FULL_E2E=1`). Shared `lib/browser-audio.mjs` + `lib/whisper-judge.mjs`. Three-tier assertion (CONNECTION hard, NON-SILENT hard, SEMANTIC soft). Upstream errors soft-fail via the classifier.
+- Claw-test scenario `voice-agent-install/` with `BRIEF.md` + `scenario.json` (labeled BENCHMARK_FRICTION, `blocks_ship: false`) + `expected.json`.
+- LLM-judge persona evals: gateway-routed 3-model harness (Claude + GPT + Gemini) with 4-strategy JSON repair and 2/3-quorum aggregation. Five fixture sets (`mars-solo`, `mars-demo`, `venus`, `persona-routing`, `mars-multilingual`). Synthetic canonical baselines under `tests/evals/baseline-runs/canonical/` (agent-authored; live receipts gitignored).
+- DIY pipeline (Option B) `code/pipeline.mjs`: streaming Deepgram STT + Claude SSE with sentence-boundary TTS dispatch + Cartesia/OpenAI TTS, 20-turn history cap, exponential reconnect, 25s keepalives, four VAD presets, barge-in on `speechStart`. Modular adapters for swapping any stage.
+- `--refresh` mode in `gbrain integrations install`: classifies each file as unchanged-identical / unchanged-stale / locally-modified / source-deleted / host-deleted / new-in-manifest. Default policy preserves operator edits (`keep-mine`); `--auto take-theirs` overwrites; `--dry-run` previews. Transaction journal at `.gbrain-source.refresh.log`. 7 new test cases pin the classification + decisions.
+- Mars multilingual: persona prompt restores cross-lingual rule (Mandarin / Spanish / French / Japanese / Korean default to English but follow the speaker). New eval fixtures at `tests/evals/fixtures/mars-multilingual.jsonl` gate the claim.
+- `recipes/twilio-voice-brain.md`: deprecation banner pointing at `agent-voice.md`; will be removed in v0.37.
 
 #### For contributors
 - New paradigm `install_kind: copy-into-host-repo` is documented in `recipes/agent-voice/README.md`. Future recipes that want this shape follow the sibling-directory convention pinned there.
