@@ -730,6 +730,11 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
     await sql`DELETE FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}`;
+    // Audit trail: every hard-delete leaves a JSONL line so the next mystery
+    // ("what deleted X?") becomes a single grep, not forensic excavation.
+    // Best-effort; never blocks the op. See src/core/destructive-audit.ts.
+    const { logDestructiveOp } = await import('./destructive-audit.ts');
+    logDestructiveOp({ op: 'deletePage', engine: 'postgres', slug, source_id: sourceId });
   }
 
   async softDeletePage(slug: string, opts?: { sourceId?: string }): Promise<{ slug: string } | null> {
@@ -771,6 +776,18 @@ export class PostgresEngine implements BrainEngine {
       RETURNING slug
     `;
     const slugs = rows.map((r) => r.slug as string);
+    // Audit trail (#1063 follow-up): log every bulk hard-delete with the
+    // older-than-hours cutoff + the actual slugs removed.
+    if (slugs.length > 0) {
+      const { logDestructiveOp } = await import('./destructive-audit.ts');
+      logDestructiveOp({
+        op: 'purgeDeletedPages',
+        engine: 'postgres',
+        older_than_hours: hours,
+        pages_purged: slugs.length,
+        page_slugs: slugs,
+      });
+    }
     return { slugs, count: slugs.length };
   }
 
