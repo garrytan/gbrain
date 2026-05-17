@@ -4,52 +4,59 @@ All notable changes to GBrain will be documented in this file.
 
 ## [0.35.6.0] - 2026-05-17
 
-**Search opts gain a floor-ratio gate that keeps weak-overlap candidates from picking up metadata boosts.** Off by default.
+**Your search results stop letting weak pages climb to the top just because they have a lot of links pointing at them.** Off by default; turn it on with one config key.
 
-When a query lands a weak-overlap page in the top-K through baseline vector overlap, the existing metadata boosts (backlink count, salience, recency) can stack until that weak page leapfrogs the legitimate primary hit. The bug is real on dense-embedder corpora indexed with `text-embedding-3-large`, Voyage 3+, or ZeroEntropy zembed-1 — exactly the kind of brain a v0.35.0.0 install is most likely to be. The fix: each metadata boost stage now skips results whose score is below `floorRatio × topScore`. The long tail keeps its unboosted relevance ranking. A truly-strong primary always wins.
+Here's the problem this fixes. When your agent searches your brain, gbrain ranks pages by how well they match the query, then it gives a small bonus to pages that have lots of inbound links, pages you write about often, and pages you touched recently. Those bonuses are small individually. But on a big brain indexed with a strong embedding model (the kind shipped in v0.35.0.0 with ZeroEntropy zembed-1, or anyone running OpenAI text-embedding-3-large or Voyage 3+), the strong embedder treats "topically adjacent" content as more similar than it really is. So a page that barely matches your query still lands in the candidate pool, picks up all three bonuses, and ends up ranked higher than the page that actually answers your question.
 
-Built on a community PR from @jayzalowitz (SkyTwin twin-memory layer, runs gbrain as memory backend). The contributor's labeled-retrieval ablation against four different embedders is what surfaced the regression class. gbrain refactored the shape on top before merging — see "What changed from the PR" below for the integration details.
+The fix is a "floor." When you turn it on, gbrain only gives the metadata bonuses to pages near the top of the result list. Pages way down the list (far from the best match) get NO bonus, no matter how popular or important they are by other measures. So a weak match stays weak. A strong match stays on top.
 
-### The numbers that matter
+Built on a community contribution from @jayzalowitz (he runs gbrain inside [SkyTwin](https://github.com/jayzalowitz/skytwin), a twin-memory layer, and noticed the bug on his own labeled test set). His PR was #1091. We did a deep review, found a few correctness bugs, refactored the shape, and shipped the integrated version. Full credit on the commit.
 
-Numbers come from the SkyTwin ablation referenced in PR #1091; gbrain-side eval is filed as a follow-up TODO (we can't reproduce the exact failure shape from outside our own corpus, which is why the gate ships default-off).
-
-| Scenario | Result (no gate) | Result (gate=0.85) |
-|---|---|---|
-| Strong primary (score 1.0) vs weak page (score 0.5) with 1000 backlinks | weak overtakes via 1.23× backlink boost | strong-primary wins; weak unchanged at 0.5 |
-| Borderline page at exactly `floorRatio × top` | gated out (PR shape) | eligible (gbrain shape — inclusive boundary) |
-
-The integration also closed three correctness issues codex's outside-voice review caught that the PR shipped with:
-
-- **Cache contamination prevented.** `knobsHash()` bumped 2→3 so a no-floor cache write can't be served to a floor-enabled lookup. Same bug class CDX-4 closed in v0.32.3 for the other search-lite knobs.
-- **NaN scores skip the boost.** `NaN < threshold` is false in JS, which would otherwise let NaN-scored rows bypass the gate and receive boosts. Realistic if embedder dims drift across reindexes (Voyage flexible-dim, zembed-1 Matryoshka).
-- **Negative top scores leave the gate disabled.** No positive signal → no gate. The PR's "single result is trivially eligible" claim only held for positive scores.
-
-### What changed from the PR
-
-The contributor's PR computed the threshold per-stage (each of backlink → salience → recency recomputed `topScore × ratio` from the array state at that moment). That implicitly made stage order part of the API — a backlink boost to the leader would raise the salience-stage floor and gate out a page that was originally within `0.85 × top`. The integration computes the threshold ONCE at `runPostFusionStages` entry from the post-cosine-rescore snapshot and passes the same number to all three stages. Order-independent semantic; same ratio means the same eligibility set regardless of which stages are enabled.
-
-The PR also threaded `floorRatio` only through `PostFusionOpts`. The integration wires it through `SearchOpts.floorRatio` (per-call), `search.floor_ratio` config key (operator default — included in `SEARCH_MODE_CONFIG_KEYS` so `gbrain search modes --reset` clears it cleanly), and `MODE_BUNDLES[mode].floor_ratio` (currently `undefined` for all three modes pending ablation evidence). No `GBRAIN_SEARCH_FLOOR_RATIO` env var — `resolveSearchMode()` is pure by design, and a hidden env knob would make `gbrain search modes` lie about the resolved state.
-
-### How to enable it
+### How to turn it on
 
 ```bash
-# Per-call (single search):
+# Try it on a single query first:
 gbrain query "..." --floor-ratio 0.85
 
-# Operator default (applies to every query through this brain):
+# Once you're happy, make it the default for every search:
 gbrain config set search.floor_ratio 0.85
 ```
 
-Reasonable starting values for dense-embedder corpora: 0.85–0.95. Out-of-range values (negative, > 1, NaN, Infinity) silently disable the gate at both the config-parse and runtime layers.
+`0.85` means "only boost pages that scored at least 85% as well as the best match." Good starting value if you're using a modern embedding model. Try `0.90` or `0.95` if you want the boost to apply to an even smaller head of the list. Values outside `0` to `1` are ignored, so a typo can't break your search.
 
-### Scope
+Off by default. We can't prove it helps on every brain (the original bug came from one specific test corpus), so we want you to opt in and tell us how it goes before we make it the default.
 
-The gate covers the three **metadata-axis** boost stages: backlink, salience, recency. Exact-match boost (`applyExactMatchBoost` in `intent-weights.ts`) runs independently as a lexical-relevance signal and is NOT gated by design — a query whose text literally appears in a page is direct relevance, not orthogonal metadata.
+### What you'd see in a concrete example
 
-### Mid-deploy cache note
+Imagine you search "best meeting notes from Q1" and the brain returns:
 
-The `knobsHash()` version bump 2→3 means a v=2 process and a v=3 process writing the same `(source_id, query_text)` produce distinct cache row IDs. Expect a temporary hit-rate dip + cache-row doubling for hot queries during a rolling deploy; clears naturally within `cache.ttl_seconds` (default 3600s).
+| Page | Match quality | Has many backlinks? | Without the floor | With the floor (0.85) |
+|---|---|---|---|---|
+| `meetings/q1-strategy-offsite` (the actual answer) | strong | no | bonus skipped, ranks lower | wins, ranks first |
+| `people/some-popular-person` (barely matches the query) | weak (0.5x of the top match) | yes, 1000 backlinks | huge bonus, leapfrogs the meeting note | no bonus (below the floor), stays where it should |
+
+That second row is the bug you've maybe been hitting if your brain has a few "celebrity" pages that everyone links to.
+
+### What's safe to know about
+
+Three things to keep in mind:
+
+- **Your search cache will dip for a few minutes after the upgrade, then recover.** gbrain caches recent search results to make repeat queries fast. We had to change the cache key shape so it can tell "floor on" results apart from "floor off" results. While both versions are running side by side during a deploy, the cache rebuilds. Clears itself within the cache TTL (default 1 hour).
+- **The gate only changes the three "metadata" bonuses (backlinks, salience, recency).** It does NOT change the exact-match bonus (when your query text literally appears in a page). Exact-match is a different kind of signal and stays on for everyone.
+- **No environment variable.** If you want to set this brain-wide, use `gbrain config set search.floor_ratio 0.85`. We deliberately did not add a `GBRAIN_SEARCH_FLOOR_RATIO` env var so `gbrain search modes` doesn't end up lying to you about what's actually configured.
+
+### What we caught and fixed before merging
+
+A second-opinion review (we sent the diff to a different AI for an adversarial read) caught three real bugs the original PR shipped with:
+
+- **Cache could serve stale "no-floor" results to a "with-floor" caller.** Same shape as a bug we fixed in v0.32.3 for the other search knobs. Closed.
+- **Pages with broken scores (NaN, comes up if an embedder version drift slipped through) would have skipped the floor and gotten boosted anyway.** Now they skip the boost entirely, which is the safer default.
+- **If your search returned only negative-score results (unusual but possible), the floor would have rejected its own top match.** Now it just turns off the floor in that case.
+
+We also reshaped two things from the original PR:
+
+- **The floor is now computed once per search, not three times.** The original recomputed it at each bonus stage, which meant the order the bonuses ran in subtly changed which pages got gated out. Now it's one number, applied the same way to all three.
+- **You can set it three ways instead of one.** Per-query (`--floor-ratio` flag), per-brain (config key, shown in `gbrain search modes`), or eventually per-mode bundle (the three search modes will get defaults once we have data on what works).
 
 ### Itemized changes
 
