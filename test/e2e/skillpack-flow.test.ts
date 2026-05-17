@@ -258,4 +258,162 @@ describe('skillpack flow (E2E)', () => {
     expect(r.stderr).toContain('removed in v0.33');
     expect(r.stderr).toContain('scaffold');
   });
+
+  // ─── v0.36 DX coverage ────────────────────────────────────────────
+  // The fixes shipped after the initial DX audit. Each test pins one
+  // user-facing contract: agent-onboarding lands, every CLI tells the
+  // reader the next action, and the two-way merge warning surfaces at
+  // the right channel (stderr, not stdout, suppressed in --json).
+
+  test('10. scaffold lands skills/_AGENT_README.md (agent-onboarding contract)', () => {
+    const ws = scratchWorkspace();
+    runGbrain(['skillpack', 'scaffold', 'book-mirror', '--workspace', ws]);
+    expect(existsSync(join(ws, 'skills', '_AGENT_README.md'))).toBe(true);
+    const body = readFileSync(join(ws, 'skills', '_AGENT_README.md'), 'utf-8');
+    // Pin the load-bearing contract phrases — agents read these.
+    expect(body).toContain('walking every `skills/<slug>/SKILL.md`');
+    expect(body).toContain('frontmatter');
+    expect(body).toContain('triggers:');
+    expect(body).toContain('reference --all');
+  });
+
+  test('11. scaffold stdout prints next-action hint on real writes', () => {
+    const ws = scratchWorkspace();
+    const r = runGbrain(['skillpack', 'scaffold', 'book-mirror', '--workspace', ws]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Next:');
+    expect(r.stdout).toContain('triggers:');
+    expect(r.stdout).toContain('_AGENT_README.md');
+    expect(r.stdout).toContain('reference --all');
+  });
+
+  test('12. scaffold re-run does NOT print the next-action hint (already installed)', () => {
+    const ws = scratchWorkspace();
+    runGbrain(['skillpack', 'scaffold', 'book-mirror', '--workspace', ws]);
+    const r = runGbrain(['skillpack', 'scaffold', 'book-mirror', '--workspace', ws]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('skipped');
+    // Hint suppressed when nothing new was written — keeps re-runs quiet.
+    expect(r.stdout).not.toContain('Next: your agent walks');
+  });
+
+  test('13. reference stdout prints per-category decision policy when there are differs', () => {
+    const ws = scratchWorkspace();
+    runGbrain(['skillpack', 'scaffold', 'book-mirror', '--workspace', ws]);
+    const skillMd = join(ws, 'skills', 'book-mirror', 'SKILL.md');
+    writeFileSync(skillMd, readFileSync(skillMd, 'utf-8') + '\n## edits\n');
+
+    const r = runGbrain(['skillpack', 'reference', 'book-mirror', '--workspace', ws]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Agent decision policy');
+    expect(r.stdout).toContain('was your local edit intentional');
+    expect(r.stdout).toContain('two-way merge warning');
+  });
+
+  test('14. --apply-clean-hunks prints two-way WARNING to STDERR, not stdout', () => {
+    // Use a private bundle so we can mutate it without polluting the repo.
+    const gbrainRoot = mkdtempSync(join(tmpdir(), 'sp-e2e-gb-warn-'));
+    tempdirs.push(gbrainRoot);
+    mkdirSync(join(gbrainRoot, 'src'), { recursive: true });
+    writeFileSync(join(gbrainRoot, 'src', 'cli.ts'), '// stub');
+    mkdirSync(join(gbrainRoot, 'skills', 'warn-demo'), { recursive: true });
+    const initial = Array.from({ length: 15 }, (_, i) => `L${i + 1}`).join('\n') + '\n';
+    writeFileSync(join(gbrainRoot, 'skills', 'warn-demo', 'SKILL.md'), initial);
+    writeFileSync(
+      join(gbrainRoot, 'openclaw.plugin.json'),
+      JSON.stringify({
+        name: 'gb', version: '0.36-test',
+        skills: ['skills/warn-demo'], shared_deps: [],
+      }, null, 2),
+    );
+
+    const ws = scratchWorkspace();
+    spawnSync(GBRAIN_CMD, [...GBRAIN_ARGS, 'skillpack', 'scaffold', 'warn-demo', '--workspace', ws], {
+      cwd: gbrainRoot, encoding: 'utf-8', env: { ...process.env, OPENCLAW_WORKSPACE: '' },
+    });
+    // Cause drift to make apply do something.
+    writeFileSync(
+      join(gbrainRoot, 'skills', 'warn-demo', 'SKILL.md'),
+      initial.replace('L8\n', 'L8 NEW\n'),
+    );
+
+    const r = spawnSync(
+      GBRAIN_CMD,
+      [...GBRAIN_ARGS, 'skillpack', 'reference', 'warn-demo', '--workspace', ws, '--apply-clean-hunks'],
+      { cwd: gbrainRoot, encoding: 'utf-8', env: { ...process.env, OPENCLAW_WORKSPACE: '' } },
+    );
+    expect(r.status).toBe(0);
+    // WARNING must be on stderr (survives stdout redirection).
+    expect(r.stderr).toContain('WARNING');
+    expect(r.stderr).toContain('two-way');
+    expect(r.stderr).toContain('aligned to gbrain');
+    // And must NOT be on stdout (where machine consumers parse).
+    expect(r.stdout).not.toContain('WARNING:');
+  });
+
+  test('15. --apply-clean-hunks --json does NOT print the WARNING (machine mode)', () => {
+    const gbrainRoot = mkdtempSync(join(tmpdir(), 'sp-e2e-gb-json-'));
+    tempdirs.push(gbrainRoot);
+    mkdirSync(join(gbrainRoot, 'src'), { recursive: true });
+    writeFileSync(join(gbrainRoot, 'src', 'cli.ts'), '// stub');
+    mkdirSync(join(gbrainRoot, 'skills', 'json-demo'), { recursive: true });
+    writeFileSync(join(gbrainRoot, 'skills', 'json-demo', 'SKILL.md'), 'a\nb\nc\n');
+    writeFileSync(
+      join(gbrainRoot, 'openclaw.plugin.json'),
+      JSON.stringify({
+        name: 'gb', version: '0.36-test',
+        skills: ['skills/json-demo'], shared_deps: [],
+      }, null, 2),
+    );
+
+    const ws = scratchWorkspace();
+    spawnSync(GBRAIN_CMD, [...GBRAIN_ARGS, 'skillpack', 'scaffold', 'json-demo', '--workspace', ws], {
+      cwd: gbrainRoot, encoding: 'utf-8', env: { ...process.env, OPENCLAW_WORKSPACE: '' },
+    });
+
+    const r = spawnSync(
+      GBRAIN_CMD,
+      [...GBRAIN_ARGS, 'skillpack', 'reference', 'json-demo', '--workspace', ws, '--apply-clean-hunks', '--json'],
+      { cwd: gbrainRoot, encoding: 'utf-8', env: { ...process.env, OPENCLAW_WORKSPACE: '' } },
+    );
+    expect(r.status).toBe(0);
+    // JSON mode: stderr stays clean for machine consumers.
+    expect(r.stderr).not.toContain('WARNING');
+    // And stdout is valid JSON.
+    expect(() => JSON.parse(r.stdout)).not.toThrow();
+  });
+
+  test('16. migrate-fence stdout points the agent at the new routing model', () => {
+    const ws = scratchWorkspace();
+    mkdirSync(join(ws, 'skills'), { recursive: true });
+    writeFileSync(
+      join(ws, 'skills', 'RESOLVER.md'),
+      `# RESOLVER
+
+<!-- gbrain:skillpack:begin -->
+<!-- gbrain:skillpack:manifest cumulative-slugs="lx" version="0.32.0" -->
+| "trigger" | \`skills/lx/SKILL.md\` |
+<!-- gbrain:skillpack:end -->
+`,
+    );
+    const r = runGbrain(['skillpack', 'migrate-fence', '--workspace', ws]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('fence_stripped');
+    expect(r.stdout).toContain('routing model just changed');
+    expect(r.stdout).toContain('scrub-legacy-fence-rows');
+    expect(r.stdout).toContain('_AGENT_README.md');
+  });
+
+  test('17. reference --all --since <bad-tag> falls back to full sweep with a warn', () => {
+    const ws = scratchWorkspace();
+    runGbrain(['skillpack', 'scaffold', 'book-mirror', '--workspace', ws]);
+    const r = runGbrain([
+      'skillpack', 'reference', '--all', '--workspace', ws, '--since', 'v999.999.999.0',
+    ]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain('--since');
+    expect(r.stderr).toContain('could not be resolved');
+    // Full sweep still ran — header line present.
+    expect(r.stdout).toContain('as reference');
+  });
 });

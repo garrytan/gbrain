@@ -257,7 +257,10 @@ async function cmdScaffold(args: string[]): Promise<void> {
 async function cmdReference(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack reference <name> | --all [--workspace PATH] [--apply-clean-hunks] [--dry-run] [--json]',
+      'gbrain skillpack reference <name> | --all [--workspace PATH] [--apply-clean-hunks] [--since <version>] [--dry-run] [--json]\n\n' +
+        '  --since <version>   With --all, restrict the sweep to skills whose source\n' +
+        '                      changed in gbrain between <version> and HEAD. Useful\n' +
+        '                      after `gbrain upgrade` to see only what moved.',
     );
     process.exit(0);
   }
@@ -267,6 +270,7 @@ async function cmdReference(args: string[]): Promise<void> {
   const all = args.includes('--all');
   let name: string | null = null;
   let workspace: string | null = null;
+  let since: string | null = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--workspace') {
@@ -274,6 +278,11 @@ async function cmdReference(args: string[]): Promise<void> {
       i++;
     } else if (a?.startsWith('--workspace=')) {
       workspace = a.slice('--workspace='.length) || null;
+    } else if (a === '--since') {
+      since = args[i + 1] ?? null;
+      i++;
+    } else if (a?.startsWith('--since=')) {
+      since = a.slice('--since='.length) || null;
     } else if (a && !a.startsWith('--') && !name) {
       name = a;
     }
@@ -294,17 +303,19 @@ async function cmdReference(args: string[]): Promise<void> {
         );
         process.exit(2);
       }
-      // Two-way merge warning fires BEFORE the apply (not after). Skipped
-      // in --json mode so machine consumers aren't drowned, but always
-      // printed to stderr regardless of mode so the warning survives
-      // stdout redirection.
+      // Two-way merge warning fires BEFORE the apply. Goes to stderr so
+      // it survives stdout redirection. Suppressed in --json mode so
+      // machine consumers (CI, agent scripts) get a clean envelope; the
+      // human-facing reason for the warning is documented in the JSON
+      // output's `framing` field already, and the docstring on the
+      // command-help covers it.
       const twoWayWarning =
         'WARNING: --apply-clean-hunks is a two-way diff against gbrain\'s CURRENT bundle.\n' +
         '         gbrain does NOT have access to the version you originally scaffolded.\n' +
         '         Hunks where your LOCAL edits differ from gbrain WILL be aligned to gbrain.\n' +
         '         If you have intentional local edits, run `gbrain skillpack reference ' + name + '`\n' +
         '         (read-only) first to inspect, OR pass --dry-run on this command.';
-      if (!dryRun) console.error(twoWayWarning);
+      if (!dryRun && !json) console.error(twoWayWarning);
 
       const result = runReferenceApply({ gbrainRoot, targetWorkspace, skillSlug: name!, dryRun });
       if (json) console.log(JSON.stringify(result, null, 2));
@@ -329,10 +340,35 @@ async function cmdReference(args: string[]): Promise<void> {
 
     if (all) {
       const result = runReferenceAll({ gbrainRoot, targetWorkspace });
-      if (json) console.log(JSON.stringify(result, null, 2));
+      // --since filter: keep only skills whose source changed in gbrain
+      // since the given version. Falls back loudly when git can't resolve
+      // the ref (tarball install, missing tag, etc).
+      let sinceFilter: Set<string> | null = null;
+      if (since) {
+        const { changedSlugsSinceVersion } = await import('../core/skillpack/bundle.ts');
+        const slugs = changedSlugsSinceVersion(gbrainRoot, since);
+        if (slugs === null) {
+          console.error(
+            `warn: --since '${since}' could not be resolved (no git checkout, missing tag, or git error). Falling back to full sweep.`,
+          );
+        } else {
+          sinceFilter = new Set(slugs);
+        }
+      }
+      const filteredSkills = sinceFilter
+        ? result.skills.filter(s => sinceFilter!.has(s.slug))
+        : result.skills;
+      const filtered = { ...result, skills: filteredSkills };
+      if (json) console.log(JSON.stringify(filtered, null, 2));
       else {
         console.log(result.framing);
-        for (const s of result.skills) {
+        if (since && sinceFilter) {
+          console.log(`(filtered to ${filteredSkills.length} skill(s) changed since ${since})`);
+        }
+        if (filteredSkills.length === 0) {
+          console.log('  (no skills changed in the requested window)');
+        }
+        for (const s of filteredSkills) {
           console.log(
             `  ${s.slug.padEnd(40)} identical:${s.summary.identical} differs:${s.summary.differs} missing:${s.summary.missing}`,
           );

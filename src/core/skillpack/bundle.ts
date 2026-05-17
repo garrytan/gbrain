@@ -213,6 +213,82 @@ export function enumerateBundle(opts: EnumerateOptions): BundleEntry[] {
   return entries;
 }
 
+// ---------------------------------------------------------------------------
+// Git-aware change filter (v0.36 — `reference --since <version>`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the set of skill slugs whose files under `skills/<slug>/` changed
+ * between `version` and HEAD in the gbrain source tree. Used by
+ * `gbrain skillpack reference --since <version>` so an agent can sweep
+ * only the skills that actually moved since the last time it looked.
+ *
+ * Returns `null` (not an empty array) when:
+ *   - the gbrain root is not a git checkout (tarball install)
+ *   - the version tag doesn't resolve in this repo
+ *   - any other git error
+ *
+ * Callers fall back to "scan every bundled skill" when null is returned,
+ * with a stderr note explaining why.
+ *
+ * `version` accepts the same shapes git rev-parse does — a tag like
+ * `v0.36.0.0`, a bare version like `0.36.0.0` (will retry with `v` prefix),
+ * a commit SHA, or a branch name.
+ */
+export function changedSlugsSinceVersion(
+  gbrainRoot: string,
+  version: string,
+): string[] | null {
+  // Synchronously execute git via Bun.spawnSync to avoid the async overhead
+  // and keep this callable from CLI dispatch without awaiting.
+  const { spawnSync } = require('child_process') as typeof import('child_process');
+
+  // Probe git availability + repo state. `.git` may be a directory OR a file
+  // (worktrees). Either is fine for `git log`.
+  if (!existsSync(join(gbrainRoot, '.git'))) return null;
+
+  // Try the literal version first, then with a `v` prefix.
+  const candidates: string[] = [version];
+  if (!version.startsWith('v')) candidates.push(`v${version}`);
+
+  for (const ref of candidates) {
+    const probe = spawnSync(
+      'git',
+      ['-C', gbrainRoot, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`],
+      { encoding: 'utf-8' },
+    );
+    if (probe.status !== 0) continue;
+
+    const log = spawnSync(
+      'git',
+      [
+        '-C',
+        gbrainRoot,
+        'log',
+        '--name-only',
+        '--format=',
+        `${ref}..HEAD`,
+        '--',
+        'skills/',
+      ],
+      { encoding: 'utf-8' },
+    );
+    if (log.status !== 0) return null;
+
+    const slugs = new Set<string>();
+    for (const line of (log.stdout ?? '').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const m = /^skills\/([^/]+)\//.exec(trimmed);
+      if (m) slugs.add(m[1]);
+    }
+    return [...slugs].sort();
+  }
+
+  // No candidate ref resolved.
+  return null;
+}
+
 export function pathSlug(relPath: string): string {
   const trimmed = relPath.replace(/\/+$/, '');
   const parts = trimmed.split('/');
