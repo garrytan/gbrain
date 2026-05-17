@@ -8,8 +8,14 @@ start here.
 
 1. Clone: `git clone https://github.com/garrytan/gbrain ~/gbrain && cd ~/gbrain`
 2. Install: `bun install`
-3. Init the brain: `gbrain init` (defaults to PGLite, zero-config). For 1000+ files or
-   multi-machine sync, init suggests Postgres + pgvector via Supabase.
+3. Choose the role and init the brain:
+   - Individual install: `gbrain init --mode individual` for a normal user brain
+     (defaults to PGLite, zero-config).
+   - Company install: deploy the same GBrain code again, but run
+     `gbrain init --mode company` in a separate `GBRAIN_HOME` with a separate
+     database and markdown brain repo.
+   - For 1000+ files or multi-machine sync, init suggests Postgres + pgvector
+     via Supabase.
 4. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
    default but printed a 9-cell cost matrix (mode × downstream model)
    preceded by `[AGENT]` markers. You MUST relay the matrix to the operator
@@ -20,6 +26,23 @@ start here.
    for existing users (search modes were added in v0.32.3).
 5. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full 9-step flow
    (API keys, identity, cron, verification).
+
+## Company-wide setup
+
+Use one GBrain code repo/container image, but isolate every knowledge boundary:
+
+```text
+gbrain-alice   -> --mode individual -> Alice brain repo   -> Alice DB   -> signed export
+gbrain-company -> --mode company    -> Company brain repo -> Company DB <- company-share pull
+```
+
+The company brain must not open a member's DB or markdown repo directly. It
+imports only signed, sanitized member exports into `member-<id>` sources.
+Company agents should be configured against the company MCP/OAuth endpoint
+unless they are intentionally acting as a specific user's private agent.
+
+For Railway/Supabase deployment variables, read
+`docs/deploy/railway-company-gbrain.md`.
 
 ## Read this order
 
@@ -32,7 +55,9 @@ start here.
 4. [`./skills/conventions/brain-routing.md`](./skills/conventions/brain-routing.md) —
    agent-facing decision table: when to switch brain, when to switch source, how
    cross-brain federation works (latent-space only; the agent decides).
-5. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
+5. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — individual-brain skill dispatcher.
+   For company-mode brains, read [`./skills/COMPANY_RESOLVER.md`](./skills/COMPANY_RESOLVER.md)
+   instead.
 
 ## Trust boundary (critical)
 

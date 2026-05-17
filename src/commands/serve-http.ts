@@ -792,7 +792,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // MCP tool calls (bearer auth + scope enforcement)
   // ---------------------------------------------------------------------------
-  const mcpOperations = operations.filter(op => !op.localOnly);
+  const baseMcpOperations = operations.filter(op => !op.localOnly);
+  async function mcpOperationsForCurrentBrain() {
+    const { getCompanyShareRole } = await import('../core/company-share.ts');
+    const { filterOperationsForBrainRole } = await import('../core/company-skill-policy.ts');
+    const role = await getCompanyShareRole(engine);
+    return filterOperationsForBrainRole(baseMcpOperations, role);
+  }
 
   app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
     const startTime = Date.now();
@@ -833,6 +839,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         status: 'success',
         timestamp: new Date().toISOString(),
       });
+      const mcpOperations = await mcpOperationsForCurrentBrain();
       return {
         tools: mcpOperations.map(op => ({
           name: op.name,
@@ -855,6 +862,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: params } = request.params;
+      const mcpOperations = await mcpOperationsForCurrentBrain();
       const op = mcpOperations.find(o => o.name === name);
       if (!op) {
         // v0.28.10: persist unknown-op attempts. Operators investigating

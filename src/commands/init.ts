@@ -24,6 +24,12 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+  const modeIndex = args.indexOf('--mode');
+  const companyShareRole = modeIndex !== -1 ? args[modeIndex + 1] : null;
+  if (companyShareRole && companyShareRole !== 'individual' && companyShareRole !== 'company') {
+    console.error('--mode must be "individual" or "company"');
+    process.exit(2);
+  }
 
   // Multi-topology v1: thin-client init. Skips local engine entirely; writes
   // remote_mcp config that the CLI dispatch guard reads to refuse DB-bound ops.
@@ -89,7 +95,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts });
+    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, companyShareRole: companyShareRole as 'individual' | 'company' | null });
   }
 
   // Supabase/Postgres mode
@@ -108,7 +114,7 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts, companyShareRole: companyShareRole as 'individual' | 'company' | null });
 }
 
 /**
@@ -378,6 +384,7 @@ async function initPGLite(opts: {
   apiKey: string | null;
   customPath: string | null;
   aiOpts?: { embedding_model?: string; embedding_dimensions?: number; expansion_model?: string; chat_model?: string };
+  companyShareRole?: 'individual' | 'company' | null;
 }) {
   const dbPath = opts.customPath || gbrainPath('brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
@@ -427,6 +434,9 @@ async function initPGLite(opts: {
     }
 
     await engine.initSchema();
+    if (opts.companyShareRole) {
+      await engine.setConfig('company_share.role', opts.companyShareRole);
+    }
 
     const config: GBrainConfig = {
       engine: 'pglite',
@@ -448,10 +458,12 @@ async function initPGLite(opts: {
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count }));
+      console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count, ...(opts.companyShareRole ? { mode: opts.companyShareRole } : {}) }));
     } else {
       console.log(`\nBrain ready at ${dbPath}`);
       console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
+      if (opts.companyShareRole) console.log(`Company-share mode: ${opts.companyShareRole}`);
+      if (opts.companyShareRole === 'company') console.log('Company skill profile: skills/COMPANY_RESOLVER.md');
       if (stats.page_count > 0) {
         console.log('');
         console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
@@ -478,6 +490,7 @@ async function initPostgres(opts: {
   jsonOutput: boolean;
   apiKey: string | null;
   aiOpts?: { embedding_model?: string; embedding_dimensions?: number; expansion_model?: string; chat_model?: string };
+  companyShareRole?: 'individual' | 'company' | null;
 }) {
   const { databaseUrl } = opts;
 
@@ -567,6 +580,9 @@ async function initPostgres(opts: {
 
     console.log('Running schema migration...');
     await engine.initSchema();
+    if (opts.companyShareRole) {
+      await engine.setConfig('company_share.role', opts.companyShareRole);
+    }
 
     const config: GBrainConfig = {
       engine: 'postgres',
@@ -588,9 +604,11 @@ async function initPostgres(opts: {
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count }));
+      console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count, ...(opts.companyShareRole ? { mode: opts.companyShareRole } : {}) }));
     } else {
       console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
+      if (opts.companyShareRole) console.log(`Company-share mode: ${opts.companyShareRole}`);
+      if (opts.companyShareRole === 'company') console.log('Company skill profile: skills/COMPANY_RESOLVER.md');
       if (stats.page_count > 0) {
         console.log('');
         console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');

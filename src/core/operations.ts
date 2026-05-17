@@ -1029,6 +1029,33 @@ const list_pages: Operation = {
   cliHints: { name: 'list' },
 };
 
+const company_share_export: Operation = {
+  name: 'company_share_export',
+  description: 'Export pages explicitly approved for company-wide sharing. Private by default; source defaults and page overrides decide whether a page exports as summary or full sanitized content.',
+  params: {
+    member_id: { type: 'string', description: 'Member id to stamp into the signed manifest.' },
+    limit: { type: 'number', description: 'Max records in this page of export results.' },
+    cursor: { type: 'string', description: 'Opaque cursor returned by the previous export page.' },
+  },
+  handler: async (ctx, p) => {
+    const { buildCompanyShareExport, CompanyShareError } = await import('./company-share.ts');
+    try {
+      return await buildCompanyShareExport(ctx.engine, {
+        memberId: typeof p.member_id === 'string' ? p.member_id : undefined,
+        limit: typeof p.limit === 'number' ? p.limit : undefined,
+        cursor: typeof p.cursor === 'string' ? p.cursor : undefined,
+        ...sourceScopeOpts(ctx),
+      });
+    } catch (err) {
+      if (err instanceof CompanyShareError) {
+        throw new OperationError('invalid_params', err.message);
+      }
+      throw err;
+    }
+  },
+  scope: 'read',
+};
+
 // --- Search ---
 
 const search: Operation = {
@@ -1700,13 +1727,18 @@ const get_brain_identity: Operation = {
   description: 'Brain identity + counters for thin-client banner. Returns version, engine kind, and page/chunk counts. Read-scope.',
   params: {},
   handler: async (ctx) => {
+    const { getCompanyShareRole } = await import('./company-share.ts');
+    const { companySkillProfile } = await import('./company-skill-policy.ts');
     const stats = await ctx.engine.getStats();
+    const brainRole = await getCompanyShareRole(ctx.engine);
     return {
       version: VERSION,
       engine: ctx.engine.kind,
+      brain_role: brainRole,
       page_count: stats.page_count,
       chunk_count: stats.chunk_count,
       last_sync_iso: null as string | null,
+      ...(brainRole === 'company' ? { skill_profile: companySkillProfile() } : {}),
     };
   },
   scope: 'read',
@@ -3129,6 +3161,8 @@ const code_traversal_cache_clear: Operation = {
 export const operations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
+  // Company-wide sharing
+  company_share_export,
   // v0.26.5 destructive-guard ops (page-level soft-delete + recovery + admin purge)
   restore_page, purge_deleted_pages,
   // Search

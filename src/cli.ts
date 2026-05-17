@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'company-share']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -187,6 +187,27 @@ function hasHelpFlag(args: string[]): boolean {
 }
 
 function printCliOnlyHelp(command: string) {
+  if (command === 'init') {
+    console.log(`Usage: gbrain init [--mode individual|company] [--pglite|--supabase|--url <connection_string>] [options]
+
+Create or migrate a GBrain database.
+
+Role:
+  --mode individual              User/private brain. Private by default for company sharing.
+  --mode company                 Company aggregate brain. Imports signed member exports.
+
+Common options:
+  --pglite                       Use local embedded PGLite.
+  --supabase                     Run the Supabase/Postgres setup wizard.
+  --url <connection_string>      Use an existing Postgres/Supabase database.
+  --non-interactive              Require --url or DATABASE_URL/GBRAIN_DATABASE_URL.
+  --mcp-only                     Configure this machine as a thin client to a remote MCP.
+
+Company-wide setups need separate GBRAIN_HOME, database, and markdown brain repo
+for each individual brain and for the company brain. The company brain learns
+from members through \`gbrain company-share pull\`, not by opening member DBs.`);
+    return;
+  }
   console.log(`Usage: gbrain ${command}`);
   console.log('');
   console.log(`gbrain ${command} - run gbrain --help for the full command list.`);
@@ -651,7 +672,7 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   // - `eval` export/prune/replay have no MCP equivalents
   // - `code-def`/`code-refs`/`code-callers`/`code-callees` have NO MCP ops
   //   in operations.ts:2630-2671; cannot be "fixed by routing" yet
-  'pages', 'files', 'eval', 'code-def', 'code-refs', 'code-callers', 'code-callees',
+  'pages', 'files', 'eval', 'code-def', 'code-refs', 'code-callers', 'code-callees', 'company-share',
 ]);
 
 /**
@@ -677,6 +698,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   orphans: "orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
   transcripts: 'transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.',
   storage: 'storage operates on the local repo on disk. Run on the host.',
+  'company-share': 'company-share manages local role config, member registry, and imports. Run on the host brain; remote agents should call the company_share_export MCP tool.',
   takes: 'takes mutate subcommands edit local .md files; routing the read subcommands lands in v0.31.x. For now: use `takes_list` and `takes_search` MCP tools from your agent, or run on the host.',
   sources: 'sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.',
   // v0.32 audit additions
@@ -1203,6 +1225,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runSources(engine, args);
         break;
       }
+      case 'company-share': {
+        const { runCompanyShare } = await import('./commands/company-share.ts');
+        await runCompanyShare(engine, args);
+        break;
+      }
       case 'pages': {
         // v0.26.5: page-level operator commands (purge-deleted escape hatch).
         const { runPages } = await import('./commands/pages.ts');
@@ -1435,7 +1462,8 @@ USAGE
   gbrain <command> [options]
 
 SETUP
-  init [--pglite|--supabase|--url]   Create brain (PGLite default, no server)
+  init [--mode individual|company]   Create brain (PGLite default, no server)
+       [--pglite|--supabase|--url]
   migrate --to <supabase|pglite>     Transfer brain between engines
   upgrade                            Self-update
   check-update [--json]              Check for new versions

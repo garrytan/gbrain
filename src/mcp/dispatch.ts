@@ -238,6 +238,24 @@ export async function dispatchToolCall(
     };
   }
 
+  if (opts.remote !== false) {
+    const { getCompanyShareRole } = await import('../core/company-share.ts');
+    const { isCompanyRemoteOperationAllowed } = await import('../core/company-skill-policy.ts');
+    const role = await getCompanyShareRole(engine);
+    if (role === 'company' && !isCompanyRemoteOperationAllowed(op)) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: 'permission_denied',
+            message: `Operation ${name} is not exposed by company-mode GBrain. Use the company skill profile or run an admin/local command on the host.`,
+          }, null, 2),
+        }],
+        isError: true,
+      };
+    }
+  }
+
   const safeParams = params || {};
   const validationError = validateParams(op, safeParams);
   if (validationError) {
