@@ -573,39 +573,105 @@ async function runPhaseSync(
 ): Promise<SyncPhaseResult> {
   try {
     const { performSync } = await import('../commands/sync.ts');
-    // Resolve the per-source id so sync reads source-scoped last_commit
-    // instead of the global config key. The global key can drift out of
-    // git history (force push, GC) causing a full reimport of all files.
-    const sourceId = await resolveSourceForDir(engine, brainDir);
-    const result = await performSync(engine, {
-      repoPath: brainDir,
-      sourceId,
-      dryRun,
-      noPull: !pull,
-      noEmbed: true,                       // embed is a separate phase
-      noExtract: willRunExtractPhase,      // dedupe ONLY when cycle's extract phase will also run.
-                                           // If extract isn't scheduled (e.g. `gbrain dream --phase sync`),
-                                           // sync's inline extract still runs to preserve prior behavior.
-    });
-    const syncedCount = result.added + result.modified;
+
+    // Multi-source sync: enumerate all registered sources with local_path
+    // and sync each one individually. This avoids the FK constraint error
+    // that occurs when brainDir doesn't match any source's local_path
+    // (causing sourceId to resolve as undefined, falling back to the
+    // schema DEFAULT 'default' which may not exist in sources table).
+    const sources = await engine.executeRaw<{ id: string; local_path: string }>(
+      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND local_path != ''`,
+    );
+
+    if (sources.length === 0) {
+      // No registered sources — fall back to legacy single-dir sync.
+      const sourceId = await resolveSourceForDir(engine, brainDir);
+      const result = await performSync(engine, {
+        repoPath: brainDir,
+        sourceId,
+        dryRun,
+        noPull: !pull,
+        noEmbed: true,
+        noExtract: willRunExtractPhase,
+      });
+      const syncedCount = result.added + result.modified;
+      return {
+        phase: 'sync',
+        status: result.status === 'blocked_by_failures' ? 'warn' : 'ok',
+        duration_ms: 0,
+        summary: dryRun
+          ? `${syncedCount} page(s) would sync, ${result.deleted} would delete`
+          : `+${result.added} added, ~${result.modified} modified, -${result.deleted} deleted`,
+        details: {
+          added: result.added,
+          modified: result.modified,
+          deleted: result.deleted,
+          renamed: result.renamed,
+          chunksCreated: result.chunksCreated,
+          failedFiles: result.failedFiles ?? 0,
+          syncStatus: result.status,
+          dryRun,
+        },
+        pagesAffected: result.pagesAffected,
+      };
+    }
+
+    // Sync each source individually and aggregate results.
+    let totalAdded = 0, totalModified = 0, totalDeleted = 0, totalRenamed = 0;
+    let totalChunksCreated = 0, totalFailedFiles = 0;
+    const allPagesAffected: string[] = [];
+    const perSourceStatuses: string[] = [];
+    let worstStatus: 'ok' | 'warn' | 'fail' = 'ok';
+
+    for (const src of sources) {
+      if (!existsSync(src.local_path)) {
+        perSourceStatuses.push(`${src.id}: path_missing`);
+        continue;
+      }
+      try {
+        const result = await performSync(engine, {
+          repoPath: src.local_path,
+          sourceId: src.id,
+          dryRun,
+          noPull: !pull,
+          noEmbed: true,
+          noExtract: willRunExtractPhase,
+        });
+        totalAdded += result.added;
+        totalModified += result.modified;
+        totalDeleted += result.deleted;
+        totalRenamed += result.renamed;
+        totalChunksCreated += result.chunksCreated;
+        totalFailedFiles += result.failedFiles ?? 0;
+        allPagesAffected.push(...(result.pagesAffected ?? []));
+        const srcStatus = result.status === 'blocked_by_failures' ? 'warn' : 'ok';
+        perSourceStatuses.push(`${src.id}: ${srcStatus} (+${result.added} ~${result.modified} -${result.deleted})`);
+        if (srcStatus === 'warn' && worstStatus !== 'fail') worstStatus = 'warn';
+      } catch (e) {
+        worstStatus = 'fail';
+        perSourceStatuses.push(`${src.id}: error (${String(e)})`);
+      }
+    }
+
     return {
       phase: 'sync',
-      status: result.status === 'blocked_by_failures' ? 'warn' : 'ok',
+      status: worstStatus,
       duration_ms: 0,
       summary: dryRun
-        ? `${syncedCount} page(s) would sync, ${result.deleted} would delete`
-        : `+${result.added} added, ~${result.modified} modified, -${result.deleted} deleted`,
+        ? `${totalAdded + totalModified} page(s) would sync across ${sources.length} source(s), ${totalDeleted} would delete`
+        : `+${totalAdded} added, ~${totalModified} modified, -${totalDeleted} deleted across ${sources.length} source(s)`,
       details: {
-        added: result.added,
-        modified: result.modified,
-        deleted: result.deleted,
-        renamed: result.renamed,
-        chunksCreated: result.chunksCreated,
-        failedFiles: result.failedFiles ?? 0,
-        syncStatus: result.status,
+        added: totalAdded,
+        modified: totalModified,
+        deleted: totalDeleted,
+        renamed: totalRenamed,
+        chunksCreated: totalChunksCreated,
+        failedFiles: totalFailedFiles,
+        syncStatus: worstStatus === 'ok' ? 'completed' : worstStatus === 'warn' ? 'blocked_by_failures' : 'error',
         dryRun,
+        sourcesSynced: perSourceStatuses,
       },
-      pagesAffected: result.pagesAffected,
+      pagesAffected: allPagesAffected,
     };
   } catch (e) {
     return {
