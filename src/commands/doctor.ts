@@ -228,13 +228,13 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
       checks.push({
         name: 'schema_version',
         status: 'fail',
-        message: `No schema version recorded. Migrations never ran. Run \`gbrain apply-migrations --yes\` on the host.`,
+        message: `No schema version recorded. Migrations never ran. Run \`gbrain init --migrate-only\` then \`gbrain apply-migrations --yes\` on the host.`,
       });
     } else {
       checks.push({
         name: 'schema_version',
         status: 'warn',
-        message: `Version ${version}, latest is ${LATEST_VERSION}. Run \`gbrain apply-migrations --yes\` on the host.`,
+        message: `Version ${version}, latest is ${LATEST_VERSION}. Run \`gbrain init --migrate-only\` then \`gbrain apply-migrations --yes\` on the host.`,
       });
     }
   } catch {

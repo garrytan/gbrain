@@ -108,6 +108,21 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // created_at DESC)`. Old brains have ingest_log without source_id; bootstrap
   // adds the column before SCHEMA_SQL replay creates the index.
   { kind: 'column', table: 'ingest_log', column: 'source_id' },
+  // v0.18.0 Step 7 — files.source_id forward-referenced by
+  // `CREATE INDEX idx_files_source_id ON files(source_id)`. Closes #974.
+  { kind: 'column', table: 'files', column: 'source_id' },
+  // v0.18.0 Step 7 — files.page_id forward-referenced by
+  // `CREATE INDEX idx_files_page_id ON files(page_id)`. Closes #974 + the
+  // column half of #820.
+  { kind: 'column', table: 'files', column: 'page_id' },
+  // v0.34.1 (v60) — oauth_clients.source_id forward-referenced by
+  // `CREATE INDEX idx_oauth_clients_source_id ON oauth_clients(source_id)
+  //  WHERE source_id IS NOT NULL`. Closes #1018.
+  { kind: 'column', table: 'oauth_clients', column: 'source_id' },
+  // v0.34.1 (v61) — oauth_clients.federated_read forward-referenced by
+  // `CREATE INDEX idx_oauth_clients_federated_read ON oauth_clients
+  //  USING GIN (federated_read)`. Closes #1018.
+  { kind: 'column', table: 'oauth_clients', column: 'federated_read' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -168,6 +183,17 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
       ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
       ALTER TABLE pages DROP COLUMN IF EXISTS emotional_weight;
+
+      -- Bootstrap-gap fix-wave (closes #974, #1018, partial #820).
+      DROP INDEX IF EXISTS idx_files_page_id;
+      DROP INDEX IF EXISTS idx_files_source_id;
+      ALTER TABLE files DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE files DROP COLUMN IF EXISTS page_id;
+
+      DROP INDEX IF EXISTS idx_oauth_clients_source_id;
+      DROP INDEX IF EXISTS idx_oauth_clients_federated_read;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS federated_read;
     `);
 
     // Run bootstrap in isolation (NOT initSchema). This is what we're testing.
@@ -234,6 +260,17 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
       ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
       ALTER TABLE pages DROP COLUMN IF EXISTS emotional_weight;
+
+      -- Bootstrap-gap fix-wave (closes #974, #1018, partial #820).
+      DROP INDEX IF EXISTS idx_files_page_id;
+      DROP INDEX IF EXISTS idx_files_source_id;
+      ALTER TABLE files DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE files DROP COLUMN IF EXISTS page_id;
+
+      DROP INDEX IF EXISTS idx_oauth_clients_source_id;
+      DROP INDEX IF EXISTS idx_oauth_clients_federated_read;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS federated_read;
     `);
 
     // Bootstrap, then schema replay. Either step crashing fails the test.
