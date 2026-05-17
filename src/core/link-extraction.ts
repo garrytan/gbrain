@@ -56,7 +56,7 @@ const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|pr
  * `.md` suffix so the same function works for both filesystem and DB content.
  */
 const ENTITY_REF_RE = new RegExp(
-  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${DIR_PATTERN}\\/[^)\\s]+?)(?:\\.md)?\\)`,
+  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/|\\.\\/)*((?:${DIR_PATTERN}\\/[^)\\s]+?)|[^)\\s\\/:]+)(?:\\.md)?\\)`,
   'g',
 );
 
