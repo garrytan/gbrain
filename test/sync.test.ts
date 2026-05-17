@@ -272,6 +272,26 @@ describe('performSync dry-run never writes', () => {
     expect(await engine.getConfig('sync.repo_path')).toBeNull();
   });
 
+  test('first sync without origin skips git pull noise and uses local working tree', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const messages: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => { messages.push(args.map(String).join(' ')); };
+    try {
+      const result = await performSync(engine, {
+        repoPath,
+        noEmbed: true,
+      });
+      expect(result.status).toBe('first_sync');
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(messages.some(m => m.includes('No origin remote') && m.includes('skipping git pull'))).toBe(true);
+    expect(messages.some(m => m.includes('sync.git_pull start'))).toBe(false);
+    expect(messages.some(m => m.includes('git pull failed'))).toBe(false);
+  });
+
   test('incremental dry-run does NOT write to DB or advance the bookmark', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
     // First do a real sync to seed the bookmark.
