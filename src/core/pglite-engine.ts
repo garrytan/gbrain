@@ -243,6 +243,10 @@ export class PGLiteEngine implements BrainEngine {
    *     (indexed by `idx_mcp_log_agent_time`) — v0.26.3
    *   - `subagent_messages.provider_id` column (indexed by
    *     `idx_subagent_messages_provider`) — v0.27
+   *   - `oauth_clients.source_id` column (indexed by
+   *     `idx_oauth_clients_source_id`) — v0.34.1 (v60)
+   *   - `oauth_clients.federated_read` column (indexed by
+   *     `idx_oauth_clients_federated_read`) — v0.34.1 (v61)
    *
    * **Maintenance contract:** when a future migration adds a column-with-index
    * or new-table-with-FK referenced by PGLITE_SCHEMA_SQL, extend this method
@@ -288,7 +292,13 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema='public' AND table_name='ingest_log') AS ingest_log_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='ingest_log' AND column_name='source_id') AS ingest_log_source_id_exists
+                WHERE table_schema='public' AND table_name='ingest_log' AND column_name='source_id') AS ingest_log_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.tables
+                WHERE table_schema='public' AND table_name='oauth_clients') AS oauth_clients_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='source_id') AS oauth_clients_source_id_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='federated_read') AS oauth_clients_federated_read_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -309,6 +319,9 @@ export class PGLiteEngine implements BrainEngine {
       subagent_provider_id_exists: boolean;
       ingest_log_exists: boolean;
       ingest_log_source_id_exists: boolean;
+      oauth_clients_exists: boolean;
+      oauth_clients_source_id_exists: boolean;
+      oauth_clients_federated_read_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -332,12 +345,23 @@ export class PGLiteEngine implements BrainEngine {
     // references source_id. Old brains have ingest_log without source_id;
     // bootstrap adds the column before SCHEMA_SQL replay creates the index.
     const needsIngestLogSourceId = probe.ingest_log_exists && !probe.ingest_log_source_id_exists;
+    // v0.34.1 (v60 + v61): idx_oauth_clients_source_id and
+    // idx_oauth_clients_federated_read in PGLITE_SCHEMA_SQL reference these
+    // columns. Old brains (oauth_clients existed since v0.30 / v45) have the
+    // table without source_id or federated_read; bootstrap adds the columns
+    // before SCHEMA_SQL replay creates the indexes. v60-v65 migrations run
+    // later via runMigrations and install the FK + backfill + RESTRICT flip
+    // + GIN index; bootstrap is intentionally lean (matches the v60 SQL
+    // shape and the v61 column add — no FK, no backfill, no validation).
+    const needsOauthClientsSourceId = probe.oauth_clients_exists && !probe.oauth_clients_source_id_exists;
+    const needsOauthClientsFederatedRead = probe.oauth_clients_exists && !probe.oauth_clients_federated_read_exists;
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsChunksEmbeddingImage
         && !needsMcpLogBootstrap && !needsSubagentProviderId
-        && !needsPagesRecency && !needsIngestLogSourceId) return;
+        && !needsPagesRecency && !needsIngestLogSourceId
+        && !needsOauthClientsSourceId && !needsOauthClientsFederatedRead) return;
 
     console.log('  Pre-v0.21 brain detected, applying forward-reference bootstrap');
 
@@ -463,6 +487,27 @@ export class PGLiteEngine implements BrainEngine {
       // DEFAULT 'default' so the index can build cleanly.
       await this.db.exec(`
         ALTER TABLE ingest_log ADD COLUMN IF NOT EXISTS source_id TEXT NOT NULL DEFAULT 'default';
+      `);
+    }
+
+    if (needsOauthClientsSourceId || needsOauthClientsFederatedRead) {
+      // v60 (oauth_clients_source_id_fk) adds source_id; v61
+      // (oauth_clients_federated_read_column) adds federated_read.
+      // PGLITE_SCHEMA_SQL's `CREATE INDEX idx_oauth_clients_source_id ON
+      // oauth_clients(source_id) WHERE source_id IS NOT NULL` and
+      // `CREATE INDEX idx_oauth_clients_federated_read ON oauth_clients USING
+      // GIN (federated_read)` both crash on brains that lack these columns
+      // (any brain at schema_version < 60 with oauth_clients already
+      // installed — oauth_clients itself dates back to v0.30 / v45).
+      //
+      // Bootstrap is intentionally lean: matches v60's leading
+      // `ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS source_id TEXT`
+      // and v61's column-add verbatim. The v60-v65 migrations run later via
+      // runMigrations and are idempotent — they handle backfill, FK install,
+      // federated_read backfill + validation, and the FK RESTRICT flip.
+      await this.db.exec(`
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS source_id TEXT;
+        ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS federated_read TEXT[] NOT NULL DEFAULT '{}';
       `);
     }
   }

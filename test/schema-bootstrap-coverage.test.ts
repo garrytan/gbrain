@@ -108,6 +108,16 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // created_at DESC)`. Old brains have ingest_log without source_id; bootstrap
   // adds the column before SCHEMA_SQL replay creates the index.
   { kind: 'column', table: 'ingest_log', column: 'source_id' },
+  // v0.34.1 (v60) — forward-referenced by `CREATE INDEX
+  // idx_oauth_clients_source_id ON oauth_clients(source_id) WHERE source_id
+  // IS NOT NULL`. oauth_clients dates back to v0.30 / v45 — any brain at
+  // schema_version < 60 with oauth_clients already installed (e.g. v0.31.x
+  // brains) hits the wedge before migrations can run.
+  { kind: 'column', table: 'oauth_clients', column: 'source_id' },
+  // v0.34.1 (v61) — forward-referenced by `CREATE INDEX
+  // idx_oauth_clients_federated_read ON oauth_clients USING GIN (federated_read)`.
+  // Sibling-column case to v60 source_id above; same wedge class.
+  { kind: 'column', table: 'oauth_clients', column: 'federated_read' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -168,6 +178,12 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
       ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
       ALTER TABLE pages DROP COLUMN IF EXISTS emotional_weight;
+
+      DROP INDEX IF EXISTS idx_oauth_clients_source_id;
+      DROP INDEX IF EXISTS idx_oauth_clients_federated_read;
+      ALTER TABLE oauth_clients DROP CONSTRAINT IF EXISTS oauth_clients_source_id_fkey;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS federated_read;
     `);
 
     // Run bootstrap in isolation (NOT initSchema). This is what we're testing.
@@ -234,6 +250,12 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE pages DROP COLUMN IF EXISTS import_filename;
       ALTER TABLE pages DROP COLUMN IF EXISTS salience_touched_at;
       ALTER TABLE pages DROP COLUMN IF EXISTS emotional_weight;
+
+      DROP INDEX IF EXISTS idx_oauth_clients_source_id;
+      DROP INDEX IF EXISTS idx_oauth_clients_federated_read;
+      ALTER TABLE oauth_clients DROP CONSTRAINT IF EXISTS oauth_clients_source_id_fkey;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS federated_read;
     `);
 
     // Bootstrap, then schema replay. Either step crashing fails the test.
