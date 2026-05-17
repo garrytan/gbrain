@@ -717,12 +717,23 @@ export interface BrainHealth {
   embed_coverage: number;
   stale_pages: number;
   /**
-   * Islanded pages — zero inbound AND zero outbound links. A hub page
-   * that has references out but no back-references is NOT an orphan under
-   * this definition (it's working as intended as an index). The metric
-   * aims at "pages I forgot to connect to anything", not the stricter
-   * graph-theory "no inbound" definition. Both engines share this
-   * semantics after Bug 11 doc-drift fix.
+   * Islanded pages — zero inbound AND zero outbound links — after applying
+   * the authoritative exclusion set: soft-deleted; source-type ingestions
+   * (emails/attachments/0-daily/4-archive); vault wayfinding (templates/
+   * navigation/output/dashboards/scripts/openclaw-config); pseudo-page
+   * exact slugs (_atlas/_index/_stats/_orphans/_scratch/claude); suffix
+   * and segment patterns (`/_index`, `/log`, `/raw/`); first-segment
+   * exclusions (scratch/thoughts/catalog/entities).
+   *
+   * A hub page with outbound but no inbound links is NOT an orphan under
+   * this definition — it's working as intended as an index. The metric
+   * aims at "pages I forgot to connect to anything", not graph-theory
+   * "no inbound".
+   *
+   * v0.33+ step-4 alignment: this SQL predicate is now shared with
+   * `findIslandedPages()` so `find_orphans` MCP/CLI count equals this
+   * value by construction. The CLI's JS-side `shouldExclude` helper is
+   * a backwards-compat re-export of the same exclusion list.
    */
   orphan_pages: number;
   missing_embeddings: number;

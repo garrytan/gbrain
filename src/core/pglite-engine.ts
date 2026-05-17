@@ -1891,6 +1891,56 @@ export class PGLiteEngine implements BrainEngine {
     return rows as Array<{ slug: string; title: string; domain: string | null }>;
   }
 
+  async findIslandedPages(opts?: { includePseudo?: boolean }): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
+    // Mirrors postgres-engine.ts:findIslandedPages. See that method for
+    // rationale. Both engines + both surfaces (getHealth + findIslandedPages)
+    // share this predicate.
+    if (opts?.includePseudo) {
+      const { rows } = await this.db.query(
+        `SELECT
+           p.slug,
+           COALESCE(p.title, p.slug) AS title,
+           p.frontmatter->>'domain' AS domain
+         FROM pages p
+         WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+           AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+           AND p.deleted_at IS NULL
+         ORDER BY p.slug`
+      );
+      return rows as Array<{ slug: string; title: string; domain: string | null }>;
+    }
+    const { rows } = await this.db.query(
+      `SELECT
+         p.slug,
+         COALESCE(p.title, p.slug) AS title,
+         p.frontmatter->>'domain' AS domain
+       FROM pages p
+       WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
+         AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
+         AND p.deleted_at IS NULL
+         AND p.slug NOT IN ('_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude')
+         AND p.slug NOT LIKE '%/#_index' ESCAPE '#'
+         AND p.slug NOT LIKE '%/log'
+         AND p.slug NOT LIKE '%/raw/%'
+         AND p.slug NOT LIKE 'emails/%'
+         AND p.slug NOT LIKE 'attachments/%'
+         AND p.slug NOT LIKE '0-daily/%'
+         AND p.slug NOT LIKE '4-archive/%'
+         AND p.slug NOT LIKE 'templates/%'
+         AND p.slug NOT LIKE 'navigation/%'
+         AND p.slug NOT LIKE 'output/%'
+         AND p.slug NOT LIKE 'dashboards/%'
+         AND p.slug NOT LIKE 'scripts/%'
+         AND p.slug NOT LIKE 'openclaw/config/%'
+         AND p.slug NOT LIKE 'scratch/%' AND p.slug != 'scratch'
+         AND p.slug NOT LIKE 'thoughts/%' AND p.slug != 'thoughts'
+         AND p.slug NOT LIKE 'catalog/%' AND p.slug != 'catalog'
+         AND p.slug NOT LIKE 'entities/%' AND p.slug != 'entities'
+       ORDER BY p.slug`
+    );
+    return rows as Array<{ slug: string; title: string; domain: string | null }>;
+  }
+
   // Tags
   async addTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void> {
     const sourceId = opts?.sourceId ?? 'default';
@@ -3160,27 +3210,37 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM pages p
          WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
         ) as stale_pages,
-        -- Bug 11 — orphan = islanded (no inbound AND no outbound).
-        -- See BrainHealth.orphan_pages docstring; docs updated to match this.
-        -- Soft-deleted pages (v0.26.5 recovery window) aren't visible to
-        -- consumers; they shouldn't crush brain_score.
-        -- Source-type ingestions (emails/attachments/0-daily/4-archive) are
-        -- anchored via timeline/parent record, not wikilinks — excluded so
-        -- brain_score reflects real graph rot.
+        -- Islanded orphan predicate (v0.33+ step-4 alignment).
+        -- Mirrors postgres-engine.ts. Both engines and both surfaces
+        -- (getHealth + findIslandedPages) share this WHERE so the CLI
+        -- find_orphans count == get_health.orphan_pages by construction.
+        -- JS mirror lives at shouldExclude in commands/orphans.ts and is
+        -- now backwards-compat only.
+        --
+        -- LIKE escape note: %/#_index ESCAPE # matches literal _index
+        -- suffix. Bare _ is a single-char wildcard in LIKE.
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
            AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id)
            AND p.deleted_at IS NULL
+           AND p.slug NOT IN ('_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude')
+           AND p.slug NOT LIKE '%/#_index' ESCAPE '#'
+           AND p.slug NOT LIKE '%/log'
+           AND p.slug NOT LIKE '%/raw/%'
            AND p.slug NOT LIKE 'emails/%'
            AND p.slug NOT LIKE 'attachments/%'
            AND p.slug NOT LIKE '0-daily/%'
            AND p.slug NOT LIKE '4-archive/%'
-           -- Pseudo-pages: templates/ are vault sources (already in CLI DENY,
-           -- aligned here); navigation/ are graph-view hub-target pages
-           -- (intentionally wayfinding, not content). Missing inbound on a
-           -- nav page reflects vault [[wikilink]] sparsity, not graph rot.
            AND p.slug NOT LIKE 'templates/%'
            AND p.slug NOT LIKE 'navigation/%'
+           AND p.slug NOT LIKE 'output/%'
+           AND p.slug NOT LIKE 'dashboards/%'
+           AND p.slug NOT LIKE 'scripts/%'
+           AND p.slug NOT LIKE 'openclaw/config/%'
+           AND p.slug NOT LIKE 'scratch/%' AND p.slug != 'scratch'
+           AND p.slug NOT LIKE 'thoughts/%' AND p.slug != 'thoughts'
+           AND p.slug NOT LIKE 'catalog/%' AND p.slug != 'catalog'
+           AND p.slug NOT LIKE 'entities/%' AND p.slug != 'entities'
         ) as orphan_pages,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)

@@ -2254,11 +2254,11 @@ const send_job_message: Operation = {
 
 const find_orphans: Operation = {
   name: 'find_orphans',
-  description: 'Find pages with no inbound wikilinks. Essential for content enrichment cycles.',
+  description: 'Find islanded pages (no inbound AND no outbound wikilinks). Count matches get_health.orphan_pages by construction. Essential for content-enrichment cycles and graph-rot triage.',
   params: {
     include_pseudo: {
       type: 'boolean',
-      description: 'Include auto-generated and pseudo pages (default: false)',
+      description: 'Relax the exclusion set to surface auto-generated/pseudo pages. Does NOT change the islanded predicate (default: false).',
     },
   },
   scope: 'read',
