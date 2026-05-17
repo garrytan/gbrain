@@ -236,23 +236,24 @@ Decision artifact lives in this entry; no separate plan doc needed.
 > v0.26.7 sync 后 M1 内容**未变**(上游没 close 任何 fork 责任),
 > 但**新增 M2 候选**见下方"M2 milestone 候选"段。
 
-### [ ] Wire-status check: dikw-compile / evidence-gate / confidence-score
+### [x] Wire-status check: dikw-compile / evidence-gate / confidence-score — RESOLVED 2026-05-17 (stale — done in M2-A 2026-05-04/05-10)
 
-**Why**: PLAN §5.2 怀疑 KOS quality 三件套 (`dikw-compile` + `evidence-gate`
-+ `confidence-score`) 没真正 wired 进 ingest pipeline。Fork README
-声称 "Runs after idea-ingest / media-ingest / meeting-ingestion",
-但上游 `ingest` skill 不知道 fork skill 存在。
+This entry pre-dates M2-A. The wire-status investigation **was performed
+2026-05-04** (production probe: `dikw_layer` set on 0/2477 pages,
+`evidence_level` 1/2477, `confidence` 2470/2477 but values hardcoded in
+`kos-compat-api.ts:454,533` not script-computed; cross-checked all callers
+in kos-compat-api / workers/notion-poller / kos-patrol — none spawn the
+triplet's run.ts; the README "Runs after idea-ingest..." line was always
+aspirational). **Verdict: 100% dead code**, leading to:
 
-**What**: 跑历史 ingest 看每个 skill 的 run.ts 是否有调用记录 (log /
-report 文件 / DB 写入痕迹)。决定:
-- (a) wire via cron post-step
-- (b) wire via local CLAUDE.md hook
-- (c) downgrade 到 "advisory only,run on demand"
-
-**Acceptance**: 三个 skill 各自的 wire status + 决策写进
-`skills/kos-jarvis/README.md` 的 `当前状态` section。
-
-**Scope**: 1 h research + 30 min decision write。
+- Triplet archived 2026-05-10 (commit `eedb357`, M2-A) →
+  `skills/kos-jarvis/_archived/{dikw-compile,evidence-gate,confidence-score}/`
+- `kos-compat-api.ts:600` rewritten: `"dikw-compile recommended"` →
+  `"use \`gbrain dream\` for cross-page synthesis"`
+- `skills/manifest.json` 3 entries deleted; `skills/RESOLVER.md`
+  `## KOS-Jarvis extensions` archive note added
+- See "Done" section: "2026-05-04 M2-A wire-status check — verdict:
+  RETIRE triplet" + "2026-05-10 (M2-A.archive) Archive triplet"
 
 ### [x] kos-lint 退役 pilot test — DONE 2026-05-10 (mechanical retire, formal pilot procedure short-circuited by smoke-test evidence)
 
@@ -288,35 +289,20 @@ abstraction.
 since the retire commit already landed; just need this TODO entry
 in the right state.
 
-### [ ] Archive frontmatter-ref-fix + slug-normalize
+### [x] Archive frontmatter-ref-fix + slug-normalize — RESOLVED 2026-05-17 (stale — done in M1 2026-05-10 commit 9e3cd0f)
 
-**Why**: PLAN §5.3 标 ARCHIVE。两个 one-shot skill 都已经跑完一次
-(frontmatter-ref-fix:ERRORs 4→0 in §6.16;slug-normalize:7 strays
-renamed in Step 1.5)。没有 recurring schedule。
+Both directories were moved to `skills/kos-jarvis/_archived/` in commit
+`9e3cd0f` (2026-05-10, M1 milestone). README.md "_archived/" tree section
+already lists them with the retire date. RESOLVER.md M1 archive note also
+present. This entry was just never flipped.
 
-**What**: `mkdir -p skills/kos-jarvis/_archive/{frontmatter-ref-fix,slug-normalize}`
-+ `git mv` 整 dir 进去 + `skills/kos-jarvis/README.md` 加 "前置工具" 段
-指向 archive。
+### [x] 重写 notion-ingest-delta SKILL.md 为 5-line 跳转 — RESOLVED 2026-05-17 (stale — done in M1 2026-05-10 commit 9e3cd0f, then again 2026-05-17 as RETIRED stub)
 
-**Acceptance**: 两 dir 都在 `_archive/` 下;README 有 pointer;
-`skills/kos-jarvis/RESOLVER.md` 段(如有 trigger 引用)更新。
-
-**Scope**: 30 min。
-
-### [ ] 重写 notion-ingest-delta SKILL.md 为 5-line 跳转
-
-**Why**: PLAN §5.5 — SKILL.md 是 design contract,实际 worker 在
-`workers/notion-poller/` + `/ingest` 端点扩展在
-`server/kos-compat-api.ts`。SKILL.md 留着误导。
-
-**What**: 缩成 5 行 redirect 指向真实代码 + `kos-compat-api /ingest`
-扩展端点文档。原 design 写进 `workers/notion-poller/run.ts` header
-注释保 rationale。
-
-**Acceptance**: SKILL.md ≤10 行;原 design rationale 在 worker
-header 可读到。
-
-**Scope**: 15 min。
+SKILL.md shrunk to a 5-line redirect on 2026-05-10 (M1 commit `9e3cd0f`).
+2026-05-17 it was rewritten again to a RETIRED stub after the
+notion-poller-itself retire (see §6.27) — the worker that the redirect
+pointed at is now under `workers/_archived/notion-poller/`. SKILL.md
+now points at §6.27 and at the still-alive `/ingest` endpoint.
 
 ---
 
@@ -688,53 +674,52 @@ _(P1 list 见上面 "consolidation PLAN 落地" section,M1 milestone 4 项)_
 
 ## P2 — observation / cosmetic
 
-### [ ] `GBRAIN_SOURCE_BOOST` tune-up evaluation (1-week soak now ~6天满)
+### [x] `GBRAIN_SOURCE_BOOST` tune-up evaluation — VERDICT 2026-05-17: no tune needed, default factor=1.0 works
 
-**Why**: v0.22.0 加的 source-aware retrieval ranking。Default boost map
-不知道我们 layout(`sources/notion/` vs upstream's `your-openclaw/chat/`),
-所以我们 brain 在 factor=1.0 全均 — 等于无 source-aware boost。Notion-
-source 占 60 %,可能 swamp 短中文 query。
+5-query probe (mixed English + CJK, default boost factor=1.0):
 
-**What**(P0 review 中的 step 3 会做这个):
-1. 跑 5-10 个代表性中文查询(`/query`),手动评 top-3 相关性。
-2. 若 notion-sources 不当主导,设 plist EnvironmentVariables:
-   `GBRAIN_SOURCE_BOOST="concepts/:1.5,projects/:1.3,syntheses/:1.5,sources/notion/:0.7"`
-3. 重跑同样 query。win >5 % → 留;else → revert。
+| Query | Top-3 sources | Verdict |
+|---|---|---|
+| `Lucien` | 0.51 concepts/, 0.46 concepts/ (0 notion in top-3) | ✓ concepts dominate |
+| `Omada Cloud` | 1.10 sources/notion, 1.10 sources/notion (notion dominant) | ✓ expected — Omada is a notion-heavy entity |
+| `知识管理` | 0.29 syntheses/, 0.28 sources/(non-notion) | ✓ syntheses lead |
+| `向量检索` | 0 results | known CJK 4-char compound issue (§6.25); vector path didn't surface either — unrelated to source boost |
+| `Notion` | 0.51 concepts/, 0.46 companies/, 0.44 syntheses/ | ✓ structured pages lead |
 
-**Acceptance**: 决定记录到 `docs/JARVIS-ARCHITECTURE.md`。
+**Decision**: keep default `factor=1.0` (no `GBRAIN_SOURCE_BOOST` env). The
+original hypothesis that "notion-source occupies 60% and may swamp short
+Chinese queries" did not materialize. Top-3 is dominated by concepts /
+syntheses / companies on most queries; notion-sources only lead when the
+query target IS a notion-heavy entity (Omada), which is the correct
+behavior. No plist EnvironmentVariables change needed.
 
-**Scope**: 1 h 评估(post-soak)。
+The default-everywhere-uniform behavior is actually working for this
+brain shape — concept/synthesis pages have stronger semantic alignment
+to query text than email-source pages do. The retrieval ranker is
+already separating signal from noise without source-aware bias.
 
-### [ ] CHUNKER_VERSION 3→4 re-walk cost (markdown-only,大概率 cheap)
+### [x] CHUNKER_VERSION 3→4 re-walk cost — VERDICT 2026-05-17: N/A, brain has 0 code pages
 
-**Why**: v0.21.0 设 `CHUNKER_VERSION 4`,sources.chunker_version 已被
-手动 pin 到 '4'。理论上 markdown body cache-hit on embedding(241 stale
-除外),代价应该极小,但没正式 verify。
+`bin/gbrain reindex-code --dry-run` returned: `preview: 0 code page(s),
+~0 tokens, est. $0.00 on text-embedding-3-large`. This brain is
+markdown-only (concepts / sources / syntheses / projects / companies);
+the CHUNKER_VERSION semantic for code-pages doesn't apply here. Closing
+without action.
 
-**What**: `gbrain reindex-code --dry-run` 看 ConfirmationRequired。若
-embedding cost <$1,直接 `--yes`。
+### [x] Patrol dashboard ↔ stdout 数字不一致 — RESOLVED 2026-05-17 (stale — fixed by 444cc81f BrainDb migration)
 
-**Acceptance**: cost preview 抓取 + 决定记录。
+The original 04-29 fs-walking vs DB-direct path discrepancy was closed
+when `kos-patrol/run.ts` Phase 1 migrated to `BrainDb.listAllPages()`
+(commit `444cc81f`, 2026-04-30). Today's verification:
+- `~/brain/.agent/dashboards/knowledge-health-2026-05-17.md`: `Total pages: 3138`
+- Latest stdout `[1] Inventory …` line: `3138 pages; kinds: source=2226, ...`
+- `~/brain/.agent/digests/patrol-2026-05-17.md`: `[knowledge-os] 2026-05-17 patrol: 3138p / 0E 0W / stale=0 / gaps=20`
+- All three values flow from the same `inv.total` in `phase1(pages)`,
+  where `pages` comes from `db.listAllPages()` (run.ts:62).
 
-**Scope**: 15 min preview, 0-30 min reindex。
-
-### [ ] Patrol dashboard ↔ stdout 数字不一致 (新发现 2026-04-29)
-
-**Why**: Phase A review 发现 `~/brain/.agent/dashboards/knowledge-health-2026-04-29.md`
-显示 `35 ERROR + 796 WARN`,而同次 patrol stdout log 显示 `0 ERROR, 762 WARN`。
-两个数字应该 always 一致。Dashboard total pages 显示 2151 vs Postgres
-2305 — dashboard 似乎走 fs walking 而 stdout 走 DB,page set 不同。
-
-**What**:
-1. 读 `skills/kos-jarvis/kos-patrol/run.ts` 的 lint 调用点 vs dashboard
-   写入点。
-2. 确认 page-set 来源是否真的不同(fs walking vs `db.listAllPages`)。
-3. Decision:统一到一个 source,或文档化 expected gap。
-
-**Acceptance**: stdout `Lint:` 和 dashboard `## Lint` 数字一致,OR
-`docs/JARVIS-ARCHITECTURE.md` 加段说明 "expected gap"。
-
-**Scope**: 30 min 调研 + 30 min 修(若选)。
+No fs walking exists anywhere in run.ts. The 04-29 issue was real then,
+the 04-30 BrainDb migration solved it, this TODO entry just was never
+flipped. Closing.
 
 ### [ ] Calendar checkpoints (carried forward, post-Path-3 调整)
 
