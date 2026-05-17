@@ -6,7 +6,7 @@ start here.
 
 ## Install (5 min)
 
-1. Clone: `git clone https://github.com/garrytan/gbrain ~/gbrain && cd ~/gbrain`
+1. Clone: `git clone https://github.com/yongchand/gbrain-company.git ~/gbrain && cd ~/gbrain`
 2. Install: `bun install`
 3. Choose the role and init the brain:
    - Individual install: `gbrain init --mode individual` for a normal user brain

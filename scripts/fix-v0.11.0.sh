@@ -3,7 +3,7 @@
 # migration never fired on upgrade.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/v0.11.1/scripts/fix-v0.11.0.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/yongchand/gbrain-company/base/scripts/fix-v0.11.0.sh | bash
 #
 # What it does:
 #   1. gbrain init --migrate-only — applies schema v7 without touching config.

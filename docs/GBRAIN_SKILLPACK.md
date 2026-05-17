@@ -1,5 +1,5 @@
 <!-- skillpack-version: 0.7.0 -->
-<!-- source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_SKILLPACK.md -->
+<!-- source: https://raw.githubusercontent.com/yongchand/gbrain-company/base/docs/GBRAIN_SKILLPACK.md -->
 # GBrain Skillpack: Reference Architecture for AI Agents
 
 This is a reference architecture for how a production AI agent uses gbrain as its

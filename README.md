@@ -62,7 +62,7 @@ markdown source repos.
 Use this path for local testing or a manually operated server.
 
 ```bash
-git clone https://github.com/garrytan/gbrain.git ~/gbrain
+git clone https://github.com/yongchand/gbrain-company.git ~/gbrain
 cd ~/gbrain
 curl -fsSL https://bun.sh/install | bash
 export PATH="$HOME/.bun/bin:$PATH"

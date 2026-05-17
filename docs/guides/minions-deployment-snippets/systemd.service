@@ -1,6 +1,6 @@
 [Unit]
 Description=gbrain minion worker
-Documentation=https://github.com/garrytan/gbrain/blob/master/docs/guides/minions-deployment.md
+Documentation=https://github.com/yongchand/gbrain-company/blob/base/docs/guides/minions-deployment.md
 After=network-online.target
 Wants=network-online.target
 

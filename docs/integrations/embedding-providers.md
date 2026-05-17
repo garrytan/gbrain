@@ -116,7 +116,7 @@ For most users: **stay at 1024 or 1536**. Bigger isn't better below the noise fl
 Three options:
 
 1. **Use LiteLLM proxy** (above) — the universal escape hatch. Works for 100+ providers.
-2. **Open a feature request** at [github.com/garrytan/gbrain/issues](https://github.com/garrytan/gbrain/issues) with the provider's API docs URL and a setup snippet. Recipes are ~30-40 lines of TypeScript.
+2. **Open a feature request** at [github.com/yongchand/gbrain-company/issues](https://github.com/yongchand/gbrain-company/issues) with the provider's API docs URL and a setup snippet. Recipes are ~30-40 lines of TypeScript.
 3. **Submit a recipe**: clone, copy `src/core/ai/recipes/voyage.ts` as the gold-standard openai-compat template, register in `src/core/ai/recipes/index.ts`, add a per-recipe smoke test under `test/ai/recipe-<name>.test.ts`. The recipe contract test (`test/ai/recipes-contract.test.ts`) and IRON RULE regression test pin the structural invariants.
 
 ## Switching providers on an existing brain

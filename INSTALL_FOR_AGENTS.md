@@ -10,9 +10,9 @@ protocol (install, read order, trust boundary, common tasks). Claude Code reads
 `CLAUDE.md` automatically and can skip ahead.
 
 If you fetched this file by URL without cloning yet, the companion files live at:
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` — start here
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt` — full doc map
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt` — same map, inlined
+- `https://raw.githubusercontent.com/yongchand/gbrain-company/base/AGENTS.md` — start here
+- `https://raw.githubusercontent.com/yongchand/gbrain-company/base/llms.txt` — full doc map
+- `https://raw.githubusercontent.com/yongchand/gbrain-company/base/llms-full.txt` — same map, inlined
 
 ## Step 1: Install GBrain
 
@@ -20,7 +20,7 @@ This installs the GBrain **software**. It is the same code for individual and
 company deployments. The role is chosen later with `gbrain init --mode ...`.
 
 ```bash
-git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
+git clone https://github.com/yongchand/gbrain-company.git ~/gbrain && cd ~/gbrain
 curl -fsSL https://bun.sh/install | bash
 export PATH="$HOME/.bun/bin:$PATH"
 bun install && bun link
@@ -29,10 +29,10 @@ bun install && bun link
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
 restart the shell or add the PATH export to the shell profile.
 
-> **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
+> **Do NOT use `bun install -g github:yongchand/gbrain-company`.** Bun blocks the top-level
 > postinstall hook on global installs, so schema migrations never run and the CLI
 > aborts with `Aborted()` when it opens PGLite. Use the `git clone + bun link` path
-> above. Tracking issue: [#218](https://github.com/garrytan/gbrain/issues/218).
+> above.
 
 For a company-wide deployment, do **not** create separate GBrain software forks
 for Alice, Bob, and Company. Deploy the same GBrain code multiple times with

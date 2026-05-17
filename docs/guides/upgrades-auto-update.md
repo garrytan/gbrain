@@ -134,7 +134,7 @@ installing gbrain, you can still stay current. Both GBRAIN_SKILLPACK.md and
 GBRAIN_RECOMMENDED_SCHEMA.md have version markers:
 
 ```bash
-curl -s https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_SKILLPACK.md | head -1
+curl -s https://raw.githubusercontent.com/yongchand/gbrain-company/base/docs/GBRAIN_SKILLPACK.md | head -1
 # Returns: <!-- skillpack-version: X.Y.Z -->
 ```
 

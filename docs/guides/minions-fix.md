@@ -86,7 +86,7 @@ registerable cron entries get rewritten and the JSONL rows mark
 If you're stuck on a branch build that doesn't have `apply-migrations`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/v0.11.1/scripts/fix-v0.11.0.sh | bash
+curl -fsSL https://raw.githubusercontent.com/yongchand/gbrain-company/base/scripts/fix-v0.11.0.sh | bash
 ```
 
 This bash script does what apply-migrations does from a shell environment:
