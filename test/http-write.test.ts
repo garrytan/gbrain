@@ -399,4 +399,137 @@ describe('GET /schema — write_endpoints block', () => {
     expect((we.actions as Record<string, unknown>).add_tag).toBeDefined();
     expect((we.actions as Record<string, unknown>).delete_page).toBeDefined();
   });
+
+  test('schema includes async_write and idempotency docs', async () => {
+    const res = await fetch(`${BASE}/schema?otp=${VALID_OTP}`);
+    const body = await res.json() as Record<string, unknown>;
+    const we = body.write_endpoints as Record<string, unknown>;
+    expect(we.async_write).toBeDefined();
+    expect(we.idempotency).toBeDefined();
+    expect(we.content_hash).toBeDefined();
+  });
+});
+
+// ── PUT /page — sync with content_hash ───────────────────────────────────────
+
+async function putPage(body: Record<string, unknown>, queryAsync = false): Promise<{ status: number; body: Record<string, unknown> }> {
+  const url = queryAsync ? `${BASE}/page?async=1` : `${BASE}/page`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-Gbrain-OTP': VALID_OTP },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json() as Record<string, unknown> };
+}
+
+describe('PUT /page — sync', () => {
+  test('returns content_hash on successful write', async () => {
+    const { status, body } = await putPage({ slug: 'wiki/test-hash', content: '# Hello\n\nworld' });
+    expect(status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(typeof body.content_hash).toBe('string');
+    expect((body.content_hash as string).length).toBe(64); // SHA-256 hex
+  });
+
+  test('idempotency_key: second call with same key returns cached result', async () => {
+    const key = 'test-idempotency-key-abc123';
+    const first = await putPage({ slug: 'wiki/idem-test', content: '# First', idempotency_key: key });
+    expect(first.status).toBe(200);
+    expect(first.body.content_hash).toBeDefined();
+
+    const second = await putPage({ slug: 'wiki/idem-test', content: '# First', idempotency_key: key });
+    expect(second.status).toBe(200);
+    expect(second.body.idempotent).toBe(true);
+    expect(second.body.content_hash).toBe(first.body.content_hash);
+  });
+});
+
+// ── PUT /page?async=1 — non-blocking write ────────────────────────────────────
+
+describe('PUT /page — async=1', () => {
+  test('returns 202 with job_id immediately', async () => {
+    const { status, body } = await putPage({ slug: 'wiki/async-test', content: '# Async\n\ntest content' }, true);
+    expect(status).toBe(202);
+    expect(body.ok).toBe(true);
+    expect(typeof body.job_id).toBe('string');
+    expect((body.job_id as string).length).toBe(16); // 8 bytes hex
+    expect(body.status).toBe('pending');
+    expect(body.slug).toBe('wiki/async-test');
+  });
+
+  test('body async field also triggers async mode', async () => {
+    const { status, body } = await putPage({ slug: 'wiki/async-body', content: '# Body async', async: 1 });
+    expect(status).toBe(202);
+    expect(body.job_id).toBeDefined();
+  });
+});
+
+// ── GET /job — async job polling ──────────────────────────────────────────────
+
+describe('GET /job — polling', () => {
+  test('returns job state after async submit', async () => {
+    // Submit async write — 202 has no content_hash yet
+    const { body: putBody } = await putPage({ slug: 'wiki/poll-test', content: '# Poll me' }, true);
+    const jobId = putBody.job_id as string;
+    expect(putBody.content_hash).toBeUndefined();
+
+    // Poll until completed (mock engine is synchronous so it finishes fast)
+    let jobBody: Record<string, unknown> = {};
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 50));
+      const jobRes = await fetch(`${BASE}/job?id=${jobId}&otp=${VALID_OTP}`);
+      jobBody = await jobRes.json() as Record<string, unknown>;
+      if (jobBody.status === 'completed' || jobBody.status === 'failed') break;
+    }
+
+    expect(jobBody.ok).toBe(true);
+    expect(jobBody.job_id).toBe(jobId);
+    expect(typeof jobBody.content_hash).toBe('string');
+    expect((jobBody.content_hash as string).length).toBe(64);
+    expect(jobBody.status).toBe('completed');
+  });
+
+  test('returns 404 for unknown job_id', async () => {
+    const res = await fetch(`${BASE}/job?id=deadbeef00000000&otp=${VALID_OTP}`);
+    expect(res.status).toBe(404);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.ok).toBe(false);
+    expect(body.code).toBe('not_found');
+  });
+
+  test('returns 400 when id param is missing', async () => {
+    const res = await fetch(`${BASE}/job?otp=${VALID_OTP}`);
+    expect(res.status).toBe(400);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.code).toBe('missing_param');
+  });
+});
+
+// ── GET /write?action=put_page&async=1 ───────────────────────────────────────
+
+describe('GET /write — put_page async=1', () => {
+  test('returns 202 with job_id', async () => {
+    const url = writeUrl({ action: 'put_page', slug: 'wiki/write-async', content: '# Via GET write', async: '1' });
+    const res = await fetch(url);
+    expect(res.status).toBe(202);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(typeof body.job_id).toBe('string');
+    expect(body.action).toBe('put_page');
+    expect(body.status).toBe('pending');
+    expect(body.content_hash).toBeUndefined();
+  });
+
+  test('idempotency_key on GET /write prevents duplicate on retry', async () => {
+    const key = 'write-idem-key-xyz';
+    const url1 = writeUrl({ action: 'put_page', slug: 'wiki/write-idem', content: '# Idem', idempotency_key: key });
+    const first = await get(url1);
+    expect(first.status).toBe(200);
+
+    const url2 = writeUrl({ action: 'put_page', slug: 'wiki/write-idem', content: '# Idem', idempotency_key: key });
+    const second = await get(url2);
+    expect(second.status).toBe(200);
+    expect(second.body.idempotent).toBe(true);
+    expect(second.body.content_hash).toBe(first.body.content_hash);
+  });
 });

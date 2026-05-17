@@ -359,6 +359,7 @@ const put_page: Operation = {
       slug: result.slug,
       status: result.status === 'imported' ? 'created_or_updated' : result.status,
       chunks: result.chunks,
+      content_hash: result.content_hash ?? '',
       ...(autoLinks ? { auto_links: autoLinks } : {}),
       ...(autoTimeline ? { auto_timeline: autoTimeline } : {}),
       ...(writerLint ? { writer_lint: writerLint } : {}),
