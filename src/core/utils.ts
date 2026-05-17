@@ -243,6 +243,34 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
   if (typeof row.source_id === 'string') {
     result.source_id = row.source_id;
   }
+  // v0.34: effective_date / effective_date_source carried through from the
+  // pages join. Same three-state read as readOptionalDate elsewhere: the
+  // field is left UNTOUCHED when the column isn't in the projection (so
+  // legacy callers see undefined), set to null when the column was selected
+  // but the page row has no date, and to YYYY-MM-DD when populated. Postgres
+  // returns Date objects via postgres.js; PGLite returns strings. Normalize
+  // to date-only ISO so downstream prompt-builders don't see noise from
+  // midnight-UTC timestamps.
+  if ('effective_date' in row) {
+    const raw = row.effective_date;
+    if (raw === null) {
+      result.effective_date = null;
+    } else if (raw instanceof Date) {
+      result.effective_date = raw.toISOString().slice(0, 10);
+    } else if (typeof raw === 'string' && raw) {
+      // Postgres TIMESTAMPTZ already serializes as "YYYY-MM-DD ..." — slice
+      // the date portion. PGLite returns the same shape via its parser.
+      result.effective_date = raw.slice(0, 10);
+    }
+  }
+  if ('effective_date_source' in row) {
+    const raw = row.effective_date_source;
+    if (raw === null) {
+      result.effective_date_source = null;
+    } else if (typeof raw === 'string' && raw) {
+      result.effective_date_source = raw;
+    }
+  }
   return result;
 }
 

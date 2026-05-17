@@ -410,6 +410,15 @@ export interface SearchResult {
    * 'default' for pre-v0.17 rows that lacked the column.
    */
   source_id?: string;
+  /**
+   * v0.34 — page-level effective_date (and its source) carried through from
+   * the pages join. Format: YYYY-MM-DD (ISO date-only). Consumers (currently
+   * the contradiction probe's date-aware judge prompt + date pre-filter)
+   * treat null and undefined the same: "no temporal anchor for this chunk."
+   * Pre-v0.34 engines that don't project these columns leave both undefined.
+   */
+  effective_date?: string | null;
+  effective_date_source?: string | null;
 }
 
 export interface SearchOpts {

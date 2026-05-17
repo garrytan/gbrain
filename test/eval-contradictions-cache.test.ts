@@ -31,7 +31,7 @@ beforeEach(async () => {
 });
 
 const verdictHit: JudgeVerdict = {
-  contradicts: true,
+  verdict: 'contradiction',
   severity: 'medium',
   axis: 'MRR vs ARR',
   confidence: 0.85,
@@ -87,7 +87,7 @@ describe('JudgeCache wrapper', () => {
     await cache.store('text-a', 'text-b', verdictHit);
     const hit = await cache.lookup('text-a', 'text-b');
     expect(hit).not.toBeNull();
-    expect(hit?.contradicts).toBe(true);
+    expect(hit?.verdict).toBe('contradiction');
     expect(hit?.severity).toBe('medium');
     expect(cache.stats().hits).toBe(1);
   });
@@ -97,7 +97,7 @@ describe('JudgeCache wrapper', () => {
     await cache.store('first', 'second', verdictHit);
     const hit = await cache.lookup('second', 'first');
     expect(hit).not.toBeNull();
-    expect(hit?.contradicts).toBe(true);
+    expect(hit?.verdict).toBe('contradiction');
   });
 
   test('different model_id is a separate key', async () => {

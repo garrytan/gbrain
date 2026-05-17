@@ -20,8 +20,8 @@
  */
 
 import { chat, type ChatResult } from '../ai/gateway.ts';
-import { parseSeverity } from './severity-classify.ts';
-import type { JudgeVerdict, ResolutionKind } from './types.ts';
+import { parseSeverity, defaultSeverityForVerdict } from './severity-classify.ts';
+import type { JudgeVerdict, ResolutionKind, Verdict } from './types.ts';
 
 const FENCE_RE = /```(?:json)?\s*\n?([\s\S]*?)```/i;
 
@@ -108,9 +108,26 @@ export function truncateUtf8(text: string, maxChars: number): string {
 export interface JudgeInput {
   /** The user's query for the search that retrieved both members. */
   query: string;
-  /** Statement A: slug + text + optional source-tier + holder (if take). */
-  a: { slug: string; text: string; source_tier?: string; holder?: string | null };
-  b: { slug: string; text: string; source_tier?: string; holder?: string | null };
+  /**
+   * Statement A: slug + text + optional source-tier + holder (if take) +
+   * optional effective_date (Lane A1). When effective_date is null/undefined
+   * the prompt shows `(date unknown)` for that side; the judge classifies
+   * based on chunk text alone, same as the v1 prompt did.
+   */
+  a: {
+    slug: string;
+    text: string;
+    source_tier?: string;
+    holder?: string | null;
+    effective_date?: string | null;
+  };
+  b: {
+    slug: string;
+    text: string;
+    source_tier?: string;
+    holder?: string | null;
+    effective_date?: string | null;
+  };
   /** Provider:model id; routed through gateway.chat. */
   model: string;
   /** UTF-8-safe truncation limit per pair member. C4 flag. */
@@ -129,58 +146,108 @@ export interface JudgeOutput {
 
 /**
  * Validated resolution_kind values. Anything outside this set defaults to
- * 'manual_review' (the safe, no-action option).
+ * 'manual_review' (the safe, no-action option for contradictions; new verdicts
+ * route through auto-supersession.ts when resolution_kind is null on input).
+ *
+ * v0.34 / Lane A2: added temporal_supersede, flag_for_review, log_timeline_change.
  */
 function parseResolutionKind(value: unknown): ResolutionKind | null {
   if (
     value === 'takes_supersede' ||
     value === 'dream_synthesize' ||
     value === 'takes_mark_debate' ||
-    value === 'manual_review'
+    value === 'manual_review' ||
+    value === 'temporal_supersede' ||
+    value === 'flag_for_review' ||
+    value === 'log_timeline_change'
   ) {
     return value;
   }
   return null;
 }
 
+const VALID_VERDICTS: ReadonlySet<Verdict> = new Set([
+  'no_contradiction',
+  'contradiction',
+  'temporal_supersession',
+  'temporal_regression',
+  'temporal_evolution',
+  'negation_artifact',
+]);
+
+/** Validate a verdict string from JSON; throws on missing/invalid so caller maps to parse_fail. */
+export function parseVerdict(value: unknown): Verdict {
+  if (typeof value !== 'string' || !VALID_VERDICTS.has(value as Verdict)) {
+    throw new Error(`judge JSON missing or invalid verdict: ${JSON.stringify(value)}`);
+  }
+  return value as Verdict;
+}
+
 /**
  * Validate the raw parsed JSON against the JudgeVerdict shape. Throws on
- * fundamentally-broken shape (missing contradicts/confidence) so the caller
+ * fundamentally-broken shape (missing verdict/confidence) so the caller
  * counts it under judge_errors.parse_fail rather than fabricating a verdict.
  *
- * C1 enforcement: contradicts:true with confidence < 0.7 is downgraded to
- * false (belt-and-suspenders against models ignoring the prompt rule).
+ * v0.34 / Lane A2: parses the new `verdict: Verdict` enum field instead of
+ * the v1 `contradicts: boolean`. PROMPT_VERSION = '2' (bumped in A1) means
+ * the persistent cache won't return v1-shaped rows for these calls.
+ *
+ * C1 enforcement: `verdict === 'contradiction'` with confidence < 0.7 is
+ * downgraded to `'no_contradiction'` (belt-and-suspenders against models
+ * ignoring the prompt rule). The 5 non-contradiction verdicts do NOT have a
+ * confidence floor — they're informational classifications, not error flags.
  */
 export function normalizeVerdict(raw: unknown): JudgeVerdict {
   if (!raw || typeof raw !== 'object') {
     throw new Error('judge JSON missing or not an object');
   }
   const v = raw as Record<string, unknown>;
-  const rawContradicts = v.contradicts;
-  if (typeof rawContradicts !== 'boolean') {
-    throw new Error('judge JSON missing required field: contradicts');
-  }
+  // Parse verdict first so we can throw a useful error before checking other
+  // fields. Old v1-shaped responses (`contradicts: true/false` without
+  // `verdict`) will throw here and the caller maps it to parse_fail — correct
+  // semantics because the prompt now asks for verdict explicitly.
+  let verdict = parseVerdict(v.verdict);
   const rawConfidence = v.confidence;
   if (typeof rawConfidence !== 'number' || !Number.isFinite(rawConfidence)) {
     throw new Error('judge JSON missing or invalid confidence');
   }
   const clampedConfidence = Math.min(1, Math.max(0, rawConfidence));
-  const severity = parseSeverity(v.severity);
   const axisRaw = typeof v.axis === 'string' ? v.axis : '';
   const resolutionKind = parseResolutionKind(v.resolution_kind);
 
-  // C1 double-enforce: contradicts:true requires confidence >= 0.7.
-  let contradicts = rawContradicts;
-  if (contradicts && clampedConfidence < 0.7) {
-    contradicts = false;
+  // C1 double-enforce: only `verdict === 'contradiction'` carries the
+  // confidence floor. Downgrade to no_contradiction below the threshold.
+  if (verdict === 'contradiction' && clampedConfidence < 0.7) {
+    verdict = 'no_contradiction';
+  }
+
+  // Severity: judge can set it; if invalid, fall back to the default for the
+  // verdict (D7 map: temporal_supersession→info, temporal_regression→high, ...).
+  // parseSeverity coerces unknown strings to 'low' historically, but now we
+  // route through defaultSeverityForVerdict instead so each verdict gets a
+  // meaningful default.
+  const severity = parseSeverity(v.severity, defaultSeverityForVerdict(verdict));
+  const isFinding = verdict !== 'no_contradiction';
+
+  // Only `contradiction` keeps the v1 fallback to 'manual_review' when the
+  // judge omits a resolution_kind. The new verdicts pass through whatever the
+  // judge said (or null) and auto-supersession.ts picks the kind based on
+  // verdict semantics.
+  let normalizedResolutionKind: ResolutionKind | null;
+  if (verdict === 'contradiction') {
+    normalizedResolutionKind = resolutionKind ?? 'manual_review';
+  } else if (isFinding) {
+    normalizedResolutionKind = resolutionKind ?? null;
+  } else {
+    normalizedResolutionKind = null;
   }
 
   return {
-    contradicts,
+    verdict,
     severity,
-    axis: contradicts ? axisRaw : '',
+    axis: isFinding ? axisRaw : '',
     confidence: clampedConfidence,
-    resolution_kind: contradicts ? (resolutionKind ?? 'manual_review') : null,
+    resolution_kind: normalizedResolutionKind,
   };
 }
 
@@ -194,14 +261,31 @@ export function normalizeVerdict(raw: unknown): JudgeVerdict {
  */
 export function buildJudgePrompt(opts: {
   query: string;
-  a: { slug: string; text: string; source_tier?: string; holder?: string | null };
-  b: { slug: string; text: string; source_tier?: string; holder?: string | null };
+  a: {
+    slug: string;
+    text: string;
+    source_tier?: string;
+    holder?: string | null;
+    effective_date?: string | null;
+  };
+  b: {
+    slug: string;
+    text: string;
+    source_tier?: string;
+    holder?: string | null;
+    effective_date?: string | null;
+  };
   maxPairChars: number;
 }): string {
   const a = truncateUtf8(opts.a.text, opts.maxPairChars);
   const b = truncateUtf8(opts.b.text, opts.maxPairChars);
   const aMeta = [opts.a.slug, opts.a.source_tier && `source-tier ${opts.a.source_tier}`, opts.a.holder && `holder ${opts.a.holder}`].filter(Boolean).join(', ');
   const bMeta = [opts.b.slug, opts.b.source_tier && `source-tier ${opts.b.source_tier}`, opts.b.holder && `holder ${opts.b.holder}`].filter(Boolean).join(', ');
+  // Lane A1: emit the page-level effective_date on its own line so the judge
+  // can reason temporally. `(date unknown)` keeps the v1 fallback behavior
+  // when the page has no effective_date — judge classifies on text alone.
+  const aDateTag = opts.a.effective_date ? `(from: ${opts.a.effective_date})` : '(date unknown)';
+  const bDateTag = opts.b.effective_date ? `(from: ${opts.b.effective_date})` : '(date unknown)';
   return [
     'You are a contradiction judge for a personal knowledge brain. The user',
     'ran a search and got two results back. Decide whether the two statements',
@@ -210,39 +294,54 @@ export function buildJudgePrompt(opts: {
     '',
     `User's query: ${opts.query}`,
     '',
-    `Statement A (${aMeta}):`,
+    `Statement A ${aDateTag} (${aMeta}):`,
     a,
     '',
-    `Statement B (${bMeta}):`,
+    `Statement B ${bDateTag} (${bMeta}):`,
     b,
     '',
     'Rules:',
-    '- Different timeframes for the same dynamic property are NOT contradictions',
-    '  (e.g., MRR was $50K in 2024 vs $2M in 2026 — both true at their time).',
-    '- Different timeframes for a static identity claim MAY BE a contradiction',
-    '  (e.g., "Alice is CFO of Acme" vs "Alice left Acme" if dates suggest one',
-    '  supersedes the other).',
+    '- The (from: YYYY-MM-DD) tag is the page-level effective date. Use it to',
+    '  classify what kind of difference this is, not just whether it exists.',
+    '  (date unknown) means the page has no temporal anchor — judge on text',
+    '  alone for that side.',
+    '- Pick exactly one verdict from the six values below.',
+    '- Use temporal_supersession when the newer-dated claim updates or replaces',
+    '  the older one (role change, status change). Not an error.',
+    '- Use temporal_regression when a metric or status went BACKWARDS over time',
+    '  (e.g., MRR dropped from $200K to $150K). This is a signal worth flagging.',
+    '- Use temporal_evolution for legitimate change over time that is neither',
+    '  supersession nor regression (e.g., evolving narrative, multi-step decision).',
+    '- Use negation_artifact when one side contains an explicit negation that',
+    '  the surface tokens make look like a positive claim (e.g., "NOT X" parsed',
+    '  as "X"). The data is correct; the apparent conflict is a parsing artifact.',
+    '- Use contradiction ONLY for genuinely conflicting claims at the same point',
+    '  in time, where the dates do not explain the difference.',
+    '- Use no_contradiction when the statements are compatible.',
+    '',
     '- Subjective opinions held at different times by the SAME holder may be',
     '  a contradiction (a flip). Opinions held by DIFFERENT holders are not.',
-    '- Different aspects of the same entity are NOT contradictions.',
-    "- Incidental disagreements unrelated to the user's query do NOT count.",
+    '- Different aspects of the same entity are not contradictions.',
+    "- Incidental disagreements unrelated to the user's query do not count.",
     '  Judge only on claims relevant to what the user asked.',
     '',
     'Reply with JSON ONLY:',
     '{',
-    '  "contradicts": true | false,',
-    '  "severity": "low" | "medium" | "high",',
+    '  "verdict": "no_contradiction" | "contradiction" | "temporal_supersession" | "temporal_regression" | "temporal_evolution" | "negation_artifact",',
+    '  "severity": "info" | "low" | "medium" | "high",',
     '  "axis": "<one-line: what they disagree about, or empty>",',
     '  "confidence": 0.0..1.0,',
-    '  "resolution_kind": "takes_supersede" | "dream_synthesize" | "takes_mark_debate" | "manual_review" | null',
+    '  "resolution_kind": "takes_supersede" | "dream_synthesize" | "takes_mark_debate" | "manual_review" | "temporal_supersede" | "flag_for_review" | "log_timeline_change" | null',
     '}',
     '',
     'Severity rubric:',
-    '- low: naming/format differences (Alice Smith vs A. Smith).',
+    '- info: temporal_supersession and temporal_evolution (not errors; informational).',
+    '- low: naming/format differences (Alice Smith vs A. Smith); negation artifacts.',
     '- medium: factual values that may be stale (revenue, headcount).',
-    '- high: identity / structural claims (founder/CEO/CFO role, status).',
+    '- high: identity / structural claims (founder/CEO/CFO role); temporal_regression.',
     '',
-    'Reply contradicts:true only when confidence >= 0.7.',
+    'Reply verdict:contradiction only when confidence >= 0.7. Other verdicts have',
+    'no confidence floor.',
   ].join('\n');
 }
 
@@ -264,6 +363,8 @@ function isRefusalResponse(result: ChatResult): boolean {
  */
 export async function judgeContradiction(input: JudgeInput): Promise<JudgeOutput> {
   const maxPairChars = input.maxPairChars ?? DEFAULT_MAX_PAIR_CHARS;
+  // input.a/b carry effective_date through PairMember (Lane A1); buildJudgePrompt
+  // emits it on the Statement line or falls through to `(date unknown)`.
   const prompt = buildJudgePrompt({
     query: input.query,
     a: input.a,
