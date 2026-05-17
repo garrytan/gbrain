@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig } from './types.ts';
 
@@ -270,10 +270,10 @@ export function configDir(): string {
   const override = process.env.GBRAIN_HOME;
   if (override && override.trim()) {
     const trimmed = override.trim();
-    if (!trimmed.startsWith('/')) {
+    if (!isAbsolute(trimmed)) {
       throw new Error(`GBRAIN_HOME must be an absolute path; got: ${trimmed}`);
     }
-    if (trimmed.split('/').includes('..')) {
+    if (trimmed.split(/[\\/]/).includes('..')) {
       throw new Error(`GBRAIN_HOME must not contain '..' segments; got: ${trimmed}`);
     }
     return join(trimmed, '.gbrain');
