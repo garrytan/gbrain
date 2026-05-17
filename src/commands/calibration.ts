@@ -162,13 +162,38 @@ export async function runCalibration(
   const sourceId = 'default';
 
   if (opts.undoWave) {
-    // D18 undo-wave is wired in Lane D. v0.36.0.0 ship-state placeholder.
+    // T17 / D18 CDX-3 — reverse the wave's mutations on canonical state.
+    const { undoWave } = await import('../core/calibration/undo-wave.ts');
+    const scrubGstack = args.includes('--scrub-gstack');
+    const dryRun = args.includes('--dry-run');
     process.stderr.write(
-      `[calibration] --undo-wave ${opts.undoWave}: implementation lands in Lane D ` +
-        `(T17). For now run \`gbrain dream --phase calibration_profile\` to regenerate, ` +
-        `or operate on calibration_profiles directly via SQL.\n`,
+      `[calibration] ${dryRun ? '[dry-run] ' : ''}reversing wave ${opts.undoWave}...\n`,
     );
-    process.exit(2);
+    const result = await undoWave(engine, {
+      waveVersion: opts.undoWave,
+      dryRun,
+      scrubGstack,
+    });
+    if (opts.json) {
+      process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    } else {
+      const verb = dryRun ? 'would revert' : 'reverted';
+      process.stdout.write(
+        `${verb}:\n` +
+          `  ${result.resolutions_reverted} take resolutions\n` +
+          `  ${result.profiles_deleted} calibration profile(s)\n` +
+          `  ${result.nudges_purged} nudge log row(s)\n` +
+          `  ${result.grade_cache_unapplied} grade-cache rows marked unapplied\n`,
+      );
+      if (result.gstack_scrub_attempted) {
+        if (result.warnings.length > 0) {
+          process.stdout.write(`  gstack scrub: failed (${result.warnings.join('; ')})\n`);
+        } else {
+          process.stdout.write(`  gstack scrub: ok\n`);
+        }
+      }
+    }
+    return;
   }
 
   if (opts.abReport) {
