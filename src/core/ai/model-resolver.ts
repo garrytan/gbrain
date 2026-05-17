@@ -2,7 +2,7 @@
  * Parse and validate `provider:model` strings against the recipe registry.
  */
 
-import type { ParsedModelId, Recipe, TouchpointKind, ChatTouchpoint, EmbeddingTouchpoint, ExpansionTouchpoint } from './types.ts';
+import type { ParsedModelId, Recipe, TouchpointKind, ChatTouchpoint, EmbeddingTouchpoint, ExpansionTouchpoint, RerankerTouchpoint } from './types.ts';
 import { getRecipe, RECIPES } from './recipes/index.ts';
 import { AIConfigError } from './errors.ts';
 
@@ -54,10 +54,10 @@ export function resolveRecipe(modelId: string): { parsed: ParsedModelId; recipe:
   return { parsed, recipe };
 }
 
-type KnownTouchpointKey = 'embedding' | 'expansion' | 'chat';
+type KnownTouchpointKey = 'embedding' | 'expansion' | 'chat' | 'reranker';
 
-function getTouchpoint(recipe: Recipe, touchpoint: TouchpointKind): EmbeddingTouchpoint | ExpansionTouchpoint | ChatTouchpoint | undefined {
-  if (touchpoint === 'embedding' || touchpoint === 'expansion' || touchpoint === 'chat') {
+function getTouchpoint(recipe: Recipe, touchpoint: TouchpointKind): EmbeddingTouchpoint | ExpansionTouchpoint | ChatTouchpoint | RerankerTouchpoint | undefined {
+  if (touchpoint === 'embedding' || touchpoint === 'expansion' || touchpoint === 'chat' || touchpoint === 'reranker') {
     return recipe.touchpoints[touchpoint as KnownTouchpointKey];
   }
   return undefined;

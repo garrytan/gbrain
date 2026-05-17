@@ -455,6 +455,32 @@ async function runPipelineWithBody(
       // would write rows to a DB index whose fence is broken.
       continue;
     }
+    if (result.stubGuardBlocked) {
+      // v0.34.5: writeFactsToFence refused to spawn a phantom
+      // unprefixed entity page (e.g. `jared.md` at brain root).
+      // Route these facts to the legacy DB-only path so they
+      // aren't dropped — the slug stays attached but no markdown
+      // file is created.
+      for (const { f } of group) {
+        const newFact: NewFact = {
+          fact: f.fact,
+          kind: f.kind,
+          entity_slug: slug,
+          visibility,
+          notability: f.notability,
+          source: f.source,
+          source_session: f.source_session ?? null,
+          confidence: f.confidence,
+          embedding: f.embedding ?? null,
+        };
+        const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: stub-guard fallback for unprefixed entity slugs (no fenceable page)
+        fact_ids.push(legacyResult.id);
+        if (legacyResult.status === 'inserted') inserted += 1;
+        else if ((legacyResult.status as FactInsertStatus) === 'duplicate') duplicate += 1;
+        else superseded += 1;
+      }
+      continue;
+    }
     if (result.legacyFallback) {
       // Defensive: writeFactsToFence sees localPath as null. We
       // checked above so this shouldn't fire — log loud + skip.

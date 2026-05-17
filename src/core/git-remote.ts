@@ -20,16 +20,38 @@ import { join } from 'path';
 import { isInternalUrl } from './url-safety.ts';
 
 /**
- * SSRF-defensive flag set. Used by both cloneRepo and pullRepo.
+ * Git CLI accepts two flag positions:
+ *   git [global -c flags] <subcommand> [subcommand flags] [args]
+ *
+ * Global flags (the `-c key=value` config overrides) MUST come before the
+ * subcommand. Subcommand-specific flags (like `--no-recurse-submodules`)
+ * MUST come after the subcommand. Mixing the two positions makes git fail
+ * with `unknown option` (exit 129). Pre-v0.34 the single GIT_SSRF_FLAGS
+ * constant spliced both positions before the verb; real git rejected the
+ * subcommand flag but the test harness used a fake-git script that didn't
+ * validate, so every remote-source clone/pull broke silently in production.
+ *
+ * Split into two constants so the call-site spread is unambiguous and the
+ * type/name signal the position rule.
+ */
+
+/**
+ * Global git config flags. Spread BEFORE the subcommand verb.
  * - http.followRedirects=false: closes DNS rebinding via redirect chains
  * - protocol.file.allow=never: no local-file URLs (defense in depth)
  * - protocol.ext.allow=never: no external helpers (`git-remote-foo`)
- * - --no-recurse-submodules: .gitmodules cannot become a second fetch surface
  */
 export const GIT_SSRF_FLAGS = [
   '-c', 'http.followRedirects=false',
   '-c', 'protocol.file.allow=never',
   '-c', 'protocol.ext.allow=never',
+] as const;
+
+/**
+ * Subcommand-level flags. Spread AFTER the subcommand verb (clone/pull).
+ * - --no-recurse-submodules: .gitmodules cannot become a second fetch surface
+ */
+export const GIT_SSRF_SUBCOMMAND_FLAGS = [
   '--no-recurse-submodules',
 ] as const;
 
@@ -153,7 +175,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
     }
   }
 
-  const args: string[] = [...GIT_SSRF_FLAGS, 'clone'];
+  const args: string[] = [...GIT_SSRF_FLAGS, 'clone', ...GIT_SSRF_SUBCOMMAND_FLAGS];
   if (opts.depth !== 0) {
     args.push(`--depth=${opts.depth ?? 1}`);
   }
@@ -179,7 +201,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
 
 /** Pull a repo with --ff-only and the same SSRF-defensive flags as cloneRepo. */
 export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): void {
-  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', '--ff-only'];
+  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],

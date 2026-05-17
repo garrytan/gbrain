@@ -175,7 +175,7 @@ describe('contradiction cache (P2)', () => {
     truncation_policy: '1500-chars-utf8-safe',
   };
   const verdict = {
-    contradicts: true,
+    verdict: 'contradiction',
     severity: 'medium',
     axis: 'MRR vs ARR',
     confidence: 0.85,
@@ -191,12 +191,13 @@ describe('contradiction cache (P2)', () => {
     await engine.putContradictionCacheEntry({ ...baseKey, verdict });
     const hit = await engine.getContradictionCacheEntry(baseKey);
     expect(hit).not.toBeNull();
-    expect((hit as Record<string, unknown>).contradicts).toBe(true);
+    expect((hit as Record<string, unknown>).verdict).toBe('contradiction');
     expect((hit as Record<string, unknown>).severity).toBe('medium');
   });
 
   test('different prompt_version is a different cache key (Codex fix)', async () => {
     await engine.putContradictionCacheEntry({ ...baseKey, verdict });
+    // baseKey has prompt_version='1'; v0.34 lookups under '2' must miss.
     const wrong = await engine.getContradictionCacheEntry({ ...baseKey, prompt_version: '2' });
     expect(wrong).toBeNull();
   });
@@ -211,11 +212,11 @@ describe('contradiction cache (P2)', () => {
     await engine.putContradictionCacheEntry({ ...baseKey, verdict });
     await engine.putContradictionCacheEntry({
       ...baseKey,
-      verdict: { ...verdict, contradicts: false, severity: 'low' },
+      verdict: { ...verdict, verdict: 'no_contradiction', severity: 'info' },
     });
     const hit = await engine.getContradictionCacheEntry(baseKey);
-    expect((hit as Record<string, unknown>).contradicts).toBe(false);
-    expect((hit as Record<string, unknown>).severity).toBe('low');
+    expect((hit as Record<string, unknown>).verdict).toBe('no_contradiction');
+    expect((hit as Record<string, unknown>).severity).toBe('info');
   });
 
   test('expired entries are not returned by get', async () => {

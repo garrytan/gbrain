@@ -12,8 +12,9 @@
 import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
-import { embed } from '../embedding.ts';
+import { embed, embedQuery } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
+import { applyReranker } from './rerank.ts';
 import { autoDetectDetail, classifyQuery } from './query-intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { enforceTokenBudget } from './token-budget.ts';
@@ -46,14 +47,78 @@ const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
  * Apply backlink boost to a result list in place. Mutates each result's score
  * by (1 + BACKLINK_BOOST_COEF * log(1 + count)). Pure data transform; no DB call.
  * Caller fetches counts via engine.getBacklinkCounts.
+ *
+ * v0.35.6.0 — floor-ratio gate. When `floorThreshold` is provided, results
+ * with `r.score < floorThreshold` are SKIPPED (no boost applied). NaN scores
+ * are also skipped (NaN < x is false in JS, which would otherwise let NaN
+ * results bypass the gate). The threshold is an ABSOLUTE score, not a ratio
+ * — compute it once at `runPostFusionStages` entry via `computeFloorThreshold`
+ * so stage order doesn't change which results clear the gate.
+ *
+ * The gate is scoped to the three metadata-axis boost stages (backlink +
+ * salience + recency). Exact-match boost (`applyExactMatchBoost` in
+ * intent-weights.ts) runs independently as a lexical-relevance signal by
+ * design.
  */
-export function applyBacklinkBoost(results: SearchResult[], counts: Map<string, number>): void {
+export function applyBacklinkBoost(
+  results: SearchResult[],
+  counts: Map<string, number>,
+  floorThreshold?: number,
+): void {
   for (const r of results) {
+    if (!Number.isFinite(r.score)) continue;
+    if (floorThreshold !== undefined && r.score < floorThreshold) continue;
     const count = counts.get(r.slug) ?? 0;
     if (count > 0) {
       r.score *= (1.0 + BACKLINK_BOOST_COEF * Math.log(1 + count));
     }
   }
+}
+
+/**
+ * v0.35.6.0 — floor-ratio threshold computation.
+ *
+ * Returns the absolute score floor below which boost stages skip a result.
+ * Returns `Number.NEGATIVE_INFINITY` (no gate) when:
+ *   - `floorRatio` is undefined (default — preserves prior behavior bit-for-bit)
+ *   - `floorRatio` is NaN, infinite, negative, or > 1 (out-of-range silently
+ *     disables the gate; range validation lives at the config-parse layer)
+ *   - No result has a positive, finite score (all-NaN, all-negative, or empty
+ *     input arrays produce no positive signal — gate stays off)
+ *
+ * Otherwise returns `topScore * floorRatio`, where `topScore` is the largest
+ * finite score in `results`. Callers compute this ONCE before any boost stage
+ * runs, then pass the resulting threshold to every stage. Single-baseline
+ * semantic — order-independent across the three metadata-axis boosts.
+ *
+ * Why this exists: gbrain's bounded boosts (`[1.0, ~1.6]` log-compressed
+ * salience clip, log-scaled backlinks, half-life recency) keep any single
+ * boost from catastrophically flipping rankings on curated small corpora.
+ * On larger corpora indexed with dense embedders (text-embedding-3-large,
+ * Voyage 3+, ZeroEntropy zembed-1), weak-overlap candidates can land in
+ * top-K via baseline vector overlap and accumulate metadata boost until
+ * they leapfrog the legitimate primary hit. The gate restricts each
+ * metadata boost to the head of the candidate pool so the long tail keeps
+ * its unboosted relevance ranking.
+ *
+ * 0.85 is a reasonable starting value for dense-embedder corpora. Default
+ * stays undefined (no gate) until per-corpus ablation evidence supports a
+ * default flip (see `TODOS.md` floor-ratio ablation entry).
+ */
+export function computeFloorThreshold(
+  results: SearchResult[],
+  floorRatio: number | undefined,
+): number {
+  if (floorRatio === undefined) return Number.NEGATIVE_INFINITY;
+  if (!Number.isFinite(floorRatio) || floorRatio < 0 || floorRatio > 1) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  let top = Number.NEGATIVE_INFINITY;
+  for (const r of results) {
+    if (Number.isFinite(r.score) && r.score > top) top = r.score;
+  }
+  if (!Number.isFinite(top) || top <= 0) return Number.NEGATIVE_INFINITY;
+  return top * floorRatio;
 }
 
 /**
@@ -71,9 +136,12 @@ export function applySalienceBoost(
   results: SearchResult[],
   scores: Map<string, number>,
   strength: 'on' | 'strong',
+  floorThreshold?: number,
 ): void {
   const k = strength === 'strong' ? 0.30 : 0.15;
   for (const r of results) {
+    if (!Number.isFinite(r.score)) continue;
+    if (floorThreshold !== undefined && r.score < floorThreshold) continue;
     const key = `${r.source_id ?? 'default'}::${r.slug}`;
     const score = scores.get(key);
     if (!score || score <= 0) continue;
@@ -100,12 +168,15 @@ export function applyRecencyBoost(
   decayMap: import('./recency-decay.ts').RecencyDecayMap,
   fallback: import('./recency-decay.ts').RecencyDecayConfig,
   nowMs: number = Date.now(),
+  floorThreshold?: number,
 ): void {
   const strengthMul = strength === 'strong' ? 1.5 : 1.0;
   // Sort prefixes longest-first so 'media/articles/' matches before 'media/'.
   const prefixes = Object.keys(decayMap).sort((a, b) => b.length - a.length);
 
   for (const r of results) {
+    if (!Number.isFinite(r.score)) continue;
+    if (floorThreshold !== undefined && r.score < floorThreshold) continue;
     const key = `${r.source_id ?? 'default'}::${r.slug}`;
     const d = dates.get(key);
     if (!d) continue;
@@ -142,6 +213,23 @@ export interface PostFusionOpts {
   recency: 'off' | 'on' | 'strong';
   decayMap?: import('./recency-decay.ts').RecencyDecayMap;
   fallback?: import('./recency-decay.ts').RecencyDecayConfig;
+  /**
+   * v0.35.6.0 — floor-ratio gate (opt-in, default off). When set, each
+   * metadata-axis boost stage (backlink, salience, recency) skips results
+   * whose score is below `floorRatio * topScore`. Threshold is computed
+   * ONCE at runPostFusionStages entry from the post-cosine-rescore score
+   * snapshot, then passed uniformly to all three stages — order-independent.
+   *
+   * Default undefined preserves prior behavior bit-for-bit. Sensible values
+   * for dense-embedder corpora: 0.85-0.95. See `computeFloorThreshold` for
+   * the empirical motivation and out-of-range handling.
+   *
+   * SCOPE: gates the three metadata stages only. Exact-match boost
+   * (`applyExactMatchBoost`) runs AFTER `runPostFusionStages` and is NOT
+   * gated — it's a lexical-relevance signal, different in kind from
+   * metadata boosts.
+   */
+  floorRatio?: number;
 }
 
 export async function runPostFusionStages(
@@ -151,12 +239,19 @@ export async function runPostFusionStages(
 ): Promise<void> {
   if (results.length === 0) return;
 
+  // v0.35.6.0 [floor-ratio gate]: compute threshold ONCE at entry, BEFORE any
+  // boost mutates scores. Single-baseline semantic — the same threshold gates
+  // all three downstream stages. This is intentionally different from a
+  // per-stage recompute (which would couple stage order to gating decisions);
+  // see plan `swift-sniffing-nygaard.md` D6 / codex outside-voice T2.
+  const floorThreshold = computeFloorThreshold(results, opts.floorRatio);
+
   // Backlink stage (existing behavior, preserved).
   if (opts.applyBacklinks) {
     try {
       const slugs = Array.from(new Set(results.map(r => r.slug)));
       const counts = await engine.getBacklinkCounts(slugs);
-      applyBacklinkBoost(results, counts);
+      applyBacklinkBoost(results, counts, floorThreshold);
     } catch {
       // Non-fatal; preserves the existing pre-v0.29.1 contract.
     }
@@ -173,7 +268,7 @@ export async function runPostFusionStages(
   if (opts.salience !== 'off') {
     try {
       const scores = await engine.getSalienceScores(refs);
-      applySalienceBoost(results, scores, opts.salience);
+      applySalienceBoost(results, scores, opts.salience, floorThreshold);
     } catch {
       // Non-fatal.
     }
@@ -190,6 +285,8 @@ export async function runPostFusionStages(
         opts.recency,
         opts.decayMap ?? DEFAULT_RECENCY_DECAY,
         opts.fallback ?? DEFAULT_FALLBACK,
+        Date.now(),
+        floorThreshold,
       );
     } catch {
       // Non-fatal.
@@ -243,6 +340,10 @@ export async function hybridSearch(
       tokenBudget: opts?.tokenBudget,
       expansion: opts?.expansion,
       searchLimit: opts?.limit,
+      // v0.35.6.0 — floor-ratio gate thread-through. Per-call value wins
+      // over per-key config wins over mode bundle (currently undefined for
+      // all 3 bundles — pending ablation evidence).
+      floor_ratio: opts?.floorRatio,
     },
   });
 
@@ -355,10 +456,14 @@ export async function hybridSearch(
     ?? (suggestions.suggestedRecency !== 'off'
         ? suggestions.suggestedRecency
         : (intentRecency ?? suggestions.suggestedRecency));
-  const postFusionOpts = {
+  const postFusionOpts: PostFusionOpts = {
     applyBacklinks: true,
     salience: salienceMode,
     recency: recencyMode,
+    // v0.35.6.0 — floor-ratio gate threaded from resolved mode. Default
+    // undefined for all 3 bundles → no behavior change unless caller sets
+    // SearchOpts.floorRatio or `search.floor_ratio` config key.
+    floorRatio: resolvedMode.floor_ratio,
   };
 
   // Skip vector search entirely if the gateway has no embedding provider configured (Codex C3).
@@ -407,7 +512,10 @@ export async function hybridSearch(
   let vectorLists: SearchResult[][] = [];
   let queryEmbedding: Float32Array | null = null;
   try {
-    const embeddings = await Promise.all(queries.map(q => embed(q)));
+    // v0.35.0.0+: query-side embedding. For asymmetric providers (ZE zembed-1,
+    // Voyage v3+) routes input_type='query' through the embed seam; symmetric
+    // providers ignore the field — no behavior change.
+    const embeddings = await Promise.all(queries.map(q => embedQuery(q)));
     queryEmbedding = embeddings[0];
     vectorLists = await Promise.all(
       embeddings.map(emb => engine.searchVector(emb, searchOpts)),
@@ -536,7 +644,26 @@ export async function hybridSearch(
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
-  const sliced = deduped.slice(offset, offset + limit);
+  // v0.35.0.0+: cross-encoder reranker. Slots between dedup and slice so the
+  // reranker sees the full candidate pool (its own topNIn caps how many
+  // get sent upstream). Fail-open: any error returns deduped unchanged.
+  //
+  // Resolution: per-call SearchOpts.reranker overrides; otherwise pull
+  // from the resolved mode bundle (tokenmax → enabled, others → disabled).
+  // The resolved mode's fields already participate in knobsHash, so cache
+  // rows naturally segregate by reranker config.
+  const rerankerOpts = opts?.reranker ?? {
+    enabled: resolvedMode.reranker_enabled,
+    topNIn: resolvedMode.reranker_top_n_in,
+    topNOut: resolvedMode.reranker_top_n_out,
+    model: resolvedMode.reranker_model,
+    timeoutMs: resolvedMode.reranker_timeout_ms,
+  };
+  const reranked = rerankerOpts.enabled
+    ? await applyReranker(query, deduped, rerankerOpts as any)
+    : deduped;
+
+  const sliced = reranked.slice(offset, offset + limit);
   // v0.32.3 search-lite: budget enforcement at the main return path.
   // hybridSearchCached used to be the only place this fired; now bare
   // hybridSearch enforces it too so eval-replay + eval-longmemeval see
@@ -597,6 +724,11 @@ export async function hybridSearchCached(
       expansion: opts?.expansion,
       intentWeighting: opts?.intentWeighting,
       searchLimit: opts?.limit,
+      // v0.35.6.0 — floor-ratio threaded through cache resolver too so
+      // knobsHash() differentiates floor-on vs floor-off cache rows.
+      // Without this, a no-floor write would be served to a floor-enabled
+      // read (ranking-correctness leak, codex T1).
+      floor_ratio: opts?.floorRatio,
     },
   });
   const cacheKnobsHash = knobsHash(resolvedForCache);
@@ -636,7 +768,8 @@ export async function hybridSearchCached(
     try {
       const { isAvailable } = await import('../ai/gateway.ts');
       if (isAvailable('embedding')) {
-        queryEmbedding = await embed(query);
+        // v0.35.0.0+: query-side embedding (cache lookup path).
+        queryEmbedding = await embedQuery(query);
       } else {
         cacheStatus = 'disabled';
       }
