@@ -139,4 +139,85 @@ describe('shouldSkipForDateMismatch', () => {
     expect(a.length).toBe(b.length);
     expect(a.length).toBe(3);
   });
+
+  // ---- Lane B: page-level effective_date relaxes rule 3 ----
+  // R1 IRON RULE regression suite. When BOTH sides have a non-null
+  // page-level effective_date, the judge will see them via the
+  // (from: YYYY-MM-DD) prompt tag and can classify temporal supersession.
+  // The v1 >30d skip would silently kill these cases — exactly the ones the
+  // new verdict taxonomy exists to surface. The other two rules stay intact.
+
+  test('Lane B: both sides have effective_date → do NOT skip (judge classifies)', () => {
+    const d = shouldSkipForDateMismatch({
+      textA: 'Sriram Krishnan: Partner — AI/ML/Eng',
+      textB: 'Sriram Krishnan: Senior White House AI Policy Advisor',
+      effectiveDateA: '2017-03-28',
+      effectiveDateB: '2025-01-15',
+    });
+    expect(d.skip).toBe(false);
+    expect(d.reason).toBe('both_have_effective_date');
+  });
+
+  test('Lane B: both sides effective_date overrides >30d chunk-text rule', () => {
+    // Without effective_dates this would be rule-3 SKIP. With them the judge
+    // gets to classify temporal_supersession.
+    const d = shouldSkipForDateMismatch({
+      textA: 'Acme MRR was $50K (2024-08-01)',
+      textB: 'Acme MRR was $2M (2026-03-15)',
+      effectiveDateA: '2024-08-01',
+      effectiveDateB: '2026-03-15',
+    });
+    expect(d.skip).toBe(false);
+    expect(d.reason).toBe('both_have_effective_date');
+  });
+
+  test('Lane B regression: rule 1 (same-paragraph dual-date) still wins over effective_date', () => {
+    // Same-paragraph dual-date is checked BEFORE the effective_date branch
+    // so flip-flops in the chunk text always reach the judge regardless of
+    // page-level dates.
+    const d = shouldSkipForDateMismatch({
+      textA: 'In Jan 2024 I said X. In Mar 2024 I reversed to not-X.',
+      textB: 'In 2026 I still hold not-X.',
+      effectiveDateA: '2024-01-15',
+      effectiveDateB: '2026-06-01',
+    });
+    expect(d.skip).toBe(false);
+    expect(d.reason).toBe('same_paragraph_dual_date');
+  });
+
+  test('Lane B regression: rule 2 (one side missing chunk dates) still applies when effective_dates partially present', () => {
+    // Only ONE side has effective_date — the relaxation doesn't fire. v1
+    // rules 1 + 2 still govern.
+    const d = shouldSkipForDateMismatch({
+      textA: 'Acme is profitable',
+      textB: 'Acme is unprofitable as of 2026-03-01',
+      effectiveDateA: null,
+      effectiveDateB: '2026-03-01',
+    });
+    expect(d.skip).toBe(false);
+    expect(d.reason).toBe('one_or_both_missing_dates');
+  });
+
+  test('Lane B regression: undefined effective_dates fall through to v1 behavior', () => {
+    // Callers that don't supply effective_dates (legacy code paths) keep the
+    // v1 skip behavior. Important for back-compat.
+    const d = shouldSkipForDateMismatch({
+      textA: 'Acme MRR was $50K (2024-08-01)',
+      textB: 'Acme MRR was $2M (2026-03-15)',
+    });
+    expect(d.skip).toBe(true);
+    expect(d.reason).toBe('both_explicit_separated');
+  });
+
+  test('Lane B regression: empty-string effective_date is treated as missing', () => {
+    // An empty string is falsy; only a real date enables the relaxation.
+    const d = shouldSkipForDateMismatch({
+      textA: 'Acme MRR was $50K (2024-08-01)',
+      textB: 'Acme MRR was $2M (2026-03-15)',
+      effectiveDateA: '',
+      effectiveDateB: '2026-03-15',
+    });
+    expect(d.skip).toBe(true);
+    expect(d.reason).toBe('both_explicit_separated');
+  });
 });
