@@ -925,6 +925,43 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(surviving[0].compiled_truth.length).toBeGreaterThan(200);
   });
 
+  itHomed('preserves a phantom whose .md file was edited but not re-imported (round-21 P2)', async () => {
+    // Codex round-21 P2: the operator may have edited the phantom
+    // alice.md on disk (adding prose) but not yet run `gbrain sync`.
+    // pages.compiled_truth is stale (still stub-shaped) while the
+    // .md file on disk has real content. The merge previously trusted
+    // the DB and would unlink the edited file. Now we ALSO read the
+    // file and apply the stub check to disk content.
+    await seedPage('alice-edited-on-disk', 'person');
+    await seedPage('people/alice-edited-on-disk-example', 'person');
+    await seedChunks('people/alice-edited-on-disk-example', 3);
+    await seedFact('alice-edited-on-disk', 'A fact.');
+
+    // Write a non-stub .md on disk while leaving the DB body stubby.
+    const phantomFile = join(brainDir, 'alice-edited-on-disk.md');
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    mkdirSync(dirname(phantomFile), { recursive: true });
+    writeFileSync(
+      phantomFile,
+      '---\ntype: person\ntitle: Alice Edited\nslug: alice-edited-on-disk\n---\n\n# Alice Edited\n\nThe user added a substantial paragraph on disk but never ran sync. This content must survive the merge.',
+      'utf-8',
+    );
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(0);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0].skipped).toBe('not_a_stub');
+
+    // Disk file untouched.
+    expect(existsSync(phantomFile)).toBe(true);
+    const onDisk = readFileSync(phantomFile, 'utf-8');
+    expect(onDisk).toContain('substantial paragraph on disk');
+  });
+
   itHomed('removes the phantom .md file from disk on soft-delete (round-19 P2)', async () => {
     // Codex round-19 P2: when the phantom page also exists on disk
     // (e.g. `alice.md` created by the v0.34.5-era writeFactsToFence

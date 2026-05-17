@@ -168,15 +168,37 @@ export async function runMergePhantomsCore(
   const dirs = getPrefixExpansionDirs();
 
   for (const row of phantoms) {
-    // Content-size gate (codex rounds 5 + 6 + 16): skip pages whose
-    // body OR timeline carries real content. We count compiled_truth
-    // body chars (excluding the machine fence — round-6 P2 #2) plus
-    // any timeline content (codex round-16 P2 #1: merge-phantoms
-    // doesn't migrate timeline rows, so soft-deleting a timeline-only
-    // page would lose history).
+    // Content-size gate (codex rounds 5 + 6 + 16 + 21): skip pages
+    // whose body OR timeline carries real content. We count
+    // compiled_truth body chars (excluding the machine fence) plus
+    // timeline content, AND also re-check the on-disk markdown file
+    // when a local_path is available (codex round-21 P2: the DB row
+    // may be stale relative to disk — user edited alice.md but
+    // hasn't re-synced — and the merge would clobber the disk edits
+    // when it later unlinks the file).
     const bodyChars = stubBodyChars(row.compiled_truth);
     const timelineChars = (row.timeline ?? '').trim().length;
-    if (bodyChars > PHANTOM_STUB_MAX_BODY_CHARS || timelineChars > 0) {
+    let diskBodyChars = 0;
+    const diskLocalPath = await lookupSourceLocalPath(engine, opts.sourceId);
+    if (diskLocalPath !== null) {
+      const diskPath = join(diskLocalPath, `${row.slug}.md`);
+      if (existsSync(diskPath)) {
+        try {
+          const onDisk = readFileSync(diskPath, 'utf-8');
+          diskBodyChars = stubBodyChars(onDisk);
+        } catch {
+          // Read failure: be conservative — treat as non-stub so the
+          // file survives. The operator can re-run after fixing
+          // perms or re-syncing.
+          diskBodyChars = Number.MAX_SAFE_INTEGER;
+        }
+      }
+    }
+    if (
+      bodyChars > PHANTOM_STUB_MAX_BODY_CHARS ||
+      timelineChars > 0 ||
+      diskBodyChars > PHANTOM_STUB_MAX_BODY_CHARS
+    ) {
       skipped.push({ phantom: row.slug, canonical: null, skipped: 'not_a_stub' });
       continue;
     }
