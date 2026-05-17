@@ -88,8 +88,13 @@ jobs:
           }
           EOF
       - name: Run Tier 2 skill tests
-        run: bun test test/e2e/skills.test.ts
+        run: bun test test/e2e/skills.test.ts test/e2e/zeroentropy-live.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # v0.33.3.0: ZE live API tests skip gracefully when this is unset,
+          # so forks without the secret stay green. The test exercises the
+          # zeroEntropyCompatFetch response-rewriter + URL rewrite + flexible
+          # dim handling + gateway.rerank against the real provider.
+          ZEROENTROPY_API_KEY: ${{ secrets.ZEROENTROPY_API_KEY }}

@@ -12,8 +12,8 @@ import type { ContradictionPair } from '../src/core/eval-contradictions/types.ts
 function mkPair(slugA: string, slugB: string): ContradictionPair {
   return {
     kind: 'cross_slug_chunks',
-    a: { slug: slugA, chunk_id: 1, take_id: null, source_tier: 'curated', holder: null, text: 'a' },
-    b: { slug: slugB, chunk_id: 2, take_id: null, source_tier: 'curated', holder: null, text: 'b' },
+    a: { slug: slugA, chunk_id: 1, take_id: null, source_tier: 'curated', holder: null, text: 'a', effective_date: null, effective_date_source: null },
+    b: { slug: slugB, chunk_id: 2, take_id: null, source_tier: 'curated', holder: null, text: 'b', effective_date: null, effective_date_source: null },
     combined_score: 1,
   };
 }

@@ -48,6 +48,12 @@ const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   tokenBudget: 'Per-call token-budget cap (undefined = no cap)',
   expansion: 'LLM multi-query expansion (Haiku call per search)',
   searchLimit: 'Default `limit` for the operation layer',
+  reranker_enabled: 'Cross-encoder reranker (ZE zerank-2) on/off',
+  reranker_model: 'Provider:model for the reranker',
+  reranker_top_n_in: 'Candidates sent to reranker per call',
+  reranker_top_n_out: 'Cap on reranked output (null = no truncate)',
+  reranker_timeout_ms: 'HTTP timeout for the reranker call',
+  floor_ratio: 'Floor-ratio gate for metadata boosts (0..1, undefined = off)',
 };
 
 interface SearchModesReport {
@@ -74,6 +80,10 @@ async function buildModesReport(engine: BrainEngine): Promise<SearchModesReport>
     'tokenBudget',
     'expansion',
     'searchLimit',
+    // v0.35.6.0 — floor-ratio surfaced in `gbrain search modes` dashboard
+    // so config drift is legible. Default undefined renders as 'undefined'
+    // in the bundle column, 'mode' source when unset by config/per-call.
+    'floor_ratio',
   ];
 
   const attributions = {} as SearchModesReport['resolved'];

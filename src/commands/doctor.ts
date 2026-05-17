@@ -414,7 +414,92 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // eval run? Non-blocking — surfaces as ok + hint.
   checks.push(await checkEvalDrift(engine));
 
+  // 9. v0.35.0.0+ reranker_health: surfaces rerank-audit failures from
+  // ~/.gbrain/audit/rerank-failures-*.jsonl. Failure-only (no success
+  // logging on the search hot path per CDX2-F22). Reads
+  // search.reranker.enabled FIRST so absence-of-failures means different
+  // things when reranker is on vs off.
+  checks.push(await checkRerankerHealth(engine));
+
   return computeDoctorReport(checks);
+}
+
+/**
+ * v0.35.0.0+ reranker_health doctor check.
+ *
+ * Logic (post-CDX2 review):
+ *   1) Read `search.reranker.enabled` first. When disabled and no
+ *      failures in window → 'ok: reranker disabled'. Avoids interpreting
+ *      "no events" as "broken" when reranker is simply not in use.
+ *   2) Walk last 7 days of `~/.gbrain/audit/rerank-failures-*.jsonl`.
+ *   3) Auth failures: ANY single one warns (config-time problem doctor's
+ *      own probe should have caught — surface it).
+ *   4) Transient (network/timeout/rate_limit): warn at >=5 in window.
+ *      Below that they're noise; reranker fails open anyway.
+ *   5) Payload-too-large failures: warn at >=1 (indicates a workload
+ *      mismatch that the operator should know about).
+ *
+ * Engine-agnostic (file-based + one config-key read).
+ */
+export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const { readRecentRerankFailures } = await import('../core/rerank-audit.ts');
+    const cfg = await engine.getConfig('search.reranker.enabled');
+    const rerankerEnabled = cfg === 'true' || cfg === '1';
+
+    const failures = readRecentRerankFailures(7);
+    if (failures.length === 0) {
+      return {
+        name: 'reranker_health',
+        status: 'ok',
+        message: rerankerEnabled
+          ? 'No rerank failures in last 7 days'
+          : 'Reranker disabled — no failures expected',
+      };
+    }
+
+    const authFails = failures.filter((f) => f.reason === 'auth');
+    if (authFails.length > 0) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${authFails.length} reranker auth failure(s) in last 7 days. Fix: verify ZEROENTROPY_API_KEY and run \`gbrain models doctor\`.`,
+      };
+    }
+
+    const payloadFails = failures.filter((f) => f.reason === 'payload_too_large');
+    if (payloadFails.length > 0) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${payloadFails.length} reranker payload-too-large failure(s) in last 7 days. Fix: lower \`search.reranker.top_n_in\` (default 30) or split very large documents.`,
+      };
+    }
+
+    const transientFails = failures.filter(
+      (f) => f.reason === 'network' || f.reason === 'timeout' || f.reason === 'rate_limit',
+    );
+    if (transientFails.length >= 5) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${transientFails.length} transient reranker failure(s) in last 7 days. Search fails open to RRF order; check ZE status if persistent.`,
+      };
+    }
+
+    return {
+      name: 'reranker_health',
+      status: 'ok',
+      message: `${failures.length} reranker failure(s) in last 7 days (below threshold)`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'reranker_health',
+      status: 'warn',
+      message: `Could not check reranker audit: ${msg}`,
+    };
+  }
 }
 
 /**
@@ -908,7 +993,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // Does NOT run the supervisor itself — this is a read-only health check.
   try {
     const { DEFAULT_PID_FILE } = await import('../core/minions/supervisor.ts');
-    const { readSupervisorEvents } = await import('../core/minions/handlers/supervisor-audit.ts');
+    const { readSupervisorEvents, summarizeCrashes } = await import('../core/minions/handlers/supervisor-audit.ts');
 
     let supervisorPid: number | null = null;
     let running = false;
@@ -925,7 +1010,20 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
 
     const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
     const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
-    const crashes24h = events.filter(e => e.event === 'worker_exited').length;
+    // Shared classifier — same code path runs in `gbrain jobs supervisor
+    // status` (src/commands/jobs.ts). Counts only events whose `likely_cause`
+    // is NOT in the clean denylist (clean_exit, graceful_shutdown). Pre-v0.34
+    // entries lacking `likely_cause` fall back to `code !== 0`. Supersedes
+    // v0.35.4.0's binary `classifyWorkerExit({code})` on this surface: the
+    // `likely_cause` read correctly classifies SIGTERM (code=null,
+    // likely_cause='graceful_shutdown') as clean, and produces per-cause
+    // buckets so operators triage memory pressure (oom) vs code bugs
+    // (runtime) without grep'ing JSONL. `classifyWorkerExit` is still
+    // used by the supervisor's internal restart policy where the binary
+    // shape is the right contract.
+    const summary = summarizeCrashes(events);
+    const crashes24h = summary.total;
+    const causeStr = `runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy}`;
     const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 
     // Only surface a Check if the supervisor was ever observed (stops the
@@ -943,22 +1041,70 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
           status: 'warn',
           message: `Supervisor not running (last_start=${lastStart ?? 'unknown'}). Restart with: gbrain jobs supervisor start --detach`,
         });
-      } else if (crashes24h > 3) {
+      } else if (crashes24h >= 1) {
+        // Threshold dropped from `>3` (pre-fix, inflated by clean exits being
+        // miscounted) to `>=1` (any real crash is signal). Per-cause breakdown
+        // gives operators triage context without grep'ing the JSONL.
         checks.push({
           name: 'supervisor',
           status: 'warn',
-          message: `Supervisor running but worker crashed ${crashes24h}x in last 24h. Check ~/.gbrain/audit/supervisor-*.jsonl for causes.`,
+          message: `Worker crashed ${crashes24h}x in last 24h (${causeStr}). Check ~/.gbrain/audit/supervisor-*.jsonl for context.`,
         });
       } else {
         checks.push({
           name: 'supervisor',
           status: 'ok',
-          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h}`,
+          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h} clean_exits_24h=${summary.clean_exits}`,
         });
       }
     }
   } catch {
     // Audit read / import failure is best-effort; skip silently.
+  }
+
+  // 3b-tris. Stub-guard fire count (last 24h). The v0.34.5 stub guard in
+  // fence-write.ts refuses to spawn unprefixed entity pages (e.g. bare
+  // `alice.md` at brain root). Each fire is appended to
+  // ~/.gbrain/audit/stub-guard-YYYY-Www.jsonl. This check is the operator
+  // visibility surface for the guard's v0.36 sunset criterion: when the
+  // 24h count is consistently low, the prefix-expansion in
+  // resolveEntitySlug is doing its job and the guard can be removed.
+  //
+  // WARN at >10 fires/24h — at that rate the resolver is probably missing
+  // a case (typo prefix, alias, non-Latin script). Operators should grep
+  // the audit log for the slugs that hit it and either add the missing
+  // resolver branch or document them as legitimate bare-slug ingestion.
+  try {
+    const { readRecentStubGuardEvents } = await import('../core/facts/stub-guard-audit.ts');
+    const events = readRecentStubGuardEvents({ sinceMs: 24 * 60 * 60 * 1000 });
+    if (events.length > 10) {
+      // Surface the top 3 slugs that hit it so operators have somewhere to start.
+      const slugCounts = new Map<string, number>();
+      for (const e of events) slugCounts.set(e.slug, (slugCounts.get(e.slug) ?? 0) + 1);
+      const topSlugs = [...slugCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([slug, n]) => `${slug}(${n})`)
+        .join(', ');
+      checks.push({
+        name: 'stub_guard_24h',
+        status: 'warn',
+        message:
+          `Stub guard fired ${events.length}x in last 24h (top: ${topSlugs}). ` +
+          `If this stays elevated, the prefix-expansion in resolveEntitySlug is ` +
+          `missing a case. Check ~/.gbrain/audit/stub-guard-*.jsonl for the slugs ` +
+          `that hit it.`,
+      });
+    } else if (events.length > 0) {
+      checks.push({
+        name: 'stub_guard_24h',
+        status: 'ok',
+        message: `Stub guard fired ${events.length}x in last 24h (below WARN threshold of 10).`,
+      });
+    }
+    // Zero hits is the goal — emit no check at all so the doctor output stays clean.
+  } catch {
+    // Audit read failure is best-effort; skip silently.
   }
 
   // 3c. Sync failure trail (Bug 9). sync.ts gates the `sync.last_commit`
@@ -2420,6 +2566,9 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     checks.push(await checkSearchMode(engine));
     progress.heartbeat('eval_drift');
     checks.push(await checkEvalDrift(engine));
+    // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
+    progress.heartbeat('reranker_health');
+    checks.push(await checkRerankerHealth(engine));
   }
 
   progress.finish();

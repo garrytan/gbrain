@@ -1387,17 +1387,35 @@ export function manageGitignore(
     return;
   }
 
-  // D49: submodule detection. In a submodule, `.git` is a regular file
-  // (containing `gitdir: ../path/to/parent.git/modules/x`), not a directory.
+  // Submodule + worktree detection (closes #889 misclassification).
+  // Both submodules and worktrees use `.git` as a FILE (not a directory), so
+  // statSync.isFile() doesn't discriminate. Discriminator is the gitdir path
+  // segment:
+  //   - submodule: gitdir contains `/modules/<name>` (skip — managed by parent)
+  //   - worktree:  gitdir contains `/worktrees/<name>` (MANAGE — first-class repo)
+  // Both contracts are documented Git internal layouts and stable across all 4
+  // {relative, absolute} × {modules, worktrees} combinations, including the
+  // absorbed-submodule case from `git submodule absorbgitdirs`.
+  // Malformed `.git` file (no `gitdir:` prefix, unreadable) → MANAGE (fail-closed
+  // toward managing, preserving the pre-#889 catch{} behavior).
   const dotGit = join(repoPath, '.git');
   if (existsSync(dotGit)) {
     try {
       if (statSync(dotGit).isFile()) {
-        console.warn(
-          `Note: skipping .gitignore management — ${repoPath} is a git submodule. ` +
-            `Add db_only directories to your parent repo's .gitignore manually.`,
-        );
-        return;
+        const content = readFileSync(dotGit, 'utf-8');
+        const match = content.match(/gitdir:\s*(.+)/);
+        const gitdir = match ? match[1].trim() : '';
+        if (gitdir.includes('/modules/')) {
+          console.warn(
+            `Note: skipping .gitignore management — ${repoPath} is a git submodule. ` +
+              `Add db_only directories to your parent repo's .gitignore manually.`,
+          );
+          return;
+        }
+        // Worktree (gitdir contains /worktrees/) OR malformed .git falls through
+        // to the existing manage path. Worktrees are first-class repos — they
+        // need .gitignore management too. Malformed → MANAGE preserves the
+        // pre-#889 fail-closed-toward-managing catch behavior.
       }
     } catch {
       // proceed; can't tell, default to managing

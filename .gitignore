@@ -42,6 +42,9 @@ export/
 test/fixtures/pglite-snapshot.tar
 test/fixtures/pglite-snapshot.version
 
+# Private brain reports — never check these in (per CLAUDE.md privacy rule)
+reports/network-intelligence/
+
 # === Fork-local (jarvis-knowledge-os-v2) ===
 # Claude Code / OMC runtime state — per-session, machine-local, not source
 .omc/

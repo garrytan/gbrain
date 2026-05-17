@@ -964,8 +964,22 @@ async function handleCliOnly(command: string, args: string[]) {
   // v0.28.8: longmemeval brings its own in-memory PGLite. Bypassing
   // connectEngine here keeps `gbrain eval longmemeval --help` and benchmark
   // runs working on machines that have no `~/.gbrain/config.json` configured.
+  //
+  // v0.35.1.1: still need to configureGateway() so the in-memory brain's
+  // import + hybridSearch can embed via the configured provider. Reads
+  // ~/.gbrain/config.json when present; falls back to env vars otherwise
+  // (GBRAIN_EMBEDDING_MODEL / GBRAIN_EMBEDDING_DIMENSIONS).
   if (command === 'eval' && args[0] === 'longmemeval') {
     const { runEvalLongMemEval } = await import('./commands/eval-longmemeval.ts');
+    if (!(args.length > 1 && (args[1] === '--help' || args[1] === '-h'))) {
+      const config = loadConfig() ?? ({
+        embedding_model: process.env.GBRAIN_EMBEDDING_MODEL,
+        embedding_dimensions: process.env.GBRAIN_EMBEDDING_DIMENSIONS
+          ? Number(process.env.GBRAIN_EMBEDDING_DIMENSIONS) : undefined,
+      } as GBrainConfig);
+      const { configureGateway } = await import('./core/ai/gateway.ts');
+      configureGateway(buildGatewayConfig(config));
+    }
     await runEvalLongMemEval(args.slice(1));
     return;
   }

@@ -28,7 +28,7 @@ import {
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { pathToSlug } from '../core/sync.ts';
+import { pathToSlug, pruneDir, isSyncable } from '../core/sync.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
 // Postgres bind-parameter limit is 65535. Links use 4 cols/row → 16K hard ceiling;
@@ -63,16 +63,26 @@ interface ExtractResult {
 // --- Shared walker ---
 
 export function walkMarkdownFiles(dir: string): { path: string; relPath: string }[] {
+  // Descent-time pruning + emit-time isSyncable filter (closes #923, #202).
+  // Pre-fix, this walker had only an ad-hoc dot-prefix exclusion and didn't
+  // call isSyncable at all — so it descended into `node_modules/`, emitted
+  // markdown files from there, AND ignored the canonical exclusion list
+  // (`.raw/`, `ops/`, README.md, etc.). Now: pruneDir skips entire vendor
+  // subtrees before recursion (saving IO), and isSyncable filters the emit
+  // set against the canonical markdown-strategy rules.
   const files: { path: string; relPath: string }[] = [];
   function walk(d: string) {
     for (const entry of readdirSync(d)) {
-      if (entry.startsWith('.')) continue;
       const full = join(d, entry);
       try {
-        if (lstatSync(full).isDirectory()) {
+        const st = lstatSync(full);
+        if (st.isDirectory()) {
+          if (!pruneDir(entry)) continue;
           walk(full);
         } else if (entry.endsWith('.md') && !entry.startsWith('_')) {
-          files.push({ path: full, relPath: relative(dir, full) });
+          const rel = relative(dir, full);
+          if (!isSyncable(rel, { strategy: 'markdown' })) continue;
+          files.push({ path: full, relPath: rel });
         }
       } catch { /* skip unreadable */ }
     }

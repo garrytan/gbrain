@@ -31,9 +31,12 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   'openai:text-embedding-3-small': { pricePerMTok: 0.02 },
   // Legacy OpenAI ada (still common in older brains)
   'openai:text-embedding-ada-002': { pricePerMTok: 0.10 },
-  // Voyage (https://www.voyageai.com/pricing — voyage-3-large default)
+  // Voyage (https://www.voyageai.com/pricing)
   'voyage:voyage-3-large':         { pricePerMTok: 0.18 },
   'voyage:voyage-3':               { pricePerMTok: 0.06 },
+  'voyage:voyage-4-large':         { pricePerMTok: 0.18 },
+  // ZeroEntropy (https://zeroentropy.dev/pricing — zembed-1)
+  'zeroentropyai:zembed-1':        { pricePerMTok: 0.05 },
 };
 
 export type PriceLookupResult =

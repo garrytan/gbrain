@@ -141,4 +141,50 @@ describe('manageGitignore', () => {
     manageGitignore(tmp);
     expect(warnings.some((w) => /Could not (read|update)/.test(w))).toBe(true);
   });
+
+  // ────────────────────────────────────────────────────────────────
+  // Worktree vs submodule discrimination (closes #889)
+  // ────────────────────────────────────────────────────────────────
+
+  test('REGRESSION: submodule with relative gitdir/modules/ → skip (D49 contract)', () => {
+    writeStorageConfig();
+    writeFileSync(join(tmp, '.git'), 'gitdir: ../.git/modules/sub\n');
+    manageGitignore(tmp);
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(false);
+    expect(warnings.some((w) => /submodule/.test(w))).toBe(true);
+  });
+
+  test('absorbed submodule with absolute gitdir/modules/ → skip (closes edge case)', () => {
+    writeStorageConfig();
+    // After `git submodule absorbgitdirs`, the gitdir path becomes absolute.
+    writeFileSync(join(tmp, '.git'), 'gitdir: /home/user/parent/.git/modules/sub\n');
+    manageGitignore(tmp);
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(false);
+    expect(warnings.some((w) => /submodule/.test(w))).toBe(true);
+  });
+
+  test('CRITICAL: worktree with absolute gitdir/worktrees/ → MANAGE (closes #889)', () => {
+    writeStorageConfig();
+    writeFileSync(join(tmp, '.git'), 'gitdir: /home/user/repo/.git/worktrees/feature-branch\n');
+    manageGitignore(tmp);
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(true);
+    expect(warnings.filter((w) => /submodule/.test(w))).toEqual([]);
+  });
+
+  test('worktree with relative gitdir/worktrees/ → MANAGE', () => {
+    writeStorageConfig();
+    writeFileSync(join(tmp, '.git'), 'gitdir: ../.git/worktrees/feature-branch\n');
+    manageGitignore(tmp);
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(true);
+    expect(warnings.filter((w) => /submodule/.test(w))).toEqual([]);
+  });
+
+  test('malformed .git file (no gitdir: prefix) → MANAGE (preserves catch behavior)', () => {
+    writeStorageConfig();
+    writeFileSync(join(tmp, '.git'), 'garbage content\n');
+    manageGitignore(tmp);
+    // No gitdir prefix → not a submodule → MANAGE.
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(true);
+    expect(warnings.filter((w) => /submodule/.test(w))).toEqual([]);
+  });
 });

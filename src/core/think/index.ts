@@ -17,13 +17,17 @@
  * for those flags per Codex P1 #7.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
 import type { BrainEngine, SynthesisEvidenceInput } from '../engine.ts';
 import { runGather, renderPagesBlock, takesHitToTakeForPrompt } from './gather.ts';
 import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveModel } from '../model-config.ts';
+import { chat as gatewayChat, type ChatResult } from '../ai/gateway.ts';
+import { resolveRecipe } from '../ai/model-resolver.ts';
+import { AIConfigError } from '../ai/errors.ts';
+import { loadConfig } from '../config.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -222,7 +226,20 @@ export async function runThink(
   if (opts.stubResponse) {
     response = opts.stubResponse;
   } else {
-    if (!opts.client && !process.env.ANTHROPIC_API_KEY) {
+    // Build a ThinkLLMClient. Three sources, in priority order:
+    //   1. opts.client (test injection — preserved as test seam)
+    //   2. Gateway adapter (routes through gateway.chat() — picks up
+    //      anthropic_api_key from gbrain config OR env, gateway rate-leases,
+    //      retry, prompt caching, the canonical seam per CLAUDE.md)
+    //   3. Graceful fallback ("no LLM available" stub) — when gateway is
+    //      unconfigured AND no env var is set, return without throwing.
+    //
+    // Pre-v0.36, this code path constructed `new Anthropic()` directly.
+    // That bypassed gateway config (gbrain config set anthropic_api_key)
+    // because the Anthropic SDK only reads process.env.ANTHROPIC_API_KEY.
+    // Closes #952 (think over MCP returns "no LLM available").
+    const client = opts.client ?? await tryBuildGatewayClient(modelUsed);
+    if (!client) {
       warnings.push('NO_ANTHROPIC_API_KEY');
       // Degrade gracefully: return the gather without synthesis. Better than throwing.
       return {
@@ -244,11 +261,6 @@ export async function runThink(
         },
       };
     }
-    // Anthropic SDK exposes the create method via .messages — match the structural signature.
-    const realClient = new Anthropic();
-    const client: ThinkLLMClient = opts.client ?? {
-      create: (params, opts2) => realClient.messages.create(params, opts2),
-    };
     const result = await client.create({
       model: modelUsed,
       max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
@@ -347,3 +359,185 @@ export async function persistSynthesis(
   const persisted = await persistCitations(engine, page.id, result.citations);
   return { slug, evidenceInserted: persisted.inserted, warnings: persisted.warnings };
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Gateway adapter for #952 (think over MCP returns "no LLM available").
+// ─────────────────────────────────────────────────────────────────
+// Pre-v0.36, runThink instantiated `new Anthropic()` directly and read
+// ANTHROPIC_API_KEY from process.env. Claude Desktop's stdio MCP launch
+// doesn't inherit shell env, so `gbrain config set anthropic_api_key sk-...`
+// (which writes to ~/.gbrain/config.json) never reached the SDK and every
+// MCP think call degraded to "no LLM available."
+//
+// The adapter routes through gateway.chat() — the canonical seam per
+// CLAUDE.md. Gateway reads the API key from gbrain config OR env, picks
+// up prompt caching, rate-leases, retry, and the test seam
+// (__setChatTransportForTests) that v0.31.12 already established.
+//
+// Per plan-eng-review D10 (cross-model tension with codex C7+C8+C9+C10),
+// the adapter implements four fixes:
+//   1. Drop the new Anthropic() direct path entirely — always route through gateway
+//   2. Real availability check via try/catch around resolveRecipe + assertion
+//      (NOT the false-positive `getChatModel()` truthy check)
+//   3. Model-id resolution: handle both bare (`claude-opus-4-7`) and
+//      provider-prefixed (`anthropic:claude-opus-4-7`) shapes
+//   4. Response-shape conversion: ChatResult → Anthropic.Message
+//
+// `opts.client` injection path is preserved (test seam — see ThinkLLMClient).
+// `opts.stubResponse` path is preserved (pure-test escape).
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Try to build a gateway-backed ThinkLLMClient for the given model.
+ * Returns null when the gateway cannot resolve a usable chat provider for
+ * this model (missing API key for the resolved provider, unknown provider,
+ * touchpoint not supported, etc.). Caller falls through to the graceful
+ * "no LLM available" stub on null.
+ */
+async function tryBuildGatewayClient(modelUsed: string): Promise<ThinkLLMClient | null> {
+  // Normalize: ensure provider:model shape. resolveModel returns bare
+  // anthropic ids (e.g. `claude-opus-4-7`); gateway.chat needs `anthropic:...`.
+  const modelStr = modelUsed.includes(':') ? modelUsed : `anthropic:${modelUsed}`;
+
+  // Availability probe: resolveRecipe throws on unknown provider; assertTouchpoint
+  // throws if the resolved recipe doesn't support chat. Both are AIConfigError.
+  let providerId: string;
+  try {
+    const { parsed } = resolveRecipe(modelStr);
+    providerId = parsed.providerId;
+  } catch (e) {
+    if (e instanceof AIConfigError) return null;
+    throw e;
+  }
+
+  // API-key availability probe. The gateway lazily checks keys inside
+  // instantiateChat at first .chat() call and throws AIConfigError on miss.
+  // Pre-checking here preserves the legacy "NO_ANTHROPIC_API_KEY" warning
+  // signal AND avoids paying for a wasted gateway call when the user clearly
+  // has no key configured. Reads BOTH the gbrain config file (`anthropic_api_key`
+  // set via `gbrain config set`) AND the process env, matching gateway's
+  // own loadConfig precedence.
+  if (providerId === 'anthropic' && !hasAnthropicKey()) return null;
+
+  return {
+    create: async (params): Promise<Anthropic.Message> => {
+      // Build ChatOpts from Anthropic.MessageCreateParamsNonStreaming.
+      const messages = params.messages.map(m => ({
+        role: m.role,
+        content: typeof m.content === 'string'
+          ? m.content
+          : (Array.isArray(m.content) ? m.content.map(b => 'text' in b ? b.text : '').join('') : ''),
+      }));
+      const system = typeof params.system === 'string'
+        ? params.system
+        : (Array.isArray(params.system) ? params.system.map(b => 'text' in b ? b.text : '').join('') : undefined);
+
+      let result: ChatResult;
+      try {
+        result = await gatewayChat({
+          model: modelStr,
+          system,
+          messages,
+          maxTokens: params.max_tokens,
+        });
+      } catch (e) {
+        // AIConfigError at chat time = missing API key for resolved provider.
+        // Surface as a sentinel "no LLM available"-shaped Message so the
+        // existing JSON-parse path produces the graceful degradation answer.
+        if (e instanceof AIConfigError) {
+          return buildGracefulMessage(modelStr) as unknown as Anthropic.Message;
+        }
+        throw e;
+      }
+      return chatResultToMessage(result, modelStr) as unknown as Anthropic.Message;
+    },
+  };
+}
+
+/**
+ * Convert gateway's `ChatResult` into an Anthropic-Message-shaped object.
+ * The caller (`runThink`) parses `result.content[0].text` as JSON; the
+ * other fields (usage, stop_reason) are returned with best-effort mapping
+ * for downstream telemetry compat.
+ */
+function chatResultToMessage(result: ChatResult, modelStr: string): {
+  id: string;
+  type: 'message';
+  role: 'assistant';
+  model: string;
+  content: Array<{ type: 'text'; text: string }>;
+  usage: { input_tokens: number; output_tokens: number };
+  stop_reason: 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence';
+} {
+  return {
+    id: '',
+    type: 'message',
+    role: 'assistant',
+    model: modelStr,
+    content: [{ type: 'text', text: result.text }],
+    usage: {
+      input_tokens: result.usage.input_tokens,
+      output_tokens: result.usage.output_tokens,
+    },
+    stop_reason: mapStopReason(result.stopReason),
+  };
+}
+
+function hasAnthropicKey(): boolean {
+  if (process.env.ANTHROPIC_API_KEY) return true;
+  try {
+    const cfg = loadConfig();
+    if (cfg?.anthropic_api_key) return true;
+  } catch {
+    // loadConfig may throw on first-run installs; treat as no key available.
+  }
+  return false;
+}
+
+function mapStopReason(s: ChatResult['stopReason']): 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence' {
+  switch (s) {
+    case 'end': return 'end_turn';
+    case 'length': return 'max_tokens';
+    case 'tool_calls': return 'tool_use';
+    // 'refusal', 'content_filter', 'other' → end_turn (no Anthropic equivalent)
+    default: return 'end_turn';
+  }
+}
+
+/**
+ * Sentinel Message returned when gateway.chat throws AIConfigError (typically
+ * missing API key for the resolved provider). The caller's JSON parser will
+ * fail on this text, fall through to `LLM_OUTPUT_NOT_JSON`, and surface the
+ * sentinel as the answer — matches the legacy graceful-degradation shape.
+ */
+function buildGracefulMessage(modelStr: string): {
+  id: string;
+  type: 'message';
+  role: 'assistant';
+  model: string;
+  content: Array<{ type: 'text'; text: string }>;
+  usage: { input_tokens: number; output_tokens: number };
+  stop_reason: 'end_turn';
+} {
+  return {
+    id: '',
+    type: 'message',
+    role: 'assistant',
+    model: modelStr,
+    content: [{ type: 'text', text: '(no LLM available — set anthropic_api_key via gbrain config or ANTHROPIC_API_KEY env)' }],
+    usage: { input_tokens: 0, output_tokens: 0 },
+    stop_reason: 'end_turn',
+  };
+}
+
+// Test-only exports for the adapter helpers. The functions live at module
+// scope (not inside runThink) so they can be unit-tested directly. Naming
+// follows the `__` prefix convention already established by
+// `__setChatTransportForTests` in gateway.ts.
+export const __thinkAdapter = {
+  tryBuildGatewayClient,
+  chatResultToMessage,
+  mapStopReason,
+  buildGracefulMessage,
+  hasAnthropicKey,
+};

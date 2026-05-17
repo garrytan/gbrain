@@ -20,6 +20,7 @@ import { minimax } from './minimax.ts';
 import { dashscope } from './dashscope.ts';
 import { zhipu } from './zhipu.ts';
 import { azureOpenAI } from './azure-openai.ts';
+import { zeroentropyai } from './zeroentropyai.ts';
 
 const ALL: Recipe[] = [
   openai,
@@ -36,6 +37,7 @@ const ALL: Recipe[] = [
   dashscope,
   zhipu,
   azureOpenAI,
+  zeroentropyai,
 ];
 
 /** Map from `provider:id` key to recipe. */
