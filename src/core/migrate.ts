@@ -3210,6 +3210,248 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 67,
+    name: 'calibration_profiles_v0_36',
+    // v0.36.0.0 — Hindsight calibration wave. Per-holder profile rows
+    // aggregating TakesScorecard data into qualitative pattern statements.
+    //
+    // Schema design (from plan D17/D18):
+    //   - source_id is REQUIRED — every read routes through sourceScopeOpts(ctx)
+    //     so we can never leak a profile across the v0.34.1 source-isolation
+    //     boundary. FK to sources(id) with CASCADE so source deletion cleans
+    //     up the per-source profile.
+    //   - wave_version stamps every row so `gbrain calibration --undo-wave
+    //     v0.36.0.0` can reverse just this wave's writes.
+    //   - published BOOL gates E8 team-brain mount sharing (D15 asymmetric
+    //     opt-in). Default false: nothing leaks until owner explicitly publishes.
+    //   - grade_completion REAL [0..1]: fraction of unresolved takes the
+    //     grade_takes phase actually processed before its budget cap fired
+    //     (F1 fix — dashboard shows "60% graded" badge instead of silently
+    //     reading stale data).
+    //   - voice_gate_passed + voice_gate_attempts: D11 audit columns. When
+    //     passed=false the row uses the template-fallback narrative and
+    //     surfaces for review.
+    //   - judge_model_agreement REAL: ensemble agreement on profile
+    //     generation itself (E2 applied to the meta-step).
+    //   - active_bias_tags TEXT[] with GIN index: E3 (calibration-aware
+    //     contradictions) joins on this; E7 (nudges) matches new takes against it.
+    //
+    // PGLite parity: identical DDL works since PGLite ships GIN.
+    // Idempotent across both engines.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS calibration_profiles (
+        id                      BIGSERIAL PRIMARY KEY,
+        source_id               TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        holder                  TEXT         NOT NULL,
+        wave_version            TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+        generated_at            TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        published               BOOLEAN      NOT NULL DEFAULT false,
+        total_resolved          INTEGER      NOT NULL,
+        brier                   REAL,
+        accuracy                REAL,
+        partial_rate            REAL,
+        grade_completion        REAL         NOT NULL DEFAULT 1.0,
+        domain_scorecards       JSONB        NOT NULL,
+        pattern_statements      TEXT[]       NOT NULL,
+        voice_gate_passed       BOOLEAN      NOT NULL,
+        voice_gate_attempts     SMALLINT     NOT NULL,
+        active_bias_tags        TEXT[]       NOT NULL,
+        model_id                TEXT         NOT NULL,
+        cost_usd                NUMERIC(10,4),
+        judge_model_agreement   REAL
+      );
+      CREATE INDEX IF NOT EXISTS calibration_profiles_holder_recent_idx
+        ON calibration_profiles (source_id, holder, generated_at DESC);
+      CREATE INDEX IF NOT EXISTS calibration_profiles_bias_tags_gin
+        ON calibration_profiles USING GIN (active_bias_tags);
+      CREATE INDEX IF NOT EXISTS calibration_profiles_published_idx
+        ON calibration_profiles (source_id, published, holder)
+        WHERE published = true;
+    `,
+  },
+  {
+    version: 68,
+    name: 'take_proposals_v0_36',
+    // v0.36.0.0 — propose_takes phase queue.
+    //
+    // Schema design:
+    //   - (source_id, page_slug, content_hash, prompt_version) is the
+    //     idempotency cache (mirrors dream_verdicts in v0.23 synthesize).
+    //     Without this, every propose_takes cycle re-spends LLM tokens on
+    //     unchanged pages.
+    //   - dedup_against_fence_rows JSONB (F2 fix): records the fence state
+    //     at proposal time so we can audit "did the LLM see the existing
+    //     fence rows when it proposed?" Prevents duplicate proposals.
+    //   - proposal_run_id (CDX-4 fix): groups proposals from a single
+    //     `gbrain dream --phase propose_takes` run so --rollback <run_id>
+    //     can bulk-reject a bad-prompt run.
+    //   - predicted_brier + predicted_brier_bucket_n (E5): forecast computed
+    //     at proposal time so the queue UX shows "your historical Brier in
+    //     this bucket is 0.31" without recomputing.
+    //   - status enum guards against undefined states.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS take_proposals (
+        id                          BIGSERIAL PRIMARY KEY,
+        source_id                   TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        page_slug                   TEXT         NOT NULL,
+        content_hash                TEXT         NOT NULL,
+        prompt_version              TEXT         NOT NULL,
+        wave_version                TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+        proposed_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        proposal_run_id             TEXT         NOT NULL,
+        status                      TEXT         NOT NULL DEFAULT 'pending'
+                                                 CHECK (status IN ('pending','accepted','rejected','superseded')),
+        claim_text                  TEXT         NOT NULL,
+        kind                        TEXT         NOT NULL,
+        holder                      TEXT         NOT NULL,
+        weight                      REAL         NOT NULL,
+        domain                      TEXT,
+        dedup_against_fence_rows    JSONB,
+        model_id                    TEXT         NOT NULL,
+        acted_at                    TIMESTAMPTZ,
+        acted_by                    TEXT,
+        promoted_row_num            INTEGER,
+        predicted_brier             REAL,
+        predicted_brier_bucket_n    INTEGER
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
+        ON take_proposals (source_id, page_slug, content_hash, prompt_version);
+      CREATE INDEX IF NOT EXISTS take_proposals_pending_idx
+        ON take_proposals (source_id, status, proposed_at DESC)
+        WHERE status = 'pending';
+      CREATE INDEX IF NOT EXISTS take_proposals_run_id_idx
+        ON take_proposals (proposal_run_id);
+    `,
+  },
+  {
+    version: 69,
+    name: 'take_grade_cache_v0_36',
+    // v0.36.0.0 — grade_takes verdict cache.
+    //
+    // Mirrors eval_contradictions_cache (v52) pattern:
+    //   - Composite primary key (take_id, prompt_version, judge_model_id,
+    //     evidence_signature) — prompt edits OR evidence-set changes
+    //     cleanly invalidate prior verdicts.
+    //   - judge_model_id is the literal model string for single-model runs
+    //     OR 'ensemble:openai+anthropic+google' for E2 ensemble runs.
+    //   - applied BOOLEAN: did we auto-resolve based on this verdict, or
+    //     did it surface to review? D17 default-off auto-resolve means
+    //     most rows start applied=false on fresh installs.
+    //   - confidence REAL: the discretized self-reported judge confidence.
+    //     CDX-11 drift detection compares this against actual accuracy
+    //     over 90-day windows.
+    //   - wave_version for --undo-wave reversal.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS take_grade_cache (
+        take_id            BIGINT       NOT NULL,
+        prompt_version     TEXT         NOT NULL,
+        judge_model_id     TEXT         NOT NULL,
+        evidence_signature TEXT         NOT NULL,
+        wave_version       TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+        graded_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        verdict            TEXT         NOT NULL
+                                        CHECK (verdict IN ('correct','incorrect','partial','unresolvable')),
+        confidence         REAL         NOT NULL,
+        applied            BOOLEAN      NOT NULL DEFAULT false,
+        cost_usd           NUMERIC(10,4),
+        PRIMARY KEY (take_id, prompt_version, judge_model_id, evidence_signature)
+      );
+      CREATE INDEX IF NOT EXISTS take_grade_cache_applied_idx
+        ON take_grade_cache (take_id, applied);
+      CREATE INDEX IF NOT EXISTS take_grade_cache_wave_idx
+        ON take_grade_cache (wave_version, graded_at DESC);
+    `,
+  },
+  {
+    version: 70,
+    name: 'take_nudge_log_v0_36',
+    // v0.36.0.0 — E7 nudge log + cooldown state (D16/F3 + CDX-5).
+    //
+    // Polymorphic reference (CDX-5 fix): a nudge can fire on a
+    // canonical take (take_id set) OR on a pending proposal (proposal_id
+    // set) BEFORE the proposal gets accepted. CHECK constraint enforces
+    // exactly one is set.
+    //
+    // (take_id, nudge_pattern, fired_at DESC) index supports the cooldown
+    // probe ("did we fire this pattern for this take in the last 14 days?").
+    // Same shape works for proposal_id via the index below.
+    //
+    // channel column lets future routing (webhook/admin-spa-toast) reuse
+    // the same cooldown semantics. v0.36.0.0 ships with channel='stderr'
+    // only (multi-channel routing deferred to v0.37+).
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS take_nudge_log (
+        id              BIGSERIAL PRIMARY KEY,
+        source_id       TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        take_id         BIGINT,
+        proposal_id     BIGINT       REFERENCES take_proposals(id) ON DELETE CASCADE,
+        nudge_pattern   TEXT         NOT NULL,
+        fired_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        channel         TEXT         NOT NULL DEFAULT 'stderr',
+        wave_version    TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+        CONSTRAINT take_nudge_log_target_xor
+          CHECK ((take_id IS NOT NULL) <> (proposal_id IS NOT NULL))
+      );
+      CREATE INDEX IF NOT EXISTS take_nudge_log_take_cooldown_idx
+        ON take_nudge_log (take_id, nudge_pattern, fired_at DESC)
+        WHERE take_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS take_nudge_log_proposal_cooldown_idx
+        ON take_nudge_log (proposal_id, nudge_pattern, fired_at DESC)
+        WHERE proposal_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS take_nudge_log_wave_idx
+        ON take_nudge_log (wave_version, fired_at DESC);
+    `,
+  },
+  {
+    version: 71,
+    name: 'takes_resolved_at_trend_idx_v0_36',
+    // v0.36.0.0 — F10 perf finding. Brier-trend aggregation queries
+    // (90-day windowed scorecard) hit takes WHERE resolved_at IS NOT NULL.
+    // Without this partial index, large takes tables do full scans even
+    // when the resolved subset is small.
+    //
+    // Partial index because most takes are unresolved on fresh brains;
+    // resolution is the sparse dimension. Engine-aware via handler since
+    // Postgres benefits from CONCURRENTLY on large tables.
+    idempotent: true,
+    sql: '',
+    handler: async (engine) => {
+      if (engine.kind === 'postgres') {
+        // Pre-drop invalid remnant from a failed CONCURRENTLY attempt.
+        await engine.runMigration(
+          71,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'takes_resolved_at_idx' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS takes_resolved_at_idx';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          71,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS takes_resolved_at_idx
+             ON takes (resolved_at DESC)
+             WHERE resolved_at IS NOT NULL;`
+        );
+      } else {
+        await engine.runMigration(
+          71,
+          `CREATE INDEX IF NOT EXISTS takes_resolved_at_idx
+             ON takes (resolved_at DESC)
+             WHERE resolved_at IS NOT NULL;`
+        );
+      }
+    },
+    transaction: false,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

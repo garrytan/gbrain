@@ -547,6 +547,111 @@ CREATE INDEX IF NOT EXISTS eval_contradictions_runs_ran_at_idx
   ON eval_contradictions_runs (ran_at DESC);
 
 -- ============================================================
+-- v0.36.0.0 Hindsight calibration wave (PGLite parity)
+-- See src/core/migrate.ts v67-v71 for full design notes.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS calibration_profiles (
+  id                      BIGSERIAL PRIMARY KEY,
+  source_id               TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  holder                  TEXT         NOT NULL,
+  wave_version            TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+  generated_at            TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  published               BOOLEAN      NOT NULL DEFAULT false,
+  total_resolved          INTEGER      NOT NULL,
+  brier                   REAL,
+  accuracy                REAL,
+  partial_rate            REAL,
+  grade_completion        REAL         NOT NULL DEFAULT 1.0,
+  domain_scorecards       JSONB        NOT NULL,
+  pattern_statements      TEXT[]       NOT NULL,
+  voice_gate_passed       BOOLEAN      NOT NULL,
+  voice_gate_attempts     SMALLINT     NOT NULL,
+  active_bias_tags        TEXT[]       NOT NULL,
+  model_id                TEXT         NOT NULL,
+  cost_usd                NUMERIC(10,4),
+  judge_model_agreement   REAL
+);
+CREATE INDEX IF NOT EXISTS calibration_profiles_holder_recent_idx
+  ON calibration_profiles (source_id, holder, generated_at DESC);
+CREATE INDEX IF NOT EXISTS calibration_profiles_bias_tags_gin
+  ON calibration_profiles USING GIN (active_bias_tags);
+CREATE INDEX IF NOT EXISTS calibration_profiles_published_idx
+  ON calibration_profiles (source_id, published, holder)
+  WHERE published = true;
+
+CREATE TABLE IF NOT EXISTS take_proposals (
+  id                          BIGSERIAL PRIMARY KEY,
+  source_id                   TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  page_slug                   TEXT         NOT NULL,
+  content_hash                TEXT         NOT NULL,
+  prompt_version              TEXT         NOT NULL,
+  wave_version                TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+  proposed_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  proposal_run_id             TEXT         NOT NULL,
+  status                      TEXT         NOT NULL DEFAULT 'pending'
+                                           CHECK (status IN ('pending','accepted','rejected','superseded')),
+  claim_text                  TEXT         NOT NULL,
+  kind                        TEXT         NOT NULL,
+  holder                      TEXT         NOT NULL,
+  weight                      REAL         NOT NULL,
+  domain                      TEXT,
+  dedup_against_fence_rows    JSONB,
+  model_id                    TEXT         NOT NULL,
+  acted_at                    TIMESTAMPTZ,
+  acted_by                    TEXT,
+  promoted_row_num            INTEGER,
+  predicted_brier             REAL,
+  predicted_brier_bucket_n    INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
+  ON take_proposals (source_id, page_slug, content_hash, prompt_version);
+CREATE INDEX IF NOT EXISTS take_proposals_pending_idx
+  ON take_proposals (source_id, status, proposed_at DESC)
+  WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS take_proposals_run_id_idx
+  ON take_proposals (proposal_run_id);
+
+CREATE TABLE IF NOT EXISTS take_grade_cache (
+  take_id            BIGINT       NOT NULL,
+  prompt_version     TEXT         NOT NULL,
+  judge_model_id     TEXT         NOT NULL,
+  evidence_signature TEXT         NOT NULL,
+  wave_version       TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+  graded_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  verdict            TEXT         NOT NULL
+                                  CHECK (verdict IN ('correct','incorrect','partial','unresolvable')),
+  confidence         REAL         NOT NULL,
+  applied            BOOLEAN      NOT NULL DEFAULT false,
+  cost_usd           NUMERIC(10,4),
+  PRIMARY KEY (take_id, prompt_version, judge_model_id, evidence_signature)
+);
+CREATE INDEX IF NOT EXISTS take_grade_cache_applied_idx
+  ON take_grade_cache (take_id, applied);
+CREATE INDEX IF NOT EXISTS take_grade_cache_wave_idx
+  ON take_grade_cache (wave_version, graded_at DESC);
+
+CREATE TABLE IF NOT EXISTS take_nudge_log (
+  id              BIGSERIAL PRIMARY KEY,
+  source_id       TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  take_id         BIGINT,
+  proposal_id     BIGINT       REFERENCES take_proposals(id) ON DELETE CASCADE,
+  nudge_pattern   TEXT         NOT NULL,
+  fired_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  channel         TEXT         NOT NULL DEFAULT 'stderr',
+  wave_version    TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+  CONSTRAINT take_nudge_log_target_xor
+    CHECK ((take_id IS NOT NULL) <> (proposal_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS take_nudge_log_take_cooldown_idx
+  ON take_nudge_log (take_id, nudge_pattern, fired_at DESC)
+  WHERE take_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS take_nudge_log_proposal_cooldown_idx
+  ON take_nudge_log (proposal_id, nudge_pattern, fired_at DESC)
+  WHERE proposal_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS take_nudge_log_wave_idx
+  ON take_nudge_log (wave_version, fired_at DESC);
+
+-- ============================================================
 -- access_tokens: legacy bearer tokens for remote MCP access
 -- ============================================================
 CREATE TABLE IF NOT EXISTS access_tokens (
