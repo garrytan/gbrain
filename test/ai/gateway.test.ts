@@ -378,3 +378,74 @@ describe('Voyage flexible-dim runtime validation', () => {
     expect(caught?.fix).toContain('2048');
   });
 });
+
+describe('embedding response integrity', () => {
+  beforeEach(() => resetGateway());
+
+  test('rejects partial embedding responses instead of silently dropping rows', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      object: 'list',
+      data: [
+        {
+          object: 'embedding',
+          index: 0,
+          embedding: new Array(1536).fill(0.01),
+        },
+      ],
+      model: 'text-embedding-3-large',
+      usage: { prompt_tokens: 3, total_tokens: 3 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+
+    try {
+      configureGateway({
+        embedding_model: 'openai:text-embedding-3-large',
+        embedding_dimensions: 1536,
+        env: { OPENAI_API_KEY: 'openai-fake' },
+      });
+
+      await expect(embed(['first', 'second'])).rejects.toThrow('1 embedding(s) for 2 input(s)');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('checks every returned vector dimension, not just the first one', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      object: 'list',
+      data: [
+        {
+          object: 'embedding',
+          index: 0,
+          embedding: new Array(1536).fill(0.01),
+        },
+        {
+          object: 'embedding',
+          index: 1,
+          embedding: new Array(768).fill(0.01),
+        },
+      ],
+      model: 'text-embedding-3-large',
+      usage: { prompt_tokens: 3, total_tokens: 3 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+
+    try {
+      configureGateway({
+        embedding_model: 'openai:text-embedding-3-large',
+        embedding_dimensions: 1536,
+        env: { OPENAI_API_KEY: 'openai-fake' },
+      });
+
+      await expect(embed(['first', 'second'])).rejects.toThrow('returned 768 but schema expects 1536');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

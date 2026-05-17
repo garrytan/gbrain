@@ -1190,12 +1190,20 @@ async function embedSubBatch(
       ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
     });
 
-    const first = result.embeddings?.[0];
-    if (first && Array.isArray(first) && first.length !== expectedDims) {
+    if (!Array.isArray(result.embeddings) || result.embeddings.length !== texts.length) {
       throw new AIConfigError(
-        `Embedding dim mismatch: model ${modelId} returned ${first.length} but schema expects ${expectedDims}.`,
-        `Run \`gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${first.length}\` or change models.`,
+        `Embedding provider returned ${result.embeddings?.length ?? 0} embedding(s) for ${texts.length} input(s).`,
+        `Retry the import after checking provider health; partial embedding responses are not safe to index.`,
       );
+    }
+
+    for (const embedding of result.embeddings) {
+      if (Array.isArray(embedding) && embedding.length !== expectedDims) {
+        throw new AIConfigError(
+          `Embedding dim mismatch: model ${modelId} returned ${embedding.length} but schema expects ${expectedDims}.`,
+          `Run \`gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${embedding.length}\` or change models.`,
+        );
+      }
     }
 
     recordSubBatchSuccess(recipe);
