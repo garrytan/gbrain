@@ -1996,15 +1996,25 @@ export class PostgresEngine implements BrainEngine {
 
   async findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
     const sql = this.sql;
+    // Soft-delete filter on BOTH sides:
+    //   - candidate: p.deleted_at IS NULL — soft-deleted pages aren't orphan candidates
+    //   - link source: src.deleted_at IS NULL — links FROM soft-deleted pages don't count as inbound
+    // Without the link-source filter, a live page can hide from orphan results purely
+    // because a soft-deleted page links to it. v0.26.5 invariant; codex C11.
     const rows = await sql`
       SELECT
         p.slug,
         COALESCE(p.title, p.slug) AS title,
         p.frontmatter->>'domain' AS domain
       FROM pages p
-      WHERE NOT EXISTS (
-        SELECT 1 FROM links l WHERE l.to_page_id = p.id
-      )
+      WHERE p.deleted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM links l
+          JOIN pages src ON src.id = l.from_page_id
+          WHERE l.to_page_id = p.id
+            AND src.deleted_at IS NULL
+        )
       ORDER BY p.slug
     `;
     return rows as unknown as Array<{ slug: string; title: string; domain: string | null }>;
