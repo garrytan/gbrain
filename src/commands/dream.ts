@@ -30,7 +30,15 @@ import {
   type CyclePhase,
   type CycleReport,
 } from '../core/cycle.ts';
-import { existsSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  renameSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
+import { join } from 'path';
 
 interface DreamArgs {
   json: boolean;
@@ -53,6 +61,14 @@ interface DreamArgs {
    * Never auto-applied for --input (codex finding #3).
    */
   bypassDreamGuard: boolean;
+  /**
+   * Persist the CycleReport JSON to a per-cycle file plus a `latest.json`
+   * symlink. Replaces the common cron pattern where downstream wrappers
+   * (e.g. fork-side launchd glue) capture stdout, archive it, and atomically
+   * swap a `latest` pointer. Pairs with `--json`; no-op without it.
+   * The directory is auto-created.
+   */
+  archiveDir: string | null;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -99,6 +115,9 @@ function parseArgs(args: string[]): DreamArgs {
     process.exit(2);
   }
 
+  const archiveDirIdx = args.indexOf('--archive-dir');
+  const archiveDir = archiveDirIdx !== -1 ? args[archiveDirIdx + 1] ?? null : null;
+
   // --input + --date / --from / --to is incoherent: --input is a single
   // file, the date filters scan a directory.
   if (inputFile && (date || from || to)) {
@@ -121,7 +140,50 @@ function parseArgs(args: string[]): DreamArgs {
     from,
     to,
     bypassDreamGuard: args.includes('--unsafe-bypass-dream-guard'),
+    archiveDir,
   };
+}
+
+/**
+ * File-system-safe timestamp: `2026-04-23T19-42-07Z`. Strips colons and
+ * milliseconds so the result is sortable, portable, and acceptable on
+ * filesystems that reject `:` (e.g. SMB/Windows-shared NAS).
+ */
+function isoStamp(d = new Date()): string {
+  return d.toISOString().replace(/[:.]/g, '-').replace(/-\d{3}Z$/, 'Z');
+}
+
+/**
+ * Write the CycleReport JSON to `<dir>/<iso>.json` and atomically swap the
+ * `<dir>/latest.json` symlink to point at it. The dir is created if missing.
+ *
+ * The atomic swap pattern (`symlink → rename onto target`) guarantees that
+ * readers never observe a dangling symlink — `rename` on the same fs is
+ * atomic. Best-effort: on platforms or filesystems where `symlink` isn't
+ * supported (rare on macOS/Linux), the per-cycle file still lands; the
+ * `latest.json` swap simply no-ops with a stderr warning.
+ *
+ * Returns the absolute path of the per-cycle file.
+ */
+function archiveReport(dir: string, json: string, stamp: string = isoStamp()): string {
+  mkdirSync(dir, { recursive: true });
+
+  const target = join(dir, `${stamp}.json`);
+  writeFileSync(target, json);
+
+  const latest = join(dir, 'latest.json');
+  const tmp = join(dir, '.latest.json.tmp');
+  try {
+    if (existsSync(tmp)) unlinkSync(tmp);
+    symlinkSync(`${stamp}.json`, tmp);
+    renameSync(tmp, latest);
+  } catch (err) {
+    console.error(
+      `[dream] archive: per-cycle file written but latest.json symlink swap failed: ${(err as Error).message}`,
+    );
+  }
+
+  return target;
 }
 
 /**
@@ -191,6 +253,12 @@ Options:
                       know the input file is NOT dream-cycle output but the
                       guard is firing. Loud stderr warning + cost reminder
                       fires every run.
+
+  --archive-dir <path>
+                      Persist the CycleReport JSON to <path>/<iso>.json and
+                      atomically swap a <path>/latest.json symlink. Pairs with
+                      --json; no-op without it. Replaces ad-hoc downstream
+                      stdout-capture wrappers. Directory is auto-created.
 
   --help, -h          Show this help
 
@@ -288,9 +356,24 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   });
 
   if (opts.json) {
-    console.log(JSON.stringify(report, null, 2));
+    const json = JSON.stringify(report, null, 2);
+    console.log(json);
+    if (opts.archiveDir) {
+      try {
+        const path = archiveReport(opts.archiveDir, json);
+        console.error(`[dream] archived report → ${path}`);
+      } catch (err) {
+        console.error(`[dream] archive write failed: ${(err as Error).message}`);
+        process.exit(2);
+      }
+    }
   } else {
     printHuman(report);
+    if (opts.archiveDir) {
+      console.error(
+        '[dream] --archive-dir requires --json; report not archived (printed human format only)',
+      );
+    }
   }
 
   // Exit non-zero when the cycle failed overall (helps cron spot real problems).
