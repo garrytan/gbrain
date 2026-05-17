@@ -474,7 +474,7 @@ GBrain ships integration recipes that your agent sets up for you. Each recipe te
 | [Credential Gateway](recipes/credential-gateway.md) | — | Gmail + Calendar access |
 | [Voice-to-Brain](recipes/twilio-voice-brain.md) | ngrok-tunnel | Phone calls to brain pages (Twilio + OpenAI Realtime) |
 | [Email-to-Brain](recipes/email-to-brain.md) | credential-gateway | Gmail to entity pages |
-| [X-to-Brain](recipes/x-to-brain.md) | — | Twitter timeline + mentions + deletions |
+| [X-to-Brain](recipes/x-to-brain.md) | X API v2 or Hermes Tweet | Twitter timeline + mentions + deletions |
 | [Calendar-to-Brain](recipes/calendar-to-brain.md) | credential-gateway | Google Calendar to searchable daily pages |
 | [Meeting Sync](recipes/meeting-sync.md) | — | Circleback transcripts to brain pages with attendees |
 | [Restart Sweep](recipes/restart-sweep.md) | OpenClaw + Telegram | Detect dropped Telegram messages after OpenClaw gateway restarts |

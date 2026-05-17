@@ -95,7 +95,31 @@ Agent reads collected data
 
 1. **GBrain installed and configured** (`gbrain doctor` passes)
 2. **Node.js 18+** (for the collector script)
-3. **X Developer account** with API access
+3. **X Developer account** with API access, or Hermes Tweet with
+   `XQUIK_API_KEY`
+
+### Optional Hermes Tweet Route
+
+If the user already runs Hermes Agent and wants a native plugin path instead of
+calling X API v2 directly, install
+[Hermes Tweet](https://github.com/Xquik-dev/hermes-tweet):
+
+```bash
+hermes plugins install Xquik-dev/hermes-tweet --enable
+```
+
+Set `XQUIK_API_KEY` in `~/.hermes/.env`, then use `tweet_explore` before
+`tweet_read` to find routes for scrape/search tweets, search Twitter/X, read
+tweet replies, look up users, monitor tweets, export followers, and capture
+account or trend state.
+
+Keep `HERMES_TWEET_ENABLE_ACTIONS=false` for unattended cron collection. Enable
+`tweet_action` only for explicit, reviewed workflows such as post tweets, send
+replies, send DMs, or automate X actions.
+
+This does not change the GBrain contract. Persist normalized JSON under
+`x-collector/data/...`, keep deletion and engagement ledgers idempotent, and let
+the agent perform enrichment in Step 5.
 
 ## Setup Flow
 
