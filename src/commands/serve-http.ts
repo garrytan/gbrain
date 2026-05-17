@@ -620,6 +620,97 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(result.status).json(result.body);
   });
 
+  // v0.36.0.0 (T15 / E6 / D23) — Calibration tab data endpoints.
+  // Server-rendered SVG charts; admin SPA renders via TrustedSVG wrapper.
+  app.get('/admin/api/calibration/profile', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { getLatestProfile } = await import('./calibration.ts');
+      const holder = (req.query.holder as string) || 'garry';
+      const profile = await getLatestProfile(engine, { holder });
+      res.json(profile);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : 'unknown' });
+    }
+  });
+
+  app.get('/admin/api/calibration/charts/:type', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { getLatestProfile } = await import('./calibration.ts');
+      const {
+        renderBrierTrend,
+        renderDomainBars,
+        renderAbandonedThreadsCard,
+        renderPatternStatementsCard,
+      } = await import('../core/calibration/svg-renderer.ts');
+      const holder = (req.query.holder as string) || 'garry';
+      const type = req.params.type;
+      const profile = await getLatestProfile(engine, { holder });
+
+      res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+      res.setHeader('Cache-Control', 'private, max-age=60');
+
+      if (type === 'brier-trend') {
+        // v0.36.0.0 ship state: 1-point series from the active profile. A
+        // proper 90-day time series will read from calibration_profiles
+        // generated_at history in v0.37 once we have multiple snapshots.
+        const series = profile?.brier !== null && profile?.brier !== undefined
+          ? [{ date: profile.generated_at.slice(0, 10), brier: profile.brier }]
+          : [];
+        return res.send(renderBrierTrend({ series }));
+      }
+      if (type === 'domain-bars') {
+        // v0.36.0.0 ship state: domain_scorecards JSONB is a placeholder
+        // (per-domain rendering comes when batchGetTakesScorecards lands in
+        // a follow-up). Render empty for now.
+        return res.send(renderDomainBars({ bars: [] }));
+      }
+      if (type === 'pattern-statements') {
+        return res.send(
+          renderPatternStatementsCard(
+            (profile?.pattern_statements ?? []).map((text: string) => ({ text })),
+          ),
+        );
+      }
+      if (type === 'abandoned-threads') {
+        // v0.36.0.0 ship state: pull abandoned threads inline via a small
+        // SQL query (the doctor check counts them; this surfaces details).
+        const rows = await engine.executeRaw<{
+          id: number;
+          page_slug: string;
+          claim: string;
+          weight: number;
+          since_date: string;
+        }>(
+          `SELECT id, page_slug, claim, weight, since_date
+             FROM takes
+             WHERE active = true AND resolved_at IS NULL AND superseded_by IS NULL
+               AND weight >= 0.7
+               AND since_date::date < (now() - INTERVAL '12 months')
+             ORDER BY since_date ASC
+             LIMIT 5`,
+        );
+        const now = new Date();
+        const threads = rows.map(r => {
+          const since = new Date((r.since_date.length === 7 ? r.since_date + '-15' : r.since_date));
+          const monthsSilent = Math.max(0, Math.floor((now.getTime() - since.getTime()) / (1000 * 60 * 60 * 24 * 30)));
+          return {
+            takeId: r.id,
+            pageSlug: r.page_slug,
+            claim: r.claim,
+            monthsSilent,
+            conviction: r.weight,
+          };
+        });
+        return res.send(renderAbandonedThreadsCard(threads));
+      }
+      res.status(400).json({ error: 'unknown_chart_type', supported: ['brier-trend', 'domain-bars', 'pattern-statements', 'abandoned-threads'] });
+      return;
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : 'unknown' });
+      return;
+    }
+  });
+
   app.get('/admin/api/requests', requireAdmin, async (req: Request, res: Response) => {
     try {
       const page = parseInt(req.query.page as string) || 1;
