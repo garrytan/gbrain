@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { buildSyncManifest, isSyncable, pathToSlug } from '../src/core/sync.ts';
+import { buildSyncManifest, isSyncable, pathToSlug, pruneDir } from '../src/core/sync.ts';
 import { buildGitInvocation } from '../src/commands/sync.ts';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -98,6 +98,56 @@ describe('isSyncable', () => {
   test('rejects ops/ directory', () => {
     expect(isSyncable('ops/deploy-log.md')).toBe(false);
     expect(isSyncable('ops/config.md')).toBe(false);
+  });
+
+  // ────────────────────────────────────────────────────────────────
+  // v0.36 walker drift fix (closes #923, #202): node_modules exclusion
+  // ────────────────────────────────────────────────────────────────
+
+  test('CRITICAL latent-bug regression: rejects node_modules paths at any depth', () => {
+    // Pre-v0.36, isSyncable had no node_modules check. Any markdown file
+    // under a non-dot `node_modules` directory slipped through. This is
+    // the canonical latent-bug fix gated by IRON RULE per the wave plan.
+    expect(isSyncable('node_modules/some-pkg/README.md')).toBe(false);
+    expect(isSyncable('node_modules/some-pkg/CHANGELOG.md')).toBe(false);
+    expect(isSyncable('node_modules/some-pkg/docs/api.md')).toBe(false);
+    expect(isSyncable('apps/web/node_modules/dep/notes.md')).toBe(false);
+  });
+});
+
+describe('pruneDir', () => {
+  test('blocks node_modules (no leading dot, the latent-bug case)', () => {
+    expect(pruneDir('node_modules')).toBe(false);
+  });
+
+  test('blocks dot-prefix dirs (.git, .obsidian, .raw, .cache, etc.)', () => {
+    expect(pruneDir('.git')).toBe(false);
+    expect(pruneDir('.obsidian')).toBe(false);
+    expect(pruneDir('.raw')).toBe(false);
+    expect(pruneDir('.cache')).toBe(false);
+    expect(pruneDir('.vscode')).toBe(false);
+  });
+
+  test('blocks ops (gbrain operational dir)', () => {
+    expect(pruneDir('ops')).toBe(false);
+  });
+
+  test('blocks *.raw sidecar dirs (gbrain convention)', () => {
+    expect(pruneDir('.raw')).toBe(false);
+    expect(pruneDir('pedro.raw')).toBe(false);
+    expect(pruneDir('article.raw')).toBe(false);
+  });
+
+  test('allows normal content dirs', () => {
+    expect(pruneDir('wiki')).toBe(true);
+    expect(pruneDir('people')).toBe(true);
+    expect(pruneDir('meetings')).toBe(true);
+    expect(pruneDir('corpus')).toBe(true);
+    expect(pruneDir('2026')).toBe(true);
+  });
+
+  test('empty string returns true (defensive default)', () => {
+    expect(pruneDir('')).toBe(true);
   });
 });
 
