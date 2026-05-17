@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.36.0.0] - 2026-05-17
+## [0.37.0.0] - 2026-05-17
 
 **Voice agent reference lands — Mars + Venus personas, WebRTC-first, copy-into-your-repo not stuck-in-gbrain.**
 **New skillpack paradigm: gbrain ships REFERENCE content the install agent copies into your repo, where YOU own the edits.**
@@ -45,7 +45,7 @@ This is the first recipe to use `install_kind: copy-into-host-repo`. The legacy 
 - `scripts/import-from-upstream.sh` + `scripts/upstream-scrub-table.txt` — deterministic refresh from upstream voice-agent source (env-var-driven; no upstream-repo name in any shipped file).
 - New TypeScript types: `InstallKind`, manifest shape, install records — pinned by `test/integrations-install.test.ts` (11 cases).
 
-### What you ACTUALLY do to take advantage of v0.36.0.0
+### What you ACTUALLY do to take advantage of v0.37.0.0
 
 ```bash
 # 1. Upgrade gbrain (whatever your update path is).
@@ -101,7 +101,7 @@ The voice agent runs in YOUR repo, on YOUR cadence. When gbrain ships a new agen
 - DIY pipeline (Option B) `code/pipeline.mjs`: streaming Deepgram STT + Claude SSE with sentence-boundary TTS dispatch + Cartesia/OpenAI TTS, 20-turn history cap, exponential reconnect, 25s keepalives, four VAD presets, barge-in on `speechStart`. Modular adapters for swapping any stage.
 - `--refresh` mode in `gbrain integrations install`: classifies each file as unchanged-identical / unchanged-stale / locally-modified / source-deleted / host-deleted / new-in-manifest. Default policy preserves operator edits (`keep-mine`); `--auto take-theirs` overwrites; `--dry-run` previews. Transaction journal at `.gbrain-source.refresh.log`. 7 new test cases pin the classification + decisions.
 - Mars multilingual: persona prompt restores cross-lingual rule (Mandarin / Spanish / French / Japanese / Korean default to English but follow the speaker). New eval fixtures at `tests/evals/fixtures/mars-multilingual.jsonl` gate the claim.
-- `recipes/twilio-voice-brain.md`: deprecation banner pointing at `agent-voice.md`; will be removed in v0.37.
+- `recipes/twilio-voice-brain.md`: deprecation banner pointing at `agent-voice.md`; will be removed in v0.38.
 
 #### For contributors
 - New paradigm `install_kind: copy-into-host-repo` is documented in `recipes/agent-voice/README.md`. Future recipes that want this shape follow the sibling-directory convention pinned there.

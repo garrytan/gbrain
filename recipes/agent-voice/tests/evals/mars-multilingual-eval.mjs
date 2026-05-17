@@ -2,7 +2,7 @@
 /**
  * mars-multilingual-eval.mjs — Mars cross-language behavior.
  *
- * Gates the multilingual claim restored in v0.36.0.0. Each fixture is in a
+ * Gates the multilingual claim restored in v0.37.0.0. Each fixture is in a
  * non-English language; the judge checks that Mars responds in the same
  * language AND stays in character.
  */

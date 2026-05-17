@@ -30,7 +30,8 @@
     "preserves_existing_content": true
   },
   "privacy": {
-    "no_literal_banned_names_in_copied_tree": ["wintermute", "garry", "garrison", "solomon", "herbert", "/data/.openclaw/"],
+    "comment": "Specific banned-name list lives in $AGENT_VOICE_PII_BLOCKLIST env var (set by CI from a secret, or by the operator in .zshrc). Literal names deliberately NOT in this checked-in file per CLAUDE.md's 'never use private agent names in shipped artifacts.'",
+    "blocklist_env_var": "AGENT_VOICE_PII_BLOCKLIST",
     "scan_paths": ["services/voice-agent/", "skills/voice-persona-mars/", "skills/voice-persona-venus/", "skills/voice-post-call/"]
   },
   "server": {

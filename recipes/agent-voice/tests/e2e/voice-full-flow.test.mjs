@@ -168,9 +168,13 @@ describe.skipIf(!SHOULD_RUN)('voice-full-flow E2E (openclaw + roundtrip)', () =>
 
     // No PII leak — re-run the guard against the copied tree.
     // (We can't easily invoke the gbrain-side guard here; the guard ran during install via gbrain CI.)
-    // Spot-check: literal "wintermute" should not appear in any copied file.
-    const grep = spawnSync('grep', ['-ri', '--include=*.mjs', '--include=*.md', 'wintermute', join(scratchDir, 'services/voice-agent')], { encoding: 'utf-8' });
-    expect(grep.stdout, `private agent name leaked in copied files:\n${grep.stdout}`).toBe('');
+    // Spot-check: any term from $AGENT_VOICE_PII_BLOCKLIST should not appear in any copied file.
+    // Literal banned names deliberately NOT in this source file per CLAUDE.md.
+    if (process.env.AGENT_VOICE_PII_BLOCKLIST) {
+      const pattern = process.env.AGENT_VOICE_PII_BLOCKLIST; // pipe-separated regex source
+      const grep = spawnSync('grep', ['-riE', '--include=*.mjs', '--include=*.md', pattern, join(scratchDir, 'services/voice-agent')], { encoding: 'utf-8' });
+      expect(grep.stdout, `blocklist term leaked in copied files:\n${grep.stdout}`).toBe('');
+    }
   });
 
   it('drives a WebRTC roundtrip and asserts audio quality', async () => {

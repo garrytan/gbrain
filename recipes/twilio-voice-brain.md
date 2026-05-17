@@ -2,7 +2,7 @@
 id: twilio-voice-brain
 name: Voice-to-Brain (DEPRECATED — see agent-voice)
 version: 0.8.2
-description: "DEPRECATED in v0.36.0.0. New installs use `gbrain integrations install agent-voice` — the copy-into-host-repo paradigm with WebRTC-first browser client + Mars/Venus personas + read-only tool router. This recipe stays for one release as redirect; will be removed in v0.37."
+description: "DEPRECATED in v0.37.0.0. New installs use `gbrain integrations install agent-voice` — the copy-into-host-repo paradigm with WebRTC-first browser client + Mars/Venus personas + read-only tool router. This recipe stays for one release as redirect; will be removed in v0.38."
 category: sense
 requires: [ngrok-tunnel]
 secrets:
@@ -33,10 +33,10 @@ cost_estimate: "$15-25/mo (Twilio number $1-2 + voice $0.01/min, OpenAI Realtime
 
 # Voice-to-Brain: Phone Calls That Create Brain Pages
 
-> **⚠️ DEPRECATED as of v0.36.0.0.** New installs should use the [agent-voice](agent-voice.md)
+> **⚠️ DEPRECATED as of v0.37.0.0.** New installs should use the [agent-voice](agent-voice.md)
 > recipe — a WebRTC-first voice agent with Mars + Venus personas, copy-into-host-repo
 > install paradigm, and read-only tool router. This recipe stays for one release as a
-> redirect for operators with existing Twilio installs. It will be removed in v0.37.
+> redirect for operators with existing Twilio installs. It will be removed in v0.38.
 >
 > **Migration:** `gbrain integrations install agent-voice --target <your-repo>` copies a
 > working reference into your host agent repo where you own the edits. The new recipe
