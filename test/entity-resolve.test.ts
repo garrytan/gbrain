@@ -193,6 +193,44 @@ async function pageId(eng: PGLiteEngine, slug: string, sourceId = 'default'): Pr
 }
 
 describe('resolveEntitySlug — prefix expansion (v0.34.5)', () => {
+  it('fuzzy title match wins over prefix expansion when no bare slug exists (round-22 P2)', async () => {
+    // Codex round-22 P2: when a bare token is the TITLE of one
+    // entity (e.g. "Liz" on people/elizabeth-example) AND also a
+    // slug prefix of another (people/liz-smith), the resolver
+    // previously routed via prefix expansion → people/liz-smith
+    // (wrong; user meant Liz=Elizabeth). Fix: bare-name prefix
+    // expansion only short-circuits exact/fuzzy when there's a
+    // STUB-shaped bare slug to override. With no bare slug at all,
+    // fuzzy runs first.
+    await engine.putPage(
+      'people/elizabeth-fuzzy-example',
+      {
+        type: 'person' as any,
+        title: 'Liz',
+        compiled_truth: '# Liz (Elizabeth)',
+        frontmatter: { type: 'person', title: 'Liz', slug: 'people/elizabeth-fuzzy-example' },
+      },
+      { sourceId: 'default' },
+    );
+    await seedChunks(engine, 'people/elizabeth-fuzzy-example', 50);
+    await engine.putPage(
+      'people/liz-smith-example',
+      {
+        type: 'person' as any,
+        title: 'Liz Smith',
+        compiled_truth: '# Liz Smith',
+        frontmatter: { type: 'person', title: 'Liz Smith', slug: 'people/liz-smith-example' },
+      },
+      { sourceId: 'default' },
+    );
+    await seedChunks(engine, 'people/liz-smith-example', 5);
+
+    // "Liz" should fuzzy-match the title and return elizabeth, NOT
+    // prefix-expand to liz-smith.
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Liz');
+    expect(result).toBe('people/elizabeth-fuzzy-example');
+  });
+
   it('prefers prefix expansion over an existing STUB-shaped unprefixed phantom (round-7 P2)', async () => {
     // Codex round-7 P2 #1: when both the canonical `people/alice-example`
     // AND an unprefixed STUB phantom `alice` exist, resolveEntitySlug

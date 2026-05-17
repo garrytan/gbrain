@@ -57,45 +57,55 @@ export async function resolveEntitySlug(
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
-  // 1. Bare-name resolution: prefer a canonical prefixed page over an
-  //    unprefixed phantom, but ONLY when the bare slug match looks
-  //    like a stub. A user with a real top-level `rag` page plus a
-  //    `concepts/rag` page should keep resolving "rag" → "rag" because
-  //    the bare page is intentional, not a phantom. Codex rounds 7
-  //    + 8 calibrated this together:
-  //      - Round 7 wanted prefix-first to stop the alice.md/people/alice
-  //        fact-split for pre-fix phantom users.
-  //      - Round 8 caught that prefix-first also overrides real
-  //        top-level pages. Solution: peek the bare slug's body, and
-  //        only prefix-override when it's stub-shaped.
+  // 1. Bare-name STUB override (codex rounds 7 + 8 + 22): when the
+  //    bare slug EXISTS as a stub-shaped page (a v0.34.5 phantom),
+  //    redirect to the canonical via prefix expansion. This is the
+  //    ONLY case where prefix expansion runs before exact/fuzzy —
+  //    we want to stop fact-writes from accumulating on the phantom.
+  //
+  //    Round-22 calibration: when the bare slug is MISSING (no page
+  //    at all), prefix expansion runs LATER (step 4) so fuzzy gets
+  //    a chance first. Otherwise a bare reference like "Liz" would
+  //    redirect to `people/liz-smith` even when `people/elizabeth-
+  //    example` has title 'Liz' (a much better fuzzy match).
   if (isBareName(trimmed)) {
     const token = slugify(trimmed);
     const bareBody = await tryExactSlugBody(engine, source_id, token);
-    if (bareBody === 'missing' || isStubBody(bareBody)) {
-      // Either no bare page exists, or it exists but is stub-shaped —
-      // try prefix expansion and prefer the canonical.
+    if (bareBody !== 'missing' && isStubBody(bareBody)) {
+      // Phantom-shaped bare slug exists — redirect to canonical.
       const expanded = await tryPrefixExpansion(engine, source_id, token);
       if (expanded) return expanded;
     }
-    // Either bareBody is a real (non-stub) page or prefix expansion
-    // found nothing. Fall through to step 2 which will exact-match
-    // the bare page when it exists.
+    // bareBody is either 'missing' (no bare slug yet) or real
+    // (intentional bare page). Fall through.
   }
 
   // 2. Exact match on slug. Catches prefixed slugs (`people/alice-example`)
-  //    that the caller passed verbatim, and bare slugs where step 1
-  //    either declined to override or found no canonical.
+  //    that the caller passed verbatim, and intentional bare slugs
+  //    that step 1 declined to override.
   if (looksLikeSlug(trimmed)) {
     const exact = await tryExactSlug(engine, source_id, trimmed);
     if (exact) return exact;
   }
 
   // 3. Fuzzy match against existing pages within the source. Match either
-  //    on slug fragment or on title.
+  //    on slug fragment or on title. Title matches are how "Liz" finds
+  //    `people/elizabeth-example` when that page's title is 'Liz'.
   const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
   if (fuzzy) return fuzzy;
 
-  // 4. Fallback: deterministic slugify. NOT prefixed — caller decides.
+  // 4. Bare-name catch-all prefix expansion: the bare slug doesn't
+  //    exist at all (step 1 saw 'missing'), exact didn't match, and
+  //    fuzzy didn't find a strong title hit. Try prefix expansion as
+  //    a last resort so first-name references like "Jared" (no page,
+  //    no fuzzy hit, low pg_trgm score) still land on
+  //    `people/jared-friedman` instead of slugifying to a phantom.
+  if (isBareName(trimmed)) {
+    const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
+    if (expanded) return expanded;
+  }
+
+  // 5. Fallback: deterministic slugify. NOT prefixed — caller decides.
   return slugify(trimmed);
 }
 
