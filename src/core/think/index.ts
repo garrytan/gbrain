@@ -57,6 +57,21 @@ export interface RunThinkOpts {
   embedQuestion?: (q: string) => Promise<Float32Array | null>;
   /** Pure-test escape: return synthesized payload without calling any LLM. */
   stubResponse?: ThinkResponse;
+  /**
+   * v0.36.0.0 (E1, D22) — when true, retrieve the active calibration profile
+   * for the configured holder and inject it into the prompt per D22 placement
+   * (after retrieval, before question). The system prompt also gains
+   * anti-bias rewrite rules.
+   *
+   * Off by default (regression posture). When on but no profile exists,
+   * think falls back to baseline behavior + a NO_CALIBRATION_PROFILE warning.
+   */
+  withCalibration?: boolean;
+  /**
+   * Holder to retrieve the calibration profile for. Default 'garry'. Only
+   * consulted when withCalibration=true.
+   */
+  calibrationHolder?: string;
 }
 
 /** Structured response from the LLM (matches the schema declared in prompt.ts). */
@@ -206,20 +221,51 @@ export async function runThink(
     ? `<anchor>${opts.anchor}</anchor>\nReachable: ${gather.graphSlugs.slice(0, 30).join(', ')}`
     : undefined;
 
+  // v0.36.0.0 (E1) — optional calibration profile retrieval. When enabled
+  // and a profile exists, inject it per D22 (after retrieval, before question).
+  // When enabled and no profile, fall back to baseline + warn.
+  let calibrationBlockOpts:
+    | { holder: string; patternStatements: string[]; activeBiasTags: string[]; brier?: number | null }
+    | undefined;
+  if (opts.withCalibration) {
+    try {
+      const { getLatestProfile } = await import('../../commands/calibration.ts');
+      const profile = await getLatestProfile(engine, {
+        holder: opts.calibrationHolder ?? 'garry',
+      });
+      if (profile) {
+        calibrationBlockOpts = {
+          holder: profile.holder,
+          patternStatements: profile.pattern_statements,
+          activeBiasTags: profile.active_bias_tags,
+          brier: profile.brier,
+        };
+      } else {
+        warnings.push('NO_CALIBRATION_PROFILE');
+      }
+    } catch (err) {
+      warnings.push(
+        `CALIBRATION_FETCH_FAILED: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+  }
+
   // SYNTHESIZE
   const intent = inferIntent(opts.question, opts.anchor);
   const systemPrompt = buildThinkSystemPrompt({
     intent,
-    anchor: opts.anchor,
-    since: opts.since,
-    until: opts.until,
+    ...(opts.anchor !== undefined ? { anchor: opts.anchor } : {}),
+    ...(opts.since !== undefined ? { since: opts.since } : {}),
+    ...(opts.until !== undefined ? { until: opts.until } : {}),
     willSave: opts.save,
+    withCalibration: !!calibrationBlockOpts,
   });
   const userMessage = buildThinkUserMessage({
     question: opts.question,
     pagesBlock,
     takesBlock,
-    graphBlock,
+    ...(graphBlock !== undefined ? { graphBlock } : {}),
+    ...(calibrationBlockOpts !== undefined ? { calibration: calibrationBlockOpts } : {}),
   });
 
   let response: ThinkResponse;

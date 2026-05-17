@@ -50,7 +50,7 @@ the gather phase still runs and prints what would have been the input.
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (flagNames.includes(a)) { i++; continue; }
-    if (a === '--save' || a === '--take' || a === '--json' || a === '--help' || a === '-h') continue;
+    if (a === '--save' || a === '--take' || a === '--json' || a === '--help' || a === '-h' || a === '--with-calibration') continue;
     positional.push(a);
   }
   const question = positional.join(' ').trim();
@@ -68,6 +68,11 @@ the gather phase still runs and prints what would have been the input.
   const model = flagValue(args, '--model');
   const since = flagValue(args, '--since');
   const until = flagValue(args, '--until');
+  // v0.36.0.0 (E1, D22) — anti-bias rewrite mode. Off by default (no
+  // regression for existing think users). When on, the active calibration
+  // profile gets injected per D22 placement (after retrieval, before question).
+  const withCalibration = flagPresent(args, '--with-calibration');
+  const calibrationHolder = flagValue(args, '--calibration-holder');
 
   if (take && !anchor) {
     console.error('--take requires --anchor (the take row needs a target page)');
@@ -99,6 +104,10 @@ the gather phase still runs and prints what would have been the input.
   } else {
     result = await runThink(engine, {
       question, anchor, rounds, save, take, model, since, until,
+      // v0.36.0.0 (E1) — opt-in anti-bias rewrite. Falls back to baseline
+      // think when no profile exists, with NO_CALIBRATION_PROFILE warning.
+      withCalibration,
+      ...(calibrationHolder ? { calibrationHolder } : {}),
       // Local CLI: no MCP allow-list filter — operator owns the brain.
     });
 
