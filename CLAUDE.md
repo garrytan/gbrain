@@ -1213,30 +1213,66 @@ know exactly what changed.
 
 ### Release-summary template
 
-Use this structure for the top of every `## [X.Y.Z]` entry:
+**Iron rule: lead ELI10, get precise after.** The first ~150 words of every entry
+must be readable by someone who does NOT know gbrain's internals. No file paths,
+no function names, no internal constants, no acronyms (no "RRF", no "knobsHash",
+no "MODE_BUNDLES", no "CDX-4"), no jargon that requires reading the codebase to
+parse. Lead with the user-visible behavior change, in everyday English, like
+you're explaining it to a smart engineer who has never opened the repo.
 
-1. **Two-line bold headline** (10-14 words total) ... should land like a verdict, not
-   marketing. Sound like someone who shipped today and cares whether it works.
-2. **Lead paragraph** (3-5 sentences) ... what shipped, what changed for the user.
-   Specific, concrete, no AI vocabulary, no em dashes, no hype.
-3. **A "The X numbers that matter" section** with:
-   - One short setup paragraph naming the source of the numbers (real production
-     deployment OR a reproducible benchmark ... name the file/command to run).
-   - A table of 3-6 key metrics with BEFORE / AFTER / Δ columns.
-   - A second optional table for per-category breakdown if relevant.
-   - 1-2 sentences interpreting the most striking number in concrete user terms.
-4. **A "What this means for [audience]" closing paragraph** (2-4 sentences) tying
-   the metrics to a real workflow shift. End with what to do.
+THEN, once the reader knows what shipped and why they'd care, drill into the
+precise details: real file paths, real function names, real config keys, real
+numbers. The precision part is required (the entry is also the technical record
+of what changed), but it lives AFTER the plain-English lead, never before it.
 
-Voice rules:
+The shape:
+
+1. **One-line bold headline.** What changed for the user, in human English. No
+   jargon. No internal terms. Example good: "Your search stops boosting weak
+   pages just because they have a lot of links pointing at them." Example bad:
+   "PostFusionOpts gains floorRatio; KNOBS_HASH_VERSION bumped 2→3."
+2. **Plain-English opener** (~3-5 sentences). Describe the problem this fixes in
+   everyday terms. Pretend the reader has a brain full of meeting notes and
+   people pages and wants to know if this release helps them. Concrete example
+   beats abstract description.
+3. **A "How to turn it on" or "How to use it" section** with paste-ready
+   commands. Real flags, real config keys. This is where precision starts.
+4. **A "What you'd see in a concrete example" or "The X numbers that matter"
+   section** with a table. Use everyday-language column headers ("Page",
+   "Match quality", "Has many backlinks?") even when the underlying mechanism
+   is technical. The table teaches what the feature does without requiring the
+   reader to understand how.
+5. **A "What's safe to know about" or "Things to watch" section** for caveats,
+   side effects, cache invalidation, mid-deploy notes. Still in plain language.
+6. **A "What we caught and fixed before merging" section** if the work went
+   through review (CEO/eng/codex/outside-voice). Translate review findings into
+   plain English. "We caught a stale-cache bug" beats "knobsHash() did not
+   include floorRatio in the v=2 hash input."
+7. **`### Itemized changes`** (precision lives here). File paths, function
+   names, types, constants, line numbers. This section is for engineers who
+   need to know exactly what moved.
+
+Voice rules (apply throughout):
 - No em dashes (use commas, periods, "...").
 - No AI vocabulary (delve, robust, comprehensive, nuanced, fundamental, etc.) or
   banned phrases ("here's the kicker", "the bottom line", etc.).
-- Real numbers, real file names, real commands. Not "fast" but "~30s on 30K pages."
+- Real numbers, real file names, real commands AFTER the ELI10 lead. Not "fast"
+  but "~30s on 30K pages." In the ELI10 lead, "fast enough that you won't
+  notice" or "~30 seconds even on a big brain."
 - Short paragraphs, mix one-sentence punches with 2-3 sentence runs.
 - Connect to user outcomes: "the agent does ~3x less reading" beats "improved
   precision."
 - Be direct about quality. "Well-designed" or "this is a mess." No dancing.
+
+**The smell test:** if someone who has never opened gbrain reads the first 150
+words and walks away knowing what shipped and whether they care, the entry
+passes. If they need to grep the codebase to follow along, rewrite the lead.
+
+**Canonical examples in this CHANGELOG:** v0.35.6.0 (floor-ratio gate, written
+ELI10-lead-first), v0.34.4.0 (embed stale fix wave). Use those shapes when in
+doubt. Avoid the shape of entries that lead with internal constants or release
+mechanics; those exist in older history but should not be the model for new
+work.
 
 Source material to pull from:
 - CHANGELOG.md previous entry for prior context
