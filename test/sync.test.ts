@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { buildSyncManifest, isSyncable, pathToSlug } from '../src/core/sync.ts';
-import { buildGitInvocation } from '../src/commands/sync.ts';
+import { buildAutoEmbedArgs, buildGitInvocation } from '../src/commands/sync.ts';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
@@ -558,5 +558,20 @@ describe('git() helper invocation order (CJK wave v0.32.7)', () => {
       '-c', 'core.quotepath=false',
       '-C', '/repo',
     ]);
+  });
+});
+
+describe('sync auto-embed arguments', () => {
+  test('scopes incremental source sync embedding to the same source', () => {
+    expect(buildAutoEmbedArgs(['hello-js'], 'source-a')).toEqual([
+      '--source',
+      'source-a',
+      '--slugs',
+      'hello-js',
+    ]);
+  });
+
+  test('keeps default-source sync embed arguments unchanged', () => {
+    expect(buildAutoEmbedArgs(['people/alice'])).toEqual(['--slugs', 'people/alice']);
   });
 });
