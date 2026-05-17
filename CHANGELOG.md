@@ -2,6 +2,99 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.35.6.0] - 2026-05-17
+
+**Search opts gain a floor-ratio gate that keeps weak-overlap candidates from picking up metadata boosts.** Off by default.
+
+When a query lands a weak-overlap page in the top-K through baseline vector overlap, the existing metadata boosts (backlink count, salience, recency) can stack until that weak page leapfrogs the legitimate primary hit. The bug is real on dense-embedder corpora indexed with `text-embedding-3-large`, Voyage 3+, or ZeroEntropy zembed-1 — exactly the kind of brain a v0.35.0.0 install is most likely to be. The fix: each metadata boost stage now skips results whose score is below `floorRatio × topScore`. The long tail keeps its unboosted relevance ranking. A truly-strong primary always wins.
+
+Built on a community PR from @jayzalowitz (SkyTwin twin-memory layer, runs gbrain as memory backend). The contributor's labeled-retrieval ablation against four different embedders is what surfaced the regression class. gbrain refactored the shape on top before merging — see "What changed from the PR" below for the integration details.
+
+### The numbers that matter
+
+Numbers come from the SkyTwin ablation referenced in PR #1091; gbrain-side eval is filed as a follow-up TODO (we can't reproduce the exact failure shape from outside our own corpus, which is why the gate ships default-off).
+
+| Scenario | Result (no gate) | Result (gate=0.85) |
+|---|---|---|
+| Strong primary (score 1.0) vs weak page (score 0.5) with 1000 backlinks | weak overtakes via 1.23× backlink boost | strong-primary wins; weak unchanged at 0.5 |
+| Borderline page at exactly `floorRatio × top` | gated out (PR shape) | eligible (gbrain shape — inclusive boundary) |
+
+The integration also closed three correctness issues codex's outside-voice review caught that the PR shipped with:
+
+- **Cache contamination prevented.** `knobsHash()` bumped 2→3 so a no-floor cache write can't be served to a floor-enabled lookup. Same bug class CDX-4 closed in v0.32.3 for the other search-lite knobs.
+- **NaN scores skip the boost.** `NaN < threshold` is false in JS, which would otherwise let NaN-scored rows bypass the gate and receive boosts. Realistic if embedder dims drift across reindexes (Voyage flexible-dim, zembed-1 Matryoshka).
+- **Negative top scores leave the gate disabled.** No positive signal → no gate. The PR's "single result is trivially eligible" claim only held for positive scores.
+
+### What changed from the PR
+
+The contributor's PR computed the threshold per-stage (each of backlink → salience → recency recomputed `topScore × ratio` from the array state at that moment). That implicitly made stage order part of the API — a backlink boost to the leader would raise the salience-stage floor and gate out a page that was originally within `0.85 × top`. The integration computes the threshold ONCE at `runPostFusionStages` entry from the post-cosine-rescore snapshot and passes the same number to all three stages. Order-independent semantic; same ratio means the same eligibility set regardless of which stages are enabled.
+
+The PR also threaded `floorRatio` only through `PostFusionOpts`. The integration wires it through `SearchOpts.floorRatio` (per-call), `search.floor_ratio` config key (operator default — included in `SEARCH_MODE_CONFIG_KEYS` so `gbrain search modes --reset` clears it cleanly), and `MODE_BUNDLES[mode].floor_ratio` (currently `undefined` for all three modes pending ablation evidence). No `GBRAIN_SEARCH_FLOOR_RATIO` env var — `resolveSearchMode()` is pure by design, and a hidden env knob would make `gbrain search modes` lie about the resolved state.
+
+### How to enable it
+
+```bash
+# Per-call (single search):
+gbrain query "..." --floor-ratio 0.85
+
+# Operator default (applies to every query through this brain):
+gbrain config set search.floor_ratio 0.85
+```
+
+Reasonable starting values for dense-embedder corpora: 0.85–0.95. Out-of-range values (negative, > 1, NaN, Infinity) silently disable the gate at both the config-parse and runtime layers.
+
+### Scope
+
+The gate covers the three **metadata-axis** boost stages: backlink, salience, recency. Exact-match boost (`applyExactMatchBoost` in `intent-weights.ts`) runs independently as a lexical-relevance signal and is NOT gated by design — a query whose text literally appears in a page is direct relevance, not orthogonal metadata.
+
+### Mid-deploy cache note
+
+The `knobsHash()` version bump 2→3 means a v=2 process and a v=3 process writing the same `(source_id, query_text)` produce distinct cache row IDs. Expect a temporary hit-rate dip + cache-row doubling for hot queries during a rolling deploy; clears naturally within `cache.ttl_seconds` (default 3600s).
+
+### Itemized changes
+
+- `src/core/search/hybrid.ts` — three boost functions (`applyBacklinkBoost`, `applySalienceBoost`, `applyRecencyBoost`) gain an optional `floorThreshold?: number` parameter. Per-result loops now skip non-finite (NaN/Infinity) scores AND scores below the threshold. New exported `computeFloorThreshold(results, floorRatio)` is the single ratio→threshold converter; it returns `Number.NEGATIVE_INFINITY` (no gate) for undefined floorRatio, out-of-range values, or inputs with no positive signal. `runPostFusionStages` computes the threshold ONCE at entry and passes it uniformly to all three stages. `PostFusionOpts.floorRatio?: number` is the public-facing ratio.
+- `src/core/search/mode.ts` — `ModeBundle.floor_ratio: number | undefined`. All three bundles set `floor_ratio: undefined` initially. `SearchKeyOverrides` and `SearchPerCallOpts` gain `floor_ratio?: number`. `resolveSearchMode` picks via the standard chain. `loadOverridesFromConfig` parses `search.floor_ratio` (validates 0..1 range; out-of-range silently drops). `SEARCH_MODE_CONFIG_KEYS` includes `'search.floor_ratio'`. `KNOBS_HASH_VERSION` bumped 2→3; `knobsHash()` appends a `fr=<value-or-none>` segment at 4-decimal precision so 0.85, 0.851, and undefined all key into different rows.
+- `src/core/types.ts` — `SearchOpts.floorRatio?: number`.
+- `src/commands/search.ts` — `KNOB_DESCRIPTIONS` and the dashboard knob iteration include `floor_ratio`, so `gbrain search modes` and `gbrain search modes --json` surface the resolved value + source attribution alongside the other knobs.
+- `test/search.test.ts` — 30+ new cases covering `computeFloorThreshold` (out-of-range, NaN, negative top, all-NaN, single result), `applyBacklinkBoost` floor gate (preservation, weak-gated, borderline-eligible, leapfrog regression, NaN skip-not-pass), `applySalienceBoost` floor gate (T6 IRON RULE parity), `applyRecencyBoost` floor gate (T6 IRON RULE regression — the modified function shipped with zero test coverage on the new param), and `runPostFusionStages` single-baseline composition (D6 pin against future single-floor refactor).
+- `test/search-mode.test.ts` — `floor_ratio: undefined` added to the canonical-bundle fixtures for all three modes; `KNOBS_HASH_VERSION` pin updated to 3; new tests for `floor_ratio`-changes-hash (cache contamination prevention); `loadOverridesFromConfig` coverage for valid and out-of-range values.
+- `test/search/knobs-hash-reranker.test.ts` — header comment + version assertion updated for the 2→3 bump.
+
+### What's NOT in scope (deferred)
+
+- **Default-on for any mode.** `MODE_BUNDLES.floor_ratio` stays `undefined` for conservative / balanced / tokenmax until per-corpus ablation against gbrain's own eval surfaces (`longmemeval`, `whoknows`, `suspected-contradictions`, BrainBench-Real) backs a default flip. See `TODOS.md`.
+- **Per-stage floor ratios.** Single ratio applied uniformly to all three stages today. Different ratio per stage (different floor for salience vs recency) is v0.36+ if evidence shows asymmetric value.
+- **Per-source floor.** Single global threshold today. Federated-read users (v0.34.1.0+) sharing a query across multiple sources get one floor across the merged result set. v0.36+ if real federated-read usage shows the suppression issue codex flagged.
+- **Exact-match boost gating.** Explicit scope narrowing — exact-match is a lexical signal, different in kind from metadata boosts.
+- **`GBRAIN_SEARCH_FLOOR_RATIO` env var.** Would create a hidden side door `resolveSearchMode()` can't see. Use the config key instead.
+
+### For contributors
+
+- Plan + cross-model review trail: `~/.claude/plans/swift-sniffing-nygaard.md` captures the 9-decision (D1-D9) review pass through `/plan-eng-review` and `/codex`. Three correctness bugs (cache contamination, NaN passes gate, negative-top breaks single-result) were caught by codex's outside voice; two prior eng-review recommendations (per-stage composition lock, env var) were reversed before implementation. Reading the plan is the fastest way to understand which architectural decisions are durable vs accidental.
+- Community PR attribution: @jayzalowitz (PR #1091, SkyTwin twin-memory layer). The empirical motivation, the failure-mode framing, the dense-embedder targeting, and the `0.85` starting value are all from his ablation. Integration shape is gbrain-side.
+
+## To take advantage of v0.35.6.0
+
+`gbrain upgrade` should do this automatically. If it didn't:
+
+1. **Run the orchestrator manually** (no-op if migrations already at HEAD; the knobsHash bump is a code-level constant, not a DB schema change):
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the new knob is wired:**
+   ```bash
+   gbrain search modes --json | grep -A 1 floor_ratio
+   ```
+   Should show `"floor_ratio"` in the resolved knob map with `value: null` (no override set).
+3. **Try the gate on a corpus you suspect of leapfrog regressions:**
+   ```bash
+   # Compare results with and without the gate; if your dense-embedder corpus
+   # exhibits the failure mode, gate=0.85 should restore the strong primary.
+   gbrain query "..." --floor-ratio 0.85
+   ```
+4. **If `gbrain doctor` flags any new sync_failures or schema warnings post-upgrade,** the floor-ratio path is not the cause (no schema change in this release). File the issue at https://github.com/garrytan/gbrain/issues with `gbrain doctor` output.
+
 ## [0.35.5.1] - 2026-05-16
 
 **`gbrain doctor` stops counting clean supervisor exits as crashes — the "120x/24h" alarm finally reflects real crashes, with per-cause breakdown for operator triage.**
