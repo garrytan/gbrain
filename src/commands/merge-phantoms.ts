@@ -79,7 +79,8 @@ export interface PhantomMerge {
     | 'no_local_path'
     | 'fence_write_failed'
     | 'not_a_stub'
-    | 'ambiguous';
+    | 'ambiguous'
+    | 'fence_drift';
   /**
    * When `skipped === 'ambiguous'`, the list of canonical candidates
    * that matched across multiple directories. Operator picks which
@@ -322,15 +323,46 @@ export async function runMergePhantomsCore(
     }
 
     if (facts_moved === 0) {
-      // Phantom with no facts to migrate — just soft-delete it AND
-      // remove the .md file (codex round-20 P2 #1: the factless early-
-      // continue used to bypass the unlink-on-disk block, leaving a
-      // file that next sync would resurrect). The feasibility check
-      // above only ran when facts_moved > 0, so re-fetch localPath
-      // here — may be null for thin-client sources, in which case
-      // there's nothing on disk to unlink.
-      await engine.softDeletePage(row.slug, { sourceId: opts.sourceId });
+      // Codex round-27 P1: before treating as factless, check whether
+      // the on-disk .md has a populated `## Facts` fence. The fence
+      // is the system of record per v0.32.2; if DB rows are missing
+      // but the fence has facts (crash between renameSync and DB
+      // insert, manual fence edits before extract_facts reconciles,
+      // etc.), unlinking the file would lose the unreconciled facts.
+      // Skip with `fence_drift` so the operator can run extract_facts
+      // first.
       const factlessLocalPath = await lookupSourceLocalPath(engine, opts.sourceId);
+      if (factlessLocalPath !== null) {
+        const phantomFile = join(factlessLocalPath, `${row.slug}.md`);
+        if (existsSync(phantomFile)) {
+          try {
+            const onDisk = readFileSync(phantomFile, 'utf-8');
+            const { parseFactsFence } = await import('../core/facts-fence.ts');
+            const parsed = parseFactsFence(onDisk);
+            // Active = parser said active (not strikethrough,
+            // not forgotten, not superseded). validUntil-in-past is
+            // still "active in the fence" semantically; the autopilot
+            // derives expired_at downstream.
+            const activeFenceFacts = parsed.facts.filter(f => f.active);
+            if (activeFenceFacts.length > 0) {
+              skipped.push({ phantom: row.slug, canonical, skipped: 'fence_drift' });
+              // eslint-disable-next-line no-console
+              console.warn(
+                `[merge-phantoms] phantom ${row.slug} has ${activeFenceFacts.length} unreconciled fact(s) in its on-disk fence but no active DB rows. Skipped to prevent data loss. Run \`gbrain dream --phase extract_facts\` or remove the unsynced facts manually, then re-run merge-phantoms.`,
+              );
+              continue;
+            }
+          } catch {
+            // Read or parse failure — be conservative, skip with the
+            // same reason so we don't unlink a file we couldn't
+            // inspect.
+            skipped.push({ phantom: row.slug, canonical, skipped: 'fence_drift' });
+            continue;
+          }
+        }
+      }
+      // Phantom genuinely factless — soft-delete + unlink.
+      await engine.softDeletePage(row.slug, { sourceId: opts.sourceId });
       if (factlessLocalPath !== null) {
         const phantomFile = join(factlessLocalPath, `${row.slug}.md`);
         if (existsSync(phantomFile)) {

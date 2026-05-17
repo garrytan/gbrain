@@ -257,6 +257,63 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(body).toContain('Fact two about Alice.');
   });
 
+  itHomed('skips factless phantom whose .md fence has unreconciled active facts (round-27 P1)', async () => {
+    // Codex round-27 P1: when DB rows are missing but the on-disk
+    // fence carries unreconciled active facts (e.g. crash between
+    // renameSync and DB insert), the merge previously treated the
+    // page as factless and unlinked the file — losing the fence
+    // facts. Now we parse the fence first; if it has active rows,
+    // skip with `fence_drift`.
+    await seedPage('drift-phantom', 'person');
+    await seedPage('people/drift-phantom-canonical', 'person');
+    await seedChunks('people/drift-phantom-canonical', 3);
+
+    // Write a fence on disk WITHOUT seeding the DB rows.
+    const phantomFile = join(brainDir, 'drift-phantom.md');
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    mkdirSync(dirname(phantomFile), { recursive: true });
+    writeFileSync(
+      phantomFile,
+      [
+        '---',
+        'type: person',
+        'title: drift-phantom',
+        'slug: drift-phantom',
+        '---',
+        '',
+        '# drift-phantom',
+        '',
+        '## Facts',
+        '',
+        '<!--- gbrain:facts:begin -->',
+        '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+        '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
+        '| 1 | Unreconciled fact 1. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
+        '| 2 | Unreconciled fact 2. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
+        '<!--- gbrain:facts:end -->',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(0);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0].skipped).toBe('fence_drift');
+
+    // File still on disk, phantom DB row not soft-deleted.
+    expect(existsSync(phantomFile)).toBe(true);
+    const phantomPage = await engine.executeRaw<{ deleted_at: Date | null }>(
+      `SELECT deleted_at FROM pages WHERE slug = 'drift-phantom' AND source_id = 'default'`,
+      [],
+    );
+    expect(phantomPage[0].deleted_at).toBeNull();
+  });
+
   itHomed('soft-deletes a phantom even when it has no facts attached', async () => {
     await seedPage('emptyperson', 'person');
     await seedPage('people/emptyperson-example', 'person');
