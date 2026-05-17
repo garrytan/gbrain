@@ -31,6 +31,17 @@ import {
 
 const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
+const pendingCacheWrites = new Set<Promise<unknown>>();
+
+export async function awaitPendingSearchCacheWrites(): Promise<void> {
+  if (pendingCacheWrites.size === 0) return;
+  await Promise.allSettled([...pendingCacheWrites]);
+}
+
+function trackCacheWrite(promise: Promise<unknown>): void {
+  pendingCacheWrites.add(promise);
+  promise.finally(() => pendingCacheWrites.delete(promise)).catch(() => { /* swallow */ });
+}
 /**
  * Backlink boost coefficient. Score is multiplied by (1 + BACKLINK_BOOST_COEF * log(1 + count)).
  * - 0 backlinks: factor = 1.0 (no boost).
@@ -752,9 +763,11 @@ export async function hybridSearchCached(
     results.length > 0 &&
     (innerMeta?.vector_enabled ?? false)
   ) {
-    void cache
-      .store(query, queryEmbedding, results, finalMeta, { sourceId: opts?.sourceId, knobsHash: cacheKnobsHash })
-      .catch(() => { /* swallow */ });
+    trackCacheWrite(
+      cache
+        .store(query, queryEmbedding, results, finalMeta, { sourceId: opts?.sourceId, knobsHash: cacheKnobsHash })
+        .catch(() => { /* swallow */ }),
+    );
   }
 
   return budgeted;
