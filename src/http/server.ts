@@ -71,6 +71,60 @@ function sweepIdempotency(): void {
   }
 }
 
+// ── IP-based auth failure rate limiter ────────────────────────────────────────
+// Tracks OTP failures per IP. After MAX_AUTH_FAILURES within AUTH_WINDOW_MS,
+// the IP is banned for AUTH_BAN_MS. In-process only — resets on restart, which
+// is acceptable: an attacker would need to trigger a Railway restart to reset,
+// which is harder than just getting blocked.
+const MAX_AUTH_FAILURES = 10;
+const AUTH_WINDOW_MS    = 60_000;   // 1 minute sliding window
+const AUTH_BAN_MS       = 3_600_000; // 1 hour ban
+
+interface AuthRecord { failures: number; windowStart: number; bannedUntil: number }
+const authFailures = new Map<string, AuthRecord>();
+
+function getClientIp(req: Request): string {
+  return req.headers.get('cf-connecting-ip')
+    ?? req.headers.get('x-forwarded-for')?.split(',')[0].trim()
+    ?? 'unknown';
+}
+
+function checkIpBanned(ip: string): boolean {
+  const rec = authFailures.get(ip);
+  if (!rec) return false;
+  return Date.now() < rec.bannedUntil;
+}
+
+function recordAuthFailure(ip: string): void {
+  const now = Date.now();
+  let rec = authFailures.get(ip);
+  if (!rec || now - rec.windowStart > AUTH_WINDOW_MS) {
+    rec = { failures: 0, windowStart: now, bannedUntil: 0 };
+    authFailures.set(ip, rec);
+  }
+  rec.failures++;
+  if (rec.failures >= MAX_AUTH_FAILURES) {
+    rec.bannedUntil = now + AUTH_BAN_MS;
+  }
+}
+
+function recordAuthSuccess(ip: string): void {
+  authFailures.delete(ip);
+}
+
+// Sweep stale entries every ~5 minutes (called on each auth attempt).
+let lastAuthSweep = 0;
+function sweepAuthFailures(): void {
+  const now = Date.now();
+  if (now - lastAuthSweep < 300_000) return;
+  lastAuthSweep = now;
+  for (const [ip, rec] of authFailures) {
+    if (now > rec.bannedUntil && now - rec.windowStart > AUTH_WINDOW_MS) {
+      authFailures.delete(ip);
+    }
+  }
+}
+
 const ALLOWED_TAGS = ['preference', 'fact', 'method', 'project', 'person', 'decision'] as const;
 const VERSION = pkg.version as string;
 
@@ -297,8 +351,20 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
       }
 
       // ── 認證 ─────────────────────────────────────────────────────────────
+      const clientIp = getClientIp(req);
+      sweepAuthFailures();
+
+      if (checkIpBanned(clientIp)) {
+        return err('too_many_failures',
+          'Too many failed authentication attempts. Try again in 1 hour.',
+          429,
+          { hint: 'Your IP has been temporarily blocked due to repeated auth failures.' }
+        );
+      }
+
       const auth = authenticate(req, url, staticToken, totpSecret);
       if (!auth.ok) {
+        recordAuthFailure(clientIp);
         if (auth.needOtp) {
           // LLM 收到這個就知道要跟你要鑰匙；附上下一把鑰匙時間方便倒數
           const rotateAt = nextOtpRotationMs();
@@ -314,6 +380,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         }
         return err('unauthorized', 'Valid Bearer token required', 401);
       }
+      recordAuthSuccess(clientIp);
 
       const ctx = makeCtx(engine);
 
