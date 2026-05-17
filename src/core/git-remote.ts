@@ -24,13 +24,17 @@ import { isInternalUrl } from './url-safety.ts';
  * - http.followRedirects=false: closes DNS rebinding via redirect chains
  * - protocol.file.allow=never: no local-file URLs (defense in depth)
  * - protocol.ext.allow=never: no external helpers (`git-remote-foo`)
- * - --no-recurse-submodules: .gitmodules cannot become a second fetch surface
+ *
+ * NOTE on submodule recursion: `--no-recurse-submodules` is a per-command
+ * option (clone/pull/fetch), not a global git option. Putting it in the
+ * global-options slot (before the subcommand) fails on git ≥2.43 with
+ * "unknown option: --no-recurse-submodules". Callers append it to the
+ * per-command args instead. See pullRepo + cloneRepo below.
  */
 export const GIT_SSRF_FLAGS = [
   '-c', 'http.followRedirects=false',
   '-c', 'protocol.file.allow=never',
   '-c', 'protocol.ext.allow=never',
-  '--no-recurse-submodules',
 ] as const;
 
 export type RemoteUrlErrorCode =
@@ -153,7 +157,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
     }
   }
 
-  const args: string[] = [...GIT_SSRF_FLAGS, 'clone'];
+  const args: string[] = [...GIT_SSRF_FLAGS, 'clone', '--no-recurse-submodules'];
   if (opts.depth !== 0) {
     args.push(`--depth=${opts.depth ?? 1}`);
   }
@@ -179,7 +183,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
 
 /** Pull a repo with --ff-only and the same SSRF-defensive flags as cloneRepo. */
 export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): void {
-  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', '--ff-only'];
+  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', '--ff-only', '--no-recurse-submodules'];
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
