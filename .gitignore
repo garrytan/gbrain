@@ -38,3 +38,8 @@ export/
 # Tier 3 PGLite snapshot fixture (built on demand by build:pglite-snapshot)
 test/fixtures/pglite-snapshot.tar
 test/fixtures/pglite-snapshot.version
+
+# Auto-managed by gbrain (db_only directories)
+media/x/
+media/articles/
+meetings/transcripts/
