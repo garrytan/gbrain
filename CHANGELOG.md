@@ -2,6 +2,50 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.35.4.0] - 2026-05-16
+
+**Doctor stops crying wolf on clean worker restarts. Entity resolver stops spawning phantom pages. Prefix-expansion gets 58x faster.**
+
+A fix-wave shipping privacy work, bug fixes, observability, and one big perf win. The shape of the change: `gbrain doctor`'s supervisor check no longer counts `code === 0` clean exits as crashes (matching the actual v0.34.3.0 supervisor restart-policy logic), `resolveEntitySlug` catches bare first names like `"Alice"` before the slugify-fallback can spawn an unparented `alice.md` at brain root, a new `stub_guard_24h` doctor surface tells operators when the resolver IS missing a case, and the `tryPrefixExpansion` query rewrites against the correlated-subquery shape that's 58x faster on the perf-regression benchmark.
+
+### What you can now do
+
+**Stop seeing false-positive crash WARNs in `gbrain doctor` after autopilot drain.** Before this release, every clean worker exit (drain + respawn, graceful shutdown, queue completion — anything with `code === 0`) was counted as a crash. On a busy brain that drains the worker every few hours, the doctor's supervisor check would WARN "Supervisor running but worker crashed 8x in last 24h" even though zero crashes happened. The v0.34.3.0 supervisor's restart policy already used the right rule (don't increment `crashCount` on `code === 0`); doctor and `jobs supervisor status` were reading the same audit events but applying their own filter. All three sites now share one `classifyWorkerExit()` helper — same rule, one source of truth.
+
+**Stop seeing phantom `jared.md` pages at brain root.** When the fact-extraction pipeline produced a bare entity name (e.g. `"Alice"`) and `pg_trgm` scored too low to fuzzy-match against `people/alice-example`, the slugify fallback returned `"alice"` and `writeFactsToFence` would happily create `alice.md` at the brain root — orphan, no people/ prefix, never linked to the real Alice page. The resolver now runs a prefix-expansion step between fuzzy match and slugify fallback: when the input looks like a single bare-name token, query `people/<token>-%` then `companies/<token>-%`, pick the highest-connection candidate as the tiebreaker. The same fix layer adds a defensive second wall in `writeFactsToFence` itself — refuses to spawn unprefixed entity pages — with the fact still landing in the DB via the legacy fallback so nothing gets dropped.
+
+**See when the resolver is missing a case.** New `stub_guard_24h` check in `gbrain doctor` reads the new stub-guard audit log and WARNs at >10 fires/24h. The fix hint points operators directly at `~/.gbrain/audit/stub-guard-*.jsonl` so the offending slugs are one `cat` away. The check stays silent on zero hits (clean brain output) and shows count + below-threshold OK status when hits happen but stay reasonable. The sunset criterion is also wired in: when the 24h reads stay below 5/week for 3 consecutive weeks, the guard can be removed in v0.36 (the resolver fix has earned the trust).
+
+**Extract facts ~58x faster on brains with substantial link/chunk counts.** The pre-fix `tryPrefixExpansion` SQL did three derived-table aggregations (`LEFT JOIN (SELECT FROM links GROUP BY to_page_id)`) that pre-aggregated the ENTIRE links and content_chunks tables on every call. On the v0.35.4.0 perf benchmark (5K pages, 50K links, 25K chunks): old median 18.16ms, new median 0.31ms, speedup **58.22x**. The new shape uses correlated subqueries scoped to the slug-LIKE candidates — PostgreSQL hits the indexes on `links.to_page_id`, `links.from_page_id`, and `content_chunks.page_id` exactly N=3 times per candidate, not N=1 time across the whole table. Behavior is preserved; tiebreaker semantics unchanged.
+
+### Itemized changes
+
+- `src/core/entities/resolve.ts` adds `isBareName()` + `tryPrefixExpansion()` between fuzzy and slugify fallback. Token slug shape: people/`X`-%, companies/`X`-% prefix patterns. SQL uses correlated subqueries (no CTE cap, no whole-table aggregation). The slug-LIKE filter is already selective in practice (typical brain has 0-5 pages per prefix). `PREFIX_EXPANSION_DIRS = ['people', 'companies']` — extend in a follow-up when new entity directories prove necessary.
+- `src/core/facts/fence-write.ts` adds the stub-creation guard at line 190: when `target.slug` lacks a `/`, return `{inserted: 0, ids: [], stubGuardBlocked: true}` and fire `logStubGuardEvent`. JSDoc names v0.36 as the retire target.
+- `src/core/facts/backstop.ts` routes `stubGuardBlocked: true` results to `engine.insertFact()` (legacy DB-only path) so facts aren't silently dropped — they land in the facts table with the bare entity_slug, `source_markdown_slug` stays null.
+- `src/core/facts/stub-guard-audit.ts` (new) is the JSONL audit writer for stub-guard fires. ISO-week rotation at `~/.gbrain/audit/stub-guard-YYYY-Www.jsonl`. Reader `readRecentStubGuardEvents` deliberately diverges from `supervisor-audit.ts:readSupervisorEvents` — reads BOTH the current AND the previous ISO-week file before filtering by `ts`. The supervisor reader only reads the current week, losing 24h-window correctness across Monday 00:00 UTC. Follow-up TODO filed: fix the supervisor reader the same way.
+- `src/core/minions/exit-classification.ts` (new) is the pure `classifyWorkerExit({code: number | null}): 'crash' | 'clean_exit'` helper. Signature consumes audit-JSON shape (not Node callback shape) — the supervisor wraps Node's `(code, signal)` into `{code}` before calling. Three call sites use it: supervisor restart policy, doctor's supervisor check, `gbrain jobs supervisor status`.
+- `src/commands/doctor.ts` adds the `stub_guard_24h` check between supervisor and sync_failures. Replaces the inline `code !== 0 && code !== undefined` filter with `classifyWorkerExit()`.
+- `src/commands/jobs.ts` same inline-filter replacement on the `supervisor status` subcommand.
+- `docs/issues/doctor-auto-heal-and-scoring.md` (new) specs 7 follow-up improvements to the doctor health score system: frontmatter severity levels, temporal contradiction awareness, multi-source drift baseline, image asset acknowledgment, auto-heal mode, score delta tracking, weighted scoring. None implemented in this release; documenting the scope for the next wave.
+- `.gitignore` adds `reports/network-intelligence/` as defense-in-depth (private-brain export dir).
+- Test infrastructure: `test/exit-classification.test.ts` (17 cases — helper unit tests + consumer wire-up + audit-shape round-trip + inline-filter regression guards), `test/stub-guard-audit.test.ts` (9 cases — filename math + writer error tolerance + dual-week boundary read), `test/entity-resolve.test.ts` (13 cases — bare name resolution + tiebreaker + edge cases, fixtures use `alice-example`/`bob-example`/`charlie-example`/`dave-example` placeholders per CLAUDE.md privacy rule), `test/entity-resolve-perf.slow.test.ts` (1 case — baseline-ratio regression guard, 58x speedup measured), plus extensions in `test/fence-write.test.ts` (+3), `test/facts-backstop.test.ts` (+1), `test/doctor.test.ts` (+5).
+
+## To take advantage of v0.35.4.0
+
+`gbrain upgrade` handles everything automatically. No migration, no config changes, no manual action needed.
+
+1. **Run the upgrade:**
+   ```bash
+   gbrain upgrade
+   ```
+2. **Verify the doctor check is in the new shape:**
+   ```bash
+   gbrain doctor --json | jq '.checks[] | select(.name == "supervisor" or .name == "stub_guard_24h")'
+   ```
+   The supervisor check should show `clean_restarts=N` in the message when applicable, and `stub_guard_24h` should appear only if the guard has fired.
+3. **If `gbrain doctor` warns about something unexpected,** please file an issue at
+   https://github.com/garrytan/gbrain/issues with the doctor output.
 ## [0.35.3.1] - 2026-05-15
 
 **The contradiction probe stops crying wolf on time. Six-member verdict enum + page-level date in the prompt + a new privacy lint for proposals.**
