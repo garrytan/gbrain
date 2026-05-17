@@ -52,12 +52,31 @@ export interface DateFilterDecision {
     | 'both_explicit_separated'
     | 'one_or_both_missing_dates'
     | 'same_paragraph_dual_date'
-    | 'overlapping_or_close';
+    | 'overlapping_or_close'
+    /**
+     * v0.34 / Lane B: both sides have a non-null page-level effective_date,
+     * so the judge will see the temporal anchors and classify supersession /
+     * regression / evolution explicitly. Rule 3's >30d skip would otherwise
+     * silently kill exactly the cases the new verdicts exist to surface.
+     */
+    | 'both_have_effective_date';
 }
 
 export interface DateFilterInput {
   textA: string;
   textB: string;
+  /**
+   * v0.34 / Lane B: page-level effective_date for each side (carried through
+   * from SearchResult.effective_date via PairMember). When both are non-null
+   * the judge will see them via the (from: YYYY-MM-DD) prompt tag and can
+   * classify temporal supersession explicitly — so the rule-3 >30d skip is
+   * counterproductive (it was a cost-saving heuristic for the v1 binary
+   * verdict; the v2 enum makes the explicit classification cheap).
+   * Undefined / null means "no temporal anchor for that side" and rule 3
+   * still applies as a fallback heuristic.
+   */
+  effectiveDateA?: string | null;
+  effectiveDateB?: string | null;
 }
 
 /** Extract date tokens from text. Returns parsed Date objects (UTC midnight). */
@@ -143,6 +162,15 @@ export function shouldSkipForDateMismatch(input: DateFilterInput): DateFilterDec
     hasSameParagraphDualDate(input.textB)
   ) {
     return { skip: false, reason: 'same_paragraph_dual_date' };
+  }
+  // v0.34 / Lane B: when BOTH sides have a non-null page-level effective_date,
+  // the judge will see them via the (from: YYYY-MM-DD) tag and can classify
+  // temporal supersession / regression / evolution explicitly. Skipping these
+  // pairs was the v1 default; in v2 it would silently kill the cases the
+  // new verdict taxonomy exists to surface (e.g. the role-change-across-
+  // years case where chunk-text dates are years apart).
+  if (input.effectiveDateA && input.effectiveDateB) {
+    return { skip: false, reason: 'both_have_effective_date' };
   }
   const datesA = extractDates(input.textA);
   const datesB = extractDates(input.textB);
