@@ -317,21 +317,14 @@ export async function runMergePhantomsCore(
       }
     }
 
-    if (opts.dryRun) {
-      merged.push({ phantom: row.slug, canonical, facts_moved });
-      continue;
-    }
-
+    // Fence-drift check runs BEFORE the dry-run short-circuit (codex
+    // round-28 P2: otherwise dry-run reports a merge that the real
+    // run would skip as fence_drift, making the preview misleading
+    // for the exact data-loss case the guard catches).
+    let factlessLocalPath: string | null = null;
+    let hasFenceDrift = false;
     if (facts_moved === 0) {
-      // Codex round-27 P1: before treating as factless, check whether
-      // the on-disk .md has a populated `## Facts` fence. The fence
-      // is the system of record per v0.32.2; if DB rows are missing
-      // but the fence has facts (crash between renameSync and DB
-      // insert, manual fence edits before extract_facts reconciles,
-      // etc.), unlinking the file would lose the unreconciled facts.
-      // Skip with `fence_drift` so the operator can run extract_facts
-      // first.
-      const factlessLocalPath = await lookupSourceLocalPath(engine, opts.sourceId);
+      factlessLocalPath = await lookupSourceLocalPath(engine, opts.sourceId);
       if (factlessLocalPath !== null) {
         const phantomFile = join(factlessLocalPath, `${row.slug}.md`);
         if (existsSync(phantomFile)) {
@@ -339,10 +332,6 @@ export async function runMergePhantomsCore(
             const onDisk = readFileSync(phantomFile, 'utf-8');
             const { parseFactsFence } = await import('../core/facts-fence.ts');
             const parsed = parseFactsFence(onDisk);
-            // Active = parser said active (not strikethrough,
-            // not forgotten, not superseded). validUntil-in-past is
-            // still "active in the fence" semantically; the autopilot
-            // derives expired_at downstream.
             const activeFenceFacts = parsed.facts.filter(f => f.active);
             if (activeFenceFacts.length > 0) {
               skipped.push({ phantom: row.slug, canonical, skipped: 'fence_drift' });
@@ -350,18 +339,25 @@ export async function runMergePhantomsCore(
               console.warn(
                 `[merge-phantoms] phantom ${row.slug} has ${activeFenceFacts.length} unreconciled fact(s) in its on-disk fence but no active DB rows. Skipped to prevent data loss. Run \`gbrain dream --phase extract_facts\` or remove the unsynced facts manually, then re-run merge-phantoms.`,
               );
-              continue;
+              hasFenceDrift = true;
             }
           } catch {
-            // Read or parse failure — be conservative, skip with the
-            // same reason so we don't unlink a file we couldn't
-            // inspect.
             skipped.push({ phantom: row.slug, canonical, skipped: 'fence_drift' });
-            continue;
+            hasFenceDrift = true;
           }
         }
       }
-      // Phantom genuinely factless — soft-delete + unlink.
+      if (hasFenceDrift) continue;
+    }
+
+    if (opts.dryRun) {
+      merged.push({ phantom: row.slug, canonical, facts_moved });
+      continue;
+    }
+
+    if (facts_moved === 0) {
+      // Phantom genuinely factless (fence-drift check above already
+      // ran and didn't trigger) — soft-delete + unlink.
       await engine.softDeletePage(row.slug, { sourceId: opts.sourceId });
       if (factlessLocalPath !== null) {
         const phantomFile = join(factlessLocalPath, `${row.slug}.md`);

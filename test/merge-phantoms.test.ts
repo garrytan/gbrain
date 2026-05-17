@@ -257,6 +257,44 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(body).toContain('Fact two about Alice.');
   });
 
+  itHomed('dry-run reports fence-drift skip just like the real run (round-28 P2)', async () => {
+    // Codex round-28 P2: the dry-run preview must match what a real
+    // run would do. A phantom with stale DB + populated on-disk
+    // fence skips with `fence_drift` in a real run; dry-run used to
+    // report it under `WOULD MERGE` with facts_moved=0. Now both
+    // paths run the fence-drift check.
+    await seedPage('drift-dry', 'person');
+    await seedPage('people/drift-dry-canonical', 'person');
+    await seedChunks('people/drift-dry-canonical', 3);
+
+    const phantomFile = join(brainDir, 'drift-dry.md');
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    mkdirSync(dirname(phantomFile), { recursive: true });
+    writeFileSync(
+      phantomFile,
+      [
+        '---', 'type: person', 'title: drift-dry', 'slug: drift-dry', '---',
+        '', '# drift-dry', '', '## Facts', '',
+        '<!--- gbrain:facts:begin -->',
+        '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+        '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
+        '| 1 | Drift dry fact. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
+        '<!--- gbrain:facts:end -->', '',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: true,
+    });
+
+    expect(result.dry_run).toBe(true);
+    expect(result.merged.length).toBe(0);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0].skipped).toBe('fence_drift');
+  });
+
   itHomed('skips factless phantom whose .md fence has unreconciled active facts (round-27 P1)', async () => {
     // Codex round-27 P1: when DB rows are missing but the on-disk
     // fence carries unreconciled active facts (e.g. crash between
