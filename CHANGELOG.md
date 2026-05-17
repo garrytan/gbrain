@@ -46,6 +46,84 @@ A fix-wave shipping privacy work, bug fixes, observability, and one big perf win
    The supervisor check should show `clean_restarts=N` in the message when applicable, and `stub_guard_24h` should appear only if the guard has fired.
 3. **If `gbrain doctor` warns about something unexpected,** please file an issue at
    https://github.com/garrytan/gbrain/issues with the doctor output.
+## [0.35.3.0] - 2026-05-15
+
+**Fix wave: 19 stale community PRs land as one bisect-friendly PR with the architectural fix none of them surfaced.**
+
+Two real bugs, both in shipping code on master since v0.28+, both fixed at the architecture level instead of one site at a time. The first: `extract_facts.entity_hints` and the X-API resolver's `candidates` output schema both declared `type: 'array'` without `items`, so strict-mode validators (Gemini Pro structured outputs, OpenAI strict tool defs) rejected the entire tool schema. Twelve community PRs converged on the entity_hints fix; only one (#910 from @DmitryBMsk) caught the candidates side. The second: every remote-source `git clone` and `git pull` invocation has been broken for ~7 months because `--no-recurse-submodules` was spliced BEFORE the subcommand verb in `GIT_SSRF_FLAGS`. Real git rejects this with exit 129 ("unknown option"); the fake-git test harness exits 0 regardless of argv shape, so CI never caught it. Seven community PRs flagged this. Codex outside-voice review on top of all 19 PRs surfaced the structural finding none of them saw: three duplicate `ParamDef→JSON Schema` mappers existed across the MCP surface, not one. The live HTTP MCP `tools/list` path (`serve-http.ts:837`) and the subagent brain-tool registry (`brain-allowlist.ts:84`) would both have stayed broken after a `buildToolDefs`-only patch.
+
+### What you can now do
+
+**Use `extract_facts` from strict-mode agents again.** Gemini Pro structured outputs and OpenAI strict tool definitions both reject `type: 'array'` without `items`. The `entity_hints` param now declares `items: { type: 'string' }` and the resolver `candidates` output declares the full `XTweetCandidate` interface with `required: [tweet_id, text, created_at, score, url]` and `additionalProperties: false`. The schema matches the TypeScript interface byte-for-byte — single source of truth.
+
+**Clone and pull remote sources over real git again.** `cloneRepo` and `pullRepo` now spread `--no-recurse-submodules` AFTER the verb where it belongs. Real git stops rejecting the call with exit 129. Constant naming signals the position rule so future flag additions land in the right place: `GIT_SSRF_FLAGS` is global config (spread before the verb), `GIT_SSRF_SUBCOMMAND_FLAGS` is subcommand-scoped (spread after).
+
+**Get one canonical ParamDef→schema mapper.** New `paramDefToSchema(p: ParamDef)` helper exported from `src/mcp/tool-defs.ts`. Three consumers now share one source of truth: `buildToolDefs` (stdio MCP), `serve-http.ts:837` (HTTP MCP `tools/list`), and `brain-allowlist.ts:84` (subagent tool registry). Recursive on `items` so nested array-of-arrays preserves inner shape on the wire — closes the same bug class one layer deeper.
+
+**Trust structural guards in CI.** Three new tests fail loudly with property paths if any future array drift reintroduces the bug class. `test/mcp-tool-defs.test.ts` walks every operation's `inputSchema` recursively. `test/git-remote.test.ts` asserts `--no-recurse-submodules` indexOf > verb indexOf — position-anchored, not just inclusion. `test/resolvers.test.ts` explicitly imports `xHandleToTweetResolver` + `urlReachableResolver` and walks both `inputSchema` AND `outputSchema` (the previously planned `getDefaultRegistry()` walk would have silently passed against zero resolvers — codex catch).
+
+### Itemized changes
+
+- `src/mcp/tool-defs.ts` exports new recursive `paramDefToSchema(p: ParamDef)` helper. Key ordering (type, description, enum, default, items) is intentional — matches the pre-v0.35.3 inline mappers so JSON.stringify output stays byte-stable for every operation that doesn't use nested arrays.
+- `src/commands/serve-http.ts:837-849` swaps the inline ParamDef destructure for `paramDefToSchema(v)`. Closes the HTTP MCP `tools/list` bug. OAuth-authenticated remote agents (Claude Desktop, ChatGPT, Perplexity over HTTP MCP) now see `items` on every array param.
+- `src/core/minions/tools/brain-allowlist.ts:84-97` swaps the inline destructure inside `paramsToInputSchema()` for `paramDefToSchema(v)`. Preserves the `required:` aggregation at `:95` (that's at the tool-def level, not the param level — codex explicitly out-of-scope).
+- `src/core/operations.ts:2699` adds `items: { type: 'string' }` to `entity_hints`. The handler at `:2733` already coerced with `Array.isArray(...)` so runtime shape is unchanged; only the schema declaration was broken.
+- `src/core/resolvers/builtin/x-api/handle-to-tweet.ts:102` replaces `candidates: { type: 'array' }` with full-spec items matching the `XTweetCandidate` interface 10 lines above, including `required: [all 5 fields]` and `additionalProperties: false` (D5 decision: without `required`, schema permits `{}`).
+- `src/core/git-remote.ts:29-44` splits `GIT_SSRF_FLAGS` (3 `-c` config flags, spread BEFORE the verb) from new exported `GIT_SSRF_SUBCOMMAND_FLAGS = ['--no-recurse-submodules']` (spread AFTER). `cloneRepo:156` and `pullRepo:182` now spread the new constant in subcommand position.
+- `test/mcp-tool-defs.test.ts` adds: (a) explicit fixture for `extract_facts.entity_hints.items.type === 'string'`, (b) synthetic nested-array ParamDef pinning `items.items.type` recursion, (c) `findArrayWithoutItems` walker that fails the suite with a property path on any `type: 'array'` lacking `items.type`. `legacyInlineMap` reference mirrors the new recursive helper.
+- `test/git-remote.test.ts` snapshot split: `GIT_SSRF_FLAGS` pins to 3 elements (no submodules), new `GIT_SSRF_SUBCOMMAND_FLAGS` snapshot pins to 1. `cloneRepo` + `pullRepo` argv tests assert `indexOf(--no-recurse-submodules) > indexOf(verb)` — position-anchored regression guard. Pre-v0.35.3 the existing test at `:233` baked the bug in via `argv.slice(0, GIT_SSRF_FLAGS.length)`.
+- `test/resolvers.test.ts` (existing file) gets a new `describe` block. Explicitly imports `xHandleToTweetResolver` + `urlReachableResolver` and walks both `inputSchema` AND `outputSchema` recursively. Negative coverage guard asserts `builtins.length >= 2` so a future autoformatter dropping the array can't silently turn the walk into a no-op.
+- `test/e2e/zeroentropy-live.test.ts` raises rerank test timeouts to handle ZeroEntropy's cold-start latency (observed ~5-6s on Tier 2 runners; subsequent calls < 500ms). Passes explicit `timeoutMs: 25000` to each rerank() call and a 30s bun:test per-test timeout. Production `DEFAULT_RERANK_TIMEOUT_MS = 5000` in `gateway.ts` stays put for the search hot path.
+- Contributed by: @DmitryBMsk (PR #910 — deepest variant of the entity_hints + candidates double-fix); cleanest naming from PR #846 (`GIT_SSRF_SUBCOMMAND_FLAGS`). 17 superseded PRs being closed with thank-you notes after this merge: #1028, #1023, #1020, #999, #985, #980, #979, #963, #904, #863, #862, #847, #846, #842, #832, #812.
+
+## To take advantage of v0.35.3.0
+
+`gbrain upgrade` is all you need. There's no schema migration, no config change, no manual action.
+
+1. Run `gbrain upgrade` — the new tool schemas reach your MCP clients on next restart.
+2. Restart your MCP clients (Claude Code, Claude Desktop, ChatGPT, Cursor, etc.) so they re-fetch `tools/list`.
+3. Verify `extract_facts` works from strict-mode agents:
+   ```bash
+   gbrain --tools-json | jq '.tools[] | select(.name == "extract_facts") | .inputSchema.properties.entity_hints'
+   ```
+   Should show `{"type":"array","items":{"type":"string"},...}` — pre-fix, `items` was missing.
+4. If you use remote-source git clones (`gbrain config get sources` shows any with a remote URL), they'll start working again on the next `gbrain sync`. Pre-fix, every clone of a remote-source repository was silently failing with git exit 129.
+
+If `gbrain doctor` flags anything after upgrade, please file an issue with the doctor output. This was a 7-month silent bug — the doctor's structural guards should catch the next one before it ships.
+## [0.35.1.1] - 2026-05-16
+
+**Fix wave: `gbrain eval longmemeval` actually runs against the public _s split.**
+
+A pre-spend smoke for the upcoming embedder shootout caught three tightly-coupled bugs that would have made all 7 cells fail. Shipping the fixes before anyone burns judge tokens.
+
+### What this fixes
+
+**The longmemeval adapter accepts the public _s dataset shape.** Pre-v0.35.1.1 assumed every dataset used the oracle `{session_id, turns}` shape, but the HuggingFace _s split serializes sessions as a parallel `haystack_session_ids: string[]` + a `LongMemEvalTurn[][]` (each inner array is one session's turns directly). The old adapter crashed `session.turns is undefined` on every question. New `normalizeSessions` helper accepts both shapes, mirroring the proven path in `gbrain-evals/eval/runner/longmemeval.ts`.
+
+**Session IDs that contain underscores or uppercase letters now produce valid slugs.** The _s split's IDs look like `sharegpt_yywfIrx_0`, both of which the v0.32.7 CJK-wave slug validator rejects. New `sanitizeSessionIdForSlug` lowercases and rewrites disallowed chars to `-`. The frontmatter `session_id:` line still carries the original verbatim, so downstream JSONL emit + LongMemEval correctness scoring work unchanged — only the slug gets rewritten to satisfy the validator.
+
+**`gbrain eval longmemeval` now configures the AI gateway before running.** v0.28.8 deliberately skipped `connectEngine()` for this subcommand so it would run on machines without a configured brain. Side effect: the gateway never got configured either, so the first embed call inside `importFromContent` crashed with "AI gateway is not configured." Fix: explicit `configureGateway()` before `runEvalLongMemEval`, reading `~/.gbrain/config.json` if present and falling back to env vars (`GBRAIN_EMBEDDING_MODEL`, `GBRAIN_EMBEDDING_DIMENSIONS`, etc.) when there's no config — preserving the "runs on a fresh machine" property.
+
+### Itemized changes
+
+- `src/eval/longmemeval/adapter.ts`: new `normalizeSessions` accepts both oracle (`{session_id, turns}`) and _s (`Turn[][]` + parallel `haystack_session_ids`) shapes; new `sanitizeSessionIdForSlug` rewrites underscores + uppercase + other disallowed chars to `-`; `LongMemEvalQuestion.haystack_sessions` typed as the union, `haystack_session_ids?: string[]` field added with documentation.
+- `src/cli.ts`: gateway configure step added before the `eval longmemeval` dispatch path, gated on `--help` short-circuit so help still works without a configured gateway.
+- `test/eval-longmemeval.test.ts`: 2 new regression cases pinning the _s shape normalization end-to-end (slugs sanitized, frontmatter preserves original session_id, dates flow through) and the missing-haystack_session_ids fallback to synthesized `lme_<question_id>_<i>` ids.
+
+## To take advantage of v0.35.1.1
+
+`gbrain upgrade` handles the fix transparently. Re-run any LongMemEval-against-_s-split commands that had been crashing.
+
+1. **Upgrade:**
+   ```bash
+   gbrain upgrade
+   ```
+2. **(If you hit the prior crash) re-run with `--resume-from` to skip any questions already scored:**
+   ```bash
+   gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s.json \
+     --output results.jsonl --resume-from results.jsonl --mode tokenmax
+   ```
+3. **No migration, no schema change, no breaking semantics.**
 
 ## [0.35.1.0] - 2026-05-15
 

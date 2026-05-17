@@ -26,6 +26,7 @@ import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { operations } from '../../operations.ts';
 import type { Operation, OperationContext } from '../../operations.ts';
+import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
 
 /**
@@ -85,12 +86,7 @@ function paramsToInputSchema(op: Operation): Record<string, unknown> {
   return {
     type: 'object' as const,
     properties: Object.fromEntries(
-      Object.entries(op.params).map(([k, v]) => [k, {
-        type: v.type === 'array' ? 'array' : v.type,
-        ...(v.description ? { description: v.description } : {}),
-        ...(v.enum ? { enum: v.enum } : {}),
-        ...(v.items ? { items: { type: v.items.type } } : {}),
-      }]),
+      Object.entries(op.params).map(([k, v]) => [k, paramDefToSchema(v)]),
     ),
     required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k),
   };
