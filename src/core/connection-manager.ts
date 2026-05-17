@@ -192,6 +192,15 @@ export class ConnectionManager {
   private _killSwitch: boolean;
   private _directUrl: string | null;
   private _isSupabase: boolean;
+  /**
+   * Set by disconnect() so any in-flight initDirectPool() chain that
+   * resolves AFTER disconnect can detect the cancellation, close its
+   * now-orphaned pool, and skip writing to `_directPool`. Without this,
+   * the .then() callback in getDirectPool() resurrects `_directPool`
+   * after disconnect has nulled it — the pool comes back to life and
+   * leaks its underlying socket.
+   */
+  private _disconnected = false;
 
   constructor(opts: ConnectionManagerOpts) {
     this.opts = opts;
@@ -302,9 +311,23 @@ export class ConnectionManager {
 
   private async getDirectPool(): Promise<Sql> {
     if (this._directPool) return this._directPool;
+    if (this._disconnected) {
+      // Post-disconnect: do not silently re-init. Callers that need a
+      // fresh pool after disconnect should construct a new manager.
+      throw new Error('connection-manager: disconnect() was called; create a new instance to reconnect');
+    }
     // A1: cache the Promise so concurrent first callers await the same init.
     if (!this._directInit) {
       this._directInit = this.initDirectPool().then(pool => {
+        // Disconnect may have raced ahead of init. If so, the field this
+        // promise was meant to populate is no longer ours to write — close
+        // the now-orphaned pool so its socket doesn't leak, and resolve
+        // null so any other awaiter throws the same "disconnected" error
+        // the disconnect path would have produced.
+        if (this._disconnected) {
+          pool.end().catch(() => { /* best-effort cleanup */ });
+          return null;
+        }
         this._directPool = pool;
         return pool;
       }).catch(err => {
@@ -315,7 +338,8 @@ export class ConnectionManager {
     }
     const pool = await this._directInit;
     if (!pool) {
-      // Defensive — initDirectPool should have thrown.
+      // Defensive — initDirectPool should have thrown, OR disconnect()
+      // raced ahead of us and the .then callback closed the orphan.
       throw new Error('connection-manager: direct pool init returned null');
     }
     return pool;
@@ -394,11 +418,30 @@ export class ConnectionManager {
    * (db.ts singleton path). Direct pool is always ours.
    */
   async disconnect(): Promise<void> {
+    // Flip _disconnected FIRST so any in-flight initDirectPool().then()
+    // callback that races with us sees the cancellation and closes its
+    // orphan pool instead of writing to _directPool after we null it.
+    this._disconnected = true;
+
+    // Capture and clear the pending init reference unconditionally —
+    // previously this was nested inside `if (this._directPool)`, which
+    // meant a disconnect during init left _directInit pointing at a
+    // stale, settled Promise that would never be retried.
+    const pendingInit = this._directInit;
+    this._directInit = null;
+
     if (this._directPool) {
       try { await this._directPool.end(); } catch { /* idempotent */ }
       this._directPool = null;
-      this._directInit = null;
     }
+
+    // Wait for any in-flight init to settle. The .then callback above
+    // already closes its orphan pool when _disconnected is true, so
+    // we just need to drain the promise so the close call actually fires.
+    if (pendingInit) {
+      try { await pendingInit; } catch { /* init may have rejected; nothing to clean */ }
+    }
+
     if (this._readPool && !this._readPoolOwnedExternally) {
       try { await this._readPool.end(); } catch { /* idempotent */ }
       this._readPool = null;
