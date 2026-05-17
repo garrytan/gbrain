@@ -335,14 +335,36 @@ export async function runMergePhantomsCore(
       if (existsSync(phantomFile)) {
         try {
           const onDisk = readFileSync(phantomFile, 'utf-8');
-          const { parseFactsFence } = await import('../core/facts-fence.ts');
+          const { parseFactsFence, FACTS_FENCE_BEGIN } = await import('../core/facts-fence.ts');
+          const hasFenceMarkers = onDisk.includes(FACTS_FENCE_BEGIN);
           const parsed = parseFactsFence(onDisk);
           const activeFenceCount = parsed.facts.filter(f => f.active).length;
-          if (activeFenceCount > facts_moved) {
+          // Drift check only applies when the file HAS a machine fence
+          // (pre-v0.32.2 phantoms without any fence are legacy state,
+          // not drift). With a fence present, mismatch in EITHER
+          // direction signals stale state and we skip:
+          //   - disk > DB: unreconciled facts pending extract_facts.
+          //   - disk < DB: user struck/forgot rows; DB still stale.
+          //   - disk == DB count but different tuples: rare content
+          //     drift (covered by the tuple-match check below).
+          let driftDetected = false;
+          if (hasFenceMarkers) {
+            driftDetected = activeFenceCount !== facts_moved;
+            if (!driftDetected && activeFenceCount > 0) {
+              const dbTuples = new Set(
+                phantomFacts.map(f => `${f.fact}|${f.kind}|${f.source}`),
+              );
+              const fenceMissingFromDb = parsed.facts
+                .filter(f => f.active)
+                .some(f => !dbTuples.has(`${f.claim}|${f.kind}|${f.source ?? ''}`));
+              if (fenceMissingFromDb) driftDetected = true;
+            }
+          }
+          if (driftDetected) {
             skipped.push({ phantom: row.slug, canonical, skipped: 'fence_drift' });
             // eslint-disable-next-line no-console
             console.warn(
-              `[merge-phantoms] phantom ${row.slug} has ${activeFenceCount} active fact(s) in its on-disk fence but only ${facts_moved} active DB row(s). Skipped to prevent data loss. Run \`gbrain dream --phase extract_facts\` to reconcile, then re-run merge-phantoms.`,
+              `[merge-phantoms] phantom ${row.slug} has fence/DB drift (${activeFenceCount} active fence row(s) vs ${facts_moved} DB row(s)). Skipped to prevent data loss. Run \`gbrain dream --phase extract_facts\` to reconcile, then re-run merge-phantoms.`,
             );
             hasFenceDrift = true;
           }

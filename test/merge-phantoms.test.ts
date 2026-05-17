@@ -257,6 +257,49 @@ describe('merge-phantoms — runMergePhantomsCore', () => {
     expect(body).toContain('Fact two about Alice.');
   });
 
+  itHomed('skips fence-drift when DB has MORE active rows than the disk fence (round-30 P2)', async () => {
+    // Codex round-30 P2: bi-directional drift. User struck out 2 of
+    // 3 fence rows via `gbrain forget` (or hand-editing the .md)
+    // but autopilot hasn't run extract_facts yet, so the DB still
+    // has 3 active rows. Migrating from DB would resurrect the
+    // user's strikethroughs. Skip.
+    await seedPage('drift-reverse', 'person');
+    await seedPage('people/drift-reverse-canonical', 'person');
+    await seedChunks('people/drift-reverse-canonical', 3);
+    await seedFact('drift-reverse', 'DB fact 1.');
+    await seedFact('drift-reverse', 'DB fact 2.');
+    await seedFact('drift-reverse', 'DB fact 3.');
+
+    // Disk fence: only one active row; two are strikethrough.
+    const phantomFile = join(brainDir, 'drift-reverse.md');
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    mkdirSync(dirname(phantomFile), { recursive: true });
+    writeFileSync(
+      phantomFile,
+      [
+        '---', 'type: person', 'title: drift-reverse', 'slug: drift-reverse', '---',
+        '', '# drift-reverse', '', '## Facts', '',
+        '<!--- gbrain:facts:begin -->',
+        '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+        '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
+        '| 1 | DB fact 1. | fact | 1.0 | private | medium | 2026-05-01 | | test | |',
+        '| 2 | ~~DB fact 2.~~ | fact | 1.0 | private | medium | 2026-05-01 | | test | forgotten: user struck |',
+        '| 3 | ~~DB fact 3.~~ | fact | 1.0 | private | medium | 2026-05-01 | | test | forgotten: user struck |',
+        '<!--- gbrain:facts:end -->', '',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await runMergePhantomsCore(engine as unknown as BrainEngine, {
+      sourceId: 'default',
+      dryRun: false,
+    });
+
+    expect(result.merged.length).toBe(0);
+    expect(result.skipped.length).toBe(1);
+    expect(result.skipped[0].skipped).toBe('fence_drift');
+  });
+
   itHomed('skips fence-drift when DB has some facts but disk fence has MORE (round-29 P1)', async () => {
     // Codex round-29 P1: a phantom with 1 DB row but 3 active fence
     // rows on disk would previously migrate the 1 and unlink the
