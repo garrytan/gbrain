@@ -162,7 +162,7 @@ gbrain code-refs BrainEngine                # all reference sites
 gbrain query "how does N+1 handling work" --near-symbol BrainEngine.searchKeyword --walk-depth 2
 ```
 
-All five auto-emit JSON on non-TTY (gh-CLI convention) so a GStack subagent shelling out via bash gets a clean parseable response. Run `gbrain sources add <repo> --strategy code` to index a repo, then your agent's brain-first lookup covers code, not just markdown. ([Cathedral II release notes](CHANGELOG.md#0210---2026-04-25))
+All five auto-emit JSON on non-TTY (gh-CLI convention) so a GStack subagent shelling out via bash gets a clean parseable response. Add a repo with `gbrain sources add <id> --path <path>`, then run `gbrain sync --strategy code` to index it — your agent's brain-first lookup covers code, not just markdown. ([Cathedral II release notes](CHANGELOG.md#0210---2026-04-25))
 
 ## The 34 Skills
 
