@@ -96,18 +96,13 @@ describe('Mars prompt — structural guarantees', () => {
     }
   });
 
-  it('does NOT claim multilingual capability (gated on multilingual eval landing)', () => {
-    // The Mars persona is English-only until an eval verifies cross-language
-    // behavior. Restoring the claim requires the eval to ship first.
-    // Match either the explicit "multilingual" word OR phrasings like
-    // "switch languages" / "speak Spanish" / "speak Chinese" / "你好" etc.
-    expect(MARS.prompt).not.toMatch(/multilingual/i);
-    expect(MARS.prompt).not.toMatch(/switch languages naturally/i);
-    expect(MARS.prompt).not.toMatch(/speaks [A-Z][a-z]+ese/i);
-  });
-
-  it('explicit English-only language rule is present', () => {
-    expect(MARS.prompt).toMatch(/English/);
+  it('declares cross-lingual capability with English bias', () => {
+    // Mars's voice (Orus) supports multiple languages. The persona explicitly
+    // enables cross-language switching. Verified by mars-multilingual.jsonl
+    // eval fixtures (in tests/evals/fixtures/).
+    expect(MARS.prompt).toMatch(/cross-lingual/i);
+    expect(MARS.prompt).toMatch(/Mandarin|Spanish|French|Japanese|Korean/);
+    expect(MARS.prompt).toMatch(/follow the speaker|default to English/i);
   });
 
   it('declares Venus owns logistics (Venus territory marker)', () => {

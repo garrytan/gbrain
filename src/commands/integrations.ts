@@ -1014,7 +1014,319 @@ interface InstallOpts {
   refresh?: boolean;
   overwrite?: boolean;
   dryRun?: boolean;
+  autoMode?: 'keep-mine' | 'take-theirs' | null;
 }
+
+// Per-file refresh classification per recipes/agent-voice/install/refresh-algorithm.md.
+type FileRefreshState =
+  | 'unchanged-identical'
+  | 'unchanged-stale'
+  | 'locally-modified'
+  | 'source-deleted'
+  | 'host-deleted'
+  | 'new-in-manifest';
+
+interface RefreshClassification {
+  src: string;
+  target: string;
+  state: FileRefreshState;
+  recordedSha?: string;
+  currentSrcSha?: string;
+  currentHostSha?: string;
+}
+
+/**
+ * Compute SHA-256 of a string buffer.
+ */
+function sha256OfBuffer(buf: Buffer): string {
+  const h = createHash('sha256');
+  h.update(buf);
+  return h.digest('hex');
+}
+
+/**
+ * Three-way classification for refresh mode.
+ *
+ * For every manifest entry + every host file:
+ *   - identical:        host hash == src hash → no-op
+ *   - stale:            host hash == recorded hash && host hash != src hash → safe to update
+ *   - locally-modified: host hash != recorded hash && host hash != src hash → operator edited
+ *   - source-deleted:   manifest dropped this file; host still has it
+ *   - host-deleted:     manifest has it; host file missing
+ *   - new-in-manifest:  file in manifest, not in prior install record
+ */
+function classifyForRefresh(
+  manifestEntries: ManifestFileEntry[],
+  recordedFiles: InstalledFileRecord[],
+  recipeBundleRoot: string,
+  resolvedTarget: string,
+): RefreshClassification[] {
+  const recordedByTarget = new Map<string, InstalledFileRecord>();
+  for (const r of recordedFiles) recordedByTarget.set(r.target, r);
+
+  const classifications: RefreshClassification[] = [];
+  const manifestTargets = new Set<string>();
+
+  // Pass 1: walk current manifest entries.
+  for (const entry of manifestEntries) {
+    manifestTargets.add(entry.target);
+    const srcPath = pathResolve(recipeBundleRoot, entry.src);
+    const targetPath = pathResolve(resolvedTarget, entry.target);
+
+    let currentSrcSha: string | undefined;
+    try {
+      currentSrcSha = sha256OfBuffer(readFileSync(srcPath));
+    } catch {
+      // src missing? Skip — this would mean a manifest pointing at a missing file in gbrain.
+      continue;
+    }
+
+    let currentHostSha: string | undefined;
+    let hostExists = false;
+    try {
+      currentHostSha = sha256OfBuffer(readFileSync(targetPath));
+      hostExists = true;
+    } catch {
+      hostExists = false;
+    }
+
+    const recorded = recordedByTarget.get(entry.target);
+
+    if (!hostExists) {
+      classifications.push({ src: entry.src, target: entry.target, state: 'host-deleted', recordedSha: recorded?.sha256, currentSrcSha });
+      continue;
+    }
+
+    if (!recorded) {
+      classifications.push({ src: entry.src, target: entry.target, state: 'new-in-manifest', currentSrcSha, currentHostSha });
+      continue;
+    }
+
+    if (currentHostSha === currentSrcSha) {
+      classifications.push({ src: entry.src, target: entry.target, state: 'unchanged-identical', recordedSha: recorded.sha256, currentSrcSha, currentHostSha });
+    } else if (currentHostSha === recorded.sha256) {
+      classifications.push({ src: entry.src, target: entry.target, state: 'unchanged-stale', recordedSha: recorded.sha256, currentSrcSha, currentHostSha });
+    } else {
+      classifications.push({ src: entry.src, target: entry.target, state: 'locally-modified', recordedSha: recorded.sha256, currentSrcSha, currentHostSha });
+    }
+  }
+
+  // Pass 2: anything in recorded but NOT in current manifest = source-deleted.
+  for (const r of recordedFiles) {
+    if (!manifestTargets.has(r.target)) {
+      classifications.push({ src: r.src, target: r.target, state: 'source-deleted', recordedSha: r.sha256 });
+    }
+  }
+
+  return classifications;
+}
+
+/**
+ * Append one event to the refresh transaction journal.
+ */
+function appendRefreshLog(targetVoiceAgentDir: string, event: object) {
+  try {
+    const logPath = pathResolve(targetVoiceAgentDir, '.gbrain-source.refresh.log');
+    fsAppendFileSync(logPath, JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
+  } catch {
+    /* non-fatal */
+  }
+}
+
+/**
+ * Refresh mode: read `.gbrain-source.json`, classify, apply decisions.
+ */
+async function refreshRecipeIntoHostRepo(
+  recipeId: string,
+  opts: InstallOpts,
+): Promise<{ classifications: RefreshClassification[]; applied: number; manifestPath: string }> {
+  const recipe = findRecipe(recipeId);
+  if (!recipe) throw new Error(`recipe not found: ${recipeId}`);
+  if (recipe.frontmatter.install_kind !== 'copy-into-host-repo') {
+    throw new Error(`recipe ${recipeId} is not copy-into-host-repo (install_kind=${recipe.frontmatter.install_kind})`);
+  }
+
+  const recipeBundleRoot = pathResolve(
+    pathDirname(pathResolve(__dirname, '..', '..', 'recipes', recipe.filename)),
+    recipe.filename.replace(/\.md$/, ''),
+  );
+  const manifestPath = join(recipeBundleRoot, 'install', 'manifest.json');
+  const manifest: InstallManifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+
+  let resolvedTarget: string;
+  try {
+    resolvedTarget = realpathSync(opts.target);
+  } catch {
+    throw new Error(`target repo does not exist: ${opts.target}`);
+  }
+
+  const sourceFilePath = pathResolve(
+    resolvedTarget,
+    manifest.target_root_relative_to_host_repo,
+    '.gbrain-source.json',
+  );
+  if (!existsSync(sourceFilePath)) {
+    throw new Error(`.gbrain-source.json not found at ${sourceFilePath} — this target was never installed via copy-into-host-repo; run without --refresh first`);
+  }
+
+  let recorded: GbrainSourceJson;
+  try {
+    recorded = JSON.parse(readFileSync(sourceFilePath, 'utf8'));
+  } catch (err) {
+    throw new Error(`failed to parse .gbrain-source.json: ${(err as Error).message}`);
+  }
+
+  if (recorded.recipe !== recipeId) {
+    throw new Error(`.gbrain-source.json recipe="${recorded.recipe}" does not match requested recipe="${recipeId}"`);
+  }
+
+  const allManifestEntries: ManifestFileEntry[] = [...(manifest.files || []), ...(manifest.skills || [])];
+  const classifications = classifyForRefresh(allManifestEntries, recorded.files || [], recipeBundleRoot, resolvedTarget);
+
+  // Print classification summary.
+  const counts: Record<string, number> = {};
+  for (const c of classifications) counts[c.state] = (counts[c.state] || 0) + 1;
+  console.log(`[refresh] ${recipeId} → ${resolvedTarget}`);
+  for (const [state, n] of Object.entries(counts)) {
+    console.log(`  ${state}: ${n}`);
+  }
+
+  if (opts.dryRun) {
+    console.log('[refresh] DRY RUN — no files written. Per-file detail:');
+    for (const c of classifications) {
+      console.log(`  [${c.state}] ${c.target}`);
+    }
+    return { classifications, applied: 0, manifestPath };
+  }
+
+  const targetVoiceAgentDir = pathResolve(resolvedTarget, manifest.target_root_relative_to_host_repo);
+  appendRefreshLog(targetVoiceAgentDir, { event: 'refresh_started', recipe: recipeId, counts });
+
+  let applied = 0;
+  const updatedFiles: InstalledFileRecord[] = [];
+
+  for (const c of classifications) {
+    const srcAbs = pathResolve(recipeBundleRoot, c.src);
+    const targetAbs = pathResolve(resolvedTarget, c.target);
+    const manifestEntry = allManifestEntries.find((e) => e.target === c.target);
+
+    switch (c.state) {
+      case 'unchanged-identical': {
+        // No-op. Carry forward the recorded entry.
+        const r = recorded.files.find((f) => f.target === c.target);
+        if (r) updatedFiles.push(r);
+        break;
+      }
+      case 'unchanged-stale': {
+        // Operator's file matches the recorded SHA; source has moved. Auto-update.
+        copyFileSync(srcAbs, targetAbs);
+        if (manifestEntry?.mode) {
+          try { chmodSync(targetAbs, parseInt(manifestEntry.mode, 8)); } catch { /* ignore */ }
+        }
+        const newSha = sha256OfBuffer(readFileSync(srcAbs));
+        updatedFiles.push({ src: c.src, target: c.target, sha256: newSha, mode: manifestEntry?.mode || '0644' });
+        applied++;
+        appendRefreshLog(targetVoiceAgentDir, { event: 'updated', src: c.src, target: c.target, decision: 'take-theirs' });
+        break;
+      }
+      case 'locally-modified': {
+        const decision = opts.autoMode || 'keep-mine'; // Default to safety: preserve local edit.
+        if (decision === 'take-theirs') {
+          copyFileSync(srcAbs, targetAbs);
+          if (manifestEntry?.mode) {
+            try { chmodSync(targetAbs, parseInt(manifestEntry.mode, 8)); } catch { /* ignore */ }
+          }
+          const newSha = sha256OfBuffer(readFileSync(srcAbs));
+          updatedFiles.push({ src: c.src, target: c.target, sha256: newSha, mode: manifestEntry?.mode || '0644' });
+          applied++;
+          appendRefreshLog(targetVoiceAgentDir, { event: 'overwrote_local', src: c.src, target: c.target, decision: 'take-theirs' });
+        } else {
+          // keep-mine — the operator's file stays; we update the recorded SHA to their current host SHA
+          // so future refreshes don't re-flag the same file until either side changes again.
+          updatedFiles.push({ src: c.src, target: c.target, sha256: c.currentHostSha!, mode: manifestEntry?.mode || '0644' });
+          appendRefreshLog(targetVoiceAgentDir, { event: 'preserved_local', src: c.src, target: c.target, decision: 'keep-mine' });
+        }
+        console.log(`  [locally-modified] ${c.target} → ${decision}`);
+        break;
+      }
+      case 'host-deleted': {
+        // Operator removed the file. Offer to restore (auto-mode 'take-theirs') or leave it gone (default).
+        const decision = opts.autoMode === 'take-theirs' ? 'restore' : 'leave-deleted';
+        if (decision === 'restore') {
+          mkdirSync(pathDirname(targetAbs), { recursive: true });
+          copyFileSync(srcAbs, targetAbs);
+          if (manifestEntry?.mode) {
+            try { chmodSync(targetAbs, parseInt(manifestEntry.mode, 8)); } catch { /* ignore */ }
+          }
+          const newSha = sha256OfBuffer(readFileSync(srcAbs));
+          updatedFiles.push({ src: c.src, target: c.target, sha256: newSha, mode: manifestEntry?.mode || '0644' });
+          applied++;
+          appendRefreshLog(targetVoiceAgentDir, { event: 'restored', src: c.src, target: c.target, decision: 'restore' });
+        } else {
+          appendRefreshLog(targetVoiceAgentDir, { event: 'host_deleted_left_alone', src: c.src, target: c.target });
+          // Don't carry forward into updatedFiles — the file is genuinely gone.
+        }
+        console.log(`  [host-deleted] ${c.target} → ${decision}`);
+        break;
+      }
+      case 'source-deleted': {
+        // gbrain reference removed this file; offer cleanup with --auto take-theirs.
+        const decision = opts.autoMode === 'take-theirs' ? 'cleanup' : 'leave-orphan';
+        if (decision === 'cleanup') {
+          try {
+            // Just unlink — keep things conservative.
+            const unlinkSync = require('node:fs').unlinkSync;
+            unlinkSync(targetAbs);
+            applied++;
+            appendRefreshLog(targetVoiceAgentDir, { event: 'removed_orphan', target: c.target, decision: 'cleanup' });
+          } catch (err) {
+            console.warn(`  [source-deleted] failed to remove orphan ${c.target}: ${(err as Error).message}`);
+          }
+        } else {
+          appendRefreshLog(targetVoiceAgentDir, { event: 'orphan_left_alone', target: c.target });
+        }
+        console.log(`  [source-deleted] ${c.target} → ${decision}`);
+        break;
+      }
+      case 'new-in-manifest': {
+        // Wasn't in the recorded manifest; was added in this refresh. Default: install it.
+        mkdirSync(pathDirname(targetAbs), { recursive: true });
+        copyFileSync(srcAbs, targetAbs);
+        if (manifestEntry?.mode) {
+          try { chmodSync(targetAbs, parseInt(manifestEntry.mode, 8)); } catch { /* ignore */ }
+        }
+        const newSha = sha256OfBuffer(readFileSync(srcAbs));
+        updatedFiles.push({ src: c.src, target: c.target, sha256: newSha, mode: manifestEntry?.mode || '0644' });
+        applied++;
+        appendRefreshLog(targetVoiceAgentDir, { event: 'added_new', src: c.src, target: c.target });
+        break;
+      }
+    }
+  }
+
+  // Re-write .gbrain-source.json with the updated SHAs.
+  const gbrainVersion = (() => {
+    try {
+      const pkgPath = pathResolve(__dirname, '..', '..', 'package.json');
+      return JSON.parse(readFileSync(pkgPath, 'utf8')).version || 'unknown';
+    } catch { return 'unknown'; }
+  })();
+
+  const updatedRecord: GbrainSourceJson = {
+    recipe: recipeId,
+    gbrain_version: gbrainVersion,
+    install_kind: 'copy-into-host-repo',
+    copied_at: new Date().toISOString(),
+    files: updatedFiles,
+  };
+  const fsModule = require('node:fs');
+  fsModule.writeFileSync(sourceFilePath, JSON.stringify(updatedRecord, null, 2) + '\n');
+  appendRefreshLog(targetVoiceAgentDir, { event: 'refresh_complete', applied });
+
+  return { classifications, applied, manifestPath };
+}
+
+export { refreshRecipeIntoHostRepo, classifyForRefresh };
 
 export async function installRecipeIntoHostRepo(
   recipeId: string,
@@ -1156,8 +1468,17 @@ async function cmdInstall(args: string[]): Promise<void> {
       opts.overwrite = true;
     } else if (arg === '--dry-run' || arg === '-n') {
       opts.dryRun = true;
+    } else if (arg === '--auto') {
+      const mode = args[++i];
+      if (mode !== 'keep-mine' && mode !== 'take-theirs') {
+        console.error(`--auto must be 'keep-mine' or 'take-theirs', got: ${mode}`);
+        process.exit(2);
+      }
+      opts.autoMode = mode;
     } else if (arg === '--help' || arg === '-h') {
-      console.log('Usage: gbrain integrations install <recipe-id> --target <host-repo-path> [--refresh] [--overwrite] [--dry-run]');
+      console.log('Usage:');
+      console.log('  gbrain integrations install <recipe-id> --target <host-repo-path> [--overwrite] [--dry-run]');
+      console.log('  gbrain integrations install <recipe-id> --target <host-repo-path> --refresh [--auto keep-mine|take-theirs] [--dry-run]');
       return;
     } else if (!recipeId && !arg.startsWith('-')) {
       recipeId = arg;
@@ -1175,17 +1496,22 @@ async function cmdInstall(args: string[]): Promise<void> {
       process.exit(2);
     }
   }
-  if (opts.refresh) {
-    console.error('--refresh is not yet implemented; see recipes/<id>/install/refresh-algorithm.md');
-    process.exit(2);
-  }
 
   try {
-    const { written, manifestPath } = await installRecipeIntoHostRepo(recipeId, opts);
-    console.log(`[install] ${recipeId}: copied ${written} files into ${realpathSync(opts.target)}`);
-    console.log(`[install] manifest: ${manifestPath}`);
-    if (!opts.dryRun) {
-      console.log('[install] next steps: see recipes/' + recipeId + '/install/post-install-hint.md');
+    if (opts.refresh) {
+      const { applied, manifestPath } = await refreshRecipeIntoHostRepo(recipeId, opts);
+      console.log(`[refresh] ${recipeId}: applied ${applied} changes to ${realpathSync(opts.target)}`);
+      console.log(`[refresh] manifest: ${manifestPath}`);
+      if (opts.dryRun) {
+        console.log('[refresh] DRY RUN — no files written.');
+      }
+    } else {
+      const { written, manifestPath } = await installRecipeIntoHostRepo(recipeId, opts);
+      console.log(`[install] ${recipeId}: copied ${written} files into ${realpathSync(opts.target)}`);
+      console.log(`[install] manifest: ${manifestPath}`);
+      if (!opts.dryRun) {
+        console.log('[install] next steps: see recipes/' + recipeId + '/install/post-install-hint.md');
+      }
     }
   } catch (err) {
     console.error(`[install] FAIL: ${(err as Error).message}`);

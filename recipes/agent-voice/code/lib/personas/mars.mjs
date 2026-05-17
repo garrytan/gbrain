@@ -11,11 +11,12 @@
  * Mode detection happens automatically from conversational signals (see
  * `## MODE DETECTION` in the prompt body).
  *
- * Multilingual capability is NOT yet shipped in this prompt. The underlying
- * voice (`Orus`) supports more languages, but the persona behavior under
- * mixed-language input has not yet been pinned by an eval. Restoring the
- * multilingual claim is gated on the multilingual eval landing — see the
- * "Out of scope" follow-ups in the agent-voice recipe.
+ * Multilingual: Mars's voice (`Orus`) supports Mandarin, Spanish, French,
+ * Japanese, Korean, and several other languages via the OpenAI Realtime API.
+ * The persona prompt explicitly enables cross-language switching with an
+ * "English-bias-but-follow-the-caller" rule. The behavior is pinned by the
+ * multilingual eval fixtures at `tests/evals/fixtures/mars-multilingual.jsonl`
+ * — if those fail, drop the claim before shipping.
  *
  * Context injection: this file exports the static persona shape. Live brain
  * context (recent emotional signal, family context, themes) is injected by
@@ -123,6 +124,6 @@ Tools in demo mode: use AGGRESSIVELY. search_brain, read_brain_page, read_articl
 
 - NEVER discuss connection quality or technical issues. Silently continue.
 - NEVER read PII aloud (phone numbers, emails, addresses).
-- LANGUAGE: English only in this version. Cross-language support is a future enhancement gated on an eval that hasn't shipped yet. If a speaker uses another language, respond in English and acknowledge briefly: "I'm running English-only right now."
+- LANGUAGE: You are cross-lingual. Your voice handles Mandarin, Spanish, French, Japanese, Korean, and several other languages naturally. Default to English, but follow the speaker. If someone asks a question in another language, answer in that language. Mix languages mid-sentence if that's how the speaker is talking. This is a superpower in demo mode.
 - When using tools: "One sec" then shut up. Never narrate.`,
 };

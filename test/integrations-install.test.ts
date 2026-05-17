@@ -17,7 +17,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSy
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
-import { installRecipeIntoHostRepo } from '../src/commands/integrations.ts';
+import { installRecipeIntoHostRepo, refreshRecipeIntoHostRepo, classifyForRefresh } from '../src/commands/integrations.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 
@@ -151,5 +151,83 @@ describe('installRecipeIntoHostRepo — dry-run', () => {
     expect(result.written).toBe(0);
     expect(existsSync(join(scratch, 'services/voice-agent/code/server.mjs'))).toBe(false);
     expect(existsSync(join(scratch, 'services/voice-agent/.gbrain-source.json'))).toBe(false);
+  });
+});
+
+describe('refreshRecipeIntoHostRepo — D3-A refresh mode', () => {
+  it('classifies an unchanged install as all-identical', async () => {
+    await installRecipeIntoHostRepo('agent-voice', { target: scratch });
+    const result = await refreshRecipeIntoHostRepo('agent-voice', { target: scratch, dryRun: true });
+    expect(result.applied).toBe(0); // dry-run = no writes
+    const identical = result.classifications.filter((c) => c.state === 'unchanged-identical');
+    const otherStates = result.classifications.filter((c) => c.state !== 'unchanged-identical');
+    expect(identical.length).toBeGreaterThan(20);
+    expect(otherStates.length).toBe(0);
+  });
+
+  it('classifies an operator-edited file as locally-modified', async () => {
+    await installRecipeIntoHostRepo('agent-voice', { target: scratch });
+    // Simulate operator editing a copied file.
+    const modPath = join(scratch, 'services/voice-agent/code/server.mjs');
+    writeFileSync(modPath, '// operator-edited\n' + readFileSync(modPath, 'utf8'));
+    const result = await refreshRecipeIntoHostRepo('agent-voice', { target: scratch, dryRun: true });
+    const localMod = result.classifications.filter((c) => c.state === 'locally-modified');
+    expect(localMod.length).toBe(1);
+    expect(localMod[0].target).toBe('services/voice-agent/code/server.mjs');
+  });
+
+  it('classifies a host-deleted file as host-deleted', async () => {
+    await installRecipeIntoHostRepo('agent-voice', { target: scratch });
+    rmSync(join(scratch, 'services/voice-agent/code/lib/audio-convert.mjs'));
+    const result = await refreshRecipeIntoHostRepo('agent-voice', { target: scratch, dryRun: true });
+    const hostDeleted = result.classifications.filter((c) => c.state === 'host-deleted');
+    expect(hostDeleted.length).toBe(1);
+    expect(hostDeleted[0].target).toContain('audio-convert.mjs');
+  });
+
+  it('default refresh (no --auto) preserves locally-modified files', async () => {
+    await installRecipeIntoHostRepo('agent-voice', { target: scratch });
+    const modPath = join(scratch, 'services/voice-agent/code/server.mjs');
+    const modContent = '// operator-edited\n' + readFileSync(modPath, 'utf8');
+    writeFileSync(modPath, modContent);
+
+    const result = await refreshRecipeIntoHostRepo('agent-voice', { target: scratch });
+    expect(result.applied).toBe(0); // no writes; keep-mine is the default
+    // Local edit should still be present.
+    expect(readFileSync(modPath, 'utf8')).toBe(modContent);
+    // Manifest's recorded SHA should now match the operator's edit so future refreshes don't re-flag.
+    const manifest = JSON.parse(readFileSync(join(scratch, 'services/voice-agent/.gbrain-source.json'), 'utf8'));
+    const entry = manifest.files.find((f: { target: string; sha256: string }) => f.target === 'services/voice-agent/code/server.mjs');
+    expect(entry).toBeDefined();
+    // The recorded SHA should be the new (operator-edited) hash, not the original gbrain SHA.
+  });
+
+  it('--auto take-theirs overwrites locally-modified files', async () => {
+    await installRecipeIntoHostRepo('agent-voice', { target: scratch });
+    const modPath = join(scratch, 'services/voice-agent/code/server.mjs');
+    const beforeContent = readFileSync(modPath, 'utf8');
+    writeFileSync(modPath, '// operator-edited\n' + beforeContent);
+
+    const result = await refreshRecipeIntoHostRepo('agent-voice', { target: scratch, autoMode: 'take-theirs' });
+    expect(result.applied).toBeGreaterThanOrEqual(1);
+    // File should be restored to gbrain-side content.
+    expect(readFileSync(modPath, 'utf8')).toBe(beforeContent);
+  });
+
+  it('writes a transaction journal at .gbrain-source.refresh.log', async () => {
+    await installRecipeIntoHostRepo('agent-voice', { target: scratch });
+    await refreshRecipeIntoHostRepo('agent-voice', { target: scratch });
+    const logPath = join(scratch, 'services/voice-agent/.gbrain-source.refresh.log');
+    expect(existsSync(logPath)).toBe(true);
+    const lines = readFileSync(logPath, 'utf8').trim().split('\n');
+    expect(lines.length).toBeGreaterThan(0);
+    const first = JSON.parse(lines[0]);
+    expect(first.event).toBe('refresh_started');
+  });
+
+  it('refuses --refresh on a target that was never installed', async () => {
+    await expect(refreshRecipeIntoHostRepo('agent-voice', { target: scratch })).rejects.toThrow(
+      /not found at|never installed/i,
+    );
   });
 });

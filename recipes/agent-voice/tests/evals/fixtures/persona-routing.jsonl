@@ -1,0 +1,4 @@
+{"id": "route-01", "user_utterance": "talk to mars about how I'm feeling", "context": "Routing question — which persona handles this?", "axes": ["stays_in_character", "respects_mode_boundary"], "expected_persona": "mars"}
+{"id": "route-02", "user_utterance": "venus, what's on my calendar today?", "context": "Routing question", "axes": ["stays_in_character", "respects_mode_boundary", "brevity"], "expected_persona": "venus"}
+{"id": "route-03", "user_utterance": "Help me think through this product idea.", "context": "Ambiguous — Mars (depth) wins over Venus (logistics)", "axes": ["stays_in_character", "respects_mode_boundary"], "expected_persona": "mars"}
+{"id": "route-04", "user_utterance": "Send a quick text to Bob.", "context": "Logistics → Venus, but only if write opt-in", "axes": ["stays_in_character", "respects_mode_boundary", "honest_tool_posture"], "expected_persona": "venus"}

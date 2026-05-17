@@ -1,0 +1,58 @@
+{
+  "comment": "Post-install assertions for the voice-agent-install scenario. Soft-fail policy on the SEMANTIC tier (LLM-judge) and on upstream-API outages; hard-fail on missing files, missing resolver rows, PII leaks, or zero audio frames.",
+  "filesystem": {
+    "must_exist": [
+      "services/voice-agent/code/server.mjs",
+      "services/voice-agent/code/lib/personas/mars.mjs",
+      "services/voice-agent/code/lib/personas/venus.mjs",
+      "services/voice-agent/code/lib/personas/personas.mjs",
+      "services/voice-agent/code/lib/personas/private-name-blocklist.json",
+      "services/voice-agent/code/lib/context-builder.example.mjs",
+      "services/voice-agent/code/tools.mjs",
+      "services/voice-agent/code/public/call.html",
+      "services/voice-agent/.gbrain-source.json",
+      "services/voice-agent/package.json",
+      "skills/voice-persona-mars/SKILL.md",
+      "skills/voice-persona-venus/SKILL.md",
+      "skills/voice-post-call/SKILL.md"
+    ]
+  },
+  "gbrain_source_json": {
+    "recipe": "agent-voice",
+    "install_kind": "copy-into-host-repo",
+    "must_NOT_have_fields": ["upstream_repo", "imported_from", "source_url"],
+    "min_files_count": 20,
+    "files_entries_must_have": ["src", "target", "sha256", "mode"]
+  },
+  "resolver_rows": {
+    "file": "AGENTS.md",
+    "must_contain": ["voice-persona-mars", "voice-persona-venus", "voice-post-call"],
+    "preserves_existing_content": true
+  },
+  "privacy": {
+    "no_literal_banned_names_in_copied_tree": ["wintermute", "garry", "garrison", "solomon", "herbert", "/data/.openclaw/"],
+    "scan_paths": ["services/voice-agent/", "skills/voice-persona-mars/", "skills/voice-persona-venus/", "skills/voice-post-call/"]
+  },
+  "server": {
+    "health_endpoint": "/health",
+    "health_response": { "ok": true },
+    "max_startup_seconds": 30,
+    "default_port_env": "AGENT_VOICE_TEST_PORT",
+    "default_port": 8766
+  },
+  "audio_roundtrip": {
+    "blocks_ship": false,
+    "tier_a_hard_fail_on": {
+      "audioSendCount_eq": 0,
+      "audioPlayCount_eq": 0
+    },
+    "tier_b_hard_fail_on": {
+      "responseBlobSize_lt_bytes": 5120
+    },
+    "tier_c_soft_fail_only": true
+  },
+  "upstream_soft_fail_codes": {
+    "openai_realtime_http": [429, 500, 502, 503, 504],
+    "ws_close": [1011, 1013, 1006]
+  }
+}
