@@ -647,17 +647,26 @@ const put_page: Operation = {
     }
 
     // v0.31 (D23): facts compliance backstop. When an agent writes a page
-    // on a conversation-shape slug AND the body has substantive prose, fire
-    // a fact-extraction job into the bounded queue. Skipped on dry-run,
-    // dream-generated content (anti-loop), and non-eligible kinds (sync,
-    // ingest, file uploads, code pages). Never blocks the put_page response.
+    // on a conversation-shape slug AND the body has substantive prose,
+    // extract facts and reconcile against the hot-memory table. Skipped
+    // on dry-run, dream-generated content (anti-loop), and non-eligible
+    // kinds (sync, ingest, file uploads, code pages).
     // v0.31.2: routed through runFactsBackstop (PR1 commit 6) so put_page
     // and sync share the same eligibility/extract/dedup/insert pipeline.
-    // Queue mode preserves the prior fire-and-forget shape (caller's
-    // put_page response stays fast). Default 'all' notability filter
-    // (MEDIUM facts wait for the dream cycle but DO land via put_page,
-    // matching the pre-fix behavior on this surface).
-    let factsQueued: { queued: boolean } | { skipped: string } | undefined;
+    //
+    // gbrain.io fork patch: switched from 'queue' (fire-and-forget) to
+    // 'inline' so the put_page response carries real {inserted, duplicate,
+    // superseded, fact_ids} counts. The mothership is the only writer in
+    // our shape and wants per-page truthful metrics; flipping inline turns
+    // put_page into a single synchronous "store + extract + return" call,
+    // which is exactly the round-trip shape the proxy already holds open.
+    // Trade-off: put_page latency now includes the fact-extraction LLM
+    // call (~3-5s on a medium meeting page). Acceptable for mothership-
+    // driven crawl/ingest; would be wrong for any per-keystroke surface.
+    let factsBackstop:
+      | { inserted: number; duplicate: number; superseded: number; fact_ids: number[] }
+      | { skipped: string }
+      | undefined;
     try {
       const { runFactsBackstop } = await import('./facts/backstop.ts');
       const r = await runFactsBackstop(
@@ -672,23 +681,32 @@ const put_page: Operation = {
           sourceId: ctx.sourceId ?? 'default',
           sessionId: (ctx as { source_session?: string }).source_session ?? null,
           source: 'mcp:put_page',
-          mode: 'queue',
+          mode: 'inline',
         },
       );
-      if (r.mode === 'queue' && r.enqueued) {
-        factsQueued = { queued: true };
-      } else if (r.mode === 'queue' && r.skipped) {
-        // Preserve the pre-v0.31.2 response shape for MCP clients:
+      if (r.mode === 'inline' && r.skipped) {
+        // Preserve the bare-reason response shape MCP clients can read:
         // 'kind:guide' / 'too_short' / 'subagent_namespace' / 'dream_generated'
-        // (bare reasons), not the helper's namespaced 'eligibility_failed:...'
-        // discriminator. Map back here.
+        // / 'extraction_disabled'. The helper namespaces eligibility skips
+        // as 'eligibility_failed:<reason>'; unwrap here.
         const bare = r.skipped.startsWith('eligibility_failed:')
           ? r.skipped.slice('eligibility_failed:'.length)
           : r.skipped;
-        factsQueued = { skipped: bare };
+        factsBackstop = { skipped: bare };
+      } else if (r.mode === 'inline') {
+        factsBackstop = {
+          inserted: r.inserted,
+          duplicate: r.duplicate,
+          superseded: r.superseded,
+          fact_ids: r.fact_ids,
+        };
       }
     } catch {
-      factsQueued = { skipped: 'backstop_error' };
+      // Inline mode bubbles pipeline errors; absorb-log writes happen
+      // only in queue mode upstream. Surface a single skipped reason so
+      // put_page never fails outright on extract failure — the page is
+      // already stored, the LLM call is best-effort enrichment.
+      factsBackstop = { skipped: 'backstop_error' };
     }
 
     // Post-write validator lint (PR 2.5): feature-flag-gated, non-blocking.
@@ -719,7 +737,7 @@ const put_page: Operation = {
       ...(autoLinks ? { auto_links: autoLinks } : {}),
       ...(autoTimeline ? { auto_timeline: autoTimeline } : {}),
       ...(writerLint ? { writer_lint: writerLint } : {}),
-      ...(factsQueued ? { facts_backstop: factsQueued } : {}),
+      ...(factsBackstop ? { facts_backstop: factsBackstop } : {}),
     };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },

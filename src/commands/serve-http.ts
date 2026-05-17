@@ -18,6 +18,7 @@ import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
@@ -795,23 +796,26 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const mcpOperations = operations.filter(op => !op.localOnly);
 
-  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
-    const startTime = Date.now();
-    const authInfo = (req as any).auth as AuthInfo;
-
+  // Build a Server instance with the gbrain MCP request handlers wired up.
+  // Both the stateless POST /mcp (Streamable HTTP) handler AND the
+  // session-ful GET /sse + POST /messages (legacy SSE transport) reuse this
+  // — same handlers, same scope enforcement, same audit log + activity-feed
+  // side effects. Each handler captures its own `startTime` so latency in
+  // the SSE path measures per-JSON-RPC-call duration, not per-session.
+  function buildMcpServerForAuth(authInfo: AuthInfo): Server {
     // Human-readable agent name is now threaded through AuthInfo by
     // verifyAccessToken (which JOINs oauth_clients in its existing token
     // SELECT). No per-request DB roundtrip needed. Falls back to clientId
     // for legacy tokens or when the JOIN row's client_name is NULL.
     const agentName = authInfo.clientName ?? authInfo.clientId;
 
-    // Create a fresh MCP server per request (stateless)
     const server = new Server(
       { name: 'gbrain', version: VERSION },
       { capabilities: { tools: {} } },
     );
 
     server.setRequestHandler(ListToolsRequestSchema, async () => {
+      const startTime = Date.now();
       // v0.28.10: log every JSON-RPC method, not just successful tools/call.
       // Pre-fix, /admin/api/requests showed nothing for clients that only
       // ever called tools/list, and the v0.26.3 persistence regression test
@@ -850,6 +854,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     });
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      const startTime = Date.now();
       const { name, arguments: params } = request.params;
       const op = mcpOperations.find(o => o.name === name);
       if (!op) {
@@ -1060,6 +1065,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       return toolResult;
     });
 
+    return server;
+  }
+
+  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
+    const authInfo = (req as any).auth as AuthInfo;
+    const server = buildMcpServerForAuth(authInfo);
+
     // F14: wrap transport setup + handleRequest in try/catch. Without this,
     // an SDK-level throw (e.g., schema parse failure on a malformed request)
     // propagates to express's default error handler, which renders an HTML
@@ -1072,6 +1084,91 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       await transport.handleRequest(req, res, req.body);
     } catch (e) {
       console.error('MCP request handler error:', e instanceof Error ? e.message : e);
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'internal_error',
+          message: e instanceof Error ? e.message : 'Unknown error',
+        });
+      }
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // MCP legacy SSE transport (GET /sse + POST /messages)
+  // ---------------------------------------------------------------------------
+  // The newer Streamable HTTP transport on POST /mcp covers most modern MCP
+  // clients (Claude Desktop, the official MCP SDK using
+  // StreamableHTTPClientTransport). The legacy SSE transport — deprecated
+  // in the MCP spec but still used by openclaw and other clients pinned to
+  // the older SSEClientTransport — uses two endpoints: the client opens an
+  // SSE stream on GET, receives an `endpoint` event pointing at the POST
+  // URL (with a session id), then POSTs JSON-RPC requests there. We add it
+  // here so any MCP client can talk to gbrain over HTTP regardless of which
+  // transport its SDK is pinned to.
+  //
+  // Both transports authenticate via the same bearer token + scope rules
+  // and share buildMcpServerForAuth, so request logging + activity-feed
+  // broadcast + scope enforcement live in one place.
+  //
+  // Sessions are kept in-memory; if the server restarts mid-session the
+  // client reconnects and gets a fresh session id. No cross-process state.
+  const sseMcpSessions = new Map<string, { transport: SSEServerTransport; server: Server; authInfo: AuthInfo }>();
+
+  app.get('/sse', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
+    const authInfo = (req as any).auth as AuthInfo;
+    const server = buildMcpServerForAuth(authInfo);
+    // The SDK appends `?sessionId=<auto-generated>` to the endpoint when
+    // emitting the SSE `endpoint` event, so passing '/messages' yields
+    // '/messages?sessionId=…' for the client to POST against.
+    const transport = new SSEServerTransport('/messages', res);
+
+    try {
+      await server.connect(transport);
+      sseMcpSessions.set(transport.sessionId, { transport, server, authInfo });
+    } catch (e) {
+      console.error('MCP /sse setup error:', e instanceof Error ? e.message : e);
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'internal_error',
+          message: e instanceof Error ? e.message : 'Unknown error',
+        });
+      }
+      return;
+    }
+
+    req.on('close', () => {
+      sseMcpSessions.delete(transport.sessionId);
+      try { transport.close(); } catch { /* best effort */ }
+      try { server.close(); } catch { /* best effort */ }
+    });
+  });
+
+  app.post('/messages', requireBearerAuth({ verifier: oauthProvider }), express.json(), async (req: Request, res: Response) => {
+    const sessionId = String(req.query.sessionId ?? '');
+    if (!sessionId) {
+      res.status(400).json({ error: 'invalid_request', message: 'sessionId query param required' });
+      return;
+    }
+
+    const entry = sseMcpSessions.get(sessionId);
+    if (!entry) {
+      res.status(404).json({ error: 'session_not_found', message: 'Unknown sessionId. Reconnect via GET /sse.' });
+      return;
+    }
+
+    // Bind the session to the bearer that opened it. Another caller's
+    // valid bearer must not be able to drive a session it doesn't own,
+    // even if scopes overlap. clientId is the stable identifier on AuthInfo.
+    const callerAuth = (req as any).auth as AuthInfo;
+    if (callerAuth.clientId !== entry.authInfo.clientId) {
+      res.status(403).json({ error: 'forbidden', message: 'sessionId belongs to a different client' });
+      return;
+    }
+
+    try {
+      await entry.transport.handlePostMessage(req, res, req.body);
+    } catch (e) {
+      console.error('MCP /messages handler error:', e instanceof Error ? e.message : e);
       if (!res.headersSent) {
         res.status(500).json({
           error: 'internal_error',
