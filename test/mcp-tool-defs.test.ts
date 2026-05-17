@@ -88,6 +88,23 @@ describe('buildToolDefs', () => {
       expect(Array.isArray(def.inputSchema.required)).toBe(true);
     }
   });
+
+  // Strict OpenAI/Codex tool-schema validation rejects every tool in the
+  // payload (HTTP 400 invalid_function_parameters) when any array param
+  // lacks `items`. Hermes / OpenClaw / Claude Desktop fall back to a more
+  // lenient provider, masking the real bug. Pin the invariant.
+  test('every array param declares items', () => {
+    const offenders: string[] = [];
+    for (const def of buildToolDefs(operations)) {
+      const props = def.inputSchema.properties as Record<string, { type?: string; items?: unknown }>;
+      for (const [paramName, schema] of Object.entries(props)) {
+        if (schema.type === 'array' && !schema.items) {
+          offenders.push(`${def.name}.${paramName}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
