@@ -50,7 +50,11 @@ interface PluginCtx {
 }
 
 const entry: PluginEntry = {
-  id: 'gbrain-context-engine',
+  // Plugin id. Must match `openclaw.plugin.json:id` ("gbrain") so the
+  // OpenClaw plugin validator accepts the load. The engine TYPE this plugin
+  // registers is a separate concept tracked by ENGINE_ID ('gbrain-context'),
+  // passed to registerContextEngine below.
+  id: 'gbrain',
   name: 'GBrain Context Engine',
   description: 'Deterministic temporal/spatial context injection on every turn',
 
