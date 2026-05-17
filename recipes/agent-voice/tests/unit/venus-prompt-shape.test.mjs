@@ -61,8 +61,13 @@ describe('Venus prompt — privacy guard', () => {
     expect(m, m ? `operator-blocklist leak: ${m[0]}` : '').toBeNull();
   });
 
-  it('does NOT name specific upstream agents', () => {
-    expect(VENUS.prompt).not.toMatch(/\b(Garry|Steph|Garrison|Solomon|Herbert|Wintermute)\b/);
+  it('does NOT name specific upstream agents or operators', () => {
+    // Names checked via env-driven blocklist set by AGENT_VOICE_PII_BLOCKLIST
+    // (see private-name-blocklist.json). Literal names deliberately not in this
+    // source file per CLAUDE.md's "never use private agent names in shipped artifacts."
+    if (OPERATOR_BLOCKLIST) {
+      expect(VENUS.prompt.match(OPERATOR_BLOCKLIST)).toBeNull();
+    }
   });
 });
 
@@ -89,7 +94,6 @@ describe('Venus prompt — structural guarantees', () => {
       'file_upload',
       'delete_page',
       'set_reminder',
-      'tell_wintermute',
       'log_voice_request',
     ];
     for (const t of writeTools) {

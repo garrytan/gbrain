@@ -4,7 +4,7 @@
 # Catches three classes of leak:
 #   1. SHAPE regex: phone, email, SSN, JWT, bearer token, Luhn-valid credit card.
 #      Mirrors the patterns in src/core/eval-capture-scrub.ts.
-#   2. PATH patterns: hardcoded private filesystem prefixes (/data/.openclaw/, etc.).
+#   2. PATH patterns: hardcoded private filesystem prefixes (e.g. private agent home dirs).
 #   3. OPERATOR blocklist: pipe-separated word list from $AGENT_VOICE_PII_BLOCKLIST.
 #      Operator/CI sets this to ban specific private names without committing them
 #      to a public file. See recipes/agent-voice/code/lib/personas/private-name-blocklist.json

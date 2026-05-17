@@ -87,10 +87,13 @@ describe('Mars prompt — structural guarantees', () => {
   });
 
   it('uses generic addressee ("the operator" or "you"), not a proper noun', () => {
-    // Spot-check: should not contain ALL-CAPS proper names that look like
-    // "Garry" or other addressees. We allow camelCased technical words.
-    const properNounLike = MARS.prompt.match(/\b(Garry|Steph|Garrison|Solomon|Herbert|Wintermute)\b/);
-    expect(properNounLike, properNounLike ? `proper-noun addressee: ${properNounLike[0]}` : '').toBeNull();
+    // Names checked via env-driven blocklist set by AGENT_VOICE_PII_BLOCKLIST
+    // (see private-name-blocklist.json). Literal names deliberately not in this
+    // source file per CLAUDE.md's "never use private agent names in shipped artifacts."
+    if (OPERATOR_BLOCKLIST) {
+      const m = MARS.prompt.match(OPERATOR_BLOCKLIST);
+      expect(m, m ? `proper-noun addressee leak: ${m[0]}` : '').toBeNull();
+    }
   });
 
   it('does NOT claim multilingual capability (gated on multilingual eval landing)', () => {
