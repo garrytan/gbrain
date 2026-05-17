@@ -204,6 +204,13 @@ export interface GradeTakesOpts extends BasePhaseOpts {
   /** Identifier recorded as resolved_by when auto-applying. Default 'gbrain:grade_takes'. */
   resolvedByLabel?: string;
   /**
+   * v0.36.0.0 (T11 / E4) — gstack-learnings coupling on incorrect/partial
+   * auto-resolutions. Config gate: `cycle.grade_takes.write_gstack_learnings`.
+   * Default false for external users (gstack may not be installed); Garry's
+   * brain flips it true to opt in. Failures are non-fatal (warning).
+   */
+  writeGstackLearnings?: boolean;
+  /**
    * E2 ensemble (T5): when true, borderline single-model verdicts
    * (0.6 <= confidence < 0.95) fire a 3-model ensemble tiebreaker. Default
    * false (single-model only).
@@ -548,6 +555,34 @@ class GradeTakesPhase extends BaseCyclePhase {
         try {
           await engine.resolveTake(take.page_id, take.row_num, resolution);
           result.auto_applied += 1;
+
+          // T11 / E4 — gstack-learnings coupling on incorrect / partial
+          // auto-resolutions. Best-effort: failures log warning + continue.
+          if (
+            (recordedVerdict.verdict === 'incorrect' || recordedVerdict.verdict === 'partial') &&
+            opts.writeGstackLearnings === true
+          ) {
+            const { writeIncorrectResolution } = await import('../calibration/gstack-coupling.ts');
+            const coupling = await writeIncorrectResolution({
+              event: {
+                takeId: take.id,
+                pageSlug: take.page_slug,
+                rowNum: take.row_num,
+                holder: take.holder,
+                claim: take.claim,
+                quality: recordedVerdict.verdict,
+                weight: take.weight,
+                confidence: recordedVerdict.confidence,
+                reasoning: recordedVerdict.reasoning,
+              },
+              enabled: true,
+            });
+            if (!coupling.written && coupling.reason !== 'config_disabled') {
+              result.warnings.push(
+                `gstack coupling skipped (take ${take.id}): ${coupling.reason}${coupling.error ? ` — ${coupling.error}` : ''}`,
+              );
+            }
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           result.warnings.push(`auto-apply failed on take ${take.id}: ${msg}`);
