@@ -58,4 +58,29 @@ describe('dream CLI flag wiring', () => {
     expect(dreamSrc).toContain('skips the Sonnet');
     expect(dreamSrc.toLowerCase()).toContain('zero llm calls');
   });
+
+  test('declares --archive-dir flag with archiveDir field', () => {
+    expect(dreamSrc).toContain("'--archive-dir'");
+    expect(dreamSrc).toContain('archiveDir');
+  });
+
+  test('archiveReport helper writes per-cycle file + atomic latest.json symlink', () => {
+    // Source-text introspection — the runtime path is exercised end-to-end
+    // in test/dream.test.ts.
+    expect(dreamSrc).toMatch(/function\s+archiveReport/);
+    expect(dreamSrc).toContain('latest.json');
+    expect(dreamSrc).toContain('renameSync');
+    expect(dreamSrc).toContain('symlinkSync');
+  });
+
+  test('--archive-dir is no-op without --json (help text says so)', () => {
+    expect(dreamSrc).toContain('Pairs with');
+    expect(dreamSrc).toMatch(/requires --json/);
+  });
+
+  test('isoStamp returns colon-free, sortable, fs-safe timestamp', () => {
+    // Filename-safety is a contract — must not contain ':' or '.'
+    expect(dreamSrc).toMatch(/function\s+isoStamp/);
+    expect(dreamSrc).toContain("replace(/[:.]/g, '-')");
+  });
 });
