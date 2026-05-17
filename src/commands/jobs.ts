@@ -6,6 +6,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
+import { classifyWorkerExit } from '../core/minions/exit-classification.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
@@ -802,7 +803,10 @@ HANDLER TYPES (built in)
 
         const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
         const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
-        const crashes24h = events.filter(e => e.event === 'worker_exited').length;
+        const allExits = events.filter(e => e.event === 'worker_exited');
+        const realCrashes = allExits.filter(e => classifyWorkerExit(e as { code?: number | null }) === 'crash');
+        const cleanRestarts = allExits.length - realCrashes.length;
+        const crashes24h = realCrashes.length;
         const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 
         const status = {
@@ -811,6 +815,7 @@ HANDLER TYPES (built in)
           pid_file: pidFile,
           last_start: lastStart,
           crashes_24h: crashes24h,
+          clean_restarts_24h: cleanRestarts,
           max_crashes_exceeded: !!maxCrashesEvent,
         };
 
@@ -821,7 +826,7 @@ HANDLER TYPES (built in)
           if (supervisorPid) console.log(`  PID:           ${supervisorPid}`);
           console.log(`  PID file:      ${pidFile}`);
           if (lastStart) console.log(`  Last start:    ${lastStart}`);
-          console.log(`  Crashes (24h): ${crashes24h}`);
+          console.log(`  Crashes (24h): ${crashes24h}${cleanRestarts > 0 ? ` (${cleanRestarts} clean restarts excluded)` : ''}`);
           if (maxCrashesEvent) console.log(`  ⚠ Max crashes exceeded at ${maxCrashesEvent.ts}`);
         }
         process.exit(running ? 0 : 1);

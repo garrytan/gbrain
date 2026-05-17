@@ -2,6 +2,118 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.35.4.0] - 2026-05-16
+
+**Doctor stops crying wolf on clean worker restarts. Entity resolver stops spawning phantom pages. Prefix-expansion gets 58x faster.**
+
+A fix-wave shipping privacy work, bug fixes, observability, and one big perf win. The shape of the change: `gbrain doctor`'s supervisor check no longer counts `code === 0` clean exits as crashes (matching the actual v0.34.3.0 supervisor restart-policy logic), `resolveEntitySlug` catches bare first names like `"Alice"` before the slugify-fallback can spawn an unparented `alice.md` at brain root, a new `stub_guard_24h` doctor surface tells operators when the resolver IS missing a case, and the `tryPrefixExpansion` query rewrites against the correlated-subquery shape that's 58x faster on the perf-regression benchmark.
+
+### What you can now do
+
+**Stop seeing false-positive crash WARNs in `gbrain doctor` after autopilot drain.** Before this release, every clean worker exit (drain + respawn, graceful shutdown, queue completion — anything with `code === 0`) was counted as a crash. On a busy brain that drains the worker every few hours, the doctor's supervisor check would WARN "Supervisor running but worker crashed 8x in last 24h" even though zero crashes happened. The v0.34.3.0 supervisor's restart policy already used the right rule (don't increment `crashCount` on `code === 0`); doctor and `jobs supervisor status` were reading the same audit events but applying their own filter. All three sites now share one `classifyWorkerExit()` helper — same rule, one source of truth.
+
+**Stop seeing phantom `jared.md` pages at brain root.** When the fact-extraction pipeline produced a bare entity name (e.g. `"Alice"`) and `pg_trgm` scored too low to fuzzy-match against `people/alice-example`, the slugify fallback returned `"alice"` and `writeFactsToFence` would happily create `alice.md` at the brain root — orphan, no people/ prefix, never linked to the real Alice page. The resolver now runs a prefix-expansion step between fuzzy match and slugify fallback: when the input looks like a single bare-name token, query `people/<token>-%` then `companies/<token>-%`, pick the highest-connection candidate as the tiebreaker. The same fix layer adds a defensive second wall in `writeFactsToFence` itself — refuses to spawn unprefixed entity pages — with the fact still landing in the DB via the legacy fallback so nothing gets dropped.
+
+**See when the resolver is missing a case.** New `stub_guard_24h` check in `gbrain doctor` reads the new stub-guard audit log and WARNs at >10 fires/24h. The fix hint points operators directly at `~/.gbrain/audit/stub-guard-*.jsonl` so the offending slugs are one `cat` away. The check stays silent on zero hits (clean brain output) and shows count + below-threshold OK status when hits happen but stay reasonable. The sunset criterion is also wired in: when the 24h reads stay below 5/week for 3 consecutive weeks, the guard can be removed in v0.36 (the resolver fix has earned the trust).
+
+**Extract facts ~58x faster on brains with substantial link/chunk counts.** The pre-fix `tryPrefixExpansion` SQL did three derived-table aggregations (`LEFT JOIN (SELECT FROM links GROUP BY to_page_id)`) that pre-aggregated the ENTIRE links and content_chunks tables on every call. On the v0.35.4.0 perf benchmark (5K pages, 50K links, 25K chunks): old median 18.16ms, new median 0.31ms, speedup **58.22x**. The new shape uses correlated subqueries scoped to the slug-LIKE candidates — PostgreSQL hits the indexes on `links.to_page_id`, `links.from_page_id`, and `content_chunks.page_id` exactly N=3 times per candidate, not N=1 time across the whole table. Behavior is preserved; tiebreaker semantics unchanged.
+
+### Itemized changes
+
+- `src/core/entities/resolve.ts` adds `isBareName()` + `tryPrefixExpansion()` between fuzzy and slugify fallback. Token slug shape: people/`X`-%, companies/`X`-% prefix patterns. SQL uses correlated subqueries (no CTE cap, no whole-table aggregation). The slug-LIKE filter is already selective in practice (typical brain has 0-5 pages per prefix). `PREFIX_EXPANSION_DIRS = ['people', 'companies']` — extend in a follow-up when new entity directories prove necessary.
+- `src/core/facts/fence-write.ts` adds the stub-creation guard at line 190: when `target.slug` lacks a `/`, return `{inserted: 0, ids: [], stubGuardBlocked: true}` and fire `logStubGuardEvent`. JSDoc names v0.36 as the retire target.
+- `src/core/facts/backstop.ts` routes `stubGuardBlocked: true` results to `engine.insertFact()` (legacy DB-only path) so facts aren't silently dropped — they land in the facts table with the bare entity_slug, `source_markdown_slug` stays null.
+- `src/core/facts/stub-guard-audit.ts` (new) is the JSONL audit writer for stub-guard fires. ISO-week rotation at `~/.gbrain/audit/stub-guard-YYYY-Www.jsonl`. Reader `readRecentStubGuardEvents` deliberately diverges from `supervisor-audit.ts:readSupervisorEvents` — reads BOTH the current AND the previous ISO-week file before filtering by `ts`. The supervisor reader only reads the current week, losing 24h-window correctness across Monday 00:00 UTC. Follow-up TODO filed: fix the supervisor reader the same way.
+- `src/core/minions/exit-classification.ts` (new) is the pure `classifyWorkerExit({code: number | null}): 'crash' | 'clean_exit'` helper. Signature consumes audit-JSON shape (not Node callback shape) — the supervisor wraps Node's `(code, signal)` into `{code}` before calling. Three call sites use it: supervisor restart policy, doctor's supervisor check, `gbrain jobs supervisor status`.
+- `src/commands/doctor.ts` adds the `stub_guard_24h` check between supervisor and sync_failures. Replaces the inline `code !== 0 && code !== undefined` filter with `classifyWorkerExit()`.
+- `src/commands/jobs.ts` same inline-filter replacement on the `supervisor status` subcommand.
+- `docs/issues/doctor-auto-heal-and-scoring.md` (new) specs 7 follow-up improvements to the doctor health score system: frontmatter severity levels, temporal contradiction awareness, multi-source drift baseline, image asset acknowledgment, auto-heal mode, score delta tracking, weighted scoring. None implemented in this release; documenting the scope for the next wave.
+- `.gitignore` adds `reports/network-intelligence/` as defense-in-depth (private-brain export dir).
+- Test infrastructure: `test/exit-classification.test.ts` (17 cases — helper unit tests + consumer wire-up + audit-shape round-trip + inline-filter regression guards), `test/stub-guard-audit.test.ts` (9 cases — filename math + writer error tolerance + dual-week boundary read), `test/entity-resolve.test.ts` (13 cases — bare name resolution + tiebreaker + edge cases, fixtures use `alice-example`/`bob-example`/`charlie-example`/`dave-example` placeholders per CLAUDE.md privacy rule), `test/entity-resolve-perf.slow.test.ts` (1 case — baseline-ratio regression guard, 58x speedup measured), plus extensions in `test/fence-write.test.ts` (+3), `test/facts-backstop.test.ts` (+1), `test/doctor.test.ts` (+5).
+
+## To take advantage of v0.35.4.0
+
+`gbrain upgrade` handles everything automatically. No migration, no config changes, no manual action needed.
+
+1. **Run the upgrade:**
+   ```bash
+   gbrain upgrade
+   ```
+2. **Verify the doctor check is in the new shape:**
+   ```bash
+   gbrain doctor --json | jq '.checks[] | select(.name == "supervisor" or .name == "stub_guard_24h")'
+   ```
+   The supervisor check should show `clean_restarts=N` in the message when applicable, and `stub_guard_24h` should appear only if the guard has fired.
+3. **If `gbrain doctor` warns about something unexpected,** please file an issue at
+   https://github.com/garrytan/gbrain/issues with the doctor output.
+## [0.35.3.1] - 2026-05-15
+
+**The contradiction probe stops crying wolf on time. Six-member verdict enum + page-level date in the prompt + a new privacy lint for proposals.**
+
+`gbrain eval suspected-contradictions` used to treat every claim as timeless. On a brain with conversation transcripts, dated meeting pages, evolving takes, and historical entity records, that meant ~60% of residual HIGH findings were temporal false positives: a status change recorded as "trial" in April and "confirmed" in May got flagged as a contradiction; a role transition recorded in 2017 vs. an updated role in 2025 got flagged. None of those are bugs in the brain; they're features of a brain that records history.
+
+The judge now sees the page-level `effective_date` for each chunk via a `(from: YYYY-MM-DD)` tag in the prompt, and it classifies into a six-member verdict taxonomy instead of `contradicts: true/false`. The same wave adds a CI privacy lint that catches PII patterns in `docs/proposals/*.md` so future RFCs can't ship with personal-context vocabulary the way this wave's source RFC did at draft time.
+
+### What you can now do
+
+**Get verdict-aware findings out of the probe.** The judge now returns one of six verdicts: `no_contradiction`, `contradiction` (genuine conflict at the same point in time), `temporal_supersession` (newer claim updates the older), `temporal_regression` (a metric or status went backwards), `temporal_evolution` (legitimate change over time), or `negation_artifact` (judge misread an explicit negation). `gbrain eval suspected-contradictions trend` shows the per-verdict breakdown in the chart; `gbrain eval suspected-contradictions review` prints a `[verdict]` tag inline with each finding. The Wilson-CI denominator stays anchored to the strict `verdict === 'contradiction'` count so the headline metric is preserved. A new `queries_with_any_finding` sibling metric counts queries that produced any non-`no_contradiction` verdict.
+
+**Skip the >30d skip rule when both sides have dates.** The pre-judge date filter previously dropped pairs whose chunk-text-extracted dates differed by more than 30 days. That heuristic silently killed exactly the cases the new verdicts exist to surface (the 2017 vs. 2025 role-transition class). The filter now passes those pairs through when both sides have a non-null page-level `effective_date`, so the judge gets to classify them as `temporal_supersession` instead of the pair vanishing into the skip bucket. Same-paragraph dual-date override and missing-date fallback rules are preserved verbatim.
+
+**Cap the cost of the post-bump re-judge.** The `PROMPT_VERSION` change invalidates the entire judge cache (the prompt shape changed, old verdicts no longer apply). Before that re-judge spends any tokens, the runner prints an upper-bound cost estimate and waits 10 seconds in TTY for Ctrl-C; set `GBRAIN_NO_PROBE_PROMPT=1` to skip or `GBRAIN_PROBE_PROMPT_GRACE_SECONDS=0` to proceed immediately. Non-TTY (autopilot) auto-proceeds with a stderr note. `--budget-usd N` hard-caps the run when cumulative cost exceeds the cap. The judge model now resolves through `models.eval.contradictions_judge` (defaults to Haiku tier), so `gbrain config set models.eval.contradictions_judge` works the same way as every other model config key. `gbrain models doctor` surfaces the new touchpoint.
+
+**Block PII in `docs/proposals/*.md` at CI time.** A new `scripts/check-proposal-pii.sh` (wired into `bun run verify` and `bun run check:all`) catches the specific PII classes that surfaced in past RFC drafts: private repo references (`garrytan/brain`), personal-relationship vocabulary (`trial separation`, `couples session`, `divorce attorney`, etc.), death-context phrases, and the literal `Wintermute` agent name. Bare common words (`separation`, `funeral`) are intentionally not banned. The denylist names patterns rather than real names, so the script's own source doesn't re-introduce PII into the repo.
+
+### Itemized changes
+
+- `SearchResult` interface gains optional `effective_date` + `effective_date_source` fields. Eight SQL projection sites updated (3 in postgres-engine, 5 in pglite-engine — `searchKeyword`, `searchKeywordChunks`, `searchVector` across both engines). `rowToSearchResult` normalizes both Postgres `Date` and PGLite string returns to `YYYY-MM-DD`. Three-state read pattern (undefined when not selected, null when selected-but-empty, string when populated).
+- `PairMember` (`src/core/eval-contradictions/types.ts`) gets required `effective_date: string | null` and `effective_date_source: string | null`. `runner.ts` threads the fields through `searchResultToMember` and `takeToMember`; the judge call passes them via the new optional fields on `JudgeInput.a/b`.
+- `buildJudgePrompt` now emits `Statement A (from: YYYY-MM-DD)` when `effective_date` is non-null, else `(date unknown)`. Prompt instructions explain the tag and the new verdict semantics.
+- `PROMPT_VERSION` bumped `'1' → '2'`. Cache-key tuple shape unchanged (still 5 fields); old rows naturally miss on first run. Cache type guard updated to check `verdict` instead of `contradicts`.
+- `JudgeVerdict.contradicts: boolean` replaced with `verdict: Verdict` (6-member union). `Severity` extended with `'info'`. `ResolutionKind` extended with `temporal_supersede`, `flag_for_review`, `log_timeline_change`. `normalizeVerdict` applies the C1 confidence floor only to `verdict === 'contradiction'` (other verdicts are informational classifications, no floor). `defaultSeverityForVerdict` maps each verdict to its baseline severity (D7 map: supersession→info, regression→high, evolution→info, negation_artifact→low, contradiction→medium).
+- `runner.ts` emit predicate changes from `if (verdict.contradicts)` to `if (verdict.verdict !== 'no_contradiction')`. Per-verdict tally feeds `ProbeReport.verdict_breakdown`. `queries_with_contradiction` (strict, Wilson-CI denominator) and `queries_with_any_finding` (broad) tracked separately.
+- `auto-supersession.ts`: `classifyResolution` and `renderResolutionCommand` extended for new verdicts. Probe still NEVER auto-mutates — new kinds render paste-ready commands (`gbrain takes supersede --since <date>`) or informational lines (`# flag_for_review:`). The `auto-supersession.ts:4` "NEVER auto-applies" invariant preserved verbatim.
+- `date-filter.ts`: `shouldSkipForDateMismatch` accepts optional `effectiveDateA` and `effectiveDateB`. When both are non-null, returns `skip=false` with new `'both_have_effective_date'` reason. Other rules preserved.
+- `src/commands/eval-suspected-contradictions.ts`: new `--budget-usd N` hard cap (was pre-existing for runtime; help text now explains it), new cost-estimate prompt wired via `src/core/eval-contradictions/cost-prompt.ts`. `--severity` accepts `info`. `--severity` output shows `[verdict]` tag. Judge model routes through `resolveModel({configKey: 'models.eval.contradictions_judge', tier: 'utility', envVar: 'GBRAIN_CONTRADICTIONS_JUDGE_MODEL'})`. Human summary and trend chart show the per-verdict breakdown.
+- `src/commands/models.ts` registers `models.eval.contradictions_judge` as a tracked per-task model key so `gbrain models` and `gbrain models doctor` surface it.
+- `scripts/check-proposal-pii.sh` + denylist (structural patterns only, no real names) + 15-case test in `test/scripts/check-proposal-pii.test.ts`. Wired into `bun run verify`, `bun run check:all`, and as the new `bun run check:proposal-pii` standalone target. Two privacy-guard test fixtures naming `Wintermute` allowlisted in `scripts/check-test-real-names.sh`; the new privacy-guard scripts themselves allowlisted in `scripts/check-privacy.sh`.
+- Six IRON-RULE regression test suites pin the wave's invariants: R1 date-filter rule 3 relaxation preserves rules 1+2 (6 cases), R2 cache invalidation on `PROMPT_VERSION` bump, R3 verdict-enum migration (compile-time via `tsc --noEmit`), R4 runner emit predicate fires for every non-`no_contradiction` verdict (6 cases), R5 cache key tuple stays 5 fields, R6 contradiction severity unchanged (4 cases). Plus 9 cases on the cost-prompt helper.
+- The source RFC (`docs/proposals/temporal-contradiction-probe.md`) and PR title/body/commit/branch-name all scrubbed of PII at draft time. The new CI lint prevents the next one from slipping through.
+
+### Phase 2/3/4 deferred (per the plan)
+
+The RFC proposed four phases. This wave ships Phase 1 only. Deferred:
+- Phase 2 (structured claim extraction + `gbrain trajectory` view): blocked on a separate RFC that maps the existing `extract_facts` + `consolidate` cycle pipeline before extending the facts table. Codex review of the original plan caught factual errors about this pipeline; the deferral is deliberate.
+- Phase 3 (auto-write `valid_until` from `temporal_supersession` verdicts): would violate `auto-supersession.ts:4`'s "NEVER auto-applies" invariant. Reframed as paste-ready commands in Phase 1.
+- Phase 4 (founder scorecard / Argus integration): needs concrete Argus spec.
+
+## To take advantage of v0.35.3.1
+
+`gbrain upgrade` should do this automatically. The wave is schema-compatible (no migrations), so `gbrain apply-migrations` is a no-op.
+
+1. **Re-run the contradiction probe to see the new verdicts:**
+   ```bash
+   gbrain eval suspected-contradictions run --budget-usd 5
+   ```
+   Expect a one-time cost-estimate prompt + 10-second Ctrl-C window since `PROMPT_VERSION` changed; the cache is invalidated. Non-TTY runs auto-proceed.
+2. **(Optional) Pin the judge model:**
+   ```bash
+   gbrain config set models.eval.contradictions_judge anthropic:claude-haiku-4-5
+   gbrain models doctor
+   ```
+3. **(Optional) Adjust the cost-prompt grace window** for CI / autopilot:
+   ```bash
+   export GBRAIN_NO_PROBE_PROMPT=1                 # skip entirely
+   # or
+   export GBRAIN_PROBE_PROMPT_GRACE_SECONDS=0      # auto-proceed in TTY
+   ```
+4. **If `bun run verify` fails on `check:proposal-pii`,** the lint caught PII in `docs/proposals/*.md`. Replace with generic placeholders (alice-example, acme-corp, fund-a) per CLAUDE.md "Privacy rule: scrub real names from public docs."
+5. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
 ## [0.35.3.0] - 2026-05-15
 
 **Fix wave: 19 stale community PRs land as one bisect-friendly PR with the architectural fix none of them surfaced.**
@@ -46,6 +158,7 @@ Two real bugs, both in shipping code on master since v0.28+, both fixed at the a
 4. If you use remote-source git clones (`gbrain config get sources` shows any with a remote URL), they'll start working again on the next `gbrain sync`. Pre-fix, every clone of a remote-source repository was silently failing with git exit 129.
 
 If `gbrain doctor` flags anything after upgrade, please file an issue with the doctor output. This was a 7-month silent bug — the doctor's structural guards should catch the next one before it ships.
+
 ## [0.35.1.1] - 2026-05-16
 
 **Fix wave: `gbrain eval longmemeval` actually runs against the public _s split.**
