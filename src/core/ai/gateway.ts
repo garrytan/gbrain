@@ -398,18 +398,27 @@ function prefixWithProviderFrom(original: string, bare: string): string {
 const _warnedRecipes = new Set<string>();
 
 /**
- * Walk every registered recipe with an `embedding` touchpoint. Each one
- * missing `max_batch_tokens` gets exactly one stderr line per process for
- * its first appearance. Recipes WITH the field stay quiet. The
+ * Walk the configured embedding recipes. Each one missing `max_batch_tokens`
+ * gets exactly one stderr line per process for its first appearance. Recipes
+ * WITH the field stay quiet. The
  * recursive-halving safety net only fires when `max_batch_tokens` is set,
  * so a recipe that forgets it has no protection if the provider has a
  * batch cap. Loud-fail over silent-skip per CLAUDE.md; a future
  * Cohere/Mistral/Jina recipe that inherits the embedding-touchpoint
  * pattern but forgets the cap re-creates the v0.27 Voyage backfill loop.
- * The warning calls that out before production traffic hits it.
+ * The warning calls that out before production traffic hits it, while avoiding
+ * unrelated startup noise from recipes the current brain is not using.
  */
 function warnRecipesMissingBatchTokens(): void {
+  const configuredProviderIds = new Set<string>();
+  for (const model of [_config?.embedding_model, _config?.embedding_multimodal_model]) {
+    if (!model) continue;
+    const providerId = model.split(':')[0];
+    if (providerId) configuredProviderIds.add(providerId);
+  }
+
   for (const recipe of listRecipes()) {
+    if (!configuredProviderIds.has(recipe.id)) continue;
     const embedding = recipe.touchpoints?.embedding;
     if (!embedding || embedding.max_batch_tokens !== undefined) continue;
     // OpenAI is the canonical "no cap declared, fast path is intentional"
