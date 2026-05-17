@@ -1,9 +1,17 @@
 /**
- * gbrain skillpack <list|install|diff|check> — W5 CLI namespace.
+ * gbrain skillpack <list|scaffold|reference|migrate-fence|scrub-legacy-fence-rows|harvest|diff|check>
  *
- * D-CX-2 pattern: unified subcommand namespace. The pre-existing
- * `skillpack-check` command keeps its top-level name for backwards
- * compat but is also reachable as `gbrain skillpack check` here.
+ * v0.33 contract change: dropped `install` and `uninstall` (managed-block
+ * model). Replaced by:
+ *   - `scaffold`               — one-time, additive copy into host workspace
+ *   - `reference`              — read-only update lens (per-file diff + framing)
+ *                                Add `--apply-clean-hunks` to two-way auto-apply
+ *   - `migrate-fence`          — one-shot strip of the legacy fence
+ *   - `scrub-legacy-fence-rows` — opt-in cleanup of legacy rows post-migrate
+ *   - `harvest`                — inverse: lift host skill into gbrain
+ *
+ * `install` and `uninstall` now exit non-zero with a hint pointing at the
+ * replacement command. Clean break, no deprecated alias (D10-amended).
  */
 
 import { existsSync, readFileSync } from 'fs';
@@ -15,33 +23,47 @@ import {
   loadBundleManifest,
   BundleError,
 } from '../core/skillpack/bundle.ts';
-import {
-  planInstall,
-  applyInstall,
-  applyUninstall,
-  diffSkill,
-  InstallError,
-  UninstallError,
-} from '../core/skillpack/installer.ts';
+import { runScaffold, ScaffoldError } from '../core/skillpack/scaffold.ts';
+import { runReference, runReferenceAll, runReferenceApply } from '../core/skillpack/reference.ts';
+import { runMigrateFence } from '../core/skillpack/migrate-fence.ts';
+import { runScrubLegacy } from '../core/skillpack/scrub-legacy.ts';
+import { runHarvest, HarvestError } from '../core/skillpack/harvest.ts';
 import { autoDetectSkillsDir } from '../core/repo-root.ts';
 
 const HELP_TOP = `gbrain skillpack <subcommand> [options]
 
 Subcommands:
-  list             Print every skill bundled in openclaw.plugin.json.
-  install <name>   Copy one skill (or --all) into a target workspace.
-                   Data-loss protected: per-file diff, --overwrite-local
-                   escape hatch, lockfile + atomic AGENTS.md update.
-  uninstall <name> Inverse of install (v0.25.1). Removes one skill;
-                   refuses if slug isn't in cumulative-slugs receipt
-                   (D8) or if any file was hand-edited (D11). Symmetric
-                   to install's data-loss posture.
-  diff <name>      Show per-file diff status between the bundle and
-                   the target workspace for one skill.
-  check            Run the skillpack health report (same as the
-                   top-level \`gbrain skillpack-check\`).
+  list                       Print every skill bundled in openclaw.plugin.json.
+
+  scaffold <name>            Copy a bundled skill into your agent repo. Additive;
+  scaffold --all             refuses to overwrite existing files.
+
+  reference <name>           Read-only: diff gbrain's bundle vs your local copy.
+  reference --all            Sweep over every bundled skill.
+  reference <n> --apply-clean-hunks
+                             Two-way diff, auto-apply non-conflicting hunks.
+
+  migrate-fence              One-shot conversion from the old managed-block
+                             model. Strips fence comments, preserves rows.
+
+  scrub-legacy-fence-rows    Opt-in cleanup: remove preserved legacy rows
+                             once frontmatter discovery is the norm.
+
+  harvest <slug> --from <host-repo-root>
+                             Lift a proven skill from a host repo
+                             (e.g. ~/git/wintermute) back into gbrain.
+
+  diff <name>                (Informational) per-file status; exit 0 always.
+
+  check                      Health report. \`check --strict\` exits non-zero
+                             on any drift (for CI gating).
 
 Run \`gbrain skillpack <subcommand> --help\` for per-subcommand options.
+
+Removed in v0.33 (use migrate-fence to upgrade, then \`scaffold\`):
+  install       — replaced by \`scaffold\`. Run \`migrate-fence\` once.
+  uninstall     — removed. To remove a scaffolded skill, delete the
+                  skills/<slug>/ directory (the files are yours).
 `;
 
 export async function runSkillpack(args: string[]): Promise<void> {
@@ -51,55 +73,86 @@ export async function runSkillpack(args: string[]): Promise<void> {
     console.log(HELP_TOP);
     process.exit(0);
   }
-  if (sub === 'list') {
-    await runList(rest);
-    return;
+  switch (sub) {
+    case 'list':
+      await cmdList(rest);
+      return;
+    case 'scaffold':
+      await cmdScaffold(rest);
+      return;
+    case 'reference':
+      await cmdReference(rest);
+      return;
+    case 'migrate-fence':
+      await cmdMigrateFence(rest);
+      return;
+    case 'scrub-legacy-fence-rows':
+      await cmdScrubLegacy(rest);
+      return;
+    case 'harvest':
+      await cmdHarvest(rest);
+      return;
+    case 'diff':
+      await cmdDiff(rest);
+      return;
+    case 'check':
+      await routeCheck(rest);
+      return;
+    case 'install':
+      console.error(
+        "Error: 'gbrain skillpack install' was removed in v0.33. Use 'gbrain skillpack scaffold <name>' instead.\n" +
+          "If you're upgrading from an older release, run 'gbrain skillpack migrate-fence' once to strip the legacy managed block, then scaffold any new skills.",
+      );
+      process.exit(2);
+      return;
+    case 'uninstall':
+      console.error(
+        "Error: 'gbrain skillpack uninstall' was removed in v0.33. The new scaffold model lets you own scaffolded files outright — to remove a skill, delete its directory (rm -rf skills/<slug>/) and any paired source files declared in its frontmatter.",
+      );
+      process.exit(2);
+      return;
+    default:
+      console.error(`Unknown subcommand: ${sub}\n`);
+      console.error(HELP_TOP);
+      process.exit(2);
   }
-  if (sub === 'install') {
-    await runInstall(rest);
-    return;
+}
+
+function resolveAbs(p: string): string {
+  return isAbsolute(p) ? p : resolvePath(process.cwd(), p);
+}
+
+function findGbrainOrDie(): string {
+  const root = findGbrainRoot();
+  if (!root) {
+    console.error('Error: could not find gbrain repo root.');
+    process.exit(2);
   }
-  if (sub === 'uninstall') {
-    await runUninstall(rest);
-    return;
-  }
-  if (sub === 'diff') {
-    await runDiff(rest);
-    return;
-  }
-  if (sub === 'check') {
-    const { runSkillpackCheck } = await import('./skillpack-check.ts');
-    await runSkillpackCheck(rest);
-    return;
-  }
-  console.error(`Unknown subcommand: ${sub}\n`);
-  console.error(HELP_TOP);
+  return root;
+}
+
+function resolveWorkspace(opts: { workspace?: string | null; skillsDir?: string | null }): string {
+  if (opts.workspace) return resolveAbs(opts.workspace);
+  if (opts.skillsDir) return resolvePath(resolveAbs(opts.skillsDir), '..');
+  const detected = autoDetectSkillsDir();
+  if (detected.dir) return resolvePath(detected.dir, '..');
+  console.error(
+    'Error: could not auto-detect a target workspace. Pass --workspace <path> or set $OPENCLAW_WORKSPACE.',
+  );
   process.exit(2);
 }
 
 // ---------------------------------------------------------------------------
-// list
+// list  — unchanged from v0.32; lightly reformatted
 // ---------------------------------------------------------------------------
 
-const HELP_LIST = `gbrain skillpack list [--json]
-
-Print every skill bundled in openclaw.plugin.json, one per line.
-Exit 0 always (unless the manifest is missing/malformed).
-`;
-
-async function runList(args: string[]): Promise<void> {
+async function cmdList(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(HELP_LIST);
+    console.log('gbrain skillpack list [--json]\n\nPrint every skill bundled in openclaw.plugin.json.');
     process.exit(0);
   }
   const json = args.includes('--json');
-  const gbrainRoot = findGbrainRoot();
-  if (!gbrainRoot) {
-    console.error(
-      'Error: could not find gbrain repo root. Run this from inside a gbrain checkout, or pass --gbrain-root (not yet implemented).',
-    );
-    process.exit(2);
-  }
+  const gbrainRoot = findGbrainOrDie();
   let manifest;
   try {
     manifest = loadBundleManifest(gbrainRoot);
@@ -122,327 +175,67 @@ async function runList(args: string[]): Promise<void> {
       }
       return { name: slug, description };
     });
-    console.log(
-      JSON.stringify(
-        { name: manifest.name, version: manifest.version, skills: entries },
-        null,
-        2,
-      ),
-    );
+    console.log(JSON.stringify({ name: manifest.name, version: manifest.version, skills: entries }, null, 2));
   } else {
     console.log(`${manifest.name} ${manifest.version} bundle — ${slugs.length} skills:`);
-    for (const slug of slugs) {
-      console.log(`  ${slug}`);
-    }
+    for (const slug of slugs) console.log(`  ${slug}`);
   }
   process.exit(0);
 }
 
 // ---------------------------------------------------------------------------
-// install
+// scaffold
 // ---------------------------------------------------------------------------
 
-interface InstallFlags {
-  help: boolean;
-  json: boolean;
-  dryRun: boolean;
-  force: boolean;
-  overwriteLocal: boolean;
-  forceUnlock: boolean;
-  all: boolean;
-  skillName: string | null;
-  skillsDir: string | null;
-  workspace: string | null;
-}
-
-const HELP_INSTALL = `gbrain skillpack install <name> | --all [options]
-
-Copy bundled skills into a target OpenClaw workspace. The target is
-auto-detected (\$OPENCLAW_WORKSPACE, then ~/.openclaw/workspace, then
---skills-dir). Shared convention files are installed alongside
-(dependency closure per codex D-CX-10).
-
-Arguments:
-  <name>               Install a single skill by slug.
-  --all                Install every skill in openclaw.plugin.json#skills.
-
-Options:
-  --dry-run            Preview file operations; no writes.
-  --overwrite-local    For per-file diff: overwrite target files that
-                       differ from the bundle. Default: skip locally-
-                       modified files for data-loss protection.
-  --force-unlock       Acquire the skillpack lockfile even if a stale
-                       peer lock exists.
-  --skills-dir PATH    Override target skills directory.
-  --workspace PATH     Override target workspace (parent of skills/).
-  --json               Machine-readable envelope.
-  --help               Show this message.
-
-Exit codes:
-  0   success
-  1   some files skipped due to local-modification protection
-  2   setup error (no workspace, no bundle, lock held)
-`;
-
-function parseInstallFlags(argv: string[]): InstallFlags {
-  const f: InstallFlags = {
-    help: false,
-    json: false,
-    dryRun: false,
-    force: false,
-    overwriteLocal: false,
-    forceUnlock: false,
-    all: false,
-    skillName: null,
-    skillsDir: null,
-    workspace: null,
-  };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--help' || a === '-h') f.help = true;
-    else if (a === '--json') f.json = true;
-    else if (a === '--dry-run') f.dryRun = true;
-    else if (a === '--force') f.force = true;
-    else if (a === '--overwrite-local') f.overwriteLocal = true;
-    else if (a === '--force-unlock') f.forceUnlock = true;
-    else if (a === '--all') f.all = true;
-    else if (a === '--skills-dir') {
-      f.skillsDir = argv[i + 1] ?? null;
-      i++;
-    } else if (a?.startsWith('--skills-dir=')) {
-      f.skillsDir = a.slice('--skills-dir='.length) || null;
-    } else if (a === '--workspace') {
-      f.workspace = argv[i + 1] ?? null;
-      i++;
-    } else if (a?.startsWith('--workspace=')) {
-      f.workspace = a.slice('--workspace='.length) || null;
-    } else if (a && !a.startsWith('--') && !f.skillName) {
-      f.skillName = a;
-    }
-  }
-  return f;
-}
-
-function resolveAbs(p: string): string {
-  return isAbsolute(p) ? p : resolvePath(process.cwd(), p);
-}
-
-async function runInstall(args: string[]): Promise<void> {
-  const flags = parseInstallFlags(args);
-  if (flags.help) {
-    console.log(HELP_INSTALL);
-    process.exit(0);
-  }
-  if (!flags.all && !flags.skillName) {
-    console.error('Error: pass a skill name or --all.\n');
-    console.error(HELP_INSTALL);
-    process.exit(2);
-  }
-  const gbrainRoot = findGbrainRoot();
-  if (!gbrainRoot) {
-    console.error('Error: could not find gbrain repo root.');
-    process.exit(2);
-  }
-
-  // Resolve target: workspace (parent of skills/) is required for the
-  // managed block + lockfile. skillsDir defaults to workspace/skills.
-  let targetWorkspace: string | null = flags.workspace
-    ? resolveAbs(flags.workspace)
-    : null;
-  let targetSkillsDir: string | null = flags.skillsDir
-    ? resolveAbs(flags.skillsDir)
-    : null;
-
-  if (!targetSkillsDir) {
-    const detected = autoDetectSkillsDir();
-    if (detected.dir) {
-      targetSkillsDir = detected.dir;
-      if (!targetWorkspace) {
-        // workspace is parent of skills/
-        targetWorkspace = resolvePath(targetSkillsDir, '..');
-      }
-    }
-  }
-  if (!targetSkillsDir) {
-    console.error(
-      'Error: could not find a target skills directory. Set $OPENCLAW_WORKSPACE or pass --skills-dir / --workspace.',
+async function cmdScaffold(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(
+      'gbrain skillpack scaffold <name> | --all [--workspace PATH] [--dry-run] [--json]',
     );
-    process.exit(2);
-  }
-  if (!targetWorkspace) {
-    targetWorkspace = resolvePath(targetSkillsDir, '..');
-  }
-
-  try {
-    const plan = planInstall({
-      gbrainRoot,
-      targetWorkspace,
-      targetSkillsDir,
-      skillSlug: flags.all ? null : flags.skillName!,
-      overwriteLocal: flags.overwriteLocal,
-      dryRun: flags.dryRun,
-      forceUnlock: flags.forceUnlock,
-    });
-    const result = applyInstall(plan, {
-      gbrainRoot,
-      targetWorkspace,
-      targetSkillsDir,
-      skillSlug: flags.all ? null : flags.skillName!,
-      overwriteLocal: flags.overwriteLocal,
-      dryRun: flags.dryRun,
-      forceUnlock: flags.forceUnlock,
-    });
-
-    if (flags.json) {
-      console.log(
-        JSON.stringify(
-          {
-            ok: result.summary.skippedLocallyModified === 0,
-            dryRun: result.dryRun,
-            gbrainRoot,
-            targetWorkspace,
-            targetSkillsDir,
-            summary: result.summary,
-            managedBlock: result.managedBlock,
-            files: result.files.map(f => ({
-              source: f.source,
-              target: f.target,
-              outcome: f.outcome,
-              sharedDep: f.sharedDep,
-            })),
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      const label = flags.dryRun ? 'skillpack install --dry-run' : 'skillpack install';
-      console.log(
-        `${label}: ${result.summary.wroteNew} new, ${result.summary.wroteOverwrite} overwrites, ${result.summary.skippedIdentical} unchanged, ${result.summary.skippedLocallyModified} skipped (local edits)`,
-      );
-      for (const f of result.files) {
-        if (f.outcome === 'skipped_identical') continue;
-        const tag = f.outcome.padEnd(25);
-        const dep = f.sharedDep ? ' [shared]' : '';
-        console.log(`  ${tag} ${f.target}${dep}`);
-      }
-      if (result.managedBlock.applied) {
-        console.log(`  managed-block           ${result.managedBlock.resolverFile}`);
-      } else if (result.managedBlock.skippedReason === 'resolver_not_found') {
-        console.log(
-          `  warn: no RESOLVER.md / AGENTS.md in ${targetWorkspace} or ${targetSkillsDir} — managed block not written. Create one and re-run.`,
-        );
-      }
-      if (result.summary.skippedLocallyModified > 0) {
-        console.log(
-          `\nNote: ${result.summary.skippedLocallyModified} file(s) differ from the bundle and were skipped. Pass --overwrite-local to replace them (loses local edits) or run \`gbrain skillpack diff <name>\` to inspect.`,
-        );
-      }
-    }
-
-    const exitCode = result.summary.skippedLocallyModified > 0 ? 1 : 0;
-    process.exit(exitCode);
-  } catch (err) {
-    if (err instanceof InstallError || err instanceof BundleError) {
-      if (flags.json) {
-        console.log(
-          JSON.stringify(
-            { ok: false, error: (err as Error & { code?: string }).code, message: err.message },
-            null,
-            2,
-          ),
-        );
-      } else {
-        console.error(`skillpack install: ${err.message}`);
-      }
-      process.exit(err instanceof InstallError && err.code === 'lock_held' ? 2 : 2);
-    }
-    throw err;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// diff
-// ---------------------------------------------------------------------------
-
-const HELP_DIFF = `gbrain skillpack diff <name> [options]
-
-Show per-file diff status between the bundle and the target workspace
-for one skill. Read-only; no writes.
-
-Options:
-  --skills-dir PATH    Override target skills directory.
-  --json               Machine-readable envelope.
-  --help               Show this message.
-
-Exit codes:
-  0   every file matches the bundle
-  1   at least one file differs (or is missing)
-`;
-
-async function runDiff(args: string[]): Promise<void> {
-  const help = args.includes('--help') || args.includes('-h');
-  if (help) {
-    console.log(HELP_DIFF);
     process.exit(0);
   }
   const json = args.includes('--json');
-  let targetSkillsDir: string | null = null;
-  let skillName: string | null = null;
+  const dryRun = args.includes('--dry-run');
+  const all = args.includes('--all');
+  let name: string | null = null;
+  let workspace: string | null = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--skills-dir') {
-      targetSkillsDir = args[i + 1] ? resolveAbs(args[i + 1]) : null;
+    if (a === '--workspace') {
+      workspace = args[i + 1] ?? null;
       i++;
-    } else if (a?.startsWith('--skills-dir=')) {
-      targetSkillsDir = resolveAbs(a.slice('--skills-dir='.length));
-    } else if (a && !a.startsWith('--') && !skillName) {
-      skillName = a;
+    } else if (a?.startsWith('--workspace=')) {
+      workspace = a.slice('--workspace='.length) || null;
+    } else if (a && !a.startsWith('--') && !name) {
+      name = a;
     }
   }
-  if (!skillName) {
-    console.error('Error: pass a skill name.\n');
-    console.error(HELP_DIFF);
-    process.exit(2);
-  }
-  const gbrainRoot = findGbrainRoot();
-  if (!gbrainRoot) {
-    console.error('Error: could not find gbrain repo root.');
-    process.exit(2);
-  }
-  if (!targetSkillsDir) {
-    const detected = autoDetectSkillsDir();
-    if (detected.dir) targetSkillsDir = detected.dir;
-  }
-  if (!targetSkillsDir) {
-    console.error('Error: pass --skills-dir or set $OPENCLAW_WORKSPACE.');
+  if (!all && !name) {
+    console.error('Error: pass a skill name or --all.');
     process.exit(2);
   }
 
+  const gbrainRoot = findGbrainOrDie();
+  const targetWorkspace = resolveWorkspace({ workspace });
+
   try {
-    const diffs = diffSkill(gbrainRoot, skillName, targetSkillsDir);
-    const clean = diffs.every(d => d.identical && d.existing);
+    const result = runScaffold({
+      gbrainRoot,
+      targetWorkspace,
+      skillSlug: all ? null : name!,
+      dryRun,
+    });
     if (json) {
-      console.log(JSON.stringify({ ok: clean, skillName, diffs }, null, 2));
+      console.log(JSON.stringify({ ok: true, dryRun: result.dryRun, summary: result.summary, files: result.files }, null, 2));
     } else {
-      console.log(`skillpack diff ${skillName} → ${targetSkillsDir}`);
-      for (const d of diffs) {
-        let tag: string;
-        if (!d.existing) tag = 'missing  ';
-        else if (d.identical) tag = 'identical';
-        else tag = 'differs  ';
-        console.log(`  ${tag}  ${d.target}  (src ${d.sourceBytes}B / tgt ${d.targetBytes}B)`);
-      }
-      console.log(clean ? '\n✓ all files match the bundle.' : '\n(run `gbrain skillpack install <name> --overwrite-local` to replace local-modified files.)');
+      console.log(
+        `${dryRun ? 'scaffold --dry-run' : 'scaffold'}: ${result.summary.wroteNew} wrote, ${result.summary.skippedExisting} skipped (already present), ${result.summary.pairedSourcesWritten} paired source(s)`,
+      );
     }
-    process.exit(clean ? 0 : 1);
+    process.exit(0);
   } catch (err) {
-    if (err instanceof BundleError) {
-      if (json) {
-        console.log(JSON.stringify({ ok: false, error: err.code, message: err.message }, null, 2));
-      } else {
-        console.error(`skillpack diff: ${err.message}`);
-      }
+    if (err instanceof ScaffoldError || err instanceof BundleError) {
+      console.error(`skillpack scaffold: ${(err as Error).message}`);
       process.exit(2);
     }
     throw err;
@@ -450,202 +243,319 @@ async function runDiff(args: string[]): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// uninstall (v0.25.1, D6 + D8 + D11)
+// reference (+ --apply-clean-hunks)
 // ---------------------------------------------------------------------------
 
-interface UninstallFlags {
-  help: boolean;
-  json: boolean;
-  dryRun: boolean;
-  overwriteLocal: boolean;
-  forceUnlock: boolean;
-  skillName: string | null;
-  skillsDir: string | null;
-  workspace: string | null;
-}
-
-const HELP_UNINSTALL = `gbrain skillpack uninstall <name> [options]
-
-Remove one bundled skill from a target OpenClaw workspace. Inverse of
-install. Symmetric data-loss posture: refuses if the slug isn't in the
-managed-block's cumulative-slugs receipt (D8) or if any file diverges
-from the bundle (D11).
-
-Arguments:
-  <name>               Skill slug to uninstall.
-
-Options:
-  --dry-run            Preview removals + managed-block change; no writes.
-  --overwrite-local    Remove files even when they differ from the
-                       bundle (you've hand-edited them). Default is
-                       refuse-and-warn — symmetric to install.
-  --force-unlock       Acquire the skillpack lockfile even if a stale
-                       peer lock exists.
-  --skills-dir PATH    Override target skills directory.
-  --workspace PATH     Override target workspace (parent of skills/).
-  --json               Machine-readable envelope.
-  --help               Show this message.
-
-Exit codes:
-  0   success
-  1   refused due to local-modification protection (run with
-      --overwrite-local to commit, or hand-revert your edits first)
-  2   setup error (slug not in receipt, no workspace, lock held, etc.)
-`;
-
-function parseUninstallFlags(argv: string[]): UninstallFlags {
-  const f: UninstallFlags = {
-    help: false,
-    json: false,
-    dryRun: false,
-    overwriteLocal: false,
-    forceUnlock: false,
-    skillName: null,
-    skillsDir: null,
-    workspace: null,
-  };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--help' || a === '-h') f.help = true;
-    else if (a === '--json') f.json = true;
-    else if (a === '--dry-run') f.dryRun = true;
-    else if (a === '--overwrite-local') f.overwriteLocal = true;
-    else if (a === '--force-unlock') f.forceUnlock = true;
-    else if (a === '--skills-dir') {
-      f.skillsDir = argv[i + 1] ?? null;
-      i++;
-    } else if (a?.startsWith('--skills-dir=')) {
-      f.skillsDir = a.slice('--skills-dir='.length) || null;
-    } else if (a === '--workspace') {
-      f.workspace = argv[i + 1] ?? null;
+async function cmdReference(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(
+      'gbrain skillpack reference <name> | --all [--workspace PATH] [--apply-clean-hunks] [--dry-run] [--json]',
+    );
+    process.exit(0);
+  }
+  const json = args.includes('--json');
+  const apply = args.includes('--apply-clean-hunks');
+  const dryRun = args.includes('--dry-run');
+  const all = args.includes('--all');
+  let name: string | null = null;
+  let workspace: string | null = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--workspace') {
+      workspace = args[i + 1] ?? null;
       i++;
     } else if (a?.startsWith('--workspace=')) {
-      f.workspace = a.slice('--workspace='.length) || null;
-    } else if (a && !a.startsWith('--') && !f.skillName) {
-      f.skillName = a;
+      workspace = a.slice('--workspace='.length) || null;
+    } else if (a && !a.startsWith('--') && !name) {
+      name = a;
     }
   }
-  return f;
-}
-
-async function runUninstall(args: string[]): Promise<void> {
-  const flags = parseUninstallFlags(args);
-  if (flags.help) {
-    console.log(HELP_UNINSTALL);
-    process.exit(0);
-  }
-  if (!flags.skillName) {
-    console.error('Error: pass a skill name to uninstall.\n');
-    console.error(HELP_UNINSTALL);
-    process.exit(2);
-  }
-  const gbrainRoot = findGbrainRoot();
-  if (!gbrainRoot) {
-    console.error('Error: could not find gbrain repo root.');
+  if (!all && !name) {
+    console.error('Error: pass a skill name or --all.');
     process.exit(2);
   }
 
-  let targetWorkspace: string | null = flags.workspace
-    ? resolveAbs(flags.workspace)
-    : null;
-  let targetSkillsDir: string | null = flags.skillsDir
-    ? resolveAbs(flags.skillsDir)
-    : null;
-
-  if (!targetSkillsDir) {
-    const detected = autoDetectSkillsDir();
-    if (detected.dir) {
-      targetSkillsDir = detected.dir;
-      if (!targetWorkspace) {
-        targetWorkspace = resolvePath(targetSkillsDir, '..');
-      }
-    }
-  }
-  if (!targetSkillsDir) {
-    console.error(
-      'Error: could not find a target skills directory. Set $OPENCLAW_WORKSPACE or pass --skills-dir / --workspace.',
-    );
-    process.exit(2);
-  }
-  if (!targetWorkspace) {
-    targetWorkspace = resolvePath(targetSkillsDir, '..');
-  }
+  const gbrainRoot = findGbrainOrDie();
+  const targetWorkspace = resolveWorkspace({ workspace });
 
   try {
-    const result = applyUninstall({
-      gbrainRoot,
-      targetWorkspace,
-      targetSkillsDir,
-      skillSlug: flags.skillName,
-      overwriteLocal: flags.overwriteLocal,
-      dryRun: flags.dryRun,
-      forceUnlock: flags.forceUnlock,
-    });
-
-    if (flags.json) {
-      console.log(
-        JSON.stringify(
-          {
-            ok: true,
-            dryRun: result.dryRun,
-            gbrainRoot,
-            targetWorkspace,
-            targetSkillsDir,
-            skill: flags.skillName,
-            summary: result.summary,
-            managedBlock: result.managedBlock,
-            files: result.files.map(f => ({
-              source: f.source,
-              target: f.target,
-              outcome: f.outcome,
-              sharedDep: f.sharedDep,
-            })),
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      const label = flags.dryRun
-        ? 'skillpack uninstall --dry-run'
-        : 'skillpack uninstall';
-      console.log(
-        `${label} ${flags.skillName}: ${result.summary.removed} removed, ${result.summary.absent} already absent, ${result.summary.keptLocallyModified} kept (local edits)`,
-      );
-      for (const f of result.files) {
-        if (f.outcome === 'absent') continue;
-        const tag = f.outcome.padEnd(25);
-        const dep = f.sharedDep ? ' [shared]' : '';
-        console.log(`  ${tag} ${f.target}${dep}`);
-      }
-      if (result.managedBlock.applied) {
-        console.log(
-          `  managed-block           ${result.managedBlock.resolverFile} (cumulative-slugs updated)`,
+    if (apply) {
+      if (all) {
+        console.error(
+          'Error: --apply-clean-hunks is intentionally NOT supported with --all. Apply one skill at a time.',
         );
+        process.exit(2);
       }
+      const result = runReferenceApply({ gbrainRoot, targetWorkspace, skillSlug: name!, dryRun });
+      if (json) console.log(JSON.stringify(result, null, 2));
+      else {
+        console.log(result.framing);
+        console.log(
+          `reference --apply-clean-hunks: ${result.summary.totalHunksApplied} hunk(s) applied, ${result.summary.totalHunksConflicted} conflict(s)`,
+        );
+        for (const f of result.files) {
+          if (f.status === 'identical') continue;
+          console.log(`  ${f.status.padEnd(15)} ${f.target}`);
+          for (const c of f.conflicts) console.log(`    ${c}`);
+        }
+      }
+      process.exit(0);
     }
 
+    if (all) {
+      const result = runReferenceAll({ gbrainRoot, targetWorkspace });
+      if (json) console.log(JSON.stringify(result, null, 2));
+      else {
+        console.log(result.framing);
+        for (const s of result.skills) {
+          console.log(
+            `  ${s.slug.padEnd(40)} identical:${s.summary.identical} differs:${s.summary.differs} missing:${s.summary.missing}`,
+          );
+        }
+      }
+      process.exit(0);
+    }
+
+    const result = runReference({ gbrainRoot, targetWorkspace, skillSlug: name! });
+    if (json) console.log(JSON.stringify(result, null, 2));
+    else {
+      console.log(result.framing);
+      console.log(
+        `reference: identical:${result.summary.identical} differs:${result.summary.differs} missing:${result.summary.missing}`,
+      );
+      for (const f of result.files) {
+        if (f.status === 'identical') continue;
+        console.log(`\n  ${f.status.padEnd(10)} ${f.target}`);
+        if (f.unifiedDiff) console.log(f.unifiedDiff);
+      }
+    }
     process.exit(0);
   } catch (err) {
-    if (err instanceof UninstallError || err instanceof BundleError) {
-      const code = (err as Error & { code?: string }).code ?? 'error';
-      if (flags.json) {
-        console.log(
-          JSON.stringify(
-            { ok: false, error: code, message: err.message },
-            null,
-            2,
-          ),
-        );
-      } else {
-        console.error(`skillpack uninstall: ${err.message}`);
-      }
-      // exit 1 only for the recoverable "you have local edits" case;
-      // every other UninstallError is a setup error.
-      const exit =
-        err instanceof UninstallError && code === 'locally_modified' ? 1 : 2;
-      process.exit(exit);
+    if (err instanceof BundleError) {
+      console.error(`skillpack reference: ${err.message}`);
+      process.exit(2);
     }
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// migrate-fence
+// ---------------------------------------------------------------------------
+
+async function cmdMigrateFence(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('gbrain skillpack migrate-fence [--workspace PATH] [--dry-run] [--json]');
+    process.exit(0);
+  }
+  const json = args.includes('--json');
+  const dryRun = args.includes('--dry-run');
+  let workspace: string | null = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--workspace') {
+      workspace = args[i + 1] ?? null;
+      i++;
+    } else if (a?.startsWith('--workspace=')) {
+      workspace = a.slice('--workspace='.length) || null;
+    }
+  }
+  const gbrainRoot = findGbrainOrDie();
+  const targetWorkspace = resolveWorkspace({ workspace });
+  const result = runMigrateFence({ targetWorkspace, gbrainRoot, dryRun });
+  if (json) console.log(JSON.stringify(result, null, 2));
+  else {
+    console.log(`migrate-fence: ${result.status}`);
+    if (result.resolverFile) console.log(`  resolver: ${result.resolverFile}`);
+    if (result.fenceSlugs.length) console.log(`  fenced slugs: ${result.fenceSlugs.join(', ')}`);
+    if (result.skillsCopied.length) console.log(`  skills copied: ${result.skillsCopied.join(', ')}`);
+    if (result.skillsAlreadyPresent.length)
+      console.log(`  already present: ${result.skillsAlreadyPresent.join(', ')}`);
+    if (result.usedRowFallback)
+      console.log('  (used row-parsing fallback — receipt was missing or drifted)');
+  }
+  process.exit(result.status === 'fence_malformed' ? 2 : 0);
+}
+
+// ---------------------------------------------------------------------------
+// scrub-legacy-fence-rows
+// ---------------------------------------------------------------------------
+
+async function cmdScrubLegacy(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(
+      'gbrain skillpack scrub-legacy-fence-rows [--workspace PATH] [--dry-run] [--json]',
+    );
+    process.exit(0);
+  }
+  const json = args.includes('--json');
+  const dryRun = args.includes('--dry-run');
+  let workspace: string | null = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--workspace') {
+      workspace = args[i + 1] ?? null;
+      i++;
+    } else if (a?.startsWith('--workspace=')) {
+      workspace = a.slice('--workspace='.length) || null;
+    }
+  }
+  const targetWorkspace = resolveWorkspace({ workspace });
+  const result = runScrubLegacy({ targetWorkspace, dryRun });
+  if (json) console.log(JSON.stringify(result, null, 2));
+  else {
+    console.log(
+      `scrub-legacy-fence-rows: ${result.removed.length} removed, ${result.preserved.length} preserved`,
+    );
+    if (result.removed.length) console.log(`  removed: ${result.removed.join(', ')}`);
+    if (result.preserved.length) console.log(`  preserved: ${result.preserved.join(', ')}`);
+  }
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// harvest
+// ---------------------------------------------------------------------------
+
+async function cmdHarvest(args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(
+      'gbrain skillpack harvest <slug> --from <host-repo-root> [--no-lint] [--dry-run] [--overwrite-local] [--json]',
+    );
+    process.exit(0);
+  }
+  const json = args.includes('--json');
+  const dryRun = args.includes('--dry-run');
+  const noLint = args.includes('--no-lint');
+  const overwriteLocal = args.includes('--overwrite-local');
+  let slug: string | null = null;
+  let from: string | null = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--from') {
+      from = args[i + 1] ?? null;
+      i++;
+    } else if (a?.startsWith('--from=')) {
+      from = a.slice('--from='.length) || null;
+    } else if (a && !a.startsWith('--') && !slug) {
+      slug = a;
+    }
+  }
+  if (!slug) {
+    console.error('Error: pass a slug.');
+    process.exit(2);
+  }
+  if (!from) {
+    console.error('Error: pass --from <host-repo-root>.');
+    process.exit(2);
+  }
+  const gbrainRoot = findGbrainOrDie();
+
+  try {
+    const result = runHarvest({
+      slug,
+      hostRepoRoot: resolveAbs(from),
+      gbrainRoot,
+      noLint,
+      dryRun,
+      overwriteLocal,
+    });
+    if (json) console.log(JSON.stringify(result, null, 2));
+    else {
+      console.log(`harvest ${slug}: ${result.status}`);
+      if (result.filesCopied.length)
+        console.log(`  files: ${result.filesCopied.length} copied`);
+      if (result.pairedSources.length)
+        console.log(`  paired sources: ${result.pairedSources.join(', ')}`);
+      if (result.manifestUpdated) console.log('  openclaw.plugin.json updated');
+      if (result.lintHits.length) {
+        console.log('  privacy-lint hits (harvest rolled back):');
+        for (const h of result.lintHits) console.log(`    ${h}`);
+      }
+    }
+    // Exit non-zero on lint failure so the editorial workflow knows to scrub.
+    process.exit(result.status === 'lint_failed' ? 1 : 0);
+  } catch (err) {
+    if (err instanceof HarvestError || err instanceof BundleError) {
+      console.error(`skillpack harvest: ${(err as Error).message}`);
+      process.exit(2);
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// diff (informational — preserved from v0.32; uses legacy installer's
+// diffSkill which still ships unchanged until T12 deletes it)
+// ---------------------------------------------------------------------------
+
+async function cmdDiff(args: string[]): Promise<void> {
+  // Lazy-import the legacy diff helper. T12 deletes installer.ts; until
+  // then this path keeps the existing semantics.
+  const { diffSkill } = await import('../core/skillpack/installer.ts');
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('gbrain skillpack diff <name> [--workspace PATH] [--json]');
+    process.exit(0);
+  }
+  const json = args.includes('--json');
+  let name: string | null = null;
+  let skillsDir: string | null = null;
+  let workspace: string | null = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--workspace') {
+      workspace = args[i + 1] ?? null;
+      i++;
+    } else if (a?.startsWith('--workspace=')) {
+      workspace = a.slice('--workspace='.length) || null;
+    } else if (a === '--skills-dir') {
+      skillsDir = args[i + 1] ?? null;
+      i++;
+    } else if (a?.startsWith('--skills-dir=')) {
+      skillsDir = a.slice('--skills-dir='.length) || null;
+    } else if (a && !a.startsWith('--') && !name) {
+      name = a;
+    }
+  }
+  if (!name) {
+    console.error('Error: pass a skill name.');
+    process.exit(2);
+  }
+  const gbrainRoot = findGbrainOrDie();
+  const targetSkillsDir = skillsDir
+    ? resolveAbs(skillsDir)
+    : join(resolveWorkspace({ workspace }), 'skills');
+  try {
+    const diffs = diffSkill(gbrainRoot, name, targetSkillsDir);
+    const clean = diffs.every(d => d.identical && d.existing);
+    if (json) console.log(JSON.stringify({ ok: true, skillName: name, diffs }, null, 2));
+    else {
+      console.log(`skillpack diff ${name} → ${targetSkillsDir}`);
+      for (const d of diffs) {
+        let tag: string;
+        if (!d.existing) tag = 'missing  ';
+        else if (d.identical) tag = 'identical';
+        else tag = 'differs  ';
+        console.log(`  ${tag}  ${d.target}  (src ${d.sourceBytes}B / tgt ${d.targetBytes}B)`);
+      }
+      console.log(clean ? '\n✓ all files match the bundle.' : '\n(Run `gbrain skillpack reference ' + name + '` for a unified diff.)');
+    }
+    // v0.33: diff is informational; exit 0 always.
+    process.exit(0);
+  } catch (err) {
+    if (err instanceof BundleError) {
+      console.error(`skillpack diff: ${err.message}`);
+      process.exit(2);
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// check — routes to skillpack-check (T10 adds --strict)
+// ---------------------------------------------------------------------------
+
+async function routeCheck(args: string[]): Promise<void> {
+  const { runSkillpackCheck } = await import('./skillpack-check.ts');
+  await runSkillpackCheck(args);
 }
