@@ -100,8 +100,23 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     // execFileSync with array args bypasses the shell (same pattern as
     // dry-fix.ts:172). execSync with template strings is vulnerable to
     // paths containing shell metacharacters.
-    expect(source).toContain("execFileSync('git', ['-C', linkInfo.repoRoot, 'pull', '--ff-only']");
+    expect(source).toContain('function upgradeBunLinkSourceClone');
+    expect(source).toContain("execFileSync('git', ['-C', repoRoot, 'fetch'");
     expect(source).toContain("execFileSync('bun', ['install']");
+  });
+
+  test('bun-link upgrade handles source clones without tracking branches', () => {
+    expect(source).toContain('resolveUpstreamRef');
+    expect(source).toContain("'@{u}'");
+    expect(source).toContain('resolveDefaultRemote');
+    expect(source).toContain("'remote', 'get-url', remote");
+    expect(source).toContain('no tracking branch');
+  });
+
+  test('bun-link upgrade preflights non-ff custom branch merges', () => {
+    expect(source).toContain('assertMergeClean');
+    expect(source).toContain("'merge-tree', '--write-tree', 'HEAD', upstreamRef");
+    expect(source).toContain("'merge', '--no-edit', upstreamRef");
   });
 
   test('classifyBunInstall checks repository.url AND src/cli.ts marker', () => {
