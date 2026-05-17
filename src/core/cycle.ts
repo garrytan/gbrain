@@ -57,6 +57,14 @@ export type CyclePhase =
   | 'lint' | 'backlinks' | 'sync' | 'synthesize' | 'extract' | 'extract_facts'
   | 'resolve_symbol_edges'
   | 'patterns' | 'recompute_emotional_weight' | 'consolidate'
+  // v0.36.0.0 Hindsight calibration wave:
+  //  - propose_takes: LLM scans markdown prose, proposes gradeable claims
+  //    to a review queue. User accepts/rejects via `gbrain takes propose`.
+  //  - grade_takes: walks unresolved takes, retrieves evidence, asks a
+  //    judge model to verdict them. Auto-resolve OFF by default (D17).
+  //  - calibration_profile: aggregates the resolved subset into 2-4
+  //    narrative pattern statements + active bias tags. Voice-gated.
+  | 'propose_takes' | 'grade_takes' | 'calibration_profile'
   | 'embed' | 'orphans' | 'purge';
 
 export const ALL_PHASES: CyclePhase[] = [
@@ -88,6 +96,20 @@ export const ALL_PHASES: CyclePhase[] = [
   // stay as audit trail. Placed AFTER patterns (graph-fresh) and BEFORE
   // embed (so the new takes get embedded same-cycle).
   'consolidate',
+  // v0.36.0.0 Hindsight calibration wave. Ordering rationale:
+  //   - propose_takes AFTER consolidate so the proposal LLM sees the
+  //     freshly-consolidated takes when deciding what's NOT yet captured
+  //     (F2 fence-dedup).
+  //   - grade_takes AFTER propose so newly-accepted proposals from the
+  //     queue are eligible for grading on the next cycle (manual accept
+  //     can land between cycle runs; auto-accept is intentionally NOT a
+  //     thing — user always reviews).
+  //   - calibration_profile AFTER grade so the profile reads fresh
+  //     resolutions. Voice-gated narrative; cheap (Haiku judge).
+  // Budget caps live in src/core/cycle/budget-meter.ts via BaseCyclePhase.
+  'propose_takes',
+  'grade_takes',
+  'calibration_profile',
   'embed',
   'orphans',
   // v0.26.5: hard-deletes soft-deleted pages and expired archived sources past
@@ -118,6 +140,12 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   // v0.29 — writes pages.emotional_weight column.
   'recompute_emotional_weight',
   'consolidate',
+  // v0.36.0.0 — propose_takes / grade_takes / calibration_profile all
+  // mutate DB state (take_proposals, take_grade_cache, calibration_profiles)
+  // so they coordinate via the cycle lock.
+  'propose_takes',
+  'grade_takes',
+  'calibration_profile',
   'embed',
   'purge',
 ]);
