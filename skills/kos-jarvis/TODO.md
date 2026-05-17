@@ -133,6 +133,32 @@ COLUMN IF NOT EXISTS …` 过了,生产 schema v34, 不依赖此 PR merge。
 
 ## P1 — Post-v0.34.4 sync follow-ups (added 2026-05-15)
 
+### [x] (PR-3) Upstream PR: `gbrain dream --archive-dir` flag — FILED 2026-05-17 ([#1133](https://github.com/garrytan/gbrain/pull/1133))
+
+Branch `upstream-fix/dream-archive-dir` cut from `upstream/master`
+(HEAD `af7e5379` v0.35.6.0). Adds `--archive-dir <path>` flag to
+`src/commands/dream.ts` that, paired with `--json`, writes the
+CycleReport to `<path>/<iso>.json` (colon-free fs-safe timestamp)
+and atomically swaps a `<path>/latest.json` symlink. Helper
+`archiveReport()` + `isoStamp()` lifted from fork-side
+`skills/kos-jarvis/dream-wrap/run.ts` patterns. 3 files / +205 -3.
+Tests: `bun test test/dream-cli-flags.test.ts test/dream.test.ts`
+**29 pass / 0 fail / 72 expect() / 19.46 s** (5 new static-introspection
++ 5 new integration cases against real PGLite + temp dir).
+
+On merge:
+1. Fork `skills/kos-jarvis/dream-wrap/run.ts` trims from 205 LoC →
+   ~30 LoC (exit-code translation only — clean/ok/partial/skipped → 0,
+   failed → 1, wrap-level error → 2; the archive + symlink + ISO
+   stamp surface all delegate to upstream)
+2. Cron contract unchanged for launchd
+3. Active fork dirs unchanged (dream-wrap kept for the exit-code
+   semantic that upstream doesn't yet fold in — partial = exit 0
+   instead of failed = exit 1)
+
+Pattern matches PR #1017 (superseded by v0.35.5.0 #1111) — fork-side
+experience codified into upstream so the wrapper layer thins.
+
 ### [x] (PR-2) Upstream PR: extend forward-bootstrap to cover oauth_clients.{source_id, federated_read} — CLOSED 2026-05-17 (superseded by v0.35.5.0 #1111)
 
 **[garrytan/gbrain#1017](https://github.com/garrytan/gbrain/pull/1017)**.
