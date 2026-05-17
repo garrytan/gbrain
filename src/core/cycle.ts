@@ -934,9 +934,19 @@ async function runPhaseOrphans(engine: BrainEngine): Promise<PhaseResult> {
     const { findOrphans } = await import('../commands/orphans.ts');
     const result = await findOrphans(engine);
     const count = result.total_orphans;
+    // Orphans are a code-smell signal, not a fatal condition. The
+    // original `count > 20` cutoff was tuned for small dev brains; on
+    // any corpus past a few hundred pages it fires 'warn' every cycle
+    // in steady state. Combined with the autopilot circuit-breaker
+    // historically tripping on cycle.status='partial', that produced
+    // respawn storms under KeepAlive=true. Switch to a ratio: warn
+    // only when more than half the corpus is orphaned (the real "your
+    // graph fell apart" signal). total_pages=0 is a defensive 'ok'.
+    const status: PhaseStatus =
+      result.total_pages > 0 && count / result.total_pages > 0.5 ? 'warn' : 'ok';
     return {
       phase: 'orphans',
-      status: count > 20 ? 'warn' : 'ok',
+      status,
       duration_ms: 0,
       summary: `${count} orphan page(s) out of ${result.total_pages} total`,
       details: {

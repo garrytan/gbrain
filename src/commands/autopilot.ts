@@ -355,7 +355,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             await new Promise(r => setImmediate(r));
           },
         });
-        if (report.status === 'failed' || report.status === 'partial') {
+        // Only 'failed' (every attempted phase failed) trips the autopilot
+        // circuit breaker. 'partial' means at least one phase warned or
+        // failed while others ran — that's a soft signal, not a fatal
+        // condition. Treating 'partial' as failure here caused respawn
+        // storms under KeepAlive=true on brains where a single phase
+        // (typically `orphans`) emits a 'warn' every cycle in steady state.
+        if (report.status === 'failed') {
           cycleOk = false;
         }
         if (jsonMode) {
