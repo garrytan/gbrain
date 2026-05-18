@@ -36,6 +36,7 @@ describe('phase1 operational-memory benchmark', () => {
       'decision_history',
       'decision_reuse',
       'repeated_work_suppression',
+      'resume_compression_fidelity',
       'resume_projection',
       'task_resume',
       'trace_template_completeness',
@@ -69,6 +70,12 @@ describe('phase1 operational-memory benchmark', () => {
         expect(workload.success_rate).toBe(100);
       }
 
+      if (workload.name === 'resume_compression_fidelity') {
+        expect(workload.unit).toBe('percent');
+        expect(typeof workload.success_rate).toBe('number');
+        expect(workload.success_rate).toBe(100);
+      }
+
       if (workload.name === 'decision_reuse') {
         expect(workload.unit).toBe('percent');
         expect(typeof workload.success_rate).toBe('number');
@@ -94,6 +101,7 @@ describe('phase1 operational-memory benchmark', () => {
       'decision_reuse_success_rate',
       'primary_improvement_threshold',
       'repeated_work_suppression_success_rate',
+      'resume_compression_fidelity_success_rate',
       'resume_projection_success_rate',
       'task_resume_p95_ms',
       'trace_template_completeness_success_rate',
@@ -123,6 +131,7 @@ describe('phase1 operational-memory benchmark', () => {
           { name: 'decision_reuse', status: 'measured', unit: 'percent', success_rate: 100 },
           { name: 'verification_warnings', status: 'measured', unit: 'percent', success_rate: 100 },
           { name: 'trace_template_completeness', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'resume_compression_fidelity', status: 'measured', unit: 'percent', success_rate: 100 },
         ],
       }, null, 2));
 

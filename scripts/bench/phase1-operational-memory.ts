@@ -56,6 +56,7 @@ try {
   workloads.push(await runDecisionReuseWorkload(engine));
   workloads.push(await runVerificationWarningsWorkload(engine));
   workloads.push(await runTraceTemplateCompletenessWorkload(engine));
+  workloads.push(await runResumeCompressionFidelityWorkload(engine));
 
   const payload = {
     generated_at: new Date().toISOString(),
@@ -279,6 +280,33 @@ async function runTraceTemplateCompletenessWorkload(
   };
 }
 
+async function runResumeCompressionFidelityWorkload(
+  engine: BrainEngine,
+): Promise<Phase1CorrectnessWorkloadResult> {
+  let passed = 0;
+
+  for (const fixture of PHASE1_TASK_FIXTURES) {
+    const resume = await buildTaskResumeCard(engine, fixture.thread.id);
+    const matches =
+      hasExactItems(resume.next_steps, fixture.expectedResume.next_steps) &&
+      hasExactItems(resume.blockers, fixture.expectedResume.blockers) &&
+      hasExactItems(resume.repeated_work_warnings, fixture.expectedResume.repeated_work_warnings) &&
+      hasExactItems(resume.active_decisions, fixture.expectedResume.active_decisions) &&
+      hasExactItems(resume.verification_warnings, fixture.expectedResume.verification_warnings);
+
+    if (matches) {
+      passed += 1;
+    }
+  }
+
+  return {
+    name: 'resume_compression_fidelity',
+    status: 'measured',
+    unit: 'percent',
+    success_rate: roundTo((passed / PHASE1_TASK_FIXTURES.length) * 100, 2),
+  };
+}
+
 function hasExactItems(actual: string[], expected: string[]): boolean {
   if (actual.length !== expected.length) return false;
   return expected.every((entry, index) => actual[index] === entry);
@@ -395,6 +423,18 @@ function evaluateAcceptance(
     threshold: {
       operator: '===',
       value: PHASE1_ACCEPTANCE_THRESHOLDS.trace_template_completeness_success_rate,
+      unit: 'percent',
+    },
+  });
+
+  const resumeCompressionFidelity = getCorrectnessWorkload(workloads, 'resume_compression_fidelity');
+  checks.push({
+    name: 'resume_compression_fidelity_success_rate',
+    status: resumeCompressionFidelity.success_rate === PHASE1_ACCEPTANCE_THRESHOLDS.resume_compression_fidelity_success_rate ? 'pass' : 'fail',
+    actual: resumeCompressionFidelity.success_rate,
+    threshold: {
+      operator: '===',
+      value: PHASE1_ACCEPTANCE_THRESHOLDS.resume_compression_fidelity_success_rate,
       unit: 'percent',
     },
   });
