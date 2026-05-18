@@ -135,7 +135,7 @@ USAGE
   gbrain jobs stats
   gbrain jobs smoke
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
-                   [--health-interval MS]
+                   [--health-interval MS] [--lock-duration MS]
   gbrain jobs supervisor [start] [--detach] [--json]
                          [--concurrency N] [--queue Q] [--pid-file PATH]
                          [--max-crashes N] [--health-interval N]
@@ -713,11 +713,41 @@ HANDLER TYPES (built in)
         healthCheckInterval = parsed;
       }
 
+      // --lock-duration: row-lock TTL in ms. Default: 30_000 (30s). The worker
+      // renews the lock every lockDuration/2 to keep long-running jobs alive,
+      // but this value is also a multiplier in the wall-clock dead-letter
+      // threshold (see handleWallClockTimeouts in queue.ts):
+      //   default cap = lockDuration * 2 * max_stalled
+      // For jobs without an explicit `timeout_ms`, the cap at defaults
+      // (30s × 2 × 3) is 180s — too tight for vision-heavy `claude --print`
+      // collectors that can legitimately run 5-10 minutes. Bumping
+      // --lock-duration 90000 raises the cap to 9 min and the resulting
+      // wall-clock to 27 min, with no impact on lock-renewal correctness.
+      // Validated identically to --health-interval.
+      const lockDurationRaw = parseFlag(args, '--lock-duration');
+      let lockDuration: number | undefined;
+      if (lockDurationRaw !== undefined) {
+        const parsed = parseInt(lockDurationRaw, 10);
+        if (!Number.isFinite(parsed) || parsed < 1) {
+          console.error(`Error: --lock-duration must be a positive integer (ms), got "${lockDurationRaw}"`);
+          process.exit(1);
+        }
+        if (parsed < 1000) {
+          console.error(
+            `Error: --lock-duration ${parsed} is suspiciously low (likely a unit-confusion typo). ` +
+            `The flag takes milliseconds; for a 90-second lock pass 90000.`,
+          );
+          process.exit(1);
+        }
+        lockDuration = parsed;
+      }
+
       try { await queue.ensureSchema(); }
       catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
       const worker = new MinionWorker(engine, {
         queue: queueName, concurrency, maxRssMb, healthCheckInterval,
+        ...(lockDuration !== undefined ? { lockDuration } : {}),
       });
       await registerBuiltinHandlers(worker, engine);
 
@@ -745,7 +775,10 @@ HANDLER TYPES (built in)
       const healthNote = !isSupervisedChild && healthCheckInterval > 0
         ? `, health-check: ${Math.round(healthCheckInterval / 1000)}s`
         : '';
-      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote})`);
+      const lockNote = lockDuration !== undefined
+        ? `, lock-duration: ${Math.round(lockDuration / 1000)}s`
+        : '';
+      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote}${lockNote})`);
       console.log(`Registered handlers: ${worker.registeredNames.join(', ')}`);
       try {
         await worker.start();
