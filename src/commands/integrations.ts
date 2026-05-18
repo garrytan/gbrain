@@ -695,6 +695,20 @@ async function cmdDoctor(args: string[]): Promise<void> {
     }
   }
 
+  // Cross-cutting check: dead jobs in the minions queue. Shell jobs submitted
+  // by collectors (signal-detect, email-collector, art-signals, etc.) die
+  // silently from the per-integration perspective \u2014 the collector's drain
+  // sees the submit succeed and stays green, while the worker job dies on
+  // the queue side. Without this check, an entire collector pipeline can
+  // be broken for days before anyone notices. Empirically validated 2026-05-18
+  // when 3,561 email-collector batches died with "empty result from codex"
+  // and no surface flagged it.
+  //
+  // Implementation deliberately shells out to `gbrain jobs list` to preserve
+  // this file's "no DB connection" design \u2014 see file-level comment.
+  const deadJobsCheck = checkDeadJobs();
+  if (deadJobsCheck) results.push(deadJobsCheck);
+
   if (jsonMode) {
     const fails = results.filter(r => r.status !== 'ok');
     console.log(JSON.stringify({
@@ -714,8 +728,66 @@ async function cmdDoctor(args: string[]): Promise<void> {
     }
   }
 
+  // Surface cross-cutting [queue] checks below per-integration sections.
+  const queueChecks = results.filter(r => r.integration === '[queue]');
+  if (queueChecks.length > 0) {
+    console.log(`  [queue]: ${queueChecks.every(c => c.status === 'ok') ? 'OK' : 'ISSUES'}`);
+    for (const c of queueChecks) {
+      const icon = c.status === 'ok' ? '  \u2713' : c.status === 'timeout' ? '  \u23F1' : '  \u2717';
+      console.log(`${icon} ${c.output}`);
+    }
+  }
+
   const totalFails = results.filter(r => r.status !== 'ok').length;
   console.log(`\n  OVERALL: ${totalFails === 0 ? 'All checks passed' : `${totalFails} issue(s) found`}`);
+}
+
+/**
+ * Count dead minion jobs and group by job name. Returns a CheckResult only
+ * if dead jobs exist (silent when healthy, per doctor's ISSUES-only model).
+ *
+ * Shell-outs to `gbrain jobs list --status dead` instead of opening a DB
+ * connection \u2014 preserves this file's standalone-CLI design.
+ */
+function checkDeadJobs(): CheckResult | null {
+  try {
+    // Limit caps memory; if a real pipeline is dying you'll see thousands.
+    // 99999 is generous and parses in well under 1s for typical sizes.
+    const out = execSync('gbrain jobs list --status dead --limit 99999', {
+      encoding: 'utf8',
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    // Output format: header line, separator, then rows. Each row has the
+    // shape "  <id>  <name>  <status>  <queue>  <time>  <created>".
+    // Status column is always "dead" for our filter \u2014 count lines with it.
+    const byName: Record<string, number> = {};
+    let total = 0;
+    for (const line of out.split('\n')) {
+      // Match rows: leading whitespace, integer id, name, "dead".
+      const m = line.match(/^\s+\d+\s+(\S+)\s+dead\b/);
+      if (m) {
+        byName[m[1]] = (byName[m[1]] || 0) + 1;
+        total++;
+      }
+    }
+    if (total === 0) return null;
+    // Order names by count desc for readability.
+    const breakdown = Object.entries(byName)
+      .sort((a, b) => b[1] - a[1])
+      .map(([n, c]) => `${n}:${c}`)
+      .join(', ')
+    return {
+      integration: '[queue]',
+      check: 'dead_jobs',
+      status: 'fail',
+      output: `${total} dead job(s) in minions queue (${breakdown}). Inspect: gbrain jobs list --status dead | head; details: gbrain jobs get <id>`,
+    };
+  } catch {
+    // DB unreachable / gbrain jobs unavailable \u2014 skip silently. Doctor still
+    // surfaces the per-recipe checks; this one is best-effort.
+    return null;
+  }
 }
 
 function cmdStats(args: string[]): void {
