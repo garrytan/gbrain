@@ -179,10 +179,22 @@ Parse `content[0].text` as JSON to get the structured error.
 }
 ```
 
-**SSE caveat**: `StreamableHTTPServerTransport` (the MCP SDK transport) MAY
-return `Content-Type: text/event-stream` for streaming responses. For
-`tools/call` you'll almost always get plain JSON, but client should defensively
-check `Content-Type` and parse SSE if needed (`data:` line prefix).
+**SSE format — DEFAULT, not optional** (verified 2026-05-17 on gbrain
+v0.35.6.0 + OpenClaw feishu jarvis Python integration): `gbrain serve
+--http` returns `Content-Type: text/event-stream` for `/mcp` responses
+**by default**, even for synchronous `tools/call`. The body shape is:
+
+```
+event: message
+data: {"jsonrpc":"2.0","id":"1","result":{...}}
+
+```
+
+Clients MUST extract the line starting with `data: ` and parse its JSON
+payload. Raw `r.json()` (Python `requests`) and direct `jq .` on the body
+will fail with "Invalid numeric literal" because they see the `event:`
+prefix first. See `§5.1` Python and `§5.3` bash patterns for the
+defensive extraction. `/token` and `/health` return plain JSON (not SSE).
 
 ### 3.3 `/health` (auth-less)
 
@@ -250,6 +262,19 @@ def _get_access_token() -> str:
     _token_cache["expires_at"] = now + body["expires_in"]
     return body["access_token"]
 
+def _parse_mcp_response(raw_body: str, content_type: str) -> dict:
+    """Parse /mcp response. Server returns SSE by default (Content-Type:
+    text/event-stream) even for synchronous tools/call. Extract the `data:`
+    line and parse its JSON payload. Falls back to plain JSON if server
+    ever changes its mind (e.g. /token-style plain-JSON responses).
+    """
+    if "text/event-stream" in content_type:
+        for line in raw_body.splitlines():
+            if line.startswith("data: "):
+                return json.loads(line[len("data: "):])
+        raise RuntimeError("SSE response with no `data:` line found")
+    return json.loads(raw_body)  # plain JSON fallback
+
 def mcp_call(tool_name: str, arguments: dict[str, Any], timeout: int = 240) -> Any:
     """Call an MCP tool. Returns the parsed op result. Raises on error envelope."""
     token = _get_access_token()
@@ -269,7 +294,7 @@ def mcp_call(tool_name: str, arguments: dict[str, Any], timeout: int = 240) -> A
         timeout=timeout,
     )
     r.raise_for_status()
-    body = r.json()
+    body = _parse_mcp_response(r.text, r.headers.get("content-type", ""))
     if body.get("error"):
         raise RuntimeError(f"MCP {tool_name} JSON-RPC error: {body['error']['message']}")
     text = body.get("result", {}).get("content", [{}])[0].get("text", "")
@@ -339,10 +364,19 @@ async function mcpCall<T = unknown>(name: string, args: Record<string, unknown>)
     }),
   });
   if (!r.ok) throw new Error(`MCP ${name} HTTP ${r.status}: ${await r.text()}`);
-  const env = await r.json() as {
-    error?: { message: string };
-    result?: { content?: Array<{ text?: string }>; isError?: boolean };
-  };
+  // Server returns SSE by default (event: message\ndata: <JSON>). Detect
+  // Content-Type and extract the data: line; fall back to plain JSON only
+  // if the server ever negotiates non-SSE (per MCP SDK contract).
+  const contentType = r.headers.get("content-type") ?? "";
+  let env: { error?: { message: string }; result?: { content?: Array<{ text?: string }>; isError?: boolean } };
+  if (contentType.includes("text/event-stream")) {
+    const raw = await r.text();
+    const dataLine = raw.split("\n").find((l) => l.startsWith("data: "));
+    if (!dataLine) throw new Error(`MCP ${name} SSE response with no data: line`);
+    env = JSON.parse(dataLine.slice("data: ".length));
+  } else {
+    env = await r.json();
+  }
   if (env.error) throw new Error(`MCP ${name} JSON-RPC error: ${env.error.message}`);
   const text = env.result?.content?.[0]?.text ?? "";
   if (env.result?.isError) {
@@ -366,12 +400,13 @@ TOK=$(curl -s -X POST "$KOS_MCP_BASE/token" \
   -d "client_secret=$KOS_OAUTH_CLIENT_SECRET" \
   -d "scope=read write" | jq -r .access_token)
 
-# 2. Call MCP
+# 2. Call MCP — response is SSE (event: message\ndata: <JSON>), extract data:
 curl -s -X POST "$KOS_MCP_BASE/mcp" \
   -H "Authorization: Bearer $TOK" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"query","arguments":{"query":"foo"}}}' \
+  | grep '^data: ' | sed 's/^data: //' \
   | jq -r '.result.content[0].text' | jq .
 ```
 
@@ -533,15 +568,17 @@ echo "  ✓ access_token issued"
 TOOLS=$(curl -s -X POST "$KOS_MCP_BASE/mcp" \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":"1","method":"tools/list"}' | jq -r '.result.tools | length')
+  -d '{"jsonrpc":"2.0","id":"1","method":"tools/list"}' \
+  | grep '^data: ' | sed 's/^data: //' | jq -r '.result.tools | length')
 [ "$TOOLS" -ge 10 ] || { echo "FAIL: tools/list returned $TOOLS"; exit 1; }
 echo "  ✓ tools/list returns $TOOLS ops"
 
-# 3. query smoke
+# 3. query smoke (SSE response → extract data: line first)
 curl -s -X POST "$KOS_MCP_BASE/mcp" \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"query","arguments":{"query":"smoke"}}}' \
+  | grep '^data: ' | sed 's/^data: //' \
   | jq -r '.result.content[0].text' | jq '. | length' \
   | xargs -I{} sh -c '[ {} -ge 0 ] && echo "  ✓ query returned {} hits"'
 
@@ -551,6 +588,7 @@ curl -s -X POST "$KOS_MCP_BASE/mcp" \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d "$(jq -nc --arg slug "$SLUG" '{jsonrpc:"2.0",id:"1",method:"tools/call",params:{name:"put_page",arguments:{slug:$slug,content:"---\ntype: source\nkind: source\ntitle: handoff-smoke\nstatus: draft\ncreated: 2026-05-17\nupdated: 2026-05-17\nsource_refs: [handoff-smoke]\ntags: [smoke-test]\n---\n\n# handoff smoke\n\nIf you see this in vector search, the wire works."}}}')" \
+  | grep '^data: ' | sed 's/^data: //' \
   | jq -r '.result.content[0].text' | jq -r '.status'
 # expect: created_or_updated
 

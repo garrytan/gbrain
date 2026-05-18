@@ -156,19 +156,22 @@ TOK=$(curl -s -X POST http://127.0.0.1:7225/token \
 # health (auth-less)
 curl -sS http://127.0.0.1:7225/health
 
-# MCP tools/list (验 OAuth + scope OK)
+# MCP tools/list (验 OAuth + scope OK) — 注意 /mcp 默认返 SSE，
+# 必须先 grep '^data: ' 抽 SSE data line 再 jq 解析
 curl -sS -X POST http://127.0.0.1:7225/mcp \
   -H "Authorization: Bearer $TOK" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":"1","method":"tools/list"}' | jq .
+  -d '{"jsonrpc":"2.0","id":"1","method":"tools/list"}' \
+  | grep '^data: ' | sed 's/^data: //' | jq .
 
-# MCP tools/call query
+# MCP tools/call query (SSE 同样 wrap)
 curl -sS -X POST http://127.0.0.1:7225/mcp \
   -H "Authorization: Bearer $TOK" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"query","arguments":{"query":"harness engineering 是什么"}}}' | jq .
+  -d '{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"query","arguments":{"query":"harness engineering 是什么"}}}' \
+  | grep '^data: ' | sed 's/^data: //' | jq .
 
 # 3. 用 ntn 在本地执行 worker tools (使用 .env 里的 client_id/secret)
 ntn workers exec kosStatus --local
