@@ -1,3 +1,4 @@
+from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import store, llm
@@ -6,7 +7,7 @@ from tools import todo as _todo_mod
 from pathlib import Path
 
 # Cache system prompt and tool registry — both are static for the process lifetime.
-_system_prompt: str | None = None
+_system_prompt = None  # str | None
 _tools = None
 
 
@@ -32,13 +33,16 @@ def extract_text(response) -> str:
 
 
 def _run_tool(tools, block):
+    """Execute one tool and return (block, output, latency_ms)."""
+    t = time.monotonic()
     tool = tools.get(block.name)
     if tool is None:
-        return block, f"ERROR: unknown tool '{block.name}'"
+        return block, f"ERROR: unknown tool '{block.name}'", int((time.monotonic() - t) * 1000)
     try:
-        return block, tool.execute(**block.input)
+        output = tool.execute(**block.input)
     except Exception as e:
-        return block, f"ERROR: {type(e).__name__}: {e}"
+        output = f"ERROR: {type(e).__name__}: {e}"
+    return block, output, int((time.monotonic() - t) * 1000)
 
 
 def run(task: str, max_steps: int = 50) -> str:
@@ -71,9 +75,9 @@ def run(task: str, max_steps: int = 50) -> str:
         with ThreadPoolExecutor(max_workers=len(tool_blocks) or 1) as ex:
             futs = {ex.submit(_run_tool, tools, b): b for b in tool_blocks}
             for fut in as_completed(futs):
-                block, output = fut.result()
+                block, output, tool_ms = fut.result()
                 outputs[block.id] = output
-                timings[block.id] = ms(t0)
+                timings[block.id] = tool_ms
 
         results = []
         for block in tool_blocks:

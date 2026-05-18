@@ -86,14 +86,15 @@ def log_tool_call(run_id: str, step_idx: int, name: str, inp: dict, output: str,
     if _verbose():
         keys = list(inp.keys())
         print(f"  → {name}({keys}) {latency_ms}ms  {output[:80].strip()!r}", file=sys.stderr)
+    # Atomic INSERT: call_idx = MAX(call_idx)+1 computed inside the DB to avoid
+    # the SELECT-then-INSERT race when parallel tool calls log concurrently.
     with _conn() as conn:
-        idx = conn.execute(
-            "SELECT COUNT(*) FROM tool_calls WHERE run_id=? AND step_idx=?",
-            (run_id, step_idx),
-        ).fetchone()[0]
         conn.execute(
-            "INSERT INTO tool_calls (run_id,step_idx,call_idx,name,input,output,latency_ms,ts) VALUES (?,?,?,?,?,?,?,?)",
-            (run_id, step_idx, idx, name, json.dumps(inp), output, latency_ms, _now()),
+            "INSERT INTO tool_calls (run_id,step_idx,call_idx,name,input,output,latency_ms,ts) "
+            "SELECT ?,?,COALESCE(MAX(call_idx)+1,0),?,?,?,?,? "
+            "FROM tool_calls WHERE run_id=? AND step_idx=?",
+            (run_id, step_idx, name, json.dumps(inp), output, latency_ms, _now(),
+             run_id, step_idx),
         )
 
 

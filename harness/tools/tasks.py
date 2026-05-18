@@ -17,7 +17,15 @@ def _now() -> str:
 
 
 def _task_path(task_id: str) -> Path:
-    return _TASKS_DIR / f"{task_id}.json"
+    """Return the task file path, raising ValueError if task_id would escape tasks dir."""
+    # Strip any path separators to prevent directory traversal.
+    safe_id = task_id.replace("/", "").replace("\\", "").replace("..", "")
+    if not safe_id or safe_id != task_id:
+        raise ValueError(f"invalid task_id: {task_id!r}")
+    p = (_TASKS_DIR / f"{task_id}.json").resolve()
+    if not str(p).startswith(str(_TASKS_DIR.resolve())):
+        raise ValueError(f"task_id escapes tasks directory: {task_id!r}")
+    return p
 
 
 def _load(task_id: str) -> dict:
