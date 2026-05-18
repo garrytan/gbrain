@@ -679,7 +679,10 @@ function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
  * Failure messages embed `source.id` so the fix command
  * `gbrain sync --source <id>` matches what the user copy-pastes.
  */
-export async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
+export async function checkSyncFreshness(
+  engine: BrainEngine,
+  opts: { now?: number } = {},
+): Promise<Check> {
   try {
     const sources = await engine.executeRaw<{
       id: string;
@@ -703,7 +706,10 @@ export async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
     const warnMs = warnHours * 60 * 60 * 1000;
     const failMs = failHours * 60 * 60 * 1000;
 
-    const now = Date.now();
+    // `now` is a test seam — boundary tests need to pin the comparison
+    // instant to avoid jitter (CI scheduling can push a "scheduled 72h
+    // ago" timestamp past the strict `>` fail threshold by microseconds).
+    const now = opts.now ?? Date.now();
     const issues: string[] = [];
     let hasWarnings = false;
     let hasFailures = false;

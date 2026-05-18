@@ -2,6 +2,48 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.36.0.0] - 2026-05-17
+
+**Skillpacks are scaffolding now, not amber. Scaffold once, own the files, fork freely.**
+
+GBrain v0.36 retires the managed-block install model. `gbrain skillpack install` and `uninstall` are gone — replaced by `scaffold` (one-time additive copy), `reference` (read-only diff lens against gbrain's bundle), `migrate-fence` (one-shot transition from the old fence), `scrub-legacy-fence-rows` (opt-in row cleanup), and `harvest` (lift a proven skill from a host repo back into gbrain). The whole "amber" surface — managed block, cumulative-slugs receipt, content-hash gates, lockfile, prune semantics — is deleted. ~600 LOC of mechanism comes out; ~400 LOC of new modules + ~1000 LOC of new test coverage replace it. The point is that scaffolded skills are first-class members of your agent repo. You own them. gbrain becomes a reference library, not a package manager.
+
+### What you can now do
+
+**Scaffold a skill into your real agent repo and own it outright.** `cd ~/git/wintermute && gbrain skillpack scaffold book-mirror` copies the skill markdown, any sibling routing-eval fixtures, and any paired source files declared in the skill's frontmatter `sources:` array. No managed-block fence written to your `RESOLVER.md`. No `cumulative-slugs` receipt. No `.gbrain-skillpack.lock` file. The files are yours. Edit freely; re-scaffolding refuses to overwrite anything that exists.
+
+**Read the diff against gbrain's bundle as reference, not as a force-update.** `gbrain skillpack reference book-mirror` prints per-file status (`identical` / `differs` / `missing`) plus unified diffs for any drift, framed with an agent-readable header: "These files live at <path> as reference. Read them and decide what (if anything) to integrate into your local skills/. Your local edits are intentional — do not blindly overwrite." For a one-line-per-skill sweep, `reference --all`. For two-way auto-apply of non-conflicting hunks, `reference <name> --apply-clean-hunks` (with a documented two-way merge limitation — no scaffold-time base tracking, by design).
+
+**Migrate off the old managed block with one command.** `gbrain skillpack migrate-fence` strips `<!-- gbrain:skillpack:begin -->` / `end -->` markers and the manifest receipt comment from your resolver file, preserving every row inside the fence verbatim as user-owned routing. Cumulative-slugs receipt missing or stale → falls back to row-parsing with a loud warning. Idempotent; re-runs are no-ops. Once your agent confirms it walks frontmatter `triggers:` for routing, `gbrain skillpack scrub-legacy-fence-rows` tears down the bridge — removes legacy rows whose skill exists AND declares non-empty triggers, preserves anything user-added.
+
+**Lift a proven skill back into gbrain so other clients can scaffold it.** `gbrain skillpack harvest my-skill --from ~/git/wintermute` is the inverse loop. Reads the host skill's `skills/<slug>/` + any paired source files, copies into gbrain's tree, updates `openclaw.plugin.json` (sorted), and runs a default-on privacy linter against `~/.gbrain/harvest-private-patterns.txt` (built-in defaults catch `\bWintermute\b`, common email regex, Slack channel patterns). Any match → rollback (delete the copy) and exit non-zero so the editorial pass surfaces the leak. Symlinks in the host skill dir are rejected; canonical-path containment prevents path traversal. The companion editorial skill `skillpack-harvest` walks the genericization checklist (scrub fork names, generalize triggers, lift fork-specific conventions to references).
+
+**Gate CI on bundle drift without breaking interactive use.** `gbrain skillpack check` defaults to informational (exit 0 even with drift) when invoked as a subcommand. Pass `--strict` to opt into exit-1 on action-needed for CI gating. Top-level `gbrain skillpack-check` (the cron entry point) keeps its existing exit-1 behavior for backwards compat.
+
+**Auto-detect a target workspace in non-OpenClaw repos.** `autoDetectSkillsDir` gains a `cwd_walk_up` tier ahead of the `~/.openclaw/workspace` fallback. `cd ~/git/wintermute && gbrain skillpack scaffold ...` finds wintermute automatically. `$OPENCLAW_WORKSPACE` precedence preserved when explicitly set — the precedence regression (R5) is pinned by a test.
+
+### Migration
+
+Existing pre-v0.36 installs:
+
+```bash
+gbrain skillpack migrate-fence       # one-shot, strips the fence
+# (after confirming your agent walks frontmatter)
+gbrain skillpack scrub-legacy-fence-rows
+```
+
+Scripts referencing `gbrain skillpack install` or `gbrain skillpack uninstall` will exit non-zero with a hint pointing at the replacement command. There's no deprecated alias — this is a clean break. Update the scripts once and move on. The bundled skill markdown + paired source files are yours to edit; cleanup is `rm -rf skills/<slug>/` (consult the skill's frontmatter `sources:` for any paired files to remove alongside).
+
+### For contributors
+
+Major file/test surface changes:
+- New: `src/core/skillpack/{copy,scaffold,reference,migrate-fence,scrub-legacy,harvest,harvest-lint,apply-hunks,diff-text}.ts`
+- New: `skills/skillpack-harvest/SKILL.md` (the editorial workflow companion to the harvest CLI)
+- New: `test/skillpack-{copy,scaffold,reference,reference-apply,apply-hunks,migrate-fence,scrub-legacy,harvest,harvest-lint,frontmatter-sources}.test.ts` and `test/e2e/skillpack-flow.test.ts` (~140 cases)
+- Deleted: `test/skillpack-uninstall.test.ts` (412 lines), `test/skillpack-sync-guard.test.ts`
+- Extended: `src/core/skillpack/bundle.ts` (frontmatter `sources:` validation, `enumerateScaffoldEntries`), `src/core/repo-root.ts` (`cwd_walk_up` tier)
+- New docs: `docs/guides/skillpacks-as-scaffolding.md` (model + workflow)
+- `src/core/skillpack/installer.ts` and `test/skillpack-install.test.ts` survive for now — the v0.32 `gbrain skillpack diff` informational command still uses `diffSkill` from there. Slated for deletion in v0.37 cleanup.
 ## [0.35.7.0] - 2026-05-17
 
 **The contradiction probe grew up. Typed claims over time, regressions detected automatically, founder scorecards as a one-liner.**

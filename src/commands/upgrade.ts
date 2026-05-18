@@ -343,6 +343,80 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   } catch {
     // Best-effort cosmetic surface; never block post-upgrade.
   }
+
+  // v0.36 DX: skillpack reference sweep. After an upgrade, the gbrain bundle
+  // may have shipped changes to scaffolded skills the host already has on
+  // disk. Run `reference --all` automatically and print a one-line-per-skill
+  // summary so the agent + operator see what drifted without manually
+  // running the sweep. Skipped silently when:
+  //   - GBRAIN_SKIP_REFERENCE_SWEEP=1 in env
+  //   - no target workspace can be auto-detected (gbrain installed but
+  //     never scaffolded anywhere)
+  //   - the detected workspace IS the gbrain repo (dev-mode, would just
+  //     compare gbrain against itself)
+  //   - every scaffolded skill is identical (nothing to say)
+  await postUpgradeReferenceSweep();
+}
+
+/**
+ * Run `reference --all` against the auto-detected host workspace and print
+ * a one-line-per-skill summary of any drift. Best-effort; failures are
+ * swallowed so a broken sweep never blocks post-upgrade.
+ *
+ * Exported (with optional `opts` test seam) for unit testing the gate
+ * logic + output shape. Production callers pass no args — both paths are
+ * auto-detected.
+ */
+export async function postUpgradeReferenceSweep(
+  opts: { gbrainRoot?: string; targetWorkspace?: string } = {},
+): Promise<void> {
+  if (process.env.GBRAIN_SKIP_REFERENCE_SWEEP) return;
+  try {
+    const { autoDetectSkillsDirReadOnly } = await import('../core/repo-root.ts');
+    const { findGbrainRoot } = await import('../core/skillpack/bundle.ts');
+    const { runReferenceAll } = await import('../core/skillpack/reference.ts');
+    const path = await import('path');
+
+    // Allow tests to inject; default to auto-detection.
+    let targetWorkspace = opts.targetWorkspace;
+    if (!targetWorkspace) {
+      const detected = autoDetectSkillsDirReadOnly();
+      if (!detected.dir) return;
+      targetWorkspace = path.resolve(detected.dir, '..');
+    }
+
+    const gbrainRoot = opts.gbrainRoot ?? findGbrainRoot();
+    if (!gbrainRoot) return;
+
+    // Dev-mode guard: the detected workspace IS the gbrain repo. Sweeping
+    // gbrain against itself is always identical — print nothing.
+    if (path.resolve(targetWorkspace) === path.resolve(gbrainRoot)) return;
+
+    const result = runReferenceAll({ gbrainRoot, targetWorkspace });
+    // Print only skills that (a) the host has actually scaffolded, AND
+    // (b) have at least one differs or missing entry. Pure-`missing`
+    // skills the host never scaffolded are noise; skip them.
+    const drifted = result.skills.filter(
+      s =>
+        s.summary.identical + s.summary.differs > 0 &&
+        (s.summary.differs > 0 || s.summary.missing > 0),
+    );
+    if (drifted.length === 0) return;
+
+    console.log('');
+    console.log('Skillpack reference sweep (post-upgrade):');
+    for (const s of drifted) {
+      console.log(
+        `  ${s.slug.padEnd(40)} differs:${s.summary.differs} missing:${s.summary.missing}`,
+      );
+    }
+    console.log('');
+    console.log(
+      'Run `gbrain skillpack reference <slug>` to inspect per-skill diffs.\nSee `skills/_AGENT_README.md` for what your agent should do on update.\nSkip this sweep: `GBRAIN_SKIP_REFERENCE_SWEEP=1`.',
+    );
+  } catch {
+    // Best-effort. Never block post-upgrade.
+  }
 }
 
 // findMigrationsDir + extractFeaturePitch removed in v0.11.1: migration data

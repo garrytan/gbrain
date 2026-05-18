@@ -60,6 +60,7 @@
     "skills/skill-creator",
     "skills/skillify",
     "skills/skillpack-check",
+    "skills/skillpack-harvest",
     "skills/soul-audit",
     "skills/strategic-reading",
     "skills/testing",
@@ -68,6 +69,7 @@
   ],
   "shared_deps": [
     "skills/conventions",
+    "skills/_AGENT_README.md",
     "skills/_brain-filing-rules.md",
     "skills/_brain-filing-rules.json",
     "skills/_output-rules.md"
