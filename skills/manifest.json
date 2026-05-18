@@ -1,0 +1,230 @@
+{
+  "name": "gbrain",
+  "version": "0.32.3.0",
+  "conformance_version": "1.0.0",
+  "description": "Personal knowledge brain with hybrid RAG search \u2014 GStack mod for agent platforms",
+  "skills": [
+    {
+      "name": "ingest",
+      "path": "ingest/SKILL.md",
+      "description": "Route content to specialized ingestion skills. Detects input type and delegates."
+    },
+    {
+      "name": "query",
+      "path": "query/SKILL.md",
+      "description": "Answer questions using 3-layer search, synthesis, and citation propagation"
+    },
+    {
+      "name": "maintain",
+      "path": "maintain/SKILL.md",
+      "description": "Brain health checks: back-link enforcement, citation audit, filing validation, stale info, orphans, benchmarks"
+    },
+    {
+      "name": "enrich",
+      "path": "enrich/SKILL.md",
+      "description": "Enrich pages with tiered enrichment protocol, person/company page templates, and validation rules"
+    },
+    {
+      "name": "briefing",
+      "path": "briefing/SKILL.md",
+      "description": "Compile daily briefing with meeting context, active deals, and citation tracking"
+    },
+    {
+      "name": "migrate",
+      "path": "migrate/SKILL.md",
+      "description": "Universal migration from Obsidian, Notion, Logseq, markdown, CSV, JSON, Roam"
+    },
+    {
+      "name": "setup",
+      "path": "setup/SKILL.md",
+      "description": "Set up GBrain: auto-provision Supabase or PGLite, AGENTS.md injection, first import"
+    },
+    {
+      "name": "publish",
+      "path": "publish/SKILL.md",
+      "description": "Share brain pages as beautiful password-protected HTML (code + skill pair, zero LLM calls)"
+    },
+    {
+      "name": "frontmatter-guard",
+      "path": "frontmatter-guard/SKILL.md",
+      "description": "Validate and auto-repair YAML frontmatter on brain pages; gates against malformed YAML, missing closing ---, nested quotes, slug mismatches, null bytes"
+    },
+    {
+      "name": "signal-detector",
+      "path": "signal-detector/SKILL.md",
+      "description": "Always-on ambient signal capture. Fires on every message to detect original thinking and entity mentions."
+    },
+    {
+      "name": "brain-ops",
+      "path": "brain-ops/SKILL.md",
+      "description": "Brain-first lookup, read-enrich-write loop, source attribution, ambient enrichment. The core read/write cycle."
+    },
+    {
+      "name": "idea-ingest",
+      "path": "idea-ingest/SKILL.md",
+      "description": "Ingest links, articles, tweets, and ideas into the brain with analysis and entity cross-linking."
+    },
+    {
+      "name": "media-ingest",
+      "path": "media-ingest/SKILL.md",
+      "description": "Ingest video, audio, PDF, book, screenshot, and repo content with entity extraction."
+    },
+    {
+      "name": "meeting-ingestion",
+      "path": "meeting-ingestion/SKILL.md",
+      "description": "Ingest meeting transcripts with attendee enrichment, entity propagation, and timeline merge."
+    },
+    {
+      "name": "citation-fixer",
+      "path": "citation-fixer/SKILL.md",
+      "description": "Audit and fix citation formatting across brain pages."
+    },
+    {
+      "name": "repo-architecture",
+      "path": "repo-architecture/SKILL.md",
+      "description": "Where new brain files go. Filing rules and directory conventions."
+    },
+    {
+      "name": "skill-creator",
+      "path": "skill-creator/SKILL.md",
+      "description": "Create new skills following the conformance standard with MECE validation."
+    },
+    {
+      "name": "daily-task-manager",
+      "path": "daily-task-manager/SKILL.md",
+      "description": "Task lifecycle: add, complete, defer, remove, review with priority levels."
+    },
+    {
+      "name": "daily-task-prep",
+      "path": "daily-task-prep/SKILL.md",
+      "description": "Morning preparation with calendar context, open threads, and task review."
+    },
+    {
+      "name": "cross-modal-review",
+      "path": "cross-modal-review/SKILL.md",
+      "description": "Quality gate via second model with refusal routing chain."
+    },
+    {
+      "name": "cron-scheduler",
+      "path": "cron-scheduler/SKILL.md",
+      "description": "Schedule management with staggering, quiet hours, and wake-up override."
+    },
+    {
+      "name": "reports",
+      "path": "reports/SKILL.md",
+      "description": "Save and load timestamped reports with keyword routing for fast lookup."
+    },
+    {
+      "name": "testing",
+      "path": "testing/SKILL.md",
+      "description": "Skill validation framework: frontmatter, sections, manifest coverage, MECE checks."
+    },
+    {
+      "name": "soul-audit",
+      "path": "soul-audit/SKILL.md",
+      "description": "6-phase interactive interview generating SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md."
+    },
+    {
+      "name": "webhook-transforms",
+      "path": "webhook-transforms/SKILL.md",
+      "description": "Convert external events into brain-ingestible signals with entity extraction."
+    },
+    {
+      "name": "data-research",
+      "path": "data-research/SKILL.md",
+      "description": "Structured data research: search, extract, archive, deduplicate, track. Parameterized YAML recipes for investor updates, donations, company metrics."
+    },
+    {
+      "name": "minion-orchestrator",
+      "path": "minion-orchestrator/SKILL.md",
+      "description": "Unified Minions skill for deterministic shell jobs and LLM subagent orchestration. Submit, monitor, steer, pause/resume, replay. Replaces the older gbrain-jobs routing intent and sessions_spawn for durable observable background work."
+    },
+    {
+      "name": "skillify",
+      "path": "skillify/SKILL.md",
+      "description": "Meta skill. Turn any raw feature into a properly-skilled, tested, resolvable, evaled unit. Paired with gbrain check-resolvable gives user-controllable auto-skill-creation."
+    },
+    {
+      "name": "skillpack-check",
+      "path": "skillpack-check/SKILL.md",
+      "description": "Agent-readable gbrain health report. Wraps doctor + apply-migrations --list into one JSON blob with exit codes. Cron-friendly for morning-briefing pipelines."
+    },
+    {
+      "name": "smoke-test",
+      "path": "smoke-test/SKILL.md",
+      "description": "Post-restart smoke tests + auto-fix for gbrain and OpenClaw environments"
+    },
+    {
+      "name": "book-mirror",
+      "path": "book-mirror/SKILL.md",
+      "description": "Take any book (EPUB/PDF), produce a personalized chapter-by-chapter analysis with two-column tables: left = chapter summary, right = how it applies to you based on brain context. Output: brain page + PDF."
+    },
+    {
+      "name": "article-enrichment",
+      "path": "article-enrichment/SKILL.md",
+      "description": "Transform raw article text dumps in the brain into structured pages with executive summaries, verbatim quotes, key insights, why-it-matters, and cross-references."
+    },
+    {
+      "name": "strategic-reading",
+      "path": "strategic-reading/SKILL.md",
+      "description": "Read a book/article/case study through the lens of a specific strategic problem; produce an applied playbook (do/avoid/watch for) with short/medium/long-term recommendations."
+    },
+    {
+      "name": "concept-synthesis",
+      "path": "concept-synthesis/SKILL.md",
+      "description": "Deduplicate and synthesize raw concept stubs into a tiered intellectual map (T1 Canon to T4 Riff), tracing idea evolution across sources over time."
+    },
+    {
+      "name": "perplexity-research",
+      "path": "perplexity-research/SKILL.md",
+      "description": "Brain-augmented web research via Perplexity plus Opus; surfaces what is NEW vs already-known about a topic by cross-referencing against the brain first."
+    },
+    {
+      "name": "archive-crawler",
+      "path": "archive-crawler/SKILL.md",
+      "description": "Universal archivist for personal file archives (Dropbox/B2/email exports). Filters for high-value content within an explicit gbrain.yml allow-list scan_paths gate."
+    },
+    {
+      "name": "academic-verify",
+      "path": "academic-verify/SKILL.md",
+      "description": "Verify academic citations and research claims against current literature; routes through perplexity-research for the actual web search and formats results as a citation-checked brain page."
+    },
+    {
+      "name": "brain-pdf",
+      "path": "brain-pdf/SKILL.md",
+      "description": "Generate a publication-quality PDF from any brain page via the gstack make-pdf binary; strips frontmatter, sanitizes emoji, applies running headers."
+    },
+    {
+      "name": "voice-note-ingest",
+      "path": "voice-note-ingest/SKILL.md",
+      "description": "Ingest voice notes with exact-phrasing preservation (never paraphrased); routes content based on a decision tree across originals/concepts/people/companies/ideas/personal/voice-notes."
+    },
+    {
+      "name": "cold-start",
+      "path": "cold-start/SKILL.md",
+      "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Uses ClawVisor for safe credential handling — agents never hold raw API keys."
+    },
+    {
+      "name": "ask-user",
+      "path": "ask-user/SKILL.md",
+      "description": "Reusable choice-gate pattern for presenting users with 2-4 options and stopping execution until they respond. Platform-agnostic (Telegram buttons, Discord, CLI, OpenClaw clarify tool)."
+    },
+    {
+      "name": "functional-area-resolver",
+      "path": "functional-area-resolver/SKILL.md",
+      "description": "Compress an agent's routing file (RESOLVER.md or AGENTS.md) by replacing skill-per-row tables with functional-area dispatcher entries. Two-layer dispatch keeps every sub-skill reachable at ~50% of the file size."
+    }
+  ],
+  "dependencies": {
+    "runtime": "bun",
+    "package": "gbrain"
+  },
+  "setup": {
+    "skill": "setup",
+    "description": "Auto-provision Supabase or PGLite and configure GBrain (< 2 min)"
+  },
+  "recipes_dir": "recipes/",
+  "resolver": "RESOLVER.md",
+  "conventions_dir": "conventions/",
+  "templates_dir": "../templates/"
+}
