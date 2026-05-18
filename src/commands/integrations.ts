@@ -34,12 +34,21 @@ interface RecipeSecret {
   where: string;
 }
 
+/**
+ * Install mode discriminator. New recipes default to 'local-managed' (the
+ * legacy path that writes to ~/.gbrain/skills/). 'copy-into-host-repo'
+ * recipes write their bundle into the operator's host agent repo via the
+ * `gbrain integrations install` subcommand.
+ */
+type InstallKind = 'local-managed' | 'copy-into-host-repo';
+
 interface RecipeFrontmatter {
   id: string;
   name: string;
   version: string;
   description: string;
-  category: 'infra' | 'sense' | 'reflex';
+  category: 'infra' | 'sense' | 'reflex' | 'voice';
+  install_kind: InstallKind;
   requires: string[];
   secrets: RecipeSecret[];
   health_checks: HealthCheck[];
@@ -296,6 +305,8 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
   try {
     const { data, content: body } = matter(content);
     if (!data.id) return null;
+    const installKind: InstallKind =
+      data.install_kind === 'copy-into-host-repo' ? 'copy-into-host-repo' : 'local-managed';
     return {
       frontmatter: {
         id: data.id,
@@ -303,6 +314,7 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
         version: data.version || '0.0.0',
         description: data.description || '',
         category: data.category || 'sense',
+        install_kind: installKind,
         requires: data.requires || [],
         secrets: data.secrets || [],
         health_checks: (data.health_checks || []) as HealthCheck[],
@@ -851,6 +863,662 @@ USAGE
 
 // --- Main Entry ---
 
+// =============================================================================
+// `gbrain integrations install <recipe-id>` — copy-into-host-repo path.
+//
+// Reads the recipe's `install/manifest.json` (sibling to `recipes/<id>.md`),
+// validates the target host repo, copies each manifest entry to the target,
+// computes SHA-256 hashes during the copy, writes
+// <target>/services/voice-agent/.gbrain-source.json so future --refresh calls
+// can do three-way classification (unchanged-identical / unchanged-stale /
+// locally-modified).
+//
+// Target validation (path-traversal + privacy hardening):
+//   - Must be an existing directory.
+//   - Must NOT be gbrain itself OR a parent of gbrain.
+//   - Must contain a `.git` directory (refuses missing-git-root).
+//   - Must NOT contain existing files at any target path (unless --overwrite).
+//   - All manifest target paths must be relative; rejects `..` and absolute.
+//   - Symlink-escape check via realpath comparison.
+//
+// Refresh mode (`--refresh`) is documented in install/refresh-algorithm.md.
+// The v0 install command implements the COPY path; refresh is a follow-up.
+// =============================================================================
+
+import { createHash } from 'node:crypto';
+import {
+  copyFileSync,
+  statSync as fsStatSync,
+  realpathSync,
+  chmodSync,
+  appendFileSync as fsAppendFileSync,
+} from 'node:fs';
+import { resolve as pathResolve, dirname as pathDirname } from 'node:path';
+
+interface ManifestFileEntry {
+  src: string;
+  target: string;
+  mode?: string;
+}
+
+interface InstallManifest {
+  recipe: string;
+  version: string;
+  install_kind: InstallKind;
+  target_root_relative_to_host_repo: string;
+  skills_target_root_relative_to_host_repo: string;
+  files: ManifestFileEntry[];
+  skills: ManifestFileEntry[];
+  resolver_rows_to_append?: string[];
+}
+
+interface InstalledFileRecord {
+  src: string;
+  target: string;
+  sha256: string;
+  mode: string;
+}
+
+interface GbrainSourceJson {
+  recipe: string;
+  gbrain_version: string;
+  install_kind: InstallKind;
+  copied_at: string;
+  files: InstalledFileRecord[];
+}
+
+function sha256OfFile(path: string): string {
+  const h = createHash('sha256');
+  h.update(readFileSync(path));
+  return h.digest('hex');
+}
+
+/**
+ * Validate a target path inside the host repo. Rejects:
+ *   - Absolute paths
+ *   - Paths containing '..' segments
+ *   - Paths that escape via symlink (resolved real path leaves target root)
+ */
+function validateManifestTarget(target: string): string | null {
+  if (target.startsWith('/')) return `absolute path not allowed: ${target}`;
+  if (target.includes('..')) return `parent-dir escape not allowed: ${target}`;
+  if (target.includes('\0')) return `null byte in path: ${target}`;
+  return null;
+}
+
+/**
+ * Validate the host target repo.
+ *   - Exists + is a directory
+ *   - Has a `.git` (refuses missing-git-root)
+ *   - Not gbrain itself; not a parent of gbrain
+ *   - Refuses if any manifest target already exists (unless --overwrite)
+ */
+function validateTargetRepo(
+  targetRepo: string,
+  manifestEntries: ManifestFileEntry[],
+  overwrite: boolean,
+): string | null {
+  let resolvedTarget: string;
+  try {
+    resolvedTarget = realpathSync(targetRepo);
+  } catch {
+    return `target repo does not exist or is not accessible: ${targetRepo}`;
+  }
+
+  let stat;
+  try {
+    stat = fsStatSync(resolvedTarget);
+  } catch {
+    return `target repo stat failed: ${resolvedTarget}`;
+  }
+  if (!stat.isDirectory()) return `target is not a directory: ${resolvedTarget}`;
+
+  // Refuse if target is gbrain itself or contains gbrain.
+  let gbrainRoot: string | null = null;
+  try {
+    gbrainRoot = realpathSync(pathResolve(__dirname, '..', '..'));
+  } catch {
+    // ignore — non-fatal
+  }
+  if (gbrainRoot && (resolvedTarget === gbrainRoot || gbrainRoot.startsWith(resolvedTarget + '/'))) {
+    return `refusing to install into gbrain itself (or a parent dir): ${resolvedTarget}`;
+  }
+
+  // Must have a .git
+  try {
+    const gitStat = fsStatSync(join(resolvedTarget, '.git'));
+    if (!gitStat.isDirectory() && !gitStat.isFile()) {
+      return `target has no .git: ${resolvedTarget}`;
+    }
+  } catch {
+    return `target has no .git: ${resolvedTarget}`;
+  }
+
+  if (!overwrite) {
+    for (const entry of manifestEntries) {
+      const targetPath = join(resolvedTarget, entry.target);
+      try {
+        fsStatSync(targetPath);
+        return `refusing to overwrite existing file at ${entry.target} (pass --overwrite to force)`;
+      } catch {
+        // not exists; fine
+      }
+    }
+  }
+
+  return null;
+}
+
+interface InstallOpts {
+  target: string;
+  refresh?: boolean;
+  overwrite?: boolean;
+  dryRun?: boolean;
+  autoMode?: 'keep-mine' | 'take-theirs' | null;
+}
+
+// Per-file refresh classification per recipes/agent-voice/install/refresh-algorithm.md.
+type FileRefreshState =
+  | 'unchanged-identical'
+  | 'unchanged-stale'
+  | 'locally-modified'
+  | 'source-deleted'
+  | 'host-deleted'
+  | 'new-in-manifest';
+
+interface RefreshClassification {
+  src: string;
+  target: string;
+  state: FileRefreshState;
+  recordedSha?: string;
+  currentSrcSha?: string;
+  currentHostSha?: string;
+}
+
+/**
+ * Compute SHA-256 of a string buffer.
+ */
+function sha256OfBuffer(buf: Buffer): string {
+  const h = createHash('sha256');
+  h.update(buf);
+  return h.digest('hex');
+}
+
+/**
+ * Three-way classification for refresh mode.
+ *
+ * For every manifest entry + every host file:
+ *   - identical:        host hash == src hash → no-op
+ *   - stale:            host hash == recorded hash && host hash != src hash → safe to update
+ *   - locally-modified: host hash != recorded hash && host hash != src hash → operator edited
+ *   - source-deleted:   manifest dropped this file; host still has it
+ *   - host-deleted:     manifest has it; host file missing
+ *   - new-in-manifest:  file in manifest, not in prior install record
+ */
+function classifyForRefresh(
+  manifestEntries: ManifestFileEntry[],
+  recordedFiles: InstalledFileRecord[],
+  recipeBundleRoot: string,
+  resolvedTarget: string,
+): RefreshClassification[] {
+  const recordedByTarget = new Map<string, InstalledFileRecord>();
+  for (const r of recordedFiles) recordedByTarget.set(r.target, r);
+
+  const classifications: RefreshClassification[] = [];
+  const manifestTargets = new Set<string>();
+
+  // Pass 1: walk current manifest entries.
+  for (const entry of manifestEntries) {
+    manifestTargets.add(entry.target);
+    const srcPath = pathResolve(recipeBundleRoot, entry.src);
+    const targetPath = pathResolve(resolvedTarget, entry.target);
+
+    let currentSrcSha: string | undefined;
+    try {
+      currentSrcSha = sha256OfBuffer(readFileSync(srcPath));
+    } catch {
+      // src missing? Skip — this would mean a manifest pointing at a missing file in gbrain.
+      continue;
+    }
+
+    let currentHostSha: string | undefined;
+    let hostExists = false;
+    try {
+      currentHostSha = sha256OfBuffer(readFileSync(targetPath));
+      hostExists = true;
+    } catch {
+      hostExists = false;
+    }
+
+    const recorded = recordedByTarget.get(entry.target);
+
+    if (!hostExists) {
+      classifications.push({ src: entry.src, target: entry.target, state: 'host-deleted', recordedSha: recorded?.sha256, currentSrcSha });
+      continue;
+    }
+
+    if (!recorded) {
+      classifications.push({ src: entry.src, target: entry.target, state: 'new-in-manifest', currentSrcSha, currentHostSha });
+      continue;
+    }
+
+    if (currentHostSha === currentSrcSha) {
+      classifications.push({ src: entry.src, target: entry.target, state: 'unchanged-identical', recordedSha: recorded.sha256, currentSrcSha, currentHostSha });
+    } else if (currentHostSha === recorded.sha256) {
+      classifications.push({ src: entry.src, target: entry.target, state: 'unchanged-stale', recordedSha: recorded.sha256, currentSrcSha, currentHostSha });
+    } else {
+      classifications.push({ src: entry.src, target: entry.target, state: 'locally-modified', recordedSha: recorded.sha256, currentSrcSha, currentHostSha });
+    }
+  }
+
+  // Pass 2: anything in recorded but NOT in current manifest = source-deleted.
+  for (const r of recordedFiles) {
+    if (!manifestTargets.has(r.target)) {
+      classifications.push({ src: r.src, target: r.target, state: 'source-deleted', recordedSha: r.sha256 });
+    }
+  }
+
+  return classifications;
+}
+
+/**
+ * Append one event to the refresh transaction journal.
+ */
+function appendRefreshLog(targetVoiceAgentDir: string, event: object) {
+  try {
+    const logPath = pathResolve(targetVoiceAgentDir, '.gbrain-source.refresh.log');
+    fsAppendFileSync(logPath, JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
+  } catch {
+    /* non-fatal */
+  }
+}
+
+/**
+ * Refresh mode: read `.gbrain-source.json`, classify, apply decisions.
+ */
+async function refreshRecipeIntoHostRepo(
+  recipeId: string,
+  opts: InstallOpts,
+): Promise<{ classifications: RefreshClassification[]; applied: number; manifestPath: string }> {
+  const recipe = findRecipe(recipeId);
+  if (!recipe) throw new Error(`recipe not found: ${recipeId}`);
+  if (recipe.frontmatter.install_kind !== 'copy-into-host-repo') {
+    throw new Error(`recipe ${recipeId} is not copy-into-host-repo (install_kind=${recipe.frontmatter.install_kind})`);
+  }
+
+  const recipeBundleRoot = pathResolve(
+    pathDirname(pathResolve(__dirname, '..', '..', 'recipes', recipe.filename)),
+    recipe.filename.replace(/\.md$/, ''),
+  );
+  const manifestPath = join(recipeBundleRoot, 'install', 'manifest.json');
+  const manifest: InstallManifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+
+  let resolvedTarget: string;
+  try {
+    resolvedTarget = realpathSync(opts.target);
+  } catch {
+    throw new Error(`target repo does not exist: ${opts.target}`);
+  }
+
+  const sourceFilePath = pathResolve(
+    resolvedTarget,
+    manifest.target_root_relative_to_host_repo,
+    '.gbrain-source.json',
+  );
+  if (!existsSync(sourceFilePath)) {
+    throw new Error(`.gbrain-source.json not found at ${sourceFilePath} — this target was never installed via copy-into-host-repo; run without --refresh first`);
+  }
+
+  let recorded: GbrainSourceJson;
+  try {
+    recorded = JSON.parse(readFileSync(sourceFilePath, 'utf8'));
+  } catch (err) {
+    throw new Error(`failed to parse .gbrain-source.json: ${(err as Error).message}`);
+  }
+
+  if (recorded.recipe !== recipeId) {
+    throw new Error(`.gbrain-source.json recipe="${recorded.recipe}" does not match requested recipe="${recipeId}"`);
+  }
+
+  const allManifestEntries: ManifestFileEntry[] = [...(manifest.files || []), ...(manifest.skills || [])];
+  const classifications = classifyForRefresh(allManifestEntries, recorded.files || [], recipeBundleRoot, resolvedTarget);
+
+  // Print classification summary.
+  const counts: Record<string, number> = {};
+  for (const c of classifications) counts[c.state] = (counts[c.state] || 0) + 1;
+  console.log(`[refresh] ${recipeId} → ${resolvedTarget}`);
+  for (const [state, n] of Object.entries(counts)) {
+    console.log(`  ${state}: ${n}`);
+  }
+
+  if (opts.dryRun) {
+    console.log('[refresh] DRY RUN — no files written. Per-file detail:');
+    for (const c of classifications) {
+      console.log(`  [${c.state}] ${c.target}`);
+    }
+    return { classifications, applied: 0, manifestPath };
+  }
+
+  const targetVoiceAgentDir = pathResolve(resolvedTarget, manifest.target_root_relative_to_host_repo);
+  appendRefreshLog(targetVoiceAgentDir, { event: 'refresh_started', recipe: recipeId, counts });
+
+  let applied = 0;
+  const updatedFiles: InstalledFileRecord[] = [];
+
+  for (const c of classifications) {
+    const srcAbs = pathResolve(recipeBundleRoot, c.src);
+    const targetAbs = pathResolve(resolvedTarget, c.target);
+    const manifestEntry = allManifestEntries.find((e) => e.target === c.target);
+
+    switch (c.state) {
+      case 'unchanged-identical': {
+        // No-op. Carry forward the recorded entry.
+        const r = recorded.files.find((f) => f.target === c.target);
+        if (r) updatedFiles.push(r);
+        break;
+      }
+      case 'unchanged-stale': {
+        // Operator's file matches the recorded SHA; source has moved. Auto-update.
+        copyFileSync(srcAbs, targetAbs);
+        if (manifestEntry?.mode) {
+          try { chmodSync(targetAbs, parseInt(manifestEntry.mode, 8)); } catch { /* ignore */ }
+        }
+        const newSha = sha256OfBuffer(readFileSync(srcAbs));
+        updatedFiles.push({ src: c.src, target: c.target, sha256: newSha, mode: manifestEntry?.mode || '0644' });
+        applied++;
+        appendRefreshLog(targetVoiceAgentDir, { event: 'updated', src: c.src, target: c.target, decision: 'take-theirs' });
+        break;
+      }
+      case 'locally-modified': {
+        const decision = opts.autoMode || 'keep-mine'; // Default to safety: preserve local edit.
+        if (decision === 'take-theirs') {
+          copyFileSync(srcAbs, targetAbs);
+          if (manifestEntry?.mode) {
+            try { chmodSync(targetAbs, parseInt(manifestEntry.mode, 8)); } catch { /* ignore */ }
+          }
+          const newSha = sha256OfBuffer(readFileSync(srcAbs));
+          updatedFiles.push({ src: c.src, target: c.target, sha256: newSha, mode: manifestEntry?.mode || '0644' });
+          applied++;
+          appendRefreshLog(targetVoiceAgentDir, { event: 'overwrote_local', src: c.src, target: c.target, decision: 'take-theirs' });
+        } else {
+          // keep-mine — the operator's file stays; we update the recorded SHA to their current host SHA
+          // so future refreshes don't re-flag the same file until either side changes again.
+          updatedFiles.push({ src: c.src, target: c.target, sha256: c.currentHostSha!, mode: manifestEntry?.mode || '0644' });
+          appendRefreshLog(targetVoiceAgentDir, { event: 'preserved_local', src: c.src, target: c.target, decision: 'keep-mine' });
+        }
+        console.log(`  [locally-modified] ${c.target} → ${decision}`);
+        break;
+      }
+      case 'host-deleted': {
+        // Operator removed the file. Offer to restore (auto-mode 'take-theirs') or leave it gone (default).
+        const decision = opts.autoMode === 'take-theirs' ? 'restore' : 'leave-deleted';
+        if (decision === 'restore') {
+          mkdirSync(pathDirname(targetAbs), { recursive: true });
+          copyFileSync(srcAbs, targetAbs);
+          if (manifestEntry?.mode) {
+            try { chmodSync(targetAbs, parseInt(manifestEntry.mode, 8)); } catch { /* ignore */ }
+          }
+          const newSha = sha256OfBuffer(readFileSync(srcAbs));
+          updatedFiles.push({ src: c.src, target: c.target, sha256: newSha, mode: manifestEntry?.mode || '0644' });
+          applied++;
+          appendRefreshLog(targetVoiceAgentDir, { event: 'restored', src: c.src, target: c.target, decision: 'restore' });
+        } else {
+          appendRefreshLog(targetVoiceAgentDir, { event: 'host_deleted_left_alone', src: c.src, target: c.target });
+          // Don't carry forward into updatedFiles — the file is genuinely gone.
+        }
+        console.log(`  [host-deleted] ${c.target} → ${decision}`);
+        break;
+      }
+      case 'source-deleted': {
+        // gbrain reference removed this file; offer cleanup with --auto take-theirs.
+        const decision = opts.autoMode === 'take-theirs' ? 'cleanup' : 'leave-orphan';
+        if (decision === 'cleanup') {
+          try {
+            // Just unlink — keep things conservative.
+            const unlinkSync = require('node:fs').unlinkSync;
+            unlinkSync(targetAbs);
+            applied++;
+            appendRefreshLog(targetVoiceAgentDir, { event: 'removed_orphan', target: c.target, decision: 'cleanup' });
+          } catch (err) {
+            console.warn(`  [source-deleted] failed to remove orphan ${c.target}: ${(err as Error).message}`);
+          }
+        } else {
+          appendRefreshLog(targetVoiceAgentDir, { event: 'orphan_left_alone', target: c.target });
+        }
+        console.log(`  [source-deleted] ${c.target} → ${decision}`);
+        break;
+      }
+      case 'new-in-manifest': {
+        // Wasn't in the recorded manifest; was added in this refresh. Default: install it.
+        mkdirSync(pathDirname(targetAbs), { recursive: true });
+        copyFileSync(srcAbs, targetAbs);
+        if (manifestEntry?.mode) {
+          try { chmodSync(targetAbs, parseInt(manifestEntry.mode, 8)); } catch { /* ignore */ }
+        }
+        const newSha = sha256OfBuffer(readFileSync(srcAbs));
+        updatedFiles.push({ src: c.src, target: c.target, sha256: newSha, mode: manifestEntry?.mode || '0644' });
+        applied++;
+        appendRefreshLog(targetVoiceAgentDir, { event: 'added_new', src: c.src, target: c.target });
+        break;
+      }
+    }
+  }
+
+  // Re-write .gbrain-source.json with the updated SHAs.
+  const gbrainVersion = (() => {
+    try {
+      const pkgPath = pathResolve(__dirname, '..', '..', 'package.json');
+      return JSON.parse(readFileSync(pkgPath, 'utf8')).version || 'unknown';
+    } catch { return 'unknown'; }
+  })();
+
+  const updatedRecord: GbrainSourceJson = {
+    recipe: recipeId,
+    gbrain_version: gbrainVersion,
+    install_kind: 'copy-into-host-repo',
+    copied_at: new Date().toISOString(),
+    files: updatedFiles,
+  };
+  const fsModule = require('node:fs');
+  fsModule.writeFileSync(sourceFilePath, JSON.stringify(updatedRecord, null, 2) + '\n');
+  appendRefreshLog(targetVoiceAgentDir, { event: 'refresh_complete', applied });
+
+  return { classifications, applied, manifestPath };
+}
+
+export { refreshRecipeIntoHostRepo, classifyForRefresh };
+
+export async function installRecipeIntoHostRepo(
+  recipeId: string,
+  opts: InstallOpts,
+): Promise<{ written: number; manifestPath: string }> {
+  const recipe = findRecipe(recipeId);
+  if (!recipe) throw new Error(`recipe not found: ${recipeId}`);
+  if (recipe.frontmatter.install_kind !== 'copy-into-host-repo') {
+    throw new Error(
+      `recipe ${recipeId} uses install_kind=${recipe.frontmatter.install_kind}; ` +
+        `this command only supports copy-into-host-repo recipes.`,
+    );
+  }
+
+  // Find the recipe bundle root: recipes/<id>/ (sibling to recipes/<id>.md).
+  const recipeBundleRoot = pathResolve(
+    pathDirname(pathResolve(__dirname, '..', '..', 'recipes', recipe.filename)),
+    recipe.filename.replace(/\.md$/, ''),
+  );
+
+  const manifestPath = join(recipeBundleRoot, 'install', 'manifest.json');
+  let manifest: InstallManifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  } catch (err) {
+    throw new Error(`failed to read manifest at ${manifestPath}: ${(err as Error).message}`);
+  }
+
+  // Combine file + skill entries for the validation + copy loop.
+  const allEntries: ManifestFileEntry[] = [
+    ...(manifest.files || []),
+    ...(manifest.skills || []),
+  ];
+
+  // Validate every manifest target path.
+  for (const entry of allEntries) {
+    const reason = validateManifestTarget(entry.target);
+    if (reason) throw new Error(`manifest entry invalid (${entry.src} → ${entry.target}): ${reason}`);
+  }
+
+  // Validate the target repo.
+  const targetRepoError = validateTargetRepo(opts.target, allEntries, !!opts.overwrite);
+  if (targetRepoError) throw new Error(targetRepoError);
+
+  const resolvedTarget = realpathSync(opts.target);
+
+  if (opts.dryRun) {
+    console.log(`[install] DRY RUN — would copy ${allEntries.length} files into ${resolvedTarget}`);
+    for (const entry of allEntries) {
+      console.log(`  ${entry.src} → ${entry.target}`);
+    }
+    return { written: 0, manifestPath };
+  }
+
+  // Copy each entry.
+  const installedRecords: InstalledFileRecord[] = [];
+  for (const entry of allEntries) {
+    const srcPath = join(recipeBundleRoot, entry.src);
+    const targetPath = join(resolvedTarget, entry.target);
+    mkdirSync(pathDirname(targetPath), { recursive: true });
+    copyFileSync(srcPath, targetPath);
+    if (entry.mode) {
+      try { chmodSync(targetPath, parseInt(entry.mode, 8)); } catch { /* non-fatal */ }
+    }
+    const hash = sha256OfFile(srcPath);
+    installedRecords.push({
+      src: entry.src,
+      target: entry.target,
+      sha256: hash,
+      mode: entry.mode || '0644',
+    });
+  }
+
+  // Write the .gbrain-source.json manifest into the target repo.
+  // Per D11-A: NO upstream_repo field, NO imported_from field.
+  const gbrainVersion = (() => {
+    try {
+      const pkgPath = pathResolve(__dirname, '..', '..', 'package.json');
+      return JSON.parse(readFileSync(pkgPath, 'utf8')).version || 'unknown';
+    } catch { return 'unknown'; }
+  })();
+
+  const gbrainSource: GbrainSourceJson = {
+    recipe: recipeId,
+    gbrain_version: gbrainVersion,
+    install_kind: 'copy-into-host-repo',
+    copied_at: new Date().toISOString(),
+    files: installedRecords,
+  };
+
+  const sourceFilePath = join(
+    resolvedTarget,
+    manifest.target_root_relative_to_host_repo,
+    '.gbrain-source.json',
+  );
+  mkdirSync(pathDirname(sourceFilePath), { recursive: true });
+  writeFileSync(sourceFilePath, JSON.stringify(gbrainSource, null, 2) + '\n');
+
+  // Append resolver rows (if any) to the host's RESOLVER.md or AGENTS.md.
+  if (manifest.resolver_rows_to_append && manifest.resolver_rows_to_append.length > 0) {
+    const resolverCandidates = ['RESOLVER.md', 'AGENTS.md', 'skills/RESOLVER.md', 'skills/AGENTS.md'];
+    let resolverPath: string | null = null;
+    for (const candidate of resolverCandidates) {
+      const candidatePath = join(resolvedTarget, candidate);
+      try {
+        fsStatSync(candidatePath);
+        resolverPath = candidatePath;
+        break;
+      } catch { /* not present */ }
+    }
+    if (resolverPath) {
+      const rowsBlock = `\n\n<!-- gbrain:agent-voice:resolver-rows -->\n` +
+        manifest.resolver_rows_to_append.map((r) => `- ${r}`).join('\n') +
+        '\n<!-- /gbrain:agent-voice:resolver-rows -->\n';
+      fsAppendFileSync(resolverPath, rowsBlock);
+    } else {
+      console.warn(
+        `[install] no RESOLVER.md or AGENTS.md in target repo; ` +
+          `add these rows manually:\n` +
+          manifest.resolver_rows_to_append.map((r) => `  ${r}`).join('\n'),
+      );
+    }
+  }
+
+  return { written: installedRecords.length, manifestPath };
+}
+
+async function cmdInstall(args: string[]): Promise<void> {
+  let recipeId: string | null = null;
+  const opts: InstallOpts = { target: '' };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--target' || arg === '-t') {
+      opts.target = args[++i];
+    } else if (arg === '--refresh') {
+      opts.refresh = true;
+    } else if (arg === '--overwrite') {
+      opts.overwrite = true;
+    } else if (arg === '--dry-run' || arg === '-n') {
+      opts.dryRun = true;
+    } else if (arg === '--auto') {
+      const mode = args[++i];
+      if (mode !== 'keep-mine' && mode !== 'take-theirs') {
+        console.error(`--auto must be 'keep-mine' or 'take-theirs', got: ${mode}`);
+        process.exit(2);
+      }
+      opts.autoMode = mode;
+    } else if (arg === '--help' || arg === '-h') {
+      console.log('Usage:');
+      console.log('  gbrain integrations install <recipe-id> --target <host-repo-path> [--overwrite] [--dry-run]');
+      console.log('  gbrain integrations install <recipe-id> --target <host-repo-path> --refresh [--auto keep-mine|take-theirs] [--dry-run]');
+      return;
+    } else if (!recipeId && !arg.startsWith('-')) {
+      recipeId = arg;
+    }
+  }
+
+  if (!recipeId) {
+    console.error('Usage: gbrain integrations install <recipe-id> --target <host-repo-path>');
+    process.exit(2);
+  }
+  if (!opts.target) {
+    opts.target = process.env.OPENCLAW_WORKSPACE || '';
+    if (!opts.target) {
+      console.error('--target <host-repo-path> required (or set $OPENCLAW_WORKSPACE)');
+      process.exit(2);
+    }
+  }
+
+  try {
+    if (opts.refresh) {
+      const { applied, manifestPath } = await refreshRecipeIntoHostRepo(recipeId, opts);
+      console.log(`[refresh] ${recipeId}: applied ${applied} changes to ${realpathSync(opts.target)}`);
+      console.log(`[refresh] manifest: ${manifestPath}`);
+      if (opts.dryRun) {
+        console.log('[refresh] DRY RUN — no files written.');
+      }
+    } else {
+      const { written, manifestPath } = await installRecipeIntoHostRepo(recipeId, opts);
+      console.log(`[install] ${recipeId}: copied ${written} files into ${realpathSync(opts.target)}`);
+      console.log(`[install] manifest: ${manifestPath}`);
+      if (!opts.dryRun) {
+        console.log('[install] next steps: see recipes/' + recipeId + '/install/post-install-hint.md');
+      }
+    }
+  } catch (err) {
+    console.error(`[install] FAIL: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 export async function runIntegrations(args: string[]): Promise<void> {
   const sub = args[0];
 
@@ -872,6 +1540,9 @@ export async function runIntegrations(args: string[]): Promise<void> {
       break;
     case 'show':
       cmdShow(subArgs);
+      break;
+    case 'install':
+      await cmdInstall(subArgs);
       break;
     case 'status':
       cmdStatus(subArgs);

@@ -1,0 +1,9 @@
+{"intent": "venus, what's on my calendar today", "expected_skill": "voice-persona-venus"}
+{"intent": "ask venus about tasks", "expected_skill": "voice-persona-venus"}
+{"intent": "what's my schedule looking like", "expected_skill": "voice-persona-venus"}
+{"intent": "any messages I should see", "expected_skill": "voice-persona-venus"}
+{"intent": "remind me about the meeting", "expected_skill": "voice-persona-venus"}
+{"intent": "what are my open tasks", "expected_skill": "voice-persona-venus"}
+{"intent": "talk to mars about how I'm feeling", "expected_skill": "voice-persona-mars", "ambiguous_with": "voice-persona-venus"}
+{"intent": "ingest this voice memo", "expected_skill": "voice-note-ingest", "ambiguous_with": "voice-persona-venus"}
+{"intent": "after the call, summarize it", "expected_skill": "voice-post-call", "ambiguous_with": "voice-persona-venus"}

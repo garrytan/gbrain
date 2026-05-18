@@ -1,8 +1,8 @@
 ---
 id: twilio-voice-brain
-name: Voice-to-Brain
-version: 0.8.1
-description: Phone calls create brain pages via Twilio + voice pipeline + GBrain MCP. Two architectures -- OpenAI Realtime (turnkey) or DIY STT+LLM+TTS (full control). Callers talk, brain pages appear.
+name: Voice-to-Brain (DEPRECATED — see agent-voice)
+version: 0.8.2
+description: "DEPRECATED in v0.37.0.0. New installs use `gbrain integrations install agent-voice` — the copy-into-host-repo paradigm with WebRTC-first browser client + Mars/Venus personas + read-only tool router. This recipe stays for one release as redirect; will be removed in v0.38."
 category: sense
 requires: [ngrok-tunnel]
 secrets:
@@ -32,6 +32,17 @@ cost_estimate: "$15-25/mo (Twilio number $1-2 + voice $0.01/min, OpenAI Realtime
 ---
 
 # Voice-to-Brain: Phone Calls That Create Brain Pages
+
+> **⚠️ DEPRECATED as of v0.37.0.0.** New installs should use the [agent-voice](agent-voice.md)
+> recipe — a WebRTC-first voice agent with Mars + Venus personas, copy-into-host-repo
+> install paradigm, and read-only tool router. This recipe stays for one release as a
+> redirect for operators with existing Twilio installs. It will be removed in v0.38.
+>
+> **Migration:** `gbrain integrations install agent-voice --target <your-repo>` copies a
+> working reference into your host agent repo where you own the edits. The new recipe
+> includes a Twilio bridge in `code/lib/twilio-bridge.mjs` for operators who still want
+> phone inbound, but the WebRTC `/call?test=1` flow is the headline experience.
+
 
 Call a phone number. Talk. A structured brain page appears with entity detection,
 cross-references, and a summary posted to your messaging app.
