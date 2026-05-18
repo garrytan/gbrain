@@ -2,6 +2,80 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.35.7.0] - 2026-05-17
+
+**The contradiction probe grew up. Typed claims over time, regressions detected automatically, founder scorecards as a one-liner.**
+
+v0.35.3.1 taught the probe to see dates. v0.35.7 turns dates into a proper time-series substrate. Your `## Facts` fences can now carry typed metric assertions (mrr=50000, arr=2000000, team_size=12), the consolidate cycle phase writes `valid_until` on chronologically-superseded facts, and two new commands turn that data into operator signal: `gbrain eval trajectory <entity>` shows the sorted claim history with regressions flagged inline, and `gbrain founder scorecard <entity>` rolls up claim accuracy, consistency, growth direction, and red flags into one JSON payload.
+
+This is the wave the original temporal-contradiction RFC deferred to "Phases 2-4." Three rounds of review (CEO, eng, codex outside-voice) caught a security regression in the planned API, a pre-existing cycle-idempotency bug that would have poisoned trajectory data on every dream cycle re-run, and a misidentified file path for the LLM extraction prompt — all fixed before any code landed.
+
+### What you can now do
+
+**Author typed metric claims in the `## Facts` fence.** The fence widens from 10 to 14 columns when a row carries `claim_metric`, `claim_value`, `claim_unit`, `claim_period`. Mixed fences (some typed rows, some not) work fine — the renderer stays at 10 cells when every row's typed fields are empty, so existing brains don't see diff churn. Metric labels normalize to lowercase snake_case (`MRR` → `mrr`, `Monthly Recurring Revenue` → `mrr`) so trajectory queries don't fragment across capitalization variants. Fifteen common founder metrics have canonical names in the seed map; unknown labels lowercase + underscore-collapse and pass through.
+
+**Get chronological metric trajectories on any entity.** `gbrain eval trajectory companies/acme-example` prints a sorted history with auto-detected regressions flagged inline. `--metric mrr` filters to a single metric. `--since 2026-01-01 --until 2026-07-31` narrows the window. `--json` returns the stable `schema_version: 1` envelope `{points, regressions, drift_score, schema_version}`. Regression threshold is 10% by default, override via `GBRAIN_TRAJECTORY_REGRESSION_THRESHOLD`. The drift_score is `1 - mean(cosine(emb[i], emb[i-1]))` over the trajectory's existing embeddings: 0 means narrative stable, 1 means every claim is unrelated; null when fewer than 3 typed points have embeddings.
+
+**Roll up an entity into a founder scorecard.** `gbrain founder scorecard companies/acme-example` produces four signals: claim_accuracy (over resolved takes), consistency (1 minus the fraction of metric value-changes), growth_trajectory (direction + delta per metric), and red_flags (regressions + high drift + missed predictions). `--json` for a stable contract that any downstream system can consume. Default window is the last year; `--since` / `--until` to narrow.
+
+**Reach trajectories via the MCP `find_trajectory` op** — read scope, not localOnly. OAuth clients query other agents' brains directly. Visibility filtering matches `recall`'s posture: remote callers see only `visibility='world'` facts; local CLI sees everything. Source-scoped via the existing `sourceScopeOpts` v0.34.1.0 pattern — federated `allowedSources` clients get the union; scalar `sourceId` clients see their one source.
+
+**Run the dream cycle without poisoning trajectory data.** v0.35.7 fixes a pre-existing cycle idempotency bug: before this wave, running the full cycle twice in a row would append duplicate takes via `MAX(row_num)+1` after `extract_facts` wiped `consolidated_at` on every fact. The fix is a semantic upsert keyed on `(page_id, claim, since_date)` so re-promotion of a stable cluster reuses the existing take. The autopilot can now run on a cron without silently doubling your facts table's promotion count.
+
+**Cycle-inserted facts now arrive with embeddings.** Before this wave, the `extract_facts` cycle phase inserted fence-derived facts with `embedding = NULL`, which broke consolidate's cosine clustering and any downstream embedding-dependent feature (drift score, semantic similarity in recall). v0.35.7 batches `gateway.embed()` after fence parse and threads embeddings into `insertFacts`. ~$0.02 per 1K facts at OpenAI 3-large pricing; falls open when the embedding gateway is unavailable.
+
+**Fact valid_from now reflects claim dates, not import timestamps.** Eng review caught that `extractFactsFromFenceText` returned `valid_from: undefined` when a fence row lacked an explicit `validFrom:`, which fell through to `insertFacts`'s `now()` default. So a meeting page dated 2026-04-28 used to land its facts as claimed-on-today instead of claimed-on-the-meeting-date — and every trajectory query against existing fences showed import dates instead of claim dates. The fix threads `pages.effective_date` (v0.29.1+) as the fallback. Precedence chain: explicit fence `validFrom:` > `pages.effective_date` > `now()`.
+
+### Itemized changes
+
+- **Schema migration v67** (`facts_typed_claim_columns`) adds four optional columns to `facts`: `claim_metric TEXT`, `claim_value DOUBLE PRECISION`, `claim_unit TEXT`, `claim_period TEXT`. Plus partial index `facts_typed_claim_idx ON facts (entity_slug, claim_metric, valid_from) WHERE claim_metric IS NOT NULL`. All nullable; metadata-only on both engines.
+- `ParsedFact` (`src/core/facts-fence.ts`) gains optional `claimMetric`, `claimValue`, `claimUnit`, `claimPeriod`. Parser tolerates both 10-cell (legacy) and 14-cell (widened) row shapes. Renderer emits 14 cells iff any row has a non-undefined typed field; otherwise stays at 10-cell for backward compat. Numeric `claimValue` cell tolerates comma thousand separators (`50,000` → `50000`).
+- `extractFactsFromFenceText` (`src/core/facts/extract-from-fence.ts`) gains optional `pageEffectiveDate` in opts. Three-branch precedence: fence row > pageEffectiveDate > undefined (engine defaults to `now()`). Metric normalization via `normalizeMetricLabel` with a 15-entry seed map for common founder metrics.
+- `src/core/facts/extract.ts` (the MCP put_page / backstop Haiku call site, NOT the cycle phase — Codex F2 fix) extends its system prompt to optionally emit `metric/value/unit/period` for metric-shaped claims. Backward compatible — non-metric claims emit nulls.
+- `NewFact` interface (`src/core/engine.ts`) gains `claim_metric`, `claim_value`, `claim_unit`, `claim_period` (all nullable). Postgres + PGLite `insertFact` / `insertFacts` SQL extended.
+- `BrainEngine.findTrajectory` method added to both engines. Source-scoped (`sourceId` scalar fast path + `sourceIds` federated array), visibility-filtered when `remote=true`. Single SQL query, `ORDER BY valid_from ASC, id ASC` for deterministic ordering (R3 pin).
+- `src/core/trajectory.ts` (new file) — pure functions `detectRegressions`, `computeDriftScore`, `computeTrajectoryStats`. Exported `TRAJECTORY_SCHEMA_VERSION = 1`. Threshold knob via `GBRAIN_TRAJECTORY_REGRESSION_THRESHOLD` env var.
+- `find_trajectory` MCP op (`src/core/operations.ts`) — scope: read, not localOnly. Routes through `sourceScopeOpts(ctx)` + threads `ctx.remote` for visibility filtering. Strips raw `Float32Array` embeddings from the wire response.
+- `gbrain eval trajectory <entity>` CLI (`src/commands/eval-trajectory.ts`). Pure data fn + JSON formatter + human formatter + thin-client routing seam.
+- `gbrain founder scorecard <entity>` CLI (`src/commands/founder-scorecard.ts`). Pure aggregation function `computeFounderScorecard` exported for tests. Thin-client routing falls back to trajectory-only when remote.
+- `consolidate` cycle phase (`src/core/cycle/phases/consolidate.ts`) gains semantic upsert keyed on `(page_id, claim, since_date)` + chronological `valid_until` writeback on each cluster. Re-running the full cycle on stable input produces zero new takes (R7 pin) and zero `valid_until` diffs (idempotent).
+- `extract_facts` cycle phase (`src/core/cycle/extract-facts.ts`) batch-embeds via `gateway.embed()` before `insertFacts`. Threads `page.effective_date` as the `pageEffectiveDate` fallback.
+- New tests: `test/facts-fence-typed.test.ts` (17 cases — round-trip, normalization, valid_from precedence), `test/consolidate-valid-until.test.ts` (4 cases — R4a chronological writeback, R4b/R7 cycle idempotency), `test/engine-find-trajectory.test.ts` (18 cases — engine + trajectory.ts pure functions), `test/operations-find-trajectory.test.ts` (9 cases — MCP op shape + visibility + source scoping), `test/eval-trajectory.test.ts` (7 cases — CLI), `test/founder-scorecard.test.ts` (9 cases — rollup math), `test/eval-contradictions/no-valid-until-write.test.ts` (4 cases — R1+R8 grep guards).
+- Migration v67 test added to `test/migrate.test.ts` (6 cases — shape, source-shape, idempotency, runtime materialization, backward compat with nullable columns).
+
+## To take advantage of v0.35.7.0
+
+`gbrain upgrade` should do this automatically. The wave ships migration v67 (`facts_typed_claim_columns`); `apply-migrations` runs it transparently.
+
+1. **Verify the migration applied:**
+   ```bash
+   gbrain doctor --json
+   ```
+   Look for `schema_version: 67`. If it's still lower, run `gbrain apply-migrations --yes`.
+2. **Try the new commands on an existing entity:**
+   ```bash
+   gbrain eval trajectory <some-entity-slug>
+   gbrain founder scorecard <some-entity-slug>
+   ```
+   Without any typed-claim data yet, `eval trajectory` will say "(no typed claims for this entity in the window)". That's normal — the substrate is now ready; the data lands as you author typed fence rows or as the next dream cycle's Haiku extraction populates them on conversation-derived facts.
+3. **Author a typed-claim fence row (optional):**
+   In any entity's `## Facts` fence, extend a row with typed columns:
+   ```markdown
+   | # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period |
+   |---|-------|------|------------|------------|------------|------------|-------------|--------|---------|--------------|-------------|------------|--------------|
+   | 1 | MRR hit $50K | fact | 1.0 | private | high | 2026-01-15 |  | OH transcript |  | mrr | 50000 | USD | monthly |
+   ```
+   On next `gbrain sync` + dream cycle, the fact lands with typed fields. `gbrain eval trajectory` picks it up immediately.
+4. **(Optional) Tighten the regression threshold:**
+   ```bash
+   export GBRAIN_TRAJECTORY_REGRESSION_THRESHOLD=0.05   # fire on 5%+ drops instead of 10%
+   ```
+5. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
 ## [0.35.6.0] - 2026-05-17
 
 **Your search results stop letting weak pages climb to the top just because they have a lot of links pointing at them.** Off by default; turn it on with one config key.
