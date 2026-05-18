@@ -1,7 +1,7 @@
 ---
 domain: skills
 action: load
-version: 1
+version: 2
 ---
 
 ## input
@@ -50,6 +50,13 @@ version: 1
 ```json
 {
   "query": "write python code and save to gbrain brain"
+}
+```
+
+### valid-planning-query
+```json
+{
+  "query": "plan a multi-step task with todos and subtasks"
 }
 ```
 
