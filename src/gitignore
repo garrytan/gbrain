@@ -1,0 +1,43 @@
+node_modules/
+bin/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.*.example
+# Bun --compile temp artifacts. Each build emits a new hash-named .bun-build
+# file in cwd; glob catches all of them.
+*.bun-build
+.gstack/
+supabase/.temp/
+.claude/skills/
+# admin/dist/ is the React SPA bundle. CLAUDE.md says it's committed for
+# self-contained binaries (the bun --compile path embeds it via
+# `import path from 'admin/dist/index.html' with { type: 'file' }`).
+# Build via: cd admin && bun install && bun run build.
+admin/node_modules/
+.idea
+eval/reports/
+eval/data/world-v1/world.html
+
+# BrainBench amara-life-v1 Opus cache (regenerate via eval:generate-amara-life)
+eval/data/amara-life-v1/_cache/
+
+# claw-test E2E build cache (shim + scratch outputs)
+test/.cache/
+
+.claude/
+export/
+
+# Conductor workspace-local agent artifacts: plans, todos, run-unit-parallel
+# failure logs and per-shard test output. v0.26.4 (run-unit-parallel.sh)
+# writes .context/test-failures.log + .context/test-summary.txt +
+# .context/test-shards/. Workspace-local by design — never committed.
+.context/
+
+# Tier 3 PGLite snapshot fixture (built on demand by build:pglite-snapshot)
+test/fixtures/pglite-snapshot.tar
+test/fixtures/pglite-snapshot.version
+
+# Private brain reports — never check these in (per CLAUDE.md privacy rule)
+reports/network-intelligence/
