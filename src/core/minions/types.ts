@@ -189,6 +189,14 @@ export interface MinionWorkerOpts {
    *  hung probe would wedge the recursive setTimeout chain forever and
    *  silently disable the health monitor. Default: 10000 (10 seconds). */
   dbProbeTimeoutMs?: number;
+  /** Rolling-hour rate cap for low-priority jobs (priority >= 0). When > 0,
+   *  the claim query gates `priority >= 0` jobs to at most N starts per
+   *  rolling hour, computed across the whole `minion_jobs` table (all queues).
+   *  Jobs with `priority < 0` are exempt and always claimable. 0 or unset =
+   *  no rate limit (default behavior — matches the maxRssMb convention).
+   *  Pairs with the convention that negative priority means "interactive /
+   *  reserve budget" and positive means "background / share remaining headroom." */
+  lowPriRateCap?: number;
 }
 
 // --- Job Context (passed to handlers) ---

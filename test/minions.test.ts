@@ -570,6 +570,48 @@ describe('MinionQueue: Claim Mechanics', () => {
     expect(third!.name).toBe('low'); // priority 10
   });
 
+  test('lowPriRateCap gates priority >= 0 jobs while exempting priority < 0', async () => {
+    // 3 low-pri (priority 5) and 2 high-pri (priority -5) jobs queued
+    await queue.add('low-a', {}, { priority: 5 });
+    await queue.add('low-b', {}, { priority: 5 });
+    await queue.add('low-c', {}, { priority: 5 });
+    await queue.add('high-a', {}, { priority: -5 });
+    await queue.add('high-b', {}, { priority: -5 });
+
+    // With cap of 2 and no starts yet, first low-pri claim succeeds (0 < 2).
+    // After it claims, started_at is set so the next low-pri claim sees count=1.
+    // After the second, count=2, the cap, so the third low-pri claim must yield
+    // the next negative-priority job instead.
+    const names = ['low-a', 'low-b', 'low-c', 'high-a', 'high-b'];
+    const c1 = await queue.claim('t1', 30000, 'default', names, 2);
+    const c2 = await queue.claim('t2', 30000, 'default', names, 2);
+    const c3 = await queue.claim('t3', 30000, 'default', names, 2);
+    const c4 = await queue.claim('t4', 30000, 'default', names, 2);
+    const c5 = await queue.claim('t5', 30000, 'default', names, 2);
+
+    // Highest priority (lowest number) jumps to the front, then low-pri until
+    // cap hits, then the remaining high-pri, then nothing claimable.
+    expect(c1!.name).toBe('high-a'); // priority -5 — exempt
+    expect(c2!.name).toBe('high-b'); // priority -5 — exempt
+    expect(c3!.name).toBe('low-a');  // low-pri start #1 (cnt 0 < 2)
+    expect(c4!.name).toBe('low-b');  // low-pri start #2 (cnt 1 < 2)
+    expect(c5).toBeNull();           // cnt 2 = cap, low-c blocked; no exempt left
+  });
+
+  test('lowPriRateCap unset = no rate limit (backward compat)', async () => {
+    await queue.add('low-a', {}, { priority: 5 });
+    await queue.add('low-b', {}, { priority: 5 });
+    await queue.add('low-c', {}, { priority: 5 });
+
+    const c1 = await queue.claim('t1', 30000, 'default', ['low-a', 'low-b', 'low-c']);
+    const c2 = await queue.claim('t2', 30000, 'default', ['low-a', 'low-b', 'low-c']);
+    const c3 = await queue.claim('t3', 30000, 'default', ['low-a', 'low-b', 'low-c']);
+
+    expect(c1).not.toBeNull();
+    expect(c2).not.toBeNull();
+    expect(c3).not.toBeNull();
+  });
+
   test('claim only claims registered names', async () => {
     await queue.add('sync', {});
     await queue.add('embed', {});

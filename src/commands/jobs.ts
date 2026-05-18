@@ -136,6 +136,7 @@ USAGE
   gbrain jobs smoke
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
                    [--health-interval MS] [--lock-duration MS]
+                   [--low-pri-rate-cap N]
   gbrain jobs supervisor [start] [--detach] [--json]
                          [--concurrency N] [--queue Q] [--pid-file PATH]
                          [--max-crashes N] [--health-interval N]
@@ -742,12 +743,33 @@ HANDLER TYPES (built in)
         lockDuration = parsed;
       }
 
+      // --low-pri-rate-cap: rolling-hour cap on starts of jobs with priority >= 0.
+      // Default unset (no cap). When > 0, the claim SQL gates low-priority jobs
+      // so they collectively never exceed N starts per hour, leaving headroom
+      // for `priority < 0` jobs (which are exempt and always claimable). This
+      // implements a "background tier shares leftover budget" policy against
+      // external rate limits — e.g. the Anthropic Max 5-hour message window
+      // (~900 msg/5h on the alt account). Setting this to 90 caps low-pri at
+      // 50% of that ceiling, preserving the remaining 50% for interactive
+      // / `priority < 0` work even when a background backlog is draining.
+      const lowPriRateCapRaw = parseFlag(args, '--low-pri-rate-cap');
+      let lowPriRateCap: number | undefined;
+      if (lowPriRateCapRaw !== undefined) {
+        const parsed = parseInt(lowPriRateCapRaw, 10);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          console.error(`Error: --low-pri-rate-cap must be a non-negative integer (jobs/hour), got "${lowPriRateCapRaw}"`);
+          process.exit(1);
+        }
+        lowPriRateCap = parsed;
+      }
+
       try { await queue.ensureSchema(); }
       catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
       const worker = new MinionWorker(engine, {
         queue: queueName, concurrency, maxRssMb, healthCheckInterval,
         ...(lockDuration !== undefined ? { lockDuration } : {}),
+        ...(lowPriRateCap !== undefined ? { lowPriRateCap } : {}),
       });
       await registerBuiltinHandlers(worker, engine);
 
@@ -778,7 +800,10 @@ HANDLER TYPES (built in)
       const lockNote = lockDuration !== undefined
         ? `, lock-duration: ${Math.round(lockDuration / 1000)}s`
         : '';
-      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote}${lockNote})`);
+      const rateCapNote = lowPriRateCap !== undefined && lowPriRateCap > 0
+        ? `, low-pri-rate-cap: ${lowPriRateCap}/hr (priority >= 0)`
+        : '';
+      console.log(`Minion worker started (queue: ${queueName}, concurrency: ${concurrency}${watchdogNote}${healthNote}${lockNote}${rateCapNote})`);
       console.log(`Registered handlers: ${worker.registeredNames.join(', ')}`);
       try {
         await worker.start();

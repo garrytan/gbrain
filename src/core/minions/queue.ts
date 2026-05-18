@@ -538,12 +538,35 @@ export class MinionQueue {
    *
    * Sets timeout_at = now() + timeout_ms when the job has a per-job deadline,
    * so handleTimeouts() can dead-letter expired jobs without rereading timeout_ms.
+   *
+   * `lowPriRateCap` (optional): if set, jobs with `priority >= 0` are only
+   * claimable when fewer than `lowPriRateCap` such jobs have started in the
+   * last rolling hour. Jobs with `priority < 0` always claim regardless of
+   * this cap — they're considered "interactive/important" and reserve their
+   * own headroom against external rate limits (e.g. Anthropic 5h window).
+   * When unset, no rate limit is applied (preserves prior behavior).
+   *
+   * The cap check runs in the same statement as the UPDATE via a CTE, so
+   * there's no TOCTOU between counting and claiming.
    */
-  async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[]): Promise<MinionJob | null> {
+  async claim(
+    lockToken: string,
+    lockDurationMs: number,
+    queue: string,
+    registeredNames: string[],
+    lowPriRateCap?: number,
+  ): Promise<MinionJob | null> {
     if (registeredNames.length === 0) return null;
 
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
-      `UPDATE minion_jobs SET
+      `WITH low_pri_starts AS (
+         SELECT COUNT(*)::int AS cnt
+         FROM minion_jobs
+         WHERE started_at IS NOT NULL
+           AND started_at > now() - INTERVAL '1 hour'
+           AND priority >= 0
+       )
+       UPDATE minion_jobs SET
         status = 'active',
         lock_token = $1,
         lock_until = now() + ($2::double precision * interval '1 millisecond'),
@@ -556,12 +579,17 @@ export class MinionQueue {
        WHERE id = (
          SELECT id FROM minion_jobs
          WHERE queue = $3 AND status = 'waiting' AND name = ANY($4)
+           AND (
+             priority < 0
+             OR $5::int IS NULL
+             OR (SELECT cnt FROM low_pri_starts) < $5::int
+           )
          ORDER BY priority ASC, created_at ASC
          FOR UPDATE SKIP LOCKED
          LIMIT 1
        )
        RETURNING *`,
-      [lockToken, lockDurationMs, queue, registeredNames]
+      [lockToken, lockDurationMs, queue, registeredNames, lowPriRateCap ?? null]
     );
     return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
   }
