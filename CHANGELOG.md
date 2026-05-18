@@ -2,6 +2,109 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.36.0.0] - 2026-05-17
+
+**ZeroEntropy is the new default. Faster, cheaper, better quality on real queries. Existing users get a one-shot switch prompt with cost estimate; new installs land on it out of the box. README rewritten to match what gbrain actually is in 2026.**
+
+Track A flips the default embedding + reranker stack to ZeroEntropy. `zembed-1` at 1280 dims via Matryoshka for embeddings, `zerank-2` cross-encoder reranker on by default in the `balanced` mode bundle. The decision is reversible: `gbrain ze-switch --undo` restores your prior config with a symmetric cost-warning prompt. Track B is a zero-based README rewrite from 884 lines to 139, with the deep-dive content moved into dedicated docs files (`docs/INSTALL.md`, `docs/architecture/RETRIEVAL.md`, `docs/ethos/ORIGIN.md`).
+
+### The numbers that matter
+
+Comparison numbers come from a real-corpus benchmark across 20 hand-curated queries on a 17K-page brain. Three providers, head-to-head:
+
+| Metric | OpenAI | Voyage | ZeroEntropy |
+|---|---|---|---|
+| Top-1 wins (of 20 queries) | 6 | 4 | **11** |
+| Avg latency | 973ms | 559ms | **442ms** |
+| Cost per 1M tokens | $0.13 | $0.06 | **$0.05 (regular) / $0.025 (sale)** |
+| Reshuffle of top-1 as reranker | n/a | n/a | **60%** |
+| Cross-provider overlap | 10-18% (any pair) | — | — |
+
+The cross-provider overlap is the most interesting number: providers literally see different things. Pairing zembed-1 (primary) + zerank-2 (reranker) compounds; that's why default-balanced mode now enables the reranker (it was off in v0.35).
+
+### What this means for the user
+
+**New installs ship faster, cheaper retrieval by default.** No config required: `gbrain init` lands on `zeroentropyai:zembed-1` at 1280d with reranker on. Get a key from [zeroentropy.dev](https://dashboard.zeroentropy.dev), set it via `gbrain config set zeroentropy_api_key sk-...`, done. If you'd rather stay on OpenAI/Voyage, `gbrain config set embedding_model <provider:model>` overrides the default — your choice sticks.
+
+**Existing brains see a one-shot upgrade prompt** the first time you run `gbrain upgrade` to v0.36.0.0. The prompt:
+- Shows the comparison numbers above
+- Splits the cost into schema-change time vs re-embed time (two-line cost UX so the long-running step is honest)
+- Defaults on Enter to STAY (safest); explicit `s` to switch, `l` to ask later, `n` to never ask
+- Re-asks after 90 days if you said never (so a year-later contributor's "we have better benchmarks now" data gets surfaced)
+
+The prompt is TTY-only — non-TTY upgrades (CI, cron, docker) print an informational stderr line and skip. Re-run the switch interactively any time via `gbrain ze-switch`.
+
+**The switch consolidates with the v0.32.7 chunker-bump prompt.** If your brain has both pending (chunker version is stale AND you're switching providers), the `RetrievalUpgradePlanner` computes one combined cost and runs ONE re-embed pass. No double-charging. This was a real bug the original cutover plan had; codex outside-voice caught it pre-implementation.
+
+### What you can now do
+
+**Run with the data behind the default.** `gbrain ze-switch --dry-run` shows you the exact pages-pending, cost estimate, and schema-change time before any change. `--json` makes it agent-readable. `--undo` reverses the switch with a symmetric cost prompt (re-embedding back to the old width costs real money — the prompt is honest about that).
+
+**Switch without TTY.** `gbrain ze-switch --non-interactive` is scripted-deploy-friendly. Errors out without `ZEROENTROPY_API_KEY` set unless you also pass `--ignore-missing-key` (lets you stage the schema change before the key is ready; embeddings will fail loud until the key arrives).
+
+**Recover from a half-applied switch.** Power loss or SIGKILL between schema change and config write puts your brain in a known-bad state: schema width is 1280d but config still says 1536d. `gbrain doctor`'s new `embedding_width_consistency` check catches this and recommends `gbrain ze-switch --resume`, which completes whichever step was missing.
+
+**Verify your config matches your schema.** `gbrain doctor` ships two new ZE-aware checks: `ze_embedding_health` (warns if you configured ZE but no key is set), `embedding_width_consistency` (asserts config dim matches the actual vector(N) column width). Both have paste-ready `gbrain config set` fix hints in the message.
+
+### Itemized changes
+
+#### Track A — ZeroEntropy as default
+
+- `src/core/ai/gateway.ts:45-54` — `DEFAULT_EMBEDDING_MODEL='zeroentropyai:zembed-1'`, `DEFAULT_EMBEDDING_DIMENSIONS=1280`, `DEFAULT_RERANKER_MODEL='zeroentropyai:zerank-2'`. 1280d is the Matryoshka step closest to the prior OpenAI 1536d default; 1024 (Voyage's step) is NOT on ZE's valid-dim list — `ZEROENTROPY_VALID_DIMS = {2560, 1280, 640, 320, 160, 80, 40}`.
+- `src/core/search/mode.ts` — `balanced.reranker_enabled` flipped to `true`. The 60% top-1 reshuffle reaches every default install. Missing-key fail-open contract in `src/core/search/rerank.ts` handles unauthenticated cases (logs to audit JSONL, returns input order unchanged). Opt out with `gbrain config set search.reranker.enabled false`.
+- **NEW** `src/core/retrieval-upgrade-planner.ts` — `RetrievalUpgradePlanner` consolidates the v0.32.7 chunker-bump prompt with the new ZE-switch prompt. Tagged-union `ApplyResult` enum (six states: `applied`, `skipped_already_applied`, `skipped_no_work`, `declined`, `planned`, `failed`). Three config keys (`ze_switch_prompt_shown`, `ze_switch_requested`, `ze_switch_applied`) separate UI state from intent from work-done. `ze_switch_previous_snapshot` JSON captures full prior state for `--undo`. Cost math uses MAX not SUM for the consolidation case — one re-embed pass invalidates both chunker and dim surfaces.
+- **NEW** `src/core/retrieval-upgrade-prompt.ts` — interactive prompt UI. Two-line cost split (schema change ~Xs + re-embed ~$Y for N pages). Privacy callout when reranker flips on. Default-on-Enter = stay (safest). 90-day re-ask window for "never ask again".
+- **NEW** `src/commands/ze-switch.ts` — manual CLI lever (`--dry-run`, `--json`, `--resume`, `--force`, `--undo`, `--non-interactive`, `--confirm-reembed`, `--ignore-missing-key`).
+- `src/core/ai/dims.ts` — `AIConfigError` extended to OpenAI text-embedding-3-{small,large}. Fail-loud at the embed boundary when configured dim is outside the model's Matryoshka range, with a paste-ready `gbrain config set embedding_dimensions <N>` fix.
+- `src/commands/doctor.ts` — two new checks (`ze_embedding_health`, `embedding_width_consistency`).
+- Schema transition runs inside a single `engine.transaction()`: DROP indexes → ALTER COLUMN → CREATE INDEX. HNSW indexes are recreated atomically with the column change — no silent slow-search window where vector queries degrade to sequential scan.
+- **NEW** `skills/migrations/v0.36.0.0.md` — agent-facing migration skill. Tells the agent to surface the retrieval-upgrade prompt to the user post-upgrade.
+
+#### Track B — README rewrite
+
+- `README.md` — 884 lines → 139 lines. 33 H2s → 8. Three "New in vX.Y.Z" hero blocks deleted (CHANGELOG carries history; release notes don't belong in the front door). The 136-line `Commands` section moved to `gbrain --help`. The 6-table skills enumeration collapsed to a one-paragraph capability description + link to `skills/RESOLVER.md`.
+- **NEW** `docs/INSTALL.md` — every install path consolidated into one place. Agent platform, CLI standalone, MCP server (stdio + HTTP). Thin-client mode included.
+- **NEW** `docs/architecture/RETRIEVAL.md` — "why the hybrid + graph stack works." BrainBench numbers, why each strategy alone fails, how source-aware ranking + intent classification + multi-query expansion fit. Lifted from the old README's deep-dive section so the front door stays clean.
+- **NEW** `docs/ethos/ORIGIN.md` — origin story moved out of README. The hero stays factual + concrete (production numbers, benchmark numbers, ZE comparison numbers); the narrative arc lives in its own file.
+- Hero retains every load-bearing fact: OpenClaw + Hermes credit, production numbers (17,888 pages / 4,383 people / 723 companies), BrainBench numbers (P@5 49.1% / R@5 97.9% / +31.4 lift), ZE comparison numbers, install timing claim.
+
+#### Tests
+
+- **NEW** `test/retrieval-upgrade-planner.test.ts` (24 cases) — full state-machine coverage. C3 eligibility logic. Cost math C4 (MAX-not-SUM). Schema transition + HNSW recreation atomicity (D18). Crash recovery via `--resume`. Snapshot captured BEFORE config writes (D16). Undo round-trip.
+- **NEW** `test/ze-switch-cli.test.ts` (11 cases) — CLI shape: `--help`, `--dry-run`, `--json`, `--non-interactive`, `--ignore-missing-key`, `--resume`, `--undo`, `--confirm-reembed`.
+- **NEW** `test/asymmetric-encoding-contract.test.ts` (6 cases) — D17 behavior-test (replaces text-grep). `__setEmbedTransportForTests` captures the HTTP body; asserts `input_type='query'` for the search-time call. Source-text guard is the cheap second layer.
+- **NEW** `test/balanced-reranker-default.test.ts` (10 cases) — D6 mode-bundle flip pinned. Fail-open contract on missing key. Recall-preserving tail when topNIn < results.length.
+- **NEW** `test/doctor-ze-checks.test.ts` (8 cases) — A5 doctor checks.
+- **NEW** `test/ai/dims-openai.test.ts` (16 cases) — D13 OpenAI Matryoshka range validation. Paste-ready fix hint in `fix` field.
+- **NEW** `test/readme-hero-anchors.test.ts` (5 cases) — D9 regression guard. Five load-bearing strings: OpenClaw, Hermes, ZE, production-numbers regex, P@5/R@5.
+
+### To take advantage of v0.36.0.0
+
+`gbrain upgrade` runs the consolidated retrieval-upgrade prompt automatically.
+
+1. **Run the upgrade:**
+   ```bash
+   gbrain upgrade
+   ```
+2. **Read the comparison numbers in the prompt.** Press `s` to switch, Enter to stay (default), `l` to ask later, `n` to never ask.
+3. **If you switched: refill embeddings.** The schema is rebuilt at 1280d but embeddings are NULL until you re-embed:
+   ```bash
+   gbrain embed --stale     # serial; ~$X estimate from the upgrade prompt
+   ```
+   The autopilot cycle's embed phase also walks through this on its own cadence.
+4. **Verify:**
+   ```bash
+   gbrain doctor
+   ```
+   `ze_embedding_health` should be green; `embedding_width_consistency` should report schema and config both at 1280.
+5. **If you regret it:** `gbrain ze-switch --undo`. Restores your prior model + dim + reranker state. Re-embeds at the old width with the same symmetric cost prompt.
+
+If the prompt didn't fire (non-TTY upgrade, you already said "never"), run `gbrain ze-switch` manually to see it, or `gbrain ze-switch --force` to bypass the prompt-shown gate.
+
+If any step misbehaves, please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor --json` and the relevant `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+Credit: ZeroEntropy ([@zeroentropy](https://zeroentropy.dev)) for the embedding + reranker stack. Codex outside-voice review caught the double-re-embed bug class pre-implementation.
+
 ## [0.35.5.0] - 2026-05-16
 
 **Upgrade goes through on stuck Supabase brains. Orphan counts get honest. `gbrain think` over MCP actually answers. Worktrees stop being misclassified. node_modules stops leaking.**
