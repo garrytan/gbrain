@@ -16,8 +16,8 @@ working on this codebase, before touching anything else:
    full migration story (v1 Python/shell → v2 GBrain TS + Gemini shim),
    current deployment (launchd / kos.chenge.ink / Notion Knowledge Agent
    / OpenClaw feishu), and the Jarvis triangle (KOS compiles ↔ Notion
-   operates ↔ OpenClaw executes). Latest sync story: **§6.22 v0.31.2
-   (2026-05-09)**.
+   operates ↔ OpenClaw executes). Latest sync story: **§6.28 kos-compat-api
+   retire + MCP-over-HTTP cutover (2026-05-17)**.
 3. Read [`skills/kos-jarvis/TODO.md`](skills/kos-jarvis/TODO.md) — current
    outstanding work (P0/P1/P2). Check here before suggesting "what should
    we do next?"
@@ -40,20 +40,44 @@ working on this codebase, before touching anything else:
   vector path. English queries and 2-3 char standalone CJK terms
   match fine via body-fragment containment (see §6.25 for the
   2026-05-15 15-query probe). Operationally: always ensure vector
-  search is live (kos-compat-api reachable,
-  `GOOGLE_GENERATIVE_AI_API_KEY` env set) before declaring queries
-  broken — the modal operator query on this brain is a compound CJK
-  phrase that depends on it.
+  search is live (`gbrain serve --http` on :7225 reachable via
+  `kos.chenge.ink`, `GOOGLE_GENERATIVE_AI_API_KEY` env set in plist)
+  before declaring queries broken — the modal operator query on this
+  brain is a compound CJK phrase that depends on it.
 - **9 KOS page kinds coexist with GBrain's 20-dir MECE.** KOS `kind`
   frontmatter (source/entity/concept/project/decision/synthesis/comparison/
   protocol/timeline) is preserved on every page; it drives kos-jarvis
   quality gates (evidence threshold per kind) while GBrain's directory
   placement follows upstream RESOLVER.md. Mapping lives in
   `skills/kos-jarvis/type-mapping.md`.
-- **`kos.chenge.ink` is the stable external boundary.** External systems
-  (Notion Knowledge Agent, OpenClaw feishu cron) never talk to gbrain
-  directly — they hit the compat-api. If you change request/response
-  shape, notify Lucien. The historical command-mapping doc at
+- **`kos.chenge.ink` is the stable external boundary** (hostname unchanged
+  across the 2026-05-17 cutover; only the origin server + port changed:
+  fork-side `kos-compat-api :7225` Bearer → upstream native `gbrain serve
+  --http :7225` OAuth 2.1 + MCP JSON-RPC). Cloudflared on mbp-office holds
+  the public ingress; jarvis Mac runs the brain. External systems (Notion
+  Knowledge Agent, mailagent future, OpenClaw feishu future) talk to
+  `https://kos.chenge.ink` via OAuth + MCP wire; never gbrain CLI directly,
+  never the retired KOS-v1 Bearer shape. Wire spec at
+  [`docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md`](docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md)
+  is self-contained for any caller. If you change MCP op signatures or
+  OAuth client scopes, notify Lucien.
+- **OAuth client identities** live at `~/.gbrain/oauth-clients/<name>.json`
+  (gitignored, mode 600 — contains plaintext `client_secret`). Never
+  commit. If lost: `bin/gbrain auth revoke-client <client_id>` then
+  re-register via `bin/gbrain auth register-client`. 4 clients reserved
+  2026-05-17: `kos-worker` (Notion Knowledge Agent), `lucien-cli` (Lucien
+  ad-hoc CLI), `mailagent` (future, when 方案 B ships), `feishu`
+  (future, dormant since 2026-05-05).
+- **Retired (2026-05-17, §6.28)**: `server/kos-compat-api.ts` (661 LoC,
+  KOS-v1 Bearer wire that bound `:7225`) → `server/_archived/`, executed
+  same-session via atomic port re-use (not 1-week deferred). Mbp-office
+  cloudflared NEVER touched — `kos.chenge.ink` ingress still routes to
+  `:7225` of jarvis Mac; only the brain-side process bound to `:7225`
+  changed (kos-compat-api booted out → gbrain serve --http bootstrapped on
+  the freed port, ~5 s downtime). Old `KOS_API_TOKEN` env var stays in
+  `.env.local` commented-out as a rollback marker (re-bootstrap
+  kos-compat-api from `scripts/launchd/_archived/` to swap back, again
+  no cloudflared touch). Historical feishu command-mapping doc at
   `skills/kos-jarvis/_archived/feishu-bridge/SKILL.md` (archived
   2026-05-05) records the v1→v2 cutover layout for reference.
 - **Production engine is Postgres, not PGLite.** `~/.gbrain/config.json`

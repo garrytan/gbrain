@@ -3508,6 +3508,178 @@ treats this as upstream-of-self: the issue tracks fork's desired
 behavior, but the implementation lives in the MailAgent repo on
 mbp-office.
 
+## 6.28 kos-compat-api retire + MCP-over-HTTP cutover (2026-05-17)
+
+**Trigger**: Lucien override of `docs/KOS-JARVIS-CONSOLIDATION-PLAN.md`
+§M2-B 2026-05-15 verdict ("(c) don't touch"). The trigger conditions that
+flipped the calculus:
+
+1. **mailagent 方案 B「待 spec」** (§6.27): the next major external caller
+   coming online wants a spec, not a deployed shim — directly speccing
+   MCP wire avoids ever putting that caller on KOS-v1 Bearer.
+2. **Lucien decision「一劳永逸」**: M2-B's "don't touch" verdict optimized
+   for not migrating in-flight callers (Notion Knowledge Agent), but
+   Lucien's stance is to move once and stop carrying fork-side HTTP code.
+3. **Upstream OAuth + MCP + admin dashboard surface is mature** (v0.34+
+   `gbrain serve --http`, validated in this session via 5-second smoke on
+   throwaway port 17226 — `{"status":"ok","version":"0.35.6.0","engine":"postgres"}`,
+   admin bootstrap token issuance confirmed).
+
+**Scope: Complete-A** (per `/Users/chenyuanquan/.claude/plans/mellow-whistling-porcupine.md`):
+- `server/kos-compat-api.ts` (661 LoC) fully retired → `server/_archived/`
+  after 1-week observation period.
+- SSoT flipped to DB-canonical: Notion Agent writes via MCP `put_page` go
+  straight to Postgres (chunk + embed + facts_backstop queue), **no longer
+  write `~/brain/<dir>/<slug>.md` disk file or git commit**. Lucien
+  confirmed (2026-05-17) he doesn't use `~/brain/` grep / Obsidian.
+- **BrainExporter NOT in scope** (would be DB → disk reverse-write daemon
+  ~250-300 LoC). Lucien decided dream-cycle's 24h entity-graph backfill is
+  sufficient. Future PR if entity-graph latency turns out to matter.
+- `/digest` retired. patrol digest still written by `kos-patrol` cron to
+  `~/brain/.agent/digests/patrol-*.md` (host-local); Lucien reads disk or
+  OpenClaw `MEMORY.md` (via `digest-to-memory` weekly cron).
+- mailagent: not migrated this PR (still 待 spec; spec lives in
+  `docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md` for future implementation).
+- Feishu: dormant since 2026-05-05 (§M2-B history); same handoff doc covers.
+
+### Wire diff
+
+| Surface | Before | After |
+|---|---|---|
+| External entry | `https://kos.chenge.ink` → `:7225` (kos-compat-api Bun, Bearer `KOS_API_TOKEN`) | `https://kos.chenge.ink` → `:7225` (upstream `gbrain serve --http`, OAuth 2.1 + MCP JSON-RPC) |
+| Auth | single shared `KOS_API_TOKEN` (no rotation / no revoke / no audit) | 4 per-client `client_credentials` grants, per-call audit in `mcp_request_log` table |
+| Endpoints | `/query` `/ingest` `/digest` `/status` `/health` (custom JSON shape) | `/mcp` (JSON-RPC) `/token` `/admin` `/health` (RFC + MCP standard) |
+| `/ingest` SSoT | disk-canonical: write `~/brain/<dir>/<slug>.md` → git commit → spawn `gbrain sync` → `gbrain embed` | DB-canonical: `put_page` direct to Postgres (chunk + embed + facts_backstop queue); no disk write |
+| `/digest` | reads `~/brain/.agent/digests/patrol-*.md` | retired (no MCP equivalent; patrol still writes to disk for host-local use) |
+| LLM synthesis on query | fork-side `synthesizeAnswer()` (claude-sonnet-4-6) — double-LLM with caller agent | retired: query returns raw retrieval; caller LLM agent synthesizes |
+
+### OAuth client identities (4)
+
+Registered via `bin/gbrain auth register-client <name> --grant-types client_credentials --scopes "<scopes>" --source default`,
+output saved one-time to `~/.gbrain/oauth-clients/<name>.json` (gitignored,
+mode 600):
+
+| Client name | Scopes | Notes |
+|---|---|---|
+| `kos-worker` | `read write` | Notion 📚 Knowledge Agent worker (`workers/kos-worker`). Uses `list_pages` for kosStatus (avoids admin scope) |
+| `lucien-cli` | `read write admin` | Ad-hoc CLI for Lucien (~/.zshrc wrapper functions; admin scope OK on local CLI for diagnostics) |
+| `mailagent` | `read write` | **Reserved for future** (mailagent 待 spec); spec only in handoff doc |
+| `feishu` | `read write` | **Reserved for future** (dormant since 2026-05-05); spec only in handoff doc |
+
+### Cloudflared change: NONE (port re-use, atomic swap)
+
+**Strategy** (Lucien 2026-05-17, simplified twice): same `kos.chenge.ink`
+hostname AND same origin port `:7225`. Cloudflared on mbp-office stays
+exactly as is — it still routes `kos.chenge.ink → http://<jarvis-tailscale>:7225`.
+The only change is **which process binds :7225 on jarvis Mac**:
+kos-compat-api (Bun Bearer wire) booted out → port freed → gbrain-serve-http
+(upstream OAuth + MCP wire) bootstrapped on the same `:7225` slot. No
+mbp-office touch ever.
+
+**Atomic swap steps** (jarvis Mac only, ~5 s downtime):
+1. `launchctl bootout gui/$UID/com.jarvis.kos-compat-api` (frees `:7225`)
+2. `cp scripts/launchd/com.jarvis.gbrain-serve-http.plist.template ~/Library/LaunchAgents/com.jarvis.gbrain-serve-http.plist` + fill `<FILL:NANO_BANANA_API_KEY>` from `.env.local`
+3. `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.jarvis.gbrain-serve-http.plist` (binds `:7225`)
+4. `curl -s http://127.0.0.1:7225/health` → `{"status":"ok","version":"0.35.6.0","engine":"postgres"}`
+5. `curl -s https://kos.chenge.ink/health` (unchanged cloudflared path) → same
+
+### Execution phases (one session, ~1d active)
+
+- **Phase 0** (0.5d, 2026-05-17): `pg_dump` to `/tmp/pg-pre-migration-20260517.dump.gz`
+  (110 MB), `~/.gbrain/config.json.pre-migration-20260517` backup,
+  branch `migration/kos-compat-api-retire`. Schema verify: `oauth_clients`
+  table exists with `source_id` + `federated_read` columns (≥ v60 + v61).
+  `oauth_clients` count = 0 (fresh state).
+- **Phase 1** (DONE — code): `scripts/launchd/com.jarvis.gbrain-serve-http.plist.template`
+  with `--public-url https://kos.chenge.ink --bind 127.0.0.1 --port 7225 --token-ttl 3600`.
+  5s smoke validated upstream binary boots cleanly + admin token issued to stderr.
+- **Phase 2** (DONE — code): `workers/kos-worker/src/index.ts` rewrite (215 → 536 LoC:
+  OAuth client_credentials + MCP JSON-RPC + 3 tools + worker-side URL fetch +
+  frontmatter builder + kindToType port). `SETUP.md` updated. kosDigest dropped.
+  `scripts/migration/dual-mode-verify.sh` initially written for dual-hostname
+  parity probe; deleted along with `scripts/migration/` dir once port re-use
+  strategy made the probe meaningless (same port = no parallel).
+- **Phase 3 (DONE — same session, atomic port re-use)**:
+  - L: `bin/gbrain auth register-client` × 4 → save creds to `~/.gbrain/oauth-clients/<name>.json` (mode 600)
+  - L: paste `~/.gbrain/oauth-clients/kos-worker.json` into chat for Claude
+  - C: `launchctl bootout gui/$UID/com.jarvis.kos-compat-api` (free `:7225`)
+  - C: `cp` plist template to `~/Library/LaunchAgents/` + fill `<FILL:NANO_BANANA_API_KEY>` + `launchctl bootstrap`
+  - C: `curl http://127.0.0.1:7225/health` + `curl https://kos.chenge.ink/health` smoke
+  - C: `cd workers/kos-worker && ntn workers env set KOS_MCP_BASE/KOS_OAUTH_CLIENT_ID/KOS_OAUTH_CLIENT_SECRET + ntn workers env push + ntn workers deploy`
+  - C: `ntn workers exec` smoke 3 tools (kosQuery, kosIngest, kosStatus)
+  - L: Notion Custom Agent UI update per `docs/NOTION-AGENT-UPDATE-CHECKLIST.md`
+  - C: `git mv server/kos-compat-api.ts server/_archived/` + `git mv scripts/launchd/com.jarvis.kos-compat-api.plist.template scripts/launchd/_archived/`
+- **Phase 4** (DONE — docs): this §6.28 + handoff docs (`EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md`,
+  `NOTION-AGENT-UPDATE-CHECKLIST.md`) + CONSOLIDATION-PLAN §M2-B revision +
+  TODO + README + CLAUDE.md + .gitignore.
+
+**Total elapsed**: 1 session (~1 day active dev). KOS_API_TOKEN stays
+commented in `.env.local` + kos-compat-api plist retained in
+`scripts/launchd/_archived/` as rollback marker (re-bootstrap if needed).
+
+### Trade-offs accepted (Lucien 2026-05-17)
+
+1. **Notion Agent ingest 24h entity-graph 弱**: `put_page` over remote MCP
+   skips `auto_links` + `auto_timeline` (safety gate at
+   `src/core/operations.ts:610-612` — prevents prompt-injection bare-slug
+   building). dream-cycle (03:11 daily) backfills via patterns/synthesize
+   phase. Acceptable per Lucien.
+2. **kosIngest URL 模式失去 Tavily/FlareSolverr**: worker-side `fetch()` is
+   plain HTTPS; fork-side `skills/kos-jarvis/url-fetcher` (UltimateSearchSkill)
+   no longer reachable from Notion Worker. X/Twitter / Cloudflare-protected
+   pages must be pasted as markdown. Future PR if Lucien wants worker → Tavily
+   HTTPS direct (`TAVILY_API_KEY` via `ntn workers env push`).
+3. **kosStatus → 采样**: `list_pages` MCP op caps at `limit=100` and exposes
+   no `offset` param, so full 3138-page count isn't directly fetchable.
+   kosStatus returns latest-100 sample histogram + `note` to run `gbrain status`
+   locally for exact count. Avoids needing `admin` scope (which `get_stats`
+   requires, per `src/commands/serve-http.ts:102-107` >3s latency risk).
+4. **kosDigest 永久下线**: Notion Agent can't surface patrol digests anymore;
+   patrol cron unchanged.
+5. **No observation window** (Lucien's call): atomic port re-use means
+   ~5 s downtime mid-cutover (kos-compat-api bootout → gbrain-serve-http
+   bootstrap on freed `:7225`). Worker deploy revert (`ntn workers deploy`
+   of reverted commit) is ~30 s. Trade vs 1-week stabilize: zero ops drag
+   (no cloudflared touch, no dual-hostname), tighter rollback window but
+   pure-launchctl revert path.
+
+### Rollback steps (atomic — pure launchctl swap on jarvis Mac)
+
+Triggered if Phase 3 smoke fails or post-cutover Notion Agent breaks.
+**No mbp-office touch needed** — `kos.chenge.ink` ingress unchanged, both
+old and new servers bind same `:7225`.
+
+**Brain-side swap-back (jarvis Mac, ~5 s)**:
+- `launchctl bootout gui/$UID/com.jarvis.gbrain-serve-http`
+- `rm ~/Library/LaunchAgents/com.jarvis.gbrain-serve-http.plist`
+- `git mv server/_archived/kos-compat-api.ts server/`
+- `git mv scripts/launchd/_archived/com.jarvis.kos-compat-api.plist.template scripts/launchd/`
+- `cp scripts/launchd/com.jarvis.kos-compat-api.plist.template ~/Library/LaunchAgents/com.jarvis.kos-compat-api.plist`
+- Fill `<FILL:KOS_API_TOKEN>` from commented entry in `.env.local`
+- Fill `<FILL:NANO_BANANA_API_KEY>` from `.env.local`
+- `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.jarvis.kos-compat-api.plist`
+- `curl -sS http://127.0.0.1:7225/health` → smoke (Bearer wire shape returns)
+
+**Worker rollback (C, deploy)** — if worker code is the actual problem:
+- `cd workers/kos-worker && git revert <kos-worker v3 commit>`
+- `ntn workers env set KOS_API_BASE "https://kos.chenge.ink"` (still same hostname)
+- `ntn workers env set KOS_API_TOKEN "<old token from .env.local>"`
+- `ntn workers env push && ntn workers deploy`
+
+**Brain integrity check** (after any rollback):
+- `bin/gbrain doctor` — brain_score still 80/100 baseline
+- `psql ... -c "SELECT count(*) FROM pages"` — still 3138 pages
+- `psql ... -c "SELECT count(*) FROM mcp_request_log"` — audit table intact
+
+### Linked docs
+
+- [`workers/kos-worker/SETUP.md`](../workers/kos-worker/SETUP.md) — worker deploy + OAuth setup
+- [`docs/NOTION-AGENT-UPDATE-CHECKLIST.md`](NOTION-AGENT-UPDATE-CHECKLIST.md) — Notion Custom Agent UI v2→v3
+- [`docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md`](EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md) — Feishu / mailagent / future client wire spec
+- [`docs/KOS-JARVIS-CONSOLIDATION-PLAN.md`](KOS-JARVIS-CONSOLIDATION-PLAN.md) §M2-B (verdict revision) + Tier 5 DONE
+- [`scripts/launchd/com.jarvis.gbrain-serve-http.plist.template`](../scripts/launchd/com.jarvis.gbrain-serve-http.plist.template)
+- Migration plan: `~/.claude/plans/mellow-whistling-porcupine.md`
+
 ---
 
 ## 8. Cost and performance snapshot

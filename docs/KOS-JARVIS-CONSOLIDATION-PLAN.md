@@ -284,7 +284,21 @@ dream-cycle's patterns or synthesize phase.
 
 **Net fork shrinkage from M2-A**: 3 active skill dirs gone (11 → 8).
 
-#### M2-B: `kos-compat-api` ↔ `gbrain serve --http` + thin translator
+#### M2-B: `kos-compat-api` ↔ `gbrain serve --http` + thin translator — **RESOLVED 2026-05-17: Complete-A executed**
+
+> **Status timeline**:
+> - 2026-05-04 (this entry): plan written, 3 decision options listed.
+> - 2026-05-15 (TODO.md): verdict "(c) status quo — don't touch" — premise:
+>   no external client wired at that moment justifies the migration cost;
+>   `/ingest` SSoT issue (disk-canonical) dominates the LoC and clients
+>   lock us to KOS-v1 wire shape anyway.
+> - **2026-05-17 (Lucien override)**: chose **Complete-A** (not original
+>   option (a)/(b)/(c)). Full retire of `kos-compat-api` + DB-canonical
+>   put_page wire, BUT **no** BrainExporter daemon (Lucien doesn't use
+>   disk/Obsidian; dream-cycle 24h backfill suffices for entity-graph).
+>   Story in `docs/JARVIS-ARCHITECTURE.md` §6.28; full plan at
+>   `~/.claude/plans/mellow-whistling-porcupine.md`. See Tier 5 section
+>   appended at end of this doc for the resolution narrative.
 
 - [ ] Read `src/commands/serve-http.ts` (v0.26.0 upstream) + admin
   dashboard surface
@@ -441,6 +455,67 @@ This plan is "complete" when:
 - `CLAUDE.md` (project root) — fork upstream policy + fork-specific rules
 - `garrytan/gbrain` upstream `CLAUDE.md` — canonical Key Files list,
   consumed via cherry-pick + monthly sync (per `CLAUDE.md` policy)
+
+---
+
+## Tier 5 — kos-compat-api retire (Complete-A) — DONE 2026-05-17
+
+**Trigger**: Lucien override of M2-B 2026-05-15 verdict.
+
+**Decision**: Complete-A (kos-compat-api full retire + DB-canonical put_page wire,
+no BrainExporter).
+
+**Why over alternatives**:
+- vs **Complete-B** (含 BrainExporter ~250-300 LoC reverse-write daemon):
+  Lucien doesn't use `~/brain/` disk grep / Obsidian, so the reverse-write
+  daemon's value is zero for his workflow. Plan agent critique flagged 5
+  HIGH risks (soft-delete data-loss via `gbrain sync` hard-delete bypass of
+  72h restore window, serializeMarkdown echo-oscillation, cloudflared
+  cross-host ops, 9-13d active dev vs 5-7d). All deferred to "future PR if
+  ever needed".
+- vs **Trim+** (只切 query + status，保留 fork /ingest + /digest, 2-3d):
+  doesn't satisfy Lucien's「一劳永逸」goal — leaves 550 LoC fork-side HTTP
+  wrapper + KOS_API_TOKEN + 1 launchd service still owned.
+- vs **URL-only Hybrid** (kos-compat-api shrunk to URL fetch only, ~80 LoC):
+  preserves Tavily/FlareSolverr URL抓取 but only 1 use case (kosIngest URL
+  mode for X.com); plain worker fetch is 80% of cases; future PR can add
+  worker → Tavily HTTPS direct if real friction emerges.
+
+**Trade-offs accepted by Lucien (2026-05-17)**:
+- Notion Agent ingest 24h entity-graph 弱 (remote-skip safety gate; dream-cycle
+  03:11 backfills auto_links + auto_timeline)
+- kosIngest URL mode loses Tavily/FlareSolverr (worker plain fetch only; paste
+  markdown for X/Twitter-protected pages)
+- kosStatus → 采样 (list_pages caps at limit=100, no offset exposed; exact
+  total via `gbrain status` on host)
+- kosDigest tool 永久下线 (patrol digest at `~/brain/.agent/digests/`)
+
+**Files**:
+- New: `scripts/launchd/com.jarvis.gbrain-serve-http.plist.template`,
+  `scripts/migration/dual-mode-verify.sh`,
+  `docs/NOTION-AGENT-UPDATE-CHECKLIST.md`,
+  `docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md`
+- Modified: `workers/kos-worker/src/index.ts` (215 → 536 LoC rewrite),
+  `workers/kos-worker/SETUP.md` (deploy + OAuth steps),
+  `docs/JARVIS-ARCHITECTURE.md` (§6.28, ~140 行),
+  `CLAUDE.md` (project root, OAuth + kos.chenge.ink rules),
+  `.gitignore` (oauth-clients + new daemon log entries),
+  `skills/kos-jarvis/README.md` (当前状态 entry),
+  `skills/kos-jarvis/TODO.md` (Done entry)
+- Archive (Phase 3, executed same session per Lucien atomic port re-use):
+  `server/kos-compat-api.ts` → `server/_archived/`;
+  `scripts/launchd/com.jarvis.kos-compat-api.plist.template` → `_archived/`.
+  No cloudflared touch — old `kos-compat-api :7225` booted out, new
+  `gbrain serve --http` bootstrapped on the same freed `:7225`; mbp-office
+  `kos.chenge.ink` ingress unchanged. Rollback = pure launchctl swap back.
+  See §6.28 Rollback steps.
+
+**Net fork shrinkage**: ~661 LoC `server/kos-compat-api.ts` retired -
+~321 LoC added in kos-worker rewrite (in fork repo but lives client-side, not
+fork brain code) = ~340 LoC net brain-side trim. Active skill dirs unchanged
+at 10 (M2-B was always about `server/`, not `skills/kos-jarvis/`).
+
+**Plan + verification artifact**: `~/.claude/plans/mellow-whistling-porcupine.md`.
 
 ---
 

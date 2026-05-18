@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarvis.gbrain-serve-http</string>
+    <!--
+      Native upstream `gbrain serve --http` (port 7225) — OAuth 2.1 +
+      MCP JSON-RPC. Migrates fork-side com.jarvis.kos-compat-api (port
+      7225, single shared Bearer KOS_API_TOKEN) to per-client OAuth +
+      mcp_request_log audit trail. See migration story in
+      docs/JARVIS-ARCHITECTURE.md §6.28.
+
+      External hostname: kos.chenge.ink (Lucien adds to mbp-office
+      cloudflared config; ingress = http://<jarvis-tailscale>:7225).
+      Old kos.chenge.ink remains pointed at :7225 kos-compat-api during
+      1-week observation period; cleanup deferred to N+2 weeks.
+
+      OAuth client registration (Lucien runs once per client):
+        bin/gbrain auth register-client "kos-worker" \
+          --grant-types client_credentials --scopes "read write" --source default
+        # → outputs client_id + client_secret ONCE; save to:
+        #   ~/.gbrain/oauth-clients/kos-worker.json (gitignored, mode 600)
+
+      Bootstrap admin token (rotates on every launchctl restart):
+        tail -30 server/gbrain-serve-http.stderr.log | grep -i 'admin.*token'
+        # → use to log into https://kos.chenge.ink/admin once per restart
+
+      Flags (per src/commands/serve.ts:79-111):
+        --http              enable HTTP mode (required)
+        --port 7225         non-collision with kos-compat-api on 7225
+        --bind 127.0.0.1    loopback only (suppresses public-url warning;
+                            cloudflared bridges public HTTPS to here)
+        --public-url <url>  RFC 8414 issuer URL — MUST match the URL
+                            external OAuth clients hit, else strict
+                            clients reject tokens (issuer mismatch).
+                            Set this when you change the cloudflared
+                            hostname.
+        --token-ttl 3600    1h access_token expiry (default)
+        (--enable-dcr off)  Dynamic Client Registration disabled by
+                            default. Register clients via CLI above.
+        (--log-full-params off) Privacy — don't log raw MCP payloads.
+
+      Manual smoke (after bootstrap):
+        curl -s http://127.0.0.1:7225/health
+        # → {"status":"ok","version":"0.35.6.0","engine":"postgres"}
+        curl -s https://kos.chenge.ink/health  # same shape
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/bin/gbrain</string>
+        <string>serve</string>
+        <string>--http</string>
+        <string>--port</string>
+        <string>7225</string>
+        <string>--bind</string>
+        <string>127.0.0.1</string>
+        <string>--public-url</string>
+        <string>https://kos.chenge.ink</string>
+        <string>--token-ttl</string>
+        <string>3600</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/chenyuanquan/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>GOOGLE_GENERATIVE_AI_API_KEY</key>
+        <string><FILL:NANO_BANANA_API_KEY></string>
+        <key>GBRAIN_EMBEDDING_MODEL</key>
+        <string>google:gemini-embedding-001</string>
+        <key>GBRAIN_EMBEDDING_DIMENSIONS</key>
+        <string>1536</string>
+    </dict>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/server/gbrain-serve-http.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/server/gbrain-serve-http.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2</string>
+</dict>
+</plist>

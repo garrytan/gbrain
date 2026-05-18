@@ -57,3 +57,17 @@ skills/kos-jarvis/enrich-sweep/sweep.std*.log
 skills/kos-jarvis/enrich-sweep/sweep.std*.log.*.archive.gz
 workers/notion-poller/poller.std*.log
 workers/notion-poller/poller.std*.log.*.archive.gz
+
+# v0.35.6.0+ — gbrain-serve-http daemon log outputs (replaces kos-compat-api
+# logs after 2026-05-17 §6.28 cutover; kos-compat-api log entries retained
+# during 1-week observation window).
+server/gbrain-serve-http.std*.log
+server/gbrain-serve-http.std*.log.*.archive.gz
+server/kos-compat-api.std*.log
+server/kos-compat-api.std*.log.*.archive.gz
+
+# OAuth 2.1 client identities (defensive — primary file is per-user at
+# ~/.gbrain/oauth-clients/<name>.json outside repo). Block accidental
+# in-repo placement.
+.gbrain/oauth-clients/
+**/oauth-clients/*.json
