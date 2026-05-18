@@ -1,0 +1,24 @@
+# fly.toml — partial. Merge into your existing fly.toml.
+#
+# Set secrets once (never commit them):
+#   fly secrets set DATABASE_URL='postgresql://user:pass@host:6543/db?prepare=false'
+#   fly secrets set GBRAIN_ALLOW_SHELL_JOBS=1   # only if submitting shell jobs
+#   fly secrets set ANTHROPIC_API_KEY=...       # optional
+#
+# Two-layer supervision: Fly restarts the VM on host events; the
+# `gbrain jobs supervisor` process restarts the worker on in-process
+# crashes with exponential backoff and a structured audit trail.
+
+[processes]
+  worker = "gbrain jobs supervisor --concurrency 2"
+
+# Scale the worker process to 1 machine (job queue serializes work; more
+# machines means higher concurrency but also more Postgres connections).
+#   fly scale count worker=1
+
+# If you want the worker in its own VM size:
+# [[vm]]
+#   processes = ["worker"]
+#   memory = "512mb"
+#   cpu_kind = "shared"
+#   cpus = 1
