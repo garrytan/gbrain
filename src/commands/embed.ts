@@ -514,6 +514,58 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
   }
 }
 
+const DEFAULT_EMBED_RECHUNK_MAX_CHARS = 1500;
+
+function embedRechunkMaxChars(): number {
+  const raw = process.env.GBRAIN_EMBED_RECHUNK_MAX_CHARS;
+  if (!raw) return DEFAULT_EMBED_RECHUNK_MAX_CHARS;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_EMBED_RECHUNK_MAX_CHARS;
+}
+
+type EmbedCandidateChunk = {
+  chunk_index: number;
+  chunk_text: string;
+  chunk_source: ChunkInput['chunk_source'];
+  embedded_at?: string | Date | null;
+};
+
+function hasOversizedStaleChunk(chunks: EmbedCandidateChunk[]): boolean {
+  const maxChars = embedRechunkMaxChars();
+  return chunks.some(c => !c.embedded_at && c.chunk_text.length > maxChars);
+}
+
+function buildChunkInputsForPage(page: { compiled_truth?: string | null; timeline?: string | null }, maxChars: number): ChunkInput[] {
+  const inputs: ChunkInput[] = [];
+  const compiledTruth = page.compiled_truth ?? '';
+  const timeline = page.timeline ?? '';
+  if (compiledTruth.trim()) {
+    for (const c of chunkText(compiledTruth, { maxChars })) {
+      inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
+    }
+  }
+  if (timeline.trim()) {
+    for (const c of chunkText(timeline, { maxChars })) {
+      inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
+    }
+  }
+  return inputs;
+}
+
+async function rechunkPageForEmbedding(
+  engine: BrainEngine,
+  slug: string,
+  sourceId?: string,
+): Promise<Awaited<ReturnType<BrainEngine['getChunks']>> | null> {
+  const opts = sourceId ? { sourceId } : undefined;
+  const page = await engine.getPage(slug, opts);
+  if (!page) return null;
+  const inputs = buildChunkInputsForPage(page, embedRechunkMaxChars());
+  if (inputs.length === 0) return null;
+  await engine.upsertChunks(slug, inputs, opts);
+  return await engine.getChunks(slug, opts);
+}
+
 async function embedPage(
   engine: BrainEngine,
   slug: string,
@@ -534,16 +586,7 @@ async function embedPage(
   let chunks = await engine.getChunks(slug, opts);
   if (chunks.length === 0) {
     const inputs: ChunkInput[] = [];
-    if (page.compiled_truth.trim()) {
-      for (const c of chunkText(page.compiled_truth)) {
-        inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
-      }
-    }
-    if (page.timeline.trim()) {
-      for (const c of chunkText(page.timeline)) {
-        inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
-      }
-    }
+    inputs.push(...buildChunkInputsForPage(page, embedRechunkMaxChars()));
 
     if (dryRun) {
       // Count what chunking WOULD produce, without writing.
@@ -556,6 +599,12 @@ async function embedPage(
     if (inputs.length > 0) {
       await engine.upsertChunks(slug, inputs, opts);
       chunks = await engine.getChunks(slug, opts);
+    }
+  }
+  if (!dryRun && hasOversizedStaleChunk(chunks)) {
+    const rechunked = await rechunkPageForEmbedding(engine, slug, sourceId);
+    if (rechunked && rechunked.length > 0) {
+      chunks = rechunked;
     }
   }
 
@@ -1002,15 +1051,24 @@ async function embedAllStale(
 
       async function embedOneKey(key: string) {
         const stale = byKey.get(key)!;
+        let staleForEmbed: EmbedCandidateChunk[] = stale;
         const keySourceId = stale[0]?.source_id ?? 'default';
         const slug = stale[0].slug;
         try {
-          const embeddings = await embedBatchWithBackoff(stale.map(c => c.chunk_text), { abortSignal: effectiveSignal });
+          if (hasOversizedStaleChunk(staleForEmbed)) {
+            const rechunked = await rechunkPageForEmbedding(engine, slug, keySourceId);
+            if (rechunked && rechunked.length > 0) {
+              staleForEmbed = rechunked.filter(c => !c.embedded_at);
+              if (staleForEmbed.length === 0) return;
+            }
+          }
+
+          const embeddings = await embedBatchWithBackoff(staleForEmbed.map(c => c.chunk_text), { abortSignal: effectiveSignal });
           // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
           const existing = await observed(pacer, () => engine.getChunks(slug, { sourceId: keySourceId }));
           const staleIdxToEmbedding = new Map<number, Float32Array>();
-          for (let j = 0; j < stale.length; j++) {
-            staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
+          for (let j = 0; j < staleForEmbed.length; j++) {
+            staleIdxToEmbedding.set(staleForEmbed[j].chunk_index, embeddings[j]);
           }
           const merged: ChunkInput[] = existing.map(c => ({
             chunk_index: c.chunk_index,
@@ -1025,12 +1083,12 @@ async function embedAllStale(
           // A partially-stale page keeps preserved chunks of unknown/old
           // provenance, so don't claim it's current. (After invalidate, a
           // signature-drifted page IS fully stale → this stamps it.)
-          if (signature && stale.length === existing.length) {
+          if (signature && staleForEmbed.length === existing.length) {
             await observed(pacer, () =>
               engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature }),
             );
           }
-          result.embedded += stale.length;
+          result.embedded += staleForEmbed.length;
         } catch (e: unknown) {
           // Budget/abort-fired cancellations are expected on the way out; don't
           // spam per-page "Error embedding" lines when we're shutting down.
