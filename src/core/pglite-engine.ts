@@ -2342,22 +2342,41 @@ export class PGLiteEngine implements BrainEngine {
     const embedding = input.embedding ?? null;
     const embeddedAt = embedding ? new Date() : null;
     const embedStr = embedding ? toPgVectorLiteral(embedding) : null;
+    // v0.35.4 (D-CDX-5) — typed-claim columns. All four nullable.
+    const claimMetric = input.claim_metric ?? null;
+    const claimValue  = input.claim_value  ?? null;
+    const claimUnit   = input.claim_unit   ?? null;
+    const claimPeriod = input.claim_period ?? null;
 
     if (ctx.supersedeId !== undefined) {
       // Supersede flow: insert new + expire old in one txn so observers never
       // see both rows active simultaneously.
       const result = await this.db.transaction(async (tx) => {
         const ins = await tx.query<{ id: number }>(
-          `INSERT INTO facts (
-             source_id, entity_slug, fact, kind, visibility, notability, context,
-             valid_from, valid_until, source, source_session, confidence,
-             embedding, embedded_at
-           ) VALUES (
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, ${embedStr === null ? 'NULL' : `$13::vector`}, ${embedStr === null ? 'NULL' : '$14'}
-           ) RETURNING id`,
           embedStr === null
-            ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence]
-            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt],
+            ? `INSERT INTO facts (
+                 source_id, entity_slug, fact, kind, visibility, notability, context,
+                 valid_from, valid_until, source, source_session, confidence,
+                 embedding, embedded_at,
+                 claim_metric, claim_value, claim_unit, claim_period
+               ) VALUES (
+                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+                 NULL, NULL,
+                 $13, $14, $15, $16
+               ) RETURNING id`
+            : `INSERT INTO facts (
+                 source_id, entity_slug, fact, kind, visibility, notability, context,
+                 valid_from, valid_until, source, source_session, confidence,
+                 embedding, embedded_at,
+                 claim_metric, claim_value, claim_unit, claim_period
+               ) VALUES (
+                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+                 $13::vector, $14,
+                 $15, $16, $17, $18
+               ) RETURNING id`,
+          embedStr === null
+            ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, claimMetric, claimValue, claimUnit, claimPeriod]
+            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, claimMetric, claimValue, claimUnit, claimPeriod],
         );
         const newId = ins.rows[0].id;
         await tx.query(
@@ -2371,16 +2390,30 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     const ins = await this.db.query<{ id: number }>(
-      `INSERT INTO facts (
-         source_id, entity_slug, fact, kind, visibility, notability, context,
-         valid_from, valid_until, source, source_session, confidence,
-         embedding, embedded_at
-       ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, ${embedStr === null ? 'NULL' : `$13::vector`}, ${embedStr === null ? 'NULL' : '$14'}
-       ) RETURNING id`,
       embedStr === null
-        ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence]
-        : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt],
+        ? `INSERT INTO facts (
+             source_id, entity_slug, fact, kind, visibility, notability, context,
+             valid_from, valid_until, source, source_session, confidence,
+             embedding, embedded_at,
+             claim_metric, claim_value, claim_unit, claim_period
+           ) VALUES (
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+             NULL, NULL,
+             $13, $14, $15, $16
+           ) RETURNING id`
+        : `INSERT INTO facts (
+             source_id, entity_slug, fact, kind, visibility, notability, context,
+             valid_from, valid_until, source, source_session, confidence,
+             embedding, embedded_at,
+             claim_metric, claim_value, claim_unit, claim_period
+           ) VALUES (
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+             $13::vector, $14,
+             $15, $16, $17, $18
+           ) RETURNING id`,
+      embedStr === null
+        ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, claimMetric, claimValue, claimUnit, claimPeriod]
+        : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, claimMetric, claimValue, claimUnit, claimPeriod],
     );
     return { id: ins.rows[0].id, status: 'inserted' };
   }
@@ -2421,23 +2454,45 @@ export class PGLiteEngine implements BrainEngine {
         const embedding = input.embedding ?? null;
         const embeddedAt = embedding ? new Date() : null;
         const embedStr = embedding ? toPgVectorLiteral(embedding) : null;
+        // v0.35.4 (D-CDX-5) — typed-claim columns. All four nullable.
+        const claimMetric = input.claim_metric ?? null;
+        const claimValue  = input.claim_value  ?? null;
+        const claimUnit   = input.claim_unit   ?? null;
+        const claimPeriod = input.claim_period ?? null;
 
+        // Param-positional dispatch: embedStr presence shifts the trailing
+        // slots by one. Order of named slots stays stable across both
+        // branches: embedded_at, row_num, source_markdown_slug,
+        // claim_metric, claim_value, claim_unit, claim_period.
         const ins = await tx.query<{ id: number }>(
-          `INSERT INTO facts (
-             source_id, entity_slug, fact, kind, visibility, notability, context,
-             valid_from, valid_until, source, source_session, confidence,
-             embedding, embedded_at,
-             row_num, source_markdown_slug
-           ) VALUES (
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-             ${embedStr === null ? 'NULL' : `$13::vector`},
-             ${embedStr === null ? '$13' : '$14'},
-             ${embedStr === null ? '$14' : '$15'},
-             ${embedStr === null ? '$15' : '$16'}
-           ) RETURNING id`,
           embedStr === null
-            ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embeddedAt, input.row_num, input.source_markdown_slug]
-            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, input.row_num, input.source_markdown_slug],
+            ? `INSERT INTO facts (
+                 source_id, entity_slug, fact, kind, visibility, notability, context,
+                 valid_from, valid_until, source, source_session, confidence,
+                 embedding, embedded_at,
+                 row_num, source_markdown_slug,
+                 claim_metric, claim_value, claim_unit, claim_period
+               ) VALUES (
+                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+                 NULL, $13,
+                 $14, $15,
+                 $16, $17, $18, $19
+               ) RETURNING id`
+            : `INSERT INTO facts (
+                 source_id, entity_slug, fact, kind, visibility, notability, context,
+                 valid_from, valid_until, source, source_session, confidence,
+                 embedding, embedded_at,
+                 row_num, source_markdown_slug,
+                 claim_metric, claim_value, claim_unit, claim_period
+               ) VALUES (
+                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+                 $13::vector, $14,
+                 $15, $16,
+                 $17, $18, $19, $20
+               ) RETURNING id`,
+          embedStr === null
+            ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod]
+            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod],
         );
         out.push(ins.rows[0].id);
       }
@@ -2560,6 +2615,98 @@ export class PGLiteEngine implements BrainEngine {
       [source_id, entitySlug, k],
     );
     return result.rows.map(rowToFact);
+  }
+
+  async findTrajectory(opts: import('./engine.ts').TrajectoryOpts): Promise<import('./engine.ts').TrajectoryPoint[]> {
+    const limit = clampSearchLimit(opts.limit, 100, 500);
+    const sinceDate = opts.since ? new Date(opts.since) : null;
+    const untilDate = opts.until ? new Date(opts.until) : null;
+    const metric = opts.metric ?? null;
+    const useArray = Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0;
+    const sourceIds = useArray ? opts.sourceIds! : null;
+    const sourceId = opts.sourceId ?? 'default';
+    const remoteFilter = opts.remote === true;
+
+    // Build SQL dynamically. PGLite uses $N positional params; we
+    // assemble the WHERE clauses + params array in tandem to keep them
+    // aligned. Final shape is single SELECT, ORDER BY (valid_from, id) ASC.
+    const where: string[] = [
+      useArray ? `source_id = ANY($1::text[])` : `source_id = $1`,
+      `entity_slug = $2`,
+      `expired_at IS NULL`,
+    ];
+    const params: unknown[] = [useArray ? sourceIds : sourceId, opts.entitySlug];
+    let p = 3;
+    if (remoteFilter) {
+      where.push(`visibility = 'world'`);
+    }
+    if (metric !== null) {
+      where.push(`claim_metric = $${p}`);
+      params.push(metric);
+      p += 1;
+    }
+    if (sinceDate) {
+      where.push(`valid_from >= $${p}`);
+      params.push(sinceDate);
+      p += 1;
+    }
+    if (untilDate) {
+      where.push(`valid_from <= $${p}`);
+      params.push(untilDate);
+      p += 1;
+    }
+    params.push(limit);
+    const limitPlaceholder = p;
+
+    const sqlText = `
+      SELECT id, valid_from,
+             claim_metric, claim_value, claim_unit, claim_period,
+             fact, source_session, source_markdown_slug,
+             embedding
+      FROM facts
+      WHERE ${where.join(' AND ')}
+      ORDER BY valid_from ASC, id ASC
+      LIMIT $${limitPlaceholder}
+    `;
+    const result = await this.db.query<{
+      id: number;
+      valid_from: Date | string;
+      claim_metric: string | null;
+      claim_value: number | null;
+      claim_unit: string | null;
+      claim_period: string | null;
+      fact: string;
+      source_session: string | null;
+      source_markdown_slug: string | null;
+      embedding: string | number[] | Float32Array | null;
+    }>(sqlText, params);
+
+    return result.rows.map(r => {
+      // Inline embedding parser — mirrors rowToFact() at line 3911.
+      let embedding: Float32Array | null = null;
+      if (r.embedding != null) {
+        if (r.embedding instanceof Float32Array) embedding = r.embedding;
+        else if (Array.isArray(r.embedding)) embedding = new Float32Array(r.embedding);
+        else if (typeof r.embedding === 'string') {
+          const trimmed = r.embedding.trim();
+          const inner = trimmed.startsWith('[') ? trimmed.slice(1, -1) : trimmed;
+          const parts = inner.split(',').map(s => parseFloat(s.trim())).filter(Number.isFinite);
+          embedding = parts.length > 0 ? new Float32Array(parts) : null;
+        }
+      }
+      return {
+        fact_id: Number(r.id),
+        valid_from: r.valid_from instanceof Date ? r.valid_from : new Date(r.valid_from),
+        metric: r.claim_metric,
+        value: r.claim_value === null ? null : Number(r.claim_value),
+        unit: r.claim_unit,
+        period: r.claim_period,
+        text: r.fact,
+        source_session: r.source_session,
+        source_markdown_slug: r.source_markdown_slug,
+        embedding,
+      };
+    });
   }
 
   async consolidateFact(id: number, takeId: number): Promise<void> {
