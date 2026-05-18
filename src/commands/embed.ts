@@ -210,7 +210,7 @@ async function embedPage(
   for (let j = 0; j < toEmbed.length; j++) {
     embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
   }
-  const updated: ChunkInput[] = chunks.map(c => ({
+  const updated: ChunkInput[] = chunks.map(c => preserveCodeMetadata(c, {
     chunk_index: c.chunk_index,
     chunk_text: c.chunk_text,
     chunk_source: c.chunk_source,
@@ -222,6 +222,31 @@ async function embedPage(
   result.embedded += toEmbed.length;
   result.pages_processed++;
   console.log(`${slug}: embedded ${toEmbed.length} chunks`);
+}
+
+/**
+ * Carry code-chunk metadata (language, symbol_name, symbol_type, line range,
+ * parent scope, doc comment, qualified name) from a loaded Chunk back into a
+ * ChunkInput destined for upsertChunks.
+ *
+ * Issue #769: every re-embed used to strip these fields, and upsertChunks
+ * overwrites (does not COALESCE) the metadata columns from EXCLUDED, so
+ * each pass clobbered code-def's primary index to NULL. Pulling the
+ * preservation into one helper keeps the three re-embed call sites
+ * (embedPage, embedAll non-stale, embedAllStale) in lock-step.
+ */
+function preserveCodeMetadata(loaded: any, base: ChunkInput): ChunkInput {
+  return {
+    ...base,
+    language: loaded.language ?? undefined,
+    symbol_name: loaded.symbol_name ?? undefined,
+    symbol_type: loaded.symbol_type ?? undefined,
+    start_line: loaded.start_line ?? undefined,
+    end_line: loaded.end_line ?? undefined,
+    parent_symbol_path: loaded.parent_symbol_path ?? undefined,
+    doc_comment: loaded.doc_comment ?? undefined,
+    symbol_name_qualified: loaded.symbol_name_qualified ?? undefined,
+  };
 }
 
 async function embedAll(
@@ -297,8 +322,10 @@ async function embedAll(
       for (let j = 0; j < toEmbed.length; j++) {
         embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
       }
-      // Preserve ALL chunks, only update embeddings for stale ones
-      const updated: ChunkInput[] = chunks.map(c => ({
+      // Preserve ALL chunks, only update embeddings for stale ones.
+      // preserveCodeMetadata threads code-chunk metadata (#769) so re-embed
+      // doesn't clobber language/symbol_name/symbol_type to NULL.
+      const updated: ChunkInput[] = chunks.map(c => preserveCodeMetadata(c, {
         chunk_index: c.chunk_index,
         chunk_text: c.chunk_text,
         chunk_source: c.chunk_source,
@@ -462,7 +489,10 @@ async function embedAllStale(
           for (let j = 0; j < stale.length; j++) {
             staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
           }
-          const merged: ChunkInput[] = existing.map(c => ({
+          // preserveCodeMetadata threads code-chunk metadata (#769) so the
+          // autopilot --stale path doesn't clobber language/symbol_name/etc
+          // to NULL on every cycle.
+          const merged: ChunkInput[] = existing.map(c => preserveCodeMetadata(c, {
             chunk_index: c.chunk_index,
             chunk_text: c.chunk_text,
             chunk_source: c.chunk_source,

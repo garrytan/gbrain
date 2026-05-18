@@ -1385,6 +1385,13 @@ export class PostgresEngine implements BrainEngine {
     // predicate on embedded_at would silently skip the row. This is why the egress fix predicates
     // on `embedding IS NULL` rather than `embedded_at IS NULL` — and it's why we now keep both
     // columns honest at write time.
+    //
+    // Code-chunk metadata columns (language / symbol_name / symbol_type / line range /
+    // parent_symbol_path / doc_comment / symbol_name_qualified) follow the SAME chunk_text-gated
+    // CASE pattern as `embedding` (#769). Re-chunk (chunk_text changed) trusts EXCLUDED outright;
+    // pure re-embed (chunk_text unchanged) COALESCEs so a caller that only carries embedding
+    // doesn't clobber metadata to NULL. Without this, every embed --stale pass nuked code-def's
+    // primary index for thousands of chunks at once.
     await sql.unsafe(
       `INSERT INTO content_chunks ${cols} VALUES ${rows.join(', ')}
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
@@ -1397,14 +1404,14 @@ export class PostgresEngine implements BrainEngine {
            WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.embedding IS NULL THEN NULL
            ELSE COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)
          END,
-         language = EXCLUDED.language,
-         symbol_name = EXCLUDED.symbol_name,
-         symbol_type = EXCLUDED.symbol_type,
-         start_line = EXCLUDED.start_line,
-         end_line = EXCLUDED.end_line,
-         parent_symbol_path = EXCLUDED.parent_symbol_path,
-         doc_comment = EXCLUDED.doc_comment,
-         symbol_name_qualified = EXCLUDED.symbol_name_qualified,
+         language = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.language ELSE COALESCE(EXCLUDED.language, content_chunks.language) END,
+         symbol_name = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name ELSE COALESCE(EXCLUDED.symbol_name, content_chunks.symbol_name) END,
+         symbol_type = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_type ELSE COALESCE(EXCLUDED.symbol_type, content_chunks.symbol_type) END,
+         start_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.start_line ELSE COALESCE(EXCLUDED.start_line, content_chunks.start_line) END,
+         end_line = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.end_line ELSE COALESCE(EXCLUDED.end_line, content_chunks.end_line) END,
+         parent_symbol_path = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.parent_symbol_path ELSE COALESCE(EXCLUDED.parent_symbol_path, content_chunks.parent_symbol_path) END,
+         doc_comment = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.doc_comment ELSE COALESCE(EXCLUDED.doc_comment, content_chunks.doc_comment) END,
+         symbol_name_qualified = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name_qualified ELSE COALESCE(EXCLUDED.symbol_name_qualified, content_chunks.symbol_name_qualified) END,
          modality = EXCLUDED.modality,
          embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)`,
       params as Parameters<typeof sql.unsafe>[1],

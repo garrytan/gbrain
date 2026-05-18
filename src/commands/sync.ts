@@ -1045,6 +1045,12 @@ async function performFullSync(
   const { runImport } = await import('./import.ts');
   const importArgs = [repoPath];
   if (opts.noEmbed) importArgs.push('--no-embed');
+  // Issue #767 fix: thread strategy so performFullSync honors `gbrain sync
+  // --strategy code` on first sync (no anchor commit yet). Without this,
+  // runImport's collectMarkdownFiles is hardcoded markdown and silently
+  // produces 0 code pages, breaking code-def/code-refs/code-callers on
+  // freshly-registered code sources.
+  if (opts.strategy) importArgs.push('--strategy', opts.strategy);
   if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
   // v0.31.2: thread strategy through so code-strategy first sync
   // actually enumerates code files (closes bug 1).

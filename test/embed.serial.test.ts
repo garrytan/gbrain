@@ -430,6 +430,110 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
 });
 
 // ────────────────────────────────────────────────────────────────
+// Code metadata preservation across re-embed (regression for #769)
+// ────────────────────────────────────────────────────────────────
+//
+// gbrain v0.30.1 and earlier silently clobbered code-chunk metadata
+// (language, symbol_name, symbol_type, start_line, end_line,
+// parent_symbol_path, doc_comment, symbol_name_qualified) on every
+// re-embed pass. The chunker populated those columns at import time,
+// but embed.ts loaded chunks via getChunks then mapped them to a
+// stripped ChunkInput carrying only 5 fields. upsertChunks then
+// OVERWROTE (not COALESCEd) the metadata columns from EXCLUDED, so
+// re-embed wiped them to NULL. End result on a real brain: 4875 code
+// pages, 47866 chunks, all with NULL language/symbol_name/symbol_type;
+// code-def returned 0 hits across every indexed repo.
+//
+// All three runEmbed paths (--stale autopilot, --all, --slugs) must
+// thread metadata through the re-upsert. Tests below assert that the
+// engine.upsertChunks call carries the same metadata it loaded.
+
+describe('runEmbed preserves code-chunk metadata across re-embed (regression for #769)', () => {
+  const fullCodeChunk = {
+    chunk_index: 0,
+    chunk_text: '[Java] foo/Bar.java:10-20 method baz',
+    chunk_source: 'compiled_truth' as const,
+    embedded_at: null,
+    token_count: 12,
+    language: 'java',
+    symbol_name: 'baz',
+    symbol_type: 'function',
+    start_line: 10,
+    end_line: 20,
+    parent_symbol_path: ['Bar'],
+    doc_comment: 'does the thing',
+    symbol_name_qualified: 'Bar.baz',
+  };
+
+  function metadataOf(chunk: any) {
+    return {
+      language: chunk.language,
+      symbol_name: chunk.symbol_name,
+      symbol_type: chunk.symbol_type,
+      start_line: chunk.start_line,
+      end_line: chunk.end_line,
+      parent_symbol_path: chunk.parent_symbol_path,
+      doc_comment: chunk.doc_comment,
+      symbol_name_qualified: chunk.symbol_name_qualified,
+    };
+  }
+
+  test('--stale (autopilot path) carries code metadata into upsertChunks', async () => {
+    const stale = [{
+      slug: 'code-page',
+      chunk_index: 0,
+      chunk_text: fullCodeChunk.chunk_text,
+      chunk_source: 'compiled_truth',
+      model: null,
+      token_count: 12,
+    }];
+    let upsertChunkArgs: any[] | null = null;
+    const engine = mockEngine({
+      countStaleChunks: async () => 1,
+      listStaleChunks: async () => stale,
+      getChunks: async () => [fullCodeChunk],
+      upsertChunks: async (_slug: string, chunks: any[]) => { upsertChunkArgs = chunks; },
+    });
+
+    await runEmbed(engine, ['--stale']);
+
+    expect(upsertChunkArgs).not.toBeNull();
+    expect(upsertChunkArgs!).toHaveLength(1);
+    expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
+  });
+
+  test('--all (full re-embed) carries code metadata into upsertChunks', async () => {
+    let upsertChunkArgs: any[] | null = null;
+    const engine = mockEngine({
+      listPages: async () => [{ slug: 'code-page' }],
+      getChunks: async () => [fullCodeChunk],
+      upsertChunks: async (_slug: string, chunks: any[]) => { upsertChunkArgs = chunks; },
+    });
+
+    await runEmbed(engine, ['--all']);
+
+    expect(upsertChunkArgs).not.toBeNull();
+    expect(upsertChunkArgs!).toHaveLength(1);
+    expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
+  });
+
+  test('--slugs (per-page embed) carries code metadata into upsertChunks', async () => {
+    let upsertChunkArgs: any[] | null = null;
+    const engine = mockEngine({
+      getPage: async () => ({ slug: 'code-page', compiled_truth: 'x', timeline: '' }),
+      getChunks: async () => [fullCodeChunk],
+      upsertChunks: async (_slug: string, chunks: any[]) => { upsertChunkArgs = chunks; },
+    });
+
+    await runEmbed(engine, ['--slugs', 'code-page']);
+
+    expect(upsertChunkArgs).not.toBeNull();
+    expect(upsertChunkArgs!).toHaveLength(1);
+    expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
 // D5: embedBatchWithBackoff retry wrapper — 8 cases per plan
 // (D2 jitter, D4 cause-unwrap, D4a maxRetries:0 passthrough,
 // D8 abortSignal threading, plus the pure helpers).
