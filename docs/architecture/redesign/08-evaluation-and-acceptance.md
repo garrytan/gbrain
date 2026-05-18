@@ -83,6 +83,23 @@ Acceptance rules:
 
 This evaluation is successful when the next action becomes cheaper because the system remembered what already failed.
 
+## Memory Lane Update Cadence Matrix
+
+This matrix is evaluation guidance, not retrieval authority. Retrieval remains
+intent- and scope-driven, and `read_context` remains the answer-grounding
+boundary.
+
+| Lane | Update Cadence | Authority | Staleness Rule | Promotion Or Refresh Path |
+|---|---|---|---|---|
+| Session context | Immediate, ephemeral | Current conversation only | Expires with session context | Durable writeback routes to candidate, task, or canonical write. |
+| Working Set | Fast, task-scoped | Canonical operational resume state | Stale when branch, path, symbol, test, or blocker changes | Refresh working set and record attempts or decisions. |
+| Retrieval Trace | Per meaningful memory interaction | Canonical audit record | Historical, not current truth | May feed Memory Candidate creation. |
+| Memory Candidate | Fast capture, slower review | Canonical governance state, not truth | Stale when unresolved beyond review window or contradicted | Reject, promote, supersede, redact, or hand off. |
+| Candidate Signal | Per retrieval probe | Non-canonical exposure lane | Stale when underlying candidate status changes | Recompute from Memory Inbox state. |
+| Context Map / Atlas | Background or source-change refresh | Derived orientation | Stale when source hash, extractor version, task, or code anchor changes | Rebuild or warn; never promote directly. |
+| Compiled Truth | Slow, reviewed update | Canonical answer evidence | Stale when superseded or source evidence changes | Patch with provenance and target snapshot checks. |
+| Profile Memory | Slow, scoped update | Canonical personal memory | Stale when unconfirmed, superseded, or scope changes | Write through personal scope preflight. |
+
 ## Markdown Knowledge Retrieval Evaluation
 
 This evaluation measures whether curated Markdown remains the canonical and usable interface for knowledge retrieval.
