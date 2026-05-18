@@ -63,6 +63,25 @@ function getTouchpoint(recipe: Recipe, touchpoint: TouchpointKind): EmbeddingTou
   return undefined;
 }
 
+function allowsExpansionViaChat(
+  recipe: Recipe,
+  touchpoint: TouchpointKind,
+  modelId: string,
+  extendedModels?: ReadonlySet<string>,
+): boolean {
+  if (touchpoint !== 'expansion') return false;
+  if (recipe.touchpoints.expansion) return false;
+  const chat = recipe.touchpoints.chat;
+  if (!chat) return false;
+  // Intentional narrow fallback: preserve the recipe-level meaning of
+  // `touchpoints.expansion` as "dedicated / recommended expansion surface",
+  // while allowing advanced users to explicitly point expansion_model at a
+  // chat-capable provider. The explicit-config signal is the model's presence
+  // in extendedModels, which is populated from gateway config only.
+  if (!extendedModels || !extendedModels.has(modelId)) return false;
+  return true;
+}
+
 /**
  * Assert the resolved recipe actually offers the requested touchpoint.
  *
@@ -90,6 +109,9 @@ export function assertTouchpoint(
 ): void {
   const tp = getTouchpoint(recipe, touchpoint);
   if (!tp) {
+    if (allowsExpansionViaChat(recipe, touchpoint, modelId, extendedModels)) {
+      return;
+    }
     throw new AIConfigError(
       `Provider "${recipe.id}" does not support touchpoint "${touchpoint}".`,
       touchpoint === 'embedding' && recipe.id === 'anthropic'

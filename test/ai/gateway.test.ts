@@ -9,7 +9,7 @@ import {
   getExpansionModel,
   VoyageResponseTooLargeError,
 } from '../../src/core/ai/gateway.ts';
-import { parseModelId, resolveRecipe } from '../../src/core/ai/model-resolver.ts';
+import { parseModelId, resolveRecipe, assertTouchpoint } from '../../src/core/ai/model-resolver.ts';
 import {
   dimsProviderOptions,
   VOYAGE_VALID_OUTPUT_DIMS,
@@ -99,6 +99,14 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
     });
     expect(isAvailable('expansion')).toBe(true);
   });
+
+  test('expansion available for chat-only openai-compatible providers when explicitly configured', () => {
+    configureGateway({
+      expansion_model: 'deepseek:openai/gpt-4.1-mini',
+      env: { DEEPSEEK_API_KEY: 'fake-deepseek-key' },
+    });
+    expect(isAvailable('expansion')).toBe(true);
+  });
 });
 
 describe('model-resolver', () => {
@@ -133,6 +141,12 @@ describe('model-resolver', () => {
 
   test('resolveRecipe throws AIConfigError for unknown provider', () => {
     expect(() => resolveRecipe('cohere:embed-v3')).toThrow(AIConfigError);
+  });
+
+  test('assertTouchpoint accepts expansion on chat-only openai-compatible providers when explicitly configured', () => {
+    const recipe = resolveRecipe('deepseek:openai/gpt-4.1-mini').recipe;
+    const configured = new Set(['openai/gpt-4.1-mini']);
+    expect(() => assertTouchpoint(recipe, 'expansion', 'openai/gpt-4.1-mini', configured)).not.toThrow();
   });
 });
 
