@@ -147,36 +147,94 @@ export async function runPhaseConsolidate(
         continue;
       }
 
-      const inserted = await engine.addTakesBatch([{
-        page_id: pageId,
-        row_num: nextRowNum,
-        claim: best.fact,
-        kind: 'fact',
-        holder: 'self',
-        weight: clamp01(avgWeight),
-        since_date: sinceISO,
-        source: sources.slice(0, 200),
-        active: true,
-      }]);
-      if (inserted < 1) continue;
-
-      // Read back the new takes.id by (page_id, row_num).
-      const idRows = await engine.executeRaw<{ id: number }>(
-        `SELECT id FROM takes WHERE page_id = $1 AND row_num = $2`,
-        [pageId, nextRowNum],
+      // v0.35.4 (D-CDX-4) — semantic upsert. The full dream cycle runs
+      // `extract_facts` BEFORE `consolidate`; `extract_facts` hard-deletes
+      // and re-inserts page facts via deleteFactsForPage + insertFacts,
+      // which clears `consolidated_at` on every fact. Without this lookup,
+      // a second cycle run would re-INSERT a duplicate take via
+      // `MAX(row_num)+1`, silently poisoning trajectory + scorecard data.
+      // Match on (page_id, claim, since_date) — the natural identity of a
+      // promoted take.
+      const existing = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM takes
+         WHERE page_id = $1 AND claim = $2 AND since_date = $3
+         LIMIT 1`,
+        [pageId, best.fact, sinceISO],
       );
-      if (idRows.length === 0) {
+
+      let takeId: number;
+      if (existing.length > 0) {
+        // Re-promotion of a cluster we already wrote a take for. Refresh
+        // the source-aggregation string (new fact rows may carry new
+        // source_session values that the prior run didn't see); leave
+        // row_num + weight untouched to keep the take's identity stable.
+        takeId = existing[0].id;
+        await engine.executeRaw(
+          `UPDATE takes SET source = $1, updated_at = now() WHERE id = $2`,
+          [sources.slice(0, 200), takeId],
+        );
+      } else {
+        const inserted = await engine.addTakesBatch([{
+          page_id: pageId,
+          row_num: nextRowNum,
+          claim: best.fact,
+          kind: 'fact',
+          holder: 'self',
+          weight: clamp01(avgWeight),
+          since_date: sinceISO,
+          source: sources.slice(0, 200),
+          active: true,
+        }]);
+        if (inserted < 1) continue;
+
+        const idRows = await engine.executeRaw<{ id: number }>(
+          `SELECT id FROM takes WHERE page_id = $1 AND row_num = $2`,
+          [pageId, nextRowNum],
+        );
+        if (idRows.length === 0) {
+          nextRowNum += 1;
+          continue;
+        }
+        takeId = idRows[0].id;
         nextRowNum += 1;
-        continue;
+        takesWritten += 1;
       }
-      const takeId = idRows[0].id;
-      nextRowNum += 1;
-      takesWritten += 1;
 
       // Mark all contributing facts consolidated.
       for (const f of cluster) {
         await engine.consolidateFact(f.id, takeId);
         factsConsolidated += 1;
+      }
+
+      // v0.35.4 (D-CDX-4 part 2) — chronological valid_until writeback.
+      // Sort the cluster by (valid_from ASC, id ASC); walk consecutive
+      // pairs; stamp the older fact's valid_until = next_newer.valid_from.
+      // The newest fact keeps valid_until = NULL. This makes the facts
+      // table a proper bitemporal record without the contradiction probe
+      // having to mutate it (preserves auto-supersession.ts:4 invariant —
+      // see also R8 test guard).
+      //
+      // Idempotent: re-running on the same cluster produces the same
+      // chronological order and the same valid_until values. No-op if
+      // valid_until is already correct.
+      const chronological = [...cluster].sort((a, b) => {
+        const t = a.valid_from.getTime() - b.valid_from.getTime();
+        if (t !== 0) return t;
+        return a.id - b.id;
+      });
+      for (let i = 0; i < chronological.length - 1; i++) {
+        const older = chronological[i];
+        const newer = chronological[i + 1];
+        await engine.executeRaw(
+          // Only UPDATE when the new value would actually change. Avoids
+          // touching updated_at on no-op rewrites and keeps idempotency
+          // observable in the DB (zero affected rows on stable re-run).
+          `UPDATE facts
+             SET valid_until = $1
+           WHERE id = $2
+             AND (valid_until IS DISTINCT FROM $1)`,
+          [newer.valid_from, older.id],
+        );
       }
     }
   }
