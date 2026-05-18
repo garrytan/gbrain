@@ -1,0 +1,50 @@
+[Unit]
+Description=gbrain minion worker
+Documentation=https://github.com/garrytan/gbrain/blob/master/docs/guides/minions-deployment.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as an unprivileged user that owns the brain repo and any shell-job cwds.
+# Create with: sudo useradd --system --home /srv/gbrain --shell /usr/sbin/nologin gbrain
+User=gbrain
+Group=gbrain
+WorkingDirectory=/srv/gbrain
+
+# Env file is mode 600, owned by User=. Do not put secrets in this unit.
+EnvironmentFile=/etc/gbrain.env
+
+# Two-layer supervision: systemd restarts `gbrain jobs supervisor` on host
+# events (reboot, unit crash); the supervisor restarts `gbrain jobs work`
+# on in-process crashes with exponential backoff + structured audit.
+ExecStart=/usr/local/bin/gbrain jobs supervisor --concurrency 2
+
+# systemd restarts the supervisor on any non-zero exit. The supervisor
+# itself handles worker-level crash recovery.
+Restart=always
+RestartSec=10s
+
+# Graceful shutdown: SIGTERM → wait → SIGKILL. 30s matches worker grace
+# for in-flight jobs and the shell handler's 5s child SIGTERM window.
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gbrain-worker
+
+# Default 1024 is tight for Bun + Postgres pool + concurrent subagent LLM calls.
+LimitNOFILE=65535
+
+# Hardening (optional — remove if they break your deployment).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# ReadWritePaths must include the brain workspace AND ~/.gbrain (PID file +
+# audit log written by the supervisor).
+ReadWritePaths=/srv/gbrain /home/gbrain/.gbrain
+
+[Install]
+WantedBy=multi-user.target
