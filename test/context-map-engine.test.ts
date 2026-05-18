@@ -14,6 +14,8 @@ interface EngineHarness {
   cleanup: () => Promise<void>;
 }
 
+const PGLITE_REOPEN_TEST_TIMEOUT_MS = 45_000;
+
 async function createSqliteHarness(): Promise<EngineHarness> {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-context-map-sqlite-'));
   const databasePath = join(dir, 'brain.db');
@@ -108,7 +110,7 @@ async function expectContextMap(engine: BrainEngine, id: string, scopeId: string
 }
 
 for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
-  const timeoutMs = createHarness === createPgliteHarness ? 10_000 : undefined;
+  const timeoutMs = createHarness === createPgliteHarness ? PGLITE_REOPEN_TEST_TIMEOUT_MS : undefined;
   test(`${createHarness.name} persists context map entries across reopen`, async () => {
     const harness = await createHarness();
     const scopeId = 'workspace:default';

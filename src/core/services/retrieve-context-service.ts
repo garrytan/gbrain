@@ -531,6 +531,7 @@ async function persistRetrieveTrace(
       `scenario:${result.scenario}`,
       ...result.answerability.reason_codes.map((code) => `answerability:${code}`),
       ...buildScopeGateVerification(result.scope_gate),
+      ...buildCandidateSignalVerification(result),
     ],
     write_outcome: 'no_durable_write',
     selected_intent: intentFromScenario(result.scenario),
@@ -562,5 +563,15 @@ function buildScopeGateVerification(scopeGate: ScopeGateDecisionResult | undefin
   return [
     `scope_gate:${scopeGate.policy}`,
     `scope_gate_reason:${scopeGate.decision_reason}`,
+  ];
+}
+
+function buildCandidateSignalVerification(result: RetrieveContextResult): string[] {
+  if (result.candidate_signals.length === 0) {
+    return [`candidate_signal_policy:${result.candidate_signal_policy.mode}`];
+  }
+  return [
+    `candidate_signal_policy:${result.candidate_signal_policy.mode}`,
+    ...result.candidate_signals.map((signal) => `candidate_signal:${signal.candidate_id}`),
   ];
 }

@@ -36,6 +36,7 @@ describe('phase1 operational-memory benchmark', () => {
       'decision_history',
       'decision_reuse',
       'repeated_work_suppression',
+      'resume_compression_fidelity',
       'resume_projection',
       'task_resume',
       'trace_template_completeness',
@@ -69,6 +70,12 @@ describe('phase1 operational-memory benchmark', () => {
         expect(workload.success_rate).toBe(100);
       }
 
+      if (workload.name === 'resume_compression_fidelity') {
+        expect(workload.unit).toBe('percent');
+        expect(typeof workload.success_rate).toBe('number');
+        expect(workload.success_rate).toBe(100);
+      }
+
       if (workload.name === 'decision_reuse') {
         expect(workload.unit).toBe('percent');
         expect(typeof workload.success_rate).toBe('number');
@@ -94,6 +101,7 @@ describe('phase1 operational-memory benchmark', () => {
       'decision_reuse_success_rate',
       'primary_improvement_threshold',
       'repeated_work_suppression_success_rate',
+      'resume_compression_fidelity_success_rate',
       'resume_projection_success_rate',
       'task_resume_p95_ms',
       'trace_template_completeness_success_rate',
@@ -108,6 +116,54 @@ describe('phase1 operational-memory benchmark', () => {
 
   test('--baseline enables full phase1 acceptance evaluation', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-phase1-baseline-'));
+    const baselinePath = join(dir, 'baseline.json');
+
+    try {
+      writeFileSync(baselinePath, JSON.stringify({
+        generated_at: '2026-04-19T00:00:00.000Z',
+        engine: 'sqlite',
+        workloads: [
+          { name: 'task_resume', status: 'measured', unit: 'ms', p50_ms: 1.2, p95_ms: 1.5 },
+          { name: 'attempt_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
+          { name: 'decision_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
+          { name: 'resume_projection', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'repeated_work_suppression', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'decision_reuse', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'verification_warnings', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'trace_template_completeness', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'resume_compression_fidelity', status: 'measured', unit: 'percent', success_rate: 100 },
+        ],
+      }, null, 2));
+
+      const proc = spawnSync([
+        'bun',
+        'run',
+        'scripts/bench/phase1-operational-memory.ts',
+        '--json',
+        '--baseline',
+        baselinePath,
+      ], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+
+      expect(proc.exitCode).toBe(0);
+      const payload = JSON.parse(new TextDecoder().decode(proc.stdout));
+      expect(payload.acceptance.phase1_status).toBe('pass');
+
+      const primaryCheck = payload.acceptance.checks.find(
+        (check: any) => check.name === 'primary_improvement_threshold',
+      );
+      expect(primaryCheck.status).toBe('pass');
+      expect(typeof primaryCheck.actual).toBe('number');
+      expect(primaryCheck.actual).toBeGreaterThanOrEqual(10);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('--baseline rejects stale workload manifests before comparing p95', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-phase1-stale-baseline-'));
     const baselinePath = join(dir, 'baseline.json');
 
     try {
@@ -140,14 +196,15 @@ describe('phase1 operational-memory benchmark', () => {
 
       expect(proc.exitCode).toBe(0);
       const payload = JSON.parse(new TextDecoder().decode(proc.stdout));
-      expect(payload.acceptance.phase1_status).toBe('pass');
-
       const primaryCheck = payload.acceptance.checks.find(
         (check: any) => check.name === 'primary_improvement_threshold',
       );
-      expect(primaryCheck.status).toBe('pass');
-      expect(typeof primaryCheck.actual).toBe('number');
-      expect(primaryCheck.actual).toBeGreaterThanOrEqual(10);
+
+      expect(payload.acceptance.readiness_status).toBe('fail');
+      expect(payload.acceptance.phase1_status).toBe('fail');
+      expect(primaryCheck.status).toBe('fail');
+      expect(primaryCheck.reason).toContain('Baseline workload manifest mismatch');
+      expect(primaryCheck.reason).toContain('missing=resume_compression_fidelity');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

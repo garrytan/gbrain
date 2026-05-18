@@ -301,4 +301,40 @@ describe('candidate signal service ranking and hints', () => {
     expect(result.candidate_signals.map(signal => signal.candidate_id)).toEqual(['unknown-audit-visible']);
     expect(result.candidate_signal_policy.suppressed_count).toBe(1);
   });
+
+  test('candidate pressure is review-priority metadata and never answer-ground authority', async () => {
+    const result = await buildCandidateSignals(fakeEngine([
+      makeCandidate('promoted-no-handoff', {
+        status: 'promoted',
+        source_refs: ['Source: User, direct message, 2026-05-16 12:00 KST'],
+        recurrence_score: 1,
+      }),
+      makeCandidate('missing-provenance-pressure', {
+        source_refs: [],
+        confidence_score: 0.9,
+        importance_score: 0.9,
+      }),
+      makeCandidate('below-recurrence-threshold', {
+        recurrence_score: 0.79,
+      }),
+    ]), {
+      query: 'retrieval direction',
+      scenario: 'knowledge_qa',
+      requested_scope: 'work',
+      required_reads: [requiredRead],
+      canonical_candidates: [],
+      known_subjects: [],
+      limit: 10,
+      now: new Date('2026-05-17T00:00:00.000Z'),
+    });
+
+    const signals = Object.fromEntries(result.candidate_signals.map((signal) => [signal.candidate_id, signal]));
+    expect(signals['promoted-no-handoff']!.activation).toBe('candidate_only');
+    expect(signals['promoted-no-handoff']!.pressure_reasons).toContain('stale_promoted_without_handoff');
+    expect(signals['promoted-no-handoff']!.pressure_reasons).toContain('high_recurrence');
+    expect(signals['promoted-no-handoff']!.review_priority_hint).toBe('record_canonical_handoff');
+    expect(signals['missing-provenance-pressure']!.pressure_reasons).toContain('missing_provenance');
+    expect(signals['missing-provenance-pressure']!.review_priority_hint).toBe('reject_missing_provenance');
+    expect(signals['below-recurrence-threshold']!.pressure_reasons).not.toContain('high_recurrence');
+  });
 });

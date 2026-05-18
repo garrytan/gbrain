@@ -8,7 +8,8 @@ export type Phase1CorrectnessWorkloadName =
   | 'repeated_work_suppression'
   | 'decision_reuse'
   | 'verification_warnings'
-  | 'trace_template_completeness';
+  | 'trace_template_completeness'
+  | 'resume_compression_fidelity';
 export type Phase1WorkloadName = Phase1LatencyWorkloadName | Phase1CorrectnessWorkloadName;
 
 export interface Phase1LatencyWorkloadResult {
@@ -41,6 +42,7 @@ export interface Phase1AcceptanceThresholds {
   decision_reuse_success_rate: number;
   verification_warnings_success_rate: number;
   trace_template_completeness_success_rate: number;
+  resume_compression_fidelity_success_rate: number;
   primary_improvement_threshold_pct: number;
 }
 
@@ -54,6 +56,7 @@ export interface Phase1AcceptanceCheck {
     | 'decision_reuse_success_rate'
     | 'verification_warnings_success_rate'
     | 'trace_template_completeness_success_rate'
+    | 'resume_compression_fidelity_success_rate'
     | 'primary_improvement_threshold';
   status: Phase1AcceptanceStatus;
   actual?: number;
@@ -122,6 +125,9 @@ export interface Phase1TaskFixture {
   };
   expectedResume: {
     stale: boolean;
+    next_steps: string[];
+    blockers: string[];
+    repeated_work_warnings: string[];
     failed_attempts: string[];
     active_decisions: string[];
     decision_reuse: string[];
@@ -166,6 +172,10 @@ export const PHASE1_WORKLOADS: Phase1WorkloadDefinition[] = [
     name: 'trace_template_completeness',
     unit: 'percent',
   },
+  {
+    name: 'resume_compression_fidelity',
+    unit: 'percent',
+  },
 ];
 
 export const PHASE1_ACCEPTANCE_THRESHOLDS: Phase1AcceptanceThresholds = {
@@ -177,6 +187,7 @@ export const PHASE1_ACCEPTANCE_THRESHOLDS: Phase1AcceptanceThresholds = {
   decision_reuse_success_rate: 100,
   verification_warnings_success_rate: 100,
   trace_template_completeness_success_rate: 100,
+  resume_compression_fidelity_success_rate: 100,
   primary_improvement_threshold_pct: 10,
 };
 
@@ -238,6 +249,11 @@ export const PHASE1_TASK_FIXTURES: Phase1TaskFixture[] = [
     },
     expectedResume: {
       stale: true,
+      next_steps: ['add a reproducible benchmark runner'],
+      blockers: ['phase1 acceptance harness missing'],
+      repeated_work_warnings: [
+        'Do not repeat failed attempt: Reconstructed resume state from raw notes only',
+      ],
       failed_attempts: ['Reconstructed resume state from raw notes only'],
       active_decisions: ['Keep resume state in additive task tables'],
       decision_reuse: ['Reuse decision: Keep resume state in additive task tables'],
@@ -295,6 +311,11 @@ export const PHASE1_TASK_FIXTURES: Phase1TaskFixture[] = [
     },
     expectedResume: {
       stale: false,
+      next_steps: ['wire the benchmark into verification docs'],
+      blockers: [],
+      repeated_work_warnings: [
+        'Do not repeat failed attempt: Skipped task traces and relied on memory alone',
+      ],
       failed_attempts: ['Skipped task traces and relied on memory alone'],
       active_decisions: ['Publish a focused Phase 1 benchmark before Phase 2 work'],
       decision_reuse: ['Reuse decision: Publish a focused Phase 1 benchmark before Phase 2 work'],

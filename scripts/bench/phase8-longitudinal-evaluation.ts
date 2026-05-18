@@ -49,6 +49,7 @@ export const PHASE_DEFINITIONS: readonly PhaseDefinition[] = [
       'decision_reuse',
       'decision_history',
       'repeated_work_suppression',
+      'resume_compression_fidelity',
       'resume_projection',
       'task_resume',
       'trace_template_completeness',

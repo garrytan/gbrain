@@ -74,6 +74,7 @@ describe('phase8 longitudinal evaluation benchmark', () => {
           { name: 'decision_reuse', status: 'measured', unit: 'percent', success_rate: 100 },
           { name: 'verification_warnings', status: 'measured', unit: 'percent', success_rate: 100 },
           { name: 'trace_template_completeness', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'resume_compression_fidelity', status: 'measured', unit: 'percent', success_rate: 100 },
         ],
       }, null, 2));
 
@@ -97,6 +98,52 @@ describe('phase8 longitudinal evaluation benchmark', () => {
       expect(phase1.comparable_status).toBe('pass');
       expect(phase1.phase_status).toBe('pass');
       expect(payload.acceptance.phase8_status).toBe('pass');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, BENCHMARK_PROCESS_TIMEOUT_MS);
+
+  test('--phase1-baseline fails when the phase1 baseline workload manifest is stale', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-phase8-stale-phase1-baseline-'));
+    const baselinePath = join(dir, 'phase1-stale-baseline.json');
+
+    try {
+      writeFileSync(baselinePath, JSON.stringify({
+        generated_at: '2026-04-19T00:00:00.000Z',
+        engine: 'sqlite',
+        workloads: [
+          { name: 'task_resume', status: 'measured', unit: 'ms', p50_ms: 1.2, p95_ms: 1.5 },
+          { name: 'attempt_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
+          { name: 'decision_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
+          { name: 'resume_projection', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'repeated_work_suppression', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'decision_reuse', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'verification_warnings', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'trace_template_completeness', status: 'measured', unit: 'percent', success_rate: 100 },
+        ],
+      }, null, 2));
+
+      const proc = spawnSync([
+        'bun',
+        'run',
+        'scripts/bench/phase8-longitudinal-evaluation.ts',
+        '--json',
+        '--phase1-baseline',
+        baselinePath,
+      ], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+
+      expect(proc.exitCode).toBe(1);
+      const payload = JSON.parse(new TextDecoder().decode(proc.stdout));
+      const phase1 = payload.phase_summaries.find((summary: any) => summary.phase === 'phase1');
+
+      expect(phase1.comparable_status).toBe('fail');
+      expect(phase1.phase_status).toBe('fail');
+      expect(phase1.regression_reasons).toContain('readiness_not_pass');
+      expect(payload.acceptance.phase8_status).toBe('fail');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
