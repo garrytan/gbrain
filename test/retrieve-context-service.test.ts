@@ -338,6 +338,46 @@ describe('retrieve context service', () => {
     });
   });
 
+  test('persisted retrieve_context trace records candidate signal exposure outside canonical source refs', async () => {
+    await withEngine('candidate-signal-trace', async (engine) => {
+      const result = await retrieveContext(engine, {
+        query: 'memory consolidation signal',
+        requested_scope: 'work',
+        persist_trace: true,
+        include_orientation: false,
+      }, {
+        candidateSearch: async () => [],
+        candidateSignalBuilder: async () => ({
+          candidate_signal_policy: {
+            mode: 'normal',
+            reason_codes: ['default_agent_retrieval'],
+            included_count: 1,
+            suppressed_count: 0,
+          },
+          candidate_signals: [{
+            candidate_id: 'candidate-trace-exposure',
+            status: 'candidate',
+            authority: 'unreviewed_candidate',
+            activation: 'candidate_only',
+            target_object_type: 'curated_note',
+            target_object_id: 'systems/mbrain',
+            relation_to_canonical: 'adjacent',
+            score: 0.5,
+            score_reasons: ['query_overlap'],
+            promotion_hint: 'advance_to_review',
+            disposition_hint: 'keep_candidate',
+            summary: 'Unreviewed candidate candidate-trace-exposure may be relevant.',
+          }],
+        }),
+      });
+
+      expect(result.trace).toBeDefined();
+      expect(result.trace!.verification).toContain('candidate_signal_policy:normal');
+      expect(result.trace!.verification).toContain('candidate_signal:candidate-trace-exposure');
+      expect(result.trace!.source_refs).not.toContain('candidate_signal:candidate-trace-exposure');
+    });
+  });
+
   test('keeps timeline search hits as timeline range reads even when compiled truth text matches', async () => {
     await withEngine('timeline-search', async (engine) => {
       await importFromContent(engine, 'concepts/retrieval', [
