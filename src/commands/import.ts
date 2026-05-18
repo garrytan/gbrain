@@ -5,6 +5,7 @@ import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
+import { resolveSourceId } from '../core/source-resolver.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import {
@@ -49,11 +50,17 @@ export async function runImport(
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
-  // v0.30.x follow-up to PR #707: programmatic sourceId support so internal
-  // callers (performFullSync, future Step 6 paths) can route to a named
-  // source. The CLI `gbrain import` deliberately has no --source flag per
-  // PR #707's design intent — only programmatic callers thread sourceId.
-  const sourceId = opts.sourceId;
+  // Source routing for trusted local CLI callers. Programmatic callers may
+  // pass opts.sourceId directly; otherwise resolve the documented CLI chain:
+  // --source, GBRAIN_SOURCE, .gbrain-source, registered local_path prefix,
+  // brain-level sources.default, then literal default.
+  const sourceIdx = args.indexOf('--source');
+  const explicitSource = sourceIdx !== -1 ? args[sourceIdx + 1] : null;
+  if (sourceIdx !== -1 && (!explicitSource || explicitSource.startsWith('--'))) {
+    console.error('Usage: gbrain import <dir> [--source <id>] [--no-embed] [--workers N] [--fresh] [--json]');
+    process.exit(1);
+  }
+  const sourceId = opts.sourceId ?? await resolveSourceId(engine, explicitSource, process.cwd());
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
@@ -70,10 +77,11 @@ export async function runImport(
   // Find dir: first non-flag arg that isn't a value for --workers
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
+  if (sourceIdx !== -1) flagValues.add(sourceIdx + 1);
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json]');
+    console.error('Usage: gbrain import <dir> [--source <id>] [--no-embed] [--workers N] [--fresh] [--json]');
     process.exit(1);
   }
   const dir: string = dirArg;  // narrowed; survives closure capture

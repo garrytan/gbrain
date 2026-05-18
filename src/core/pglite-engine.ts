@@ -943,7 +943,7 @@ export class PGLiteEngine implements BrainEngine {
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       params.push(opts.sourceIds);
       extraFilter += ` AND p.source_id = ANY($${params.length}::text[])`;
-    } else if (opts?.sourceId) {
+    } else if (opts?.sourceId && opts.sourceId !== '__all__') {
       params.push(opts.sourceId);
       extraFilter += ` AND p.source_id = $${params.length}`;
     }

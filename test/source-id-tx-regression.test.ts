@@ -169,6 +169,40 @@ describe('Per-page tx methods source-qualify their bare-slug subqueries', () => 
   });
 });
 
+describe('searchKeyword honors opts.sourceId', () => {
+  test('source filter excludes same-token pages from other sources', async () => {
+    const token = 'uniquesourcefiltertoken';
+    await engine.putPage('topics/source-search-default', {
+      type: 'concept',
+      title: 'Default search source',
+      compiled_truth: `${token} default-only`,
+    }, { sourceId: 'default' });
+    await engine.upsertChunks('topics/source-search-default', [
+      { chunk_index: 0, chunk_text: `${token} default-only`, chunk_source: 'compiled_truth' },
+    ], { sourceId: 'default' });
+
+    await engine.putPage('topics/source-search-testsrc', {
+      type: 'concept',
+      title: 'Testsrc search source',
+      compiled_truth: `${token} testsrc-only`,
+    }, { sourceId: 'testsrc' });
+    await engine.upsertChunks('topics/source-search-testsrc', [
+      { chunk_index: 0, chunk_text: `${token} testsrc-only`, chunk_source: 'compiled_truth' },
+    ], { sourceId: 'testsrc' });
+
+    const defaultResults = await engine.searchKeyword(token, { sourceId: 'default', limit: 10 });
+    expect(defaultResults.map(r => r.source_id)).toEqual(['default']);
+    expect(defaultResults.map(r => r.slug)).toEqual(['topics/source-search-default']);
+
+    const testsrcResults = await engine.searchKeyword(token, { sourceId: 'testsrc', limit: 10 });
+    expect(testsrcResults.map(r => r.source_id)).toEqual(['testsrc']);
+    expect(testsrcResults.map(r => r.slug)).toEqual(['topics/source-search-testsrc']);
+
+    const allResults = await engine.searchKeyword(token, { sourceId: '__all__', limit: 10 });
+    expect(allResults.map(r => r.source_id).sort()).toEqual(['default', 'testsrc']);
+  });
+});
+
 describe('addLink rewrites the cross-product into a source-qualified JOIN', () => {
   const FROM_SLUG = 'topics/regression-link-from';
   const TO_SLUG = 'topics/regression-link-to';

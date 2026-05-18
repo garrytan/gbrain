@@ -724,7 +724,7 @@ SEARCH
   gbrain query <question>              Hybrid search (vector + keyword + RRF)
 
 IMPORT
-  gbrain import <dir> [--no-embed] [--workers N]
+  gbrain import <dir> [--source <id>] [--no-embed] [--workers N]
                                         Import markdown (idempotent)
   gbrain sync [--repo <path>] [--workers N]
                                         Git-to-brain incremental sync

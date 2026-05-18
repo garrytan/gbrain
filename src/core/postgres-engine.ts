@@ -1003,7 +1003,7 @@ export class PostgresEngine implements BrainEngine {
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       params.push(opts.sourceIds);
       sourceClause = `AND p.source_id = ANY($${params.length}::text[])`;
-    } else if (opts?.sourceId) {
+    } else if (opts?.sourceId && opts.sourceId !== '__all__') {
       params.push(opts.sourceId);
       sourceClause = `AND p.source_id = $${params.length}`;
     }
@@ -1037,6 +1037,7 @@ export class PostgresEngine implements BrainEngine {
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${languageClause}
           ${symbolKindClause}
+          ${sourceClause}
           ${afterDateClause}
           ${beforeDateClause}
           ${sourceClause}

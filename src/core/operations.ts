@@ -1039,6 +1039,7 @@ const search: Operation = {
     query: { type: 'string', required: true },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
+    source: { type: 'string', description: 'Restrict keyword search to one source id; use __all__ for all sources' },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
@@ -1046,10 +1047,12 @@ const search: Operation = {
     // v0.34.1 (#861 — P0 leak seal): thread caller's source scope into
     // searchKeyword. Pre-fix this op silently returned cross-source hits
     // for any auth'd OAuth client.
+    const explicitSource = typeof p.source === 'string' ? p.source : undefined;
+    const scope = sourceScopeOpts(ctx);
     const raw = await ctx.engine.searchKeyword(queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
-      ...sourceScopeOpts(ctx),
+      ...(scope.sourceIds ? scope : explicitSource ? { sourceId: explicitSource } : scope),
     });
     const results = dedupResults(raw);
     const latency_ms = Date.now() - startedAt;
