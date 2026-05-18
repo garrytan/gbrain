@@ -13,3 +13,6 @@ supabase/.temp/
 .claude/skills/
 .idea
 eval/reports/
+harness/__pycache__/
+harness/tools/__pycache__/
+harness/.venv/
