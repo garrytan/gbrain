@@ -205,6 +205,7 @@ function buildSignal(
   const overlap = tokenOverlap(input.query ?? '', candidate.proposed_content);
   const hasProvenance = candidate.source_refs.some(ref => ref.trim().length > 0);
   const hasTarget = Boolean(candidate.target_object_type && candidate.target_object_id?.trim());
+  const pressure = buildPressure(candidate, hasProvenance, hasTarget, hasCanonicalHandoff);
   const score = roundScore(
     (sameTarget ? 1 : 0)
     + Math.min(0.35, overlap)
@@ -234,6 +235,9 @@ function buildSignal(
     ],
     promotion_hint: promotionHint(candidate, hasProvenance, hasTarget, hasCanonicalHandoff),
     disposition_hint: dispositionHint(candidate, hasProvenance),
+    pressure_score: pressure.pressure_score,
+    pressure_reasons: pressure.pressure_reasons,
+    review_priority_hint: pressure.review_priority_hint,
     summary: signalSummary(candidate),
   };
 }
@@ -282,6 +286,44 @@ function dispositionHint(
     return 'reject_low_value';
   }
   return 'keep_candidate';
+}
+
+function buildPressure(
+  candidate: MemoryCandidateEntry,
+  hasProvenance: boolean,
+  hasTarget: boolean,
+  hasCanonicalHandoff: boolean,
+): Pick<CandidateSignal, 'pressure_score' | 'pressure_reasons' | 'review_priority_hint'> {
+  const pressureReasons: CandidateSignal['pressure_reasons'] = [];
+  if (!hasProvenance) pressureReasons.push('missing_provenance');
+  if (!hasTarget) pressureReasons.push('missing_target');
+  if (candidate.status === 'promoted' && !hasCanonicalHandoff) {
+    pressureReasons.push('stale_promoted_without_handoff');
+  }
+  if (candidate.status === 'captured' || candidate.status === 'candidate' || candidate.status === 'staged_for_review') {
+    pressureReasons.push('unresolved_exposed_candidate');
+  }
+  if (candidate.recurrence_score >= 0.8) pressureReasons.push('high_recurrence');
+
+  return {
+    pressure_score: roundScore(Math.min(1, pressureReasons.length * 0.25)),
+    pressure_reasons: pressureReasons,
+    review_priority_hint: reviewPriorityHint(candidate, hasProvenance, hasTarget, hasCanonicalHandoff),
+  };
+}
+
+function reviewPriorityHint(
+  candidate: MemoryCandidateEntry,
+  hasProvenance: boolean,
+  hasTarget: boolean,
+  hasCanonicalHandoff: boolean,
+): CandidateSignal['review_priority_hint'] {
+  if (!hasProvenance) return 'reject_missing_provenance';
+  if (!hasTarget) return 'bind_target_before_review';
+  if (candidate.status === 'promoted' && !hasCanonicalHandoff) return 'record_canonical_handoff';
+  if (candidate.status === 'captured') return 'inspect_candidate';
+  if (candidate.status === 'candidate' || candidate.status === 'staged_for_review') return 'advance_to_review';
+  return 'no_priority';
 }
 
 function normalizeKnownSubjects(subjects: BuildCandidateSignalsInput['known_subjects']): string[] {

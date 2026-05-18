@@ -2006,6 +2006,21 @@ export type CandidateSignalDispositionHint =
   | 'hide_from_default_retrieval'
   | 'requires_redaction_review';
 
+export type CandidateSignalPressureReason =
+  | 'missing_provenance'
+  | 'missing_target'
+  | 'stale_promoted_without_handoff'
+  | 'unresolved_exposed_candidate'
+  | 'high_recurrence';
+
+export type CandidateSignalReviewPriorityHint =
+  | 'no_priority'
+  | 'inspect_candidate'
+  | 'advance_to_review'
+  | 'record_canonical_handoff'
+  | 'reject_missing_provenance'
+  | 'bind_target_before_review';
+
 export interface CandidateSignalPolicy {
   mode: CandidateSignalPolicyMode;
   reason_codes: string[];
@@ -2025,6 +2040,9 @@ export interface CandidateSignal {
   score_reasons: string[];
   promotion_hint: CandidateSignalPromotionHint;
   disposition_hint: CandidateSignalDispositionHint;
+  pressure_score: number;
+  pressure_reasons: CandidateSignalPressureReason[];
+  review_priority_hint: CandidateSignalReviewPriorityHint;
   summary: string;
 }
 
