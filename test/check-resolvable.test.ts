@@ -196,6 +196,19 @@ describe("DRY detection — checkResolvable", () => {
   let dir: string;
   afterEachCleanup(() => dir && rmSync(dir, { recursive: true, force: true }));
 
+  test("parses triggers from CRLF frontmatter on Windows checkouts", () => {
+    dir = makeSkillsFixture({ win: "# WinSkill\n" });
+    const skillPath = join(dir, "win", "SKILL.md");
+    writeFileSync(
+      skillPath,
+      "---\r\nname: win\r\ndescription: test\r\ntriggers:\r\n  - \"win\"\r\n---\r\n# WinSkill\r\n",
+    );
+
+    const report = checkResolvable(dir);
+    const gaps = report.issues.filter(i => i.type === "mece_gap");
+    expect(gaps).toHaveLength(0);
+  });
+
   test("flags inlined notability rule with no reference", () => {
     dir = makeSkillsFixture({
       bad: "# BadSkill\n\nCheck the notability gate every time.\n",
