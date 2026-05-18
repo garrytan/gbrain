@@ -10,6 +10,12 @@ tags: ["fact"]
 
 ---
 
+## 開工三步
+
+1. `read_memory("wiki/status/session-log")` — 上次做到哪
+2. `read_memory("wiki/status/priorities")` — 現在做什麼
+3. `GET /stats` — 更新腦庫數字到 `wiki/status/health`
+
 ## 核心工具（常用，直接記住）
 
 | 工具 | 用途 |
@@ -24,13 +30,24 @@ tags: ["fact"]
 
 | 情境 | 讀這頁 |
 |------|--------|
-| 要寫入/建立頁面 | `wiki/agent-manual/rules` |
+| 要寫入 / 建立頁面 | `wiki/agent-manual/rules` |
 | 要建立 link 或關係 | `wiki/agent-manual/links` |
 | 不知道用哪個工具 | `wiki/agent-manual/tools` |
 | 不知道工作流程 | `wiki/agent-manual/workflow` |
+| Namespace 判斷 | `wiki/conventions/namespace-rules` |
+| Frontmatter 格式 | `wiki/conventions/frontmatter` |
+| 同步架構疑問 | `wiki/conventions/sync-architecture` |
+| 查看收件匣任務 | `wiki/inbox/` search |
+| 協作協議 | `wiki/workflow/protocol` |
 
 ## GBrain 三條鐵律
 
 1. slug 只能 `wiki/` 或 `mem/` 開頭
 2. 寫入前先搜尋確認不重複
 3. 不確定就問，不要猜
+
+## 收工三步
+
+1. 更新 `wiki/status/session-log`（這次做了什麼、下次接力點）
+2. 更新 `wiki/status/priorities`（推進進度）
+3. 更新 `wiki/status/health`（stats 快照）

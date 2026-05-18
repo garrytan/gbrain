@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Push all agent-manual pages to GBrain.
-
-Pages pushed:
-  wiki/agent-manual          ← index (輕量，啟動時讀這頁)
-  wiki/agent-manual/rules    ← 寫入規則 + 禁止行為
-  wiki/agent-manual/links    ← Link type + Namespace 判斷
-  wiki/agent-manual/tools    ← 完整工具列表
-  wiki/agent-manual/workflow ← 工作流程
+"""Push all agent-manual and living-document pages to GBrain.
 
 Usage:
     python scripts/push_manual.py
@@ -20,15 +13,27 @@ import os, sys, hmac, hashlib, time
 from pathlib import Path
 import requests
 
-GBRAIN_BASE = "https://gbrain-production-18fa.up.railway.app"
+GBRAIN_BASE = "https://brain.3141919ryanfeofjpewfp.uk"
 DOCS = Path(__file__).parent.parent / "docs"
 
 PAGES = [
+    # Agent Manual（說明書）
     ("wiki/agent-manual",          "agent-manual-index.md",    "Agent Manual — Index"),
     ("wiki/agent-manual/rules",    "agent-manual-rules.md",    "Agent Manual — 寫入規則"),
     ("wiki/agent-manual/links",    "agent-manual-links.md",    "Agent Manual — Link 規則"),
     ("wiki/agent-manual/tools",    "agent-manual-tools.md",    "Agent Manual — 完整工具列表"),
     ("wiki/agent-manual/workflow", "agent-manual-workflow.md", "Agent Manual — 工作流程"),
+    # Status（狀態層，活文件）
+    ("wiki/status/priorities",     "status-priorities.md",     "當前優先任務"),
+    ("wiki/status/health",         "status-health.md",         "腦庫健康快照"),
+    ("wiki/status/session-log",    "status-session-log.md",    "AI 工作記錄"),
+    ("wiki/status/orphans",        "status-orphans.md",        "孤立頁面清單"),
+    # Conventions（慣例層）
+    ("wiki/conventions/namespace-rules",    "conventions-namespace.md",          "Namespace 判斷規則"),
+    ("wiki/conventions/frontmatter",        "conventions-frontmatter.md",        "Frontmatter 格式規範"),
+    ("wiki/conventions/sync-architecture",  "conventions-sync-architecture.md",  "同步架構說明"),
+    # Workflow（協作協議）
+    ("wiki/workflow/protocol",     "workflow-protocol.md",     "Genspark ↔ 本地 AI 協作協議"),
 ]
 
 
@@ -69,10 +74,16 @@ def push_page(slug: str, filename: str, title: str) -> str:
 
 def push_all() -> None:
     print(f"推送 {len(PAGES)} 頁到 GBrain...\n")
+    ok = skip = 0
     for slug, filename, title in PAGES:
         result = push_page(slug, filename, title)
         print(f"  {result}")
-    print("\n完成。索引頁：wiki/agent-manual")
+        if result.startswith("OK"):
+            ok += 1
+        else:
+            skip += 1
+    print(f"\n完成：{ok} 頁成功，{skip} 頁跳過")
+    print("索引頁：wiki/agent-manual")
     print("提醒：關鍵字搜尋需等 60-90 秒更新。")
 
 

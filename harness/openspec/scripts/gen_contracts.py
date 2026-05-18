@@ -98,17 +98,87 @@ def build_skill_list_error(code: str, message: str) -> SkillListError:
 '''
 
 
+_INBOX_CHECK_CONTRACT = '''class InboxTask(TypedDict):
+    slug: str
+    title: str
+    assigned_to: str
+    created_by: str
+    created: str
+    task_excerpt: str
+
+
+class InboxCheckSuccess(TypedDict):
+    found: int           # >= 0
+    tasks: List[InboxTask]
+
+
+class InboxCheckError(TypedDict):
+    code: str    # SEARCH_FAILED | INVALID_LIMIT
+    message: str
+
+
+def validate_inbox_check_input(data: dict) -> dict:
+    """Raise ValueError if input is invalid."""
+    if not isinstance(data, dict):
+        raise ValueError("input must be a dict")
+    result: dict = {}
+    if "assigned_to" in data:
+        v = data["assigned_to"]
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("assigned_to must be a non-empty string")
+        result["assigned_to"] = v
+    else:
+        result["assigned_to"] = "local-ai"
+    if "limit" in data:
+        v = data["limit"]
+        if not isinstance(v, int) or isinstance(v, bool):
+            raise ValueError("limit must be an integer")
+        if v <= 0:
+            raise ValueError("limit must be > 0 (INVALID_LIMIT)")
+        if v > 20:
+            raise ValueError("limit must be <= 20 (INVALID_LIMIT)")
+        result["limit"] = v
+    else:
+        result["limit"] = 5
+    return result
+
+
+def build_inbox_check_success(tasks: list) -> InboxCheckSuccess:
+    entries = [
+        InboxTask(
+            slug=t["slug"],
+            title=t["title"],
+            assigned_to=t["assigned_to"],
+            created_by=t["created_by"],
+            created=t["created"],
+            task_excerpt=t["task_excerpt"],
+        )
+        for t in tasks
+    ]
+    return InboxCheckSuccess(found=len(entries), tasks=entries)
+
+
+def build_inbox_check_error(code: str, message: str) -> InboxCheckError:
+    assert code in ("SEARCH_FAILED", "INVALID_LIMIT")
+    return InboxCheckError(code=code, message=message)
+'''
+
+
 def main():
     _CONTRACTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    out_load = _CONTRACTS_DIR / "skills_load_contract.py"
-    out_list = _CONTRACTS_DIR / "skills_list_contract.py"
+    out_load  = _CONTRACTS_DIR / "skills_load_contract.py"
+    out_list  = _CONTRACTS_DIR / "skills_list_contract.py"
+    out_inbox = _CONTRACTS_DIR / "inbox_check_contract.py"
 
     out_load.write_text(_HEADER + _LOAD_CONTRACT)
     out_list.write_text(_HEADER + _LIST_CONTRACT)
+    out_inbox.write_text(_HEADER + _INBOX_CHECK_CONTRACT)
 
-    print(f"✓ generated {out_load.relative_to(Path(__file__).parent.parent.parent)}")
-    print(f"✓ generated {out_list.relative_to(Path(__file__).parent.parent.parent)}")
+    base = Path(__file__).parent.parent.parent
+    print(f"✓ generated {out_load.relative_to(base)}")
+    print(f"✓ generated {out_list.relative_to(base)}")
+    print(f"✓ generated {out_inbox.relative_to(base)}")
 
 
 if __name__ == "__main__":

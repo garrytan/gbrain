@@ -9,13 +9,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "contracts"))
 
-from skills_load_contract import validate_skill_load_input    # type: ignore
-from skills_list_contract import validate_skill_list_input    # type: ignore
+from skills_load_contract import validate_skill_load_input      # type: ignore
+from skills_list_contract import validate_skill_list_input      # type: ignore
+from inbox_check_contract import validate_inbox_check_input     # type: ignore
 
 # Map (domain, action) → validator function
 _VALIDATORS = {
     ("skills", "load"): validate_skill_load_input,
     ("skills", "list"): validate_skill_list_input,
+    ("inbox",  "check"): validate_inbox_check_input,
 }
 
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
