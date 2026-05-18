@@ -504,6 +504,136 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
 }
 
 /**
+ * v0.36.0.0 (A5): ze_embedding_health doctor check.
+ *
+ * When the configured embedding_model starts with `zeroentropyai:`, verify
+ * the API key is set. Doesn't make a network call by default — the existing
+ * `gbrain models doctor` probe covers that, and we don't want every
+ * `gbrain doctor` run to spend tokens. Surfaces a paste-ready fix when the
+ * key is missing.
+ */
+export async function checkZeEmbeddingHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const model = await engine.getConfig('embedding_model') ?? '';
+    if (!model.startsWith('zeroentropyai:')) {
+      return {
+        name: 'ze_embedding_health',
+        status: 'ok',
+        message: `Configured embedding model "${model || 'default'}" is not ZeroEntropy — skip.`,
+      };
+    }
+    const envKey = process.env.ZEROENTROPY_API_KEY;
+    const configKey = await engine.getConfig('zeroentropy_api_key');
+    if (!envKey && !configKey) {
+      return {
+        name: 'ze_embedding_health',
+        status: 'warn',
+        message:
+          `embedding_model="${model}" but ZEROENTROPY_API_KEY is not set. ` +
+          `Fix: get a key at https://dashboard.zeroentropy.dev and run ` +
+          `\`gbrain config set zeroentropy_api_key <YOUR_KEY>\` (or export ZEROENTROPY_API_KEY).`,
+      };
+    }
+    return {
+      name: 'ze_embedding_health',
+      status: 'ok',
+      message: `embedding_model="${model}" with key configured`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'ze_embedding_health',
+      status: 'warn',
+      message: `Could not check ZE embedding health: ${msg}`,
+    };
+  }
+}
+
+/**
+ * v0.36.0.0 (A5): embedding_width_consistency doctor check.
+ *
+ * Cross-checks that `config.embedding_dimensions` matches the actual
+ * `vector(N)` width on `content_chunks.embedding`. Drift here means the
+ * ze-switch was interrupted mid-flight (schema changed but config write
+ * crashed, or vice versa). Surfaces a paste-ready `gbrain ze-switch
+ * --resume` hint.
+ */
+export async function checkEmbeddingWidthConsistency(engine: BrainEngine): Promise<Check> {
+  try {
+    const configDimStr = await engine.getConfig('embedding_dimensions');
+    if (!configDimStr) {
+      // Pre-v0.27 brain or never configured. Not our problem.
+      return {
+        name: 'embedding_width_consistency',
+        status: 'ok',
+        message: 'embedding_dimensions not configured — using defaults.',
+      };
+    }
+    const configDim = parseInt(configDimStr, 10);
+    if (!Number.isFinite(configDim) || configDim <= 0) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message: `embedding_dimensions config value "${configDimStr}" is not a positive integer. Fix: \`gbrain config set embedding_dimensions <N>\`.`,
+      };
+    }
+
+    // Read the actual column width from pg_attribute / information_schema.
+    // Postgres + PGLite both expose vector typmod via atttypmod (vectors
+    // store dim as typmod). atttypmod==-1 means no constraint; >=0 is the
+    // dim+VARHDRSZ — we use format_type for portability.
+    const rows = await engine.executeRaw<{ format_type: string }>(
+      `SELECT format_type(atttypid, atttypmod) AS format_type
+         FROM pg_attribute
+        WHERE attrelid = 'content_chunks'::regclass
+          AND attname = 'embedding'
+          AND NOT attisdropped`,
+    );
+    if (rows.length === 0) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message: 'content_chunks.embedding column not found. Fix: run `gbrain init --migrate-only` or check schema.',
+      };
+    }
+    const formatType = rows[0].format_type;
+    // Parse 'vector(N)' shape.
+    const m = formatType.match(/vector\((\d+)\)/i);
+    if (!m) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message: `Unexpected column type for content_chunks.embedding: "${formatType}".`,
+      };
+    }
+    const schemaDim = parseInt(m[1], 10);
+    if (schemaDim !== configDim) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message:
+          `Schema width mismatch: content_chunks.embedding is vector(${schemaDim}) but ` +
+          `embedding_dimensions config = ${configDim}. ` +
+          `Fix: \`gbrain ze-switch --resume\` if you were mid-switch, or ` +
+          `\`gbrain config set embedding_dimensions ${schemaDim}\` to match the schema.`,
+      };
+    }
+    return {
+      name: 'embedding_width_consistency',
+      status: 'ok',
+      message: `Schema width (${schemaDim}d) matches embedding_dimensions config`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'embedding_width_consistency',
+      status: 'warn',
+      message: `Could not check embedding width: ${msg}`,
+    };
+  }
+}
+
+/**
  * v0.32.3 [CDX-20]: surface mode + per-key override drift.
  *
  * Status stays `ok` (never warns; never docks health score). If
@@ -2559,6 +2689,11 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
     progress.heartbeat('reranker_health');
     checks.push(await checkRerankerHealth(engine));
+    // v0.36.0.0 (A5): ZE embedding key health + schema/config width consistency.
+    progress.heartbeat('ze_embedding_health');
+    checks.push(await checkZeEmbeddingHealth(engine));
+    progress.heartbeat('embedding_width_consistency');
+    checks.push(await checkEmbeddingWidthConsistency(engine));
   }
 
   progress.finish();

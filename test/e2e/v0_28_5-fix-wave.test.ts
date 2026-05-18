@@ -221,7 +221,17 @@ describe('v0.28.5 A4 — existing-brain dim mismatch loud failure', () => {
     const engine = new PGLiteEngine();
     await engine.connect({});
     try {
-      // Default initSchema with no gateway override → 1536.
+      // v0.36.0.0: default flipped to 1280; explicitly configure the gateway
+      // to 1536 so the test still exercises the "existing brain at 1536d"
+      // path it was designed for. This mirrors how a real v0.18-vintage brain
+      // would look post-upgrade.
+      const { configureGateway, resetGateway } = await import('../../src/core/ai/gateway.ts');
+      resetGateway();
+      configureGateway({
+        embedding_model: 'openai:text-embedding-3-large',
+        embedding_dimensions: 1536,
+        env: { OPENAI_API_KEY: 'sk-fake' },
+      });
       await engine.initSchema();
       const existing = await readContentChunksEmbeddingDim(engine);
       expect(existing.exists).toBe(true);
