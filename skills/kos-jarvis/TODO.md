@@ -858,6 +858,49 @@ upstream PR after.
 
 ---
 
+## P2 — post-§6.28 cutover follow-ups (added 2026-05-17)
+
+### [ ] (entity-graph latency) Evaluate dream-cycle 24h backfill 足够否
+
+**Why**: §6.28 Complete-A 接受 Notion Agent put_page 24h 内 entity-graph 弱
+(auto_links + auto_timeline remote-skip safety gate at
+`src/core/operations.ts:610-612`)。dream-cycle (`com.jarvis.dream-cycle.plist`,
+03:11 daily) `synthesize` + `patterns` phase 应当 backfill — 但实际效果
+need empirical verification on this brain shape.
+
+**What**: 1 周观察期后 spot-check 5-10 个新 Notion Agent 写的 page,
+查 `pages.frontmatter -> 'links'` 是否有 outbound entries + `links` 表
+是否含 inbound rows for the slug. 若 24h 后仍空 → 评估加 15-min cron
+跑 `gbrain enrich --only-recent` (轻量 backfill, ~50 LoC fork-side shim 调
+upstream `enrich` MCP op with `updated_after=<15 min ago>`)。
+
+**Scope**: 30 min spot-check + 决策。如果决策加 cron: 独立 PR 2-3 h
+(launchd plist + thin shim script + monitoring).
+
+### [ ] (mcp_request_log retention) Add cron deleting old audit rows
+
+**Why**: §6.28 切换 OAuth per-call audit 全 land 进 `mcp_request_log` 表。
+Plan agent R3 指出无 retention 会无限增长。Lucien 频率 (~50-200 calls/day)
+= ~70K rows/year, 单表 OK 但 admin dashboard 用 `count(*)` over `created_at >
+now() - interval '24 hours'` 在 100K+ 时 latency 上升。
+
+**What**: 加一个 launchd cron (周一 04:30) 跑 `psql ... -c "DELETE FROM
+mcp_request_log WHERE created_at < now() - interval '90 days'"`. 或者上游
+v0.36+ 可能 ship 自动 retention — 若是，本任务直接 close。
+
+**Scope**: 30 min 看上游 v0.36 changelog；如果上游没 ship，1 h 写 cron + plist。
+
+### [x] (cloudflared) `kos.chenge.ink` route cleanup on mbp-office — RESOLVED 2026-05-17 (Lucien chose port flip not hostname switch; no separate cleanup needed)
+
+Originally drafted assuming dual-hostname strategy (new `mcp.chenge.ink` for
+new wire, leave old `kos.chenge.ink → :7225` as rollback path for N+2 weeks).
+Lucien instead chose atomic origin-port flip: same `kos.chenge.ink` hostname,
+cloudflared origin updated from `:7225` to `:7225` in one step. No separate
+cleanup task remains; rollback path is "flip cloudflared origin back to
+`:7225` + re-bootstrap kos-compat-api plist from `_archived/`".
+
+---
+
 ## P3 — speculative
 
 ### [ ] 启用 v0.20+ 上游 features (Postgres-only)
@@ -877,6 +920,52 @@ backpressure-audit。我们没跑 worker daemon 所以没立刻收益,但若以�
 
 ## Done (most recent)
 
+- [x] **2026-05-17 kos-compat-api retire (Complete-A) + MCP-over-HTTP cutover (branch `migration/kos-compat-api-retire`)** —
+      Lucien override of M2-B 2026-05-15 verdict ("(c) don't touch")。Trigger: mailagent
+      方案 B「待 spec」(§6.27) + Lucien stance「一劳永逸」+ upstream OAuth + MCP + admin dashboard
+      已成熟 (v0.34+ `gbrain serve --http`)。**Scope: Complete-A** — fork `server/kos-compat-api.ts`
+      (661 LoC, KOS-v1 Bearer wire on `kos.chenge.ink :7225`) retired → `server/_archived/`
+      (Phase 3 executed same session — Lucien chose atomic flip, no obsv window)。SSoT 反转 (DB-canonical, Notion Agent put_page 不写
+      `~/brain/<dir>/<slug>.md` 也不 git commit)。**不写 BrainExporter** (Lucien 不用
+      disk + obsidian; dream-cycle 24h 内 backfill entity-graph)。/digest tool 永久下线
+      (Lucien 直接看 `~/brain/.agent/digests/patrol-*.md` 或 OpenClaw MEMORY.md)。
+      **Brain-side 改动**: 新 `scripts/launchd/com.jarvis.gbrain-serve-http.plist.template`
+      (gbrain serve --http on :7225, OAuth 2.1 + MCP JSON-RPC, --public-url
+      `https://kos.chenge.ink`, KeepAlive + RunAtLoad)；`scripts/migration/dual-mode-verify.sh`
+      smoke script (验旧 `/query` vs 新 `tools/call query`)；`docs/JARVIS-ARCHITECTURE.md` §6.28
+      retire story (140 行)。**Client 改动**: `workers/kos-worker/src/index.ts` rewrite
+      (215 → 536 LoC: OAuth client_credentials helper + MCP JSON-RPC framing helper +
+      3 tools (kosQuery/kosIngest/kosStatus) + worker-side URL fetch + frontmatter builder +
+      kindToType map port from kos-compat-api.ts:67-79)。kosDigest 删除。kosStatus 走
+      `list_pages` + worker-side aggregation 避 admin scope。`workers/kos-worker/SETUP.md`
+      重写部署步骤 + OAuth client 注册 step + env vars (KOS_MCP_BASE + KOS_OAUTH_CLIENT_ID +
+      KOS_OAUTH_CLIENT_SECRET 替代 KOS_API_TOKEN)。**Handoff docs**:
+      `docs/NOTION-AGENT-UPDATE-CHECKLIST.md` (Lucien-facing Notion UI v2→v3 step-by-step,
+      Step 0-2 + 运维 notes + rollback)；`docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md`
+      (~600 行 self-contained for OpenClaw feishu jarvis / mailagent / 任何 future caller —
+      11 sections + Python + TS + bash code patterns + per-client notes + smoke
+      acceptance)。**Trade-offs accepted (per plan file `mellow-whistling-porcupine.md`)**:
+      (1) Notion Agent ingest 24h entity-graph 弱 (auto_links/auto_timeline remote-skip at
+      `src/core/operations.ts:610-612`; dream-cycle 03:11 daily backfill); (2) kosIngest URL
+      模式失去 fork-side Tavily/FlareSolverr 能力 (worker plain fetch, X.com / Cloudflare-protected
+      页需 paste markdown); (3) kosStatus 采样模式 (`list_pages` capped at limit=100, no offset
+      exposed — exact total 需 `gbrain status` on host); (4) kosDigest 永久下线。
+      **Plan agent critique 硬化**: G2 schema verify (oauth_clients `source_id`+`federated_read`
+      列存在即 ≥ v60+v61 OK); G3 cloudflared 跨机器 ops **完全规避** — Lucien 选复用 port
+      `:7225` (atomic launchctl swap: kos-compat-api bootout → port freed → gbrain-serve-http
+      bootstrap on same port), cloudflared `kos.chenge.ink` ingress 完全不动；G5 soft-delete
+      data-loss moot (没 BrainExporter); R4 get_stats >3s latency 避 (用 list_pages)。
+      **Backup**: `~/.gbrain/config.json.pre-migration-20260517`, `/tmp/pg-pre-migration-20260517.dump.gz`
+      (110 MB gzip)。**Phase 3 (executed same session, atomic port re-use)**: Lucien register
+      OAuth clients (×4) + paste kos-worker.json into chat → Claude `launchctl bootout
+      com.jarvis.kos-compat-api` (frees `:7225`) + `cp` plist template to ~/Library/LaunchAgents/
+      with `<FILL:NANO_BANANA_API_KEY>` filled + `launchctl bootstrap gbrain-serve-http` (binds
+      `:7225`) + smoke `curl http://127.0.0.1:7225/health` + `curl https://kos.chenge.ink/health` →
+      Claude `ntn workers env set/push/deploy` + 3-tool smoke → Lucien Notion UI update per
+      checklist → Claude `git mv server/kos-compat-api.ts server/_archived/` + plist template
+      archive。KOS_API_TOKEN 留 .env.local 注释 + kos-compat-api plist 留在 `scripts/launchd/_archived/`
+      作 rollback marker (rollback = pure launchctl swap back, no mbp-office touch needed)。
+      完整 plan: `/Users/chenyuanquan/.claude/plans/mellow-whistling-porcupine.md`。
 - [x] **2026-05-09 v0.31.2 上游同步 (sync-v0.31.2 branch)** — 22 commits 跨 5 大版本 (v0.27.0/v0.28.x/v0.29.x/v0.30.x/v0.31.x → v0.31.2) / 378 文件 / +57691 -1833 LoC,**只 5 个 conflict** (上次 v0.26.7 是 31)。机械分类:`package.json` 保 fork `@electric-sql/pglite 0.4.4` override + 加 upstream `@jsquash/{avif,png}` 解码器,`bun.lock` + `llms-full.txt` take upstream regenerate (bun install + bun run build:llms),`README.md` take v0.28.8 LongMemEval 头条 (HEAD 有 v0.25.0 重复段),`skills/RESOLVER.md` take 上游 voice-note 5-keyword + 重新 append KOS 段。`pglite-engine.ts` WAL patch **自动 merge 干净**(无需 reapply,upstream 重构没动 disconnect 块)。`bun install` 拉 20 新 dep (ai@6 + @ai-sdk/{anthropic,google,openai,openai-compatible}@3 + jsquash + heic-decode + eventsource-parser + exifr)。typecheck 干净 (~3s),bin compile 0.31.2,`bun run test` 4760 pass / 9 fail (1 known + 2 env-coupled fork P2 + 2 self-test 递归 + 2 doctor-fix env + 1 perf warn + 1 build-llms 已 regen 修),`bun run check:all` clean。**production schema v34 → v45 silent-applied via bun install postinstall** — v0.31.1.1 fixwave (#682+#741) 的 bootstrap 加固真的 work,**无需手动 ALTER**(对比 v0.26.7 sync 的 mcp_request_log 手 ALTER 教训)。35 tables 全 RLS,facts table 已 ready (0 entries 等下次 ingest),2718 pages,brain_score 80/100,embed coverage 96% (244 stale 等下次 backfill)。**M3 milestone probe-passed**: `gbrain providers test --model google:gemini-embedding-001` 用现有 NANO_BANANA_API_KEY → 286ms / 768 dim default green。Production cutover 推到下个 session(本机 PGLite #223 cold-start hang 阻碍 `/tmp/pilot-brain` 端到端验证;用 Postgres-backed throwaway DB 绕开)。**PR #627 closed as superseded** by upstream v0.31.1.1 fixwave。**Privacy 修**: upstream check-privacy.sh 抓到 3 处历史 sync 记叙文里的 banned word(`docs/JARVIS-ARCHITECTURE.md` §6.20 + `skills/kos-jarvis/TODO.md` L416),改成 generic 措辞。Service mesh restart: kos-compat-api PID 27071→92596 (v0.31.2 loaded), gemini-embed-shim 续跑, 4 cron 服务 (dream-cycle/kos-patrol/notion-poller/enrich-sweep) bootout/bootstrap 后 idle 等定时。kos-patrol smoke: `~/brain/.agent/dashboards/knowledge-health-2026-05-10.md` 写出,2718 pages / 0 ERROR / 1421 WARN (WARN 涨从 762 由于 +241 新 page + 可能新 lint rule)。完整 sync 故事 [§6.22](../../docs/JARVIS-ARCHITECTURE.md#622-upstream-v0312-sync-2026-05-09)。
 - [x] **2026-05-05 Feishu signal-detector extension 退役 + brain-side bridge docs 归档** —
   Lucien 复盘判定 `~/.openclaw/extensions/jarvis-feishu-signal-detector/` 在产 garbage:

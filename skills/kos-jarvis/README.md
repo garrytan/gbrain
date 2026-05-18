@@ -87,10 +87,22 @@ skills/kos-jarvis/
 
 ## 当前状态(2026-05-17 更新)
 
+- [x] **2026-05-17 kos-compat-api retire (Complete-A) + MCP-over-HTTP cutover**:
+      fork-side `server/kos-compat-api.ts` (661 LoC, KOS-v1 Bearer wire on
+      `kos.chenge.ink :7225`) retired in favor of upstream native
+      `gbrain serve --http` (OAuth 2.1 + MCP JSON-RPC at `kos.chenge.ink :7225`)。
+      详 §6.28。**SSoT 反转 (DB-canonical)，不写 BrainExporter**
+      (Lucien 不用 disk + obsidian); entity-graph 24h 内由 dream-cycle backfill。
+      /digest tool 永久下线。kos-worker rewrite (215 → 536 LoC: OAuth client_credentials +
+      MCP JSON-RPC + 3 tools + worker-side URL fetch + frontmatter builder)。
+      mailagent + feishu 走 [`docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md`](../../docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md)
+      不动 fork。Active dirs 不变 (10) — shrinkage 在 `server/` 不在 `skills/kos-jarvis/`。
+      Phase 3 archive `server/kos-compat-api.ts` → `_archived/` 待 1 周观察期后执行。
 - [x] **2026-05-17 v0.35.6.0 sync + notion-poller retire**: 上游 sync 9 个版本 (v0.34.4 → v0.35.6.0)
       最干净一次 (~1 h, 2 真冲突), 详 §6.26。同 session 退役 notion-poller (production probe
       确认 24+ h × 0 net ingest, 详 §6.27), 移到 `workers/_archived/`。
-      替代设计: 方案 B mailagent CLI 直推 `kos-compat-api /ingest` (issue 在 ChenyqThu/jarvis-knowledge-os-v2)。
+      替代设计: 方案 B mailagent CLI 待 spec (per §6.28 EXTERNAL-CLIENTS-HANDOFF doc),
+      不再 spec fork-side /ingest wire (那条已 retire)。
 - [x] **M3 (2026-05-10)**: gemini-embed-shim 退役,production cutover —
       5 plists 切到 native v0.27 Vercel AI SDK gateway(GOOGLE_GENERATIVE_AI_API_KEY +
       GBRAIN_EMBEDDING_MODEL=google:gemini-embedding-001 + 1536 dim),
