@@ -656,11 +656,17 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           }
 
           // Phase 2 (background): embed the page so vector search works.
-          (async () => {
+          // Mirror put_page op's guard: skip embedding (and hash-bypass) if no API
+          // key is configured — avoids 5-retry exponential backoff on missing key.
+          const canEmbed = !!process.env.OPENAI_API_KEY;
+          ;(async () => {
             await acquireAsyncSlot();
             jobState.status = 'running';
             try {
-              const result = await importFromContent(engine, slug, fullContent, { forceReembed: true }) as { content_hash?: string } & object;
+              const result = await importFromContent(engine, slug, fullContent, {
+                forceReembed: canEmbed,
+                noEmbed: !canEmbed,
+              }) as { content_hash?: string } & object;
               const resolvedHash = (result as { content_hash?: string }).content_hash ?? jobState.content_hash;
               jobState.status = 'completed';
               jobState.content_hash = resolvedHash;
@@ -930,11 +936,17 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             }
 
             // Phase 2 (background): embed the page so vector search works.
-            (async () => {
+            // Mirror put_page op's guard: skip embedding (and hash-bypass) if no API
+            // key is configured — avoids 5-retry exponential backoff on missing key.
+            const canEmbedWrite = !!process.env.OPENAI_API_KEY;
+            ;(async () => {
               await acquireAsyncSlot();
               jobState.status = 'running';
               try {
-                const result = await importFromContent(engine, slug, fullContent, { forceReembed: true }) as { content_hash?: string } & object;
+                const result = await importFromContent(engine, slug, fullContent, {
+                  forceReembed: canEmbedWrite,
+                  noEmbed: !canEmbedWrite,
+                }) as { content_hash?: string } & object;
                 const resolvedHash = (result as { content_hash?: string }).content_hash ?? jobState.content_hash;
                 jobState.status = 'completed';
                 jobState.content_hash = resolvedHash;
