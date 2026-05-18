@@ -2179,7 +2179,7 @@ export async function expand(query: string): Promise<string[]> {
       // class as chat. Default the chat timeout.
       abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
       prompt: [
-        'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
+        'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents. Respond with a JSON object in exactly this shape: {"queries": ["rewrite1", "rewrite2", "rewrite3"]}. The JSON key MUST be exactly "queries" (not "rewrites" or any other variation).',
         'Return ONLY the JSON object. Do NOT include the original query in the result.',
         'Each rewrite should emphasize different aspects, synonyms, or framings.',
         '',
