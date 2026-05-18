@@ -1,136 +1,205 @@
-# harness — minimal LLM agent (Phase 1 MVP)
+# harness — Python LLM Agent for GBrain
 
-**Agent = Model + Harness.**
-Three parts: `loop.py` (the sacred loop), `tools/` (everything that does work), `store.py` (SQLite truth store).
-Nothing else.
+**Agent = Model + Harness.** A minimal, military-grade Python LLM agent that runs on top of [GBrain](https://github.com/garrytan/gbrain) as its persistent memory and knowledge layer.
 
-## Structure
+> Part of the **LifeBuilder** digital twin stack. GBrain is the original entity — the persistent brain. This harness is the executor that reads, writes, and acts on it.
+
+---
+
+## Architecture
 
 ```
-harness/
-├── loop.py           # main loop, ≤50 lines, never changes
-├── store.py          # SQLite: runs / steps / tool_calls
-├── llm.py            # thin Anthropic SDK wrapper
-├── tools/
-│   ├── __init__.py   # Tool base class + auto-scan registry
-│   ├── memory.py     # search_memory, read_memory, write_memory → gbrain
-│   ├── bash.py       # bash
-│   ├── human.py      # ask_human
-│   └── web.py        # web_fetch (Phase 2 stub)
-├── prompts/
-│   └── system.md     # system prompt
-└── cli.py            # entry point
+Genspark (planner)          Local AI (executor)
+     │                             │
+     │ wiki/inbox/ task pages      │
+     └─────────────────────────────┘
+                  │
+            ┌─────▼──────┐
+            │  GBrain MCP │  ← knowledge base, wiki, memory
+            └─────────────┘
+                  ▲
+       harness/tools/ talks to GBrain via REST
 ```
+
+The harness is three things that never change:
+
+| File | Role |
+|------|------|
+| `loop.py` | Sacred loop — model ↔ tools, ≤50 lines, never touched |
+| `store.py` | SQLite run/step/tool_call ledger |
+| `llm.py` | Thin Anthropic SDK wrapper |
+
+Tools plug in automatically — drop a `class MyTool(Tool)` in `tools/` and it registers itself.
+
+---
+
+## Tools (18 total)
+
+| Tool | Purpose |
+|------|---------|
+| `search_memory` | Hybrid search over GBrain |
+| `read_memory` | Read a page by slug |
+| `write_memory` | Write / update a page |
+| `list_pages` | List pages by prefix |
+| `bash` | Shell execution |
+| `ask_human` | Interrupt for human input |
+| `web_fetch` | HTTP fetch |
+| `skill_load` | Load agent skill by keyword |
+| `skill_list` | List available skills |
+| `check_inbox` | Check `wiki/inbox/` for tasks assigned to this agent |
+| `get_links` | Get outbound links from a page |
+| `get_backlinks` | Get inbound links to a page |
+| `get_tags` | Get tags for a page |
+| `add_tag` | Add a tag to a page |
+| `add_link` | Add a typed link |
+| `add_timeline` | Add a timeline entry |
+| `get_timeline` | Get timeline for a page |
+| `get_stats` | Brain stats snapshot |
+
+---
+
+## Living Documents System
+
+The agent maintains 13 persistent GBrain pages across three layers:
+
+**Manual** (on-demand, load only what you need):
+- `wiki/agent-manual` — index + 開工/收工三步
+- `wiki/agent-manual/tools` — tool reference
+- `wiki/agent-manual/rules` — write safety rules, namespace table
+- `wiki/agent-manual/genspark` — Genspark collaboration protocol
+- `wiki/agent-manual/workflow` — task execution workflow
+
+**Status** (session-updated living state):
+- `wiki/status/session-log` — chronological work log, newest-first
+- `wiki/status/priorities` — P0–P3 tasks, progress, session conditions
+- `wiki/status/health` — brain stats snapshot with trend tracking
+- `wiki/status/orphans` — orphan page list with suggested connections
+
+**Conventions** (reference, rarely changes):
+- `wiki/conventions/namespace-rules` — 房多多/興臺/太空艙 namespace table
+- `wiki/conventions/frontmatter` — standard YAML format, ai_confidence
+- `wiki/conventions/sync-architecture` — Obsidian wins, AI safe zones
+- `wiki/workflow/protocol` — Genspark ↔ Local AI collaboration protocol
+
+Push all 13 pages to GBrain:
+
+```bash
+GBRAIN_TOTP_SECRET=<secret> python3 scripts/push_manual.py
+```
+
+---
+
+## Genspark ↔ Local AI Collaboration
+
+Genspark (cloud) plans. This agent executes. They communicate through `wiki/inbox/`:
+
+```markdown
+---
+status: pending
+assigned_to: local-ai
+created_by: genspark
+---
+## Task
+Write a summary of all 房多多 leads from last week...
+```
+
+This agent polls the inbox at session start:
+
+```python
+check_inbox(assigned_to="local-ai", limit=5)
+```
+
+Status machine: `pending → in_progress → done → reviewed`
+
+---
+
+## Military-Grade Contract Pipeline
+
+Every tool change goes through:
+
+```
+SPEC → guard:specs → gen:contracts → guard:contracts → IMPL → guard:all
+```
+
+```bash
+python3 openspec/scripts/guard_specs.py    # format validation
+python3 openspec/scripts/gen_contracts.py  # regenerate contracts
+python3 openspec/scripts/guard_contracts.py # contract + example validation
+```
+
+Zero failed = done. **Never skip a guard.** Never manually edit `*_contract.py`.
+
+See `skills/python-military-grade.md` for the full Python-native pipeline skill.
+
+---
 
 ## Setup
 
 ```bash
 cd harness
 pip install -r requirements.txt
-cp .env.example .env
-# fill in ANTHROPIC_API_KEY and GBRAIN_OTP
 ```
 
-**GBRAIN_OTP** is the 30-second TOTP generated from `GBRAIN_TOTP_SECRET`.
-Generate one before each run:
+Set environment variables:
 
 ```bash
-export GBRAIN_OTP=$(python3 -c "
-import pyotp, os
-print(pyotp.TOTP(os.environ['GBRAIN_TOTP_SECRET']).now())
-")
+export ANTHROPIC_API_KEY=sk-ant-...
+export GBRAIN_BASE=https://brain.yourdomain.com   # or http://127.0.0.1:4244
+export GBRAIN_TOTP_SECRET=<your-secret>           # for OTP auth
 ```
 
-Or add `pyotp` to requirements and generate it inside the tool on each call
-(Phase 2 improvement — for now, set it in the shell before running).
+Auth uses daily-rotating OTP (HMAC-SHA256). The tool auto-generates the token on each call — no manual rotation.
 
-## Run a task
+---
+
+## Deployment (Railway + Cloudflare)
+
+GBrain runs on Railway. Cloudflare WAF sits in front:
+
+1. **Custom domain**: `brain.yourdomain.com` → Railway service via CNAME
+2. **IP whitelist**: Cloudflare WAF Custom Rule blocks all traffic except your IP(s)
+3. **OTP auth**: Even if IP slips through, requests need a valid daily OTP
+
+---
+
+## Run
 
 ```bash
 cd harness
-python cli.py "Search gbrain for notes about harness, compile a summary, write it to mem/harness-summary"
+python cli.py "Check inbox, pick up the first pending task, complete it"
 ```
 
-Or from the parent directory:
+Every run is logged to `~/.gbrain/harness.db`:
 
 ```bash
-python -m harness "your task here"
-```
-
-## Demo task (smoke test)
-
-```bash
-python cli.py "Search gbrain for any notes about LLM harness or agent loop, then write a one-paragraph summary to mem/harness-overview with title 'LLM Harness Overview'"
-```
-
-Expected flow:
-1. Agent calls `search_memory(q="LLM harness agent loop")`
-2. Reads relevant pages with `read_memory`
-3. Calls `write_memory(slug="mem/harness-overview", title="LLM Harness Overview", body="...")`
-4. Returns a confirmation message
-
-## Inspect a stored run
-
-Every run is logged to `~/.gbrain/harness.db`.
-
-```bash
-# List recent runs
-python3 -c "
-import sqlite3, json
-conn = sqlite3.connect('/root/.gbrain/harness.db')  # adjust path
-for row in conn.execute('SELECT id, status, task, started_at FROM runs ORDER BY started_at DESC LIMIT 10'):
-    print(dict(zip(['id','status','task','started_at'], row)))
-"
-
-# Full replay of a run
 python cli.py show <run_id>
 ```
 
-`get_run(run_id)` returns the full reconstructed run:
+---
 
-```json
-{
-  "id": "d37bb3e7",
-  "task": "...",
-  "status": "done",
-  "started_at": "...",
-  "total_input_tokens": 1240,
-  "total_output_tokens": 380,
-  "steps": [
-    {
-      "step_idx": 0,
-      "stop_reason": "tool_use",
-      "input_tokens": 800,
-      "output_tokens": 120,
-      "content": [...],
-      "tool_calls": [
-        {
-          "name": "search_memory",
-          "input": {"q": "LLM harness"},
-          "output": "slug: mem/foo\ntitle: Foo\n..."
-        }
-      ]
-    }
-  ]
-}
-```
-
-## Change a tool without touching the loop
-
-To swap `search_memory` for a different backend, edit only `tools/memory.py`.
-The loop has zero knowledge of tool names — it dispatches by `block.name` into
-the registry dict, nothing else.
-
-## Smoke test (no API keys needed)
+## Smoke Test
 
 ```bash
 cd harness
 python3 -c "
 import sys; sys.path.insert(0, '.')
 from tools import load_tools
-from tools.bash import Bash
 tools = load_tools()
 print('tools:', sorted(tools.keys()))
-print(Bash().execute(cmd='echo works'))
 "
 ```
+
+Expected: 18 tools listed.
+
+---
+
+## Contract Guard Smoke Test
+
+```bash
+cd harness
+python3 openspec/scripts/guard_specs.py
+python3 openspec/scripts/gen_contracts.py
+python3 openspec/scripts/guard_contracts.py
+```
+
+Expected: `N passed, 0 failed` on all three.

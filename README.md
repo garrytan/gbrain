@@ -1,3 +1,13 @@
+# GBrain — Ryan's Fork
+
+> **This fork adds a Python LLM agent harness (`harness/`) built on top of GBrain.**
+> GBrain itself is unchanged — all 2685 lines of additions are original Python in `harness/`.
+> This is part of the **LifeBuilder** digital twin stack: GBrain is the persistent original entity; the harness is the executor.
+
+**→ [harness/README.md](harness/README.md)** — Python agent setup, living docs system, Genspark ↔ Local AI collaboration protocol, military-grade contract pipeline.
+
+---
+
 # GBrain
 
 Your AI agent is smart but forgetful. GBrain gives it a brain.
