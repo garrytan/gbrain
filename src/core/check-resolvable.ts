@@ -161,9 +161,19 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
 // `skillsDir/*/SKILL.md` when manifest.json is missing — the scenario
 // needed for AGENTS.md-only OpenClaw deployments. See D-CX-12 / F-ENG-1.
 
-/** Simple YAML frontmatter parser — extracts triggers array if present. */
-function extractTriggers(skillContent: string): string[] {
-  const fmMatch = skillContent.match(/^---\n([\s\S]*?)\n---/);
+/**
+ * Simple YAML frontmatter parser — extracts triggers array if present.
+ *
+ * Normalizes CRLF → LF before parsing so Windows checkouts (where
+ * `core.autocrlf=true` is the default) parse correctly. Without this,
+ * the `^---\n` and `^triggers:\s*\n` regexes never match because the
+ * file content is `---\r\n` / `triggers:\r\n`, and every skill on
+ * Windows is reported as `mece_gap` regardless of its actual content.
+ * CI runs on Ubuntu-only so the bug only surfaces in user environments.
+ */
+export function extractTriggers(skillContent: string): string[] {
+  const content = skillContent.replace(/\r\n/g, '\n');
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
   if (!fmMatch) return [];
   const fm = fmMatch[1];
   const triggersMatch = fm.match(/^triggers:\s*\n((?:\s+-\s+.+\n?)*)/m);
