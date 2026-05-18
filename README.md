@@ -12,6 +12,8 @@ GBrain is those patterns, generalized. 34 skills. Install in 30 minutes. Your ag
 
 **New in v0.28.8 — LongMemEval in the box:** `gbrain eval longmemeval <dataset.jsonl>` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against gbrain's hybrid retrieval. One in-memory PGLite per run, `TRUNCATE` between questions (runtime-enumerated tables, schema-migration-safe), 25.9ms p50 per question on Apple Silicon. Your `~/.gbrain` brain is never touched. Retrieved chat content is sanitized with the same `INJECTION_PATTERNS` that protect takes — one source of truth for prompt-injection defense. Hand the JSONL output to LongMemEval's `evaluate_qa.py` to score.
 
+**New in v0.35.7 — Temporal trajectory + founder scorecard.** Author typed metric assertions in the `## Facts` fence (`mrr=50000`, `arr=2000000`, `team_size=12`) and gbrain stores them as first-class typed columns. `gbrain eval trajectory companies/acme-example` prints the chronological history with regressions auto-flagged inline. `gbrain founder scorecard companies/acme-example` rolls up claim accuracy, consistency, growth direction, and red flags into a stable `schema_version: 1` JSON contract. New MCP op `find_trajectory` exposes the same data to agents (read scope, visibility-filtered for remote callers). The `consolidate` cycle phase now writes `valid_until` on chronologically-superseded facts AND uses semantic upsert on `(page_id, claim, since_date)` — re-running the dream cycle on stable input is now a true no-op (fixed a pre-existing duplicate-takes bug from prior versions).
+
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
 > **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
@@ -770,6 +772,21 @@ EVAL
   gbrain eval longmemeval <dataset>     Run public LongMemEval against gbrain hybrid retrieval (v0.28.8)
                                         [--limit N] [--retrieval-only] [--keyword-only] [--expansion]
                                         [--top-k K] [--model M] [--output FILE]
+  gbrain eval suspected-contradictions  Cached contradiction probe (v0.32.6, 6-verdict enum v0.35.3.1)
+                                        [run|trend|review] [--severity S] [--budget-usd N]
+  gbrain eval trajectory <entity>       Chronological typed-claim trajectory + regressions (v0.35.7)
+                                        [--metric M] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+                                        [--limit N] [--json]
+
+TEMPORAL (v0.35.7)
+  gbrain founder scorecard <entity>     Roll up an entity's typed claims + resolved-take outcomes into
+                                        four signals: claim_accuracy / consistency / growth_trajectory /
+                                        red_flags. Stable JSON contract (schema_version: 1).
+                                        [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
+                                        Backed by the find_trajectory MCP op (read scope, federated
+                                        source-scoped, visibility-filtered for remote callers).
+                                        Override regression threshold:
+                                          export GBRAIN_TRAJECTORY_REGRESSION_THRESHOLD=0.05
 
 ADMIN
   gbrain doctor [--json] [--fast]       Health checks (resolver, skills, DB, embeddings)

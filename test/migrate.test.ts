@@ -784,6 +784,108 @@ describe('migrate runner v66 — partial index materialized on PGLite', () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────
+// v0.35.4 — migration v67 (facts_typed_claim_columns)
+// Adds four optional typed-claim columns to `facts` + a partial index
+// keyed on (entity_slug, claim_metric, valid_from) WHERE claim_metric IS NOT NULL.
+// All fields nullable; the migration is metadata-only on both engines
+// because no DEFAULT is set and the partial index covers zero rows until
+// extraction emits typed fields.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('migrate v67 — facts_typed_claim_columns', () => {
+  const v67 = MIGRATIONS.find(m => m.version === 67);
+
+  test('v67 exists and uses an inline sql field (no handler needed)', () => {
+    expect(v67).toBeDefined();
+    expect(v67!.name).toBe('facts_typed_claim_columns');
+    expect(v67!.idempotent).toBe(true);
+    expect(typeof v67!.sql).toBe('string');
+    expect((v67!.sql as string).length).toBeGreaterThan(0);
+  });
+
+  test('v67 sql adds all four typed-claim columns', () => {
+    const sql = v67!.sql as string;
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS claim_metric');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS claim_value');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS claim_unit');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS claim_period');
+    // DOUBLE PRECISION is the numeric type for claim_value (per plan D-CDX).
+    expect(sql).toContain('DOUBLE PRECISION');
+  });
+
+  test('v67 creates partial index on (entity_slug, claim_metric, valid_from)', () => {
+    const sql = v67!.sql as string;
+    expect(sql).toContain('CREATE INDEX IF NOT EXISTS facts_typed_claim_idx');
+    expect(sql).toContain('ON facts (entity_slug, claim_metric, valid_from)');
+    expect(sql).toContain('WHERE claim_metric IS NOT NULL');
+  });
+});
+
+describe('migrate runner v67 — typed-claim columns materialized on PGLite', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  test('v67 added claim_metric, claim_value, claim_unit, claim_period columns to facts', async () => {
+    const rows = await (engine as any).db.query(
+      `SELECT column_name, data_type FROM information_schema.columns
+       WHERE table_name = 'facts'
+         AND column_name IN ('claim_metric', 'claim_value', 'claim_unit', 'claim_period')
+       ORDER BY column_name`,
+    );
+    const names = rows.rows.map((r: any) => r.column_name).sort();
+    expect(names).toEqual(['claim_metric', 'claim_period', 'claim_unit', 'claim_value']);
+    const byName: Record<string, string> = Object.fromEntries(
+      rows.rows.map((r: any) => [r.column_name, r.data_type]),
+    );
+    // claim_value is DOUBLE PRECISION; the others are TEXT.
+    expect(byName['claim_value']).toBe('double precision');
+    expect(byName['claim_metric']).toBe('text');
+    expect(byName['claim_unit']).toBe('text');
+    expect(byName['claim_period']).toBe('text');
+  });
+
+  test('v67 created facts_typed_claim_idx partial index on PGLite', async () => {
+    const rows = await (engine as any).db.query(
+      `SELECT indexname, indexdef FROM pg_indexes WHERE indexname = 'facts_typed_claim_idx'`,
+    );
+    expect(rows.rows.length).toBe(1);
+    // The partial-predicate appears in the materialized index definition.
+    expect(rows.rows[0].indexdef).toContain('claim_metric');
+  });
+
+  test('v67 columns are nullable — existing facts persist with NULL typed fields (backward compat)', async () => {
+    // Insert a fact via raw SQL with no typed-claim values; assert the
+    // four columns remain NULL. The cycle path (extract_facts) hits this
+    // backward-compat surface every time it processes a fence without
+    // metric assertions.
+    const db = (engine as any).db;
+    await db.exec(`INSERT INTO sources (id, name) VALUES ('v67-test', 'v67-test') ON CONFLICT DO NOTHING`);
+    await db.exec(
+      `INSERT INTO facts (source_id, entity_slug, fact, source, valid_from)
+       VALUES ('v67-test', 'v67/example', 'plain non-typed claim', 'test', now())`,
+    );
+    const row = await db.query(
+      `SELECT claim_metric, claim_value, claim_unit, claim_period
+       FROM facts WHERE source_id = 'v67-test' AND entity_slug = 'v67/example'`,
+    );
+    expect(row.rows.length).toBe(1);
+    expect(row.rows[0].claim_metric).toBeNull();
+    expect(row.rows[0].claim_value).toBeNull();
+    expect(row.rows[0].claim_unit).toBeNull();
+    expect(row.rows[0].claim_period).toBeNull();
+  });
+});
+
 describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate rows', () => {
   let engine: PGLiteEngine;
 
