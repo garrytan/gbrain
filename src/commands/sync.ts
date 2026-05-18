@@ -57,7 +57,10 @@ export interface SyncResult {
  * intentional: a lower estimate that undersells the real bill would be
  * worse than one that oversells.
  */
-function estimateSyncAllCost(sources: Array<{ local_path: string | null; config: Record<string, unknown> }>): {
+function estimateSyncAllCost(
+  sources: Array<{ local_path: string | null; config: Record<string, unknown> }>,
+  respectGitignore = false,
+): {
   totalTokens: number;
   totalFiles: number;
   activeSources: number;
@@ -81,7 +84,7 @@ function estimateSyncAllCost(sources: Array<{ local_path: string | null; config:
       // walkSyncableFiles used statSync (followed symlinks). New walker
       // uses lstat + inode-cycle + max-depth so the preview matches
       // what the real sync will actually walk.
-      const files = collectSyncableFiles(src.local_path, { strategy: cfg.strategy ?? 'markdown' });
+      const files = collectSyncableFiles(src.local_path, { strategy: cfg.strategy ?? 'markdown', respectGitignore });
       for (const fullPath of files) {
         try {
           const stat = statSync(fullPath);
@@ -161,6 +164,12 @@ export interface SyncOpts {
    * v0.22.13 (PR #490 CODEX-2). Not part of the public CLI surface.
    */
   skipLock?: boolean;
+  /**
+   * #1073 (opt-in): prune files git ignores at the source root from the
+   * full-import walker. Default off. CLI `--respect-gitignore` or config
+   * `sync.respect_gitignore: true`; the flag wins when both are present.
+   */
+  respectGitignore?: boolean;
 }
 
 /**
@@ -1014,7 +1023,7 @@ async function performFullSync(
   // code --dry-run` always reported zero files even when ~1500 code
   // files were waiting.
   if (opts.dryRun) {
-    const allFiles = collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown' });
+    const allFiles = collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown', respectGitignore: opts.respectGitignore });
     console.log(
       `Full-sync dry run (strategy=${opts.strategy ?? 'markdown'}): ` +
       `${allFiles.length} file(s) would be imported ` +
@@ -1056,6 +1065,7 @@ async function performFullSync(
     commit: headCommit,
     strategy: opts.strategy,
     sourceId: opts.sourceId,
+    respectGitignore: opts.respectGitignore,
   });
   console.error(
     `[gbrain phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
@@ -1159,6 +1169,15 @@ export async function runSync(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
+  // #1073: opt-in gitignore-aware full-import walker. Precedence:
+  // explicit --no-respect-gitignore (off) > --respect-gitignore (on) >
+  // `sync.respect_gitignore` config. Default off preserves legacy behavior.
+  const respectGitignore = args.includes('--no-respect-gitignore')
+    ? false
+    : args.includes('--respect-gitignore')
+      ? true
+      : (await engine.getConfig('sync.respect_gitignore')) === 'true';
+
   // --skip-failed: acknowledge pre-existing unacked failures BEFORE the sync
   // runs, not only ones the current run produces. Without this, the common
   // recovery flow — fix the YAML, re-run sync, then run --skip-failed to
@@ -1215,7 +1234,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
     // Skipped entirely when --no-embed is set (user already opted out of
     // the cost and will run `embed --stale` later).
     if (!noEmbed) {
-      const preview = estimateSyncAllCost(sources);
+      const preview = estimateSyncAllCost(sources, respectGitignore);
       const costUsd = estimateEmbeddingCostUsd(preview.totalTokens);
       const previewMsg =
         `sync --all preview: ${preview.totalFiles} files across ${preview.activeSources} source(s), ` +
@@ -1267,6 +1286,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
         sourceId: src.id,
         strategy: cfg.strategy,
         concurrency,
+        respectGitignore,
       };
       try {
         const result = await performSync(engine, repoOpts);
@@ -1285,7 +1305,7 @@ export async function runSync(engine: BrainEngine, args: string[]) {
     return;
   }
 
-  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, sourceId, strategy: strategyArg, concurrency };
+  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, sourceId, strategy: strategyArg, concurrency, respectGitignore };
 
   // Bug 9 — --retry-failed: before running normal sync, clear acknowledgment
   // flags so the sync picks them up as fresh work. The actual re-attempt
