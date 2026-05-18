@@ -679,7 +679,10 @@ function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
  * Failure messages embed `source.id` so the fix command
  * `gbrain sync --source <id>` matches what the user copy-pastes.
  */
-export async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
+export async function checkSyncFreshness(
+  engine: BrainEngine,
+  opts?: { nowMs?: number },
+): Promise<Check> {
   try {
     const sources = await engine.executeRaw<{
       id: string;
@@ -703,7 +706,13 @@ export async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
     const warnMs = warnHours * 60 * 60 * 1000;
     const failMs = failHours * 60 * 60 * 1000;
 
-    const now = Date.now();
+    // `opts.nowMs` is a test-only injection seam for the boundary tests.
+    // Without it, the two `Date.now()` calls (one in the test's `agoMs`
+    // helper, one here) drift apart by microseconds-to-milliseconds, which
+    // pushes "exactly 72h ago" above the strict `>` threshold and flips the
+    // status from warn to fail (CI-flaky, see PR #1138 ship). Production
+    // callers omit `nowMs` and get live wall-clock semantics.
+    const now = opts?.nowMs ?? Date.now();
     const issues: string[] = [];
     let hasWarnings = false;
     let hasFailures = false;

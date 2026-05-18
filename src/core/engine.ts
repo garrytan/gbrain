@@ -1253,6 +1253,50 @@ export interface BrainEngine {
   updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<void>;
   rewriteLinks(oldSlug: string, newSlug: string): Promise<void>;
 
+  /**
+   * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
+   * `pages.content_hash` for a single slug+source. NO chunking, NO embedding,
+   * NO link reconcile, NO `updated_at` advance beyond the trivial bump.
+   *
+   * Used by the phantom-redirect pass in `extract_facts` after appending
+   * migrated fact rows to a canonical page's disk fence: we just rewrote the
+   * `.md` on disk, so the DB body must match before the next reconcile reads
+   * stale state. content_hash is included so the next `gbrain sync` sees the
+   * canonical as unchanged and skips re-import (round-14 + codex #7 — the
+   * "second cycle is a no-op" premise depends on all three columns moving
+   * together).
+   *
+   * Skips soft-deleted rows (deleted_at filter). Idempotent — second call
+   * with the same args produces the same row state.
+   */
+  refreshPageBody(
+    slug: string,
+    sourceId: string,
+    compiledTruth: string,
+    timeline: string,
+    contentHash: string,
+  ): Promise<void>;
+
+  /**
+   * v0.35.5 — lossless DB-side migration of fact rows from one slug to
+   * another within a single source. UPDATEs `entity_slug` and
+   * `source_markdown_slug` on every active fact row whose
+   * `source_markdown_slug` matches the phantom slug. Every other column
+   * (embedding, valid_from, valid_until, kind, notability, confidence,
+   * source_session, status, etc.) is preserved verbatim — codex #3 fix
+   * for the writeFactsToFence lossy-migration trap.
+   *
+   * Idempotent: re-run after success finds no rows to update and returns
+   * `{migrated: 0}`. Hard-deletes are out of scope; the caller wipes the
+   * phantom's `.md` file separately. Scoped to one source by design —
+   * cross-source migration is a separate concern.
+   */
+  migrateFactsToCanonical(
+    phantomSlug: string,
+    canonicalSlug: string,
+    sourceId: string,
+  ): Promise<{ migrated: number }>;
+
   // Config
   getConfig(key: string): Promise<string | null>;
   setConfig(key: string, value: string): Promise<void>;

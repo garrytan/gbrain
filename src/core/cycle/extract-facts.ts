@@ -34,6 +34,11 @@
 import type { BrainEngine } from '../engine.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
+import {
+  runPhantomRedirectPass,
+  emptyPhantomPassResult,
+  type PhantomPassResult,
+} from './phantom-redirect.ts';
 import { embed, isAvailable } from '../ai/gateway.ts';
 
 export interface ExtractFactsOpts {
@@ -43,6 +48,15 @@ export interface ExtractFactsOpts {
   dryRun?: boolean;
   /** Optional source_id override for multi-source brains. Default 'default'. */
   sourceId?: string;
+  /**
+   * v0.35.5 (codex #10): brain directory for the phantom-redirect pre-pass.
+   * The phantom handler needs disk access to append migrated fence rows
+   * to canonical pages and to unlink phantom `.md` files. When omitted,
+   * the phantom-redirect pass is skipped (callers like `gbrain dream`
+   * that don't have a brainDir, e.g. headless eval runs, still get the
+   * standard fence-reconcile loop).
+   */
+  brainDir?: string;
 }
 
 export interface ExtractFactsResult {
@@ -53,6 +67,13 @@ export interface ExtractFactsResult {
   legacyRowsPending: number;
   guardTriggered: boolean;
   warnings: string[];
+  /** v0.35.5: phantom-redirect pre-pass counts. */
+  phantomsScanned: number;
+  phantomsRedirected: number;
+  phantomsAmbiguous: number;
+  phantomsSkippedDrift: number;
+  phantomsLockBusy: boolean;
+  phantomsMorePending: boolean;
 }
 
 /**
@@ -73,6 +94,12 @@ export async function runExtractFacts(
     legacyRowsPending: 0,
     guardTriggered: false,
     warnings: [],
+    phantomsScanned: 0,
+    phantomsRedirected: 0,
+    phantomsAmbiguous: 0,
+    phantomsSkippedDrift: 0,
+    phantomsLockBusy: false,
+    phantomsMorePending: false,
   };
 
   // ── Empty-fence guard (Codex R2-#7) ────────────────────────────
@@ -95,6 +122,39 @@ export async function runExtractFacts(
     return result;
   }
 
+  // ── v0.35.5: phantom-redirect pre-pass ──────────────────────────
+  //
+  // Runs BEFORE the main reconcile loop so canonical pages are consistent
+  // (compiled_truth + DB facts + content_hash) by the time the loop visits
+  // them. Skipped when brainDir is undefined — the redirect handler needs
+  // disk access to write canonical fences and unlink phantom `.md` files.
+  // Idempotency-by-construction: phantom predicate filters out `deleted_at
+  // IS NOT NULL` so a half-redirected page (soft-deleted, .md still on
+  // disk) won't be re-redirected.
+  let phantomResult: PhantomPassResult = emptyPhantomPassResult();
+  if (opts.brainDir) {
+    try {
+      phantomResult = await runPhantomRedirectPass(
+        engine,
+        opts.brainDir,
+        sourceId,
+        opts.dryRun ?? false,
+      );
+    } catch (e) {
+      // The pass owns its own per-phantom try/catch; reaching this catch
+      // means the lock acquisition or the over-arching SQL query failed.
+      // Surface as a warning, leave counters zero — main reconcile continues.
+      const msg = e instanceof Error ? e.message : String(e);
+      result.warnings.push(`phantom_redirect_pass_failed: ${msg.slice(0, 200)}`);
+    }
+  }
+  result.phantomsScanned = phantomResult.scanned;
+  result.phantomsRedirected = phantomResult.redirected;
+  result.phantomsAmbiguous = phantomResult.ambiguous;
+  result.phantomsSkippedDrift = phantomResult.skipped_drift;
+  result.phantomsLockBusy = phantomResult.lock_busy;
+  result.phantomsMorePending = phantomResult.more_pending;
+
   // ── Resolve target slug set ───────────────────────────────────
   let slugs: string[];
   if (opts.slugs && opts.slugs.length > 0) {
@@ -104,6 +164,16 @@ export async function runExtractFacts(
     // which is already the precedent for full-extract paths.
     const allSlugs = await engine.getAllSlugs();
     slugs = Array.from(allSlugs);
+  }
+  // v0.35.5: union the canonicals touched by the phantom-redirect pass
+  // so their DB facts get reconciled from the just-merged disk fence.
+  // Without this, an incremental-mode cycle with phantom-but-not-canonical
+  // in opts.slugs would leave canonical's DB facts stale until next full
+  // walk (codex A1 — the round-14 risk specialized to scenario B).
+  if (phantomResult.touched_canonicals.length > 0) {
+    const slugSet = new Set(slugs);
+    for (const c of phantomResult.touched_canonicals) slugSet.add(c);
+    slugs = Array.from(slugSet);
   }
 
   // ── Reconcile each page ───────────────────────────────────────
