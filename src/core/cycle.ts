@@ -193,6 +193,26 @@ export interface CycleReport {
     facts_consolidated: number;
     /** v0.31: number of new takes created by the consolidate phase. */
     consolidate_takes_written: number;
+    /**
+     * v0.35.5: number of phantom unprefixed entity pages (e.g. `alice.md`)
+     * redirected to their canonical prefixed slugs (`people/alice-example`)
+     * by the phantom-redirect pre-pass inside `extract_facts`. Capped per
+     * cycle by `GBRAIN_PHANTOM_REDIRECT_LIMIT` (default 50).
+     */
+    phantoms_redirected: number;
+    /**
+     * v0.35.5: number of phantom pages skipped because their canonical
+     * resolved to multiple candidates. Operator must triage manually via
+     * the `~/.gbrain/audit/phantoms-YYYY-Www.jsonl` audit log.
+     */
+    phantoms_ambiguous: number;
+    /**
+     * v0.35.5: number of phantom pages skipped because the disk fence and
+     * DB body disagreed on the parsed fact row set, OR because the redirect
+     * commit phase failed mid-way and surfaces as drift on retry. Audit log
+     * records the specific reason.
+     */
+    phantoms_skipped_drift: number;
   };
 }
 
@@ -677,6 +697,8 @@ async function runPhaseExtract(
 
 async function runPhaseExtractFacts(
   engine: BrainEngine,
+  brainDir: string | null,
+  sourceId: string,
   dryRun: boolean,
   changedSlugs?: string[],
 ): Promise<PhaseResult> {
@@ -685,6 +707,8 @@ async function runPhaseExtractFacts(
     const result = await runExtractFacts(engine, {
       slugs: changedSlugs,
       dryRun,
+      sourceId,
+      brainDir: brainDir ?? undefined,
     });
 
     // Empty-fence guard: pre-v51 legacy rows pending the v0_32_2 backfill.
@@ -704,11 +728,20 @@ async function runPhaseExtractFacts(
       };
     }
 
+    // v0.35.5: phantom-redirect counters bubble up alongside the existing
+    // fact-reconcile counts. We summarize the phantom counters in the
+    // human-readable summary line when any non-zero phantom work happened
+    // so the daily cycle report makes the cleanup visible.
+    const phantomSummary = (result.phantomsRedirected
+      || result.phantomsAmbiguous
+      || result.phantomsSkippedDrift)
+      ? `, ${result.phantomsRedirected} phantom(s) redirected (${result.phantomsAmbiguous} ambiguous, ${result.phantomsSkippedDrift} drift-skipped)`
+      : '';
     return {
       phase: 'extract_facts',
       status: result.warnings.length > 0 ? 'warn' : 'ok',
       duration_ms: 0,
-      summary: `${result.factsInserted} fact(s) reconciled across ${result.pagesScanned} page(s)` +
+      summary: `${result.factsInserted} fact(s) reconciled across ${result.pagesScanned} page(s)${phantomSummary}` +
         (result.warnings.length > 0 ? ` (${result.warnings.length} warning(s))` : ''),
       details: {
         pagesScanned: result.pagesScanned,
@@ -716,6 +749,15 @@ async function runPhaseExtractFacts(
         factsInserted: result.factsInserted,
         factsDeleted: result.factsDeleted,
         warnings: result.warnings.slice(0, 5),
+        // v0.35.5: phantom counters surfaced so extractTotals() can lift
+        // them to CycleReport.totals and the daily report makes the
+        // cleanup visible.
+        phantoms_scanned: result.phantomsScanned,
+        phantoms_redirected: result.phantomsRedirected,
+        phantoms_ambiguous: result.phantomsAmbiguous,
+        phantoms_skipped_drift: result.phantomsSkippedDrift,
+        phantoms_lock_busy: result.phantomsLockBusy,
+        phantoms_more_pending: result.phantomsMorePending,
       },
     };
   } catch (e) {
@@ -1160,8 +1202,15 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.extract_facts');
+        // v0.35.5 (codex #10): thread sourceId so multi-source brains route
+        // the phantom-redirect pass to the right source, and brainDir so
+        // the redirect handler can read/write disk fences. brainDir is the
+        // already-resolved cycle scope; sourceId defaults to 'default' when
+        // the sources table doesn't recognize this brainDir (pre-multi-
+        // source installs).
+        const xfSourceId = (await resolveSourceForDir(engine, opts.brainDir)) ?? 'default';
         const { result, duration_ms } = await timePhase(() =>
-          runPhaseExtractFacts(engine, dryRun, syncPagesAffected));
+          runPhaseExtractFacts(engine, opts.brainDir, xfSourceId, dryRun, syncPagesAffected));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1397,6 +1446,9 @@ function emptyTotals(): CycleReport['totals'] {
     purged_pages_count: 0,
     facts_consolidated: 0,
     consolidate_takes_written: 0,
+    phantoms_redirected: 0,
+    phantoms_ambiguous: 0,
+    phantoms_skipped_drift: 0,
   };
 }
 
@@ -1435,6 +1487,13 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
     } else if (p.phase === 'consolidate' && p.details) {
       t.facts_consolidated = Number(p.details.facts_consolidated ?? 0);
       t.consolidate_takes_written = Number(p.details.takes_written ?? 0);
+    } else if (p.phase === 'extract_facts' && p.details) {
+      // v0.35.5: phantom-redirect counters live inside the extract_facts
+      // phase's details block (the pre-pass runs before the main reconcile
+      // loop and stamps its counts in the same phase result).
+      t.phantoms_redirected = Number(p.details.phantoms_redirected ?? 0);
+      t.phantoms_ambiguous = Number(p.details.phantoms_ambiguous ?? 0);
+      t.phantoms_skipped_drift = Number(p.details.phantoms_skipped_drift ?? 0);
     }
   }
   return t;

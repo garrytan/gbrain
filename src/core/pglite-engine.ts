@@ -715,6 +715,51 @@ export class PGLiteEngine implements BrainEngine {
     return { slugs, count: slugs.length };
   }
 
+  async refreshPageBody(
+    slug: string,
+    sourceId: string,
+    compiledTruth: string,
+    timeline: string,
+    contentHash: string,
+  ): Promise<void> {
+    // Parity with PostgresEngine.refreshPageBody: narrow UPDATE only.
+    // The deleted_at filter prevents a redirect retry from reviving a
+    // canonical that was already purged.
+    await this.db.query(
+      `UPDATE pages
+         SET compiled_truth = $1,
+             timeline = $2,
+             content_hash = $3,
+             updated_at = now()
+       WHERE source_id = $4
+         AND slug = $5
+         AND deleted_at IS NULL`,
+      [compiledTruth, timeline, contentHash, sourceId, slug],
+    );
+  }
+
+  async migrateFactsToCanonical(
+    phantomSlug: string,
+    canonicalSlug: string,
+    sourceId: string,
+  ): Promise<{ migrated: number }> {
+    // Parity with PostgresEngine.migrateFactsToCanonical. UPDATE preserves
+    // every column except entity_slug + source_markdown_slug. Active rows
+    // only (expired_at IS NULL) so we don't disturb the supersession audit
+    // trail.
+    const { rows } = await this.db.query(
+      `UPDATE facts
+         SET entity_slug = $1,
+             source_markdown_slug = $1
+       WHERE source_id = $2
+         AND source_markdown_slug = $3
+         AND expired_at IS NULL
+       RETURNING id`,
+      [canonicalSlug, sourceId, phantomSlug],
+    );
+    return { migrated: rows.length };
+  }
+
   async listPages(filters?: PageFilters): Promise<Page[]> {
     const limit = filters?.limit || 100;
     const offset = filters?.offset || 0;
