@@ -6,7 +6,6 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
-import { classifyWorkerExit } from '../core/minions/exit-classification.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
@@ -786,7 +785,7 @@ HANDLER TYPES (built in)
       // ----- status subcommand -----
       if (isStatusCmd) {
         const { existsSync, readFileSync } = await import('fs');
-        const { readSupervisorEvents } = await import('../core/minions/handlers/supervisor-audit.ts');
+        const { readSupervisorEvents, summarizeCrashes } = await import('../core/minions/handlers/supervisor-audit.ts');
 
         let supervisorPid: number | null = null;
         let running = false;
@@ -803,10 +802,11 @@ HANDLER TYPES (built in)
 
         const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
         const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
-        const allExits = events.filter(e => e.event === 'worker_exited');
-        const realCrashes = allExits.filter(e => classifyWorkerExit(e as { code?: number | null }) === 'crash');
-        const cleanRestarts = allExits.length - realCrashes.length;
-        const crashes24h = realCrashes.length;
+        // Shared classifier — same code path runs in `gbrain doctor` so the
+        // two surfaces cannot drift on what counts as a crash. Supersedes
+        // v0.35.4.0's binary `classifyWorkerExit({code})` on this surface;
+        // see doctor.ts for the layering rationale.
+        const summary = summarizeCrashes(events);
         const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 
         const status = {
@@ -814,8 +814,9 @@ HANDLER TYPES (built in)
           supervisor_pid: supervisorPid,
           pid_file: pidFile,
           last_start: lastStart,
-          crashes_24h: crashes24h,
-          clean_restarts_24h: cleanRestarts,
+          crashes_24h: summary.total,
+          clean_exits_24h: summary.clean_exits,
+          crashes_by_cause: summary.by_cause,
           max_crashes_exceeded: !!maxCrashesEvent,
         };
 
@@ -826,7 +827,8 @@ HANDLER TYPES (built in)
           if (supervisorPid) console.log(`  PID:           ${supervisorPid}`);
           console.log(`  PID file:      ${pidFile}`);
           if (lastStart) console.log(`  Last start:    ${lastStart}`);
-          console.log(`  Crashes (24h): ${crashes24h}${cleanRestarts > 0 ? ` (${cleanRestarts} clean restarts excluded)` : ''}`);
+          console.log(`  Crashes (24h):     ${summary.total} (runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy})`);
+          console.log(`  Clean exits (24h): ${summary.clean_exits}`);
           if (maxCrashesEvent) console.log(`  ⚠ Max crashes exceeded at ${maxCrashesEvent.ts}`);
         }
         process.exit(running ? 0 : 1);

@@ -34,22 +34,29 @@ describe('consumer wire-up — helper used by all 3 sites (no inline filters lef
   // accidentally inlines the rule again gets caught at test time, not at
   // production-divergence time.
 
+  // v0.35.5.0: doctor.ts and jobs.ts moved from `classifyWorkerExit` (binary
+  // code-based) to `summarizeCrashes` (per-cause via `likely_cause`). The
+  // wire-up contract is "must use a shared helper, not an inline filter" —
+  // the specific helper differs by site. The supervisor's internal restart
+  // policy still uses `classifyWorkerExit` (binary is the right shape there).
   const SITES = [
-    { label: 'doctor.ts', path: 'src/commands/doctor.ts' },
-    { label: 'jobs.ts', path: 'src/commands/jobs.ts' },
-    { label: 'child-worker-supervisor.ts', path: 'src/core/minions/child-worker-supervisor.ts' },
+    { label: 'doctor.ts', path: 'src/commands/doctor.ts', helper: 'summarizeCrashes' },
+    { label: 'jobs.ts', path: 'src/commands/jobs.ts', helper: 'summarizeCrashes' },
+    { label: 'child-worker-supervisor.ts', path: 'src/core/minions/child-worker-supervisor.ts', helper: 'classifyWorkerExit' },
   ];
 
   for (const site of SITES) {
-    it(`${site.label} imports classifyWorkerExit`, () => {
+    it(`${site.label} uses a shared classifier helper (${site.helper})`, () => {
       const source = readFileSync(join(import.meta.dir, '..', site.path), 'utf8');
-      // Either named import OR import-from of the helper file — both count.
-      expect(source).toMatch(/(import\s+\{[^}]*classifyWorkerExit[^}]*\}|from\s+['"][^'"]*exit-classification)/);
+      // Helper is either imported by name (top-level) or via dynamic import.
+      const helperRe = new RegExp(`\\b${site.helper}\\b`);
+      expect(source).toMatch(helperRe);
     });
 
-    it(`${site.label} calls classifyWorkerExit at least once`, () => {
+    it(`${site.label} calls ${site.helper} at least once`, () => {
       const source = readFileSync(join(import.meta.dir, '..', site.path), 'utf8');
-      expect(source).toMatch(/classifyWorkerExit\s*\(/);
+      const callRe = new RegExp(`\\b${site.helper}\\s*\\(`);
+      expect(source).toMatch(callRe);
     });
   }
 

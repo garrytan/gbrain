@@ -369,6 +369,17 @@ export interface NewFact {
   confidence?: number;                  // [0,1], default 1.0
   notability?: 'high' | 'medium' | 'low'; // salience filter for extraction gate
   embedding?: Float32Array | null;     // pre-computed; if null, insertFact computes via gateway
+  /**
+   * v0.35.4 (D-CDX-5) — typed-claim fields. Optional. When populated,
+   * `gbrain eval trajectory` + `find_trajectory` MCP op consume them for
+   * chronological regression detection and drift_score. `claim_metric` is
+   * normalized to lowercase snake_case by the extraction layer before
+   * this method sees it; the engine stores verbatim.
+   */
+  claim_metric?: string | null;
+  claim_value?: number | null;
+  claim_unit?: string | null;
+  claim_period?: string | null;
 }
 
 /** Options shared by list-facts methods. */
@@ -400,6 +411,58 @@ export interface FactsHealth {
   classifier_fail_counter?: number;
   p50_latency_ms?: number;
   p99_latency_ms?: number;
+}
+
+/**
+ * v0.35.4 (D-CDX-6) — Options for `BrainEngine.findTrajectory`.
+ *
+ * `sourceId` (scalar fast path) and `sourceIds` (federated array) follow
+ * the v0.34.1.0 search* pattern: when `sourceIds` is set the engine
+ * applies `WHERE source_id = ANY($N::text[])`; otherwise scalar predicate
+ * with `sourceId ?? 'default'`.
+ *
+ * `remote` (D-CDX-1) gates the visibility filter: when true the engine
+ * adds `AND visibility = 'world'`, mirroring `recall`'s posture for
+ * untrusted callers. Local CLI keeps `remote: false` and sees both
+ * private + world facts.
+ */
+export interface TrajectoryOpts {
+  entitySlug: string;
+  /** Single-source scope; default 'default' when both this and sourceIds are unset. */
+  sourceId?: string;
+  /** Federated array scope (mutually exclusive with sourceId; the array wins when set). */
+  sourceIds?: string[];
+  /** When true, filters to visibility='world' only. Set by MCP layer from ctx.remote. */
+  remote?: boolean;
+  /** Metric filter. When set, only facts with this canonical metric label participate. */
+  metric?: string;
+  /** Lower bound on valid_from (inclusive). YYYY-MM-DD or full ISO. */
+  since?: string | Date;
+  /** Upper bound on valid_from (inclusive). YYYY-MM-DD or full ISO. */
+  until?: string | Date;
+  /** Cap on points returned. Default 100, max 500. */
+  limit?: number;
+}
+
+/**
+ * A single point in an entity's claim trajectory. Carries the typed-claim
+ * fields when populated (drives regression detection), the underlying
+ * fact text (for display), provenance (source_session, source_markdown_slug),
+ * and the raw embedding so the caller can compute drift_score without a
+ * second SQL round-trip.
+ */
+export interface TrajectoryPoint {
+  fact_id: number;
+  valid_from: Date;
+  metric: string | null;
+  value: number | null;
+  unit: string | null;
+  period: string | null;
+  text: string;
+  source_session: string | null;
+  source_markdown_slug: string | null;
+  /** Raw embedding for drift computation; null when the fact was inserted without one. */
+  embedding: Float32Array | null;
 }
 
 /** Maximum results returned by search operations. Internal bulk operations (listPages) are not clamped. */
@@ -1133,6 +1196,21 @@ export interface BrainEngine {
    * Never DELETE — facts stay as audit trail.
    */
   consolidateFact(id: number, takeId: number): Promise<void>;
+
+  /**
+   * v0.35.4 (D-CDX-1 + D-CDX-6) — chronological fact trajectory for an
+   * entity. Returns points ordered by (valid_from ASC, id ASC) so the
+   * caller can compute regressions and drift_score deterministically.
+   *
+   * - Source-scoped via `sourceId` (scalar) OR `sourceIds` (federated array).
+   * - Visibility-filtered: when `opts.remote=true`, only `visibility='world'`
+   *   facts are returned. Trusted local callers see both private + world.
+   * - Optional metric filter restricts to a single normalized metric label.
+   * - Active-only by default (expired_at IS NULL); soft-deleted entities
+   *   on the pages side are NOT filtered here — trajectory is a facts-table
+   *   query and doesn't JOIN pages.
+   */
+  findTrajectory(opts: TrajectoryOpts): Promise<TrajectoryPoint[]>;
 
   /** Per-source operational metrics for `gbrain doctor` facts_health check. */
   getFactsHealth(source_id: string): Promise<FactsHealth>;

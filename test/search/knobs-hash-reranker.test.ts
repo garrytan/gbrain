@@ -2,7 +2,8 @@
  * v0.35.0.0 — knobsHash reranker-field participation tests.
  *
  * Pins:
- *  - KNOBS_HASH_VERSION === 2 (bumped from 1; CDX1-F14).
+ *  - KNOBS_HASH_VERSION === 3 (bumped 1→2 v0.35.0.0 for reranker; 2→3 v0.35.6.0
+ *    for floor_ratio — codex outside-voice T1 cross-floor cache contamination).
  *  - All 5 new reranker fields participate in the hash:
  *      reranker_enabled, reranker_model, reranker_top_n_in,
  *      reranker_top_n_out, reranker_timeout_ms.
@@ -42,8 +43,8 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 2 (CDX1-F14: bumped from 1 to fold reranker fields in)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(2);
+  test('version is 3 (1→2 v0.35.0.0 reranker; 2→3 v0.35.6.0 floor_ratio)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(3);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {
