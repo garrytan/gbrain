@@ -54,7 +54,7 @@ The cost: +150ms p50 latency, ~$0.025/M tokens. Disabled with `gbrain config set
 
 ## Source-aware ranking
 
-Hybrid search applies a source-factor CASE expression at the SQL layer (lives in `src/core/search/sql-ranking.ts`). Curated content like `originals/`, `concepts/`, `writing/` outranks bulk content like `wintermute/chat/`, `daily/`, `media/x/`. Hard-exclude prefixes (`test/`, `archive/`, `attachments/`, `.raw/`) filter at retrieval, not post-rank.
+Hybrid search applies a source-factor CASE expression at the SQL layer (lives in `src/core/search/sql-ranking.ts`). Curated content like `originals/`, `concepts/`, `writing/` outranks bulk content like `your-openclaw/chat/`, `daily/`, `media/x/`. Hard-exclude prefixes (`test/`, `archive/`, `attachments/`, `.raw/`) filter at retrieval, not post-rank.
 
 The boost map is configurable via `GBRAIN_SOURCE_BOOST` env var or per-call `SearchOpts.exclude_slug_prefixes`. Temporal queries (`detail: 'high'`) bypass the boost so chat pages re-surface for time-sensitive lookups.
 
