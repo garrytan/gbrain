@@ -64,11 +64,36 @@ interface IdempotencyRecord {
 
 const idempotencyCache = new Map<string, IdempotencyRecord>();
 
+// In-flight idempotency: key → job_id for jobs not yet terminal.
+// Cleared when job reaches completed/failed and idempotencyCache takes over.
+const asyncInFlight = new Map<string, string>();
+
 function sweepIdempotency(): void {
   const cutoff = Date.now() - ASYNC_JOB_TTL_MS;
   for (const [k, rec] of idempotencyCache) {
     if (rec.created < cutoff) idempotencyCache.delete(k);
   }
+}
+
+// ── Async concurrency semaphore ───────────────────────────────────────────────
+// Limits simultaneous background embedding calls so Railway → OpenAI doesn't
+// saturate. Tune via ASYNC_MAX_CONCURRENCY env var.
+const ASYNC_MAX_CONCURRENCY = Math.max(1, parseInt(process.env.ASYNC_MAX_CONCURRENCY ?? '5', 10));
+let asyncActiveCount = 0;
+const asyncPendingQueue: Array<() => void> = [];
+
+function acquireAsyncSlot(): Promise<void> {
+  if (asyncActiveCount < ASYNC_MAX_CONCURRENCY) {
+    asyncActiveCount++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => asyncPendingQueue.push(() => { asyncActiveCount++; resolve(); }));
+}
+
+function releaseAsyncSlot(): void {
+  asyncActiveCount--;
+  const next = asyncPendingQueue.shift();
+  if (next) next();
 }
 
 // ── IP-based auth failure rate limiter ────────────────────────────────────────
@@ -598,17 +623,30 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           if (cached && cached.slug === slug) {
             return ok({ slug, content_hash: cached.content_hash, idempotent: true, ...cached.result }, Date.now() - t0);
           }
+          if (asyncMode) {
+            const existingJobId = asyncInFlight.get(idempotencyKey);
+            if (existingJobId) {
+              const existingJob = asyncJobs.get(existingJobId);
+              if (existingJob) {
+                return Response.json(
+                  { ok: true, job_id: existingJobId, slug, status: existingJob.status, idempotent: true },
+                  { status: 202 },
+                );
+              }
+              asyncInFlight.delete(idempotencyKey);
+            }
+          }
         }
 
         if (asyncMode) {
           sweepJobs();
           const jobId = newJobId();
-          // Placeholder hash filled in once the background task resolves.
           const jobState: AsyncJobState = { status: 'pending', slug, content_hash: '', created: Date.now() };
           asyncJobs.set(jobId, jobState);
+          if (idempotencyKey) asyncInFlight.set(idempotencyKey, jobId);
 
-          // Fire-and-forget — never awaited here.
           (async () => {
+            await acquireAsyncSlot();
             jobState.status = 'running';
             try {
               const result = await putPageOp.handler(ctx, { slug, content: fullContent }) as { content_hash?: string } & object;
@@ -622,6 +660,9 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             } catch (e) {
               jobState.status = 'failed';
               jobState.error = e instanceof Error ? e.message : String(e);
+            } finally {
+              releaseAsyncSlot();
+              if (idempotencyKey) asyncInFlight.delete(idempotencyKey);
             }
           })();
 
@@ -846,6 +887,19 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             if (cached && cached.slug === slug) {
               return ok({ action, slug, content_hash: cached.content_hash, idempotent: true, ...cached.result }, Date.now() - t0);
             }
+            if (writeAsync) {
+              const existingJobId = asyncInFlight.get(writeIdempotencyKey);
+              if (existingJobId) {
+                const existingJob = asyncJobs.get(existingJobId);
+                if (existingJob) {
+                  return Response.json(
+                    { ok: true, action, job_id: existingJobId, slug, status: existingJob.status, idempotent: true },
+                    { status: 202 },
+                  );
+                }
+                asyncInFlight.delete(writeIdempotencyKey);
+              }
+            }
           }
 
           if (writeAsync) {
@@ -853,7 +907,10 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             const jobId = newJobId();
             const jobState: AsyncJobState = { status: 'pending', slug, content_hash: '', created: Date.now() };
             asyncJobs.set(jobId, jobState);
+            if (writeIdempotencyKey) asyncInFlight.set(writeIdempotencyKey, jobId);
+
             (async () => {
+              await acquireAsyncSlot();
               jobState.status = 'running';
               try {
                 const result = await putPageOp.handler(ctx, { slug, content: fullContent }) as { content_hash?: string } & object;
@@ -867,6 +924,9 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
               } catch (e) {
                 jobState.status = 'failed';
                 jobState.error = e instanceof Error ? e.message : String(e);
+              } finally {
+                releaseAsyncSlot();
+                if (writeIdempotencyKey) asyncInFlight.delete(writeIdempotencyKey);
               }
             })();
             return Response.json(
