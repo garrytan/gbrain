@@ -1,0 +1,48 @@
+name: Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc  # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test:
+    # ubuntu-latest is free 2-core/7GB. Larger runners (16-cores, etc.) require
+    # a provisioned runner pool in repo settings. Falling back to default keeps
+    # the matrix shard speedup (~5-6x via parallelism) at zero cost.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: latest
+      - run: bun install
+      - name: Pre-test gates (shard 1 only — they're not test files)
+        if: matrix.shard == 1
+        run: bun run verify
+      - name: Run test shard ${{ matrix.shard }}/4
+        run: scripts/test-shard.sh ${{ matrix.shard }} 4
+      - name: Run *.serial.test.ts at --max-concurrency=1 (shard 1 only)
+        # Serial files share file-wide state (top-level mock.module, module
+        # singletons) that leaks across files in the same bun-test process.
+        # test-shard.sh excludes them; this step runs them at concurrency=1.
+        if: matrix.shard == 1
+        run: bun run test:serial
