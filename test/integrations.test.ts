@@ -8,6 +8,7 @@ import {
   hostnameToOctets,
   isPrivateIpv4,
   isInternalUrl,
+  hasConfiguredSecretSet,
 } from '../src/commands/integrations.ts';
 
 // --- parseRecipe tests ---
@@ -156,6 +157,71 @@ Content.
     expect(recipe).not.toBeNull();
     expect(recipe!.frontmatter.secrets).toHaveLength(3);
     expect(recipe!.frontmatter.secrets[2].name).toBe('KEY_C');
+  });
+});
+
+// --- secret alternatives ---
+
+describe('integration secret alternatives', () => {
+  test('credential-gateway is configured with Google OAuth secrets only', () => {
+    const recipe = parseRecipe(`---
+id: credential-gateway
+secrets:
+  - name: CLAWVISOR_URL
+    description: ClawVisor URL
+    where: https://clawvisor.com
+  - name: CLAWVISOR_AGENT_TOKEN
+    description: ClawVisor token
+    where: https://clawvisor.com
+  - name: GOOGLE_CLIENT_ID
+    description: Google client id
+    where: https://console.cloud.google.com
+  - name: GOOGLE_CLIENT_SECRET
+    description: Google client secret
+    where: https://console.cloud.google.com
+secret_groups:
+  - name: ClawVisor
+    secrets: [CLAWVISOR_URL, CLAWVISOR_AGENT_TOKEN]
+  - name: Google OAuth
+    secrets: [GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET]
+---
+Setup guide.
+`, 'credential-gateway.md')!;
+
+    delete process.env.CLAWVISOR_URL;
+    delete process.env.CLAWVISOR_AGENT_TOKEN;
+    process.env.GOOGLE_CLIENT_ID = 'client-id';
+    process.env.GOOGLE_CLIENT_SECRET = 'client-secret';
+
+    expect(hasConfiguredSecretSet(recipe.frontmatter)).toBe(true);
+
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_SECRET;
+  });
+
+  test('credential-gateway is not configured with only one ClawVisor secret', () => {
+    const recipe = parseRecipe(`---
+id: credential-gateway
+secrets:
+  - name: CLAWVISOR_URL
+    description: ClawVisor URL
+    where: https://clawvisor.com
+  - name: CLAWVISOR_AGENT_TOKEN
+    description: ClawVisor token
+    where: https://clawvisor.com
+secret_groups:
+  - name: ClawVisor
+    secrets: [CLAWVISOR_URL, CLAWVISOR_AGENT_TOKEN]
+---
+Setup guide.
+`, 'credential-gateway.md')!;
+
+    process.env.CLAWVISOR_URL = 'https://example.com';
+    delete process.env.CLAWVISOR_AGENT_TOKEN;
+
+    expect(hasConfiguredSecretSet(recipe.frontmatter)).toBe(false);
+
+    delete process.env.CLAWVISOR_URL;
   });
 });
 

@@ -18,6 +18,11 @@ secrets:
   - name: GOOGLE_CLIENT_SECRET
     description: Google OAuth2 client secret (Option B)
     where: https://console.cloud.google.com/apis/credentials — same page as client ID
+secret_groups:
+  - name: ClawVisor
+    secrets: [CLAWVISOR_URL, CLAWVISOR_AGENT_TOKEN]
+  - name: Google OAuth
+    secrets: [GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET]
 health_checks:
   - type: any_of
     label: "Auth provider"

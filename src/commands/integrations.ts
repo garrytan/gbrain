@@ -34,6 +34,11 @@ interface RecipeSecret {
   where: string;
 }
 
+interface SecretGroup {
+  name: string;
+  secrets: string[];
+}
+
 interface RecipeFrontmatter {
   id: string;
   name: string;
@@ -42,6 +47,12 @@ interface RecipeFrontmatter {
   category: 'infra' | 'sense' | 'reflex';
   requires: string[];
   secrets: RecipeSecret[];
+  /**
+   * Optional alternative secret sets. Recipes like credential-gateway can be
+   * configured through ClawVisor OR direct Google OAuth, so requiring every
+   * listed secret would incorrectly mark a valid setup as unavailable.
+   */
+  secret_groups: SecretGroup[];
   health_checks: HealthCheck[];
   setup_time: string;
   cost_estimate?: string;
@@ -305,6 +316,7 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
         category: data.category || 'sense',
         requires: data.requires || [],
         secrets: data.secrets || [],
+        secret_groups: data.secret_groups || [],
         health_checks: (data.health_checks || []) as HealthCheck[],
         setup_time: data.setup_time || 'unknown',
         cost_estimate: data.cost_estimate,
@@ -458,12 +470,20 @@ function checkSecrets(secrets: RecipeSecret[]): { set: string[]; missing: Recipe
   return { set, missing };
 }
 
+export function hasConfiguredSecretSet(frontmatter: RecipeFrontmatter): boolean {
+  if (frontmatter.secrets.length === 0) return true;
+  if (frontmatter.secret_groups.length > 0) {
+    return frontmatter.secret_groups.some(group =>
+      group.secrets.length > 0 && group.secrets.every(name => Boolean(process.env[name])),
+    );
+  }
+  return frontmatter.secrets.every(s => Boolean(process.env[s.name]));
+}
+
 type IntegrationStatus = 'available' | 'configured' | 'active';
 
 function getStatus(recipe: ParsedRecipe): IntegrationStatus {
-  const { set, missing } = checkSecrets(recipe.frontmatter.secrets);
-  // All required secrets must be set to be "configured"
-  if (missing.length > 0) return 'available';
+  if (!hasConfiguredSecretSet(recipe.frontmatter)) return 'available';
 
   const heartbeat = readHeartbeat(recipe.frontmatter.id);
   const recentEvents = heartbeat.filter(e =>
