@@ -8,7 +8,7 @@ import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
-import { embedBatch, embedMultimodal } from './embedding.ts';
+import { embedBatch, embedMultimodal, getEmbeddingModelName } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
@@ -290,6 +290,7 @@ export async function importFromContent(
     const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
     for (let i = 0; i < chunks.length; i++) {
       chunks[i].embedding = embeddings[i];
+      chunks[i].model = getEmbeddingModelName();
       chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
     }
   }
@@ -606,6 +607,7 @@ export async function importCodeFile(
     if (matched && matched.embedding) {
       // Reuse the existing embedding verbatim. No API call, no cost.
       chunks[i]!.embedding = matched.embedding as Float32Array;
+      chunks[i]!.model = matched.model ?? undefined;
       chunks[i]!.token_count = matched.token_count ?? undefined;
     } else {
       needsEmbedIndexes.push(i);
@@ -620,6 +622,7 @@ export async function importCodeFile(
       for (let j = 0; j < needsEmbedIndexes.length; j++) {
         const i = needsEmbedIndexes[j]!;
         chunks[i]!.embedding = embeddings[j]!;
+        chunks[i]!.model = getEmbeddingModelName();
         chunks[i]!.token_count = Math.ceil(chunks[i]!.chunk_text.length / 4);
       }
     } catch (e: unknown) {
