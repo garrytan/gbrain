@@ -97,6 +97,104 @@ function isBareName(raw: string): boolean {
 const PREFIX_EXPANSION_DIRS = ['people', 'companies'] as const;
 
 /**
+ * v0.35.5 — phantom-canonical resolver. Variant of `resolveEntitySlug` that
+ * SKIPS the exact-slug step at the top: a phantom slug like `'alice'` would
+ * always exact-match itself (the phantom page exists as that exact slug),
+ * which made the original phantom-redirect handler a no-op (codex #1).
+ *
+ * Resolution order for phantoms:
+ *   1. Fuzzy match against `pages.title` / `pages.slug` within the source
+ *      — catches Liz → Elizabeth-Warren style fuzzy title hits when no
+ *      prefix-expansion candidate exists (round-22 case).
+ *   2. Prefix expansion: `people/<token>-*` then `companies/<token>-*`.
+ *   3. Returns null if neither path finds a prefixed canonical.
+ *
+ * The output is filtered to require `result !== phantomSlug AND result.includes('/')`
+ * so a fuzzy match that bounces back to the phantom itself (e.g. fuzzy on
+ * its own bare title) doesn't trigger a self-redirect. Caller treats null
+ * as `'no_canonical'`.
+ */
+export async function resolvePhantomCanonical(
+  engine: BrainEngine,
+  source_id: string,
+  phantomSlug: string,
+): Promise<string | null> {
+  if (!phantomSlug) return null;
+  const trimmed = phantomSlug.trim();
+  if (!trimmed) return null;
+  // The phantom slug is the input; we treat it as the search term too,
+  // because phantom slugs ARE the lowercased bare name a fuzzy / prefix
+  // lookup would naturally target.
+  const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
+  if (fuzzy && fuzzy !== phantomSlug && fuzzy.includes('/')) return fuzzy;
+
+  const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
+  if (expanded && expanded !== phantomSlug && expanded.includes('/')) return expanded;
+
+  return null;
+}
+
+/**
+ * v0.35.5 — standalone candidate query for ambiguity detection (codex #11).
+ *
+ * `tryPrefixExpansion` returns top-1-per-directory and short-circuits on
+ * the first non-empty directory. That's correct for the resolver hot path
+ * (we want the most likely match, not all of them) but wrong for the
+ * phantom-redirect handler which needs to KNOW whether multiple canonicals
+ * could absorb the phantom. This query returns every prefixed page across
+ * every configured dir whose slug matches `<dir>/<token>` OR `<dir>/<token>-*`,
+ * so the caller can count candidates and refuse to redirect when ambiguous.
+ *
+ * Returns rows ordered by `connection_count DESC, slug ASC` (deterministic
+ * tiebreaker for test pinning). Cap of 10 — beyond that we treat the input
+ * as too generic anyway and the caller skips with audit.
+ */
+export async function findPrefixCandidates(
+  engine: BrainEngine,
+  source_id: string,
+  token: string,
+): Promise<Array<{ slug: string; connection_count: number }>> {
+  if (!token) return [];
+  // Build LIKE pattern set for each configured directory:
+  //   people/<token>      (bare child — covers `people/alice` exactly)
+  //   people/<token>-%    (suffixed child — covers `people/alice-example`)
+  //   ... same for companies/
+  // We deliberately do NOT use `people/<token>%` (no hyphen) because that
+  // also matches `people/aliceberg` for token="alice" — a false positive.
+  const patterns: string[] = [];
+  for (const dir of PREFIX_EXPANSION_DIRS) {
+    patterns.push(`${dir}/${token}`);
+    patterns.push(`${dir}/${token}-%`);
+  }
+  try {
+    const rows = await engine.executeRaw<{
+      slug: string;
+      connection_count: number;
+    }>(
+      `SELECT p.slug,
+              ((SELECT COUNT(*)::int FROM links WHERE to_page_id = p.id)
+               + (SELECT COUNT(*)::int FROM links WHERE from_page_id = p.id)
+               + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
+                AS connection_count
+       FROM pages p
+       WHERE p.source_id = $1
+         AND p.deleted_at IS NULL
+         AND p.slug LIKE ANY($2::text[])
+       ORDER BY connection_count DESC, p.slug ASC
+       LIMIT 10`,
+      [source_id, patterns],
+    );
+    return rows;
+  } catch {
+    // Defensive: any SQL hiccup returns "no candidates" so the caller's
+    // ambiguity gate doesn't crash the cycle. The downstream
+    // `resolvePhantomCanonical` runs the per-dir tryPrefixExpansion path
+    // separately and will surface its own errors.
+    return [];
+  }
+}
+
+/**
  * Look up pages whose slug starts with `<dir>/<token>-` for each known
  * entity directory. When multiple candidates match within a directory,
  * pick the one with the highest connection count (links_in + links_out +

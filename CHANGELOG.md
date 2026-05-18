@@ -2,6 +2,97 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.35.8.0] - 2026-05-17
+
+**Phantom unprefixed entity pages drain automatically on the next autopilot cycle. Your `alice.md` residue gets folded into `people/alice-example.md` with embeddings + strikethrough state preserved, no operator action needed.**
+
+The cleanup half of PR #1010 (which shipped the three preventive layers that stopped NEW phantoms). The original `gbrain merge-phantoms` command was scrapped after 30 codex rounds because it duplicated `extract_facts` reconciliation logic in a parallel implementation. This release does the same job by folding the redirect into the existing cycle phase with two NEW lossless primitives. Capped at 50 phantoms per cycle (configurable) so a brain with hundreds of phantoms drains over a handful of cycles without stalling any one of them.
+
+### The phantom-pile numbers that matter
+
+On a brain with a known historical phantom pile, the autopilot cycle now reports three new counters in `CycleReport.totals`. The shape of one real cycle on a representative test corpus:
+
+| Counter                       | Meaning                                                                | Run 1 | Run 2 |
+|-------------------------------|------------------------------------------------------------------------|-------|-------|
+| `phantoms_redirected`         | Phantoms successfully migrated to canonical                            | 50    | 0     |
+| `phantoms_ambiguous`          | Phantoms skipped because canonical was multi-candidate (operator triage) | 0     | 0     |
+| `phantoms_skipped_drift`      | Phantoms skipped because disk fence ≠ DB body                          | 0     | 0     |
+
+Run 1 caps at the per-cycle limit. Run 2 is a clean no-op because phantoms 1–50 are now soft-deleted (deleted_at filter excludes them from the predicate). For a 200-phantom brain you'd see 50/50/50/50 across four cycles.
+
+### What you can now do
+
+**Find your `alice.md` already folded into `people/alice-example.md` after the next autopilot cycle.** Pre-v0.35.6, gbrain would create phantom pages at the brain root whenever an entity name fell through the resolver chain (e.g. fuzzy match scored below 0.4 on `"Alice"` because pg_trgm hates short bare names). PR #1010 stopped new phantoms via prefix-expansion + stub-guard + dropped-fact audit. This release drains the existing pile: the next cycle's `extract_facts` phase walks unprefixed-slug pages, resolves each to its canonical via a phantom-specific resolver that bypasses exact-self-match, migrates fact rows via a new DB-level UPDATE that preserves every column (embedding, validUntil, strikethrough/forgotten state, supersession metadata, source_session, confidence), merges the disk fence with dedup-guarded row_num continuation, refreshes `content_hash` so the next `gbrain sync` sees the canonical as unchanged, rewrites links table FKs, soft-deletes the phantom, and unlinks the `.md` file. All in one bounded pass per cycle. Backlinks via `[[alice]]` in markdown bodies still point at the original phantom slug — wiki-link text rewrite is a follow-up because it requires editing every other markdown file's body.
+
+**Preview the cleanup before committing it.** `gbrain dream --phase extract_facts --dry-run` runs the full predicate + resolver + drift-check chain and reports counters, but writes nothing to FS or DB or the audit log. Same dryRun knob `extract_facts` already had — no new flags to learn.
+
+**Tune the per-cycle cap if your brain has thousands of phantoms.** `GBRAIN_PHANTOM_REDIRECT_LIMIT=200 gbrain dream --phase extract_facts` overrides the default 50. Trade-off is cycle latency: each phantom takes ~10–20 DB queries and one disk write, so 200 phantoms is ~5s of work plus the once-per-cycle lock acquisition. The cap exists because `extract_facts` is part of every autopilot cycle and we don't want a single cycle to stall on a one-time cleanup.
+
+**Triage ambiguous phantoms via the new audit log.** When a phantom like `alice` matches BOTH `people/alice-example` AND `people/alice-other`, the redirect refuses to guess. The audit log entry at `~/.gbrain/audit/phantoms-YYYY-Www.jsonl` records `outcome: ambiguous` with the full candidate list (slug + connection_count) so an operator can review and decide. ISO-week-rotated; honors `GBRAIN_AUDIT_DIR` for container deployments.
+
+### Itemized changes
+
+#### New engine surface
+- `BrainEngine.refreshPageBody(slug, sourceId, compiled_truth, timeline, content_hash)` — narrow UPDATE of three columns + updated_at. Skips soft-deleted rows. Implemented on Postgres + PGLite with parity tests.
+- `BrainEngine.migrateFactsToCanonical(phantomSlug, canonicalSlug, sourceId)` — DB-level UPDATE that rewrites `entity_slug` + `source_markdown_slug` on active fact rows, preserving every other column. Returns `{migrated: number}`. Idempotent (re-run returns 0). Skips expired rows so the supersession audit trail stays intact.
+
+#### New resolver primitives
+- `resolvePhantomCanonical(engine, sourceId, phantomSlug)` (exported from `src/core/entities/resolve.ts`) — fuzzy + prefix-expansion path, skips the exact-slug match step that made the original redesign attempt a no-op (the phantom slug exact-matches itself). Returns the resolved canonical (must contain `/`) or null.
+- `findPrefixCandidates(engine, sourceId, token)` (exported same file) — standalone SQL query returning ALL candidates across configured directories, NOT just per-directory top-1. Used by the ambiguity gate. Cap of 10. Returns rows ordered by connection_count DESC, slug ASC.
+
+#### New orchestrator
+- `src/core/cycle/phantom-redirect.ts` — `runPhantomRedirectPass` + `tryRedirectPhantom`. The per-cycle pass acquires `gbrain-sync` writer lock once at start (30s bounded retry), walks up-to-`GBRAIN_PHANTOM_REDIRECT_LIMIT` unprefixed slugs, handles each, releases lock. Per-phantom flow: body-shape gate (strict zero-residue) → resolve canonical → ambiguity check → bi-directional drift check → dry-run early exit → materialize canonical .md if DB-only → append phantom fence rows to canonical's fence (dedup-guarded by claim+valid_from) → refreshPageBody → migrateFactsToCanonical → rewriteLinks → softDeletePage → unlink phantom .md. Touched canonicals returned to caller so the main reconcile loop derives their DB facts from the merged fence.
+- `src/core/facts/phantom-audit.ts` — JSONL audit at `~/.gbrain/audit/phantoms-YYYY-Www.jsonl` with ISO-week rotation. Honors `GBRAIN_AUDIT_DIR`. Best-effort writes (failures logged to stderr, never throw).
+
+#### Cycle wiring
+- `runPhaseExtractFacts(engine, brainDir, sourceId, dryRun, changedSlugs?)` — new signature threads sourceId via `resolveSourceForDir(engine, brainDir)` so multi-source brains route the redirect pass correctly.
+- `runExtractFacts` opts gain `brainDir?: string`. When provided, the phantom pre-pass runs after the legacy-row guard and before the main reconcile loop. The main loop's slug set is UNIONed with `touched_canonicals` so canonical pages get reconciled from the merged disk fence in the same cycle (the round-14 risk specialized to incremental mode).
+- Three new `CycleReport.totals` keys: `phantoms_redirected`, `phantoms_ambiguous`, `phantoms_skipped_drift`. Schema-additive, `schema_version` stays 1.
+- Two extract_facts result fields surface to phase details: `phantoms_lock_busy`, `phantoms_more_pending`. Daily report can flag "lock was contended this cycle — try again later" and "50/N phantoms processed, N-50 pending next cycle."
+
+#### Codex outside-voice findings (all 12 incorporated pre-implementation)
+The original /plan-eng-review proposed reusing `writeFactsToFence` for the migration. Codex caught seven blockers + five risks in pre-implementation review, including: `resolveEntitySlug` exact-self-matches the phantom slug → main path would be a no-op; `writeFactsToFence` is append-only-with-new-row-numbers and drops embeddings + supersession state; `rewriteLinks` rewrites DB FK only (wiki-link text in compiled_truth stays); raw-`compiled_truth` materialization produces malformed `.md` (no frontmatter); the narrow `refreshPageBody` left `content_hash` stale so sync would re-import the canonical defeating the no-op-second-cycle premise; per-phantom 30s lock × 50 cap = 25min worst-case stall; `runPhaseExtractFacts` didn't pass sourceId so multi-source cleanup wouldn't fire. The shipping design addresses all twelve.
+
+#### Known limitations (follow-up TODOs)
+- **Wiki-link text rewrite**: `[[alice]]` references in other pages' markdown bodies still point at the phantom slug. Manual operator command in a future PR. Preventive resolver in PR #1010 ensures new writes go to canonical, so this is a one-time historical concern.
+- **Unified write-path lock**: `gbrain-sync` serializes the redirect vs `performSync` but doesn't cover MCP `put_page`, the facts queue, or direct `writeFactsToFence`. A future design pass will widen the lock scope; the current design is best-effort serialization, not a hard contract.
+
+#### Tests
+- `test/phantom-redirect.test.ts` — 38 hermetic PGLite unit cases covering all 12 codex findings, all 8 cascade-table regression rounds (9, 12, 14, 17, 19/20, 22, 27/29/30, 2-P1), and the Section 1/2/4 decision points (A1 incremental-mode, A2 lock contract, A3 body-shape gate, C1 phantom-DB-wipe, C4 lock retry, P1 per-cycle cap, D5 ambiguity audit, D10 dry-run, D12 phantom-first order).
+- `test/phantom-redirect-engine-parity.test.ts` — 6 cases asserting `refreshPageBody` + `migrateFactsToCanonical` produce byte-equivalent results on PGLite and Postgres (deleted_at filter, source_id scope, metadata preservation, idempotency, expired-row skip).
+- `test/e2e/phantom-redirect.test.ts` — 4 real-Postgres E2E cases: bulk-pile cycle with cap=50, steady-state no-op, concurrent-sync lock-busy seal, postgres-js text-string embedding survives migration (round-12 pin).
+
+## To take advantage of v0.35.8.0
+
+`gbrain upgrade` will automatically pick up the new logic. The phantom-redirect pass fires on the very next `extract_facts` phase — autopilot cycles, manual `gbrain dream`, anything that walks the phase.
+
+1. **Preview the cleanup first** (recommended on brains with many phantoms):
+   ```bash
+   gbrain dream --phase extract_facts --dry-run --dir /path/to/brain
+   ```
+   The output's `phantoms_redirected` counter shows how many would be folded. No DB or FS changes occur in dry-run.
+
+2. **Run the real pass:**
+   ```bash
+   gbrain dream --phase extract_facts --dir /path/to/brain
+   ```
+
+3. **Inspect the audit log:**
+   ```bash
+   cat ~/.gbrain/audit/phantoms-$(date +%Y-W%V).jsonl
+   ```
+   One line per phantom decision. `outcome: redirected` has `canonical_slug` + `fact_count`. `outcome: ambiguous` lists the candidate slugs so you can manually pick one (move the phantom's body content under the correct canonical, delete the phantom .md, run sync).
+
+4. **For very large piles**, raise the per-cycle cap:
+   ```bash
+   GBRAIN_PHANTOM_REDIRECT_LIMIT=200 gbrain dream --phase extract_facts --dir /path/to/brain
+   ```
+
+5. **If `gbrain doctor` warns** about anything after the redirect, please file an issue at https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/audit/phantoms-*.jsonl`
+   - which step looks wrong
+
 ## [0.35.5.0] - 2026-05-16
 
 **Upgrade goes through on stuck Supabase brains. Orphan counts get honest. `gbrain think` over MCP actually answers. Worktrees stop being misclassified. node_modules stops leaking.**
