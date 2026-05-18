@@ -41,7 +41,7 @@ GET <GBRAIN_BASE>/write?action=put_page&slug=<slug>&content_b64=<base64-utf8>&id
 
 Step 1: Submit async
 GET <GBRAIN_BASE>/write?action=put_page&slug=<slug>&content_b64=<base64>&async=1&idempotency_key=<key>&otp=<OTP_OR_TOKEN>
-→ 202 { job_id, slug, content_hash, status: "pending" }
+→ 202 { job_id, slug, status: "pending" }
 
 Step 2: Poll until done (every 2s, max 10 polls)
 GET <GBRAIN_BASE>/job?id=<job_id>&otp=<OTP_OR_TOKEN>

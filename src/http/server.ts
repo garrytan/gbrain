@@ -4,6 +4,7 @@ import type { SearchResult } from '../core/types.ts';
 import { embed } from '../core/embedding.ts';
 import { operationsByName, OperationError } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import { importFromContent } from '../core/import-file.ts';
 import { createHash, createHmac, randomBytes } from 'crypto';
 import pkg from '../../package.json' with { type: 'json' };
 
@@ -645,12 +646,22 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           asyncJobs.set(jobId, jobState);
           if (idempotencyKey) asyncInFlight.set(idempotencyKey, jobId);
 
+          // Phase 1 (sync): write page to DB immediately so keyword search works
+          // before embedding completes. Runs in the request context before 202.
+          try {
+            const phase1 = await importFromContent(engine, slug, fullContent, { noEmbed: true });
+            jobState.content_hash = phase1.content_hash ?? '';
+          } catch (e) {
+            console.warn(`[gbrain] async phase1 write failed for ${slug}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+
+          // Phase 2 (background): embed the page so vector search works.
           (async () => {
             await acquireAsyncSlot();
             jobState.status = 'running';
             try {
-              const result = await putPageOp.handler(ctx, { slug, content: fullContent }) as { content_hash?: string } & object;
-              const resolvedHash = result.content_hash ?? '';
+              const result = await importFromContent(engine, slug, fullContent, { forceReembed: true }) as { content_hash?: string } & object;
+              const resolvedHash = (result as { content_hash?: string }).content_hash ?? jobState.content_hash;
               jobState.status = 'completed';
               jobState.content_hash = resolvedHash;
               jobState.result = result;
@@ -909,12 +920,22 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             asyncJobs.set(jobId, jobState);
             if (writeIdempotencyKey) asyncInFlight.set(writeIdempotencyKey, jobId);
 
+            // Phase 1 (sync): write page to DB immediately so keyword search works
+            // before embedding completes. Runs in the request context before 202.
+            try {
+              const phase1 = await importFromContent(engine, slug, fullContent, { noEmbed: true });
+              jobState.content_hash = phase1.content_hash ?? '';
+            } catch (e) {
+              console.warn(`[gbrain] async phase1 write failed for ${slug}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+
+            // Phase 2 (background): embed the page so vector search works.
             (async () => {
               await acquireAsyncSlot();
               jobState.status = 'running';
               try {
-                const result = await putPageOp.handler(ctx, { slug, content: fullContent }) as { content_hash?: string } & object;
-                const resolvedHash = result.content_hash ?? '';
+                const result = await importFromContent(engine, slug, fullContent, { forceReembed: true }) as { content_hash?: string } & object;
+                const resolvedHash = (result as { content_hash?: string }).content_hash ?? jobState.content_hash;
                 jobState.status = 'completed';
                 jobState.content_hash = resolvedHash;
                 jobState.result = result;
