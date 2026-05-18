@@ -1329,11 +1329,13 @@ test('auditBrainLoop excludes future handoffs and mutations from old audit windo
       status: 'staged_for_review',
       targetObjectId,
     });
-    await harness.engine.promoteMemoryCandidateEntry('candidate-audit-future-handoff', {
+    const promoted = await harness.engine.promoteMemoryCandidateEntry('candidate-audit-future-handoff', {
       expected_current_status: 'staged_for_review',
       reviewed_at: new Date(),
       review_reason: 'Future handoff promotion.',
     });
+    if (!promoted) throw new Error('Expected candidate promotion fixture to be created');
+    const oldUntil = await waitForClockAfter(promoted.updated_at);
     const handoff = await harness.engine.createCanonicalHandoffEntry({
       id: 'handoff-audit-future',
       scope_id: 'workspace:default',
@@ -1365,7 +1367,7 @@ test('auditBrainLoop excludes future handoffs and mutations from old audit windo
 
     const oldWindowReport = await auditBrainLoop(harness.engine, {
       since: new Date(trace.created_at.getTime() - 1000),
-      until: handoff.created_at,
+      until: oldUntil,
       candidate_review_window_days: 0,
     });
     const extendedWindowReport = await auditBrainLoop(harness.engine, {
@@ -1377,7 +1379,8 @@ test('auditBrainLoop excludes future handoffs and mutations from old audit windo
     expect(oldWindowReport.candidate_lifecycle.candidate_signal_exposure_count).toBe(1);
     expect(oldWindowReport.candidate_lifecycle.signal_to_status_event_rate).toBe(0);
     expect(oldWindowReport.candidate_lifecycle.median_time_to_disposition_ms).toBeNull();
-    expect(oldWindowReport.candidate_lifecycle.promoted_without_handoff_count).toBe(0);
+    expect(oldWindowReport.candidate_lifecycle.promoted_without_handoff_count).toBe(1);
+    expect(oldWindowReport.candidate_lifecycle.pressure.stale_promoted_without_handoff_count).toBe(1);
     expect(oldWindowReport.candidate_lifecycle.handoff_without_canonical_update_count).toBe(0);
     expect(extendedWindowReport.candidate_lifecycle.candidate_signal_exposure_count).toBe(1);
     expect(extendedWindowReport.candidate_lifecycle.signal_to_status_event_rate).toBe(1);

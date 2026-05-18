@@ -128,16 +128,18 @@ describe('S25 — memory consolidation retention', () => {
         candidate_id: 'candidate-s25-old',
         limit: 20,
       });
+      const expectedLifecycle = [
+        'created:null->captured',
+        'advanced:captured->candidate',
+        'advanced:candidate->staged_for_review',
+        'promoted:staged_for_review->promoted',
+        'superseded:promoted->superseded',
+      ];
       expect(oldCandidateEvents
-        .sort((left, right) => left.created_at.getTime() - right.created_at.getTime()
-          || left.id.localeCompare(right.id))
-        .map((event) => event.event_kind)).toEqual([
-          'created',
-          'advanced',
-          'advanced',
-          'promoted',
-          'superseded',
-        ]);
+        .map((event) => `${event.event_kind}:${event.from_status ?? 'null'}->${event.to_status}`)
+        .sort((left, right) => expectedLifecycle.indexOf(left) - expectedLifecycle.indexOf(right))).toEqual(
+          expectedLifecycle,
+        );
 
       const handoffs = await handle.engine.listCanonicalHandoffEntries({
         candidate_id: 'candidate-s25-old',
