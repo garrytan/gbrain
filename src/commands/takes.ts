@@ -552,8 +552,55 @@ Common flags:
     case 'resolve':     return cmdResolve(engine, rest);
     case 'scorecard':   return cmdScorecard(engine, rest);
     case 'calibration': return cmdCalibration(engine, rest);
+    case 'revisit':     return cmdRevisit(engine, rest);
     default:
       // No subcommand keyword → treat first arg as <slug> for the list path.
       return cmdList(engine, args);
   }
+}
+
+/**
+ * v0.36.0.0 (TD4 / D30) — `gbrain takes revisit <slug>` opens $EDITOR on
+ * the source page so the user can write a follow-up immediately. The
+ * action the admin SPA's "revisit now" link triggers (via a small
+ * route handler that dispatches into this CLI command).
+ *
+ * Inserts a `<!-- gbrain:revisit -->` cursor marker at the bottom of the
+ * page body so the editor opens with intent visible.
+ */
+async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
+  const slug = rest[0];
+  if (!slug) {
+    process.stderr.write('Usage: gbrain takes revisit <slug>\n');
+    process.exit(1);
+  }
+  const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { execFileSync, spawnSync } = await import('node:child_process');
+  const { loadConfig } = await import('../core/config.ts');
+  const cfg = loadConfig();
+  const repoPath = (cfg as { sync?: { repo_path?: string } } | null)?.sync?.repo_path;
+  if (!repoPath) {
+    process.stderr.write('No brain repo configured. Run `gbrain config set sync.repo_path /path/to/brain`.\n');
+    process.exit(1);
+  }
+  const filePath = join(repoPath, `${slug}.md`);
+  if (!existsSync(filePath)) {
+    process.stderr.write(`Page not found: ${filePath}\n`);
+    process.exit(1);
+  }
+  // Append a cursor marker if not already present.
+  const existing = readFileSync(filePath, 'utf8');
+  const marker = '\n<!-- gbrain:revisit -->\n';
+  if (!existing.includes('<!-- gbrain:revisit -->')) {
+    writeFileSync(filePath, existing + marker);
+  }
+  const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
+  process.stderr.write(`Opening ${filePath} in ${editor}...\n`);
+  // Use spawnSync with stdio:'inherit' so the editor takes the terminal.
+  const result = spawnSync(editor, [filePath], { stdio: 'inherit' });
+  if (result.status !== 0) {
+    process.stderr.write(`Editor exited with status ${result.status ?? 'unknown'}\n`);
+  }
+  void execFileSync;
 }

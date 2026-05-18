@@ -622,6 +622,59 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // v0.36.0.0 (T15 / E6 / D23) — Calibration tab data endpoints.
   // Server-rendered SVG charts; admin SPA renders via TrustedSVG wrapper.
+  // v0.36.0.0 (TD3) — pattern drill-down. Returns the source takes that
+  // produced the pattern statement at index `id` of the active profile.
+  // v0.36.0.0 ship state: returns the top N takes in the holder's overall
+  // takes table, sorted by weight desc. v0.37+ will store per-pattern
+  // source_take_ids on calibration_profiles_patterns so the drill-down
+  // shows the EXACT takes that drove the pattern.
+  app.get('/admin/api/calibration/pattern/:id', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { getLatestProfile } = await import('./calibration.ts');
+      const holder = (req.query.holder as string) || 'garry';
+      const profile = await getLatestProfile(engine, { holder });
+      if (!profile) {
+        res.status(404).json({ error: 'no_profile' });
+        return;
+      }
+      const rawId = req.params.id;
+      const idStr = Array.isArray(rawId) ? rawId[0] : rawId;
+      const idx = Number.parseInt(idStr ?? '', 10) - 1;
+      if (!Number.isFinite(idx) || idx < 0 || idx >= profile.pattern_statements.length) {
+        res.status(400).json({ error: 'invalid_pattern_index', max: profile.pattern_statements.length });
+        return;
+      }
+      const statement = profile.pattern_statements[idx];
+      // v0.36.0.0 ship state: surface the top resolved takes for the
+      // holder as drill-down evidence. Per-pattern provenance is v0.37.
+      const takes = await engine.executeRaw<{
+        id: number;
+        page_slug: string;
+        row_num: number;
+        claim: string;
+        weight: number;
+        resolved_quality: string | null;
+        since_date: string | null;
+      }>(
+        `SELECT id, page_slug, row_num, claim, weight, resolved_quality, since_date
+           FROM takes
+           WHERE holder = $1 AND active = true AND resolved_at IS NOT NULL
+           ORDER BY weight DESC, since_date DESC
+           LIMIT 25`,
+        [holder],
+      );
+      res.json({
+        pattern_statement: statement,
+        pattern_index: idx + 1,
+        holder,
+        provenance_note: 'v0.36.0.0 ship state shows top-25 resolved takes for this holder; per-pattern source_take_ids land in v0.37.',
+        takes,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : 'unknown' });
+    }
+  });
+
   app.get('/admin/api/calibration/profile', requireAdmin, async (req: Request, res: Response) => {
     try {
       const { getLatestProfile } = await import('./calibration.ts');
