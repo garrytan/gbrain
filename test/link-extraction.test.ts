@@ -109,6 +109,69 @@ describe('extractEntityRefs', () => {
     expect(refs.length).toBe(1);
     expect(refs[0].dir).toBe('meetings');
   });
+
+  // [PARA-PATCH] Obsidian + PARA layout (Tiago Forte numeric-prefix dirs).
+  // Without DIR_PATTERN's `\d+_word` alternative + slugifyPath normalization,
+  // a 947-wikilink TimelyCare vault extracts zero edges (see TIM-27).
+  describe('PARA-numbered Obsidian dirs', () => {
+    test('extracts lowercase PARA-numbered wikilink', () => {
+      const refs = extractEntityRefs('See [[10_projects/user-research/_user-research|User Research]]');
+      expect(refs.length).toBe(1);
+      expect(refs[0].slug).toBe('10_projects/user-research/_user-research');
+      expect(refs[0].dir).toBe('10_projects');
+      expect(refs[0].name).toBe('User Research');
+    });
+
+    test('extracts PascalCase PARA wikilink and normalizes slug to DB form', () => {
+      const refs = extractEntityRefs('See [[10_Projects/user-research/_User-Research|User Research]]');
+      expect(refs.length).toBe(1);
+      // slugifyPath lowercases segments so the extracted slug matches what
+      // slugifyPath(filePath) produced when the vault was imported.
+      expect(refs[0].slug).toBe('10_projects/user-research/_user-research');
+      expect(refs[0].dir).toBe('10_projects');
+    });
+
+    test('normalizes spaced segments to hyphens to match DB slug', () => {
+      const refs = extractEntityRefs(
+        'See [[20_Meetings/30_Meeting Transcripts/Onboarding/Gregg Intro|Gregg]]',
+      );
+      expect(refs.length).toBe(1);
+      expect(refs[0].slug).toBe(
+        '20_meetings/30_meeting-transcripts/onboarding/gregg-intro',
+      );
+    });
+
+    test('extracts each canonical PARA top-level dir (projects/meetings/resources/areas/pulse/archived)', () => {
+      const samples = [
+        ['[[10_Projects/foo]]', '10_projects/foo'],
+        ['[[20_Meetings/bar]]', '20_meetings/bar'],
+        ['[[30_Resources/baz]]', '30_resources/baz'],
+        ['[[40_Areas/qux]]', '40_areas/qux'],
+        ['[[50_Pulse/zed]]', '50_pulse/zed'],
+        ['[[80_Archived/old]]', '80_archived/old'],
+      ];
+      for (const [src, expected] of samples) {
+        const refs = extractEntityRefs(src);
+        expect(refs.length).toBe(1);
+        expect(refs[0].slug).toBe(expected);
+      }
+    });
+
+    test('extracts PARA-style markdown link as well as wikilink', () => {
+      const refs = extractEntityRefs('See [Plan](10_Projects/foo/_plan.md) details.');
+      expect(refs.length).toBe(1);
+      expect(refs[0].slug).toBe('10_projects/foo/_plan');
+      expect(refs[0].dir).toBe('10_projects');
+    });
+
+    test('still skips bare unmatched dirs like 10_unknown that are not present as pages (just extracts; downstream filters)', () => {
+      // The regex is permissive — any `\d+_word/...` path matches. Validation
+      // happens at extract.ts via allSlugs.has(). This test pins the contract.
+      const refs = extractEntityRefs('See [[99_random/whatever]]');
+      expect(refs.length).toBe(1);
+      expect(refs[0].slug).toBe('99_random/whatever');
+    });
+  });
 });
 
 // ─── extractPageLinks ──────────────────────────────────────────

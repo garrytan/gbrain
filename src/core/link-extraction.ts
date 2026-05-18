@@ -12,6 +12,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { slugifyPath } from './sync.ts';
 import type { PageType } from './types.ts';
 
 // ─── Entity references ──────────────────────────────────────────
@@ -42,8 +43,18 @@ export type LinkResolutionType = 'qualified' | 'unqualified';
  *   - Gbrain canonical: people, companies, meetings, concepts, deal, civic, project, source, media, yc, projects
  *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
  *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
+ *   - [PARA-PATCH] PARA-numbered Obsidian dirs: `\d+_word` (e.g. `10_projects`,
+ *     `20_meetings`, `30_resources`, `40_areas`, `50_pulse`, `80_archived`).
+ *     Without this, vaults that follow the Tiago-Forte PARA layout (numeric
+ *     prefix to force sidebar order) extract 0 wikilinks even though the source
+ *     has hundreds. The PARA alternative uses [A-Za-z] so PascalCase
+ *     `10_Projects/...` matches without forcing an `i` flag on the whole
+ *     regex (which would also relax the kebab-case source-id grammar in
+ *     QUALIFIED_WIKILINK_RE). Extracted slugs are normalized via `slugifyPath`
+ *     so PascalCase / spaced segments match the lowercased DB slug.
+ *     Tracked upstream: see TIM-27 in the Paperclip TimelyCare project.
  */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+const DIR_PATTERN = '(?:\\d+_[A-Za-z][A-Za-z0-9_-]*|people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
 
 /**
  * Match `[Name](path)` markdown links pointing to entity directories.
@@ -239,8 +250,11 @@ export function extractEntityRefs(content: string): EntityRef[] {
   while ((match = mdPattern.exec(stripped)) !== null) {
     const name = match[1];
     const fullPath = match[2];
-    const slug = fullPath;
-    const dir = fullPath.split('/')[0];
+    // [PARA-PATCH] Normalize via slugifyPath so PascalCase / spaced segments
+    // (e.g. `10_Projects/User-Research`) match the lowercased DB slug. No-op
+    // for already-canonical refs like `people/alice-chen`.
+    const slug = slugifyPath(fullPath);
+    const dir = slug.split('/')[0];
     refs.push({ name, slug, dir });
   }
 
@@ -256,6 +270,8 @@ export function extractEntityRefs(content: string): EntityRef[] {
     if (slug.includes('://')) continue;
     if (slug.endsWith('.md')) slug = slug.slice(0, -3);
     const displayName = (match[3] || slug).trim();
+    // [PARA-PATCH] Match wikilink path against DB slug grammar.
+    slug = slugifyPath(slug);
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir, sourceId });
     qualifiedRanges.push([match.index, match.index + match[0].length]);
@@ -271,6 +287,8 @@ export function extractEntityRefs(content: string): EntityRef[] {
     if (slug.includes('://')) continue;
     if (slug.endsWith('.md')) slug = slug.slice(0, -3);
     const displayName = (match[2] || slug).trim();
+    // [PARA-PATCH] Match wikilink path against DB slug grammar.
+    slug = slugifyPath(slug);
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir });
   }
