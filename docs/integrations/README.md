@@ -34,8 +34,8 @@ These are integration recipes your agent can set up for you. Run
 | [x-to-brain](../../recipes/x-to-brain.md) | Sense | — | Twitter timeline, mentions, keyword monitoring with deletion detection | 15 min |
 | [meeting-sync](../../recipes/meeting-sync.md) | Sense | — | Circleback meeting transcripts auto-import with attendee propagation | 15 min |
 | ~~[credential-gateway](../../recipes/credential-gateway.md)~~ | ~~Infra~~ | — | ~~Gmail + Calendar access~~ *Deprecated — use google-tools-mcp* | — |
-| ~~[email-to-brain](../../recipes/email-to-brain.md)~~ | ~~Sense~~ | — | ~~Gmail collector~~ *Deprecated — use google-tools-mcp* | — |
-| ~~[calendar-to-brain](../../recipes/calendar-to-brain.md)~~ | ~~Sense~~ | — | ~~Calendar sync~~ *Deprecated — use google-tools-mcp* | — |
+| ~~[email-to-brain](../../recipes/email-to-brain.md)~~ | ~~Sense~~ | credential-gateway | ~~Gmail collector~~ *Deprecated — use google-tools-mcp* | — |
+| ~~[calendar-to-brain](../../recipes/calendar-to-brain.md)~~ | ~~Sense~~ | credential-gateway | ~~Calendar sync~~ *Deprecated — use google-tools-mcp* | — |
 
 ### Manual Integration Guides
 

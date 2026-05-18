@@ -17,8 +17,11 @@ health_checks:
         name: GOOGLE_CLIENT_ID
         label: "GOOGLE_CLIENT_ID (env var)"
       - type: command
-        argv: ["sh", "-c", "test -f \"/c/Users/2supe/.config/google-tools-mcp/credentials.json\" || test -f \"/c/Users/2supe/.config/google-tools-mcp/.env\""]
-        label: "google-tools-mcp credentials file"
+        argv:
+          - sh
+          - -c
+          - test -f "$HOME/.config/google-tools-mcp/gcp-oauth.keys.json" || test -f "$HOME/.config/google-tools-mcp/google-oauth.keys.json" || test -f "$HOME/.config/google-tools-mcp/oauth.keys.json"
+        label: "google-tools-mcp OAuth config file present"
 setup_time: 5 min
 cost_estimate: "$0 (Google APIs free tier)"
 ---
@@ -95,6 +98,7 @@ The wizard will:
    - Google Sheets API
    - Google Calendar API
    - Google Forms API
+   - Google Slides API
 
 2. **Open the OAuth Consent Screen configuration.** Configure:
    - User type: **External** (or Internal for Google Workspace)
@@ -147,7 +151,8 @@ Tell the user:
    - https://console.cloud.google.com/apis/library/docs.googleapis.com
    - https://console.cloud.google.com/apis/library/sheets.googleapis.com
    - https://console.cloud.google.com/apis/library/calendar-json.googleapis.com
-   - https://console.cloud.google.com/apis/library/forms.googleapis.com"
+   - https://console.cloud.google.com/apis/library/forms.googleapis.com
+   - https://console.cloud.google.com/apis/library/slides.googleapis.com"
 
 Save credentials via ONE of:
 - **Option A** (recommended): Download `credentials.json` from Google Cloud Console
@@ -341,7 +346,7 @@ If you previously set up `credential-gateway`, `email-to-brain`, and/or
 - If consent screen is in "Testing" mode, tokens expire weekly — re-auth when needed
 
 **"insufficient permissions":**
-- Ensure all 6 Google APIs are enabled in Cloud Console
+- Ensure all 7 Google APIs are enabled in Cloud Console
 - Re-authenticate to pick up new scopes: `npx -y google-tools-mcp auth`
 
 **Multiple accounts not working:**
