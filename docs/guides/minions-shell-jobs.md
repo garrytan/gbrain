@@ -139,6 +139,62 @@ gbrain jobs list --status waiting --name shell
 
 ---
 
+## Running gbrain CLI commands from shell jobs
+
+A common pattern is submitting shell jobs that call `gbrain` itself:
+
+```bash
+gbrain jobs submit shell \
+  --params '{"cmd":"gbrain sync --skip-failed && gbrain embed --stale","cwd":"/data/gbrain"}'
+```
+
+**This will fail if your database connection is configured only via environment
+variables** (`GBRAIN_DATABASE_URL` or `DATABASE_URL`). Shell jobs receive a
+stripped environment (see "Security model" above), so those vars don't reach
+the child process.
+
+### Fix: write `database_url` to your config file
+
+The gbrain CLI reads `database_url` from `~/.gbrain/config.json` before falling
+back to env vars. If the config file has the URL, shell jobs work:
+
+```bash
+gbrain config set database_url "postgresql://user:pass@host:6543/postgres?prepare=false"
+```
+
+Verify:
+
+```bash
+gbrain jobs submit shell \
+  --params '{"cmd":"gbrain stats","cwd":"/data/gbrain"}' --follow
+# Should print page count, not "No database URL"
+```
+
+### Alternative: pass env explicitly per job
+
+If you don't want the URL in your config file, pass it in `env`:
+
+```bash
+gbrain jobs submit shell \
+  --params '{"cmd":"gbrain embed --stale","cwd":"/data/gbrain","env":{"GBRAIN_DATABASE_URL":"postgresql://..."}}'
+```
+
+This is less convenient for recurring jobs but avoids storing the URL on disk
+twice.
+
+### Note on `HOME`
+
+The worker inherits `HOME` from the process environment. If `HOME=/data`
+(common in container deployments), the config file is read from
+`/data/.gbrain/config.json`, not `/root/.gbrain/config.json`. Verify with:
+
+```bash
+gbrain jobs submit shell \
+  --params '{"cmd":"echo HOME=$HOME && ls $HOME/.gbrain/config.json","cwd":"/tmp"}' --follow
+```
+
+---
+
 ## Limitations
 
 - **Filesystem reads are not sandboxed.** See "Security model" above. Don't
