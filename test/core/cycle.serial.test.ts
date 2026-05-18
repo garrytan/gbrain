@@ -382,7 +382,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.31:   11 phases (added `consolidate` between recompute and embed).
     // v0.32.2: 12 phases (added `extract_facts` between extract and patterns).
     // v0.33.3: 13 phases (added `resolve_symbol_edges` between extract_facts and patterns) → 13 yield calls.
-    expect(hookCalls).toBe(13);
+    // v0.36.1.0: 16 phases (added `propose_takes`, `grade_takes`, `calibration_profile` between consolidate and embed).
+    expect(hookCalls).toBe(16);
   });
 
   test('hook exceptions do not abort the cycle', async () => {
@@ -393,7 +394,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
       },
     });
     // v0.33.3: 13 phases (v0.32.2's 12 + resolve_symbol_edges).
-    expect(report.phases.length).toBe(13);
+    // v0.36.1.0: 16 phases (Hindsight calibration wave adds propose_takes, grade_takes, calibration_profile).
+    expect(report.phases.length).toBe(16);
   });
 });
 

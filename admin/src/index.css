@@ -4,7 +4,10 @@
   --bg-tertiary: #1e1e2e;
   --text-primary: #e0e0e0;
   --text-secondary: #888;
-  --text-muted: #555;
+  /* v0.36.1.0 TD2 — bumped from #555 (contrast 4.0 on #0a0a0f bg, below WCAG AA
+     4.5 for body text) to #777 (contrast ~5.5, passes AA). Applies globally
+     to Dashboard, Agents, RequestLog, and the new Calibration tab. */
+  --text-muted: #777;
   --accent: #3b82f6;
   --success: #22c55e;
   --warning: #f59e0b;

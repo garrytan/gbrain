@@ -1144,6 +1144,14 @@ async function handleCliOnly(command: string, args: string[]) {
         await runWhoknows(engine, args);
         break;
       }
+      case 'calibration': {
+        // v0.36.1.0 (T7): print/regenerate the active calibration profile.
+        // MCP op `get_calibration_profile` (read-scoped) backs the same data path.
+        const { runCalibration } = await import('./commands/calibration.ts');
+        const calibrationConfig = loadConfig() ?? ({} as never);
+        await runCalibration(engine, args, calibrationConfig);
+        break;
+      }
       case 'transcripts': {
         const { runTranscripts } = await import('./commands/transcripts.ts');
         await runTranscripts(engine, args);

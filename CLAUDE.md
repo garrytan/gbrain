@@ -282,6 +282,133 @@ gbrain-evals consumes: `gbrain/engine`, `gbrain/types`, `gbrain/operations`,
 `gbrain/extract`. Removing any of these is a breaking change for the
 gbrain-evals consumer.
 
+## v0.36.1.0 Hindsight calibration wave (key files cluster)
+
+The wave that taught gbrain to know how the user tends to be wrong + use
+that knowledge at every advice surface. Six-migration schema (v67-v72),
+three new cycle phases, eight expansions, one admin tab. Plan persisted
+at `~/.claude/plans/system-instruction-you-are-working-rippling-knuth.md`.
+Convention skill at `skills/conventions/calibration.md` has the agent-
+facing rules.
+
+- `src/core/cycle/base-phase.ts` — abstract `BaseCyclePhase` class.
+  Enforces `sourceScopeOpts(ctx)` threading at the type level; closes
+  the v0.34.1 source-isolation leak class structurally for every new
+  phase. Inherits source-scope, budget meter, error envelope, progress
+  reporter. propose_takes / grade_takes / calibration_profile all
+  extend it.
+- `src/core/cycle/propose-takes.ts` — LLM scans markdown prose,
+  proposes gradeable claims to `take_proposals` queue. Idempotency
+  cache on `(source_id, page_slug, content_hash, prompt_version)`
+  composite unique index. F2 fence-dedup: existing canonical takes
+  passed to extractor as context. v0.36.1.0 ships a stub prompt; tuned
+  prompt arrives via the T19 synthetic corpus build.
+- `src/core/cycle/grade-takes.ts` — walks unresolved takes older than
+  6 months, retrieves evidence, asks judge model, caches verdict.
+  Auto-resolve DISABLED by default (D17). Conservative thresholds:
+  >=0.95 single OR >=0.85 ensemble 3/3 unanimous. T5 ensemble
+  (`aggregateEnsemble`) reuses v0.27.x cross-modal substrate; fires on
+  borderline 0.6-0.95 band. Writes to `take_grade_cache`.
+- `src/core/cycle/calibration-profile.ts` — aggregates resolved takes
+  into 2-4 narrative pattern statements + active bias tags. Voice-gated
+  via `gateVoice()`. Cold-brain skip when <5 resolved. Writes to
+  `calibration_profiles` with audit columns (`voice_gate_passed`,
+  `voice_gate_attempts`, `grade_completion`).
+- `src/core/calibration/voice-gate.ts` — single `gateVoice()` function
+  (D24), mode parameter (`pattern_statement` | `nudge` |
+  `forecast_blurb` | `dashboard_caption` | `morning_pulse`). 2 regens
+  then hand-written template fallback from
+  `src/core/calibration/templates.ts`. Haiku judge with mode-specific
+  rubrics; all rubrics structurally forbid clinical/preachy voice.
+- `src/core/calibration/cross-brain.ts` — D18 4-rule contract for
+  cross-brain calibration reads. Local-first → mount-fallback (only
+  with `canReadMountsForCtx(ctx)` true) → cross-brain attribution via
+  `source_brain_id` + `from_mount` → subagent prohibition closes the
+  OAuth-token-to-cross-brain-leak surface. All 4 rules pinned in
+  `test/cross-brain-calibration.test.ts`.
+- `src/core/calibration/nudge.ts` — E7 real-time pattern surfacing.
+  `evaluateAndFireNudge(opts)` is the full pipeline: threshold check
+  (conviction > 0.7, holder match, slug-derived domain hint matches
+  active bias tag), cooldown probe (14d via take_nudge_log), fire +
+  log. STDERR-only output for v0.36.1.0; multi-channel deferred.
+- `src/core/calibration/take-forecast.ts` — E5 Brier-trend at write
+  time. Pure math over existing `TakesScorecard`; no LLM. Returns
+  `predicted_brier`, `bucket_n`, `overall_brier`. Insufficient-data
+  branch at `MIN_BUCKET_N = 5`. `batchForecast` memoizes per
+  (holder, domain) tuple.
+- `src/core/calibration/gstack-coupling.ts` — E4 outcome-driven
+  learnings coupling. `writeIncorrectResolution(opts)` shells out to
+  `gstack-learnings-log` binary. Config gate
+  (`cycle.grade_takes.write_gstack_learnings`, default false for
+  external users). Namespace prefix `gbrain:calibration:v0.36.1.0:` so
+  `--undo-wave` can scrub.
+- `src/core/calibration/svg-renderer.ts` — D23 server-rendered SVG for
+  the admin SPA Calibration tab. Pure functions: data → SVG string.
+  Inlines design tokens; XSS-safe via `escapeXml()`. Four chart
+  renderers: `renderBrierTrend`, `renderDomainBars`,
+  `renderAbandonedThreadsCard`, `renderPatternStatementsCard`. SPA
+  renders via `<TrustedSVG>` wrapper behind `requireAdmin`.
+- `src/core/calibration/undo-wave.ts` — D18 CDX-3 resolution. `undoWave`
+  reverses the wave's mutations: unsets `takes.resolved_*` for
+  wave-applied resolutions (cross-checks resolved_by so manual writes
+  persist), deletes calibration_profiles, purges nudge logs, marks
+  grade-cache rows applied=false. `--dry-run` shows counts without
+  writing. Idempotent on wave_version match.
+- `src/core/calibration/think-ab.ts` — D19 A/B harness. `runAbTrial`
+  calls thinkRunner twice (baseline + with-calibration), records
+  preference to `think_ab_results`. `buildAbReport` aggregates over
+  30-day window; flags `calibration_net_negative` when n>=20 + win
+  rate < 45% on decisive trials.
+- `src/core/calibration/recall-footer.ts` — formatter for the morning
+  pulse calibration block. Cold-brain branch when <5 resolved. v0.36
+  ship state: opt-in via the wiring layer; auto-on in v0.37+.
+- `src/core/eval-contradictions/calibration-join.ts` — E3 cross-
+  reference. `tagFindingWithCalibration(finding, profile)` returns
+  bias-tag context for contradictions that match active patterns.
+  Returns null when profile missing (R2 regression — output
+  byte-identical to v0.32.6).
+- `src/core/think/prompt.ts` extension — E1 anti-bias rewrite.
+  `withCalibration` option on `buildThinkSystemPrompt` adds anti-bias
+  rules. New `buildCalibrationBlock()` emits the `<calibration>` XML.
+  `buildThinkUserMessage` has TWO shapes: default (question first) for
+  R1 regression, with-calibration (retrieval → calibration → question
+  per D22) when opt-in. Wired into `runThink` via
+  `opts.withCalibration` + `opts.calibrationHolder`.
+- `src/commands/calibration.ts` — CLI: `gbrain calibration` (read +
+  print), `--regenerate`, `--undo-wave <ver>` (T17), `ab-report` (T18).
+  MCP op `get_calibration_profile` (scope: read) backs the same data
+  path. Source-scoped via `sourceScopeOpts(ctx)`.
+- `src/commands/serve-http.ts` extension — three new admin routes:
+  `/admin/api/calibration/profile`, `/admin/api/calibration/charts/:type`
+  (image/svg+xml; type in {brier-trend, domain-bars,
+  pattern-statements, abandoned-threads}), and
+  `/admin/api/calibration/pattern/:id` (TD3 drill-down).
+- `src/commands/takes.ts` extension — `gbrain takes revisit <slug>`
+  (TD4 / D30) opens $EDITOR on the source page with a
+  `<!-- gbrain:revisit -->` cursor marker.
+- `src/commands/doctor.ts` extension — 4 new checks: `abandoned_threads`,
+  `calibration_freshness`, `grade_confidence_drift` (CDX-11 mitigation
+  surface; math arrives v0.37+), `voice_gate_health`.
+- `admin/src/pages/Calibration.tsx` — Calibration tab. Single-column
+  Linear-calm-clarity layout matching the approved variant-B mockup.
+  `<TrustedSVG>` wrapper handles `dangerouslySetInnerHTML` for the
+  server-rendered SVG.
+- `admin/src/index.css` extension — `--text-muted: #555 → #777` (TD2,
+  WCAG AA contrast bump from 4.0 to ~5.5 on the #0a0a0f bg).
+- `test/fixtures/calibration/extract-takes-corpus/` — synthetic prompt-
+  tuning corpus. v0.36.1.0 ships 5 representative pages; full 50-page
+  + 10-page holdout generated by `gbrain calibration build-corpus`
+  (v0.37+ subcommand). All anonymized per CLAUDE.md placeholder list.
+- `scripts/check-synthetic-corpus-privacy.sh` — CDX-14 mitigation. CI
+  guard in `bun run verify`. Greps for explicit dollar amounts +
+  verifies non-essay fixtures reference at least one placeholder name.
+- `test/regressions/v0.36.1.0-iron-rule.test.ts` — R1-R5 regression
+  inventory test file. Pins all 5 IRON-RULE regressions in one place
+  for future bisects.
+- `DESIGN.md` — repo-root design system. Formalizes the de facto admin
+  tokens that landed v0.26.0. Calibration target for future
+  `/plan-design-review` and `/design-review`.
+
 ## Thin-client routing (v0.31.1, Issue #734)
 
 `gbrain init --mcp-only` (v0.29.2) sets up a thin-client install: no local
