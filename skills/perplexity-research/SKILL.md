@@ -203,8 +203,9 @@ trailing whitespace is allowed after the closing fence.
 ````markdown
 ```json
 {
-  "envelope_version": 1,
+  "envelope_version": 2,
   "brain_page_slug": "research/<exact-slug-you-wrote>",
+  "summary": "<2-3 sentence executive summary — same content as the `> Executive summary:` block at the top of the brain page>",
   "citations": [
     {"title": "<source title>", "url": "<source URL>", "accessed": "YYYY-MM-DD"}
   ],
@@ -219,10 +220,24 @@ trailing whitespace is allowed after the closing fence.
 
 Schema rules:
 
-- `envelope_version` — integer, currently `1`. Bump only via a
-  coordinated SKILL.md + caller change.
+- `envelope_version` — integer, currently `2`. Bump only via a
+  coordinated SKILL.md + caller change. v1 (without `summary`) is
+  still accepted by callers but is deprecated; emit `2`.
 - `brain_page_slug` — **exact** slug of the page you wrote. No leading
   slash, no `.md` extension. Must match `^[a-zA-Z0-9_\-/]+$`.
+- `summary` — **v2-only.** 2-3 sentences of executive summary
+  describing what the research found. Same content as the
+  `> Executive summary:` block at the top of the brain-page
+  markdown body. This field exists because the caller can only
+  cheaply parse the JSON envelope — without it, the caller falls
+  back to the FIRST LINE of your stdout, which is normally your
+  natural preamble ("Page written. Here's the final output…")
+  rather than substantive content. **NOT a status confirmation;
+  NOT "Page written"; NOT "Emitting envelope".** A caller
+  validator (mirror of the SRW UI's `isEnvelopeChatter`) rejects
+  preamble-shaped summaries and triggers a retry.
+  - Positive example: `"summary": "Three independent sources confirm B2B SaaS marketing leaders are shifting 15-30% of search budget to AI-visibility work. Buyer archetype consistent across editorial, commercial, and technical sources."`
+  - Negative example (rejected): `"summary": "Page written. Emitting the output envelope per --output-envelope."`
 - `citations[]` — one entry per source you cited in the markdown above.
   Every URL in the markdown body must appear here. Do not invent
   citations that aren't in the markdown.
