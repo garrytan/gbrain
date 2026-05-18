@@ -289,11 +289,39 @@ export function applyOpenAICompatConfig(
   return { baseURL };
 }
 
+/**
+ * Resolve the effective embedding dimension for a given model string.
+ *
+ * Priority:
+ *   1. Explicit `embedding_dimensions` from user config — always wins.
+ *   2. `recipe.touchpoints.embedding.default_dims` for the chosen model —
+ *      catches providers like ZeroEntropy whose valid dim sets don't include
+ *      the global DEFAULT_EMBEDDING_DIMENSIONS (1536).  Without this,
+ *      `zeroentropyai:zembed-1` with no explicit `embedding_dimensions` would
+ *      silently pass 1536 to ZE's API, which rejects it with HTTP 400.
+ *   3. DEFAULT_EMBEDDING_DIMENSIONS (1536) — preserved for all other models.
+ */
+function resolveEmbeddingDimensions(
+  embeddingModel: string,
+  explicitDims: number | undefined,
+): number {
+  if (explicitDims !== undefined) return explicitDims;
+  try {
+    const { recipe } = resolveRecipe(embeddingModel);
+    const recipeDims = recipe.touchpoints.embedding?.default_dims;
+    if (recipeDims && recipeDims > 0) return recipeDims;
+  } catch {
+    // Unknown provider — fall through to global default.
+  }
+  return DEFAULT_EMBEDDING_DIMENSIONS;
+}
+
 /** Configure the gateway. Called by cli.ts#connectEngine. Clears cached models. */
 export function configureGateway(config: AIGatewayConfig): void {
+  const embeddingModel = config.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
   _config = {
-    embedding_model: config.embedding_model ?? DEFAULT_EMBEDDING_MODEL,
-    embedding_dimensions: config.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
+    embedding_model: embeddingModel,
+    embedding_dimensions: resolveEmbeddingDimensions(embeddingModel, config.embedding_dimensions),
     embedding_multimodal_model: config.embedding_multimodal_model,
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     chat_model: config.chat_model ?? DEFAULT_CHAT_MODEL,

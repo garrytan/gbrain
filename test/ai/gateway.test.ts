@@ -38,6 +38,28 @@ describe('gateway configuration', () => {
     expect(getEmbeddingDimensions()).toBe(1536);
     expect(getExpansionModel()).toBe('anthropic:claude-haiku-4-5-20251001');
   });
+
+  test('zeroentropyai:zembed-1 without explicit dims defaults to recipe default_dims (2560), not 1536', () => {
+    // Regression: before this fix, configuring zembed-1 without
+    // embedding_dimensions would silently pass dims=1536 to the ZE API,
+    // which rejects it with HTTP 400 (valid ZE dims: 2560/1280/640/320/160/80/40).
+    // resolveEmbeddingDimensions() now picks up recipe.touchpoints.embedding.default_dims.
+    configureGateway({
+      embedding_model: 'zeroentropyai:zembed-1',
+      env: { ZEROENTROPY_API_KEY: 'fake' },
+    });
+    expect(getEmbeddingModel()).toBe('zeroentropyai:zembed-1');
+    expect(getEmbeddingDimensions()).toBe(2560);
+  });
+
+  test('explicit embedding_dimensions always wins over recipe default_dims', () => {
+    configureGateway({
+      embedding_model: 'zeroentropyai:zembed-1',
+      embedding_dimensions: 1280,
+      env: { ZEROENTROPY_API_KEY: 'fake' },
+    });
+    expect(getEmbeddingDimensions()).toBe(1280);
+  });
 });
 
 describe('gateway.isAvailable (silent-drop regression surface)', () => {
