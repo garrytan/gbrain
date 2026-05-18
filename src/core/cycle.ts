@@ -272,6 +272,34 @@ export interface CycleOpts {
 
 const CYCLE_LOCK_ID = 'gbrain-cycle';
 const LOCK_TTL_MS = 30 * 60 * 1000;       // 30 minutes
+
+/**
+ * Same-host PID-liveness probe. Mirrors the check in `acquireFileLock` below
+ * and in `src/core/pglite-lock.ts`. Returns:
+ *   - `true`  if the row's holder is on this host and is provably DEAD (ESRCH).
+ *             The caller should evict the row before re-acquiring.
+ *   - `false` if the holder is alive, on another host, or the probe is
+ *             inconclusive — leave the row alone, the TTL-based eviction
+ *             below is the fallback.
+ *
+ * Why same-host only: `process.kill(pid, 0)` can only probe processes on the
+ * local kernel's process table. Cross-host orphans must rely on the TTL.
+ *
+ * Why EPERM is treated as alive: a same-host PID we don't own (e.g. PID 1 /
+ * init under unix) returns EPERM rather than ESRCH on signal-0. EPERM means
+ * the PID exists but we can't signal it — still alive for liveness purposes.
+ */
+function isStaleSameHostHolder(holderPid: number, holderHost: string | null): boolean {
+  if (!holderHost || holderHost !== hostname()) return false;
+  if (holderPid <= 0 || holderPid === process.pid) return false;
+  try {
+    process.kill(holderPid, 0);
+    return false; // signal-0 succeeded → process exists
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return code === 'ESRCH'; // only ESRCH proves dead; EPERM/EINVAL/etc. = inconclusive
+  }
+}
 // Lazy: GBRAIN_HOME may be set after module load; resolve at call time.
 const getLockFilePathDefault = () => gbrainPath('cycle.lock');
 
@@ -300,6 +328,27 @@ async function acquirePostgresLock(engine: BrainEngine): Promise<LockHandle | nu
 
   if (engine.kind === 'postgres' && maybePG.sql) {
     const sql = maybePG.sql as any;
+    // Evict dead same-host holders BEFORE the TTL-bounded upsert. Without
+    // this, a SIGKILL'd cycle leaves a row whose holder PID is gone but
+    // whose TTL is still 30 minutes in the future — every new acquire then
+    // sees a "live holder" and bails. This mirrors `acquireFileLock` below
+    // (which already does the PID-liveness check for the file-lock path).
+    try {
+      const existing: Array<{ holder_pid: number; holder_host: string | null }> = await sql`
+        SELECT holder_pid, holder_host FROM gbrain_cycle_locks WHERE id = ${CYCLE_LOCK_ID}
+      `;
+      if (existing.length > 0 && isStaleSameHostHolder(existing[0].holder_pid, existing[0].holder_host)) {
+        await sql`
+          DELETE FROM gbrain_cycle_locks
+          WHERE id = ${CYCLE_LOCK_ID} AND holder_pid = ${existing[0].holder_pid}
+        `;
+      }
+    } catch {
+      // Best-effort: any failure here just means we fall through to the
+      // TTL-bounded upsert below. We do NOT throw — staleness eviction is
+      // an optimization on top of the existing TTL contract.
+    }
+
     const rows: Array<{ id: string }> = await sql`
       INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
       VALUES (${CYCLE_LOCK_ID}, ${pid}, ${host}, NOW(), NOW() + INTERVAL '30 minutes')
@@ -334,6 +383,27 @@ async function acquirePostgresLock(engine: BrainEngine): Promise<LockHandle | nu
     // file lock. Callers always hold the file lock first, so this UPSERT
     // is race-free against other processes.
     const db = maybePGLite.db;
+    // Evict dead same-host holders BEFORE the TTL-bounded upsert. See the
+    // postgres branch above for the full rationale. PGLite is single-host by
+    // construction, so every existing row is by definition same-host — but
+    // we still gate on hostname to keep the helper's contract uniform across
+    // engines.
+    try {
+      const result = await db.query(
+        `SELECT holder_pid, holder_host FROM gbrain_cycle_locks WHERE id = $1`,
+        [CYCLE_LOCK_ID],
+      );
+      const existing = result.rows as Array<{ holder_pid: number; holder_host: string | null }>;
+      if (existing.length > 0 && isStaleSameHostHolder(existing[0].holder_pid, existing[0].holder_host)) {
+        await db.query(
+          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
+          [CYCLE_LOCK_ID, existing[0].holder_pid],
+        );
+      }
+    } catch {
+      // Best-effort — fall through to the TTL-bounded upsert.
+    }
+
     const { rows } = await db.query(
       `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
        VALUES ($1, $2, $3, NOW(), NOW() + INTERVAL '30 minutes')

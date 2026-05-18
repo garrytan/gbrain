@@ -34,6 +34,26 @@ export interface DbLockHandle {
 const DEFAULT_TTL_MINUTES = 30;
 
 /**
+ * Same-host PID-liveness probe. Mirrors `cycle.ts:isStaleSameHostHolder`.
+ * Duplicated here (rather than imported) to keep db-lock.ts free of
+ * circular dependencies — both modules import each other transitively.
+ *
+ * Returns true only when we can prove the holder PID is dead on this host
+ * (ESRCH from signal-0). Cross-host holders fall through to TTL eviction.
+ */
+function isStaleSameHostHolder(holderPid: number, holderHost: string | null): boolean {
+  if (!holderHost || holderHost !== hostname()) return false;
+  if (holderPid <= 0 || holderPid === process.pid) return false;
+  try {
+    process.kill(holderPid, 0);
+    return false;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return code === 'ESRCH';
+  }
+}
+
+/**
  * Try to acquire a named DB lock.
  *
  * Returns a handle on success. Returns `null` if another live holder has
@@ -66,6 +86,25 @@ export async function tryAcquireDbLock(
   if (engine.kind === 'postgres' && maybePG.sql) {
     const sql = maybePG.sql as any;
     const ttl = `${ttlMinutes} minutes`;
+    // Evict dead same-host holders BEFORE the TTL-bounded upsert. Same
+    // pattern as cycle.ts:acquirePostgresLock. A SIGKILL'd holder leaves a
+    // row whose TTL is up to `ttlMinutes` in the future but whose PID is
+    // gone; without this check, every new acquirer sees "live holder" and
+    // bails until the TTL elapses (default 30 min).
+    try {
+      const existing: Array<{ holder_pid: number; holder_host: string | null }> = await sql`
+        SELECT holder_pid, holder_host FROM gbrain_cycle_locks WHERE id = ${lockId}
+      `;
+      if (existing.length > 0 && isStaleSameHostHolder(existing[0].holder_pid, existing[0].holder_host)) {
+        await sql`
+          DELETE FROM gbrain_cycle_locks
+          WHERE id = ${lockId} AND holder_pid = ${existing[0].holder_pid}
+        `;
+      }
+    } catch {
+      // Best-effort — TTL eviction below is the fallback.
+    }
+
     const rows: Array<{ id: string }> = await sql`
       INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
       VALUES (${lockId}, ${pid}, ${host}, NOW(), NOW() + ${ttl}::interval)
@@ -99,6 +138,24 @@ export async function tryAcquireDbLock(
   if (engine.kind === 'pglite' && maybePGLite.db) {
     const db = maybePGLite.db;
     const ttl = `${ttlMinutes} minutes`;
+    // Evict dead same-host holders BEFORE the TTL-bounded upsert. See the
+    // postgres branch above for the full rationale.
+    try {
+      const result = await db.query(
+        `SELECT holder_pid, holder_host FROM gbrain_cycle_locks WHERE id = $1`,
+        [lockId],
+      );
+      const existing = result.rows as Array<{ holder_pid: number; holder_host: string | null }>;
+      if (existing.length > 0 && isStaleSameHostHolder(existing[0].holder_pid, existing[0].holder_host)) {
+        await db.query(
+          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
+          [lockId, existing[0].holder_pid],
+        );
+      }
+    } catch {
+      // Best-effort — TTL eviction below is the fallback.
+    }
+
     const { rows } = await db.query(
       `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
        VALUES ($1, $2, $3, NOW(), NOW() + $4::interval)
