@@ -80,9 +80,9 @@ two-sync Notion Worker idiom, and compounding signal-detector loop.
              │     gemini-embedding-2-preview │
              │            (1536 dim)          │
              ├────────────────────────────────┤
-             │  com.jarvis.kos-deep-lint      │ ← cron-driven KOS lint
              │  com.jarvis.enrich-sweep       │ ← cron-driven entity enrichment
-             │  com.jarvis.notion-poller      │ ← 5-min direct bun invocation (Path B)
+             │  com.jarvis.kos-patrol         │ ← cron-driven daily patrol (§6.28 follow-up)
+             │  (notion-poller retired §6.27, kos-deep-lint retired §6.28 follow-up)
              └────────────────────────────────┘
                               │
                               ▼
@@ -213,7 +213,7 @@ quiet-hours), and shell job type. We merged, ran the full test suite
 |---|---|---|
 | Frontmatter → typed graph edges (auto-link) | Live (default on) | `related:` → `related_to` edges. ~54 % of v1 wiki pages carry `related:`; they auto-edge on ingest. No hand-maintained adjacency files in v2. |
 | BrainWriter observational lint | Enabled | `gbrain config set writer.lint_on_put_page true`. Findings → `~/.gbrain/validator-lint.jsonl`. Strict mode **not** flipped (upstream policy: 7-day soak). |
-| Minions shell job — all 4 crons | Migrated | `notion-poller`, `kos-patrol`, `enrich-sweep`, `kos-deep-lint` now run via `gbrain jobs submit shell --follow` wrappers at `scripts/minions-wrap/*.sh`. PGLite constraint: `--follow` inline, no daemon. Retry, timeout, unified `gbrain jobs list` visibility. |
+| Minions shell job — all 4 crons | Migrated; 2 since retired | Originally `notion-poller` (RETIRED §6.27 2026-05-17), `kos-patrol`, `enrich-sweep`, `kos-deep-lint` (RETIRED §6.28 follow-up 2026-05-17 — v1 repo targets dead, never-ran zombie since M1) ran via `gbrain jobs submit shell --follow` wrappers at `scripts/minions-wrap/*.sh`. Active today: `kos-patrol` + `enrich-sweep`. PGLite constraint: `--follow` inline, no daemon. Retry, timeout, unified `gbrain jobs list` visibility. |
 | Schema migrations v2–v13 | Applied | PGLite at `~/.gbrain/brain.pglite` includes `budget_ledger`, `links_provenance_columns`, `minion_quiet_hours_stagger`. |
 | kos-lint check #3 (dead internal links) | Retired | BrainWriter's `linkValidator` covers this. `kos-lint --check 3` still works for manual invocation. |
 

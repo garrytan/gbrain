@@ -920,6 +920,28 @@ backpressure-audit。我们没跑 worker daemon 所以没立刻收益,但若以�
 
 ## Done (most recent)
 
+- [x] **2026-05-17 kos-deep-lint retire (§6.28 follow-up, zombie cleanup)** —
+      Discovered during fork ownership review after kos-compat-api cutover.
+      Evidence: (1) `scripts/minions-wrap/kos-deep-lint.sh` targets v1 KOS
+      repo at `/Users/chenyuanquan/Projects/jarvis-knowledge-os` running v1
+      Python `./kos lint --deep`, comment self-acknowledges
+      "Retained during v1→v2 overlap period" (overlap ended ~5 months ago);
+      (2) `launchctl print run count = 0` + `last exit code = (never exited)` —
+      service never fired since M1 (2026-05-10) likely because `kos-lint/` dir
+      was archived and log path `skills/kos-jarvis/kos-lint/deep-lint.std*.log`
+      became invalid; (3) v1 repo `~/Projects/jarvis-knowledge-os` last mtime
+      2026-04-19 (cold for 1 month at time of retire). Retire ops:
+      `launchctl bootout gui/$UID/com.jarvis.kos-deep-lint` + `rm
+      ~/Library/LaunchAgents/com.jarvis.kos-deep-lint.plist` +
+      `git mv scripts/launchd/com.jarvis.kos-deep-lint.plist.template →
+      scripts/launchd/_archived/` + `git mv scripts/minions-wrap/kos-deep-lint.sh
+      → scripts/launchd/_archived/` (kept with plist for context). Docs
+      updates: `docs/JARVIS-ARCHITECTURE.md` arch diagram + cron table mark
+      retired with §6.28-follow-up reference; `scripts/minions-wrap/README.md`
+      strike entry. Active fork-unique launchd services: 3 → 2 (kos-patrol,
+      enrich-sweep). Active plist templates: 7 → 5 (after this + kos-compat-api +
+      notion-poller all archived in same window — though notion-poller plist
+      template was archived 2026-05-17 also per §6.27).
 - [x] **2026-05-17 kos-compat-api retire (Complete-A) + MCP-over-HTTP cutover (branch `migration/kos-compat-api-retire`)** —
       Lucien override of M2-B 2026-05-15 verdict ("(c) don't touch")。Trigger: mailagent
       方案 B「待 spec」(§6.27) + Lucien stance「一劳永逸」+ upstream OAuth + MCP + admin dashboard
