@@ -1319,6 +1319,79 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
+    // ── v0.36.0.0 calibration phases (propose_takes → grade_takes →
+    //    calibration_profile). These run AFTER consolidate so the proposal
+    //    LLM sees newly-promoted facts, AFTER any take resolutions made
+    //    earlier in the cycle, and BEFORE embed so the calibration
+    //    narrative is available for downstream surfaces.
+    //
+    //    The three phases construct an OperationContext on the fly. The
+    //    cycle is a trusted-workspace caller (operator CLI / autopilot
+    //    daemon), so `remote: false` is the correct trust tier. sourceId
+    //    is resolved via the same `resolveSourceForDir` helper sync uses.
+    if (phases.includes('propose_takes') ||
+        phases.includes('grade_takes') ||
+        phases.includes('calibration_profile')) {
+      if (engine) {
+        const cfgMod = await import('./config.ts');
+        const calibrationConfig = cfgMod.loadConfig() ?? ({} as ReturnType<typeof cfgMod.loadConfig> & object);
+        const calibrationSourceId = await resolveSourceForDir(engine, opts.brainDir);
+        const calibrationCtx = {
+          engine,
+          config: calibrationConfig,
+          logger: { info() {}, warn() {}, error() {} } as never,
+          dryRun,
+          remote: false as const,
+          sourceId: calibrationSourceId,
+        } as never;
+
+        if (phases.includes('propose_takes')) {
+          checkAborted(opts.signal);
+          progress.start('cycle.propose_takes');
+          const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: opts.brainDir }) as Promise<PhaseResult>);
+          result.duration_ms = duration_ms;
+          phaseResults.push(result);
+          progress.finish();
+          await safeYield(opts.yieldBetweenPhases);
+        }
+
+        if (phases.includes('grade_takes')) {
+          checkAborted(opts.signal);
+          progress.start('cycle.grade_takes');
+          const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
+          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {}) as Promise<PhaseResult>);
+          result.duration_ms = duration_ms;
+          phaseResults.push(result);
+          progress.finish();
+          await safeYield(opts.yieldBetweenPhases);
+        }
+
+        if (phases.includes('calibration_profile')) {
+          checkAborted(opts.signal);
+          progress.start('cycle.calibration_profile');
+          const { runPhaseCalibrationProfile } = await import('./cycle/calibration-profile.ts');
+          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, {}) as Promise<PhaseResult>);
+          result.duration_ms = duration_ms;
+          phaseResults.push(result);
+          progress.finish();
+          await safeYield(opts.yieldBetweenPhases);
+        }
+      } else {
+        for (const p of (['propose_takes', 'grade_takes', 'calibration_profile'] as const)) {
+          if (phases.includes(p)) {
+            phaseResults.push({
+              phase: p,
+              status: 'skipped',
+              duration_ms: 0,
+              summary: 'no database connected',
+              details: { reason: 'no_database' },
+            });
+          }
+        }
+      }
+    }
+
     // ── Phase 8: embed ──────────────────────────────────────────
     if (phases.includes('embed')) {
       checkAborted(opts.signal);
