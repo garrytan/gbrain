@@ -81,6 +81,8 @@ export interface BrainEngine {
   upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void>;
   getChunks(slug: string): Promise<Chunk[]>;
   deleteChunks(slug: string): Promise<void>;
+  /** Returns distinct page slugs that have at least one chunk with a NULL embedding. */
+  getUnembeddedSlugs(limit: number): Promise<string[]>;
 
   // Links
   /**
