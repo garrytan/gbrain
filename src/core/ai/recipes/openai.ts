@@ -17,6 +17,14 @@ export const openai: Recipe = {
       dims_options: [256, 512, 768, 1024, 1536, 3072],
       cost_per_1m_tokens_usd: 0.13,
       price_last_verified: '2026-04-20',
+      // OpenAI's documented per-request embedding token cap is 300K. Without
+      // a declared batch cap, a single page whose chunks sum past 300K
+      // tokens (e.g. vendored Unicode tables, large generated code) is
+      // rejected by the API and the whole page is dropped from indexing.
+      // Closes #1080: gateway-level pre-split is the safety net. The shrink-
+      // on-miss fallback in embedSubBatch handles tokenizer-density variance.
+      max_batch_tokens: 300_000,
+      chars_per_token: 4, // tiktoken English avg
     },
     expansion: {
       models: ['gpt-5.2', 'gpt-4o-mini'],

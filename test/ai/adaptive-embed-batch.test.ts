@@ -230,13 +230,13 @@ describe('embed() recursion via stubbed transport', () => {
   });
 });
 
-// --------- 5. OpenAI fast path (D3) ---------
+// --------- 5. OpenAI batch-cap pre-split (closes #1080) ---------
 
-describe('embed() OpenAI fast path (no max_batch_tokens)', () => {
+describe('embed() OpenAI pre-split at declared max_batch_tokens (closes #1080)', () => {
   beforeEach(() => resetGateway());
   afterEach(() => __setEmbedTransportForTests(null));
 
-  test('recipe without max_batch_tokens calls transport exactly once with no partition', async () => {
+  test('small batch under the cap calls transport exactly once', async () => {
     configureOpenAI();
 
     const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 1536));
@@ -251,7 +251,42 @@ describe('embed() OpenAI fast path (no max_batch_tokens)', () => {
     expect(result).toHaveLength(100);
   });
 
-  test('OpenAI fast path is unaffected by Voyage shrink state', async () => {
+  test('batch exceeding 300K-token cap is pre-split before transport is called', async () => {
+    configureOpenAI();
+
+    const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 1536));
+    __setEmbedTransportForTests(stub as any);
+
+    // OpenAI declares max_batch_tokens=300_000, chars_per_token=4, default
+    // safety_factor=0.8. Budget = 240K tokens per sub-batch. The gateway
+    // truncates each input to MAX_CHARS=8000 chars = 2000 tokens, so 150
+    // texts × 2000 = 300K tokens total — guaranteed >1 sub-batch.
+    const big = 'x'.repeat(8000);
+    const texts = Array.from({ length: 150 }, () => big);
+    const result = await embed(texts);
+
+    expect(stub.mock.calls.length).toBeGreaterThan(1);
+    expect(result).toHaveLength(150);
+
+    // Every sub-batch must stay under the 240K-token budget.
+    for (const [arg] of stub.mock.calls) {
+      const { values } = arg as { values: string[] };
+      const totalTokens = values.reduce(
+        (sum, t) => sum + Math.ceil(t.length / 4),
+        0,
+      );
+      expect(totalTokens).toBeLessThanOrEqual(240_000);
+    }
+
+    // Concatenated lengths must equal the input length (no dropped texts).
+    const totalReturned = stub.mock.calls.reduce(
+      (sum, [arg]) => sum + (arg as { values: string[] }).values.length,
+      0,
+    );
+    expect(totalReturned).toBe(150);
+  });
+
+  test('OpenAI is unaffected by Voyage shrink state', async () => {
     // Configure Voyage first and trigger a shrink…
     configureVoyage();
     const voyageStub = mock(async ({ values }: { values: string[] }) => {
@@ -270,6 +305,77 @@ describe('embed() OpenAI fast path (no max_batch_tokens)', () => {
     await embed(['x', 'y']);
     expect(openaiStub).toHaveBeenCalledTimes(1);
     expect(__getShrinkStateForTests('voyage')).toBeUndefined();
+  });
+});
+
+// --------- 5b. LiteLLM env-driven cap (closes #1080 for proxy users) ---------
+
+describe('embed() LiteLLM LITELLM_MAX_BATCH_TOKENS env override (closes #1080)', () => {
+  beforeEach(() => resetGateway());
+  afterEach(() => __setEmbedTransportForTests(null));
+
+  function configureLitellmWithEnv(env: Record<string, string | undefined>): void {
+    configureGateway({
+      embedding_model: 'litellm:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { LITELLM_BASE_URL: 'http://localhost:4000', ...env },
+    });
+  }
+
+  test('without env override, litellm preserves its no-cap fast-path behavior', async () => {
+    configureLitellmWithEnv({});
+
+    const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 1536));
+    __setEmbedTransportForTests(stub as any);
+
+    const big = 'y'.repeat(8000);
+    const texts = Array.from({ length: 30 }, () => big);
+    await embed(texts);
+
+    // 30 texts × 8000 chars = 240K chars = 60K tokens at chars_per_token=4.
+    // Without a cap there's a single transport call regardless of size.
+    expect(stub).toHaveBeenCalledTimes(1);
+  });
+
+  test('LITELLM_MAX_BATCH_TOKENS triggers pre-split at the declared cap', async () => {
+    // Set a small cap so we can force a split with a modest payload.
+    configureLitellmWithEnv({ LITELLM_MAX_BATCH_TOKENS: '40000' });
+
+    const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 1536));
+    __setEmbedTransportForTests(stub as any);
+
+    // 30 × 8000 chars at chars_per_token=4 default = 60K tokens total.
+    // Cap 40K × safety_factor 0.8 = 32K token budget per sub-batch. With
+    // each text ≈ 2000 tokens, ~16 fit per sub-batch; expect ≥2 batches.
+    const big = 'z'.repeat(8000);
+    const texts = Array.from({ length: 30 }, () => big);
+    await embed(texts);
+
+    expect(stub.mock.calls.length).toBeGreaterThan(1);
+    for (const [arg] of stub.mock.calls) {
+      const { values } = arg as { values: string[] };
+      const totalTokens = values.reduce(
+        (sum, t) => sum + Math.ceil(t.length / 4),
+        0,
+      );
+      expect(totalTokens).toBeLessThanOrEqual(32_000);
+    }
+  });
+
+  test('invalid LITELLM_MAX_BATCH_TOKENS values fall back to no-cap behavior', async () => {
+    for (const value of ['', 'not-a-number', '0', '-5']) {
+      resetGateway();
+      configureLitellmWithEnv({ LITELLM_MAX_BATCH_TOKENS: value });
+
+      const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 1536));
+      __setEmbedTransportForTests(stub as any);
+
+      const big = 'q'.repeat(8000);
+      await embed(Array.from({ length: 30 }, () => big));
+
+      expect(stub, `value=${JSON.stringify(value)} should fall back to no-cap`).toHaveBeenCalledTimes(1);
+      __setEmbedTransportForTests(null);
+    }
   });
 });
 
