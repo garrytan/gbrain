@@ -547,13 +547,27 @@ export function isAvailable(touchpoint: TouchpointKind): boolean {
         ? getRerankerModel() ?? null
         : null;
     if (!modelStr) return false;
-    const { recipe } = resolveRecipe(modelStr);
+    const { parsed, recipe } = resolveRecipe(modelStr);
 
     // Recipe must actually support the requested touchpoint.
     // Anthropic declares only expansion + chat (no embedding model); requesting
     // embedding from an anthropic-configured brain is unavailable regardless of auth.
-    const touchpointConfig = recipe.touchpoints[touchpoint as 'embedding' | 'expansion' | 'chat' | 'reranker'];
-    if (!touchpointConfig) return false;
+    let touchpointConfig = recipe.touchpoints[touchpoint as 'embedding' | 'expansion' | 'chat' | 'reranker'];
+    if (!touchpointConfig) {
+      if (
+        touchpoint === 'expansion' &&
+        recipe.touchpoints.chat &&
+        getExtendedModelsForProvider(parsed.providerId)?.has(parsed.modelId)
+      ) {
+        // Dedicated expansion touchpoints stay opt-in at the recipe layer.
+        // This branch is the advanced-user escape hatch: an explicitly
+        // configured expansion_model may reuse a chat-capable provider even
+        // when the recipe does not advertise expansion by default.
+        touchpointConfig = recipe.touchpoints.chat;
+      } else {
+        return false;
+      }
+    }
     // Openai-compat recipes with empty models list require a user-provided
     // model. Either the recipe explicitly opts in via
     // EmbeddingTouchpoint.user_provided_models (D8=A), or the legacy

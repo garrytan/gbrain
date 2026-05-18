@@ -29,6 +29,11 @@ interface ProviderOption {
   tier: 'native' | 'openai-compat';
   pros: string[];
   cons: string[];
+  mode?: 'native' | 'via-chat';
+}
+
+function supportsExpansionViaChat(r: Recipe): boolean {
+  return !r.touchpoints.expansion && !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
 }
 
 function configureFromEnv(): void {
@@ -94,6 +99,11 @@ EXAMPLES
   gbrain providers test --touchpoint chat --model deepseek:deepseek-chat
   gbrain providers env ollama
   gbrain providers explain --json
+
+NOTES
+  EXPAND=yes       Dedicated expansion touchpoint declared on the recipe
+  EXPAND=via-chat  No dedicated expansion touchpoint; can be reused when
+                   the user explicitly sets expansion_model to that provider:model
 `);
 }
 
@@ -105,6 +115,7 @@ function runList(_args: string[]): void {
   for (const r of recipes) {
     const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
     const hasExpand = !!r.touchpoints.expansion;
+    const hasExpandViaChat = supportsExpansionViaChat(r);
     const hasChat = !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
     const ready = envReady(r);
     const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
@@ -112,7 +123,7 @@ function runList(_args: string[]): void {
       r.id.padEnd(14) +
       r.tier.padEnd(18) +
       (hasEmbed ? 'yes' : '—').padEnd(8) +
-      (hasExpand ? 'yes' : '—').padEnd(8) +
+      (hasExpand ? 'yes' : hasExpandViaChat ? 'via-chat' : '—').padEnd(8) +
       (hasChat ? 'yes' : '—').padEnd(8) +
       status,
     );
@@ -276,6 +287,22 @@ async function runExplain(args: string[]): Promise<void> {
         tier: r.tier,
         pros: prosFor(r, 'expansion'),
         cons: consFor(r),
+        mode: 'native',
+      });
+    }
+    if (supportsExpansionViaChat(r)) {
+      const m = r.touchpoints.chat!;
+      options.push({
+        id: `${r.id}:${m.models[0]}`,
+        touchpoint: 'expansion',
+        model: m.models[0],
+        cost_per_1m_tokens_usd: m.cost_per_1m_input_usd,
+        price_last_verified: m.price_last_verified,
+        env_ready: envReady(r),
+        tier: r.tier,
+        pros: prosFor(r, 'expansion'),
+        cons: consFor(r),
+        mode: 'via-chat',
       });
     }
     if (r.touchpoints.chat && r.touchpoints.chat.models.length > 0) {
@@ -332,7 +359,8 @@ async function runExplain(args: string[]): Promise<void> {
   console.log('Expansion options:');
   for (const o of options.filter(x => x.touchpoint === 'expansion')) {
     const cost = o.cost_per_1m_tokens_usd !== undefined ? `$${o.cost_per_1m_tokens_usd}/1M` : '—';
-    console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${cost.padEnd(10)} ${o.tier}`);
+    const mode = o.mode === 'via-chat' ? 'via-chat' : o.tier;
+    console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${cost.padEnd(10)} ${mode}`);
   }
   console.log('');
   console.log('Chat options:');
