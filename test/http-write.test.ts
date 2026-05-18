@@ -182,7 +182,7 @@ describe('GET /write — URL length guard', () => {
 });
 
 describe('GET /write — put_page', () => {
-  test('positive: creates page with auto-frontmatter', async () => {
+  test('positive: creates page with auto-frontmatter (sync=1)', async () => {
     const { status, body } = await get(writeUrl({
       action: 'put_page',
       slug: 'test/auto-fm',
@@ -191,6 +191,7 @@ describe('GET /write — put_page', () => {
       type: 'concept',
       tags: 'source:ai,project:test',
       source: 'agent',
+      sync: '1',
     }));
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
@@ -198,12 +199,13 @@ describe('GET /write — put_page', () => {
     expect(body.slug).toBe('test/auto-fm');
   });
 
-  test('positive: passes through content with existing frontmatter', async () => {
+  test('positive: passes through content with existing frontmatter (sync=1)', async () => {
     const content = '---\ntitle: Pre-built\ntype: note\n---\n\nBody text';
     const { status, body } = await get(writeUrl({
       action: 'put_page',
       slug: 'test/pre-fm',
       content,
+      sync: '1',
     }));
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
@@ -412,8 +414,9 @@ describe('GET /schema — write_endpoints block', () => {
 
 // ── PUT /page — sync with content_hash ───────────────────────────────────────
 
-async function putPage(body: Record<string, unknown>, queryAsync = false): Promise<{ status: number; body: Record<string, unknown> }> {
-  const url = queryAsync ? `${BASE}/page?async=1` : `${BASE}/page`;
+// querySync=true forces a blocking write (?sync=1); default is async (202).
+async function putPage(body: Record<string, unknown>, querySync = false): Promise<{ status: number; body: Record<string, unknown> }> {
+  const url = querySync ? `${BASE}/page?sync=1` : `${BASE}/page`;
   const res = await fetch(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', 'X-Gbrain-OTP': VALID_OTP },
@@ -422,33 +425,33 @@ async function putPage(body: Record<string, unknown>, queryAsync = false): Promi
   return { status: res.status, body: await res.json() as Record<string, unknown> };
 }
 
-describe('PUT /page — sync', () => {
-  test('returns content_hash on successful write', async () => {
-    const { status, body } = await putPage({ slug: 'wiki/test-hash', content: '# Hello\n\nworld' });
+describe('PUT /page — sync=1', () => {
+  test('returns 200 with content_hash when sync=1', async () => {
+    const { status, body } = await putPage({ slug: 'wiki/test-hash', content: '# Hello\n\nworld' }, true);
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
     expect(typeof body.content_hash).toBe('string');
     expect((body.content_hash as string).length).toBe(64); // SHA-256 hex
   });
 
-  test('idempotency_key: second call with same key returns cached result', async () => {
+  test('idempotency_key: second sync call with same key returns cached result', async () => {
     const key = 'test-idempotency-key-abc123';
-    const first = await putPage({ slug: 'wiki/idem-test', content: '# First', idempotency_key: key });
+    const first = await putPage({ slug: 'wiki/idem-test', content: '# First', idempotency_key: key }, true);
     expect(first.status).toBe(200);
     expect(first.body.content_hash).toBeDefined();
 
-    const second = await putPage({ slug: 'wiki/idem-test', content: '# First', idempotency_key: key });
+    const second = await putPage({ slug: 'wiki/idem-test', content: '# First', idempotency_key: key }, true);
     expect(second.status).toBe(200);
     expect(second.body.idempotent).toBe(true);
     expect(second.body.content_hash).toBe(first.body.content_hash);
   });
 });
 
-// ── PUT /page?async=1 — non-blocking write ────────────────────────────────────
+// ── PUT /page — async (default) ───────────────────────────────────────────────
 
-describe('PUT /page — async=1', () => {
-  test('returns 202 with job_id immediately', async () => {
-    const { status, body } = await putPage({ slug: 'wiki/async-test', content: '# Async\n\ntest content' }, true);
+describe('PUT /page — async (default)', () => {
+  test('returns 202 with job_id immediately (no async param needed)', async () => {
+    const { status, body } = await putPage({ slug: 'wiki/async-test', content: '# Async\n\ntest content' });
     expect(status).toBe(202);
     expect(body.ok).toBe(true);
     expect(typeof body.job_id).toBe('string');
@@ -457,10 +460,19 @@ describe('PUT /page — async=1', () => {
     expect(body.slug).toBe('wiki/async-test');
   });
 
-  test('body async field also triggers async mode', async () => {
-    const { status, body } = await putPage({ slug: 'wiki/async-body', content: '# Body async', async: 1 });
+  test('page_committed reflects phase-1 DB write in 202 response', async () => {
+    const { status, body } = await putPage({ slug: 'wiki/async-committed', content: '# Committed check' });
     expect(status).toBe(202);
-    expect(body.job_id).toBeDefined();
+    // Mock engine is synchronous so phase-1 always succeeds
+    expect(body.page_committed).toBe(true);
+    expect(typeof body.content_hash).toBe('string');
+    expect((body.content_hash as string).length).toBe(64);
+  });
+
+  test('body sync:1 forces blocking write (200)', async () => {
+    const { status, body } = await putPage({ slug: 'wiki/async-body', content: '# Body sync', sync: 1 });
+    expect(status).toBe(200);
+    expect(body.content_hash).toBeDefined();
   });
 });
 
@@ -468,10 +480,12 @@ describe('PUT /page — async=1', () => {
 
 describe('GET /job — polling', () => {
   test('returns job state after async submit', async () => {
-    // Submit async write — 202 has no content_hash yet
-    const { body: putBody } = await putPage({ slug: 'wiki/poll-test', content: '# Poll me' }, true);
+    // Submit async write — 202 includes content_hash from phase-1 DB write
+    const { body: putBody } = await putPage({ slug: 'wiki/poll-test', content: '# Poll me' });
     const jobId = putBody.job_id as string;
-    expect(putBody.content_hash).toBeUndefined();
+    // phase_committed is true (mock engine is synchronous), so content_hash present in 202
+    expect(putBody.page_committed).toBe(true);
+    expect(typeof putBody.content_hash).toBe('string');
 
     // Poll until completed (mock engine is synchronous so it finishes fast)
     let jobBody: Record<string, unknown> = {};
@@ -505,11 +519,11 @@ describe('GET /job — polling', () => {
   });
 });
 
-// ── GET /write?action=put_page&async=1 ───────────────────────────────────────
+// ── GET /write?action=put_page — async default ───────────────────────────────
 
-describe('GET /write — put_page async=1', () => {
-  test('returns 202 with job_id', async () => {
-    const url = writeUrl({ action: 'put_page', slug: 'wiki/write-async', content: '# Via GET write', async: '1' });
+describe('GET /write — put_page async (default)', () => {
+  test('returns 202 with job_id without any async param', async () => {
+    const url = writeUrl({ action: 'put_page', slug: 'wiki/write-async', content: '# Via GET write' });
     const res = await fetch(url);
     expect(res.status).toBe(202);
     const body = await res.json() as Record<string, unknown>;
@@ -517,16 +531,27 @@ describe('GET /write — put_page async=1', () => {
     expect(typeof body.job_id).toBe('string');
     expect(body.action).toBe('put_page');
     expect(body.status).toBe('pending');
-    expect(body.content_hash).toBeUndefined();
+    // phase_committed true → content_hash present in 202
+    expect(body.page_committed).toBe(true);
+    expect(typeof body.content_hash).toBe('string');
+  });
+
+  test('sync=1 returns 200 synchronously', async () => {
+    const url = writeUrl({ action: 'put_page', slug: 'wiki/write-sync', content: '# Sync via GET write', sync: '1' });
+    const res = await fetch(url);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(typeof body.content_hash).toBe('string');
   });
 
   test('idempotency_key on GET /write prevents duplicate on retry', async () => {
     const key = 'write-idem-key-xyz';
-    const url1 = writeUrl({ action: 'put_page', slug: 'wiki/write-idem', content: '# Idem', idempotency_key: key });
+    const url1 = writeUrl({ action: 'put_page', slug: 'wiki/write-idem', content: '# Idem', idempotency_key: key, sync: '1' });
     const first = await get(url1);
     expect(first.status).toBe(200);
 
-    const url2 = writeUrl({ action: 'put_page', slug: 'wiki/write-idem', content: '# Idem', idempotency_key: key });
+    const url2 = writeUrl({ action: 'put_page', slug: 'wiki/write-idem', content: '# Idem', idempotency_key: key, sync: '1' });
     const second = await get(url2);
     expect(second.status).toBe(200);
     expect(second.body.idempotent).toBe(true);

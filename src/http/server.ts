@@ -9,8 +9,8 @@ import { createHash, createHmac, randomBytes } from 'crypto';
 import pkg from '../../package.json' with { type: 'json' };
 
 // ── In-process async job tracking ─────────────────────────────────────────────
-// Used by PUT /page?async=1 so callers with short socket timeouts can fire-and-
-// forget the embed and poll GET /job?id=... for completion. Jobs expire after
+// Async is the default for PUT /page and GET /write?action=put_page. Callers
+// get 202 immediately; embedding runs in background. Poll GET /job?id=... for completion. Jobs expire after
 // ASYNC_JOB_TTL_MS so the map stays bounded without a GC daemon.
 const ASYNC_JOB_TTL_MS = 5 * 60 * 1000; // 5 min — matches idempotency window
 
@@ -602,8 +602,10 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         const source = (body.source as string | undefined) ?? 'agent';
         const slug = (body.slug as string | undefined) || `mem/${new Date().toISOString().slice(0, 10)}/${randomBytes(3).toString('hex')}`;
         const idempotencyKey = (body.idempotency_key as string | undefined) ?? null;
-        const asyncMode = body.async === true || body.async === 1 || body.async === '1'
-          || url.searchParams.get('async') === '1';
+        // Async is the default; pass sync=1 (or body sync:1) to force a blocking write.
+        const syncRequested = body.sync === true || body.sync === 1 || body.sync === '1'
+          || url.searchParams.get('sync') === '1';
+        const asyncMode = !syncRequested;
 
         // Prepend frontmatter unless content already has it
         const hasfrontmatter = content.trimStart().startsWith('---');
@@ -656,11 +658,17 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           }
 
           // Phase 2 (background): embed the page so vector search works.
-          (async () => {
+          // Mirror put_page op's guard: skip embedding (and hash-bypass) if no API
+          // key is configured — avoids 5-retry exponential backoff on missing key.
+          const canEmbed = !!process.env.OPENAI_API_KEY;
+          ;(async () => {
             await acquireAsyncSlot();
             jobState.status = 'running';
             try {
-              const result = await importFromContent(engine, slug, fullContent, { forceReembed: true }) as { content_hash?: string } & object;
+              const result = await importFromContent(engine, slug, fullContent, {
+                forceReembed: canEmbed,
+                noEmbed: !canEmbed,
+              }) as { content_hash?: string } & object;
               const resolvedHash = (result as { content_hash?: string }).content_hash ?? jobState.content_hash;
               jobState.status = 'completed';
               jobState.content_hash = resolvedHash;
@@ -678,7 +686,14 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           })();
 
           return Response.json(
-            { ok: true, job_id: jobId, slug, status: 'pending' },
+            {
+              ok: true,
+              job_id: jobId,
+              slug,
+              status: 'pending',
+              page_committed: jobState.content_hash !== '',
+              content_hash: jobState.content_hash || undefined,
+            },
             { status: 202 },
           );
         }
@@ -796,11 +811,12 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             description: 'GET /write — unified write facade for GET-only LLM platforms (Claude crawler, ChatGPT browsing, Gemini url_context). All actions require OTP auth.',
             url_limit: '8000 characters; content > 50k chars → 413; use PUT /page for large content',
             async_write: {
-              description: 'Non-blocking write for callers with short socket timeouts (Genspark, ChatGPT browsing).',
-              how: 'Add &async=1 to GET /write?action=put_page or ?async=1 / body async=1 to PUT /page.',
-              response: '202 { ok, job_id, slug, content_hash, status:"pending" }',
-              poll: 'GET /job?id=<job_id> → { status: pending|running|completed|failed, result?, error? }. Jobs expire after 5 min.',
-              verify: 'After completed: GET /page?slug=<slug> and compare content_hash to confirm write landed.',
+              description: 'Async is now the DEFAULT. Both GET /write?action=put_page and PUT /page return 202 immediately unless you pass sync=1.',
+              default_behavior: '202 returned immediately; page is written to DB before 202 (keyword-searchable at once); embedding runs in background.',
+              sync_opt_out: 'Add &sync=1 (GET) or body sync:1 (PUT) to force a blocking write that waits for embedding. Useful for small test scripts; may timeout on slow networks.',
+              response: '202 { ok, job_id, slug, status:"pending", page_committed:bool, content_hash:string|undefined }. content_hash is present when phase-1 DB write succeeded before 202.',
+              poll: 'GET /job?id=<job_id> → { status: pending|running|completed|failed, content_hash, result?, error? }. Jobs expire after 5 min.',
+              verify: 'page_committed:true in the 202 means the page is already readable via GET /page — no need for a polling round-trip to confirm landing.',
             },
             idempotency: {
               description: 'Pass idempotency_key (URL param or JSON body field) to make retries safe within a 5-min window.',
@@ -813,7 +829,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             },
             actions: {
               put_page: {
-                params: 'slug (required), content (required, URL-encoded, ≤50k), title, type (default: concept), tags (comma-separated), source, ai_confidence, created (YYYY-MM-DD), async (0|1), idempotency_key',
+                params: 'slug (required), content (required, URL-encoded, ≤50k), title, type (default: concept), tags (comma-separated), source, ai_confidence, created (YYYY-MM-DD), sync (0|1, default 0 = async), idempotency_key',
                 note: 'If content already has YAML frontmatter (starts with ---), it is used as-is. Otherwise frontmatter is built from the other params.',
               },
               add_tag: { params: 'slug (required), tag (required)' },
@@ -890,7 +906,8 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           }
 
           const writeIdempotencyKey = url.searchParams.get('idempotency_key');
-          const writeAsync = url.searchParams.get('async') === '1';
+          // Async is the default; pass sync=1 to force a blocking write.
+          const writeAsync = url.searchParams.get('sync') !== '1';
 
           if (writeIdempotencyKey) {
             sweepIdempotency();
@@ -930,11 +947,17 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             }
 
             // Phase 2 (background): embed the page so vector search works.
-            (async () => {
+            // Mirror put_page op's guard: skip embedding (and hash-bypass) if no API
+            // key is configured — avoids 5-retry exponential backoff on missing key.
+            const canEmbedWrite = !!process.env.OPENAI_API_KEY;
+            ;(async () => {
               await acquireAsyncSlot();
               jobState.status = 'running';
               try {
-                const result = await importFromContent(engine, slug, fullContent, { forceReembed: true }) as { content_hash?: string } & object;
+                const result = await importFromContent(engine, slug, fullContent, {
+                  forceReembed: canEmbedWrite,
+                  noEmbed: !canEmbedWrite,
+                }) as { content_hash?: string } & object;
                 const resolvedHash = (result as { content_hash?: string }).content_hash ?? jobState.content_hash;
                 jobState.status = 'completed';
                 jobState.content_hash = resolvedHash;
@@ -951,7 +974,15 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
               }
             })();
             return Response.json(
-              { ok: true, action, job_id: jobId, slug, status: 'pending' },
+              {
+                ok: true,
+                action,
+                job_id: jobId,
+                slug,
+                status: 'pending',
+                page_committed: jobState.content_hash !== '',
+                content_hash: jobState.content_hash || undefined,
+              },
               { status: 202 },
             );
           }
@@ -1070,7 +1101,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   console.error('  GET  /page?slug=...&otp=<code>');
   console.error('  GET  /pages?domain=...&limit=20&otp=<code>');
   console.error('  PUT  /page        {content, slug?, tags?, source?, async?, idempotency_key?}');
-  console.error('  PUT  /page?async=1 → 202 {job_id, slug, content_hash, status:"pending"}  (non-blocking embed)');
+  console.error('  PUT  /page → 202 {job_id, slug, page_committed, content_hash, status:"pending"}  (async by default; add ?sync=1 to block)');
   console.error('  GET  /job?id=<job_id>   → poll async job status');
   console.error('  DELETE /page?slug=...&otp=<code>');
   console.error('  GET  /pages/recent?limit=50&otp=<code>');
