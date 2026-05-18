@@ -2,6 +2,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import store, llm
 from tools import load_tools
+from tools import todo as _todo_mod
 from pathlib import Path
 
 # Cache system prompt and tool registry — both are static for the process lifetime.
@@ -44,6 +45,7 @@ def run(task: str, max_steps: int = 50) -> str:
     tools = _get_tools()
     system = _get_system_prompt()
     run_id = store.create_run(task)
+    _todo_mod.set_run_id(run_id)
     messages = [{"role": "user", "content": task}]
     ms = lambda t: int((time.monotonic() - t) * 1000)
 
