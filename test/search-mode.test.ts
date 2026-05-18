@@ -56,6 +56,8 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
   });
 
   test('balanced bundle values are canonical', () => {
+    // v0.36.0.0 (D6): reranker_enabled flipped from false → true. The 60%
+    // top-1 reshuffle reaches the 80% of installs that stay on `balanced`.
     expect(MODE_BUNDLES.balanced).toEqual({
       cache_enabled: true,
       cache_similarity_threshold: 0.92,
@@ -64,7 +66,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       tokenBudget: 12000,
       expansion: false,
       searchLimit: 25,
-      reranker_enabled: false,
+      reranker_enabled: true,
       reranker_model: 'zeroentropyai:zerank-2',
       reranker_top_n_in: 30,
       reranker_top_n_out: null,
