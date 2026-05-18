@@ -124,6 +124,38 @@ describe('S25 — memory consolidation retention', () => {
         interaction_id: trace.id,
       });
 
+      const oldCandidateEvents = await handle.engine.listMemoryCandidateStatusEvents({
+        candidate_id: 'candidate-s25-old',
+        limit: 20,
+      });
+      expect(oldCandidateEvents
+        .sort((left, right) => left.created_at.getTime() - right.created_at.getTime()
+          || left.id.localeCompare(right.id))
+        .map((event) => event.event_kind)).toEqual([
+          'created',
+          'advanced',
+          'advanced',
+          'promoted',
+          'superseded',
+        ]);
+
+      const handoffs = await handle.engine.listCanonicalHandoffEntries({
+        candidate_id: 'candidate-s25-old',
+        limit: 10,
+      });
+      expect(handoffs).toContainEqual(expect.objectContaining({
+        candidate_id: 'candidate-s25-old',
+        interaction_id: trace.id,
+        target_object_id: 'systems/mbrain-retention',
+      }));
+
+      const supersessions = await handle.engine.listMemoryCandidateSupersessionEntriesByInteractionIds([trace.id]);
+      expect(supersessions).toContainEqual(expect.objectContaining({
+        superseded_candidate_id: 'candidate-s25-old',
+        replacement_candidate_id: 'candidate-s25-new',
+        interaction_id: trace.id,
+      }));
+
       const normal = await retrieveContext(handle.engine, {
         query: 'retention',
         requested_scope: 'work',

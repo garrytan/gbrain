@@ -39,6 +39,17 @@ interface CandidateStatusEventAudit {
   events: MemoryCandidateStatusEvent[];
 }
 
+interface CandidateSignalExposure {
+  candidateId: string;
+  traceId: string;
+  exposedAt: Date;
+}
+
+interface TerminalCandidateDisposition {
+  kind: 'promoted' | 'rejected' | 'superseded';
+  at: Date;
+}
+
 export async function auditBrainLoop(
   engine: BrainEngine,
   input: AuditBrainLoopInput = {},
@@ -333,10 +344,12 @@ async function computeCandidateLifecycleMetrics(
     reviewWindowDays: number;
   },
 ): Promise<AuditCandidateLifecycleMetrics> {
-  const candidateIds = collectCandidateSignalIds(traces);
-  if (candidateIds.length === 0) {
+  const exposures = collectCandidateSignalExposures(traces);
+  if (exposures.length === 0) {
     return emptyCandidateLifecycleMetrics();
   }
+  const candidateIds = [...new Set(exposures.map((exposure) => exposure.candidateId))]
+    .sort((a, b) => a.localeCompare(b));
 
   const candidates = new Map<string, MemoryCandidateEntry>();
   for (const candidateId of candidateIds) {
@@ -347,25 +360,39 @@ async function computeCandidateLifecycleMetrics(
   const statusEventsByCandidate = await listTerminalStatusEventsForCandidates(
     engine,
     [...candidates.keys()],
-    window.since,
+    null,
     window.until,
   );
-  const handoffsByCandidate = new Map<string, CanonicalHandoffEntry[]>();
-  const allHandoffs: CanonicalHandoffEntry[] = [];
+  const handoffsUntilByCandidate = new Map<string, CanonicalHandoffEntry[]>();
+  const allWindowHandoffs: CanonicalHandoffEntry[] = [];
   for (const candidateId of candidateIds) {
     if (!candidates.has(candidateId)) continue;
-    const handoffs = await listCanonicalHandoffEntriesForCandidateInWindow(
+    const handoffsUntil = await listCanonicalHandoffEntriesForCandidate(
       engine,
       candidateId,
-      window.since,
+      null,
       window.until,
     );
-    handoffsByCandidate.set(candidateId, handoffs);
-    allHandoffs.push(...handoffs);
+    const windowHandoffs = handoffsUntil.filter((handoff) => handoff.created_at >= window.since);
+    handoffsUntilByCandidate.set(candidateId, handoffsUntil);
+    allWindowHandoffs.push(...windowHandoffs);
   }
 
-  const disposedCandidateIds = new Set<string>();
   const dispositionDurations: number[] = [];
+  let disposedExposureCount = 0;
+  for (const exposure of exposures) {
+    if (!candidates.has(exposure.candidateId)) continue;
+    const terminalEventsAfterExposure = (statusEventsByCandidate.get(exposure.candidateId) ?? [])
+      .filter((event) => event.created_at >= exposure.exposedAt);
+    const handoffsAfterExposure = (handoffsUntilByCandidate.get(exposure.candidateId) ?? [])
+      .filter((handoff) => handoff.created_at >= exposure.exposedAt);
+    const dispositionAt = earliestDispositionDate(terminalEventsAfterExposure, handoffsAfterExposure);
+    if (!dispositionAt) continue;
+    disposedExposureCount += 1;
+    const duration = dispositionAt.getTime() - exposure.exposedAt.getTime();
+    if (duration >= 0) dispositionDurations.push(duration);
+  }
+
   const staleBefore = new Date(window.until.getTime() - window.reviewWindowDays * 24 * 60 * 60 * 1000);
   let staleUnresolvedSignalCount = 0;
   let promotedWithoutHandoffCount = 0;
@@ -380,22 +407,15 @@ async function computeCandidateLifecycleMetrics(
   for (const candidateId of candidateIds) {
     const candidate = candidates.get(candidateId);
     if (!candidate) continue;
-    const terminalEvents = (statusEventsByCandidate.get(candidateId) ?? []).filter(isTerminalDispositionEvent);
-    const handoffs = handoffsByCandidate.get(candidateId) ?? [];
-    const dispositionAt = earliestDispositionDate(terminalEvents, handoffs);
-    const disposed = dispositionAt != null;
-    if (disposed) {
-      disposedCandidateIds.add(candidateId);
-      const duration = dispositionAt.getTime() - candidate.created_at.getTime();
-      if (duration >= 0) dispositionDurations.push(duration);
-    }
-
-    const rejectedOrSuperseded = terminalEvents.some((event) =>
-      event.event_kind === 'rejected' || event.event_kind === 'superseded');
-    const unresolved = !disposed && !rejectedOrSuperseded;
+    const terminalDisposition = latestTerminalDispositionBeforeUntil(
+      candidate,
+      statusEventsByCandidate.get(candidateId) ?? [],
+      window.until,
+    );
+    const hasHandoffBeforeUntil = (handoffsUntilByCandidate.get(candidateId) ?? []).length > 0;
+    const unresolved = !terminalDisposition && !hasHandoffBeforeUntil;
     const missingProvenance = !candidate.source_refs.some((sourceRef) => sourceRef.trim().length > 0);
-    const promotedWithoutHandoff = terminalEvents.some((event) => event.event_kind === 'promoted')
-      && handoffs.length === 0;
+    const promotedWithoutHandoff = terminalDisposition?.kind === 'promoted' && !hasHandoffBeforeUntil;
 
     if (unresolved) {
       pressure.unresolved_exposed_candidate_count += 1;
@@ -416,14 +436,14 @@ async function computeCandidateLifecycleMetrics(
   pressure.review_priority_candidate_count = pressureCandidateIds.size;
 
   return {
-    candidate_signal_exposure_count: candidateIds.length,
-    signal_to_status_event_rate: roundedRatio(disposedCandidateIds.size, candidateIds.length),
+    candidate_signal_exposure_count: exposures.length,
+    signal_to_status_event_rate: roundedRatio(disposedExposureCount, exposures.length),
     median_time_to_disposition_ms: median(dispositionDurations),
     stale_unresolved_signal_count: staleUnresolvedSignalCount,
     promoted_without_handoff_count: promotedWithoutHandoffCount,
     handoff_without_canonical_update_count: await countHandoffsWithoutCanonicalUpdate(
       engine,
-      allHandoffs,
+      allWindowHandoffs,
       window.since,
       window.until,
     ),
@@ -431,22 +451,34 @@ async function computeCandidateLifecycleMetrics(
   };
 }
 
-function collectCandidateSignalIds(traces: RetrievalTrace[]): string[] {
-  const candidateIds = new Set<string>();
+function collectCandidateSignalExposures(traces: RetrievalTrace[]): CandidateSignalExposure[] {
+  const exposureKeys = new Set<string>();
+  const exposures: CandidateSignalExposure[] = [];
   for (const trace of traces) {
     for (const marker of trace.verification) {
       if (!marker.startsWith(CANDIDATE_SIGNAL_PREFIX)) continue;
       const candidateId = marker.slice(CANDIDATE_SIGNAL_PREFIX.length).trim();
-      if (candidateId.length > 0) candidateIds.add(candidateId);
+      if (candidateId.length === 0) continue;
+      const exposureKey = `${trace.id}\0${candidateId}`;
+      if (exposureKeys.has(exposureKey)) continue;
+      exposureKeys.add(exposureKey);
+      exposures.push({
+        candidateId,
+        traceId: trace.id,
+        exposedAt: trace.created_at,
+      });
     }
   }
-  return [...candidateIds].sort((a, b) => a.localeCompare(b));
+  return exposures.sort((a, b) =>
+    a.exposedAt.getTime() - b.exposedAt.getTime()
+    || a.traceId.localeCompare(b.traceId)
+    || a.candidateId.localeCompare(b.candidateId));
 }
 
-async function listCanonicalHandoffEntriesForCandidateInWindow(
+async function listCanonicalHandoffEntriesForCandidate(
   engine: BrainEngine,
   candidateId: string,
-  since: Date,
+  since: Date | null,
   until: Date,
 ): Promise<CanonicalHandoffEntry[]> {
   const handoffs: CanonicalHandoffEntry[] = [];
@@ -457,7 +489,7 @@ async function listCanonicalHandoffEntriesForCandidateInWindow(
       offset,
     });
     handoffs.push(...batch.filter((handoff) =>
-      handoff.created_at >= since && handoff.created_at < until));
+      (!since || handoff.created_at >= since) && handoff.created_at < until));
     if (batch.length < CANONICAL_HANDOFF_BATCH_SIZE) break;
   }
   return handoffs;
@@ -466,7 +498,7 @@ async function listCanonicalHandoffEntriesForCandidateInWindow(
 async function listTerminalStatusEventsForCandidates(
   engine: BrainEngine,
   candidateIds: string[],
-  since: Date,
+  since: Date | null,
   until: Date,
 ): Promise<Map<string, MemoryCandidateStatusEvent[]>> {
   const byCandidate = new Map<string, MemoryCandidateStatusEvent[]>();
@@ -477,7 +509,7 @@ async function listTerminalStatusEventsForCandidates(
         const batch = await engine.listMemoryCandidateStatusEvents({
           candidate_id: candidateId,
           event_kind: eventKind,
-          created_since: since,
+          ...(since ? { created_since: since } : {}),
           created_until: until,
           limit: STATUS_EVENT_BATCH_SIZE,
           offset,
@@ -493,6 +525,44 @@ async function listTerminalStatusEventsForCandidates(
     }
   }
   return byCandidate;
+}
+
+function latestTerminalDispositionBeforeUntil(
+  candidate: MemoryCandidateEntry,
+  terminalEvents: MemoryCandidateStatusEvent[],
+  until: Date,
+): TerminalCandidateDisposition | null {
+  const dispositions: TerminalCandidateDisposition[] = terminalEvents
+    .filter((event) => isTerminalDispositionEvent(event) && event.created_at < until)
+    .map((event) => ({
+      kind: event.event_kind as TerminalCandidateDisposition['kind'],
+      at: event.created_at,
+    }));
+  const rowDisposition = candidateRowTerminalDispositionBeforeUntil(candidate, until);
+  if (rowDisposition) dispositions.push(rowDisposition);
+  if (dispositions.length === 0) return null;
+  return dispositions.sort((a, b) =>
+    b.at.getTime() - a.at.getTime()
+    || b.kind.localeCompare(a.kind))[0];
+}
+
+function candidateRowTerminalDispositionBeforeUntil(
+  candidate: MemoryCandidateEntry,
+  until: Date,
+): TerminalCandidateDisposition | null {
+  if (!isTerminalCandidateStatus(candidate.status)) return null;
+  if (!candidate.reviewed_at || candidate.reviewed_at >= until) return null;
+  if (candidate.updated_at >= until) return null;
+  return {
+    kind: candidate.status,
+    at: candidate.reviewed_at,
+  };
+}
+
+function isTerminalCandidateStatus(
+  status: MemoryCandidateEntry['status'],
+): status is TerminalCandidateDisposition['kind'] {
+  return status === 'promoted' || status === 'rejected' || status === 'superseded';
 }
 
 function emptyCandidateLifecycleMetrics(): AuditCandidateLifecycleMetrics {
@@ -536,27 +606,30 @@ async function countHandoffsWithoutCanonicalUpdate(
   until: Date,
 ): Promise<number> {
   let count = 0;
-  const handoffScanStartByTargetId = new Map<string, Date>();
+  const handoffScanStartByTargetKey = new Map<string, Date>();
   for (const handoff of handoffs) {
     if (!isPageBackedCanonicalHandoff(handoff)) continue;
-    const scanStart = handoffScanStartByTargetId.get(handoff.target_object_id);
+    const targetKey = canonicalHandoffTargetKey(handoff);
+    const scanStart = handoffScanStartByTargetKey.get(targetKey);
     if (!scanStart || handoff.created_at < scanStart) {
-      handoffScanStartByTargetId.set(handoff.target_object_id, handoff.created_at);
+      handoffScanStartByTargetKey.set(targetKey, handoff.created_at);
     }
   }
 
-  const mutationsByTargetId = new Map<string, MemoryMutationEvent[]>();
+  const mutationsByTargetKey = new Map<string, MemoryMutationEvent[]>();
   for (const handoff of handoffs) {
     if (!isPageBackedCanonicalHandoff(handoff)) continue;
-    let mutations = mutationsByTargetId.get(handoff.target_object_id);
+    const targetKey = canonicalHandoffTargetKey(handoff);
+    let mutations = mutationsByTargetKey.get(targetKey);
     if (!mutations) {
       mutations = await listAppliedPageMutationsForTargetSince(
         engine,
+        handoff.scope_id,
         handoff.target_object_id,
-        maxDate(handoffScanStartByTargetId.get(handoff.target_object_id) ?? handoff.created_at, since),
+        maxDate(handoffScanStartByTargetKey.get(targetKey) ?? handoff.created_at, since),
         until,
       );
-      mutationsByTargetId.set(handoff.target_object_id, mutations);
+      mutationsByTargetKey.set(targetKey, mutations);
     }
     const linkedSourceRefs = canonicalUpdateLinkSourceRefs(handoff);
     const hasCanonicalUpdate = mutations.some((mutation) =>
@@ -566,6 +639,10 @@ async function countHandoffsWithoutCanonicalUpdate(
     if (!hasCanonicalUpdate) count += 1;
   }
   return count;
+}
+
+function canonicalHandoffTargetKey(handoff: CanonicalHandoffEntry): string {
+  return `${handoff.scope_id}\0${handoff.target_object_id}`;
 }
 
 function isPageBackedCanonicalHandoff(handoff: CanonicalHandoffEntry): boolean {
@@ -590,6 +667,7 @@ function maxDate(left: Date, right: Date): Date {
 
 async function listAppliedPageMutationsForTargetSince(
   engine: BrainEngine,
+  scopeId: string,
   targetId: string,
   createdSince: Date,
   createdUntil: Date,
@@ -600,6 +678,7 @@ async function listAppliedPageMutationsForTargetSince(
       operation: 'put_page',
       target_kind: 'page',
       target_id: targetId,
+      scope_id: scopeId,
       result: 'applied',
       created_since: createdSince,
       created_until: createdUntil,

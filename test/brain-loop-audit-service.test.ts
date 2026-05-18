@@ -53,6 +53,7 @@ async function createCandidate(
   id: string,
   options: {
     status?: 'captured' | 'candidate' | 'staged_for_review';
+    scopeId?: string;
     targetObjectType?: 'curated_note' | 'procedure' | 'profile_memory' | 'personal_episode';
     targetObjectId?: string;
     sourceRefs?: string[];
@@ -60,7 +61,7 @@ async function createCandidate(
 ) {
   return await engine.createMemoryCandidateEntry({
     id,
-    scope_id: 'workspace:default',
+    scope_id: options.scopeId ?? 'workspace:default',
     candidate_type: 'fact',
     proposed_content: `Candidate ${id}.`,
     source_refs: options.sourceRefs ?? ['User, direct message, 2026-04-24 10:00 AM KST'],
@@ -941,6 +942,158 @@ test('auditBrainLoop lifecycle metrics count unlinked terminal candidate events'
   }
 });
 
+test('auditBrainLoop counts repeated candidate signal exposures without duplicating pressure candidates', async () => {
+  const harness = await createSqliteEngine();
+  const since = new Date(Date.now() - 60 * 60 * 1000);
+  const targetObjectId = 'systems/mbrain-repeated-exposure';
+
+  try {
+    await createCandidate(harness.engine, 'candidate-audit-repeated-exposure', {
+      status: 'captured',
+      targetObjectId,
+    });
+    await harness.engine.putRetrievalTrace({
+      id: 'trace-audit-repeated-exposure-a',
+      task_id: null,
+      scope: 'work',
+      route: ['retrieve_context'],
+      source_refs: [`page:${targetObjectId}`],
+      verification: ['candidate_signal:candidate-audit-repeated-exposure'],
+      selected_intent: 'broad_synthesis',
+      outcome: 'first repeated exposure',
+    });
+    await waitForClockAfter(new Date());
+    await harness.engine.putRetrievalTrace({
+      id: 'trace-audit-repeated-exposure-b',
+      task_id: null,
+      scope: 'work',
+      route: ['retrieve_context'],
+      source_refs: [`page:${targetObjectId}`],
+      verification: [
+        'candidate_signal:candidate-audit-repeated-exposure',
+        'candidate_signal:candidate-audit-repeated-exposure',
+      ],
+      selected_intent: 'broad_synthesis',
+      outcome: 'second repeated exposure',
+    });
+
+    const report = await auditBrainLoop(harness.engine, {
+      since,
+      until: new Date(Date.now() + 60 * 60 * 1000),
+      candidate_review_window_days: 0,
+    });
+
+    expect(report.candidate_lifecycle.candidate_signal_exposure_count).toBe(2);
+    expect(report.candidate_lifecycle.signal_to_status_event_rate).toBe(0);
+    expect(report.candidate_lifecycle.stale_unresolved_signal_count).toBe(1);
+    expect(report.candidate_lifecycle.pressure.unresolved_exposed_candidate_count).toBe(1);
+    expect(report.candidate_lifecycle.pressure.review_priority_candidate_count).toBe(1);
+    expect(report.summary_lines).toContain('candidate_signal_exposures=2');
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('auditBrainLoop does not count dispositions that happened before candidate signal exposure', async () => {
+  const harness = await createSqliteEngine();
+  const targetObjectId = 'systems/mbrain-pre-exposure-disposition';
+
+  try {
+    const since = new Date(Date.now() - 60 * 60 * 1000);
+    await createCandidate(harness.engine, 'candidate-audit-pre-exposure-disposition', {
+      status: 'staged_for_review',
+      targetObjectId,
+    });
+    const disposition = await harness.engine.createMemoryCandidateStatusEvent({
+      id: 'status-event-audit-pre-exposure-disposition',
+      candidate_id: 'candidate-audit-pre-exposure-disposition',
+      scope_id: 'workspace:default',
+      from_status: 'staged_for_review',
+      to_status: 'rejected',
+      event_kind: 'rejected',
+      interaction_id: null,
+      reviewed_at: new Date(),
+      review_reason: 'Rejected before later retrieval exposure.',
+      created_at: new Date(),
+    });
+    await harness.engine.updateMemoryCandidateEntryStatus('candidate-audit-pre-exposure-disposition', {
+      status: 'rejected',
+      reviewed_at: disposition.created_at,
+      review_reason: 'Rejected before later retrieval exposure.',
+    });
+    await waitForClockAfter(disposition.created_at);
+    const trace = await harness.engine.putRetrievalTrace({
+      id: 'trace-audit-pre-exposure-disposition',
+      task_id: null,
+      scope: 'work',
+      route: ['retrieve_context'],
+      source_refs: [`page:${targetObjectId}`],
+      verification: ['candidate_signal:candidate-audit-pre-exposure-disposition'],
+      selected_intent: 'broad_synthesis',
+      outcome: 'retrieve_context exposed candidate after disposition',
+    });
+
+    const report = await auditBrainLoop(harness.engine, {
+      since,
+      until: new Date(trace.created_at.getTime() + 60 * 60 * 1000),
+      candidate_review_window_days: 0,
+    });
+
+    expect(report.candidate_lifecycle.candidate_signal_exposure_count).toBe(1);
+    expect(report.candidate_lifecycle.signal_to_status_event_rate).toBe(0);
+    expect(report.candidate_lifecycle.median_time_to_disposition_ms).toBeNull();
+    expect(report.candidate_lifecycle.stale_unresolved_signal_count).toBe(0);
+    expect(report.candidate_lifecycle.pressure.unresolved_exposed_candidate_count).toBe(0);
+    expect(report.candidate_lifecycle.pressure.review_priority_candidate_count).toBe(0);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('auditBrainLoop flags already-promoted candidates that still lack canonical handoff', async () => {
+  const harness = await createSqliteEngine();
+  const targetObjectId = 'systems/mbrain-promoted-without-handoff';
+
+  try {
+    await createCandidate(harness.engine, 'candidate-audit-promoted-without-handoff', {
+      status: 'staged_for_review',
+      targetObjectId,
+    });
+    const promotedAt = new Date();
+    await harness.engine.promoteMemoryCandidateEntry('candidate-audit-promoted-without-handoff', {
+      expected_current_status: 'staged_for_review',
+      reviewed_at: promotedAt,
+      review_reason: 'Promoted before later audit exposure.',
+    });
+    await waitForClockAfter(promotedAt);
+    const trace = await harness.engine.putRetrievalTrace({
+      id: 'trace-audit-promoted-without-handoff',
+      task_id: null,
+      scope: 'work',
+      route: ['retrieve_context'],
+      source_refs: [`page:${targetObjectId}`],
+      verification: ['candidate_signal:candidate-audit-promoted-without-handoff'],
+      selected_intent: 'broad_synthesis',
+      outcome: 'retrieve_context exposed promoted candidate without handoff',
+    });
+
+    const report = await auditBrainLoop(harness.engine, {
+      since: new Date(promotedAt.getTime() - 1000),
+      until: new Date(trace.created_at.getTime() + 60 * 60 * 1000),
+      candidate_review_window_days: 0,
+    });
+
+    expect(report.candidate_lifecycle.candidate_signal_exposure_count).toBe(1);
+    expect(report.candidate_lifecycle.signal_to_status_event_rate).toBe(0);
+    expect(report.candidate_lifecycle.promoted_without_handoff_count).toBe(1);
+    expect(report.candidate_lifecycle.pressure.stale_promoted_without_handoff_count).toBe(1);
+    expect(report.candidate_lifecycle.pressure.unresolved_exposed_candidate_count).toBe(0);
+    expect(report.candidate_lifecycle.pressure.review_priority_candidate_count).toBe(1);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test('auditBrainLoop finds canonical updates beyond the first mutation page', async () => {
   const harness = await createSqliteEngine();
   const traceId = 'trace-audit-handoff-paginated-mutation';
@@ -1085,6 +1238,71 @@ test('auditBrainLoop accepts preserved handoff source refs as canonical update l
 
     expect(report.candidate_lifecycle.candidate_signal_exposure_count).toBe(1);
     expect(report.candidate_lifecycle.handoff_without_canonical_update_count).toBe(0);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('auditBrainLoop does not let another scope canonical update satisfy a handoff', async () => {
+  const harness = await createSqliteEngine();
+  const traceId = 'trace-audit-cross-scope-handoff-update';
+  const since = new Date(Date.now() - 60 * 60 * 1000);
+  const until = new Date(Date.now() + 60 * 60 * 1000);
+  const targetObjectId = 'systems/mbrain-cross-scope-handoff-update';
+
+  try {
+    await harness.engine.putRetrievalTrace({
+      id: traceId,
+      task_id: null,
+      scope: 'work',
+      route: ['retrieve_context'],
+      source_refs: [`page:${targetObjectId}`],
+      verification: ['candidate_signal:candidate-audit-cross-scope-handoff'],
+      selected_intent: 'broad_synthesis',
+      outcome: 'retrieve_context exposed candidate with cross-scope update',
+    });
+    await createCandidate(harness.engine, 'candidate-audit-cross-scope-handoff', {
+      status: 'staged_for_review',
+      targetObjectId,
+    });
+    await harness.engine.promoteMemoryCandidateEntry('candidate-audit-cross-scope-handoff', {
+      expected_current_status: 'staged_for_review',
+      reviewed_at: new Date(),
+      review_reason: 'Cross-scope handoff promotion.',
+    });
+    const handoff = await harness.engine.createCanonicalHandoffEntry({
+      id: 'handoff-audit-cross-scope',
+      scope_id: 'workspace:default',
+      candidate_id: 'candidate-audit-cross-scope-handoff',
+      target_object_type: 'curated_note',
+      target_object_id: targetObjectId,
+      source_refs: ['memory_candidate:candidate-audit-cross-scope-handoff'],
+      reviewed_at: new Date(),
+      review_reason: 'Cross-scope handoff.',
+      interaction_id: traceId,
+    });
+    if (!handoff) throw new Error('Expected canonical handoff fixture to be created');
+    await harness.engine.createMemoryMutationEvent({
+      id: 'mutation-audit-cross-scope-wrong-scope',
+      session_id: 'audit-session',
+      realm_id: 'audit-realm',
+      actor: 'test',
+      operation: 'put_page',
+      target_kind: 'page',
+      target_id: targetObjectId,
+      scope_id: 'workspace:other',
+      source_refs: ['canonical_handoff:handoff-audit-cross-scope'],
+      result: 'applied',
+      dry_run: false,
+      redaction_visibility: 'visible',
+      created_at: new Date(handoff.created_at.getTime() + 1000),
+    });
+
+    const report = await auditBrainLoop(harness.engine, { since, until });
+
+    expect(report.candidate_lifecycle.candidate_signal_exposure_count).toBe(1);
+    expect(report.candidate_lifecycle.signal_to_status_event_rate).toBe(1);
+    expect(report.candidate_lifecycle.handoff_without_canonical_update_count).toBe(1);
   } finally {
     await harness.cleanup();
   }
@@ -1237,6 +1455,52 @@ test('auditBrainLoop ignores mutable candidate status after the audit window', a
   }
 });
 
+test('auditBrainLoop ignores backdated row status when the row changed after the audit window', async () => {
+  const harness = await createSqliteEngine();
+  const traceId = 'trace-audit-backdated-row-status';
+  const targetObjectId = 'systems/mbrain-backdated-row-status';
+
+  try {
+    const trace = await harness.engine.putRetrievalTrace({
+      id: traceId,
+      task_id: null,
+      scope: 'work',
+      route: ['retrieve_context'],
+      source_refs: [`page:${targetObjectId}`],
+      verification: ['candidate_signal:candidate-audit-backdated-row-status'],
+      selected_intent: 'broad_synthesis',
+      outcome: 'retrieve_context exposed candidate before backdated row status',
+    });
+    await createCandidate(harness.engine, 'candidate-audit-backdated-row-status', {
+      status: 'staged_for_review',
+      targetObjectId,
+    });
+    const oldUntil = await waitForClockAfter(trace.created_at);
+    await waitForClockAfter(oldUntil);
+    await harness.engine.promoteMemoryCandidateEntry('candidate-audit-backdated-row-status', {
+      expected_current_status: 'staged_for_review',
+      reviewed_at: trace.created_at,
+      review_reason: 'Backdated row promotion happened after the old audit window.',
+    });
+
+    const report = await auditBrainLoop(harness.engine, {
+      since: new Date(trace.created_at.getTime() - 1000),
+      until: oldUntil,
+      candidate_review_window_days: 0,
+    });
+
+    expect(report.candidate_lifecycle.candidate_signal_exposure_count).toBe(1);
+    expect(report.candidate_lifecycle.signal_to_status_event_rate).toBe(0);
+    expect(report.candidate_lifecycle.median_time_to_disposition_ms).toBeNull();
+    expect(report.candidate_lifecycle.promoted_without_handoff_count).toBe(0);
+    expect(report.candidate_lifecycle.stale_unresolved_signal_count).toBe(1);
+    expect(report.candidate_lifecycle.pressure.unresolved_exposed_candidate_count).toBe(1);
+    expect(report.candidate_lifecycle.pressure.review_priority_candidate_count).toBe(1);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test('auditBrainLoop does not let a pre-window canonical update satisfy a later audit window', async () => {
   const harness = await createSqliteEngine();
   const traceId = 'trace-audit-pre-window-update';
@@ -1304,7 +1568,7 @@ test('auditBrainLoop does not let a pre-window canonical update satisfy a later 
   }
 });
 
-test('auditBrainLoop excludes pre-window terminal events from current lifecycle disposition', async () => {
+test('auditBrainLoop keeps pre-exposure terminal events out of signal-to-status conversion', async () => {
   const harness = await createSqliteEngine();
   const traceId = 'trace-audit-pre-window-terminal-event';
   const targetObjectId = 'systems/mbrain-pre-window-terminal-event';
@@ -1352,8 +1616,8 @@ test('auditBrainLoop excludes pre-window terminal events from current lifecycle 
     expect(report.candidate_lifecycle.candidate_signal_exposure_count).toBe(1);
     expect(report.candidate_lifecycle.signal_to_status_event_rate).toBe(0);
     expect(report.candidate_lifecycle.median_time_to_disposition_ms).toBeNull();
-    expect(report.candidate_lifecycle.stale_unresolved_signal_count).toBe(1);
-    expect(report.candidate_lifecycle.pressure.unresolved_exposed_candidate_count).toBe(1);
+    expect(report.candidate_lifecycle.stale_unresolved_signal_count).toBe(0);
+    expect(report.candidate_lifecycle.pressure.unresolved_exposed_candidate_count).toBe(0);
   } finally {
     await harness.cleanup();
   }

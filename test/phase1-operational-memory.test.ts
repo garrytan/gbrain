@@ -162,6 +162,54 @@ describe('phase1 operational-memory benchmark', () => {
     }
   });
 
+  test('--baseline rejects stale workload manifests before comparing p95', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-phase1-stale-baseline-'));
+    const baselinePath = join(dir, 'baseline.json');
+
+    try {
+      writeFileSync(baselinePath, JSON.stringify({
+        generated_at: '2026-04-19T00:00:00.000Z',
+        engine: 'sqlite',
+        workloads: [
+          { name: 'task_resume', status: 'measured', unit: 'ms', p50_ms: 1.2, p95_ms: 1.5 },
+          { name: 'attempt_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
+          { name: 'decision_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
+          { name: 'resume_projection', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'repeated_work_suppression', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'decision_reuse', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'verification_warnings', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'trace_template_completeness', status: 'measured', unit: 'percent', success_rate: 100 },
+        ],
+      }, null, 2));
+
+      const proc = spawnSync([
+        'bun',
+        'run',
+        'scripts/bench/phase1-operational-memory.ts',
+        '--json',
+        '--baseline',
+        baselinePath,
+      ], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+
+      expect(proc.exitCode).toBe(0);
+      const payload = JSON.parse(new TextDecoder().decode(proc.stdout));
+      const primaryCheck = payload.acceptance.checks.find(
+        (check: any) => check.name === 'primary_improvement_threshold',
+      );
+
+      expect(payload.acceptance.readiness_status).toBe('fail');
+      expect(payload.acceptance.phase1_status).toBe('fail');
+      expect(primaryCheck.status).toBe('fail');
+      expect(primaryCheck.reason).toContain('Baseline workload manifest mismatch');
+      expect(primaryCheck.reason).toContain('missing=resume_compression_fidelity');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('--write-baseline persists the benchmark payload to disk', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-phase1-write-baseline-'));
     const baselinePath = join(dir, 'written-baseline.json');

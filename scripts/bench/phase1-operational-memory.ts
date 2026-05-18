@@ -495,6 +495,16 @@ function buildPrimaryImprovementCheck(
     };
   }
 
+  const manifestValidationReason = validateBaselineWorkloadManifest(baseline);
+  if (manifestValidationReason) {
+    return {
+      name: 'primary_improvement_threshold',
+      status: 'fail',
+      threshold,
+      reason: manifestValidationReason,
+    };
+  }
+
   const baselineTaskResume = baseline.workloads.find((workload) => workload.name === 'task_resume');
   if (!baselineTaskResume || baselineTaskResume.unit !== 'ms' || baselineTaskResume.p95_ms <= 0) {
     return {
@@ -517,6 +527,52 @@ function buildPrimaryImprovementCheck(
     threshold,
     reason: `Compared against baseline task_resume p95 ${baselineTaskResume.p95_ms}ms.`,
   };
+}
+
+function validateBaselineWorkloadManifest(baseline: Phase1BenchmarkPayload): string | null {
+  if (!Array.isArray(baseline.workloads)) {
+    return 'Baseline payload is missing a comparable workloads array.';
+  }
+
+  const expectedUnitsByName = new Map(PHASE1_WORKLOADS.map((workload) => [workload.name, workload.unit]));
+  const actualUnitsByName = new Map<string, string>();
+  const duplicateNames = new Set<string>();
+  for (const workload of baseline.workloads) {
+    if (actualUnitsByName.has(workload.name)) {
+      duplicateNames.add(workload.name);
+    }
+    actualUnitsByName.set(workload.name, workload.unit);
+  }
+
+  const missingNames = [...expectedUnitsByName.keys()]
+    .filter((name) => !actualUnitsByName.has(name))
+    .sort((a, b) => a.localeCompare(b));
+  const extraNames = [...actualUnitsByName.keys()]
+    .filter((name) => !expectedUnitsByName.has(name))
+    .sort((a, b) => a.localeCompare(b));
+  const unitMismatches = [...actualUnitsByName.entries()]
+    .filter(([name, unit]) => {
+      const expectedUnit = expectedUnitsByName.get(name);
+      return expectedUnit != null && expectedUnit !== unit;
+    })
+    .map(([name, unit]) => `${name}:${unit}->${expectedUnitsByName.get(name)}`)
+    .sort((a, b) => a.localeCompare(b));
+
+  if (missingNames.length === 0 && extraNames.length === 0 && duplicateNames.size === 0 && unitMismatches.length === 0) {
+    return null;
+  }
+
+  return [
+    'Baseline workload manifest mismatch:',
+    `missing=${formatManifestList(missingNames)}`,
+    `extra=${formatManifestList(extraNames)}`,
+    `duplicates=${formatManifestList([...duplicateNames].sort((a, b) => a.localeCompare(b)))}`,
+    `unit_mismatch=${formatManifestList(unitMismatches)}`,
+  ].join(' ');
+}
+
+function formatManifestList(values: string[]): string {
+  return values.length === 0 ? 'none' : values.join(',');
 }
 
 function buildAcceptanceSummary(
