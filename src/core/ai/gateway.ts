@@ -42,8 +42,20 @@ import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 
 const MAX_CHARS = 8000;
-const DEFAULT_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
-const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
+// v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
+// new default for embedding. Real-corpus benchmark across 20 queries:
+//   - ZE wins 11/20 (OpenAI 6, Voyage 4)
+//   - 442ms avg vs OpenAI 973ms (2.2x faster)
+//   - $0.05/M tokens vs OpenAI $0.13/M (2.6x cheaper at regular pricing)
+// ZE valid Matryoshka steps are {2560, 1280, 640, 320, 160, 80, 40}; 1280 is
+// the closest analog to current OpenAI 1536d (smaller -> smaller HNSW index
+// -> faster queries) while staying in the high-recall zone of the Matryoshka
+// curve. 1024 (Voyage's step) is NOT a valid ZE dim — see
+// src/core/ai/dims.ts:ZEROENTROPY_VALID_DIMS.
+// New installs without ZEROENTROPY_API_KEY size for 1280d anyway — the
+// AIConfigError surfaces at first embed with a paste-ready setup hint.
+const DEFAULT_EMBEDDING_MODEL = 'zeroentropyai:zembed-1';
+const DEFAULT_EMBEDDING_DIMENSIONS = 1280;
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker default. Used only when search.reranker.enabled is set

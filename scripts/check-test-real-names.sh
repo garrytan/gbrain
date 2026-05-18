@@ -59,6 +59,8 @@ ALLOWLIST=(
   "test/scripts/check-proposal-pii.test.ts:WINTERMUTE" # case-insensitive sentinel literal for the same privacy-guard test
   "test/serve-stdio-lifecycle.test.ts:Hermes"          # comment naming a downstream-agent scenario — pre-existing, low signal
   "test/extract.test.ts:Hermes"                        # markdown-link extraction test fixture — pre-existing, ambiguous (Greek god vs fork)
+  "test/readme-hero-anchors.test.ts:Hermes"            # v0.36.0.0 D9 anchor test — asserts README mentions Hermes as a credit
+  "test/readme-hero-anchors.test.ts:OpenClaw"          # v0.36.0.0 D9 anchor test — asserts README mentions OpenClaw as a credit
 )
 
 # Build the combined regex. Names matched as whole words (\b), emails matched

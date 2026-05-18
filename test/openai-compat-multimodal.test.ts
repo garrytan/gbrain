@@ -129,23 +129,23 @@ describe('embedMultimodal — openai-compat routing (#875)', () => {
     expect((caught as Error).message).toContain('gpt-4o-multimodal');
   });
 
-  test('D12 — default embedding_dimensions (1536) applies when not explicitly set', async () => {
-    // configureGateway normalizes embedding_dimensions to 1536 when unset
-    // (the DEFAULT_EMBEDDING_DIMENSIONS). LiteLLM recipe's default_dims=0
-    // so we fall back to the brain's configured value. This test pins the
-    // "always validate via the configured/default dim" contract — there
-    // is no skip-when-unset path in practice because configureGateway
-    // always populates it.
+  test('D12 — default embedding_dimensions (1280 as of v0.36.0.0) applies when not explicitly set', async () => {
+    // configureGateway normalizes embedding_dimensions to DEFAULT_EMBEDDING_DIMENSIONS
+    // when unset. v0.36.0.0 flipped the default from 1536 (OpenAI) to 1280
+    // (ZE Matryoshka step). LiteLLM recipe's default_dims=0 so we fall back
+    // to the brain's configured value. This test pins the "always validate
+    // via the configured/default dim" contract — there is no skip-when-unset
+    // path in practice because configureGateway always populates it.
     configureGateway({
       embedding_model: 'litellm:any-model',
-      // intentionally NO embedding_dimensions → falls back to 1536
+      // intentionally NO embedding_dimensions → falls back to 1280
       env: { LITELLM_BASE_URL: 'http://localhost:4000' },
       base_urls: { litellm: 'http://localhost:4000' },
     });
-    fetchHandler = async () => okResponse(1536, 1);
+    fetchHandler = async () => okResponse(1280, 1);
     const result = await embedMultimodal([{ kind: 'image_base64', data: 'x', mime: 'image/png' }]);
     expect(result.length).toBe(1);
-    expect(result[0].length).toBe(1536);
+    expect(result[0].length).toBe(1280);
   });
 
   test('provider returns 401 → AIConfigError with model id in message', async () => {

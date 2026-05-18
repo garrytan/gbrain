@@ -148,10 +148,15 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     tokenBudget: 12000,
     expansion: false,
     searchLimit: 25,
-    // Off in balanced too — operators opt in via
-    // `gbrain config set search.reranker.enabled true` until eval data
-    // backs a mode-bundle default change.
-    reranker_enabled: false,
+    // v0.36.0.0 (D6): reranker flipped ON for `balanced` mode bundle. The
+    // real-corpus benchmark shows zerank-2 reshuffles 60% of top-1 results
+    // — the headline ZE quality story reaches the 80% of installs that
+    // stay on `balanced`. Per-query rerank cost ~$0.025/M tokens, ~150ms
+    // p50 added latency. Missing ZEROENTROPY_API_KEY is handled via
+    // src/core/search/rerank.ts fail-open contract: log to audit JSONL,
+    // return input order unchanged. Opt out with
+    // `gbrain config set search.reranker.enabled false`.
+    reranker_enabled: true,
     reranker_model: 'zeroentropyai:zerank-2',
     reranker_top_n_in: 30,
     reranker_top_n_out: null,
