@@ -90,6 +90,21 @@ export const FIND_CONTRADICTIONS_DESCRIPTION =
   "Reads the cached run row — does NOT trigger a new probe; users run " +
   "`gbrain eval suspected-contradictions` for that.";
 
+export const FIND_TRAJECTORY_DESCRIPTION =
+  "v0.35.4 — return the chronological claim trajectory for an entity (typed " +
+  "metric values over time, plus auto-detected regressions and narrative drift). " +
+  "Use this when the user asks 'how has Acme's MRR trended', 'show me what " +
+  "alice-example said about runway over time', 'is this founder consistent', " +
+  "'find regressions for fund-a's portfolio', or wants a time-series view of an " +
+  "entity's structured claims. Returns " +
+  "`{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], " +
+  "regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct}], " +
+  "drift_score: number|null, schema_version: 1}`. Drift score 0 = stable narrative, " +
+  "1 = every consecutive claim is unrelated; null when fewer than 3 typed points " +
+  "exist. Visibility-filtered for remote callers (world-only); source-scoped by " +
+  "the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` " +
+  "for an aggregated rollup of the same data.";
+
 // ──────────────────────────────────────────────────────────────────────────────
 // v0.33.3 Cathedral III foundation — code-intelligence ops (MCP-exposed).
 // Pre-v0.33.3 the callers/callees/def/refs commands were CLI-only — agents

@@ -59,6 +59,14 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   <dataset.jsonl>` (v0.28.8) runs against an isolated in-memory PGLite
   per question — your `~/.gbrain` is never opened. Full guide:
   [`docs/eval-bench.md`](./docs/eval-bench.md).
+- **Track a founder/company over time (v0.35.7):** when an entity has
+  typed metric claims in its `## Facts` fence (`metric: mrr`, `value: 50000`,
+  `unit: USD`, `period: monthly` columns), run
+  `gbrain eval trajectory <entity-slug>` for the chronological history
+  with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
+  for a four-signal JSON rollup (claim_accuracy / consistency /
+  growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
+  same data — read scope, visibility-filtered for remote callers.
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
   single-fetch ingestion.
