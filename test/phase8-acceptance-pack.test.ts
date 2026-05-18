@@ -45,6 +45,7 @@ describe('phase8 acceptance-pack benchmark', () => {
           { name: 'decision_reuse', status: 'measured', unit: 'percent', success_rate: 100 },
           { name: 'verification_warnings', status: 'measured', unit: 'percent', success_rate: 100 },
           { name: 'trace_template_completeness', status: 'measured', unit: 'percent', success_rate: 100 },
+          { name: 'resume_compression_fidelity', status: 'measured', unit: 'percent', success_rate: 100 },
         ],
       }, null, 2));
 
