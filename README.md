@@ -6,7 +6,7 @@ Built by the President and CEO of Y Combinator to run his actual AI agents. The 
 
 The brain wires itself. Every page write extracts entity references and creates typed links (`attended`, `works_at`, `invested_in`, `founded`, `advises`) with zero LLM calls. Hybrid search. Self-wiring knowledge graph. Structured timeline. Backlink-boosted ranking. Ask "who works at Acme AI?" or "what did Bob invest in this quarter?" and get answers vector search alone can't reach. Benchmarked side-by-side: gbrain lands **P@5 49.1%, R@5 97.9%** on a 240-page Opus-generated rich-prose corpus, beating its graph-disabled variant by **+31.4 points P@5** and ripgrep-BM25 + vector-only RAG by a similar margin. Full BrainBench scorecards live in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo.
 
-**New default in v0.36.0.0: ZeroEntropy** for both embedding (`zembed-1` at 1280d via Matryoshka) and reranker (`zerank-2`). On a real-corpus benchmark vs OpenAI and Voyage: **2.2× faster** (442ms vs OpenAI 973ms), **2.6× cheaper at regular pricing** ($0.05/M vs OpenAI $0.13), wins 11 of 20 queries head-to-head, reshuffles 60% of top-1 results when used as a second-pass reranker. Bring your own key from [zeroentropy.dev](https://dashboard.zeroentropy.dev), or stay on OpenAI/Voyage via `gbrain config set embedding_model <provider:model>` — your choice is sticky.
+**New default in v0.36.2.0: ZeroEntropy** for both embedding (`zembed-1` at 1280d via Matryoshka) and reranker (`zerank-2`). On a real-corpus benchmark vs OpenAI and Voyage: **2.2× faster** (442ms vs OpenAI 973ms), **2.6× cheaper at regular pricing** ($0.05/M vs OpenAI $0.13), wins 11 of 20 queries head-to-head, reshuffles 60% of top-1 results when used as a second-pass reranker. Bring your own key from [zeroentropy.dev](https://dashboard.zeroentropy.dev), or stay on OpenAI/Voyage via `gbrain config set embedding_model <provider:model>` — your choice is sticky.
 
 GBrain is those patterns, generalized. Install in 30 minutes. Your agent does the work. As Garry's personal agent gets smarter, so does yours.
 
@@ -138,4 +138,4 @@ MIT. Built by Garry Tan to run his OpenClaw and Hermes deployments — the produ
 
 Origin story: [`docs/ethos/ORIGIN.md`](docs/ethos/ORIGIN.md).
 
-Community PR contributors are credited in `CHANGELOG.md` per release. ZeroEntropy ([@zeroentropy](https://zeroentropy.dev)) for the embedding + reranker stack that became the v0.36.0.0 default. Voyage AI for the asymmetric-encoding recipe template. Ramp Labs for the search quality improvements lineage.
+Community PR contributors are credited in `CHANGELOG.md` per release. ZeroEntropy ([@zeroentropy](https://zeroentropy.dev)) for the embedding + reranker stack that became the v0.36.2.0 default. Voyage AI for the asymmetric-encoding recipe template. Ramp Labs for the search quality improvements lineage.

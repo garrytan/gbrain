@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.36.0.0] - 2026-05-17
+## [0.36.2.0] - 2026-05-17
 
 **ZeroEntropy is the new default. Faster, cheaper, better quality on real queries. Existing users get a one-shot switch prompt with cost estimate; new installs land on it out of the box. README rewritten to match what gbrain actually is in 2026.**
 
@@ -26,7 +26,7 @@ The cross-provider overlap is the most interesting number: providers literally s
 
 **New installs ship faster, cheaper retrieval by default.** No config required: `gbrain init` lands on `zeroentropyai:zembed-1` at 1280d with reranker on. Get a key from [zeroentropy.dev](https://dashboard.zeroentropy.dev), set it via `gbrain config set zeroentropy_api_key sk-...`, done. If you'd rather stay on OpenAI/Voyage, `gbrain config set embedding_model <provider:model>` overrides the default — your choice sticks.
 
-**Existing brains see a one-shot upgrade prompt** the first time you run `gbrain upgrade` to v0.36.0.0. The prompt:
+**Existing brains see a one-shot upgrade prompt** the first time you run `gbrain upgrade` to v0.36.2.0. The prompt:
 - Shows the comparison numbers above
 - Splits the cost into schema-change time vs re-embed time (two-line cost UX so the long-running step is honest)
 - Defaults on Enter to STAY (safest); explicit `s` to switch, `l` to ask later, `n` to never ask
@@ -58,7 +58,7 @@ The prompt is TTY-only — non-TTY upgrades (CI, cron, docker) print an informat
 - `src/core/ai/dims.ts` — `AIConfigError` extended to OpenAI text-embedding-3-{small,large}. Fail-loud at the embed boundary when configured dim is outside the model's Matryoshka range, with a paste-ready `gbrain config set embedding_dimensions <N>` fix.
 - `src/commands/doctor.ts` — two new checks (`ze_embedding_health`, `embedding_width_consistency`).
 - Schema transition runs inside a single `engine.transaction()`: DROP indexes → ALTER COLUMN → CREATE INDEX. HNSW indexes are recreated atomically with the column change — no silent slow-search window where vector queries degrade to sequential scan.
-- **NEW** `skills/migrations/v0.36.0.0.md` — agent-facing migration skill. Tells the agent to surface the retrieval-upgrade prompt to the user post-upgrade.
+- **NEW** `skills/migrations/v0.36.2.0.md` — agent-facing migration skill. Tells the agent to surface the retrieval-upgrade prompt to the user post-upgrade.
 
 #### Track B — README rewrite
 
@@ -78,7 +78,7 @@ The prompt is TTY-only — non-TTY upgrades (CI, cron, docker) print an informat
 - **NEW** `test/ai/dims-openai.test.ts` (16 cases) — D13 OpenAI Matryoshka range validation. Paste-ready fix hint in `fix` field.
 - **NEW** `test/readme-hero-anchors.test.ts` (5 cases) — D9 regression guard. Five load-bearing strings: OpenClaw, Hermes, ZE, production-numbers regex, P@5/R@5.
 
-### To take advantage of v0.36.0.0
+### To take advantage of v0.36.2.0
 
 `gbrain upgrade` runs the consolidated retrieval-upgrade prompt automatically.
 
