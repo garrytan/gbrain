@@ -101,6 +101,25 @@ describe('doctor command', () => {
     expect(source).toMatch(/table:\s*'files'.*col:\s*'metadata'/);
   });
 
+  test('pgvector and jsonb_integrity checks use the active PGLite engine', async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const { pgvectorCheck, jsonbIntegrityCheck } = await import('../src/commands/doctor.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      const pgvector = await pgvectorCheck(engine);
+      expect(pgvector.name).toBe('pgvector');
+      expect(pgvector.status).toBe('ok');
+
+      const jsonb = await jsonbIntegrityCheck(engine);
+      expect(jsonb.name).toBe('jsonb_integrity');
+      expect(jsonb.status).toBe('ok');
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
   // v0.31.2 — facts_extraction_health check added in PR1 commit 12.
   // Reads ingest_log rows with source_type='facts:absorb' (written by
   // writeFactsAbsorbLog from src/core/facts/absorb-log.ts), groups by

@@ -146,6 +146,70 @@ export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> 
   }
 }
 
+/**
+ * Doctor check: pgvector availability.
+ *
+ * Use the active engine instead of the module-level Postgres singleton.
+ * PGLite exposes pg_extension through its engine connection, but does not
+ * connect db.ts's Postgres singleton; using db.getConnection() here turns a
+ * healthy PGLite brain into a false warning.
+ */
+export async function pgvectorCheck(engine: BrainEngine): Promise<Check> {
+  try {
+    const ext = await engine.executeRaw<{ extname: string }>(
+      `SELECT extname FROM pg_extension WHERE extname = 'vector'`,
+    );
+    if (ext.length > 0) {
+      return { name: 'pgvector', status: 'ok', message: 'Extension installed' };
+    }
+    return { name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' };
+  } catch {
+    return { name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' };
+  }
+}
+
+/**
+ * Doctor check: JSONB columns are not double-encoded as strings.
+ *
+ * This check is valid on both Postgres and PGLite. Route through
+ * engine.executeRaw() so embedded PGLite brains are checked through their
+ * actual connection instead of the unrelated Postgres singleton.
+ */
+export async function jsonbIntegrityCheck(
+  engine: BrainEngine,
+  progress?: Pick<ProgressReporter, 'heartbeat'>,
+): Promise<Check> {
+  try {
+    const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
+      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
+      { table: 'raw_data',      col: 'data',           expected: 'object' },
+      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
+      { table: 'files',         col: 'metadata',       expected: 'object' },
+      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
+    ];
+    let totalBad = 0;
+    const breakdown: string[] = [];
+    for (const { table, col } of targets) {
+      progress?.heartbeat(`jsonb_integrity.${table}.${col}`);
+      const rows = await engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
+      );
+      const n = Number(rows[0]?.n ?? 0);
+      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
+    }
+    if (totalBad === 0) {
+      return { name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' };
+    }
+    return {
+      name: 'jsonb_integrity',
+      status: 'warn',
+      message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
+    };
+  } catch {
+    return { name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' };
+  }
+}
+
 export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> {
   try {
     const rows = await engine.executeRaw<{ off_grid: string | number; total: string | number }>(
@@ -1314,17 +1378,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
 
   // 4. pgvector extension
   progress.heartbeat('pgvector');
-  try {
-    const sql = db.getConnection();
-    const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
-    if (ext.length > 0) {
-      checks.push({ name: 'pgvector', status: 'ok', message: 'Extension installed' });
-    } else {
-      checks.push({ name: 'pgvector', status: 'fail', message: 'Extension not found. Run: CREATE EXTENSION vector;' });
-    }
-  } catch {
-    checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
-  }
+  checks.push(await pgvectorCheck(engine));
 
   // 4b. PgBouncer / prepared-statement compatibility.
   // URL-only inspection — no DB roundtrip — so this is cheap and works
@@ -1772,37 +1826,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // surface matches `repair-jsonb` (the previous 4-target scan missed a
   // repair target, per #254/Codex review).
   progress.heartbeat('jsonb_integrity');
-  try {
-    const sql = db.getConnection();
-    const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
-      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
-      { table: 'raw_data',      col: 'data',           expected: 'object' },
-      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
-      { table: 'files',         col: 'metadata',       expected: 'object' },
-      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
-    ];
-    let totalBad = 0;
-    const breakdown: string[] = [];
-    for (const { table, col } of targets) {
-      progress.heartbeat(`jsonb_integrity.${table}.${col}`);
-      const rows = await sql.unsafe(
-        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
-      );
-      const n = Number((rows as any)[0]?.n ?? 0);
-      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
-    }
-    if (totalBad === 0) {
-      checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' });
-    } else {
-      checks.push({
-        name: 'jsonb_integrity',
-        status: 'warn',
-        message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
-      });
-    }
-  } catch {
-    checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
-  }
+  checks.push(await jsonbIntegrityCheck(engine, progress));
 
   // 10b. Takes weight grid integrity (v0.32 — EXP-2).
   //
