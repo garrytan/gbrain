@@ -533,3 +533,31 @@ describe('GET /write — put_page async=1', () => {
     expect(second.body.content_hash).toBe(first.body.content_hash);
   });
 });
+
+// ── IP rate limit — isolated server (port 14298) to avoid banning test localhost
+
+describe('Auth failure rate limit', () => {
+  const RATE_PORT = 14298;
+  const RATE_BASE = `http://localhost:${RATE_PORT}`;
+  const BAD_OTP = '0000000000';
+
+  beforeAll(() => {
+    startHttpServer(makeEngine(), { port: RATE_PORT });
+  });
+
+  test('returns 429 after 10 consecutive OTP failures from same IP', async () => {
+    for (let i = 0; i < 10; i++) {
+      await fetch(`${RATE_BASE}/write?action=add_tag&slug=x&tag=x&otp=${BAD_OTP}`);
+    }
+    const res = await fetch(`${RATE_BASE}/write?action=add_tag&slug=x&tag=x&otp=${BAD_OTP}`);
+    expect(res.status).toBe(429);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.ok).toBe(false);
+    expect(body.code).toBe('too_many_failures');
+  });
+
+  test('valid OTP from banned IP is also blocked until ban expires', async () => {
+    const res = await fetch(`${RATE_BASE}/write?action=add_tag&slug=x&tag=x&otp=${VALID_OTP}`);
+    expect(res.status).toBe(429);
+  });
+});
