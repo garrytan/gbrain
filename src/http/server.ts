@@ -76,6 +76,69 @@ function sweepIdempotency(): void {
   }
 }
 
+// ── Phase-2 embed retry helper ────────────────────────────────────────────────
+// Retries the thunk up to maxRetries times with exponential backoff.
+// Returns the result on success, throws on final failure.
+const EMBED_MAX_RETRIES = 3;
+const EMBED_RETRY_BASE_MS = 5000;
+
+async function withEmbedRetry<T>(
+  label: string,
+  thunk: () => Promise<T>,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= EMBED_MAX_RETRIES; attempt++) {
+    try {
+      return await thunk();
+    } catch (e) {
+      lastError = e;
+      if (attempt < EMBED_MAX_RETRIES) {
+        const delay = EMBED_RETRY_BASE_MS * Math.pow(2, attempt);
+        console.warn(`[gbrain] embed retry ${attempt + 1}/${EMBED_MAX_RETRIES} for ${label} in ${delay}ms: ${e instanceof Error ? e.message : String(e)}`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+// ── Write-through page cache ──────────────────────────────────────────────────
+// Caches GET /page results for pages written in this process. TTL = 5 min.
+// Bounded at 100 entries: evicts the oldest on overflow.
+const PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+const PAGE_CACHE_MAX = 100;
+const pageCache = new Map<string, { page: unknown; created: number }>();
+
+function pageCacheSet(slug: string, page: unknown): void {
+  if (pageCache.size >= PAGE_CACHE_MAX) {
+    pageCache.delete(pageCache.keys().next().value!);
+  }
+  pageCache.set(slug, { page, created: Date.now() });
+}
+
+function pageCacheGet(slug: string): unknown | undefined {
+  const entry = pageCache.get(slug);
+  if (!entry) return undefined;
+  if (Date.now() - entry.created > PAGE_CACHE_TTL_MS) {
+    pageCache.delete(slug);
+    return undefined;
+  }
+  return entry.page;
+}
+
+// ── Pending-embed tracker ─────────────────────────────────────────────────────
+// Slugs written via phase 1 (noEmbed) but not yet embedded by phase 2.
+// Used by ?include_pending=1 on /search to surface just-written pages before
+// their vectors land. Best-effort: cleared on phase 2 completion/failure or
+// after ASYNC_JOB_TTL_MS (same window as job tracking).
+const pendingEmbeds = new Set<string>();
+
+// ── Backpressure ──────────────────────────────────────────────────────────────
+// If the semaphore waiting queue exceeds ASYNC_QUEUE_MAX, new writes are
+// rejected with 503 + Retry-After header so clients back off rather than
+// pile up. Tune via ASYNC_QUEUE_MAX env var (default 50).
+const ASYNC_QUEUE_MAX = Math.max(1, parseInt(process.env.ASYNC_QUEUE_MAX ?? '50', 10));
+
 // ── Async concurrency semaphore ───────────────────────────────────────────────
 // Limits simultaneous background embedding calls so Railway → OpenAI doesn't
 // saturate. Tune via ASYNC_MAX_CONCURRENCY env var.
@@ -198,6 +261,26 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
     p.finally(() => clearTimeout(timer)),
     timeout,
   ]);
+}
+
+// Lex-search the pending-embed set and return results not already in mainResults.
+// Each result is tagged vec_pending:true so callers know embedding is in-flight.
+async function appendPendingResults(
+  engine: BrainEngine,
+  lexQuery: string,
+  mainResults: { slug: string }[],
+  limit: number,
+): Promise<(SearchResult & { vec_pending: true })[]> {
+  if (!lexQuery || pendingEmbeds.size === 0) return [];
+  try {
+    const mainSlugs = new Set(mainResults.map(r => r.slug));
+    const lexHits = await engine.searchKeyword(lexQuery, { limit: limit * 2 });
+    return lexHits
+      .filter(r => pendingEmbeds.has(r.slug) && !mainSlugs.has(r.slug))
+      .map(r => ({ ...r, vec_pending: true as const }));
+  } catch {
+    return [];
+  }
 }
 
 // Shared qmd-style search runner. Returns either the result envelope (and
@@ -423,6 +506,8 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         const lex  = url.searchParams.get('lex');
         const vec  = url.searchParams.get('vec');
         const hyde = url.searchParams.get('hyde');
+        const includePending = url.searchParams.get('include_pending') === '1'
+          || url.searchParams.get('include_pending') === 'true';
 
         if (lex || vec || hyde) {
           const outcome = await runQmdSearch(engine, { lex, vec, hyde, limit });
@@ -434,14 +519,31 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             });
           }
           const { ok: _omit, ...body } = outcome;
+
+          if (includePending && pendingEmbeds.size > 0) {
+            const lexQuery = lex || vec || hyde || '';
+            const pendingResults = await appendPendingResults(engine, lexQuery, body.results as { slug: string }[], limit);
+            if (pendingResults.length > 0) {
+              return ok({ ...body, results: [...(body.results as unknown[]), ...pendingResults], pending_count: pendingResults.length }, Date.now() - t0);
+            }
+          }
+
           return ok(body, Date.now() - t0);
         }
 
         // Simple mode: single ?q= via keyword search (fast, no embedding)
         const q = url.searchParams.get('q');
         if (!q) return err('missing_param', 'Provide ?q=... or at least one of ?lex=, ?vec=, ?hyde=');
-        const results = await searchOp.handler(ctx, { query: q, limit });
+        const results = await searchOp.handler(ctx, { query: q, limit }) as { slug: string }[];
         markQuerySuccess();
+
+        if (includePending && pendingEmbeds.size > 0) {
+          const pendingResults = await appendPendingResults(engine, q, results, limit);
+          if (pendingResults.length > 0) {
+            return ok({ query: q, results, pending: pendingResults, pending_count: pendingResults.length }, Date.now() - t0);
+          }
+        }
+
         return ok({ query: q, results }, Date.now() - t0);
       }
 
@@ -562,6 +664,9 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           return ok({ slug: page.slug ?? slug, chunk: lean, total_chunks: chunks.length }, Date.now() - t0);
         }
 
+        const cached = pageCacheGet(slug);
+        if (cached) return ok({ page: cached, from_cache: true }, Date.now() - t0);
+
         let page: unknown;
         try {
           page = await getPageOp.handler(ctx, { slug });
@@ -642,6 +747,12 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         }
 
         if (asyncMode) {
+          if (asyncPendingQueue.length >= ASYNC_QUEUE_MAX) {
+            return Response.json(
+              { ok: false, code: 'overloaded', error: 'Embedding queue is full. Retry after a few seconds.' },
+              { status: 503, headers: { 'Retry-After': '5' } },
+            );
+          }
           sweepJobs();
           const jobId = newJobId();
           const jobState: AsyncJobState = { status: 'pending', slug, content_hash: '', created: Date.now() };
@@ -653,6 +764,9 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           try {
             const phase1 = await importFromContent(engine, slug, fullContent, { noEmbed: true });
             jobState.content_hash = phase1.content_hash ?? '';
+            pendingEmbeds.add(slug);
+            // Prime write-through cache so GET /page hits memory, not DB.
+            void engine.getPage(slug).then(p => { if (p) pageCacheSet(slug, p); });
           } catch (e) {
             console.warn(`[gbrain] async phase1 write failed for ${slug}: ${e instanceof Error ? e.message : String(e)}`);
           }
@@ -665,10 +779,10 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             await acquireAsyncSlot();
             jobState.status = 'running';
             try {
-              const result = await importFromContent(engine, slug, fullContent, {
+              const result = await withEmbedRetry(slug, () => importFromContent(engine, slug, fullContent, {
                 forceReembed: canEmbed,
                 noEmbed: !canEmbed,
-              }) as { content_hash?: string } & object;
+              })) as { content_hash?: string } & object;
               const resolvedHash = (result as { content_hash?: string }).content_hash ?? jobState.content_hash;
               jobState.status = 'completed';
               jobState.content_hash = resolvedHash;
@@ -680,6 +794,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
               jobState.status = 'failed';
               jobState.error = e instanceof Error ? e.message : String(e);
             } finally {
+              pendingEmbeds.delete(slug);
               releaseAsyncSlot();
               if (idempotencyKey) asyncInFlight.delete(idempotencyKey);
             }
@@ -931,6 +1046,12 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           }
 
           if (writeAsync) {
+            if (asyncPendingQueue.length >= ASYNC_QUEUE_MAX) {
+              return Response.json(
+                { ok: false, code: 'overloaded', error: 'Embedding queue is full. Retry after a few seconds.' },
+                { status: 503, headers: { 'Retry-After': '5' } },
+              );
+            }
             sweepJobs();
             const jobId = newJobId();
             const jobState: AsyncJobState = { status: 'pending', slug, content_hash: '', created: Date.now() };
@@ -942,6 +1063,8 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             try {
               const phase1 = await importFromContent(engine, slug, fullContent, { noEmbed: true });
               jobState.content_hash = phase1.content_hash ?? '';
+              pendingEmbeds.add(slug);
+              void engine.getPage(slug).then(p => { if (p) pageCacheSet(slug, p); });
             } catch (e) {
               console.warn(`[gbrain] async phase1 write failed for ${slug}: ${e instanceof Error ? e.message : String(e)}`);
             }
@@ -954,10 +1077,10 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
               await acquireAsyncSlot();
               jobState.status = 'running';
               try {
-                const result = await importFromContent(engine, slug, fullContent, {
+                const result = await withEmbedRetry(slug, () => importFromContent(engine, slug, fullContent, {
                   forceReembed: canEmbedWrite,
                   noEmbed: !canEmbedWrite,
-                }) as { content_hash?: string } & object;
+                })) as { content_hash?: string } & object;
                 const resolvedHash = (result as { content_hash?: string }).content_hash ?? jobState.content_hash;
                 jobState.status = 'completed';
                 jobState.content_hash = resolvedHash;
@@ -969,6 +1092,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
                 jobState.status = 'failed';
                 jobState.error = e instanceof Error ? e.message : String(e);
               } finally {
+                pendingEmbeds.delete(slug);
                 releaseAsyncSlot();
                 if (writeIdempotencyKey) asyncInFlight.delete(writeIdempotencyKey);
               }
@@ -1107,7 +1231,35 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   console.error('  GET  /pages/recent?limit=50&otp=<code>');
   console.error('  GET  /write?action=<action>&otp=<code>&...  (put_page|add_tag|remove_tag|add_link|add_timeline_entry|delete_page)');
 
+  // Cron: re-embed pages whose chunks are missing embeddings (e.g. written with noEmbed=true)
+  // Runs every EMBED_CRON_INTERVAL_MS (default 60s). Limit: up to 20 pages per sweep.
+  const EMBED_CRON_INTERVAL_MS = Math.max(10_000, parseInt(process.env.EMBED_CRON_INTERVAL_MS ?? '60000', 10));
+  const EMBED_CRON_BATCH = Math.max(1, parseInt(process.env.EMBED_CRON_BATCH ?? '20', 10));
+  let embedCronRunning = false;
+  const embedCronTimer = setInterval(async () => {
+    if (embedCronRunning) return;
+    embedCronRunning = true;
+    try {
+      const slugs = await engine.getUnembeddedSlugs(EMBED_CRON_BATCH);
+      for (const slug of slugs) {
+        if (pendingEmbeds.has(slug)) continue; // already in-flight via async write path
+        try {
+          const page = await engine.getPage(slug);
+          if (!page) continue;
+          const content = [page.compiled_truth, page.timeline].filter(Boolean).join('\n\n');
+          await withEmbedRetry(slug, () => importFromContent(engine, slug, content, { forceReembed: true }));
+        } catch (e) {
+          console.error(`[gbrain] embed-cron failed for ${slug}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    } catch (e) {
+      console.error(`[gbrain] embed-cron sweep error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      embedCronRunning = false;
+    }
+  }, EMBED_CRON_INTERVAL_MS);
+
   // keep alive
-  process.on('SIGINT', () => { server.stop(); process.exit(0); });
-  process.on('SIGTERM', () => { server.stop(); process.exit(0); });
+  process.on('SIGINT', () => { clearInterval(embedCronTimer); server.stop(); process.exit(0); });
+  process.on('SIGTERM', () => { clearInterval(embedCronTimer); server.stop(); process.exit(0); });
 }

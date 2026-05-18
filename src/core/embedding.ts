@@ -104,4 +104,47 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// ── Coalescing queue ──────────────────────────────────────────────────────────
+// Groups concurrent embed() calls within EMBEDDING_BATCH_WINDOW_MS into one
+// OpenAI API call. Default 2 000 ms. Set EMBEDDING_BATCH_WINDOW_MS=0 to disable.
+// Flush also triggers early when the queue hits BATCH_SIZE (100) to keep
+// request sizes bounded.
+const BATCH_WINDOW_MS = parseInt(process.env.EMBEDDING_BATCH_WINDOW_MS ?? '2000', 10);
+
+type QueueItem = {
+  text: string;
+  resolve: (v: Float32Array) => void;
+  reject: (e: unknown) => void;
+};
+const coalesceQueue: QueueItem[] = [];
+let coalesceTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function flushCoalesceQueue(): Promise<void> {
+  coalesceTimer = null;
+  const items = coalesceQueue.splice(0);
+  if (items.length === 0) return;
+  try {
+    const embeddings = await embedBatch(items.map(i => i.text));
+    items.forEach((item, idx) => item.resolve(embeddings[idx]));
+  } catch (e) {
+    items.forEach(item => item.reject(e));
+  }
+}
+
+// Drop-in replacement for embed() that coalesces concurrent callers.
+// N concurrent page writes within the window → 1 OpenAI API call instead of N.
+export function embedQueued(text: string): Promise<Float32Array> {
+  if (BATCH_WINDOW_MS === 0) return embed(text);
+  return new Promise((resolve, reject) => {
+    coalesceQueue.push({ text: text.slice(0, MAX_CHARS), resolve, reject });
+    if (!coalesceTimer) {
+      coalesceTimer = setTimeout(() => { void flushCoalesceQueue(); }, BATCH_WINDOW_MS);
+    }
+    if (coalesceQueue.length >= BATCH_SIZE) {
+      clearTimeout(coalesceTimer);
+      void flushCoalesceQueue();
+    }
+  });
+}
+
 export { MODEL as EMBEDDING_MODEL, DIMENSIONS as EMBEDDING_DIMENSIONS };

@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
-import { embedBatch } from './embedding.ts';
+import { embedQueued } from './embedding.ts';
 import { slugifyPath } from './sync.ts';
 import type { ChunkInput, PageType } from './types.ts';
 
@@ -111,10 +111,11 @@ export async function importFromContent(
     }
   }
 
-  // Embed BEFORE the transaction (external API call)
+  // Embed BEFORE the transaction (external API call).
+  // embedQueued coalesces concurrent page writes into one OpenAI call per window.
   if (!opts.noEmbed && chunks.length > 0) {
     try {
-      const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
+      const embeddings = await Promise.all(chunks.map(c => embedQueued(c.chunk_text)));
       for (let i = 0; i < chunks.length; i++) {
         chunks[i].embedding = embeddings[i];
         chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);

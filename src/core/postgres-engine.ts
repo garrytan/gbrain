@@ -409,6 +409,17 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
+  async getUnembeddedSlugs(limit: number): Promise<string[]> {
+    const rows = await this.sql<{ slug: string }[]>`
+      SELECT DISTINCT p.slug
+      FROM content_chunks cc
+      JOIN pages p ON p.id = cc.page_id
+      WHERE cc.embedding IS NULL
+      LIMIT ${limit}
+    `;
+    return rows.map(r => r.slug);
+  }
+
   // Links
   async addLink(
     from: string,

@@ -343,6 +343,18 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
+  async getUnembeddedSlugs(limit: number): Promise<string[]> {
+    const result = await this.db.query<{ slug: string }>(
+      `SELECT DISTINCT p.slug
+       FROM content_chunks cc
+       JOIN pages p ON p.id = cc.page_id
+       WHERE cc.embedding IS NULL
+       LIMIT $1`,
+      [limit]
+    );
+    return result.rows.map(r => r.slug);
+  }
+
   // Links
   async addLink(
     from: string,

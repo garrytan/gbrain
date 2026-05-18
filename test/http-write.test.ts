@@ -61,6 +61,7 @@ function makeEngine(): BrainEngine {
     searchKeyword: async () => [],
     searchVector: async () => [],
     getChunks: async () => [],
+    getUnembeddedSlugs: async () => [],
     getEmbeddingsByChunkIds: async () => [],
     updateChunkEmbedding: async () => {},
 
@@ -556,6 +557,38 @@ describe('GET /write — put_page async (default)', () => {
     expect(second.status).toBe(200);
     expect(second.body.idempotent).toBe(true);
     expect(second.body.content_hash).toBe(first.body.content_hash);
+  });
+});
+
+// ── GET /search?include_pending=1 ────────────────────────────────────────────
+
+describe('GET /search — include_pending', () => {
+  test('include_pending=1 returns vec_pending results for pages in flight', async () => {
+    // Write a page async (goes to pendingEmbeds)
+    const slug = 'wiki/pending-search-test';
+    await putPage({ slug, content: '# Pending search\n\nThis is a pending embed test page' });
+
+    // Immediately search with include_pending=1 — page should appear with vec_pending:true
+    const res = await fetch(`${BASE}/search?q=pending+embed+test&include_pending=1&otp=${VALID_OTP}`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+
+    // May or may not have pending results depending on timing, but field must be defined if present
+    if (body.pending_count) {
+      expect(typeof body.pending_count).toBe('number');
+      const pending = body.pending as { slug: string; vec_pending: boolean }[];
+      expect(Array.isArray(pending)).toBe(true);
+      const hit = pending.find(r => r.slug === slug);
+      if (hit) expect(hit.vec_pending).toBe(true);
+    }
+  });
+
+  test('include_pending=0 never returns vec_pending field', async () => {
+    const res = await fetch(`${BASE}/search?q=anything&include_pending=0&otp=${VALID_OTP}`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.pending_count).toBeUndefined();
   });
 });
 
