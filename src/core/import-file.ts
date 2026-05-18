@@ -55,7 +55,7 @@ export async function importFromContent(
   engine: BrainEngine,
   slug: string,
   content: string,
-  opts: { noEmbed?: boolean } = {},
+  opts: { noEmbed?: boolean; forceReembed?: boolean } = {},
 ): Promise<ImportResult> {
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
@@ -94,7 +94,7 @@ export async function importFromContent(
   };
 
   const existing = await engine.getPage(slug);
-  if (existing?.content_hash === hash) {
+  if (!opts.forceReembed && existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0, content_hash: hash, parsedPage };
   }
 
