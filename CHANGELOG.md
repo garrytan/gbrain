@@ -2,6 +2,82 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.35.8.1] - 2026-05-18
+
+**When you kill a stuck `gbrain dream`, the next one starts right away instead of waiting half an hour for the lock to time out.**
+
+A dream cycle takes a lock so two of them don't trample each other. If a dream gets killed mid-run (you hit Ctrl-C hard, the OOM killer takes it out, a cron times out and your shell goes away), the lock survives. That's by design for the file lock and the filesystem lock, where another check kicks in and notices the original process is gone. But there's a third lock that lives as a row in the database, and that row had no liveness check. It just sat there with an expiration time up to 30 minutes in the future, and every new dream that started up would read that row, decide "someone else is running," and quietly do nothing. On a cron-driven setup, that means your "every 10 minutes" dream cycle no-ops for half an hour every time one of them dies.
+
+This release adds the same kind of liveness check the other two locks already had. Before a new dream takes the lock, it looks at the row that's already there, asks the operating system "is this process actually still alive on this machine?", and if the OS says "no, that PID is gone," the row gets evicted and the new dream takes the lock cleanly. If the row belongs to a different machine, or to a process that's alive but we can't signal (like PID 1), the row is left alone, and the existing 30-minute timeout is still the fallback.
+
+The shape of the bug is the same as the filesystem-lock issue tracked in [#1065](https://github.com/garrytan/gbrain/issues/1065) (SIGKILL leaves stuff behind that the next run can't clear). This patch closes the database-row variant of that gap; the filesystem-lock variant in `.gbrain-lock/lock` is separate work tracked in the same issue.
+
+### How to take advantage of it
+
+`gbrain upgrade` and you're done. No schema migration, no config change, no manual action. The `gbrain_cycle_locks` table shape is the same; only the path that acquires it got smarter.
+
+If you have a wedged dream right now from a pre-upgrade kill, the next `gbrain dream` after the upgrade will evict the stale row and run. To confirm a healthy state:
+
+```bash
+gbrain dream --dry-run --json
+```
+
+### What you'd see in a concrete example
+
+Two `gbrain dream` invocations on the same machine, 30 seconds apart, where the first one got SIGKILL'd:
+
+| When | Pre-v0.35.8.1 | v0.35.8.1+ |
+|---|---|---|
+| 12:00:00 | dream starts, takes lock, runs | dream starts, takes lock, runs |
+| 12:00:15 | OOM killer takes it out | OOM killer takes it out |
+| 12:00:30 | next dream sees "lock held by PID 1547207", bails | next dream asks the OS "is 1547207 alive?", OS says "no", row gets evicted, dream runs |
+| 12:30:00 | TTL expires, next dream finally runs | (already running for ~30 min) |
+
+Same story for cron-driven setups where the cron's timeout fires but the child `bun gbrain dream` orphans. Pre-fix, you'd find a 100%-CPU orphan AND a stale DB row, both holding your brain read-only. The orphan still needs `kill -9` (that's a separate hang issue tracked in [#1065](https://github.com/garrytan/gbrain/issues/1065)); the DB row is the part this release fixes.
+
+### Things to watch
+
+- This is a same-host check. If two machines share a Postgres brain and the holding machine is the remote one, we can't probe its process table from here, so the existing 30-minute timeout is still what evicts it. The new check only kicks in when the row says "I'm on this machine and my PID is X."
+- A same-host PID that exists but can't be signaled (PID 1 / init, or anything we don't own) is treated as alive on purpose. Sending signal 0 to it returns `EPERM` instead of `ESRCH`, and `EPERM` means "the process exists, we just don't have permission to poke it." That's still alive for liveness purposes; we don't want to evict it.
+- The eviction is best-effort. If the probe query itself fails for any reason (network blip, brief connection error), we fall through to the original timeout-bounded acquire instead of crashing the cycle.
+
+### What we caught and fixed before merging
+
+- The probe must NOT use the exact same path the file lock uses. The file lock helper is in a different module that `db-lock.ts` can't import without a circular dependency. Rather than untangle the import graph, the helper is duplicated, with a comment on each copy pointing at the sibling so a future change updates both.
+- The probe must skip rows whose PID matches the current process. Without that guard, a process that re-acquires its own lock (the common case during a normal cycle) would probe itself, succeed, and waste a query — harmless but pointless. The probe now early-returns when `holder_pid === process.pid`.
+- The eviction must use a `WHERE id = $1 AND holder_pid = $2` clause, not just `WHERE id = $1`. Without the PID guard, a slow probe + fast successor (Process A probes a stale row, Process B writes a fresh row in between, Process A then deletes Process B's row) would race. Pinning on `holder_pid` makes the delete a no-op if anyone else wrote in between.
+
+## To take advantage of v0.35.8.1
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a stuck cycle lock:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+   This release has no schema migration; the command is a no-op in that case but confirms the upgrade chain is healthy.
+2. **No agent-side migration steps are needed.** The fix is entirely in the acquire path; no host configuration or skill changes.
+3. **Verify the outcome:**
+   ```bash
+   gbrain dream --dry-run --json
+   gbrain doctor
+   ```
+   `dream --dry-run` should print a clean cycle report. `doctor` should not report "cycle lock held by a process that may no longer exist."
+4. **If a stale row is still wedging things,** the safest manual reset is:
+   ```bash
+   gbrain doctor --json | jq '.checks[] | select(.id=="cycle_lock")'
+   ```
+   to confirm the holder PID, then `kill -9 <pid>` if it's a real orphan; the next dream will evict cleanly.
+5. **If any step fails,** please file an issue: https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and the contents of `~/.gbrain/upgrade-errors.jsonl` if it exists. Relates to [#1065](https://github.com/garrytan/gbrain/issues/1065).
+
+### Itemized changes
+
+- `src/core/cycle.ts` adds a module-local `isStaleSameHostHolder(holderPid, holderHost)` helper colocated with `CYCLE_LOCK_ID` + `LOCK_TTL_MS`. Both engine branches of `acquirePostgresLock` (the postgres branch using the `sql` tagged template and the pglite branch using positional `db.query`) probe the existing row first and `DELETE` it when the holder is a dead same-host PID before the existing TTL-bounded UPSERT. Probe is wrapped in `try { ... } catch {}` so any transient failure falls through to the legacy acquire path (the original TTL contract is the safety net).
+- `src/core/db-lock.ts` mirrors the same helper for the generic `tryAcquireDbLock(engine, lockId, ttlMinutes)` path, which is what `gbrain-sync` and future named DB locks acquire. Both engine branches gain the same probe + `DELETE` + best-effort try/catch. Helper is duplicated rather than imported because `cycle.ts` and `db-lock.ts` would otherwise form an import cycle; both copies carry a JSDoc note pointing at the sibling.
+- `test/db-lock-stale-pid.test.ts` (new) is the 6-case regression suite. Covers: a dead same-host PID (999999) gets evicted on the next acquire; a row tagged with a different `holder_host` is left alone (we can't probe remote PIDs, the TTL is the only safe signal); a same-host alive-but-unsignalable PID (PID 1, init, returns EPERM not ESRCH on signal 0) is left alone; a TTL-expired cross-host row still gets evicted by the existing TTL-bounded UPSERT (the new path is additive, not replacing); the clean-INSERT path with no prior row is unaffected; and the current process's own PID is never evicted by the new path (re-acquire safety).
+- Probe semantics are intentionally narrow. Only `ESRCH` from `process.kill(holderPid, 0)` counts as "provably dead"; `EPERM`, `EINVAL`, or any other errno is treated as inconclusive, which means "leave it alone, TTL will handle it." Same-host only (`holderHost === os.hostname()`); cross-host rows are never touched by the PID probe because the local kernel can't see a remote process table.
+- No schema changes. `gbrain_cycle_locks` row shape is identical to v0.35.8.0. Brains do NOT need to re-run migrations or rebuild any index.
+
 ## [0.35.8.0] - 2026-05-17
 
 **Phantom unprefixed entity pages drain automatically on the next autopilot cycle. Your `alice.md` residue gets folded into `people/alice-example.md` with embeddings + strikethrough state preserved, no operator action needed.**
