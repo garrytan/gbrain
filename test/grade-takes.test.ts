@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T4) — grade_takes phase unit tests.
+ * v0.36.1.0 (T4) — grade_takes phase unit tests.
  *
  * Pure structural tests against a mock BrainEngine + injected judge +
  * injected evidence retriever. No real LLM gateway, no PGLite.

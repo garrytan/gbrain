@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T15 / D23) — server-rendered SVG renderer tests.
+ * v0.36.1.0 (T15 / D23) — server-rendered SVG renderer tests.
  *
  * Pure functions, hermetic. No DOM, no JSDOM. Asserts structural
  * properties of the emitted SVG markup.

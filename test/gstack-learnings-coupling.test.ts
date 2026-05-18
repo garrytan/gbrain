@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T11 / E4) — gstack-learnings coupling tests.
+ * v0.36.1.0 (T11 / E4) — gstack-learnings coupling tests.
  *
  * Hermetic. Pure-function tests + writer-injection tests. No real gstack
  * binary, no shell-out.

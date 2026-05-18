@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T11 / E4) — gstack-learnings coupling.
+ * v0.36.1.0 (T11 / E4) — gstack-learnings coupling.
  *
  * When the grade_takes phase auto-resolves a take as 'incorrect' (or
  * 'partial' — partial wrongs are weaker signal but still worth recording),
@@ -19,8 +19,8 @@
  *      and DO NOT throw — calibration data writes are independent of gstack.
  *
  * Namespace:
- *   Every entry's `key` starts with 'gbrain:calibration:v0.36.0.0:' so an
- *   `--undo-wave v0.36.0.0` can later prune these via
+ *   Every entry's `key` starts with 'gbrain:calibration:v0.36.1.0:' so an
+ *   `--undo-wave v0.36.1.0` can later prune these via
  *   `gstack-learnings-prune` (Lane D / T17).
  */
 
@@ -65,8 +65,8 @@ export interface GstackLearningEntry {
  */
 export type GstackWriter = (entry: GstackLearningEntry) => Promise<void> | void;
 
-/** v0.36.0.0 — namespace prefix. Lane D `--undo-wave` filters on this. */
-export const GSTACK_LEARNING_NAMESPACE = 'gbrain:calibration:v0.36.0.0:';
+/** v0.36.1.0 — namespace prefix. Lane D `--undo-wave` filters on this. */
+export const GSTACK_LEARNING_NAMESPACE = 'gbrain:calibration:v0.36.1.0:';
 
 /** Build the learning entry from a resolution event. Pure. */
 export function buildLearningEntry(event: IncorrectResolutionEvent): GstackLearningEntry {

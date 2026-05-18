@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'founder']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -1145,7 +1145,7 @@ async function handleCliOnly(command: string, args: string[]) {
         break;
       }
       case 'calibration': {
-        // v0.36.0.0 (T7): print/regenerate the active calibration profile.
+        // v0.36.1.0 (T7): print/regenerate the active calibration profile.
         // MCP op `get_calibration_profile` (read-scoped) backs the same data path.
         const { runCalibration } = await import('./commands/calibration.ts');
         const calibrationConfig = loadConfig() ?? ({} as never);
@@ -1171,6 +1171,15 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'takes': {
         const { runTakes } = await import('./commands/takes.ts');
         await runTakes(engine, args);
+        break;
+      }
+      case 'founder': {
+        // v0.35.4 (T7) — founder scorecard. `gbrain founder scorecard <slug>`
+        // rolls up Phase 2's typed-claim substrate into the four scorecard
+        // metrics (claim accuracy, consistency, growth trajectory, red flags).
+        // Thin-client routing handled inside the command file.
+        const { runFounder } = await import('./commands/founder-scorecard.ts');
+        await runFounder(engine, args);
         break;
       }
       case 'think': {

@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T6 / D24) — voice gate unit tests.
+ * v0.36.1.0 (T6 / D24) — voice gate unit tests.
  *
  * Hermetic. No real LLM, no PGLite. Inject the judge + generator + template
  * fallback per test.

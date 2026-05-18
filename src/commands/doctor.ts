@@ -421,7 +421,7 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // things when reranker is on vs off.
   checks.push(await checkRerankerHealth(engine));
 
-  // 10. v0.36.0.0 Hindsight calibration wave (T12) — four new checks:
+  // 10. v0.36.1.0 Hindsight calibration wave (T12) — four new checks:
   //   - abandoned_threads: high-conviction takes never revisited
   //   - calibration_freshness: profile is older than 7 days
   //   - grade_confidence_drift: judge self-reported confidence vs actual accuracy (CDX-11 mitigation)
@@ -434,7 +434,7 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   return computeDoctorReport(checks);
 }
 
-// --- v0.36.0.0 calibration doctor checks (T12) ---
+// --- v0.36.1.0 calibration doctor checks (T12) ---
 
 /**
  * abandoned_threads: surfaces active high-conviction takes (weight >= 0.7)
@@ -525,7 +525,7 @@ export async function checkCalibrationFreshness(engine: BrainEngine): Promise<Ch
  * confidence prediction, the judge is mis-calibrated and the operator
  * should retune the prompt or revisit the threshold.
  *
- * v0.36.0.0 ship state: returns 'ok' with a counter — actual drift math
+ * v0.36.1.0 ship state: returns 'ok' with a counter — actual drift math
  * requires a measurement window we haven't accumulated yet. The check
  * exists so the surface is wired; the math arrives once we have N >= 30
  * auto-applied verdicts to compare.
@@ -546,7 +546,7 @@ export async function checkGradeConfidenceDrift(engine: BrainEngine): Promise<Ch
     // v0.37+ TODO: compute confidence-vs-accuracy correlation; warn when
     // mean(applied verdicts' confidence) deviates from the actual accuracy
     // rate (cross-checked against later manual corrections via the
-    // contradictions probe). For v0.36.0.0 the check surfaces only the
+    // contradictions probe). For v0.36.1.0 the check surfaces only the
     // count and a "calibration math pending" status.
     return {
       name: 'grade_confidence_drift',

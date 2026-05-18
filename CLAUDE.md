@@ -84,6 +84,7 @@ strict behavior when unset.
 - `src/commands/eval-export.ts` (v0.25.0) — streams `eval_candidates` rows as NDJSON to stdout with `schema_version: 1` prefix on every line. EPIPE-safe, progress heartbeats on stderr, stable id-desc tiebreaker so `--since` windows never dupe/miss rows.
 - `src/commands/eval-prune.ts` (v0.25.0) — explicit retention cleanup. Requires `--older-than DUR`. `--dry-run` reports would-delete count.
 - `src/commands/eval-replay.ts` (v0.25.0) — contributor-facing replay tool. Reads NDJSON from `gbrain eval export`, re-runs each captured `query` / `search` op against the current brain, computes set-Jaccard@k between captured + current `retrieved_slugs`, top-1 stability rate, and latency Δ. Stable JSON shape (`schema_version: 1`) for CI gating; human mode prints a regression table. Pure Bun, zero new deps. The dev-loop half of BrainBench-Real that closes the gap between "data captured" and "data used to gate a PR." See `docs/eval-bench.md` for the workflow.
+- `src/commands/eval-trajectory.ts` + `src/commands/founder-scorecard.ts` + `src/core/trajectory.ts` (v0.35.7) — temporal trajectory + founder scorecard. The wave that turns the v0.35.3.1 date-aware contradiction probe into a useful temporal substrate. `gbrain eval trajectory <entity>` shows the chronological typed-claim history (mrr/arr/team_size/etc) with regressions auto-flagged inline; `gbrain founder scorecard <entity>` rolls up claim_accuracy / consistency / growth_trajectory / red_flags into one JSON. Pure-function math lives in `trajectory.ts`: `detectRegressions(points, threshold)` walks consecutive metric-value pairs per metric (10% drop default, env override `GBRAIN_TRAJECTORY_REGRESSION_THRESHOLD`); `computeDriftScore(points)` returns `1 - mean(cosine(emb[i], emb[i-1]))` over existing embeddings (null when <3 embedded points). Backed by `BrainEngine.findTrajectory(opts)` — both Postgres and PGLite, single SQL query, deterministic `ORDER BY valid_from ASC, id ASC` (R3). Source-scoped via the v0.34.1.0 `sourceId` scalar / `sourceIds` array dual pattern (D-CDX-6); visibility-filtered for remote callers (D-CDX-1) — `recall`-equivalent posture. MCP op `find_trajectory` (read scope, NOT localOnly) registered after `find_experts`. Migration v67 adds four optional typed-claim columns (`claim_metric`, `claim_value`, `claim_unit`, `claim_period`) + a partial index on `(entity_slug, claim_metric, valid_from) WHERE claim_metric IS NOT NULL`. Fence widens from 10 to 14 cells when any row has typed data; renderer stays at 10 cells when none do (no churn diff on existing fences). Metric labels normalize to lowercase snake_case via `normalizeMetricLabel` (15-entry seed map for common founder metrics). The `consolidate` cycle phase gains semantic upsert keyed on `(page_id, claim, since_date)` — fixes the pre-existing F4 duplicate-takes bug where re-running the full cycle after `extract_facts` cleared `consolidated_at` would silently append duplicate takes via `MAX(row_num)+1`. Also writes chronological `valid_until` on each cluster's older facts. The `extract_facts` cycle phase batch-embeds via `gateway.embed()` before insert AND threads `pages.effective_date` as the `pageEffectiveDate` fallback for `valid_from` (precedence chain: fence-row > pageEffectiveDate > now()). The contradiction probe MUST NOT write `valid_until` — R1+R8 grep guard at `test/eval-contradictions/no-valid-until-write.test.ts` pins this. Codex outside-voice round caught F1 (v66 collision → v67), F2 (Haiku lives in `facts/extract.ts` not `extract-facts.ts` cycle phase), F3 (cycle didn't embed before insert), F4 (idempotency bug), F5+F6 (missed `fence-write.ts` caller + no Page object there → pageEffectiveDate is OPTIONAL), F7 (privacy regression — visibility filter added), F8 (ParsedFact needed typed-field extension for markdown system-of-record), F9 (dual scalar+federated sourceId). Plan: `~/.claude/plans/system-instruction-you-are-working-curious-jellyfish.md`. Tests: 258 across 12 files.
 - `src/commands/eval-suspected-contradictions.ts` + `src/core/eval-contradictions/{judge,runner,types,date-filter,cost-tracker,cache,severity-classify,cross-source,trends,calibration,judge-errors,auto-supersession,fixture-redact}.ts` (v0.32.6) — `gbrain eval suspected-contradictions [run|trend|review]`. Probe samples top-K retrieval pairs per query (cross-slug + intra-page chunk-vs-take), date pre-filters (3-rule layered — same-paragraph-dual-date overrides separation rule), LLM judge (query-conditioned per Codex; UTF-8-safe truncation; C1 confidence-floor double-enforcement; resolution_kind output drives M7 paste-ready commands), persistent cache keyed on `(chunk_a_hash, chunk_b_hash, model_id, prompt_version, truncation_policy)` (Codex outside-voice fix — prompt edits cleanly invalidate prior verdicts), Wilson 95% CI calibration on the headline percentage with `small_sample_note` when n<30, judge_errors as first-class typed counters (parse_fail/refusal/timeout/http_5xx/unknown — Codex fix to bias from silent skip), M5 trend writes to `eval_contradictions_runs`, M6 source-tier breakdown reuses `DEFAULT_SOURCE_BOOSTS` prefix logic, deterministic sampling (combined_score DESC + lex tiebreaker — stable cache hit-rate across re-runs). Hermetic via `judgeFn` + `searchFn` DI in the runner; never touches the real gateway in tests. Engine surface: `BrainEngine.listActiveTakesForPages` (P1 batched), `writeContradictionsRun` + `loadContradictionsTrend` (M5), `getContradictionCacheEntry` + `putContradictionCacheEntry` + `sweepContradictionCache` (P2). Schema migrations v51 + v52. MCP op `find_contradictions` (read scope, NOT localOnly, NOT in subagent allowlist — user-initiated only). M1 doctor check surfaces high-severity findings with paste-ready resolution commands. M2 synthesize phase pre-fetches latest probe's top-5-by-severity findings and threads them into `buildSynthesisPrompt` as an informational block. 226 hermetic unit tests + 12 real-Postgres E2E. Plan: `~/.claude/plans/system-instruction-you-are-working-hashed-dewdrop.md`. Architecture doc: `docs/contradictions.md`.
 - `src/core/think/index.ts` (v0.35.5.0 — gateway adapter) — `runThink` no longer instantiates `new Anthropic()` directly. The internal `LLMClient` instance is now built by a small adapter that wraps `gateway.chat()` from `src/core/ai/gateway.ts`, the canonical AI seam v0.31.12 established for chat/embed/expansion. Closes #952: stdio MCP launches (Claude Desktop, Cursor) don't inherit shell env, so the Anthropic SDK's env-only key resolution lost the key any user had set via `gbrain config set anthropic_api_key`. The gateway reads from `~/.gbrain/config.json` AND from env, so both paths work. Test seam preserved: `opts.client?: ThinkLLMClient` injection still works for the 12+ existing tests (`test/think-pipeline.serial.test.ts`, `test/think-gateway-adapter.test.ts`, etc.); `opts.stubResponse` continues to short-circuit before any LLM call. When neither key nor client is available, the graceful "no LLM available" stub still fires with the same `NO_ANTHROPIC_API_KEY` warning. v0.36.x TODO: drop `ThinkLLMClient` indirection entirely, migrate tests to `__setChatTransportForTests` seam from `src/core/ai/gateway.ts`.
 - `src/core/operations.ts` extension (v0.35.5.0 orphans fix) — `findOrphanPages` (both engines) now filters `p.deleted_at IS NULL` on the candidate side AND adds `JOIN pages src ON src.id = l.from_page_id WHERE src.deleted_at IS NULL` to the EXISTS subquery on the link-source side. Pre-v0.35.5 the query filtered nothing on `deleted_at`, so soft-deleted pages (v0.26.5 soft-delete shipped without updating this query) appeared as orphans AND links from soft-deleted source pages still suppressed live pages from orphan results. Closes #1021. Pinned by `test/orphans.test.ts`'s soft-delete cases.
@@ -281,7 +282,7 @@ gbrain-evals consumes: `gbrain/engine`, `gbrain/types`, `gbrain/operations`,
 `gbrain/extract`. Removing any of these is a breaking change for the
 gbrain-evals consumer.
 
-## v0.36.0.0 Hindsight calibration wave (key files cluster)
+## v0.36.1.0 Hindsight calibration wave (key files cluster)
 
 The wave that taught gbrain to know how the user tends to be wrong + use
 that knowledge at every advice surface. Six-migration schema (v67-v72),
@@ -300,7 +301,7 @@ facing rules.
   proposes gradeable claims to `take_proposals` queue. Idempotency
   cache on `(source_id, page_slug, content_hash, prompt_version)`
   composite unique index. F2 fence-dedup: existing canonical takes
-  passed to extractor as context. v0.36.0.0 ships a stub prompt; tuned
+  passed to extractor as context. v0.36.1.0 ships a stub prompt; tuned
   prompt arrives via the T19 synthetic corpus build.
 - `src/core/cycle/grade-takes.ts` — walks unresolved takes older than
   6 months, retrieves evidence, asks judge model, caches verdict.
@@ -329,7 +330,7 @@ facing rules.
   `evaluateAndFireNudge(opts)` is the full pipeline: threshold check
   (conviction > 0.7, holder match, slug-derived domain hint matches
   active bias tag), cooldown probe (14d via take_nudge_log), fire +
-  log. STDERR-only output for v0.36.0.0; multi-channel deferred.
+  log. STDERR-only output for v0.36.1.0; multi-channel deferred.
 - `src/core/calibration/take-forecast.ts` — E5 Brier-trend at write
   time. Pure math over existing `TakesScorecard`; no LLM. Returns
   `predicted_brier`, `bucket_n`, `overall_brier`. Insufficient-data
@@ -339,7 +340,7 @@ facing rules.
   learnings coupling. `writeIncorrectResolution(opts)` shells out to
   `gstack-learnings-log` binary. Config gate
   (`cycle.grade_takes.write_gstack_learnings`, default false for
-  external users). Namespace prefix `gbrain:calibration:v0.36.0.0:` so
+  external users). Namespace prefix `gbrain:calibration:v0.36.1.0:` so
   `--undo-wave` can scrub.
 - `src/core/calibration/svg-renderer.ts` — D23 server-rendered SVG for
   the admin SPA Calibration tab. Pure functions: data → SVG string.
@@ -395,13 +396,13 @@ facing rules.
 - `admin/src/index.css` extension — `--text-muted: #555 → #777` (TD2,
   WCAG AA contrast bump from 4.0 to ~5.5 on the #0a0a0f bg).
 - `test/fixtures/calibration/extract-takes-corpus/` — synthetic prompt-
-  tuning corpus. v0.36.0.0 ships 5 representative pages; full 50-page
+  tuning corpus. v0.36.1.0 ships 5 representative pages; full 50-page
   + 10-page holdout generated by `gbrain calibration build-corpus`
   (v0.37+ subcommand). All anonymized per CLAUDE.md placeholder list.
 - `scripts/check-synthetic-corpus-privacy.sh` — CDX-14 mitigation. CI
   guard in `bun run verify`. Greps for explicit dollar amounts +
   verifies non-essay fixtures reference at least one placeholder name.
-- `test/regressions/v0.36.0.0-iron-rule.test.ts` — R1-R5 regression
+- `test/regressions/v0.36.1.0-iron-rule.test.ts` — R1-R5 regression
   inventory test file. Pins all 5 IRON-RULE regressions in one place
   for future bisects.
 - `DESIGN.md` — repo-root design system. Formalizes the de facto admin
@@ -1340,30 +1341,66 @@ know exactly what changed.
 
 ### Release-summary template
 
-Use this structure for the top of every `## [X.Y.Z]` entry:
+**Iron rule: lead ELI10, get precise after.** The first ~150 words of every entry
+must be readable by someone who does NOT know gbrain's internals. No file paths,
+no function names, no internal constants, no acronyms (no "RRF", no "knobsHash",
+no "MODE_BUNDLES", no "CDX-4"), no jargon that requires reading the codebase to
+parse. Lead with the user-visible behavior change, in everyday English, like
+you're explaining it to a smart engineer who has never opened the repo.
 
-1. **Two-line bold headline** (10-14 words total) ... should land like a verdict, not
-   marketing. Sound like someone who shipped today and cares whether it works.
-2. **Lead paragraph** (3-5 sentences) ... what shipped, what changed for the user.
-   Specific, concrete, no AI vocabulary, no em dashes, no hype.
-3. **A "The X numbers that matter" section** with:
-   - One short setup paragraph naming the source of the numbers (real production
-     deployment OR a reproducible benchmark ... name the file/command to run).
-   - A table of 3-6 key metrics with BEFORE / AFTER / Δ columns.
-   - A second optional table for per-category breakdown if relevant.
-   - 1-2 sentences interpreting the most striking number in concrete user terms.
-4. **A "What this means for [audience]" closing paragraph** (2-4 sentences) tying
-   the metrics to a real workflow shift. End with what to do.
+THEN, once the reader knows what shipped and why they'd care, drill into the
+precise details: real file paths, real function names, real config keys, real
+numbers. The precision part is required (the entry is also the technical record
+of what changed), but it lives AFTER the plain-English lead, never before it.
 
-Voice rules:
+The shape:
+
+1. **One-line bold headline.** What changed for the user, in human English. No
+   jargon. No internal terms. Example good: "Your search stops boosting weak
+   pages just because they have a lot of links pointing at them." Example bad:
+   "PostFusionOpts gains floorRatio; KNOBS_HASH_VERSION bumped 2→3."
+2. **Plain-English opener** (~3-5 sentences). Describe the problem this fixes in
+   everyday terms. Pretend the reader has a brain full of meeting notes and
+   people pages and wants to know if this release helps them. Concrete example
+   beats abstract description.
+3. **A "How to turn it on" or "How to use it" section** with paste-ready
+   commands. Real flags, real config keys. This is where precision starts.
+4. **A "What you'd see in a concrete example" or "The X numbers that matter"
+   section** with a table. Use everyday-language column headers ("Page",
+   "Match quality", "Has many backlinks?") even when the underlying mechanism
+   is technical. The table teaches what the feature does without requiring the
+   reader to understand how.
+5. **A "What's safe to know about" or "Things to watch" section** for caveats,
+   side effects, cache invalidation, mid-deploy notes. Still in plain language.
+6. **A "What we caught and fixed before merging" section** if the work went
+   through review (CEO/eng/codex/outside-voice). Translate review findings into
+   plain English. "We caught a stale-cache bug" beats "knobsHash() did not
+   include floorRatio in the v=2 hash input."
+7. **`### Itemized changes`** (precision lives here). File paths, function
+   names, types, constants, line numbers. This section is for engineers who
+   need to know exactly what moved.
+
+Voice rules (apply throughout):
 - No em dashes (use commas, periods, "...").
 - No AI vocabulary (delve, robust, comprehensive, nuanced, fundamental, etc.) or
   banned phrases ("here's the kicker", "the bottom line", etc.).
-- Real numbers, real file names, real commands. Not "fast" but "~30s on 30K pages."
+- Real numbers, real file names, real commands AFTER the ELI10 lead. Not "fast"
+  but "~30s on 30K pages." In the ELI10 lead, "fast enough that you won't
+  notice" or "~30 seconds even on a big brain."
 - Short paragraphs, mix one-sentence punches with 2-3 sentence runs.
 - Connect to user outcomes: "the agent does ~3x less reading" beats "improved
   precision."
 - Be direct about quality. "Well-designed" or "this is a mess." No dancing.
+
+**The smell test:** if someone who has never opened gbrain reads the first 150
+words and walks away knowing what shipped and whether they care, the entry
+passes. If they need to grep the codebase to follow along, rewrite the lead.
+
+**Canonical examples in this CHANGELOG:** v0.35.6.0 (floor-ratio gate, written
+ELI10-lead-first), v0.34.4.0 (embed stale fix wave). Use those shapes when in
+doubt. Avoid the shape of entries that lead with internal constants or release
+mechanics; those exist in older history but should not be the model for new
+work.
 
 Source material to pull from:
 - CHANGELOG.md previous entry for prior context

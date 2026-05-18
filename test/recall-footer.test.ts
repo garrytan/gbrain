@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T16) — recall morning pulse calibration footer tests.
+ * v0.36.1.0 (T16) — recall morning pulse calibration footer tests.
  *
  * Pure formatter tests. No engine, no LLM.
  *
@@ -22,7 +22,7 @@ function buildProfile(opts: Partial<CalibrationProfileRow> = {}): CalibrationPro
     id: 1,
     source_id: 'default',
     holder: 'garry',
-    wave_version: 'v0.36.0.0',
+    wave_version: 'v0.36.1.0',
     generated_at: '2026-05-17T00:00:00Z',
     published: false,
     total_resolved: 12,

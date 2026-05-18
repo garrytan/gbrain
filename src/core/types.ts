@@ -576,6 +576,34 @@ export interface SearchOpts {
     // Test seam — never set in production code.
     rerankerFn?: (input: { query: string; documents: string[]; topN?: number; model?: string; signal?: AbortSignal; timeoutMs?: number }) => Promise<{ index: number; relevanceScore: number }[]>;
   };
+  /**
+   * v0.35.6.0 — floor-ratio gate for metadata-axis boost stages (backlink,
+   * salience, recency). Number in [0, 1] or undefined (default = no gate).
+   *
+   * When set, each gated stage skips results whose pre-boost score is below
+   * `floorRatio * topScore`, where `topScore` is computed ONCE at
+   * `runPostFusionStages` entry from the post-cosine-rescore snapshot. The
+   * same threshold gates all three stages — order-independent semantic.
+   *
+   * Resolution chain (mirrors other search-lite knobs):
+   *   per-call `SearchOpts.floorRatio` → config `search.floor_ratio`
+   *   → MODE_BUNDLES[mode].floor_ratio (undefined for all 3 modes today)
+   *   → undefined fallback.
+   *
+   * SCOPE: gates ONLY the three metadata stages. Exact-match boost
+   * (`applyExactMatchBoost` in intent-weights.ts) runs independently as a
+   * lexical-relevance signal and is NOT gated by design.
+   *
+   * Sensible operator override values for dense-embedder corpora: 0.85-0.95.
+   * Default stays undefined pending per-corpus ablation evidence (see
+   * `TODOS.md` floor-ratio ablation entry).
+   *
+   * Out-of-range values (negative, > 1, NaN, Infinity) silently disable
+   * the gate at the runtime layer; the config-parse layer also rejects
+   * out-of-range values. Defense in depth — a malformed value never
+   * gates anything.
+   */
+  floorRatio?: number;
 }
 
 /**

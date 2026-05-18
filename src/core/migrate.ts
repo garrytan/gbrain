@@ -3212,8 +3212,39 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 67,
+    name: 'facts_typed_claim_columns',
+    // v0.35.4 — typed-claim columns for trajectory queries.
+    //
+    // Adds four optional columns to `facts` so metric assertions like
+    // "$50K MRR" can be stored as (claim_metric=mrr, claim_value=50000,
+    // claim_unit=USD, claim_period=monthly) and queried chronologically
+    // by `gbrain eval trajectory` + the `find_trajectory` MCP op.
+    //
+    // All columns nullable: existing fence rows persist identically.
+    // The partial index covers only metric-bearing rows and stays
+    // zero-byte until the v0.35.4 extraction path (`src/core/facts/extract.ts`)
+    // starts emitting typed fields, so this migration is metadata-only
+    // on both engines.
+    //
+    // See plan: ~/.claude/plans/system-instruction-you-are-working-curious-jellyfish.md
+    // Locked decisions D1 (inline extension), D-CDX-7 (v66→v67 renumber).
+    idempotent: true,
+    sql: `
+      ALTER TABLE facts
+        ADD COLUMN IF NOT EXISTS claim_metric  TEXT,
+        ADD COLUMN IF NOT EXISTS claim_value   DOUBLE PRECISION,
+        ADD COLUMN IF NOT EXISTS claim_unit    TEXT,
+        ADD COLUMN IF NOT EXISTS claim_period  TEXT;
+
+      CREATE INDEX IF NOT EXISTS facts_typed_claim_idx
+        ON facts (entity_slug, claim_metric, valid_from)
+        WHERE claim_metric IS NOT NULL;
+    `,
+  },
+  {
+    version: 68,
     name: 'calibration_profiles_v0_36',
-    // v0.36.0.0 — Hindsight calibration wave. Per-holder profile rows
+    // v0.36.1.0 — Hindsight calibration wave. Per-holder profile rows
     // aggregating TakesScorecard data into qualitative pattern statements.
     //
     // Schema design (from plan D17/D18):
@@ -3222,7 +3253,7 @@ export const MIGRATIONS: Migration[] = [
     //     boundary. FK to sources(id) with CASCADE so source deletion cleans
     //     up the per-source profile.
     //   - wave_version stamps every row so `gbrain calibration --undo-wave
-    //     v0.36.0.0` can reverse just this wave's writes.
+    //     v0.36.1.0` can reverse just this wave's writes.
     //   - published BOOL gates E8 team-brain mount sharing (D15 asymmetric
     //     opt-in). Default false: nothing leaks until owner explicitly publishes.
     //   - grade_completion REAL [0..1]: fraction of unresolved takes the
@@ -3245,7 +3276,7 @@ export const MIGRATIONS: Migration[] = [
         id                      BIGSERIAL PRIMARY KEY,
         source_id               TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
         holder                  TEXT         NOT NULL,
-        wave_version            TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+        wave_version            TEXT         NOT NULL DEFAULT 'v0.36.1.0',
         generated_at            TIMESTAMPTZ  NOT NULL DEFAULT now(),
         published               BOOLEAN      NOT NULL DEFAULT false,
         total_resolved          INTEGER      NOT NULL,
@@ -3272,9 +3303,9 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 68,
+    version: 69,
     name: 'take_proposals_v0_36',
-    // v0.36.0.0 — propose_takes phase queue.
+    // v0.36.1.0 — propose_takes phase queue.
     //
     // Schema design:
     //   - (source_id, page_slug, content_hash, prompt_version) is the
@@ -3299,7 +3330,7 @@ export const MIGRATIONS: Migration[] = [
         page_slug                   TEXT         NOT NULL,
         content_hash                TEXT         NOT NULL,
         prompt_version              TEXT         NOT NULL,
-        wave_version                TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+        wave_version                TEXT         NOT NULL DEFAULT 'v0.36.1.0',
         proposed_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
         proposal_run_id             TEXT         NOT NULL,
         status                      TEXT         NOT NULL DEFAULT 'pending'
@@ -3327,9 +3358,9 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 69,
+    version: 70,
     name: 'take_grade_cache_v0_36',
-    // v0.36.0.0 — grade_takes verdict cache.
+    // v0.36.1.0 — grade_takes verdict cache.
     //
     // Mirrors eval_contradictions_cache (v52) pattern:
     //   - Composite primary key (take_id, prompt_version, judge_model_id,
@@ -3351,7 +3382,7 @@ export const MIGRATIONS: Migration[] = [
         prompt_version     TEXT         NOT NULL,
         judge_model_id     TEXT         NOT NULL,
         evidence_signature TEXT         NOT NULL,
-        wave_version       TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+        wave_version       TEXT         NOT NULL DEFAULT 'v0.36.1.0',
         graded_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
         verdict            TEXT         NOT NULL
                                         CHECK (verdict IN ('correct','incorrect','partial','unresolvable')),
@@ -3367,9 +3398,9 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 70,
+    version: 71,
     name: 'take_nudge_log_v0_36',
-    // v0.36.0.0 — E7 nudge log + cooldown state (D16/F3 + CDX-5).
+    // v0.36.1.0 — E7 nudge log + cooldown state (D16/F3 + CDX-5).
     //
     // Polymorphic reference (CDX-5 fix): a nudge can fire on a
     // canonical take (take_id set) OR on a pending proposal (proposal_id
@@ -3381,7 +3412,7 @@ export const MIGRATIONS: Migration[] = [
     // Same shape works for proposal_id via the index below.
     //
     // channel column lets future routing (webhook/admin-spa-toast) reuse
-    // the same cooldown semantics. v0.36.0.0 ships with channel='stderr'
+    // the same cooldown semantics. v0.36.1.0 ships with channel='stderr'
     // only (multi-channel routing deferred to v0.37+).
     idempotent: true,
     sql: `
@@ -3393,7 +3424,7 @@ export const MIGRATIONS: Migration[] = [
         nudge_pattern   TEXT         NOT NULL,
         fired_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
         channel         TEXT         NOT NULL DEFAULT 'stderr',
-        wave_version    TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+        wave_version    TEXT         NOT NULL DEFAULT 'v0.36.1.0',
         CONSTRAINT take_nudge_log_target_xor
           CHECK ((take_id IS NOT NULL) <> (proposal_id IS NOT NULL))
       );
@@ -3408,9 +3439,9 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 71,
+    version: 72,
     name: 'takes_resolved_at_trend_idx_v0_36',
-    // v0.36.0.0 — F10 perf finding. Brier-trend aggregation queries
+    // v0.36.1.0 — F10 perf finding. Brier-trend aggregation queries
     // (90-day windowed scorecard) hit takes WHERE resolved_at IS NOT NULL.
     // Without this partial index, large takes tables do full scans even
     // when the resolved subset is small.
@@ -3453,9 +3484,9 @@ export const MIGRATIONS: Migration[] = [
     transaction: false,
   },
   {
-    version: 72,
+    version: 73,
     name: 'think_ab_results_v0_36',
-    // v0.36.0.0 (T18 / D19) — A/B harness data for `gbrain think --ab`.
+    // v0.36.1.0 (T18 / D19) — A/B harness data for `gbrain think --ab`.
     //
     // Each row records one side-by-side comparison of think with vs.
     // without --with-calibration. After 30 days of data, `gbrain
@@ -3469,7 +3500,7 @@ export const MIGRATIONS: Migration[] = [
       CREATE TABLE IF NOT EXISTS think_ab_results (
         id              BIGSERIAL PRIMARY KEY,
         source_id       TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-        wave_version    TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+        wave_version    TEXT         NOT NULL DEFAULT 'v0.36.1.0',
         ran_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
         question        TEXT         NOT NULL,
         baseline_answer TEXT         NOT NULL,

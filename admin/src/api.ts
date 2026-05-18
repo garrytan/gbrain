@@ -22,7 +22,7 @@ async function apiFetch(path: string, options?: RequestInit) {
   return res.json();
 }
 
-// v0.36.0.0 (T15 / E6) — SVG fetch (text/plain payload, NOT JSON).
+// v0.36.1.0 (T15 / E6) — SVG fetch (text/plain payload, NOT JSON).
 async function apiFetchText(path: string) {
   const res = await fetch(`${BASE}${path}`, { credentials: 'same-origin' });
   if (res.status === 401) {
@@ -45,7 +45,7 @@ export const api = {
   revokeApiKey: (name: string) => apiFetch('/admin/api/api-keys/revoke', { method: 'POST', body: JSON.stringify({ name }) }),
   updateClientTtl: (clientId: string, tokenTtl: number | null) => apiFetch('/admin/api/update-client-ttl', { method: 'POST', body: JSON.stringify({ clientId, tokenTtl }) }),
   revokeClient: (clientId: string) => apiFetch('/admin/api/revoke-client', { method: 'POST', body: JSON.stringify({ clientId }) }),
-  // v0.36.0.0 (T15 / E6) — calibration endpoints.
+  // v0.36.1.0 (T15 / E6) — calibration endpoints.
   calibrationProfile: (holder?: string) =>
     apiFetch(`/admin/api/calibration/profile${holder ? `?holder=${encodeURIComponent(holder)}` : ''}`),
   calibrationChart: (type: string, holder?: string) =>

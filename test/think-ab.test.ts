@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T18 / D19) — A/B harness tests.
+ * v0.36.1.0 (T18 / D19) — A/B harness tests.
  *
  * Hermetic. Mock engine + injected thinkRunner + injected preferenceResolver.
  * No real LLM, no DB.

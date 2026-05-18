@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T10 / E5) — Brier-trend forecasting tests.
+ * v0.36.1.0 (T10 / E5) — Brier-trend forecasting tests.
  *
  * Hermetic. Pure-function tests + mock-engine path. No real LLM, no DB.
  *

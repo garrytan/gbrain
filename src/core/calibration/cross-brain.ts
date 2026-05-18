@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T14 / E8 + D18) — cross-brain calibration query semantics.
+ * v0.36.1.0 (T14 / E8 + D18) — cross-brain calibration query semantics.
  *
  * Team-brain sharing: when a holder's calibration profile is not present in
  * the local brain, optionally fall back to mounted brains that have
@@ -30,7 +30,7 @@
  *   - attribution test: profile returns with source_brain_id; consumer
  *     surfaces it in output
  *
- * v0.36.0.0 ship state scope:
+ * v0.36.1.0 ship state scope:
  *   - The CALIBRATION query path supports cross-brain. The actual MOUNT
  *     infrastructure (gbrain mounts add — v0.19+) is reused as-is. This
  *     module adds the cross-brain READ filter on top of mount discovery.

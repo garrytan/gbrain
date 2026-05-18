@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T13 / E7) — real-time pattern surfacing on take commit.
+ * v0.36.1.0 (T13 / E7) — real-time pattern surfacing on take commit.
  *
  * The nudge surface that taps the user on the shoulder when a newly-committed
  * take matches an active bias pattern. Conversational voice (D24 mode='nudge'),
@@ -20,7 +20,7 @@
  *     for that take so the next sync re-fires fresh nudges.
  *
  * Output channel:
- *   v0.36.0.0 ship state: STDERR only. Multi-channel routing (webhook,
+ *   v0.36.1.0 ship state: STDERR only. Multi-channel routing (webhook,
  *   admin SPA toast) is a v0.37+ follow-up — the schema's `channel` column
  *   already supports it.
  */
@@ -119,7 +119,7 @@ export async function recordNudgeFire(
 }
 
 /**
- * Build the conversational nudge text via the templates module. v0.36.0.0
+ * Build the conversational nudge text via the templates module. v0.36.1.0
  * ship state: uses the template directly (no LLM-generation path). The
  * voice gate (T6) wraps this surface at v0.37+ when we have enough
  * production examples to tune the LLM prompt.

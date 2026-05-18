@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T8 / E1, D22) — think --with-calibration tests.
+ * v0.36.1.0 (T8 / E1, D22) — think --with-calibration tests.
  *
  * Hermetic. Tests the prompt-building layer (no runThink invocation) +
  * pure structural shape of the user message.

@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (D21) — BaseCyclePhase abstract class for the Hindsight calibration
+ * v0.36.1.0 (D21) — BaseCyclePhase abstract class for the Hindsight calibration
  * wave. Three new phases (`propose_takes`, `grade_takes`, `calibration_profile`)
  * share enough structure that the duplication-vs-abstraction trade tips toward
  * a shared base. Without this scaffold, each phase reimplements the same five
@@ -25,7 +25,7 @@
  *      directly.
  *
  * Synthesize.ts / patterns.ts (existing pre-v0.36 phases) deliberately do NOT
- * retrofit to this base in v0.36.0.0 — too much churn for a refactor that
+ * retrofit to this base in v0.36.1.0 — too much churn for a refactor that
  * doesn't pay off until v0.37+ when more phases land. Future phases use this
  * by default.
  */

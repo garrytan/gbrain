@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T9 / E3) — calibration-aware contradictions tests.
+ * v0.36.1.0 (T9 / E3) — calibration-aware contradictions tests.
  *
  * Pure-function tests for the calibration-join helper. No DB, no LLM.
  *
@@ -55,7 +55,7 @@ function buildProfile(activeTags: string[], brier: number | null = 0.21): Calibr
     id: 1,
     source_id: 'default',
     holder: 'garry',
-    wave_version: 'v0.36.0.0',
+    wave_version: 'v0.36.1.0',
     generated_at: '2026-05-17T00:00:00Z',
     published: false,
     total_resolved: 12,

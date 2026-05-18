@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T4) — grade_takes cycle phase.
+ * v0.36.1.0 (T4) — grade_takes cycle phase.
  *
  * Walks unresolved takes that are old enough to have outcome data, retrieves
  * evidence from the brain, asks a judge model to verdict each one. Writes
@@ -20,7 +20,7 @@
  *   flag because relaxing after data accumulates silently shifts which
  *   historical resolutions count as auto-applied.
  *
- * Evidence retrieval status (v0.36.0.0 ship state):
+ * Evidence retrieval status (v0.36.1.0 ship state):
  *   The default evidence retriever returns an "evidence-retrieval not yet
  *   wired" placeholder. Most verdicts produced by the stub-judge against
  *   the stub-evidence will be 'unresolvable'. Real retrieval (hybrid search
@@ -47,9 +47,9 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
  * stay valid (composite cache key includes prompt_version); new runs re-spend
  * LLM tokens.
  */
-export const GRADE_TAKES_PROMPT_VERSION = 'v0.36.0.0-stub';
+export const GRADE_TAKES_PROMPT_VERSION = 'v0.36.1.0-stub';
 
-export const GRADE_TAKE_PROMPT = `[v0.36.0.0-stub] You are grading a single forecasting take. The author
+export const GRADE_TAKE_PROMPT = `[v0.36.1.0-stub] You are grading a single forecasting take. The author
 made this claim on the given date. Based on the evidence provided, did the
 claim turn out to be:
 - correct        (the world plays out as predicted)
@@ -204,7 +204,7 @@ export interface GradeTakesOpts extends BasePhaseOpts {
   /** Identifier recorded as resolved_by when auto-applying. Default 'gbrain:grade_takes'. */
   resolvedByLabel?: string;
   /**
-   * v0.36.0.0 (T11 / E4) — gstack-learnings coupling on incorrect/partial
+   * v0.36.1.0 (T11 / E4) — gstack-learnings coupling on incorrect/partial
    * auto-resolutions. Config gate: `cycle.grade_takes.write_gstack_learnings`.
    * Default false for external users (gstack may not be installed); Garry's
    * brain flips it true to opt in. Failures are non-fatal (warning).
@@ -292,12 +292,12 @@ export function parseJudgeOutput(raw: string): JudgeVerdict | null {
 }
 
 /**
- * Default evidence retriever — v0.36.0.0 ship-state placeholder. Real
+ * Default evidence retriever — v0.36.1.0 ship-state placeholder. Real
  * retrieval lands in v0.37+ via hybrid search over pages newer than the
  * take's since_date. Documented limitation per CDX-8 + D17.
  */
 export async function defaultEvidenceRetriever(take: Take, _scope: ScopedReadOpts): Promise<string> {
-  return `[evidence retrieval not yet wired — v0.36.0.0 ship-state]
+  return `[evidence retrieval not yet wired — v0.36.1.0 ship-state]
 Take claim text (the only "evidence" available pre-T-retrieval-impl):
   ${take.claim}
 Made on: ${take.since_date ?? 'unknown'}

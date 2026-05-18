@@ -1,4 +1,4 @@
-# Convention: calibration loop (v0.36.0.0)
+# Convention: calibration loop (v0.36.1.0)
 
 The brain knows your track record and uses it. The calibration loop has
 five concrete touchpoints — agents working in this codebase should know
@@ -12,7 +12,7 @@ which one applies to their current task.
 | Writing user-facing strings about the user's track record | Conversational, not academic. Friend, not doctor. Concrete numbers ("2 of 3 missed") over abstract metrics ("Brier 0.31"). See `DESIGN.md` voice section. Never use the phrase "according to your data." |
 | Adding a new cycle phase | Extend `BaseCyclePhase` in `src/core/cycle/base-phase.ts`. Inherits source-scope threading + budget metering + error envelope + progress reporter. Declare `budgetUsdKey` + `budgetUsdDefault`. |
 | Adding a new MCP op that reads source-scoped data | Route through `sourceScopeOpts(ctx)` from `src/core/operations.ts`. Type-enforced at the BaseCyclePhase level; manual MCP handlers should do this explicitly. |
-| Writing schema for any new calibration-related table | Stamp every row with `wave_version TEXT NOT NULL DEFAULT 'v0.36.0.0'` (or the current wave's version). The `--undo-wave` command reverses precisely by wave_version. |
+| Writing schema for any new calibration-related table | Stamp every row with `wave_version TEXT NOT NULL DEFAULT 'v0.36.1.0'` (or the current wave's version). The `--undo-wave` command reverses precisely by wave_version. |
 | Adding a new test fixture page under `test/fixtures/calibration/` | Synthetic only. Use the canonical placeholder names: `alice-example`, `acme-example`, `widget-co`, `fund-a/b/c`, `meetings/2026-04-03`. The CI guard `scripts/check-synthetic-corpus-privacy.sh` catches violations. |
 
 ## When to surface a calibration warning
@@ -27,7 +27,7 @@ The four doctor checks (in `src/commands/doctor.ts`):
   7 days. Hint: `gbrain calibration --regenerate`.
 
 - `grade_confidence_drift` (CDX-11 mitigation) — placeholder for the
-  v0.37+ confidence-vs-accuracy correlation math. v0.36.0.0 reports the
+  v0.37+ confidence-vs-accuracy correlation math. v0.36.1.0 reports the
   count of auto-applied verdicts and the "drift math arrives in v0.37+"
   status. Don't add a noise threshold here until the math is in.
 

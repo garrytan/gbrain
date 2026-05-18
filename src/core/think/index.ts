@@ -58,7 +58,7 @@ export interface RunThinkOpts {
   /** Pure-test escape: return synthesized payload without calling any LLM. */
   stubResponse?: ThinkResponse;
   /**
-   * v0.36.0.0 (E1, D22) — when true, retrieve the active calibration profile
+   * v0.36.1.0 (E1, D22) — when true, retrieve the active calibration profile
    * for the configured holder and inject it into the prompt per D22 placement
    * (after retrieval, before question). The system prompt also gains
    * anti-bias rewrite rules.
@@ -221,7 +221,7 @@ export async function runThink(
     ? `<anchor>${opts.anchor}</anchor>\nReachable: ${gather.graphSlugs.slice(0, 30).join(', ')}`
     : undefined;
 
-  // v0.36.0.0 (E1) — optional calibration profile retrieval. When enabled
+  // v0.36.1.0 (E1) — optional calibration profile retrieval. When enabled
   // and a profile exists, inject it per D22 (after retrieval, before question).
   // When enabled and no profile, fall back to baseline + warn.
   let calibrationBlockOpts:

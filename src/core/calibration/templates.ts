@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T6) — voice-gate fallback templates.
+ * v0.36.1.0 (T6) — voice-gate fallback templates.
  *
  * D11 (CEO review): when the voice gate fails twice on an LLM-generated
  * surface, we fall back to a hand-written template rather than ship academic-

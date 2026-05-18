@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T13 / E7) — nudge cooldown + threshold tests.
+ * v0.36.1.0 (T13 / E7) — nudge cooldown + threshold tests.
  *
  * Hermetic. Mock engine + injected stderr stream. No production stderr writes.
  *
@@ -60,7 +60,7 @@ function buildProfile(activeBiasTags: string[], holder = 'garry'): CalibrationPr
     id: 1,
     source_id: 'default',
     holder,
-    wave_version: 'v0.36.0.0',
+    wave_version: 'v0.36.1.0',
     generated_at: '2026-05-17T00:00:00Z',
     published: false,
     total_resolved: 20,

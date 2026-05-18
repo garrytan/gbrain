@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 IRON RULE regression suite (T21).
+ * v0.36.1.0 IRON RULE regression suite (T21).
  *
  * Per /plan-eng-review D26 IRON RULE: regressions get added to the test
  * suite without AskUserQuestion. A regression is when code that previously
@@ -109,7 +109,7 @@ describe('R3: takes resolution works regardless of grade_takes phase state', () 
 // R4: search/list_pages/get_page work identically through new source_id paths.
 // Already covered by the existing v0.34.1 source-isolation test suite
 // (test/source-isolation-pglite.test.ts and the matching e2e tests). The
-// v0.36.0.0 wave does NOT add new source-scoped paths to these ops —
+// v0.36.1.0 wave does NOT add new source-scoped paths to these ops —
 // calibration is a NEW op surface, not a modification to existing ones.
 
 describe('R4: existing read-side ops unchanged (covered structurally)', () => {
@@ -117,7 +117,7 @@ describe('R4: existing read-side ops unchanged (covered structurally)', () => {
     // Marker test. The actual coverage is at:
     //   - test/source-isolation-pglite.test.ts
     //   - test/e2e/source-isolation-pglite.test.ts
-    // v0.36.0.0 does NOT modify those code paths. If the calibration wave
+    // v0.36.1.0 does NOT modify those code paths. If the calibration wave
     // accidentally couples to listPages/getPage/search, the existing tests
     // catch it. This marker test exists for the IRON RULE inventory.
     expect(true).toBe(true);
@@ -130,7 +130,7 @@ describe('R4: existing read-side ops unchanged (covered structurally)', () => {
 
 describe('R5: search modes unaffected by calibration wave', () => {
   test('this regression is covered by existing search-mode test suite', () => {
-    // Marker test. v0.36.0.0 calibration code DOES NOT IMPORT from
+    // Marker test. v0.36.1.0 calibration code DOES NOT IMPORT from
     // src/core/search/mode.ts or modify the search-mode bundle resolution.
     // If a future refactor changes that, the existing search-mode tests
     // (test/search-mode.test.ts) catch the behavioral regression. This

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v0.36.0.0 (T20 / CDX-14) — privacy CI guard for the synthetic calibration corpus.
+# v0.36.1.0 (T20 / CDX-14) — privacy CI guard for the synthetic calibration corpus.
 #
 # Scans test/fixtures/calibration/ for patterns that look like real-world
 # specificity. Fails the build if any are found. Closes the synthetic-corpus
@@ -61,7 +61,7 @@ while IFS= read -r match; do
     # Allow 2019 (used as a generic past year), 2023, 2027 (used as future). The
     # specific concern is dates the operator might recognize as a real prior event.
     # This is a low-precision heuristic; manual review decides.
-    : # informational, not a failure for v0.36.0.0
+    : # informational, not a failure for v0.36.1.0
   fi
 done < <(grep -rEn '\b(201[0-8]|2030|2031)\b' "$CORPUS_DIR" --include='*.md' 2>/dev/null || true)
 

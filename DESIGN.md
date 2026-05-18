@@ -2,7 +2,7 @@
 
 The design system source of truth for gbrain. Born from the de facto tokens
 that landed in `admin/src/index.css` during the v0.26.0 admin SPA work and
-formalized during the v0.36.0.0 Hindsight calibration wave's design review.
+formalized during the v0.36.1.0 Hindsight calibration wave's design review.
 
 This doc is the calibration target for `/plan-design-review` and `/design-review`.
 When a question is "does this UI fit the system?", the answer is here.
@@ -20,7 +20,7 @@ system. Every user-facing string passes through this filter:
 - Numbers grounded in real outcomes, never abstract metrics without
   translation.
 
-Five surfaces use this voice (v0.36.0.0+):
+Five surfaces use this voice (v0.36.1.0+):
 `pattern_statement`, `nudge`, `forecast_blurb`, `dashboard_caption`,
 `morning_pulse`. All five pass through `gateVoice()` in
 `src/core/calibration/voice-gate.ts` with mode-specific rubrics. A Haiku
@@ -105,7 +105,7 @@ Why server-rendered SVG (per D23):
 - Sets the precedent for future admin charts (contradictions trend, takes
   scorecard, etc.).
 
-Four chart renderers in v0.36.0.0:
+Four chart renderers in v0.36.1.0:
 - `renderBrierTrend({ series })` — sparkline + baseline reference at 0.25
 - `renderDomainBars({ bars })` — horizontal accuracy bars
 - `renderAbandonedThreadsCard(threads)` — text rows + "revisit now" links

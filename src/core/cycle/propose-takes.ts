@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T3) — propose_takes cycle phase.
+ * v0.36.1.0 (T3) — propose_takes cycle phase.
  *
  * Scans markdown pages updated since last run, sends each page's prose to
  * a tuned LLM extractor, writes the extracted gradeable claims to the
@@ -22,8 +22,8 @@
  *   the canonical takes table. Operator opt-in via `gbrain takes propose
  *   --accept N` is the only path from queue to canonical fence (D17).
  *
- * Prompt tuning status (v0.36.0.0 ship state):
- *   The default extractor prompt is a placeholder ("v0.36.0.0-stub"). The
+ * Prompt tuning status (v0.36.1.0 ship state):
+ *   The default extractor prompt is a placeholder ("v0.36.1.0-stub"). The
  *   real prompt is tuned via T19's synthetic-corpus build (50 anonymized
  *   pages, 3-model parallel extraction, user reviews disagreement set, F1
  *   ≥ 0.85 on training corpus + F1 ≥ 0.8 on ground-truth holdout). Until
@@ -48,10 +48,10 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
  * verdicts in `take_proposals` (composite key includes prompt_version) stay
  * valid as audit history; new runs re-spend LLM tokens on every page.
  */
-export const PROPOSE_TAKES_PROMPT_VERSION = 'v0.36.0.0-stub';
+export const PROPOSE_TAKES_PROMPT_VERSION = 'v0.36.1.0-stub';
 
 /**
- * Stub extractor prompt. v0.36.0.0 ship-state placeholder — T19 corpus
+ * Stub extractor prompt. v0.36.1.0 ship-state placeholder — T19 corpus
  * build replaces this with a tuned prompt (Hindsight-style, adapted for
  * gbrain's kind/holder/weight take schema rather than Hindsight's
  * conviction/domain shape).
@@ -61,7 +61,7 @@ export const PROPOSE_TAKES_PROMPT_VERSION = 'v0.36.0.0-stub';
  * opting in early get a queue that fills only when they explicitly invoke
  * with a non-stub prompt.
  */
-export const EXTRACT_TAKES_PROMPT = `[v0.36.0.0-stub] Extract gradeable claims (predictions, recommendations,
+export const EXTRACT_TAKES_PROMPT = `[v0.36.1.0-stub] Extract gradeable claims (predictions, recommendations,
 interpretive judgments that could turn out wrong) from the prose below.
 
 Output ONLY a JSON array of objects. Each object has fields:
@@ -181,7 +181,7 @@ export function extractExistingTakesForDedup(pageBody: string): Array<{
  * and parses the JSON array output. Returns [] on parse failure (logged as
  * warning, not thrown — one bad page must not abort the phase).
  *
- * Stub-prompt note: the v0.36.0.0 ship-state prompt is a placeholder. Real
+ * Stub-prompt note: the v0.36.1.0 ship-state prompt is a placeholder. Real
  * extractor lands when T19 corpus build produces the tuned prompt. Until
  * then, the production extractor returns whatever the stub LLM produces —
  * empirically often a sparse list or [].

@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T6) — calibration_profile cycle phase.
+ * v0.36.1.0 (T6) — calibration_profile cycle phase.
  *
  * Aggregates the resolved takes subset into a calibration profile per holder:
  *  - quantitative: TakesScorecard (Brier, accuracy, partial_rate, per-domain)
@@ -34,9 +34,9 @@ import type { OperationContext } from '../operations.ts';
 import type { BrainEngine, TakesScorecard } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
 
-export const CALIBRATION_PROFILE_PROMPT_VERSION = 'v0.36.0.0-stub';
+export const CALIBRATION_PROFILE_PROMPT_VERSION = 'v0.36.1.0-stub';
 
-const PATTERN_STATEMENTS_PROMPT = `[v0.36.0.0-stub] You are summarizing a forecaster's track record so they
+const PATTERN_STATEMENTS_PROMPT = `[v0.36.1.0-stub] You are summarizing a forecaster's track record so they
 can see their patterns. Below is a JSON snapshot of how they performed —
 per-domain scorecards over the resolved subset.
 
@@ -330,7 +330,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         scorecard.accuracy,
         scorecard.partial_rate,
         gradeCompletion,
-        // domain_scorecards: per-domain breakdown placeholder — v0.36.0.0
+        // domain_scorecards: per-domain breakdown placeholder — v0.36.1.0
         // ships with the overall scorecard only; per-domain comes when
         // batchGetTakesScorecards (F12) lands in Lane C.
         JSON.stringify({}),

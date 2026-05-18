@@ -865,7 +865,7 @@ CREATE INDEX IF NOT EXISTS eval_contradictions_runs_ran_at_idx
   ON eval_contradictions_runs (ran_at DESC);
 
 -- ============================================================
--- v0.36.0.0 Hindsight calibration wave (migrations v67-v71)
+-- v0.36.1.0 Hindsight calibration wave (migrations v67-v71)
 -- ============================================================
 -- See src/core/migrate.ts for full design notes per table.
 --
@@ -876,7 +876,7 @@ CREATE TABLE IF NOT EXISTS calibration_profiles (
   id                      BIGSERIAL PRIMARY KEY,
   source_id               TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   holder                  TEXT         NOT NULL,
-  wave_version            TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+  wave_version            TEXT         NOT NULL DEFAULT 'v0.36.1.0',
   generated_at            TIMESTAMPTZ  NOT NULL DEFAULT now(),
   published               BOOLEAN      NOT NULL DEFAULT false,
   total_resolved          INTEGER      NOT NULL,
@@ -910,7 +910,7 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   page_slug                   TEXT         NOT NULL,
   content_hash                TEXT         NOT NULL,
   prompt_version              TEXT         NOT NULL,
-  wave_version                TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+  wave_version                TEXT         NOT NULL DEFAULT 'v0.36.1.0',
   proposed_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
   proposal_run_id             TEXT         NOT NULL,
   status                      TEXT         NOT NULL DEFAULT 'pending'
@@ -946,7 +946,7 @@ CREATE TABLE IF NOT EXISTS take_grade_cache (
   prompt_version     TEXT         NOT NULL,
   judge_model_id     TEXT         NOT NULL,
   evidence_signature TEXT         NOT NULL,
-  wave_version       TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+  wave_version       TEXT         NOT NULL DEFAULT 'v0.36.1.0',
   graded_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
   verdict            TEXT         NOT NULL
                                   CHECK (verdict IN ('correct','incorrect','partial','unresolvable')),
@@ -971,7 +971,7 @@ CREATE TABLE IF NOT EXISTS take_nudge_log (
   nudge_pattern   TEXT         NOT NULL,
   fired_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
   channel         TEXT         NOT NULL DEFAULT 'stderr',
-  wave_version    TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+  wave_version    TEXT         NOT NULL DEFAULT 'v0.36.1.0',
   CONSTRAINT take_nudge_log_target_xor
     CHECK ((take_id IS NOT NULL) <> (proposal_id IS NOT NULL))
 );
@@ -984,12 +984,12 @@ CREATE INDEX IF NOT EXISTS take_nudge_log_proposal_cooldown_idx
 CREATE INDEX IF NOT EXISTS take_nudge_log_wave_idx
   ON take_nudge_log (wave_version, fired_at DESC);
 
--- think_ab_results (v0.36.0.0 T18 / D19): A/B harness data for
+-- think_ab_results (v0.36.1.0 T18 / D19): A/B harness data for
 -- `gbrain think --ab`. One row per side-by-side comparison.
 CREATE TABLE IF NOT EXISTS think_ab_results (
   id              BIGSERIAL PRIMARY KEY,
   source_id       TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-  wave_version    TEXT         NOT NULL DEFAULT 'v0.36.0.0',
+  wave_version    TEXT         NOT NULL DEFAULT 'v0.36.1.0',
   ran_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
   question        TEXT         NOT NULL,
   baseline_answer TEXT         NOT NULL,
@@ -1057,7 +1057,7 @@ BEGIN
     -- v0.32.6 contradiction probe tables
     ALTER TABLE eval_contradictions_cache ENABLE ROW LEVEL SECURITY;
     ALTER TABLE eval_contradictions_runs ENABLE ROW LEVEL SECURITY;
-    -- v0.36.0.0 Hindsight calibration wave tables
+    -- v0.36.1.0 Hindsight calibration wave tables
     ALTER TABLE calibration_profiles ENABLE ROW LEVEL SECURITY;
     ALTER TABLE take_proposals ENABLE ROW LEVEL SECURITY;
     ALTER TABLE take_grade_cache ENABLE ROW LEVEL SECURITY;

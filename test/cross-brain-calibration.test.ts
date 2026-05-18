@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T14 / E8 + D18) — cross-brain calibration query tests.
+ * v0.36.1.0 (T14 / E8 + D18) — cross-brain calibration query tests.
  *
  * Hermetic. Mock engines stand in for local + mounted brains. The four
  * D18 e2e test cases are pinned here so cross-brain leak surfaces don't
@@ -31,7 +31,7 @@ function buildProfile(opts: { published: boolean; source_id?: string; holder?: s
     id: 1,
     source_id: opts.source_id ?? 'default',
     holder: opts.holder ?? 'garry',
-    wave_version: 'v0.36.0.0',
+    wave_version: 'v0.36.1.0',
     generated_at: '2026-05-17T00:00:00Z',
     published: opts.published,
     total_resolved: 12,

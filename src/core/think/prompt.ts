@@ -28,7 +28,7 @@ export interface ThinkSystemPromptOpts {
   /** When true, the synthesis page will be persisted (`--save`); shapes the body's expected length. */
   willSave?: boolean;
   /**
-   * v0.36.0.0 (E1, D22) — when set, anti-bias rewrite mode is active. The
+   * v0.36.1.0 (E1, D22) — when set, anti-bias rewrite mode is active. The
    * system prompt gains an instruction to (a) name both the user's prior
    * AND the counter-prior in the answer, (b) reference the active bias tags
    * by name when relevant. Calibration profile body goes in the user
@@ -87,7 +87,7 @@ export function buildThinkSystemPrompt(opts: ThinkSystemPromptOpts = {}): string
   }
   if (opts.withCalibration) {
     lines.push(
-      `\nCalibration-aware mode (v0.36.0.0): the user's calibration profile is included as <calibration> below the retrieval blocks. Apply it to the QUESTION FRAMING, not the evidence:`,
+      `\nCalibration-aware mode (v0.36.1.0): the user's calibration profile is included as <calibration> below the retrieval blocks. Apply it to the QUESTION FRAMING, not the evidence:`,
     );
     lines.push(`- Name both the user's PRIOR (default reasoning) AND the COUNTER-PRIOR from their hedged-domain self.`);
     lines.push(`- Reference active bias tags by name when relevant ("this fits the over-confident-geography pattern").`);
@@ -98,7 +98,7 @@ export function buildThinkSystemPrompt(opts: ThinkSystemPromptOpts = {}): string
 }
 
 /**
- * v0.36.0.0 (E1) — calibration context block injected into the user message.
+ * v0.36.1.0 (E1) — calibration context block injected into the user message.
  * Per D22 placement spec: AFTER retrieval evidence, BEFORE the user's
  * question. This is the only path that restructures the user message;
  * non-calibration callers see the existing shape.
@@ -136,7 +136,7 @@ export function buildCalibrationBlock(opts: ThinkCalibrationBlockOpts): string {
  *   - Default (no calibration): question first, then retrieval blocks, then
  *     output instruction. Preserves v0.28-vintage behavior; existing callers
  *     see no change.
- *   - With calibration (v0.36.0.0 E1, D22): retrieval blocks first, then
+ *   - With calibration (v0.36.1.0 E1, D22): retrieval blocks first, then
  *     calibration block, then question, then output instruction. The bias
  *     filter applies to QUESTION FRAMING, not evidence interpretation.
  */
@@ -145,7 +145,7 @@ export function buildThinkUserMessage(opts: {
   pagesBlock: string;
   takesBlock: string;
   graphBlock?: string;
-  /** v0.36.0.0 (E1) — present in calibration mode. */
+  /** v0.36.1.0 (E1) — present in calibration mode. */
   calibration?: ThinkCalibrationBlockOpts;
 }): string {
   const parts: string[] = [];

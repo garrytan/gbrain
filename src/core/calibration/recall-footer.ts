@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T16) — calibration footer for `gbrain recall` morning pulse.
+ * v0.36.1.0 (T16) — calibration footer for `gbrain recall` morning pulse.
  *
  * Pure formatter. Given an active calibration profile, returns the
  * conversational block to prepend or append to the recall output:
@@ -17,11 +17,11 @@
  * insufficient resolved takes. The caller decides whether to prepend
  * the block; cold-brain absence is the cleanest non-event.
  *
- * v0.36.0.0 ship state: opt-in via `gbrain recall --show-calibration`
+ * v0.36.1.0 ship state: opt-in via `gbrain recall --show-calibration`
  * to keep R3 regression posture (existing recall text shape unchanged
  * for users who don't pass the flag). v0.37 defaults to on.
  *
- * Trend computation: v0.36.0.0 has only ONE profile snapshot (the most
+ * Trend computation: v0.36.1.0 has only ONE profile snapshot (the most
  * recent generation). Trend ("was X 90d ago — improving/declining")
  * arrives when we accumulate generated_at history.
  */
@@ -48,7 +48,7 @@ export function buildRecallCalibrationFooter(opts: RecallFooterOpts): string {
   const lines: string[] = [];
   lines.push('Calibration this quarter:');
 
-  // Brier line. v0.36.0.0 has only the current snapshot — no 90d comparison.
+  // Brier line. v0.36.1.0 has only the current snapshot — no 90d comparison.
   if (profile.brier !== null) {
     lines.push(`  Brier ${profile.brier.toFixed(2)} ${trendNote(profile.brier)}`);
   }

@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T18 / D19) — A/B harness for `gbrain think`.
+ * v0.36.1.0 (T18 / D19) — A/B harness for `gbrain think`.
  *
  * Each invocation runs think TWICE on the same question: once baseline,
  * once --with-calibration. Both answers are written to the database in
@@ -12,7 +12,7 @@
  * make advice worse): we don't have to guess whether calibration helps;
  * we measure.
  *
- * v0.36.0.0 ship state:
+ * v0.36.1.0 ship state:
  *   - The data PIPELINE is real (schema, write, aggregate).
  *   - The user-facing PROMPT ("which did you prefer?") is interactive on
  *     the CLI. Tests inject a non-interactive answer resolver so the

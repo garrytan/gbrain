@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T7) — `gbrain calibration` CLI.
+ * v0.36.1.0 (T7) — `gbrain calibration` CLI.
  *
  * Reads the latest calibration profile from the DB and prints it. Mirror of
  * the v0.29 `gbrain salience` / `gbrain anomalies` shape (pure data fn + JSON

@@ -31,6 +31,7 @@ import {
   QUERY_DESCRIPTION,
   SEARCH_DESCRIPTION,
   FIND_CONTRADICTIONS_DESCRIPTION,
+  FIND_TRAJECTORY_DESCRIPTION,
   CODE_CALLERS_DESCRIPTION,
   CODE_CALLEES_DESCRIPTION,
   CODE_DEF_DESCRIPTION,
@@ -2269,7 +2270,7 @@ const find_orphans: Operation = {
   cliHints: { name: 'orphans', hidden: true },
 };
 
-// --- v0.36.0.0 (T7): calibration profile read op ---
+// --- v0.36.1.0 (T7): calibration profile read op ---
 
 const get_calibration_profile: Operation = {
   name: 'get_calibration_profile',
@@ -2468,6 +2469,86 @@ const find_contradictions: Operation = {
     };
   },
   cliHints: { name: 'find-contradictions' },
+};
+
+const find_trajectory: Operation = {
+  name: 'find_trajectory',
+  description: FIND_TRAJECTORY_DESCRIPTION,
+  scope: 'read',
+  // localOnly intentionally NOT set — federated OAuth clients should be
+  // able to query trajectories for entities in their scope. Visibility
+  // filtering (D-CDX-1) inside the engine restricts remote callers to
+  // visibility='world' facts.
+  params: {
+    entity_slug: {
+      type: 'string',
+      description: 'Required. Entity slug to chart (e.g. "companies/acme-example", "people/alice-example").',
+    },
+    metric: {
+      type: 'string',
+      description: 'Optional. Filter to a single canonical metric (e.g. "mrr", "arr", "team_size"). When omitted, all metrics return.',
+    },
+    since: {
+      type: 'string',
+      description: 'Optional lower bound on valid_from (YYYY-MM-DD or ISO).',
+    },
+    until: {
+      type: 'string',
+      description: 'Optional upper bound on valid_from (YYYY-MM-DD or ISO).',
+    },
+    limit: {
+      type: 'number',
+      description: 'Max points returned. Default 100, max 500.',
+    },
+  },
+  handler: async (ctx, p) => {
+    if (typeof p.entity_slug !== 'string' || !p.entity_slug.trim()) {
+      throw new Error('find_trajectory requires entity_slug (string)');
+    }
+    const metric = typeof p.metric === 'string' ? p.metric : undefined;
+    const since  = typeof p.since  === 'string' ? p.since  : undefined;
+    const until  = typeof p.until  === 'string' ? p.until  : undefined;
+    const limit  = typeof p.limit  === 'number' ? p.limit  : undefined;
+    const scope = sourceScopeOpts(ctx);
+
+    // D-CDX-1: thread ctx.remote into the engine so visibility filtering
+    // happens at SQL level. Mirrors recall's posture for untrusted callers.
+    const points = await ctx.engine.findTrajectory({
+      entitySlug: p.entity_slug,
+      ...scope,
+      remote: ctx.remote === true,
+      metric,
+      since,
+      until,
+      limit,
+    });
+
+    const { computeTrajectoryStats, TRAJECTORY_SCHEMA_VERSION } = await import('./trajectory.ts');
+    const { regressions, drift_score } = computeTrajectoryStats(points);
+
+    // Engine result includes raw embeddings (Float32Array); strip those
+    // before sending over MCP — they're bulky binary noise that consumers
+    // never need at this layer.
+    const wirePoints = points.map(pt => ({
+      fact_id: pt.fact_id,
+      valid_from: pt.valid_from.toISOString().slice(0, 10),
+      metric: pt.metric,
+      value: pt.value,
+      unit: pt.unit,
+      period: pt.period,
+      text: pt.text,
+      source_session: pt.source_session,
+      source_markdown_slug: pt.source_markdown_slug,
+    }));
+
+    return {
+      points: wirePoints,
+      regressions,
+      drift_score,
+      schema_version: TRAJECTORY_SCHEMA_VERSION,
+    };
+  },
+  cliHints: { name: 'find-trajectory' },
 };
 
 const get_recent_transcripts: Operation = {
@@ -3184,7 +3265,7 @@ export const operations: Operation[] = [
   pause_job, resume_job, replay_job, send_job_message,
   // Orphans
   find_orphans,
-  // v0.36.0.0 (T7) — Hindsight calibration wave: read profile via MCP
+  // v0.36.1.0 (T7) — Hindsight calibration wave: read profile via MCP
   get_calibration_profile,
   // v0.28: Takes + think
   takes_list, takes_search, think,
@@ -3200,6 +3281,8 @@ export const operations: Operation[] = [
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing
   find_experts,
+  // v0.35.4: temporal trajectory (typed claims over time + regression detection)
+  find_trajectory,
   // v0.33.3: Cathedral III code-intelligence (MCP-exposed; were CLI_ONLY pre-v0.33.3)
   code_callers, code_callees, code_def, code_refs,
   // v0.34 W3: recursive code_blast + code_flow

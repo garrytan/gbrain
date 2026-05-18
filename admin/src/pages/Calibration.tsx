@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T15 / E6) — Calibration tab.
+ * v0.36.1.0 (T15 / E6) — Calibration tab.
  *
  * Fetches the active calibration profile + 4 server-rendered SVG charts.
  * Layout: Linear calm clarity (per D23 mockup variant-B) — single column,

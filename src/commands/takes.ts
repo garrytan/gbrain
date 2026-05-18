@@ -560,7 +560,7 @@ Common flags:
 }
 
 /**
- * v0.36.0.0 (TD4 / D30) — `gbrain takes revisit <slug>` opens $EDITOR on
+ * v0.36.1.0 (TD4 / D30) — `gbrain takes revisit <slug>` opens $EDITOR on
  * the source page so the user can write a follow-up immediately. The
  * action the admin SPA's "revisit now" link triggers (via a small
  * route handler that dispatches into this CLI command).

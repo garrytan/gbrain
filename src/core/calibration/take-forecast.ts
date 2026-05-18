@@ -1,12 +1,12 @@
 /**
- * v0.36.0.0 (T10 / E5) — Brier-trend forecasting on new takes.
+ * v0.36.1.0 (T10 / E5) — Brier-trend forecasting on new takes.
  *
  * Pure math over existing `TakesScorecard` data. Zero new LLM cost,
  * zero new schema. Surface: an inline blurb the user sees at write time
  * (gbrain takes show / propose --review) reminding them of their
  * historical track record at this conviction + domain.
  *
- * v0.36.0.0 ship state:
+ * v0.36.1.0 ship state:
  *   Looks up scorecard by (holder, domainPrefix). The bucket dimension is
  *   the domain — not the conviction-weight bucket (full conviction-bucket
  *   math would need a new engine method). Returns "insufficient data"
@@ -59,7 +59,7 @@ export const MIN_BUCKET_N = 5;
  * 'startup-tactics') to a `domainPrefix` the scorecard query understands.
  *
  * The TakesScorecard's `domainPrefix` is a slug-prefix filter (e.g.
- * 'companies/'). For v0.36.0.0, we pass domain hints through as-is when
+ * 'companies/'). For v0.36.1.0, we pass domain hints through as-is when
  * they look like slug prefixes; otherwise fall back to undefined (overall
  * scorecard). v0.37+ takes get a structured domain enum and this mapping
  * tightens.
@@ -129,7 +129,7 @@ export async function forecastForTake(
 
 /**
  * Batched forecast over a list of takes (F11 perf finding). Returns one
- * TakeForecast per input. v0.36.0.0 ship state: per-take engine round-trip.
+ * TakeForecast per input. v0.36.1.0 ship state: per-take engine round-trip.
  * v0.37+ adds engine.batchGetTakeBucketStats for a single roundtrip across
  * all (holder, domain) pairs.
  */

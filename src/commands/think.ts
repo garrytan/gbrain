@@ -68,7 +68,7 @@ the gather phase still runs and prints what would have been the input.
   const model = flagValue(args, '--model');
   const since = flagValue(args, '--since');
   const until = flagValue(args, '--until');
-  // v0.36.0.0 (E1, D22) — anti-bias rewrite mode. Off by default (no
+  // v0.36.1.0 (E1, D22) — anti-bias rewrite mode. Off by default (no
   // regression for existing think users). When on, the active calibration
   // profile gets injected per D22 placement (after retrieval, before question).
   const withCalibration = flagPresent(args, '--with-calibration');
@@ -104,7 +104,7 @@ the gather phase still runs and prints what would have been the input.
   } else {
     result = await runThink(engine, {
       question, anchor, rounds, save, take, model, since, until,
-      // v0.36.0.0 (E1) — opt-in anti-bias rewrite. Falls back to baseline
+      // v0.36.1.0 (E1) — opt-in anti-bias rewrite. Falls back to baseline
       // think when no profile exists, with NO_CALIBRATION_PROFILE warning.
       withCalibration,
       ...(calibrationHolder ? { calibrationHolder } : {}),

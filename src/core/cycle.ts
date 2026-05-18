@@ -57,7 +57,7 @@ export type CyclePhase =
   | 'lint' | 'backlinks' | 'sync' | 'synthesize' | 'extract' | 'extract_facts'
   | 'resolve_symbol_edges'
   | 'patterns' | 'recompute_emotional_weight' | 'consolidate'
-  // v0.36.0.0 Hindsight calibration wave:
+  // v0.36.1.0 Hindsight calibration wave:
   //  - propose_takes: LLM scans markdown prose, proposes gradeable claims
   //    to a review queue. User accepts/rejects via `gbrain takes propose`.
   //  - grade_takes: walks unresolved takes, retrieves evidence, asks a
@@ -96,7 +96,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // stay as audit trail. Placed AFTER patterns (graph-fresh) and BEFORE
   // embed (so the new takes get embedded same-cycle).
   'consolidate',
-  // v0.36.0.0 Hindsight calibration wave. Ordering rationale:
+  // v0.36.1.0 Hindsight calibration wave. Ordering rationale:
   //   - propose_takes AFTER consolidate so the proposal LLM sees the
   //     freshly-consolidated takes when deciding what's NOT yet captured
   //     (F2 fence-dedup).
@@ -140,7 +140,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   // v0.29 — writes pages.emotional_weight column.
   'recompute_emotional_weight',
   'consolidate',
-  // v0.36.0.0 — propose_takes / grade_takes / calibration_profile all
+  // v0.36.1.0 — propose_takes / grade_takes / calibration_profile all
   // mutate DB state (take_proposals, take_grade_cache, calibration_profiles)
   // so they coordinate via the cycle lock.
   'propose_takes',
@@ -1319,7 +1319,7 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
-    // ── v0.36.0.0 calibration phases (propose_takes → grade_takes →
+    // ── v0.36.1.0 calibration phases (propose_takes → grade_takes →
     //    calibration_profile). These run AFTER consolidate so the proposal
     //    LLM sees newly-promoted facts, AFTER any take resolutions made
     //    earlier in the cycle, and BEFORE embed so the calibration

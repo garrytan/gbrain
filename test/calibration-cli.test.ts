@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T7) — gbrain calibration CLI + get_calibration_profile MCP op tests.
+ * v0.36.1.0 (T7) — gbrain calibration CLI + get_calibration_profile MCP op tests.
  *
  * Hermetic. Mock engine + injected args.
  */
@@ -64,7 +64,7 @@ function buildProfile(opts: Partial<CalibrationProfileRow> & { holder: string })
     id: 1,
     source_id: opts.source_id ?? 'default',
     holder: opts.holder,
-    wave_version: 'v0.36.0.0',
+    wave_version: 'v0.36.1.0',
     generated_at: '2026-05-17T15:00:00Z',
     published: opts.published ?? false,
     total_resolved: opts.total_resolved ?? 12,
@@ -100,7 +100,7 @@ describe('parseArgs', () => {
   });
 
   test('--undo-wave <version>', () => {
-    expect(parseArgs(['--undo-wave', 'v0.36.0.0']).opts.undoWave).toBe('v0.36.0.0');
+    expect(parseArgs(['--undo-wave', 'v0.36.1.0']).opts.undoWave).toBe('v0.36.1.0');
   });
 
   test('ab-report subcommand', () => {

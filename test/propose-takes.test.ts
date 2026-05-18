@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T3) — propose_takes phase unit tests.
+ * v0.36.1.0 (T3) — propose_takes phase unit tests.
  *
  * Pure structural tests against a mock BrainEngine + injected extractor.
  * No real LLM gateway, no PGLite — the phase's contract is exercised through

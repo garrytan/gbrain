@@ -620,11 +620,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(result.status).json(result.body);
   });
 
-  // v0.36.0.0 (T15 / E6 / D23) — Calibration tab data endpoints.
+  // v0.36.1.0 (T15 / E6 / D23) — Calibration tab data endpoints.
   // Server-rendered SVG charts; admin SPA renders via TrustedSVG wrapper.
-  // v0.36.0.0 (TD3) — pattern drill-down. Returns the source takes that
+  // v0.36.1.0 (TD3) — pattern drill-down. Returns the source takes that
   // produced the pattern statement at index `id` of the active profile.
-  // v0.36.0.0 ship state: returns the top N takes in the holder's overall
+  // v0.36.1.0 ship state: returns the top N takes in the holder's overall
   // takes table, sorted by weight desc. v0.37+ will store per-pattern
   // source_take_ids on calibration_profiles_patterns so the drill-down
   // shows the EXACT takes that drove the pattern.
@@ -645,7 +645,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return;
       }
       const statement = profile.pattern_statements[idx];
-      // v0.36.0.0 ship state: surface the top resolved takes for the
+      // v0.36.1.0 ship state: surface the top resolved takes for the
       // holder as drill-down evidence. Per-pattern provenance is v0.37.
       const takes = await engine.executeRaw<{
         id: number;
@@ -667,7 +667,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         pattern_statement: statement,
         pattern_index: idx + 1,
         holder,
-        provenance_note: 'v0.36.0.0 ship state shows top-25 resolved takes for this holder; per-pattern source_take_ids land in v0.37.',
+        provenance_note: 'v0.36.1.0 ship state shows top-25 resolved takes for this holder; per-pattern source_take_ids land in v0.37.',
         takes,
       });
     } catch (err) {
@@ -703,7 +703,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.setHeader('Cache-Control', 'private, max-age=60');
 
       if (type === 'brier-trend') {
-        // v0.36.0.0 ship state: 1-point series from the active profile. A
+        // v0.36.1.0 ship state: 1-point series from the active profile. A
         // proper 90-day time series will read from calibration_profiles
         // generated_at history in v0.37 once we have multiple snapshots.
         const series = profile?.brier !== null && profile?.brier !== undefined
@@ -712,7 +712,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return res.send(renderBrierTrend({ series }));
       }
       if (type === 'domain-bars') {
-        // v0.36.0.0 ship state: domain_scorecards JSONB is a placeholder
+        // v0.36.1.0 ship state: domain_scorecards JSONB is a placeholder
         // (per-domain rendering comes when batchGetTakesScorecards lands in
         // a follow-up). Render empty for now.
         return res.send(renderDomainBars({ bars: [] }));
@@ -725,7 +725,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         );
       }
       if (type === 'abandoned-threads') {
-        // v0.36.0.0 ship state: pull abandoned threads inline via a small
+        // v0.36.1.0 ship state: pull abandoned threads inline via a small
         // SQL query (the doctor check counts them; this surfaces details).
         const rows = await engine.executeRaw<{
           id: number;

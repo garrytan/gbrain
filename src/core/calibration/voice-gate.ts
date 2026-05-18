@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T6 / D24) — voice gate: single function, multiple surfaces.
+ * v0.36.1.0 (T6 / D24) — voice gate: single function, multiple surfaces.
  *
  * Calibration-wave surfaces talk to the user in a conversational voice that
  * sounds like a smart friend, not a clinical scoring system. Every nudge,

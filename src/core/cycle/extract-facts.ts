@@ -34,6 +34,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
+import { embed, isAvailable } from '../ai/gateway.ts';
 
 export interface ExtractFactsOpts {
   /** Subset of slugs to reconcile. undefined = walk every page in the brain. */
@@ -136,7 +137,40 @@ export async function runExtractFacts(
 
     if (parsed.facts.length === 0) continue;
 
-    const extracted = extractFactsFromFenceText(parsed.facts, slug, sourceId);
+    // v0.35.4 (D-ENG-1) — thread page.effective_date as the fallback
+    // valid_from. Without this, fence rows without explicit `validFrom:`
+    // land with `valid_from = now()` (import timestamp) and every
+    // trajectory query against the page returns import dates instead of
+    // claim dates.
+    const pageEffectiveDate = page.effective_date ? new Date(page.effective_date) : null;
+    const extracted = extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate });
+
+    // v0.35.4 (D-CDX-3) — batch-embed before insert. Without this,
+    // cycle-inserted facts land with `embedding = NULL`, which breaks
+    // consolidate's cosine clustering AND the drift_score formula in
+    // find_trajectory. Falls open: if the embedding gateway is
+    // unavailable (no API key configured), facts still insert with
+    // NULL embeddings — drift_score gracefully returns null and
+    // clustering falls back to recency.
+    if (isAvailable('embedding') && extracted.length > 0) {
+      try {
+        const texts = extracted.map(e => e.fact);
+        const embeddings = await embed(texts);
+        // Defensive: embed should return one vector per input; if the
+        // gateway returns a partial array (provider partial-batch retry
+        // returning fewer than requested), only fill what we have.
+        for (let i = 0; i < extracted.length && i < embeddings.length; i++) {
+          extracted[i].embedding = embeddings[i];
+        }
+      } catch (err) {
+        // Embedding failure is non-fatal — facts still get inserted, just
+        // without embeddings. Cycle phase status stays 'ok'.
+        result.warnings.push(
+          `${slug}: extract_facts batch embed failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     const inserted = await engine.insertFacts(extracted, { source_id: sourceId }); // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
     result.factsInserted += inserted.inserted;
   }

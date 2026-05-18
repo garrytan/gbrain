@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T9 / E3) — calibration-aware contradictions.
+ * v0.36.1.0 (T9 / E3) — calibration-aware contradictions.
  *
  * The v0.32.6 contradictions probe surfaces pairs of takes/chunks that
  * conflict across time. E3: cross-reference each finding against the
@@ -31,7 +31,7 @@ export interface CalibrationJoinTag {
  * Tag a finding with the bias context if it matches an active pattern.
  * Returns null when no calibration profile is present OR no tags match.
  *
- * Match heuristic (v0.36.0.0 ship-state):
+ * Match heuristic (v0.36.1.0 ship-state):
  *  - Each bias tag has a structure like 'over-confident-geography' or
  *    'late-on-macro-tech' — axis-then-domain.
  *  - We compute a domain hint from the finding's pair members (slug

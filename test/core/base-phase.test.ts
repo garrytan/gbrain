@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 — BaseCyclePhase unit tests.
+ * v0.36.1.0 — BaseCyclePhase unit tests.
  *
  * Pure structural tests against a TestPhase subclass. No PGLite, no
  * mock.module, no real engine — just exercise the abstract base's

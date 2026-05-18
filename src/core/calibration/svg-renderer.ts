@@ -1,5 +1,5 @@
 /**
- * v0.36.0.0 (T15 / D23) — server-rendered SVG charts for the admin SPA.
+ * v0.36.1.0 (T15 / D23) — server-rendered SVG charts for the admin SPA.
  *
  * Pure functions: data → SVG string. No DOM, no React, no chart library.
  * Admin tab fetches these endpoints and dangerouslySetInnerHTML's the

@@ -1,8 +1,8 @@
 /**
- * v0.36.0.0 (T17 / D18 CDX-3) — undo-wave reversal.
+ * v0.36.1.0 (T17 / D18 CDX-3) — undo-wave reversal.
  *
  * Reverses the calibration wave's mutations on canonical state. Every new
- * row written by the v0.36.0.0 wave carries `wave_version = 'v0.36.0.0'`
+ * row written by the v0.36.1.0 wave carries `wave_version = 'v0.36.1.0'`
  * so a precise revert is possible without touching pre-wave data.
  *
  * Reversal scope (4 steps):
@@ -28,7 +28,7 @@
  *   the rest of the undo proceeds.
  *
  * Transactional posture:
- *   v0.36.0.0 ship state runs steps 1-3 in a single engine.transaction
+ *   v0.36.1.0 ship state runs steps 1-3 in a single engine.transaction
  *   so partial reversal can't leave the brain half-undone. Step 4 (gstack
  *   scrub) runs OUTSIDE the transaction because it's a separate filesystem
  *   write.
@@ -44,7 +44,7 @@ import { GSTACK_LEARNING_NAMESPACE } from './gstack-coupling.ts';
 import type { BrainEngine } from '../engine.ts';
 
 export interface UndoWaveOpts {
-  /** Wave version to reverse. v0.36.0.0 ship state: 'v0.36.0.0'. */
+  /** Wave version to reverse. v0.36.1.0 ship state: 'v0.36.1.0'. */
   waveVersion: string;
   /** When true, compute counts only — no writes. */
   dryRun?: boolean;
@@ -72,7 +72,7 @@ export interface UndoWaveResult {
 }
 
 /**
- * Reverse the wave. v0.36.0.0 ship state: takes 1 engine round-trip per
+ * Reverse the wave. v0.36.1.0 ship state: takes 1 engine round-trip per
  * step (a transaction would be cleaner but engine.transaction isn't part
  * of the BrainEngine interface used here — would need plumbing). Each
  * step is idempotent: re-running --undo-wave is a no-op when no
