@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-"""Push docs/agent-manual.md to GBrain at wiki/agent-manual.
+"""Push all agent-manual pages to GBrain.
+
+Pages pushed:
+  wiki/agent-manual          ← index (輕量，啟動時讀這頁)
+  wiki/agent-manual/rules    ← 寫入規則 + 禁止行為
+  wiki/agent-manual/links    ← Link type + Namespace 判斷
+  wiki/agent-manual/tools    ← 完整工具列表
+  wiki/agent-manual/workflow ← 工作流程
 
 Usage:
     python scripts/push_manual.py
 
-Env vars required (same as harness):
-    GBRAIN_OTP          — one-time password (if not using TOTP)
-    GBRAIN_TOTP_SECRET  — TOTP secret (used if GBRAIN_OTP is not set)
+Env vars:
+    GBRAIN_OTP          — one-time password (優先)
+    GBRAIN_TOTP_SECRET  — TOTP secret (fallback)
 """
 from __future__ import annotations
 import os, sys, hmac, hashlib, time
@@ -14,8 +21,15 @@ from pathlib import Path
 import requests
 
 GBRAIN_BASE = "https://gbrain-production-18fa.up.railway.app"
-SLUG = "wiki/agent-manual"
-MANUAL_PATH = Path(__file__).parent.parent / "docs" / "agent-manual.md"
+DOCS = Path(__file__).parent.parent / "docs"
+
+PAGES = [
+    ("wiki/agent-manual",          "agent-manual-index.md",    "Agent Manual — Index"),
+    ("wiki/agent-manual/rules",    "agent-manual-rules.md",    "Agent Manual — 寫入規則"),
+    ("wiki/agent-manual/links",    "agent-manual-links.md",    "Agent Manual — Link 規則"),
+    ("wiki/agent-manual/tools",    "agent-manual-tools.md",    "Agent Manual — 完整工具列表"),
+    ("wiki/agent-manual/workflow", "agent-manual-workflow.md", "Agent Manual — 工作流程"),
+]
 
 
 def _otp() -> str:
@@ -32,18 +46,17 @@ def _headers() -> dict:
     return {"Authorization": f"OTP {_otp()}"}
 
 
-def push() -> None:
-    if not MANUAL_PATH.exists():
-        sys.exit(f"ERROR: manual not found at {MANUAL_PATH}")
+def push_page(slug: str, filename: str, title: str) -> str:
+    path = DOCS / filename
+    if not path.exists():
+        return f"SKIP  {slug} (檔案不存在: {filename})"
 
-    body = MANUAL_PATH.read_text()
-    title = "Agent Operating Manual"
+    body = path.read_text()
     content = f"---\ntitle: {title}\nsource: agent\ntags: [\"fact\"]\n---\n\n{body}"
 
-    print(f"Pushing {MANUAL_PATH.name} → {SLUG} ...")
     r = requests.put(
         f"{GBRAIN_BASE}/page",
-        json={"slug": SLUG, "content": content, "source": "agent", "tags": ["fact"]},
+        json={"slug": slug, "content": content, "source": "agent", "tags": ["fact"]},
         params={"async": "1"},
         headers=_headers(),
         timeout=20,
@@ -51,11 +64,17 @@ def push() -> None:
     r.raise_for_status()
     data = r.json()
     status = data.get("status", "?")
-    h = data.get("content_hash") or data.get("hash") or "?"
-    print(f"OK  status={status}  hash={h}")
-    print(f"\nThe agent will read '{SLUG}' at startup.")
-    print("Allow 60-90 seconds for keyword search index to update.")
+    return f"OK    {slug}  [{status}]"
+
+
+def push_all() -> None:
+    print(f"推送 {len(PAGES)} 頁到 GBrain...\n")
+    for slug, filename, title in PAGES:
+        result = push_page(slug, filename, title)
+        print(f"  {result}")
+    print("\n完成。索引頁：wiki/agent-manual")
+    print("提醒：關鍵字搜尋需等 60-90 秒更新。")
 
 
 if __name__ == "__main__":
-    push()
+    push_all()
