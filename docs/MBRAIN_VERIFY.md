@@ -81,6 +81,22 @@ Expected:
 - existing scenario coverage still passes after adding the GA-P fixture scenario
 - no GA-P fixture can pass by changing prose only while omitting executable surfaces
 
+## GBrain Absorption GA-P2 Verification
+
+Run:
+
+```bash
+bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s27-gbrain-evaluation-foundation.test.ts
+```
+
+Expected:
+
+- `test/fixtures/gbrain-absorption/ga-p2-evaluation-foundation.fixture.json` uses the `GA-P2` stage and replay fixture families cover retrieval, candidate lifecycle, task resume, scope leak, and derived refresh regressions
+- S27 executes one real SQLite flow per family using existing retrieval, Memory Inbox, task resume, Scope Gate, and context-map freshness surfaces
+- probe candidates and derived map results remain non-authoritative until a canonical read or rebuild path is explicitly exercised
+- task resume preserves the current goal, blocker, failed attempt, decision in force, and verification warning fields needed for before/after evaluation
+- GA-P2 stays an evaluation foundation and does not add GA-P3+ corpus-lane behavior or new production services
+
 ## Phase 1 operational-memory verification
 
 Run:

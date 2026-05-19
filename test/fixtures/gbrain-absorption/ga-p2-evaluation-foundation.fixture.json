@@ -1,0 +1,65 @@
+{
+  "stage_id": "GA-P2",
+  "fixture_format": "gbrain_absorption_replay_v1",
+  "description": "Hand-authored GA-P2 replay cases that exercise existing mbrain SQLite surfaces before GA-P3+ behavior is added.",
+  "verification_commands": [
+    "bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s27-gbrain-evaluation-foundation.test.ts"
+  ],
+  "replay_cases": [
+    {
+      "case_id": "retrieval_regression",
+      "fixture_id": "ga-p2-retrieval-regression",
+      "query": "ga p2 retrieval canonical needle",
+      "requested_scope": "work",
+      "expected_intent": "knowledge_qa",
+      "expected_surfaces": ["retrieve_context", "read_context"],
+      "expected_canonical_refs": ["section:workspace:default:concepts/ga-p2-retrieval#compiled-truth"],
+      "candidate_authority": "candidate_only",
+      "must_preserve": ["probe_candidates_are_not_answer_ground", "canonical_read_required"]
+    },
+    {
+      "case_id": "candidate_lifecycle_regression",
+      "fixture_id": "ga-p2-candidate-lifecycle-regression",
+      "query": "candidate lifecycle should retain rejection evidence",
+      "requested_scope": "work",
+      "expected_intent": "memory_inbox_review",
+      "expected_surfaces": ["memory_candidate_status_events", "list_memory_candidates"],
+      "expected_canonical_refs": ["memory_candidate:candidate-ga-p2-rejected"],
+      "candidate_authority": "candidate_only",
+      "must_preserve": ["source_refs", "status_events", "rejected_candidate_audit_visibility"]
+    },
+    {
+      "case_id": "task_resume_fidelity",
+      "fixture_id": "ga-p2-task-resume-fidelity",
+      "query": "resume ga p2 evaluation task",
+      "requested_scope": "work",
+      "expected_intent": "task_resume",
+      "expected_surfaces": ["resume_task", "retrieval_traces"],
+      "expected_canonical_refs": ["task_thread:task-ga-p2"],
+      "candidate_authority": "not_expected",
+      "must_preserve": ["current_goal", "blocker", "failed_attempt", "decision_in_force", "verification_warning"]
+    },
+    {
+      "case_id": "scope_leak_regression",
+      "fixture_id": "ga-p2-scope-leak-regression",
+      "query": "read personal exact selector from work scope",
+      "requested_scope": "work",
+      "expected_intent": "precision_lookup",
+      "expected_surfaces": ["retrieve_context", "scope_gate"],
+      "expected_canonical_refs": [],
+      "candidate_authority": "not_expected",
+      "must_preserve": ["scope_gate_denial", "no_required_reads", "no_candidate_disclosure"]
+    },
+    {
+      "case_id": "derived_refresh_regression",
+      "fixture_id": "ga-p2-derived-refresh-regression",
+      "query": "ga p2 derived freshness target",
+      "requested_scope": "work",
+      "expected_intent": "broad_synthesis",
+      "expected_surfaces": ["context_map_query", "derived_freshness"],
+      "expected_canonical_refs": ["context-map:workspace:workspace:default"],
+      "candidate_authority": "historical",
+      "must_preserve": ["stale_status", "refresh_warning", "canonical_follow_through_required"]
+    }
+  ]
+}

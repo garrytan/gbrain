@@ -80,4 +80,24 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(doc).toContain('bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s26-gbrain-absorption-contracts.test.ts');
     expect(doc).toContain('bun run test:scenarios');
   });
+
+  test('anchors GA-P2 evaluation foundation in the evaluation owner', () => {
+    const doc = readRepoFile('docs/architecture/redesign/08-evaluation-and-acceptance.md');
+
+    expect(doc).toContain('## GBrain Absorption GA-P2 Evaluation Foundation');
+    expect(doc).toContain('| Fixture family | Existing verification surface | Regression guarded |');
+    expect(doc).toContain('| retrieval_regression | `retrieve_context` + `read_context` |');
+    expect(doc).toContain('| candidate_lifecycle_regression | Memory Inbox status events |');
+    expect(doc).toContain('| task_resume_fidelity | `resume_task` / task working set |');
+    expect(doc).toContain('| scope_leak_regression | Scope Gate exact-selector denial |');
+    expect(doc).toContain('| derived_refresh_regression | context-map stale freshness checks |');
+  });
+
+  test('updates the install verification runbook for GA-P2', () => {
+    const doc = readRepoFile('docs/MBRAIN_VERIFY.md');
+
+    expect(doc).toContain('## GBrain Absorption GA-P2 Verification');
+    expect(doc).toContain('bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s27-gbrain-evaluation-foundation.test.ts');
+    expect(doc).toContain('replay fixture families cover retrieval, candidate lifecycle, task resume, scope leak, and derived refresh regressions');
+  });
 });

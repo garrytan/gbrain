@@ -113,6 +113,35 @@ Replay rules:
 6. A replay pass fails if retrieval gets the right text by violating scope,
    candidate authority, or control-plane boundaries.
 
+## GBrain Absorption GA-P2 Evaluation Foundation
+
+GA-P2 turns the replay contract into a focused regression foundation before
+later absorption phases add stronger behavior. It does not introduce a new
+runtime service. It binds hand-authored or captured replay cases to existing
+SQLite-capable verification surfaces so search, code-lane, maintenance, and
+corpus-lane changes can be evaluated before and after a patch.
+
+| Fixture family | Existing verification surface | Regression guarded |
+|---|---|---|
+| retrieval_regression | `retrieve_context` + `read_context` | Probe candidates stay non-authoritative until canonical evidence is read. |
+| candidate_lifecycle_regression | Memory Inbox status events | Rejected candidate status history remains auditable without becoming answer-grounding truth. |
+| task_resume_fidelity | `resume_task` / task working set | Resume output preserves current goal, blockers, failed attempts, decisions in force, and verification warnings. |
+| scope_leak_regression | Scope Gate exact-selector denial | Work-scoped requests cannot disclose personal selectors, required reads, or candidate snippets. |
+| derived_refresh_regression | context-map stale freshness checks | Derived maps and atlases disclose stale status and require canonical follow-through or rebuild before trust. |
+
+GA-P2 fixture rules:
+
+1. Fixture ids use the `ga-p2-` prefix and name the regression family.
+2. Each family must map to one existing operation, service, or scenario surface
+   rather than a placeholder metric.
+3. The default SQLite scenario must exercise at least one real flow per family.
+4. Candidate and derived outputs may be present in replay data, but the fixture
+   must state their authority as `candidate_only`, `historical`, or
+   `not_expected` unless a canonical read proves otherwise.
+5. A GA-P2 pass is a measurement foundation only; it does not accept GA-P3+
+   corpus-lane behavior, GA-P4 authority-model changes, or GA-P6 maintenance
+   automation.
+
 ## Repeated-Work Prevention Evaluation
 
 This evaluation corresponds to the operational-memory workstream and later phases that depend on resume quality.
