@@ -108,6 +108,52 @@ Rules for later implementation:
 
 ---
 
+## Roadmap 2026-05-19 - GA-P7 consolidation and upstream discipline checkpoint
+
+GA-P7 closes the personal gbrain absorption roadmap as a consolidation and
+upstream-discipline checkpoint. It records the implementation state of GA-P2
+through GA-P6 and keeps upstream reference material useful without allowing
+unreviewed direct ports.
+
+The checkpoint preserves source-aware ranking, replay fixture discipline, and
+system-of-record discipline as adopted implementation lessons.
+It also treats facts/takes, corpus lanes, and maintenance cycle ideas as
+reinterpretation inputs rather than schema or runtime surfaces to copy.
+
+No GA-P7 row grants permission to port upstream production runtime code directly.
+Any later adoption still needs an owning redesign workstream, fixture-backed
+scenario coverage, and verification in `docs/MBRAIN_VERIFY.md`.
+
+| Upstream area | GA-P7 classification | MBrain implementation state | Discipline rule |
+|---|---|---|---|
+| Source-aware ranking | adopted | Already reimplemented locally as engine-neutral ranking. | Tune only through local fixtures and search tests, not upstream SQL or hosted assumptions. |
+| Replay fixture discipline | adopted | GA-P2 through GA-P7 now require fixture-backed scenario replay before absorption claims are accepted. | Preserve replay as a local acceptance guard; do not import upstream capture formats as authority. |
+| System-of-record discipline | adopted | Canonical Markdown, source refs, target snapshots, and governed handoffs remain the durable record while derived DB/index artifacts stay rebuildable. | Future imports must prove projection rebuild and source-record ownership before changing runtime behavior. |
+| Eval capture and replay | reinterpreted | GA-P2 defines replay fixture discipline through `ga-p2-evaluation-foundation.fixture.json` and S27. | Replay evaluates `mbrain` governance boundaries, not upstream capture format parity. |
+| Multi-source brains | reinterpreted | GA-P3 turns source separation into corpus lanes after the Scope Gate through S29. | Corpus lanes remain provenance metadata and never become scopes or write authority. |
+| Facts/takes hot-cold memory | reinterpreted | GA-P4 records artifact authority labels without a facts/takes storage clone through S28. | Profile memory, personal episodes, candidates, timelines, and derived maps keep distinct authority. |
+| Code Cathedral and tree-sitter symbol graph | reinterpreted | GA-P5 accepts a derived code lane and live `reverify_code_claims` gate through S30. | Code graph data or codemap pointers are orientation only until live file, symbol, branch, and content hash checks pass. |
+| Dream cycle maintenance | reinterpreted | GA-P6 accepts report-first maintenance and control-plane-only apply through S31. | Maintenance may emit reports, suggestions, or governed candidates; canonical writes still require existing memory operations controls. |
+| HTTP MCP, OAuth, admin UI, teammate-scoped writes | rejected | Outside the personal local-first roadmap. | Do not import hosted team runtime surfaces as GA follow-ups. |
+| Minions and hosted agent runtime | rejected | Outside `mbrain`'s role as durable memory substrate. | Do not add a competing job runtime to satisfy maintenance or replay work. |
+| Supabase/TUS hosted storage | rejected | Conflicts with local/offline defaults unless a separate local large-file design exists. | Hosted storage flows cannot be copied into the default local profile. |
+| Frontmatter guards and resolver warnings | deferred | Still useful, but not part of GA-P2 through GA-P6 runtime acceptance. | Revisit through `mbrain lint` or import validation with focused tests. |
+| Parallel incremental sync | deferred | Requires a local SQLite/PGLite writer-lock and checkpoint-safety design. | Do not trade sync correctness for upstream throughput without a parity test. |
+| Tree-sitter Code Cathedral default graph retrieval | deferred | GA-P5 keeps graph expansion opt-in and bounded. | Default graph retrieval needs chunk-grain metadata, invalidation, and retrieval-regression evidence first. |
+
+GA-P7 verification coverage:
+
+| GA slice | Fixture | Scenario | Coverage callout |
+|---|---|---|---|
+| GA-P2 | `test/fixtures/gbrain-absorption/ga-p2-evaluation-foundation.fixture.json` | `test/scenarios/s27-gbrain-evaluation-foundation.test.ts` | Retrieval, candidate lifecycle, task resume, scope leak, and derived refresh replay. |
+| GA-P3 | `test/fixtures/gbrain-absorption/ga-p3-corpus-lanes.fixture.json` | `test/scenarios/s29-gbrain-corpus-lanes.test.ts` | Corpus lanes stay post-scope provenance metadata. |
+| GA-P4 | `test/fixtures/gbrain-absorption/ga-p4-memory-authority.fixture.json` | `test/scenarios/s28-gbrain-memory-authority.test.ts` | Artifact authority labels remain distinct from compiled truth. |
+| GA-P5 | `test/fixtures/gbrain-absorption/ga-p5-code-lane.fixture.json` | `test/scenarios/s30-gbrain-code-lane.test.ts` | Code lane remains derived orientation and current code claims require live verification. |
+| GA-P6 | `test/fixtures/gbrain-absorption/ga-p6-personal-maintenance-cycle.fixture.json` | `test/scenarios/s31-gbrain-personal-maintenance-cycle.test.ts` | Maintenance defaults to report or suggestion output and apply stays in the control plane. |
+| GA-P7 | `test/fixtures/gbrain-absorption/ga-p7-upstream-discipline.fixture.json` | `test/scenarios/s32-gbrain-upstream-discipline.test.ts` | Upstream adopted, reinterpreted, rejected, and deferred areas stay explicit and docs/tests match implementation state. |
+
+---
+
 ## Sync 2026-05-01 — source-aware search ranking only
 
 - **Project baseline before sync**: `8f24b92` (PR #80 — sync and release safety)

@@ -225,4 +225,48 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(verify).toContain('optional apply requires the existing control plane with active realm/session');
     expect(scenarios).toContain('| S31 | `s31-gbrain-personal-maintenance-cycle.test.ts` | GA-P6, G1, G2, L5, L6 | ✅ green |');
   });
+
+  test('anchors GA-P7 consolidation and upstream discipline in upstream and evaluation docs', () => {
+    const upstream = readRepoFile('docs/UPSTREAM_SYNC.md');
+    const evaluation = readRepoFile('docs/architecture/redesign/08-evaluation-and-acceptance.md');
+
+    expect(upstream).toContain('## Roadmap 2026-05-19 - GA-P7 consolidation and upstream discipline checkpoint');
+    expect(upstream).toContain('| Upstream area | GA-P7 classification | MBrain implementation state | Discipline rule |');
+    expect(upstream).toContain('| Source-aware ranking | adopted |');
+    expect(upstream).toContain('| Replay fixture discipline | adopted |');
+    expect(upstream).toContain('| System-of-record discipline | adopted |');
+    expect(upstream).toContain('| Eval capture and replay | reinterpreted |');
+    expect(upstream).toContain('| Facts/takes hot-cold memory | reinterpreted |');
+    expect(upstream).toContain('| HTTP MCP, OAuth, admin UI, teammate-scoped writes | rejected |');
+    expect(upstream).toContain('| Minions and hosted agent runtime | rejected |');
+    expect(upstream).toContain('| Supabase/TUS hosted storage | rejected |');
+    expect(upstream).toContain('| Frontmatter guards and resolver warnings | deferred |');
+    expect(upstream).toContain('| Parallel incremental sync | deferred |');
+    expect(upstream).toContain('No GA-P7 row grants permission to port upstream production runtime code directly.');
+    expect(evaluation).toContain('## GBrain Absorption GA-P7 Consolidation And Upstream Discipline');
+    expect(evaluation).toContain('ga-p7-upstream-discipline.fixture.json');
+    expect(evaluation).toContain('consolidation_cases');
+    expect(evaluation).toContain('adopted, reinterpreted, rejected, and deferred upstream areas remain explicit');
+    expect(evaluation).toContain('no production runtime change');
+  });
+
+  test('updates the install verification runbook and scenario registry for GA-P7', () => {
+    const verify = readRepoFile('docs/MBRAIN_VERIFY.md');
+    const scenarios = readRepoFile('test/scenarios/README.md');
+
+    expect(verify).toContain('## GBrain Absorption GA-P7 Verification');
+    expect(verify).toContain('bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s32-gbrain-upstream-discipline.test.ts');
+    expect(verify).toContain('test/fixtures/gbrain-absorption/ga-p7-upstream-discipline.fixture.json');
+    expect(verify).toContain('upstream_checkpoint_lists_adopted_areas');
+    expect(verify).toContain('reinterpreted_vs_rejected_rationale_present');
+    expect(verify).toContain('verification_checklist_covers_ga_p2_through_ga_p6');
+    expect(verify).toContain('deferred_surfaces_remain_explicit');
+    expect(verify).toContain('docs_and_tests_match_implementation_state');
+    expect(verify).toContain('test/scenarios/s27-gbrain-evaluation-foundation.test.ts');
+    expect(verify).toContain('test/scenarios/s28-gbrain-memory-authority.test.ts');
+    expect(verify).toContain('test/scenarios/s29-gbrain-corpus-lanes.test.ts');
+    expect(verify).toContain('test/scenarios/s30-gbrain-code-lane.test.ts');
+    expect(verify).toContain('test/scenarios/s31-gbrain-personal-maintenance-cycle.test.ts');
+    expect(scenarios).toContain('| S32 | `s32-gbrain-upstream-discipline.test.ts` | GA-P7, E1, L4, L6, G1 | ✅ green |');
+  });
 });

@@ -252,6 +252,52 @@ GA-P6 fixture rules:
    `redaction_fail_closed` must preserve the same replay expectations as
    interactive governed memory operations.
 
+## GBrain Absorption GA-P7 Consolidation And Upstream Discipline
+
+GA-P7 is docs, fixture, and scenario consolidation only. It records the
+implemented GA-P2 through GA-P6 absorption state and ensures future upstream
+imports remain classified before they become implementation work. GA-P7 has no production runtime change.
+
+The executable fixture is
+`test/fixtures/gbrain-absorption/ga-p7-upstream-discipline.fixture.json`, and
+S32 (`test/scenarios/s32-gbrain-upstream-discipline.test.ts`) verifies that the
+upstream log, evaluation owner, verification runbook, and scenario registry stay
+aligned.
+
+The fixture has one family:
+
+| Fixture field | Existing verification surface | Regression guarded |
+|---|---|---|
+| `consolidation_cases` | docs contract, upstream log, verification runbook, and S32 scenario registry checks | adopted, reinterpreted, rejected, and deferred upstream areas remain explicit; GA-P2 through GA-P6 coverage stays called out; docs/tests match the implementation state. |
+
+GA-P7 fixture rules:
+
+1. `upstream_checkpoint_lists_adopted_areas` must keep adopted upstream areas
+   explicit, including source-aware ranking, replay fixture discipline, and
+   system-of-record discipline.
+2. `reinterpreted_vs_rejected_rationale_present` must distinguish
+   reinterpreted upstream ideas like facts/takes, corpus lanes, and maintenance
+   cycle work from rejected HTTP MCP, OAuth, and Minions surfaces.
+3. `verification_checklist_covers_ga_p2_through_ga_p6` must call out GA-P2,
+   GA-P3, GA-P4, GA-P5, and GA-P6 fixtures plus S27, S28, S29, S30, and S31.
+4. `deferred_surfaces_remain_explicit` must keep frontmatter guards, parallel
+   incremental sync, and tree-sitter graph retrieval out of the accepted runtime
+   contract until separately designed. Hosted storage remains explicitly
+   rejected for the local-first default unless a separate local large-file
+   design changes that boundary.
+5. `docs_and_tests_match_implementation_state` must state that GA-P7 is a
+   fixture and scenario checkpoint with no production runtime change.
+
+GA-P7 coverage references:
+
+| GA slice | Fixture | Scenario |
+|---|---|---|
+| GA-P2 | `test/fixtures/gbrain-absorption/ga-p2-evaluation-foundation.fixture.json` | `test/scenarios/s27-gbrain-evaluation-foundation.test.ts` |
+| GA-P3 | `test/fixtures/gbrain-absorption/ga-p3-corpus-lanes.fixture.json` | `test/scenarios/s29-gbrain-corpus-lanes.test.ts` |
+| GA-P4 | `test/fixtures/gbrain-absorption/ga-p4-memory-authority.fixture.json` | `test/scenarios/s28-gbrain-memory-authority.test.ts` |
+| GA-P5 | `test/fixtures/gbrain-absorption/ga-p5-code-lane.fixture.json` | `test/scenarios/s30-gbrain-code-lane.test.ts` |
+| GA-P6 | `test/fixtures/gbrain-absorption/ga-p6-personal-maintenance-cycle.fixture.json` | `test/scenarios/s31-gbrain-personal-maintenance-cycle.test.ts` |
+
 ## Repeated-Work Prevention Evaluation
 
 This evaluation corresponds to the operational-memory workstream and later phases that depend on resume quality.

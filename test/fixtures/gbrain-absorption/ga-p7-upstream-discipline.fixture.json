@@ -1,0 +1,75 @@
+{
+  "stage_id": "GA-P7",
+  "fixture_format": "gbrain_absorption_replay_v1",
+  "description": "GA-P7 consolidates GA-P2 through GA-P6 into an upstream-discipline checkpoint that records adopted, reinterpreted, rejected, and deferred reference areas without production runtime changes.",
+  "verification_commands": [
+    "bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s32-gbrain-upstream-discipline.test.ts",
+    "bun run test:scenarios",
+    "bunx tsc --noEmit --pretty false",
+    "git diff --check"
+  ],
+  "coverage": {
+    "ga_p2": {
+      "fixture": "test/fixtures/gbrain-absorption/ga-p2-evaluation-foundation.fixture.json",
+      "scenario": "test/scenarios/s27-gbrain-evaluation-foundation.test.ts",
+      "verification": "retrieval, candidate lifecycle, task resume, scope leak, and derived refresh replay"
+    },
+    "ga_p3": {
+      "fixture": "test/fixtures/gbrain-absorption/ga-p3-corpus-lanes.fixture.json",
+      "scenario": "test/scenarios/s29-gbrain-corpus-lanes.test.ts",
+      "verification": "corpus lanes stay post-scope provenance metadata"
+    },
+    "ga_p4": {
+      "fixture": "test/fixtures/gbrain-absorption/ga-p4-memory-authority.fixture.json",
+      "scenario": "test/scenarios/s28-gbrain-memory-authority.test.ts",
+      "verification": "artifact authority labels remain distinct from compiled truth"
+    },
+    "ga_p5": {
+      "fixture": "test/fixtures/gbrain-absorption/ga-p5-code-lane.fixture.json",
+      "scenario": "test/scenarios/s30-gbrain-code-lane.test.ts",
+      "verification": "code lane remains derived orientation and current code claims require live verification"
+    },
+    "ga_p6": {
+      "fixture": "test/fixtures/gbrain-absorption/ga-p6-personal-maintenance-cycle.fixture.json",
+      "scenario": "test/scenarios/s31-gbrain-personal-maintenance-cycle.test.ts",
+      "verification": "maintenance defaults to report or suggestion output and apply stays in the control plane"
+    }
+  },
+  "consolidation_cases": [
+    {
+      "case_id": "upstream_checkpoint_lists_adopted_areas",
+      "classification": "adopted",
+      "required_terms": ["source-aware ranking", "replay fixture discipline", "system-of-record discipline"],
+      "expected_doc": "docs/UPSTREAM_SYNC.md",
+      "expected_runtime_change": false
+    },
+    {
+      "case_id": "reinterpreted_vs_rejected_rationale_present",
+      "classification": "reinterpretation_boundary",
+      "required_terms": ["facts/takes", "corpus lanes", "maintenance cycle", "HTTP MCP", "OAuth", "Minions"],
+      "expected_doc": "docs/UPSTREAM_SYNC.md",
+      "expected_runtime_change": false
+    },
+    {
+      "case_id": "verification_checklist_covers_ga_p2_through_ga_p6",
+      "classification": "verification_coverage",
+      "required_terms": ["GA-P2", "GA-P3", "GA-P4", "GA-P5", "GA-P6", "S27", "S28", "S29", "S30", "S31"],
+      "expected_doc": "docs/MBRAIN_VERIFY.md",
+      "expected_runtime_change": false
+    },
+    {
+      "case_id": "deferred_surfaces_remain_explicit",
+      "classification": "deferred",
+      "required_terms": ["frontmatter guards", "parallel incremental sync", "tree-sitter"],
+      "expected_doc": "docs/UPSTREAM_SYNC.md",
+      "expected_runtime_change": false
+    },
+    {
+      "case_id": "docs_and_tests_match_implementation_state",
+      "classification": "docs_tests_alignment",
+      "required_terms": ["no production runtime change", "fixture", "scenario", "S32"],
+      "expected_doc": "docs/architecture/redesign/08-evaluation-and-acceptance.md",
+      "expected_runtime_change": false
+    }
+  ]
+}

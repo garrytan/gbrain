@@ -192,6 +192,45 @@ Expected:
 - candidate writes remain governed candidate state and never become compiled
   truth by maintenance shortcut
 
+## GBrain Absorption GA-P7 Verification
+
+Run:
+
+```bash
+bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s32-gbrain-upstream-discipline.test.ts
+bun run test:scenarios
+bunx tsc --noEmit --pretty false
+git diff --check
+```
+
+Expected:
+
+- `test/fixtures/gbrain-absorption/ga-p7-upstream-discipline.fixture.json`
+  uses the `GA-P7` stage and includes
+  `upstream_checkpoint_lists_adopted_areas`,
+  `reinterpreted_vs_rejected_rationale_present`,
+  `verification_checklist_covers_ga_p2_through_ga_p6`,
+  `deferred_surfaces_remain_explicit`, and
+  `docs_and_tests_match_implementation_state`
+- `docs/UPSTREAM_SYNC.md` records adopted, reinterpreted, rejected, and
+  deferred upstream areas under the GA-P7 checkpoint
+- GA-P2 coverage remains tied to
+  `test/fixtures/gbrain-absorption/ga-p2-evaluation-foundation.fixture.json`
+  and `test/scenarios/s27-gbrain-evaluation-foundation.test.ts`
+- GA-P3 coverage remains tied to
+  `test/fixtures/gbrain-absorption/ga-p3-corpus-lanes.fixture.json` and
+  `test/scenarios/s29-gbrain-corpus-lanes.test.ts`
+- GA-P4 coverage remains tied to
+  `test/fixtures/gbrain-absorption/ga-p4-memory-authority.fixture.json` and
+  `test/scenarios/s28-gbrain-memory-authority.test.ts`
+- GA-P5 coverage remains tied to
+  `test/fixtures/gbrain-absorption/ga-p5-code-lane.fixture.json` and
+  `test/scenarios/s30-gbrain-code-lane.test.ts`
+- GA-P6 coverage remains tied to
+  `test/fixtures/gbrain-absorption/ga-p6-personal-maintenance-cycle.fixture.json`
+  and `test/scenarios/s31-gbrain-personal-maintenance-cycle.test.ts`
+- No network, database, or production runtime service is required for S32.
+
 ## Phase 1 operational-memory verification
 
 Run:

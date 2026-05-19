@@ -52,6 +52,7 @@ agent planning/spec files are intentionally not tracked.
 | S29 | `s29-gbrain-corpus-lanes.test.ts` | GA-P3, I5, L6, G1 | ✅ green |
 | S30 | `s30-gbrain-code-lane.test.ts` | GA-P5, L4, L6, E1 | ✅ green |
 | S31 | `s31-gbrain-personal-maintenance-cycle.test.ts` | GA-P6, G1, G2, L5, L6 | ✅ green |
+| S32 | `s32-gbrain-upstream-discipline.test.ts` | GA-P7, E1, L4, L6, G1 | ✅ green |
 
 Legend:
 - ✅ green = passes on current code
@@ -64,7 +65,8 @@ acceptance coverage, S25 memory consolidation retention coverage, S26
 GBrain absorption contract coverage, S27 GA-P2 evaluation foundation, and S28
 GA-P4 memory authority, S29 GA-P3 corpus lane provenance coverage, S30
 GA-P5 code lane derived-orientation coverage, and S31 GA-P6 personal
-maintenance cycle report/control-plane coverage. Run this as
+maintenance cycle report/control-plane coverage, and S32 GA-P7 consolidation
+and upstream-discipline coverage. Run this as
 part of final acceptance:
 
 ```sh
