@@ -28,6 +28,10 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+import { randomUUID } from 'crypto';
 
 import type {
   AIGatewayConfig,
@@ -40,6 +44,86 @@ import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+
+const COPILOT_API_URL = 'https://api.github.com/embeddings';
+const COPILOT_API_VERSION = '2025-05-01';
+const COPILOT_MARKER = Symbol('__gbrainCopilotEmbedding');
+interface CopilotEmbeddingModel { [COPILOT_MARKER]: true; modelId: string; cfg: AIGatewayConfig; }
+function isCopilotModel(model: any): model is CopilotEmbeddingModel {
+  return !!model && typeof model === 'object' && model[COPILOT_MARKER] === true;
+}
+
+function getCopilotToken(env: Record<string, string | undefined>): string {
+  const envToken = env.GBRAIN_COPILOT_TOKEN || env.COPILOT_GITHUB_TOKEN || env.GH_TOKEN || env.GITHUB_TOKEN;
+  if (envToken) return envToken;
+  const configToken = readCopilotCliToken();
+  if (configToken) return configToken;
+  throw new AIConfigError(
+    'Copilot embedding provider requires GBRAIN_COPILOT_TOKEN or a logged-in ~/.copilot/config.json.',
+    'Run GitHub Copilot login or set GBRAIN_COPILOT_TOKEN. Do not paste tokens into chat/logs.',
+  );
+}
+
+function readCopilotCliToken(): string | null {
+  try {
+    const raw = readFileSync(join(homedir(), '.copilot', 'config.json'), 'utf-8');
+    const withoutComments = raw.split('\n').filter(line => !line.trim().startsWith('//')).join('\n');
+    const config = JSON.parse(withoutComments) as {
+      lastLoggedInUser?: { host?: string; login?: string };
+      copilotTokens?: Record<string, string>;
+    };
+    const host = config.lastLoggedInUser?.host;
+    const login = config.lastLoggedInUser?.login;
+    if (host && login) {
+      const preferred = config.copilotTokens?.[`${host}:${login}`];
+      if (preferred) return preferred;
+    }
+    return Object.values(config.copilotTokens || {})[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeVector(vector: Float32Array): Float32Array {
+  let sum = 0;
+  for (let i = 0; i < vector.length; i++) sum += vector[i] * vector[i];
+  const norm = Math.sqrt(sum);
+  if (norm > 0) {
+    for (let i = 0; i < vector.length; i++) vector[i] /= norm;
+  }
+  return vector;
+}
+
+async function embedCopilot(texts: string[], modelId: string, cfg: AIGatewayConfig, opts?: { abortSignal?: AbortSignal }): Promise<Float32Array[]> {
+  const token = getCopilotToken(cfg.env);
+  const response = await fetch(cfg.env.GBRAIN_COPILOT_EMBEDDING_URL || COPILOT_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'X-GitHub-Api-Version': COPILOT_API_VERSION,
+      'X-GitHub-Request-ID': randomUUID(),
+      'User-Agent': 'gbrain/0.36.0',
+    },
+    body: JSON.stringify({ inputs: texts, model: modelId }),
+    ...(opts?.abortSignal ? { signal: opts.abortSignal } : {}),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new AITransientError(
+      `Copilot embeddings request failed: ${response.status} ${response.statusText}${body ? ` ${body}` : ''}`,
+    );
+  }
+  const payload = await response.json() as { embeddings?: { embedding?: number[] }[] };
+  if (!payload.embeddings || payload.embeddings.length !== texts.length) {
+    throw new AIConfigError(`Copilot embeddings response shape mismatch: expected ${texts.length}, got ${payload.embeddings?.length ?? 0}`);
+  }
+  return payload.embeddings.map(item => {
+    if (!item.embedding) throw new AIConfigError('Copilot embeddings response missing embedding');
+    return normalizeVector(new Float32Array(item.embedding));
+  });
+}
 
 const MAX_CHARS = 8000;
 const DEFAULT_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
@@ -921,6 +1005,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       throw new AIConfigError(
         `Anthropic has no embedding model. Use openai or google for embeddings.`,
       );
+    case 'native-copilot':
+      return { [COPILOT_MARKER]: true, modelId, cfg } as CopilotEmbeddingModel;
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'embedding');
@@ -1178,6 +1264,23 @@ async function embedSubBatch(
   modelId: string,
   opts?: EmbedOpts,
 ): Promise<Float32Array[]> {
+  // Copilot recipe: native fetch, bypass Vercel AI SDK.
+  if (isCopilotModel(model)) {
+    try {
+      const embeddings = await embedCopilot(texts, modelId, model.cfg, { abortSignal: opts?.abortSignal });
+      const first = embeddings[0];
+      if (first && first.length !== expectedDims) {
+        throw new AIConfigError(
+          `Embedding dim mismatch: model ${modelId} returned ${first.length} but schema expects ${expectedDims}.`,
+          `Run \`gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${first.length}\` or change models.`,
+        );
+      }
+      recordSubBatchSuccess(recipe);
+      return embeddings;
+    } catch (err) {
+      throw normalizeAIError(err, `embed(${recipe.id}:${modelId})`);
+    }
+  }
   try {
     const result = await _embedTransport({
       model,
@@ -1590,6 +1693,8 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       if (!apiKey) throw new AIConfigError(`Anthropic expansion requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
       return createAnthropic({ apiKey }).languageModel(modelId);
     }
+    case 'native-copilot':
+      throw new AIConfigError(`Copilot recipe is embedding-only. Use anthropic/openai/google for expansion.`);
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
@@ -1793,6 +1898,8 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       if (!apiKey) throw new AIConfigError(`Anthropic chat requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
       return createAnthropic({ apiKey }).languageModel(modelId);
     }
+    case 'native-copilot':
+      throw new AIConfigError(`Copilot recipe is embedding-only. Use anthropic/openai/google for chat.`);
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'chat');
