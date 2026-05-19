@@ -1,10 +1,18 @@
 # GBrain — Ryan's Fork
 
-> **This fork adds a Python LLM agent harness (`harness/`) built on top of GBrain.**
-> GBrain itself is unchanged — all 2685 lines of additions are original Python in `harness/`.
-> This is part of the **LifeBuilder** digital twin stack: GBrain is the persistent original entity; the harness is the executor.
+> 靈機讀玉簡，遵律令，以煉丹之法鍛技。
 
-**→ [harness/README.md](harness/README.md)** — Python agent setup, living docs system, Genspark ↔ Local AI collaboration protocol, military-grade contract pipeline.
+此 fork 在 GBrain（**玉簡**）之上加入了 `harness/`（**靈機**）— 一個 Python LLM 執行層。
+GBrain 本體零修改，全部 2685 行新增程式碼皆為原創 Python。
+
+| 名號 | 實體 | 說明 |
+|------|------|------|
+| **靈機** | `harness/` | Python 執行層，讀玉簡、遵律令、行任務 |
+| **玉簡** | GBrain 腦庫 | 知識載體，13 頁活文件常駐其中 |
+| **律令** | `openspec/` pipeline | 軍工級 contract 守門流程 |
+| **煉丹** | `skills/` | 技法鍛造，按需載入 |
+
+**→ [harness/README.md](harness/README.md)** — 完整說明：18 件工具、活文件系統、Genspark 協作協議、律令流水線。
 
 ---
 
