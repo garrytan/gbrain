@@ -85,6 +85,34 @@ Each item: which page, what to add or change, source URL.
 - [Source title](URL) — accessed YYYY-MM-DD
 - [Source title](URL) — accessed YYYY-MM-DD
 - ...
+
+## Facts
+3-8 typed `key=value` claims anchored in the cited sources above. Format:
+one claim per line, kebab-case-or-snake_case keys, scalar or quoted-string
+values. These feed gbrain's claim-trajectory machinery (`extract_facts`
+runs on `put_page`) and downstream consumers like the Solution-Research
+Workflow that read accumulated typed claims back into Phase 5/6/7 prompts.
+
+Rules:
+- Keys lowercase `[a-z][a-z0-9_]*` (snake_case) — gbrain's metric-ID
+  contract. The Solution-Research Workflow's facts validator
+  (`internal/temporal/solution_research_facts_validator.go`) rejects
+  kebab-case, leading-digit, or mixed-case keys.
+- Values: scalars (numbers, ISO dates, booleans) or short quoted
+  strings. Prefer verifiable, time-bounded, comparable claims — these
+  survive cross-run comparison.
+- 3 claims minimum; ~8 is plenty. Avoid prose claims.
+
+Examples:
+- `mid_market_saas_mrr_floor_usd=50000`
+- `legal_ai_overview_trigger_rate_pct=75`
+- `competitor_citation_share_pct_source="vendor-anecdote"`
+- `reference_year=2026`
+
+A research page WITHOUT a `## Facts` block still ingests fine, but the
+trajectory / scorecard / SRW facts-loader paths have nothing to consume
+for this run. Consumers degrade gracefully (empty-snapshot), but
+emitting the block is strictly better.
 ```
 
 ## Invocation
