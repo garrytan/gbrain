@@ -34,6 +34,7 @@ describe('CLI structure', () => {
     expect(cliSource).toContain("'export'");
     expect(cliSource).toContain("'embed'");
     expect(cliSource).toContain("'files'");
+    expect(cliSource).toContain("'calibration'");
   });
 
   test('has formatResult function for CLI output', () => {

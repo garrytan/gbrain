@@ -48,7 +48,7 @@ export async function getLatestProfile(
   engine: BrainEngine,
   opts: { holder: string; sourceId?: string; sourceIds?: string[] },
 ): Promise<CalibrationProfileRow | null> {
-  let sql = `SELECT id, source_id, holder, wave_version, generated_at, published,
+  let sql = `SELECT id::int AS id, source_id, holder, wave_version, generated_at, published,
             total_resolved, brier, accuracy, partial_rate, grade_completion,
             pattern_statements, active_bias_tags,
             voice_gate_passed, voice_gate_attempts, model_id

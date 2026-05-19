@@ -145,6 +145,12 @@ describe('getLatestProfile', () => {
     expect(capturedParams[0]![1]).toEqual(['tenant-a', 'tenant-b']);
   });
 
+  test('casts BIGSERIAL id to int so CLI JSON output is serializable', async () => {
+    const { engine, capturedSql } = buildMockEngine({ rows: [] });
+    await getLatestProfile(engine, { holder: 'garry', sourceId: 'default' });
+    expect(capturedSql[0]).toContain('SELECT id::int AS id');
+  });
+
   test('no source filter when neither sourceId nor sourceIds is passed', async () => {
     const { engine, capturedSql } = buildMockEngine({ rows: [] });
     await getLatestProfile(engine, { holder: 'garry' });
