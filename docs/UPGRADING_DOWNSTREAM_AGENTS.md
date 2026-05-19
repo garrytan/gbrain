@@ -538,3 +538,74 @@ To check what your fork is missing:
 diff <(grep -A3 "Based on gbrain" ~/<your-fork>/skills/brain-ops/SKILL.md) \
      <(grep "v[0-9]" ~/gbrain/skills/migrations/ | tail -3)
 ```
+
+
+## v0.36.5.0 — Secure DATABASE_URL access for shell jobs calling `gbrain` CLI
+
+**The change.** Shell jobs that call `gbrain` CLI commands now use
+`inherit: ["database_url"]` instead of embedding the URL in `env:`. The new
+field is validated **pre-enqueue** in both submit paths (CLI + `submit_job` op),
+so a bad payload never lands in `minion_jobs.data`. Plain
+`env: { GBRAIN_DATABASE_URL: ... }` or `env: { DATABASE_URL: ... }` is now
+rejected at validation with a paste-ready hint pointing at `inherit:`.
+
+**Why.** Pre-v0.36.5.0, callers wrote the URL plaintext into the job row and
+the shell-audit JSONL. On shared brains (mounts feature) and DB dumps, the
+URL leaked. The new path stores only the secret NAME in the row and resolves
+the value at child-spawn time from the worker's own `loadConfig()`.
+
+**What your agent must do.** Update any code that submits shell jobs running
+`gbrain` CLI commands:
+
+```jsonc
+// Before (REJECTED at submit time as of v0.36.5.0):
+{
+  "cmd": "gbrain sync --skip-failed",
+  "cwd": "/data/gbrain",
+  "env": { "GBRAIN_DATABASE_URL": "postgresql://..." }
+}
+
+// After:
+{
+  "cmd": "gbrain sync --skip-failed",
+  "cwd": "/data/gbrain",
+  "inherit": ["database_url"]
+}
+```
+
+The worker host must have `database_url` configured (one of):
+
+- `gbrain config set database_url postgresql://...` (file plane)
+- `GBRAIN_DATABASE_URL` or `DATABASE_URL` env on the worker process
+
+If the worker can't resolve `database_url`, the validator rejects the job at
+submit time with a paste-ready hint. No more silent "No database URL" failures
+in child process stderr minutes after submission.
+
+**Also new.** A `gbrain doctor` check `home_dir_in_worktree` warns if
+`~/.gbrain/` lives inside a git worktree. A retroactive `~/.gbrain/.gitignore`
+(single line `*`) is now laid down by every `saveConfig()` call AND by
+`gbrain post-upgrade`, so existing users get coverage without re-running
+`gbrain init`. Honest scope: the `.gitignore` covers casual `git add` but does
+NOT cover already-tracked files, screenshots, backups, or `git add -f`.
+
+**Strategy framing.** For agent-to-gbrain calls, the new canonical guide is
+`docs/guides/agent-to-gbrain.md`. Two distinct surfaces: HTTP MCP via OAuth
+for ops with MCP equivalents (`search`, `query`, `put_page`, etc.), and shell
+job + `inherit:` for `localOnly` admin ops (`sync`, `embed`, `dream`,
+`doctor`, etc.). Not a fallback hierarchy — pick by op.
+
+**Scope this PR.** `inherit: ["database_url"]` only. Provider API keys
+(Anthropic, OpenAI, Groq, Voyage) and the remote-MCP client secret are
+resolved by the worker's own gateway at startup; they are NOT in the inherit
+allowlist in v0.36.5.0. A follow-up PR will do the `GBrainConfig` +
+`buildGatewayConfig()` refactor needed to add them properly.
+
+**Errors to handle** (your agent submits shell jobs; surface these clearly):
+
+| Error | What it means | Agent action |
+|---|---|---|
+| `shell: env GBRAIN_DATABASE_URL is a secret — use inherit: ["database_url"]` | Caller passed the URL via `env:`. | Drop the `env:` entry; add `inherit: ["database_url"]`. |
+| `shell: inherit requested "database_url" but worker has no database_url configured` | Worker host is missing the config. | Run `gbrain config set database_url <value>` on the worker host (operator action). |
+| `shell: env X shadows inherit["X"]` | Both `inherit:["X"]` and `env:{shadow_key}` were set. | Drop the `env:` entry; `inherit:` handles it. |
+

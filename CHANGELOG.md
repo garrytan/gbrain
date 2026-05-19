@@ -2,6 +2,99 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.36.5.0] - 2026-05-18
+
+**Your agents stop writing their DATABASE_URL into a database row. Shell jobs grow `inherit: ["database_url"]`, validated before anything touches `minion_jobs`.**
+
+If you have ever submitted a `gbrain` CLI command as a shell job, you have hit the env-stripping wall and probably worked around it the same way wintermute did in PR #1137: write the URL into `~/.gbrain/config.json` plaintext, or pass it via `env: { GBRAIN_DATABASE_URL: "..." }` per job. Both work. Both leave plaintext secrets somewhere they shouldn't be — the per-job pattern in particular lands the URL in `minion_jobs.data` (a real DB row) and in the shell-audit JSONL. If your brain ever travels (shared via mounts, dumped, backed up), the URL travels with it.
+
+v0.36.5.0 lands code instead of docs. Shell-job params gain `inherit: ["database_url"]`, the worker resolves the value from its own `loadConfig()` at child-spawn time, and the persisted row carries the secret NAME (not the value). The validator runs **pre-enqueue** in both submit surfaces — `gbrain jobs submit shell` and the `submit_job` MCP op — so a rejected payload never lands in the DB row. Plain `env: { GBRAIN_DATABASE_URL: ... }` or `env: { DATABASE_URL: ... }` is now rejected at validation with a paste-ready hint pointing at the new pattern.
+
+This wave came out of the `/cso` audit cutting a much bigger proposal (encrypted vault + Unix-socket broker + SO_PEERCRED + per-call tokens) as security theater for a single-uid topology — gbrain runs on your machine, hermes and openclaw run as your uid, defending against same-uid attackers is moot. Then codex's outside-voice pass caught the load-bearing bug in my "minimum-scope" plan: validation in the worker handler runs AFTER `queue.add()` has already persisted the row, so the headline "R1 closed" claim was technically false. Fixed pre-implementation.
+
+### What you can now do
+
+**Submit shell jobs that call gbrain CLI without plaintext secrets anywhere.**
+
+```bash
+gbrain jobs submit shell --params '{
+  "cmd": "gbrain sync --skip-failed && gbrain embed --stale",
+  "cwd": "/data/gbrain",
+  "inherit": ["database_url"]
+}'
+```
+
+The worker resolves `database_url` from its own config and injects it as `GBRAIN_DATABASE_URL` in the child's env. The `minion_jobs.data` row stores `inherit: ["database_url"]` — names only, never values. The shell-audit JSONL records the same. Pre-enqueue validation rejects the submission if the worker can't resolve the key, with a paste-ready `gbrain config set database_url <value>` hint pointing at the exact fix.
+
+**Get clear errors when the env-secret anti-pattern resurfaces.** Plain `env: { GBRAIN_DATABASE_URL: "..." }` (and `DATABASE_URL`) is now rejected at pre-enqueue validation with a hint at the right pattern:
+
+```
+shell: env GBRAIN_DATABASE_URL is a secret — use `inherit: ["database_url"]` instead.
+See: docs/guides/minions-shell-jobs.md#secrets
+```
+
+Migration is one keystroke for callers using the wintermute workaround. Pre-existing rows from before v0.36.5.0 are caught at handler-pickup by defense-in-depth re-validation and dead-lettered with the same error.
+
+**Surface `~/.gbrain` worktree risk via `gbrain doctor`.** New check `home_dir_in_worktree` walks up from `gbrainPath()` (honoring `GBRAIN_HOME`) looking for a `.git` directory OR file — both shapes — and warns if found. Handles linked worktrees correctly (the Conductor + git-worktrees topology this branch was developed in literally hits this path). Walk terminates at `$HOME` so a `.git` above your home doesn't false-positive.
+
+**Get `~/.gbrain/.gitignore` retroactively.** Every `saveConfig()` call AND every `gbrain post-upgrade` now lays down a single-line `*` gitignore in `~/.gbrain/`. Idempotent — never clobbers user customization. Honest scope: this blocks casual `git add ~/.gbrain` from inside an enclosing worktree, but does NOT cover already-tracked files, screenshots, backup tools (Time Machine / iCloud / Dropbox), or `git add -f`. The doctor check surfaces what the `.gitignore` can't.
+
+**Read `docs/guides/agent-to-gbrain.md`** for the canonical two-domain framing for downstream agent authors: MCP ops via thin-client OAuth for everything with an MCP equivalent, shell job + `inherit:` for the `localOnly` admin ops (`sync`, `embed`, `dream`, `doctor`, `autopilot`). Not a fallback hierarchy — pick by op.
+
+### Itemized changes
+
+- **`src/core/minions/handlers/shell-inherit.ts`** (NEW) — `INHERITABLE` single-source-of-truth record. Adding a new inheritable key in a follow-up PR is one object entry; the type `InheritableSecret`, `INHERITABLE_NAMES`, `ALL_SHADOW_KEYS`, `inheritedByShadowKey()`, and the per-key resolver all derive from this record. Scope this PR: `database_url` only. API keys deferred to a follow-up PR that does the `GBrainConfig` + `buildGatewayConfig()` refactor needed for groq + voyage (they're not first-class config fields today).
+- **`src/core/minions/handlers/shell-validate.ts`** (NEW) — `validateShellJobParams(data, opts?)` shared validator called pre-enqueue from both submit surfaces. Existing cmd/argv/cwd/env checks + new `inherit` array check + env-shadow rejection (any env key in `ALL_SHADOW_KEYS` rejected regardless of whether `inherit` was passed) + fail-fast on missing config value. The test seam `opts.config` lets unit tests drive the validator hermetically without mocking the module.
+- **`src/commands/jobs.ts`** — `gbrain jobs submit shell` now calls `validateShellJobParams(data)` before `queue.add()` (jobs.ts:271). Audit-log call extends to record `inherit: [...]` names.
+- **`src/core/operations.ts`** — `submit_job` op for `name === 'shell'` runs the same pre-enqueue validator AND lifts the shell-audit JSONL write (codex F-CDX-4 — the op-path bypassed the audit log entirely pre-v0.36.5.0).
+- **`src/core/minions/handlers/shell.ts`** — `ShellJobParams.inherit?: InheritableSecret[]` field. `buildChildEnv` resolves inherited values from `loadConfig()` via the `INHERITABLE` record and injects under each `envKey`. Handler-entry re-validation as defense-in-depth catches pre-existing rows and any future submit path that forgets to pre-validate.
+- **`src/core/minions/handlers/shell-audit.ts`** — `ShellAuditEvent.inherit?: string[]` (names only).
+- **`src/core/config.ts`** — `ensureGitignore()` helper. Idempotent; never clobbers user content. Called from `saveConfig()`.
+- **`src/commands/upgrade.ts:runPostUpgrade`** — calls `ensureGitignore()` once per upgrade. Closes the gap codex F-CDX-8 named: init-only coverage would miss every existing user.
+- **`src/commands/doctor.ts`** — new `home_dir_in_worktree` filesystem check. Walks up from `gbrainPath()` to `$HOME`, recognizes both `.git`-as-directory (main repo) and `.git`-as-file (linked worktree). Warn (not fail) with paste-ready fix.
+- **`docs/guides/minions-shell-jobs.md`** — new `#secrets` section replacing the wintermute workaround pattern. `env: { GBRAIN_DATABASE_URL: ... }` and `env: { DATABASE_URL: ... }` documented as deprecated anti-patterns. Errors table extended with the new validation messages.
+- **`docs/guides/agent-to-gbrain.md`** (NEW) — single-page guide for downstream agent authors. Two-domain framing (MCP ops via thin-client OAuth vs `localOnly` admin ops via shell-job `inherit:`), decision table, what-never-to-do list, migration recipe.
+- **`docs/UPGRADING_DOWNSTREAM_AGENTS.md`** — v0.36.5.0 section with before/after recipe and error-handling table.
+- **New tests** (52 cases across 5 files):
+  - `test/minions-shell-validate.test.ts` (21 cases) — every validation path, T1 regression guard pinning the load-bearing invariant.
+  - `test/minions-shell-inherit.test.ts` (12 cases) — pure-function behavior of the `INHERITABLE` record + shadow-key reverse lookup + type guard.
+  - `test/config-ensure-gitignore.test.ts` (6 cases) — idempotency, no-clobber, GBRAIN_HOME honored.
+  - `test/doctor-home-dir-in-worktree.test.ts` (5 cases) — walks dir-style + file-style `.git`, walk termination at $HOME, GBRAIN_HOME override.
+  - `test/e2e/minions-shell-pglite.test.ts` (+2 cases) — full PGLite round-trip: `inherit: ["database_url"]` resolves into child env, persisted row contains names not values (negative-shape JSON assertion), defense-in-depth rejection of pre-existing env-shadow rows.
+
+### Codex pre-landing review additions (H1 + H3)
+
+Pre-landing codex caught two bypass paths and one missing shadow name. Both fixed before merge:
+
+- **H1 — cmd/argv inline-secret scan.** Without the scan, a caller could write `cmd: "GBRAIN_DATABASE_URL=postgresql://... gbrain sync"` and the validator (which only inspects the structured `env:` field) would let it through. The URL would land plaintext in `data.cmd` and in the shell-audit JSONL. Now the validator regex-scans cmd + every argv token for `(GBRAIN_DATABASE_URL|DATABASE_URL|GBRAIN_DIRECT_DATABASE_URL)=` patterns and rejects pre-enqueue with a hint at `inherit:["database_url"]`. Heuristic — a determined caller can still base64-encode or obfuscate, but the typo/wintermute-pattern shape is caught. 6 test cases pin it.
+- **H3 — GBRAIN_DIRECT_DATABASE_URL in shadowKeys.** `src/core/connection-manager.ts` reads `GBRAIN_DIRECT_DATABASE_URL` as a non-pooler direct-connection override. Same secret class. Added to `INHERITABLE.database_url.shadowKeys` so both `env:` and inline-cmd checks cover it. 2 test cases pin it.
+
+### Honest scope — output-side leakage
+
+Pre-landing codex also flagged that input-side closure is half the story. `inherit:` keeps the secret out of `data.cmd`, `data.argv`, `data.env` (input fields). It does NOT scrub `result.stdout_tail`, `result.stderr_tail`, or `error_text` (output fields). If your script prints the URL on success or on error, the value lands in the job row that way. Three rules: don't echo secrets, wrap noisy CLI tools to redact URLs on error, and inspect `gbrain jobs get <id>` after a failure to verify. Full guidance in `docs/guides/minions-shell-jobs.md#secrets`. A future PR may add an output-redaction pass; v0.36.5.0 names the boundary clearly so script authors know what to take responsibility for.
+
+### For contributors
+
+The wave's bug-class lesson is worth recording: **in queue-based job systems, validation must run before `queue.add()` if the row contents are part of the security boundary.** Validation in the worker handler runs AFTER persistence; rejecting there leaves the bad payload in the DB row. Codex caught this in plan review; the eng review missed it on the first pass. The shared `validateShellJobParams` module exists specifically to make pre-enqueue validation the only path on both CLI and op-handler surfaces; the handler-side call is defense-in-depth only.
+
+## To take advantage of v0.36.5.0
+
+`gbrain upgrade` does this automatically — no migrations to run, no host action required.
+
+1. **Verify the new pattern works on your worker host:**
+   ```bash
+   gbrain jobs submit shell --params '{"cmd":"gbrain stats","cwd":"/tmp","inherit":["database_url"]}' --follow
+   ```
+   Expect: page count, exit 0. If you see `shell: inherit requested "database_url" but worker has no database_url configured`, run `gbrain config set database_url <value>` on the worker host once.
+2. **Update your agent code** if it submits shell jobs with `env: { GBRAIN_DATABASE_URL: ... }`. Swap to `inherit: ["database_url"]`. The error message tells you exactly what to change.
+3. **Check the doctor for worktree hygiene:**
+   ```bash
+   gbrain doctor --json | grep -A1 home_dir_in_worktree
+   ```
+   Warn means `~/.gbrain/` lives inside a git worktree. The retroactive `.gitignore` blocks casual `git add`, but consider moving the brain out or setting `GBRAIN_HOME` if you also need backup/screenshare hygiene.
+4. **If any step fails**, file an issue: https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and the contents of `~/.gbrain/upgrade-errors.jsonl` if it exists. This feedback loop is how the wedge incidents get caught.
+
+Credit: this wave exists because @wintermute filed PR #1137 documenting the env-stripping gap. The doc made the underlying problem visible enough to fix in code. Thank you.
 ## [0.36.2.0] - 2026-05-17
 
 **ZeroEntropy is the new default. Faster, cheaper, better quality on real queries. Existing users get a one-shot switch prompt with cost estimate; new installs land on it out of the box. README rewritten to match what gbrain actually is in 2026.**

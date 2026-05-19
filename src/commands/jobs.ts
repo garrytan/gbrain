@@ -268,6 +268,23 @@ HANDLER TYPES (built in)
       // future protected name forces explicit opt-in at the call site.
       const { isProtectedJobName } = await import('../core/minions/protected-names.ts');
       const trusted = isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
+
+      // v0.35.8.0: pre-enqueue shell-job validation. Validates `inherit:`
+      // closed enum, rejects secret env-keys, fail-fasts on missing config.
+      // Throws UnrecoverableError BEFORE `queue.add` so a bad payload never
+      // lands in `minion_jobs.data`. Defense-in-depth re-validation happens
+      // in the worker handler. See: src/core/minions/handlers/shell-validate.ts
+      if (name.trim() === 'shell') {
+        try {
+          const { validateShellJobParams } = await import('../core/minions/handlers/shell-validate.ts');
+          validateShellJobParams(data);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`Error: ${msg}`);
+          process.exit(1);
+        }
+      }
+
       const job = await queue.add(name, data, {
         priority,
         delay: delay > 0 ? delay : undefined,
@@ -286,6 +303,9 @@ HANDLER TYPES (built in)
       try {
         const { logShellSubmission } = await import('../core/minions/handlers/shell-audit.ts');
         if (name.trim() === 'shell') {
+          const inheritNames = Array.isArray(data.inherit)
+            ? (data.inherit as unknown[]).filter((s): s is string => typeof s === 'string')
+            : undefined;
           logShellSubmission({
             caller: 'cli',
             remote: false,
@@ -295,6 +315,7 @@ HANDLER TYPES (built in)
             argv_display: Array.isArray(data.argv)
               ? (data.argv as unknown[]).filter((a): a is string => typeof a === 'string').map((a) => a.slice(0, 80))
               : undefined,
+            inherit: inheritNames && inheritNames.length > 0 ? inheritNames : undefined,
           });
         }
       } catch { /* audit failures never block submission */ }
