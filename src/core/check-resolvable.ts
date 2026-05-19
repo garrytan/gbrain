@@ -163,7 +163,7 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
 
 /** Simple YAML frontmatter parser — extracts triggers array if present. */
 function extractTriggers(skillContent: string): string[] {
-  const fmMatch = skillContent.match(/^---\n([\s\S]*?)\n---/);
+  const fmMatch = skillContent.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!fmMatch) return [];
   const fm = fmMatch[1];
   const triggersMatch = fm.match(/^triggers:\s*\n((?:\s+-\s+.+\n?)*)/m);
