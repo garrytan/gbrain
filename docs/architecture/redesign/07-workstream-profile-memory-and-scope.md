@@ -72,6 +72,27 @@ Episode rules:
 
 Together, Profile Memory and Personal Episodes preserve both stable personal facts and the history that explains how those facts emerged.
 
+## GA-P4 Profile-vs-Compiled-Truth Routing
+
+Profile Memory and Personal Episodes are canonical personal records, but they
+are not curated Markdown compiled truth. GA-P4 requires the planner and
+activation policy to expose that distinction directly:
+
+- Profile Memory reports `profile_memory` authority, not `canonical_compiled_truth`.
+- Personal Episodes report `personal_episode` authority, not `canonical_compiled_truth`.
+- Both authorities require Scope Gate `allow` before they can become
+  `answer_ground`; missing, denied, or deferred scope remains `scope_denied`.
+- Supporting notes and Source Records may cite or explain the history behind a
+  personal record, but they do not collapse profile records or episodes into
+  compiled truth.
+- If a personal signal is ambiguous, inferred, contradictory, or missing
+  personal scope/sensitivity, route it to governance or defer it rather than
+  writing a personal canonical record.
+
+This lets an answer explain whether a personal claim came from stable profile
+memory, a historical personal episode, supporting evidence, or reviewed compiled
+truth.
+
 ## Scope Gate Rules
 
 The `Scope Gate` determines which memory domain may participate in retrieval or writes for a given interaction. It is a first-order routing decision, not a cosmetic filter added after retrieval.

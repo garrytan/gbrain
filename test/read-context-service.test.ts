@@ -433,7 +433,36 @@ describe('read context service', () => {
 
       expect(allowed.scope_gate?.policy).toBe('allow');
       expect(allowed.answer_ready.ready).toBe(true);
+      expect(allowed.canonical_reads[0]!.authority).toBe('profile_memory');
+      expect(allowed.evidence_claims[0]!.claim_kind).toBe('profile_memory');
       expect(allowed.canonical_reads[0]!.text).toContain('Private personal detail.');
+    });
+  });
+
+  test('reads personal episodes with personal episode authority when scope allows it', async () => {
+    await withEngine('personal-episode-authority', async (engine) => {
+      await engine.createPersonalEpisodeEntry({
+        id: 'episode-direct-read',
+        scope_id: 'personal:default',
+        title: 'Morning reset',
+        start_time: new Date('2026-05-07T01:00:00.000Z'),
+        end_time: new Date('2026-05-07T01:30:00.000Z'),
+        source_kind: 'chat',
+        summary: 'Private episode detail.',
+        source_refs: ['User, direct message, 2026-05-07 10:15 KST'],
+        candidate_ids: [],
+      });
+
+      const result = await readContext(engine, {
+        selectors: [{ kind: 'personal_episode', object_id: 'episode-direct-read' }],
+        requested_scope: 'personal',
+      });
+
+      expect(result.scope_gate?.policy).toBe('allow');
+      expect(result.answer_ready.ready).toBe(true);
+      expect(result.canonical_reads[0]!.authority).toBe('personal_episode');
+      expect(result.evidence_claims[0]!.claim_kind).toBe('personal_episode');
+      expect(result.canonical_reads[0]!.text).toContain('Private episode detail.');
     });
   });
 

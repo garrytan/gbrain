@@ -127,6 +127,32 @@ Authority-routing rules:
 5. If no safe write home is clear, the signal stays ephemeral or becomes an
    explicitly ambiguous Memory Candidate.
 
+## GA-P4 Memory Artifact Authority Matrix
+
+GA-P4 makes authority labels explicit at activation time. The label says why an
+artifact may influence an answer; it is not a new storage subsystem.
+
+| Artifact | Activation | Authority | System of record or rebuild path |
+|---|---|---|---|
+| Compiled Truth | `answer_ground` after canonical read, `verify_first` when stale | `canonical_compiled_truth` | Curated Markdown page plus source-attributed timeline evidence. |
+| Profile Memory | `answer_ground` only after Scope Gate `allow` | `profile_memory` | Profile Memory store owned by `07`; writes use personal scope preflight. |
+| Personal Episode | `answer_ground` only after Scope Gate `allow` | `personal_episode` | Personal Episode store owned by `07`; append-only personal history. |
+| Source Record or timeline evidence | `citation_only` | `source_or_timeline_evidence` | Historical evidence; supports citations and contradictions but is not current synthesis by itself. |
+| Memory Candidate signal | `candidate_only` | `unreviewed_candidate` | Memory Inbox review state; must not ground answers before promotion or canonical handoff. |
+| Context Map or codemap pointer | `orientation_only` or `verify_first` when stale | `derived_orientation` | Rebuild from canonical pages, manifests, source hashes, extractor versions, or live code verification. |
+| Task Attempt or Decision | `suppress_if_valid`, `verify_first`, or `answer_ground` | `operational_memory` | Operational task records owned by `04`; historical code claims still need live verification for current answers. |
+
+Profile Memory and Personal Episodes are canonical inside personal scope, but
+they are not compiled truth. They must explain themselves as personal authority
+so a response can say whether a claim came from stable profile memory, an
+episode, or reviewed curated synthesis.
+
+Derived projections are never the system of record. A map, atlas, codemap, or
+candidate exposure can orient retrieval, but any answer-grounding claim must
+follow back to a canonical page, personal record, Source Record, operational
+record, or verified current artifact. If a projection is stale, the safe paths
+are rebuild, verify, or fall back to the underlying canonical source.
+
 ## Personal Maintenance Phase Contract
 
 Personal maintenance borrows the phase-runner discipline of `gbrain dream`, but

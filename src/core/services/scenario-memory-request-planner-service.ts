@@ -259,14 +259,14 @@ const ROUTES: Record<MaterialScenario, ScenarioRoute> = {
         planned_read: 'profile_memory_or_personal_episode',
         artifact_kind: 'profile_memory',
         decision: 'answer_ground',
-        authority: 'canonical_compiled_truth',
+        authority: 'profile_memory',
         reason_codes: ['primary_personal_read'],
       },
       {
-        planned_read: 'scoped_supporting_notes',
+        planned_read: 'profile_memory_or_personal_episode',
         artifact_kind: 'personal_episode',
         decision: 'answer_ground',
-        authority: 'canonical_compiled_truth',
+        authority: 'personal_episode',
         reason_codes: ['primary_personal_read'],
       },
       {

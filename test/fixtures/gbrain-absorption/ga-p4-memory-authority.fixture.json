@@ -1,0 +1,118 @@
+{
+  "stage_id": "GA-P4",
+  "fixture_format": "gbrain_absorption_replay_v1",
+  "verification_commands": [
+    "bun test test/memory-activation-policy-service.test.ts test/memory-writeback-router-service.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s28-gbrain-memory-authority.test.ts"
+  ],
+  "authority_cases": [
+    {
+      "case_id": "compiled_truth_authority",
+      "fixture_id": "ga-p4-compiled-truth",
+      "artifact_id": "page:concepts/ga-p4-authority",
+      "artifact_kind": "compiled_truth",
+      "expected_decision": "answer_ground",
+      "expected_authority": "canonical_compiled_truth",
+      "expected_reason_code": "compiled_truth"
+    },
+    {
+      "case_id": "profile_memory_authority",
+      "fixture_id": "ga-p4-profile-memory",
+      "artifact_id": "profile:ga-p4-authority",
+      "artifact_kind": "profile_memory",
+      "scope_policy": "allow",
+      "expected_decision": "answer_ground",
+      "expected_authority": "profile_memory",
+      "expected_reason_code": "scope_allowed_personal_memory"
+    },
+    {
+      "case_id": "personal_episode_authority",
+      "fixture_id": "ga-p4-personal-episode",
+      "artifact_id": "episode:ga-p4-authority",
+      "artifact_kind": "personal_episode",
+      "scope_policy": "allow",
+      "expected_decision": "answer_ground",
+      "expected_authority": "personal_episode",
+      "expected_reason_code": "scope_allowed_personal_memory"
+    },
+    {
+      "case_id": "timeline_historical_evidence",
+      "fixture_id": "ga-p4-timeline-evidence",
+      "artifact_id": "timeline:concepts/ga-p4-authority:2026-05-19",
+      "artifact_kind": "timeline",
+      "expected_decision": "citation_only",
+      "expected_authority": "source_or_timeline_evidence",
+      "expected_reason_code": "source_or_timeline_evidence"
+    },
+    {
+      "case_id": "source_record_historical_evidence",
+      "fixture_id": "ga-p4-source-record",
+      "artifact_id": "source:ga-p4-authority",
+      "artifact_kind": "source_record",
+      "expected_decision": "citation_only",
+      "expected_authority": "source_or_timeline_evidence",
+      "expected_reason_code": "source_or_timeline_evidence"
+    },
+    {
+      "case_id": "memory_candidate_candidate_only",
+      "fixture_id": "ga-p4-memory-candidate",
+      "artifact_id": "memory-candidate:ga-p4-authority",
+      "artifact_kind": "memory_candidate",
+      "expected_decision": "candidate_only",
+      "expected_authority": "unreviewed_candidate",
+      "expected_reason_code": "memory_candidate"
+    },
+    {
+      "case_id": "context_map_derived_orientation",
+      "fixture_id": "ga-p4-context-map",
+      "artifact_id": "context-map:ga-p4-authority",
+      "artifact_kind": "context_map",
+      "expected_decision": "orientation_only",
+      "expected_authority": "derived_orientation",
+      "expected_reason_code": "context_map"
+    },
+    {
+      "case_id": "codemap_derived_orientation",
+      "fixture_id": "ga-p4-codemap-pointer",
+      "artifact_id": "codemap:systems/mbrain#authority",
+      "artifact_kind": "codemap_pointer",
+      "expected_decision": "orientation_only",
+      "expected_authority": "derived_orientation",
+      "expected_reason_code": "codemap_pointer"
+    },
+    {
+      "case_id": "operational_memory_authority",
+      "fixture_id": "ga-p4-operational-memory",
+      "artifact_id": "task-decision:ga-p4-authority",
+      "artifact_kind": "task_decision",
+      "expected_decision": "answer_ground",
+      "expected_authority": "operational_memory",
+      "expected_reason_code": "task_decision"
+    }
+  ],
+  "writeback_cases": [
+    {
+      "case_id": "canonical_snapshot_guard",
+      "expected_decision": "defer",
+      "expected_intended_operation": "none",
+      "expected_reason": "canonical_missing_target_snapshot_hash"
+    },
+    {
+      "case_id": "personal_target_scope_sensitivity_guard",
+      "expected_decision": "defer",
+      "expected_intended_operation": "none",
+      "expected_reason": "personal_target_scope_required"
+    },
+    {
+      "case_id": "contradiction_candidate",
+      "expected_decision": "create_candidate",
+      "expected_intended_operation": "create_memory_candidate_entry",
+      "expected_reason": "contradiction_requires_review"
+    },
+    {
+      "case_id": "task_mechanics_no_write",
+      "expected_decision": "no_write",
+      "expected_intended_operation": "none",
+      "expected_reason": "task_mechanics_not_durable"
+    }
+  ]
+}

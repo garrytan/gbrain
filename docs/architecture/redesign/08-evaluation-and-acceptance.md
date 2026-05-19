@@ -142,6 +142,36 @@ GA-P2 fixture rules:
    corpus-lane behavior, GA-P4 authority-model changes, or GA-P6 maintenance
    automation.
 
+## GBrain Absorption GA-P4 Memory Authority
+
+GA-P4 accepts the memory-authority slice only if the system can replay and
+explain the authority of each artifact without adding a new facts/takes store.
+The executable fixture is
+`test/fixtures/gbrain-absorption/ga-p4-memory-authority.fixture.json`, and S28
+exercises it through existing SQLite-capable services and operations.
+
+The fixture has two families:
+
+| Fixture field | Existing verification surface | Regression guarded |
+|---|---|---|
+| `authority_cases` | `select_activation_policy`, `plan_scenario_memory_request`, Profile Memory, and Personal Episode operations | Compiled truth, Profile Memory, Personal Episodes, historical evidence, candidates, and derived orientation report distinct authority labels. |
+| `writeback_cases` | `route_memory_writeback` | Canonical page writes require target snapshots, personal targets require explicit personal scope and sensitivity, contradictions become candidates, and task mechanics remain no-write. |
+
+GA-P4 fixture rules:
+
+1. Profile Memory must report `profile_memory` authority only after scope
+   `allow`; denied, deferred, or missing scope stays `scope_denied`.
+2. Personal Episodes must report `personal_episode` authority only after scope
+   `allow`; they are historical personal memory, not compiled truth.
+3. Source Records and timelines remain citation-only historical evidence unless
+   reviewed synthesis updates compiled truth.
+4. Memory Candidates remain candidate-only until promotion and canonical handoff
+   preserve provenance, target object, scope, sensitivity, and target snapshot
+   evidence.
+5. Context maps, codemap pointers, and replay projections must keep derived projection system-of-record and rebuild rules explicit: the projection is rebuilt from canonical sources and never becomes the source of record itself.
+6. GA-P4 does not add new database tables, Postgres-only behavior, or facts/takes
+   storage.
+
 ## Repeated-Work Prevention Evaluation
 
 This evaluation corresponds to the operational-memory workstream and later phases that depend on resume quality.
@@ -181,6 +211,7 @@ boundary.
 | Context Map / Atlas | Background or source-change refresh | Derived orientation | Stale when source hash, extractor version, task, or code anchor changes | Rebuild or warn; never promote directly. |
 | Compiled Truth | Slow, reviewed update | Canonical answer evidence | Stale when superseded or source evidence changes | Patch with provenance and target snapshot checks. |
 | Profile Memory | Slow, scoped update | Canonical personal memory | Stale when unconfirmed, superseded, or scope changes | Write through personal scope preflight. |
+| Personal Episode | Append-only personal event capture | Canonical personal history | Historical by design; stale only when superseded by correction metadata | Record through personal episode write path; derive profile updates through governance. |
 
 ## Markdown Knowledge Retrieval Evaluation
 

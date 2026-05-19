@@ -100,4 +100,47 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(doc).toContain('bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s27-gbrain-evaluation-foundation.test.ts');
     expect(doc).toContain('replay fixture families cover retrieval, candidate lifecycle, task resume, scope leak, and derived refresh regressions');
   });
+
+  test('anchors GA-P4 memory authority in the protocol owner', () => {
+    const doc = readRepoFile('docs/architecture/redesign/02-memory-loop-and-protocols.md');
+
+    expect(doc).toContain('## GA-P4 Memory Artifact Authority Matrix');
+    expect(doc).toContain('| Profile Memory | `answer_ground` only after Scope Gate `allow` | `profile_memory` |');
+    expect(doc).toContain('| Personal Episode | `answer_ground` only after Scope Gate `allow` | `personal_episode` |');
+    expect(doc).toContain('Derived projections are never the system of record.');
+  });
+
+  test('anchors GA-P4 candidate activation and handoff invariants in governance', () => {
+    const doc = readRepoFile('docs/architecture/redesign/06-workstream-governance-and-inbox.md');
+
+    expect(doc).toContain('## GA-P4 Candidate Authority and Handoff Invariants');
+    expect(doc).toContain('Candidate activation is `candidate_only`, never `answer_ground`.');
+    expect(doc).toContain('Canonical handoff preserves source refs, target object identity, scope, sensitivity, and expected target snapshot evidence.');
+  });
+
+  test('anchors GA-P4 profile-vs-compiled-truth routing in profile scope', () => {
+    const doc = readRepoFile('docs/architecture/redesign/07-workstream-profile-memory-and-scope.md');
+
+    expect(doc).toContain('## GA-P4 Profile-vs-Compiled-Truth Routing');
+    expect(doc).toContain('Profile Memory reports `profile_memory` authority, not `canonical_compiled_truth`.');
+    expect(doc).toContain('Personal Episodes report `personal_episode` authority, not `canonical_compiled_truth`.');
+  });
+
+  test('anchors GA-P4 replay and derived projection rules in evaluation', () => {
+    const doc = readRepoFile('docs/architecture/redesign/08-evaluation-and-acceptance.md');
+
+    expect(doc).toContain('## GBrain Absorption GA-P4 Memory Authority');
+    expect(doc).toContain('ga-p4-memory-authority.fixture.json');
+    expect(doc).toContain('authority_cases');
+    expect(doc).toContain('writeback_cases');
+    expect(doc).toContain('derived projection system-of-record and rebuild rules');
+  });
+
+  test('updates the install verification runbook for GA-P4', () => {
+    const doc = readRepoFile('docs/MBRAIN_VERIFY.md');
+
+    expect(doc).toContain('## GBrain Absorption GA-P4 Verification');
+    expect(doc).toContain('bun test test/memory-activation-policy-service.test.ts test/memory-writeback-router-service.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s28-gbrain-memory-authority.test.ts');
+    expect(doc).toContain('profile memory and personal episodes report their own authority after scope allow');
+  });
 });

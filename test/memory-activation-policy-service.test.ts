@@ -143,7 +143,7 @@ describe('memory activation policy', () => {
     expect(result.next_tool).toBe('evaluate_scope_gate');
   });
 
-  test('requires explicit scope allow before grounding personal artifacts', () => {
+  test('requires explicit scope allow before grounding profile memory with profile authority', () => {
     const withoutScopePolicy = selectActivationPolicy({
       scenario: 'project_qa',
       artifacts: [{
@@ -173,7 +173,41 @@ describe('memory activation policy', () => {
     expect(withAllow.decisions[0]).toMatchObject({
       artifact_id: 'profile:preferences',
       decision: 'answer_ground',
-      authority: 'canonical_compiled_truth',
+      authority: 'profile_memory',
+    });
+  });
+
+  test('requires explicit scope allow before grounding personal episodes with episode authority', () => {
+    const withoutScopePolicy = selectActivationPolicy({
+      scenario: 'personal_recall',
+      artifacts: [{
+        id: 'episode:planning',
+        artifact_kind: 'personal_episode',
+        source_ref: 'personal-episode:planning',
+      }],
+    });
+
+    expect(withoutScopePolicy.decisions[0]).toMatchObject({
+      artifact_id: 'episode:planning',
+      decision: 'ignore',
+      authority: 'scope_denied',
+    });
+    expect(withoutScopePolicy.decisions[0]?.reason_codes).toContain('missing_scope_policy');
+
+    const withAllow = selectActivationPolicy({
+      scenario: 'personal_recall',
+      artifacts: [{
+        id: 'episode:planning',
+        artifact_kind: 'personal_episode',
+        source_ref: 'personal-episode:planning',
+        scope_policy: 'allow',
+      }],
+    });
+
+    expect(withAllow.decisions[0]).toMatchObject({
+      artifact_id: 'episode:planning',
+      decision: 'answer_ground',
+      authority: 'personal_episode',
     });
   });
 });

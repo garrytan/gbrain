@@ -75,8 +75,11 @@ function decideArtifactActivation(
   case 'memory_candidate':
     return buildDecision(artifact, 'candidate_only', 'unreviewed_candidate', ['memory_candidate']);
   case 'profile_memory':
+    return buildDecision(artifact, 'answer_ground', 'profile_memory', [
+      'scope_allowed_personal_memory',
+    ]);
   case 'personal_episode':
-    return buildDecision(artifact, 'answer_ground', 'canonical_compiled_truth', [
+    return buildDecision(artifact, 'answer_ground', 'personal_episode', [
       'scope_allowed_personal_memory',
     ]);
   }

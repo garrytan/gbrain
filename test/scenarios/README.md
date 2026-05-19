@@ -48,6 +48,7 @@ agent planning/spec files are intentionally not tracked.
 | S25 | `s25-memory-consolidation-retention.test.ts` | L5/L6/G1 | ✅ green |
 | S26 | `s26-gbrain-absorption-contracts.test.ts` | GA-P0, GA-P1, I4, I5, L4, L6, G1 | ✅ green |
 | S27 | `s27-gbrain-evaluation-foundation.test.ts` | GA-P2, E1, L5, L6, L7, G1 | ✅ green |
+| S28 | `s28-gbrain-memory-authority.test.ts` | GA-P4, L4, L5, L6, G1 | ✅ green |
 
 Legend:
 - ✅ green = passes on current code
@@ -57,7 +58,8 @@ original S1-S14 redesign contracts, S15-S21 loop-observability and
 interaction-identity contracts, S22 agentic canonical retrieval transcript
 coverage, S23 duplicate review governance coverage, plus S24 duplicate review
 acceptance coverage, S25 memory consolidation retention coverage, S26
-GBrain absorption contract coverage, and S27 GA-P2 evaluation foundation
+GBrain absorption contract coverage, S27 GA-P2 evaluation foundation, and S28
+GA-P4 memory authority
 coverage. Run this as
 part of final acceptance:
 

@@ -1728,6 +1728,8 @@ export type MemoryArtifactAuthority =
   | 'user_direct_statement'
   | 'verified_current_artifact'
   | 'canonical_compiled_truth'
+  | 'profile_memory'
+  | 'personal_episode'
   | 'source_or_timeline_evidence'
   | 'operational_memory'
   | 'derived_orientation'

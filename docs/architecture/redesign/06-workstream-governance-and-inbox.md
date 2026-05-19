@@ -108,6 +108,27 @@ Candidate-source rules:
 4. The inbox is not the route for active operational continuity. Task Thread and Working Set updates stay on the direct write path defined in `02-memory-loop-and-protocols.md` and `04-workstream-operational-memory.md`.
 5. Direct authoritative updates may bypass the inbox only when `02-memory-loop-and-protocols.md` already classifies them as a canonical write for that domain.
 
+## GA-P4 Candidate Authority and Handoff Invariants
+
+GA-P4 keeps Memory Inbox useful without letting it become a second truth store.
+Candidate activation is `candidate_only`, never `answer_ground`. A candidate may
+be displayed as a discovery signal, ranked for review, or linked to a target
+domain, but it cannot answer for compiled truth, Profile Memory, Personal
+Episodes, Source Records, operational memory, or derived orientation.
+
+Promotion and handoff are separate invariants:
+
+1. Promotion changes governance state only after provenance, scope, sensitivity,
+   contradiction, and target-domain checks pass.
+2. Canonical handoff preserves source refs, target object identity, scope, sensitivity, and expected target snapshot evidence.
+3. A handoff record does not by itself rewrite the target store; the owning
+   domain still performs the canonical mutation through its direct operation.
+4. Personal profile targets remain personal-profile writes, personal episode
+   targets remain personal-episode writes, and page-backed curated notes remain
+   target-snapshot-guarded page writes.
+5. Contradictory signals stay captured or staged until review resolves whether
+   to reject, supersede, or hand off a newer canonical write.
+
 ## Memory Inbox Model
 
 The `Memory Inbox` is the canonical governance container for not-yet-promoted memory. It stores candidates, review state, and explicit outcomes so the system can learn from uncertain signals without silently mutating truth.

@@ -97,6 +97,24 @@ Expected:
 - task resume preserves the current goal, blocker, failed attempt, decision in force, and verification warning fields needed for before/after evaluation
 - GA-P2 stays an evaluation foundation and does not add GA-P3+ corpus-lane behavior or new production services
 
+## GBrain Absorption GA-P4 Verification
+
+Run:
+
+```bash
+bun test test/memory-activation-policy-service.test.ts test/memory-writeback-router-service.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s28-gbrain-memory-authority.test.ts
+```
+
+Expected:
+
+- `test/fixtures/gbrain-absorption/ga-p4-memory-authority.fixture.json` uses the `GA-P4` stage and separates `authority_cases` from `writeback_cases`
+- profile memory and personal episodes report their own authority after scope allow instead of `canonical_compiled_truth`
+- source and timeline evidence stay citation-only, Memory Candidates stay candidate-only, and context maps or codemap pointers stay derived orientation
+- canonical page writes still require target snapshot evidence before `put_page`
+- personal profile or episode targets still require explicit personal scope and sensitivity
+- contradictions route to candidates, while task mechanics remain a direct no-write boundary
+- S28 uses existing SQLite-capable services and operations only; it does not add new DB tables, Postgres-only behavior, or facts/takes storage
+
 ## Phase 1 operational-memory verification
 
 Run:
