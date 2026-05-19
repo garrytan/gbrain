@@ -93,14 +93,33 @@ describe('writeBrainPage', () => {
     }
   });
 
-  test('writes .bak before mutating an existing file', () => {
+  test('writes a centralized .bak before mutating an existing file', () => {
+    // v0.36.x #902: backups land under ~/.gbrain/backups/frontmatter/... not
+    // next to the source file (pre-fix littered the brain tree with .bak
+    // files that broke gitignore expectations). The returned backupPath is
+    // the contract — the test asserts both the path shape and that the
+    // backup faithfully captures the pre-write content.
     const file = join(tmp, 'people', 'jane.md');
     mkdirSync(join(tmp, 'people'), { recursive: true });
     const original = `${fence}\ntype: person\ntitle: Old\n${fence}\n\nold`;
     writeFileSync(file, original);
-    writeBrainPage(file, `${fence}\ntype: person\ntitle: New\n${fence}\n\nnew`, { sourcePath: tmp });
-    expect(existsSync(file + '.bak')).toBe(true);
-    expect(readFileSync(file + '.bak', 'utf8')).toBe(original);
+    const backupRoot = mkdtempSync(join(tmpdir(), 'gbrain-test-backups-'));
+    try {
+      const { backupPath } = writeBrainPage(
+        file,
+        `${fence}\ntype: person\ntitle: New\n${fence}\n\nnew`,
+        { sourcePath: tmp, backupRoot },
+      );
+      expect(backupPath).toBeDefined();
+      // Centralized — under the test-injected backupRoot, NOT a sibling .bak.
+      expect(existsSync(file + '.bak')).toBe(false);
+      expect(backupPath!.startsWith(backupRoot + '/')).toBe(true);
+      expect(backupPath!.endsWith('.bak')).toBe(true);
+      expect(existsSync(backupPath!)).toBe(true);
+      expect(readFileSync(backupPath!, 'utf8')).toBe(original);
+    } finally {
+      rmSync(backupRoot, { recursive: true, force: true });
+    }
   });
 
   test('autoFix: true repairs nested quotes before writing', () => {

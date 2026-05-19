@@ -148,10 +148,15 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     tokenBudget: 12000,
     expansion: false,
     searchLimit: 25,
-    // Off in balanced too — operators opt in via
-    // `gbrain config set search.reranker.enabled true` until eval data
-    // backs a mode-bundle default change.
-    reranker_enabled: false,
+    // v0.36.0.0 (D6): reranker flipped ON for `balanced` mode bundle. The
+    // real-corpus benchmark shows zerank-2 reshuffles 60% of top-1 results
+    // — the headline ZE quality story reaches the 80% of installs that
+    // stay on `balanced`. Per-query rerank cost ~$0.025/M tokens, ~150ms
+    // p50 added latency. Missing ZEROENTROPY_API_KEY is handled via
+    // src/core/search/rerank.ts fail-open contract: log to audit JSONL,
+    // return input order unchanged. Opt out with
+    // `gbrain config set search.reranker.enabled false`.
+    reranker_enabled: true,
     reranker_model: 'zeroentropyai:zerank-2',
     reranker_top_n_in: 30,
     reranker_top_n_out: null,
@@ -363,7 +368,28 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // `cache.ttl_seconds` (default 3600s). The CHANGELOG note covers this.
 export const KNOBS_HASH_VERSION = 3;
 
-export function knobsHash(knobs: ResolvedSearchKnobs): string {
+/**
+ * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
+ * embedding column + provider live OUTSIDE ResolvedSearchKnobs because
+ * they're orthogonal to search mode (mode bundles don't pick columns).
+ * Passing them as a second argument keeps ModeBundle pure and lets the
+ * hash invalidate correctly across column/provider switches.
+ *
+ * When undefined, the hash falls back to the legacy 'embedding' /
+ * 'default' values so unrelated callers (eval-replay, telemetry) that
+ * don't know the column produce a stable hash for the default case.
+ */
+export interface KnobsHashContext {
+  /** Resolved column name, e.g. 'embedding', 'embedding_voyage'. */
+  embeddingColumn?: string;
+  /** Resolved provider:model, e.g. 'voyage:voyage-3-large'. */
+  embeddingModel?: string;
+}
+
+export function knobsHash(
+  knobs: ResolvedSearchKnobs,
+  ctx?: KnobsHashContext,
+): string {
   // Fixed-order key list. Adding a knob here REQUIRES bumping
   // KNOBS_HASH_VERSION and is a breaking change for any persisted cache.
   const parts = [
@@ -382,10 +408,20 @@ export function knobsHash(knobs: ResolvedSearchKnobs): string {
     `rri=${knobs.reranker_top_n_in}`,
     `rro=${knobs.reranker_top_n_out ?? 'none'}`,
     `rrt=${knobs.reranker_timeout_ms}`,
-    // v=3 additions (append-only). Use 4-decimal precision so 0.85 and
-    // 0.851 differ in the hash; undefined uses literal 'none' so a
-    // floor-off write and a floor-on write key into different rows.
+    // v=3 additions (append-only). Both contributions landed under v=3:
+    //
+    //   floor_ratio (v0.35.6.0 / codex T1): a floor-on write must not be
+    //     served to a floor-off lookup. 4-decimal precision so 0.85 and
+    //     0.851 produce different hashes; undefined uses literal 'none'.
+    //
+    //   col + prov (v0.36 / D8 / CDX-2): cross-column + cross-provider
+    //     cache contamination. A query against `embedding_voyage` must
+    //     NEVER be served from a cache row that ran against `embedding`
+    //     — they sit in different vector spaces. ctx is optional so
+    //     unrelated callers fall back to the default-column hash.
     `fr=${knobs.floor_ratio === undefined ? 'none' : knobs.floor_ratio.toFixed(4)}`,
+    `col=${ctx?.embeddingColumn ?? 'embedding'}`,
+    `prov=${ctx?.embeddingModel ?? 'default'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

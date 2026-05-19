@@ -9,8 +9,9 @@ import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
-import { join } from 'path';
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
+import { fileURLToPath } from 'url';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 
 export interface Check {
   name: string;
@@ -86,6 +87,41 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
  * Tolerance matches migration v48: any value with abs(weight - on_grid) > 1e-3
  * is genuinely off-grid (the 0.05 grid is 5e-2; float32 noise is ~1e-7).
  */
+const WHOKNOWS_FIXTURE_RELATIVE_PATH = 'test/fixtures/whoknows-eval.jsonl';
+
+function isGbrainSourceRoot(dir: string): boolean {
+  return (
+    existsSync(join(dir, 'src', 'cli.ts')) &&
+    existsSync(join(dir, 'skills', 'RESOLVER.md'))
+  );
+}
+
+export function resolveWhoknowsFixturePath(
+  env: NodeJS.ProcessEnv = process.env,
+  moduleUrl: string = import.meta.url,
+): string | null {
+  if (env.GBRAIN_WHOKNOWS_FIXTURE_PATH) {
+    return isAbsolute(env.GBRAIN_WHOKNOWS_FIXTURE_PATH)
+      ? env.GBRAIN_WHOKNOWS_FIXTURE_PATH
+      : resolvePath(process.cwd(), env.GBRAIN_WHOKNOWS_FIXTURE_PATH);
+  }
+
+  try {
+    let dir = dirname(fileURLToPath(moduleUrl));
+    for (let i = 0; i < 10; i++) {
+      if (isGbrainSourceRoot(dir)) return join(dir, WHOKNOWS_FIXTURE_RELATIVE_PATH);
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // Some bundlers/runtimes may not expose a normal file: import URL.
+    // Doctor should surface an override hint instead of fabricating a path.
+  }
+
+  return null;
+}
+
 /**
  * v0.33: whoknows_health — verify the eval fixture is present at the
  * documented path. Lightweight; just checks file existence and row count,
@@ -98,15 +134,19 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
  */
 export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> {
   try {
-    const { existsSync, readFileSync, statSync } = await import('fs');
-    const path = await import('path');
-    const repoRoot = process.cwd();
-    const fixturePath = path.join(repoRoot, 'test/fixtures/whoknows-eval.jsonl');
+    const fixturePath = resolveWhoknowsFixturePath();
+    if (!fixturePath) {
+      return {
+        name: 'whoknows_health',
+        status: 'warn',
+        message: 'whoknows eval fixture path could not be resolved. Set GBRAIN_WHOKNOWS_FIXTURE_PATH to the absolute path for test/fixtures/whoknows-eval.jsonl.',
+      };
+    }
     if (!existsSync(fixturePath)) {
       return {
         name: 'whoknows_health',
         status: 'warn',
-        message: `whoknows eval fixture missing at test/fixtures/whoknows-eval.jsonl. Fix: hand-label 10 queries you'd actually run, format {query, expected_top_3_slugs, notes}.`,
+        message: `whoknows eval fixture missing at ${fixturePath}. Fix: hand-label 10 queries you'd actually run, format {query, expected_top_3_slugs, notes}.`,
       };
     }
     const stat = statSync(fixturePath);
@@ -191,6 +231,97 @@ export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> 
       message: `Could not check takes weight grid: ${msg}`,
     };
   }
+}
+
+/**
+ * Child-table orphan detection (closes #1063).
+ *
+ * The autopilot `orphans` phase (src/core/cycle.ts:runPhaseOrphans) detects
+ * orphan PAGES (pages with no inbound links via the page-graph). It does NOT
+ * scan FK-child tables for orphan rows. When a bulk page delete leaves
+ * orphans in `content_chunks` / `page_versions` / `tags` / `takes` / etc.
+ * — whether from pre-FK migrations, race conditions, or a code path that
+ * bypassed cascade — they persist indefinitely until manual SQL cleanup.
+ *
+ * All ten FK-to-pages tables declare `ON DELETE CASCADE` in the live schema
+ * (verified via `pg_constraint` snapshot in the issue body), so finding any
+ * orphan row is by definition unexpected. The check ships paste-ready
+ * cleanup SQL when orphans surface.
+ *
+ * Excluded: `files.page_id` and `links.origin_page_id` — both declared as
+ * `ON DELETE SET NULL`, so a NULL value is a valid state (file/link survives
+ * after page deletion); only NOT-NULL-but-page-missing is an orphan there.
+ * The check encodes that distinction for the two SET NULL columns.
+ *
+ * Pure helper for parity with `takesWeightGridCheck` so tests can target it
+ * directly without driving the full `runDoctor` pipeline.
+ */
+export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check> {
+  // (table, fk_column, allow_null). When allow_null=true, NULL is a valid
+  // state (FK was declared ON DELETE SET NULL); the orphan predicate filters
+  // out NULL values. When false, NULL is impossible by NOT NULL constraint;
+  // any value not in pages.id is an orphan.
+  const targets: Array<{ table: string; col: string; allowNull: boolean }> = [
+    { table: 'content_chunks',   col: 'page_id',          allowNull: false },
+    { table: 'page_versions',    col: 'page_id',          allowNull: false },
+    { table: 'tags',             col: 'page_id',          allowNull: false },
+    { table: 'takes',            col: 'page_id',          allowNull: false },
+    { table: 'raw_data',         col: 'page_id',          allowNull: false },
+    { table: 'timeline_entries', col: 'page_id',          allowNull: false },
+    { table: 'links',            col: 'from_page_id',     allowNull: false },
+    { table: 'links',            col: 'to_page_id',       allowNull: false },
+    { table: 'links',            col: 'origin_page_id',   allowNull: true  },
+    { table: 'files',            col: 'page_id',          allowNull: true  },
+  ];
+  let totalOrphans = 0;
+  const breakdown: string[] = [];
+  const cleanupSql: string[] = [];
+  const errors: string[] = [];
+  for (const { table, col, allowNull } of targets) {
+    try {
+      // NOT IN subquery is portable across postgres + PGLite. The `pages.id`
+      // subquery covers every existing parent row.
+      const nullFilter = allowNull ? `${col} IS NOT NULL AND ` : '';
+      const rows = await engine.executeRaw<{ n: string | number }>(
+        `SELECT COUNT(*)::int AS n FROM ${table} WHERE ${nullFilter}${col} NOT IN (SELECT id FROM pages)`,
+      );
+      const n = Number(rows[0]?.n ?? 0);
+      if (n > 0) {
+        totalOrphans += n;
+        breakdown.push(`${table}.${col}=${n}`);
+        cleanupSql.push(
+          `DELETE FROM ${table} WHERE ${nullFilter}${col} NOT IN (SELECT id FROM pages);`,
+        );
+      }
+    } catch (e) {
+      // Table or column may not exist on older schemas — skip and continue.
+      // Aggregate the errors so doctor surfaces "could not check N tables"
+      // when a real failure shape appears (network, lock, syntax).
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`${table}.${col}: ${msg.slice(0, 80)}`);
+    }
+  }
+  if (totalOrphans === 0 && errors.length === 0) {
+    return {
+      name: 'child_table_orphans',
+      status: 'ok',
+      message: 'All FK-child tables clean (10 tables checked)',
+    };
+  }
+  if (totalOrphans === 0 && errors.length > 0) {
+    return {
+      name: 'child_table_orphans',
+      status: 'warn',
+      message: `Could not check ${errors.length}/10 FK-child tables (older schema or transient error): ${errors.slice(0, 3).join('; ')}`,
+    };
+  }
+  return {
+    name: 'child_table_orphans',
+    status: 'warn',
+    message:
+      `${totalOrphans} orphan row(s) in FK-child tables (${breakdown.join(', ')}). ` +
+      `Cleanup: ${cleanupSql.join(' ')}`,
+  };
 }
 
 export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
@@ -421,7 +552,190 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // things when reranker is on vs off.
   checks.push(await checkRerankerHealth(engine));
 
+  // 10. v0.36.1.0 Hindsight calibration wave (T12) — four new checks:
+  //   - abandoned_threads: high-conviction takes never revisited
+  //   - calibration_freshness: profile is older than 7 days
+  //   - grade_confidence_drift: judge self-reported confidence vs actual accuracy (CDX-11 mitigation)
+  //   - voice_gate_health: voice gate failure rate over the last 7 days
+  checks.push(await checkAbandonedThreads(engine));
+  checks.push(await checkCalibrationFreshness(engine));
+  checks.push(await checkGradeConfidenceDrift(engine));
+  checks.push(await checkVoiceGateHealth(engine));
+
   return computeDoctorReport(checks);
+}
+
+// --- v0.36.1.0 calibration doctor checks (T12) ---
+
+/**
+ * abandoned_threads: surfaces active high-conviction takes (weight >= 0.7)
+ * older than 12 months that have neither been superseded nor linked to a
+ * follow-up page. These are commitments the user made and never revisited.
+ * Status 'ok' with a count; never warns/fails (this is signal, not error).
+ */
+export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM takes
+         WHERE active = true
+           AND resolved_at IS NULL
+           AND superseded_by IS NULL
+           AND weight >= 0.7
+           AND since_date IS NOT NULL
+           AND since_date::date < (now() - INTERVAL '12 months')`,
+    );
+    const count = rows[0]?.count ?? 0;
+    if (count === 0) {
+      return {
+        name: 'abandoned_threads',
+        status: 'ok',
+        message: 'No abandoned high-conviction threads',
+      };
+    }
+    return {
+      name: 'abandoned_threads',
+      status: 'ok',
+      message: `${count} high-conviction take(s) older than 12 months and never revisited — see \`gbrain calibration\` for details`,
+    };
+  } catch (e) {
+    return {
+      name: 'abandoned_threads',
+      status: 'warn',
+      message: `Could not check abandoned threads: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * calibration_freshness: warns when the active calibration profile is
+ * older than 7 days (configurable). Default holder 'garry'. Multi-source
+ * brains see one row per source; this check uses the most recent across
+ * all sources.
+ */
+export async function checkCalibrationFreshness(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ generated_at: Date | null }>(
+      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = 'garry'`,
+    );
+    const generated = rows[0]?.generated_at;
+    if (!generated) {
+      return {
+        name: 'calibration_freshness',
+        status: 'ok',
+        message: 'No calibration profile yet (builds after 5+ resolved takes)',
+      };
+    }
+    const ageMs = Date.now() - new Date(generated).getTime();
+    const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
+    const staleDays = 7;
+    if (ageDays > staleDays) {
+      return {
+        name: 'calibration_freshness',
+        status: 'warn',
+        message: `Calibration profile is ${ageDays} days old (stale at >${staleDays}d). Run \`gbrain calibration --regenerate\``,
+      };
+    }
+    return {
+      name: 'calibration_freshness',
+      status: 'ok',
+      message: `Calibration profile generated ${ageDays}d ago`,
+    };
+  } catch (e) {
+    return {
+      name: 'calibration_freshness',
+      status: 'warn',
+      message: `Could not check calibration freshness: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * grade_confidence_drift (CDX-11 mitigation): compare the judge's
+ * self-reported confidence on auto-applied verdicts against the eventual
+ * accuracy on those same takes. When auto-resolutions diverge from
+ * confidence prediction, the judge is mis-calibrated and the operator
+ * should retune the prompt or revisit the threshold.
+ *
+ * v0.36.1.0 ship state: returns 'ok' with a counter — actual drift math
+ * requires a measurement window we haven't accumulated yet. The check
+ * exists so the surface is wired; the math arrives once we have N >= 30
+ * auto-applied verdicts to compare.
+ */
+export async function checkGradeConfidenceDrift(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ applied_count: number }>(
+      `SELECT COUNT(*)::int AS applied_count FROM take_grade_cache WHERE applied = true`,
+    );
+    const applied = rows[0]?.applied_count ?? 0;
+    if (applied < 30) {
+      return {
+        name: 'grade_confidence_drift',
+        status: 'ok',
+        message: `Only ${applied} auto-applied verdicts — need 30+ for drift detection`,
+      };
+    }
+    // v0.37+ TODO: compute confidence-vs-accuracy correlation; warn when
+    // mean(applied verdicts' confidence) deviates from the actual accuracy
+    // rate (cross-checked against later manual corrections via the
+    // contradictions probe). For v0.36.1.0 the check surfaces only the
+    // count and a "calibration math pending" status.
+    return {
+      name: 'grade_confidence_drift',
+      status: 'ok',
+      message: `${applied} auto-applied verdicts; drift math arrives in v0.37+`,
+    };
+  } catch (e) {
+    return {
+      name: 'grade_confidence_drift',
+      status: 'warn',
+      message: `Could not check grade confidence drift: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * voice_gate_health: warns when calibration_profiles rows show a high rate
+ * of voice gate failures over the last 7 days. Failures aren't bad in
+ * isolation (template fallback is fine), but a sustained high rate signals
+ * the rubric needs tuning.
+ */
+export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ total: number; failures: number }>(
+      `SELECT COUNT(*)::int AS total,
+              COALESCE(SUM(CASE WHEN voice_gate_passed = false THEN 1 ELSE 0 END), 0)::int AS failures
+         FROM calibration_profiles
+         WHERE generated_at >= (now() - INTERVAL '7 days')`,
+    );
+    const total = rows[0]?.total ?? 0;
+    const failures = rows[0]?.failures ?? 0;
+    if (total === 0) {
+      return {
+        name: 'voice_gate_health',
+        status: 'ok',
+        message: 'No calibration profile generation in the last 7 days',
+      };
+    }
+    const failRate = failures / total;
+    if (failRate >= 0.3) {
+      return {
+        name: 'voice_gate_health',
+        status: 'warn',
+        message: `Voice gate failed ${failures}/${total} (${Math.round(failRate * 100)}%) in last 7 days. Review src/core/calibration/voice-gate.ts rubric.`,
+      };
+    }
+    return {
+      name: 'voice_gate_health',
+      status: 'ok',
+      message: `Voice gate ${failures}/${total} failed in last 7 days (${Math.round(failRate * 100)}%)`,
+    };
+  } catch (e) {
+    return {
+      name: 'voice_gate_health',
+      status: 'warn',
+      message: `Could not check voice gate health: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
 }
 
 /**
@@ -498,6 +812,136 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       name: 'reranker_health',
       status: 'warn',
       message: `Could not check reranker audit: ${msg}`,
+    };
+  }
+}
+
+/**
+ * v0.36.0.0 (A5): ze_embedding_health doctor check.
+ *
+ * When the configured embedding_model starts with `zeroentropyai:`, verify
+ * the API key is set. Doesn't make a network call by default — the existing
+ * `gbrain models doctor` probe covers that, and we don't want every
+ * `gbrain doctor` run to spend tokens. Surfaces a paste-ready fix when the
+ * key is missing.
+ */
+export async function checkZeEmbeddingHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const model = await engine.getConfig('embedding_model') ?? '';
+    if (!model.startsWith('zeroentropyai:')) {
+      return {
+        name: 'ze_embedding_health',
+        status: 'ok',
+        message: `Configured embedding model "${model || 'default'}" is not ZeroEntropy — skip.`,
+      };
+    }
+    const envKey = process.env.ZEROENTROPY_API_KEY;
+    const configKey = await engine.getConfig('zeroentropy_api_key');
+    if (!envKey && !configKey) {
+      return {
+        name: 'ze_embedding_health',
+        status: 'warn',
+        message:
+          `embedding_model="${model}" but ZEROENTROPY_API_KEY is not set. ` +
+          `Fix: get a key at https://dashboard.zeroentropy.dev and run ` +
+          `\`gbrain config set zeroentropy_api_key <YOUR_KEY>\` (or export ZEROENTROPY_API_KEY).`,
+      };
+    }
+    return {
+      name: 'ze_embedding_health',
+      status: 'ok',
+      message: `embedding_model="${model}" with key configured`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'ze_embedding_health',
+      status: 'warn',
+      message: `Could not check ZE embedding health: ${msg}`,
+    };
+  }
+}
+
+/**
+ * v0.36.0.0 (A5): embedding_width_consistency doctor check.
+ *
+ * Cross-checks that `config.embedding_dimensions` matches the actual
+ * `vector(N)` width on `content_chunks.embedding`. Drift here means the
+ * ze-switch was interrupted mid-flight (schema changed but config write
+ * crashed, or vice versa). Surfaces a paste-ready `gbrain ze-switch
+ * --resume` hint.
+ */
+export async function checkEmbeddingWidthConsistency(engine: BrainEngine): Promise<Check> {
+  try {
+    const configDimStr = await engine.getConfig('embedding_dimensions');
+    if (!configDimStr) {
+      // Pre-v0.27 brain or never configured. Not our problem.
+      return {
+        name: 'embedding_width_consistency',
+        status: 'ok',
+        message: 'embedding_dimensions not configured — using defaults.',
+      };
+    }
+    const configDim = parseInt(configDimStr, 10);
+    if (!Number.isFinite(configDim) || configDim <= 0) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message: `embedding_dimensions config value "${configDimStr}" is not a positive integer. Fix: \`gbrain config set embedding_dimensions <N>\`.`,
+      };
+    }
+
+    // Read the actual column width from pg_attribute / information_schema.
+    // Postgres + PGLite both expose vector typmod via atttypmod (vectors
+    // store dim as typmod). atttypmod==-1 means no constraint; >=0 is the
+    // dim+VARHDRSZ — we use format_type for portability.
+    const rows = await engine.executeRaw<{ format_type: string }>(
+      `SELECT format_type(atttypid, atttypmod) AS format_type
+         FROM pg_attribute
+        WHERE attrelid = 'content_chunks'::regclass
+          AND attname = 'embedding'
+          AND NOT attisdropped`,
+    );
+    if (rows.length === 0) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message: 'content_chunks.embedding column not found. Fix: run `gbrain init --migrate-only` or check schema.',
+      };
+    }
+    const formatType = rows[0].format_type;
+    // Parse 'vector(N)' shape.
+    const m = formatType.match(/vector\((\d+)\)/i);
+    if (!m) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message: `Unexpected column type for content_chunks.embedding: "${formatType}".`,
+      };
+    }
+    const schemaDim = parseInt(m[1], 10);
+    if (schemaDim !== configDim) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message:
+          `Schema width mismatch: content_chunks.embedding is vector(${schemaDim}) but ` +
+          `embedding_dimensions config = ${configDim}. ` +
+          `Fix: \`gbrain ze-switch --resume\` if you were mid-switch, or ` +
+          `\`gbrain config set embedding_dimensions ${schemaDim}\` to match the schema.`,
+      };
+    }
+    return {
+      name: 'embedding_width_consistency',
+      status: 'ok',
+      message: `Schema width (${schemaDim}d) matches embedding_dimensions config`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'embedding_width_consistency',
+      status: 'warn',
+      message: `Could not check embedding width: ${msg}`,
     };
   }
 }
@@ -1671,6 +2115,164 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   } catch { /* listRecipes / gateway not available — silent */ }
 
+  // 8c. Embedding column registry (v0.36 — D5 + D13 + D14).
+  //     Validates every column in the merged registry against the real DB
+  //     shape: (a) column exists, (b) declared type+dims match actual
+  //     format_type(atttypid, atttypmod), (c) HNSW index present on
+  //     Postgres, (d) the ACTIVE default column has >= 90% coverage.
+  //
+  //     Batch probes (D5) so the registry can grow without N+1 round-trips:
+  //     one format_type query, one pg_indexes query, one coverage-per-active
+  //     column query.
+  progress.heartbeat('embedding_column_registry');
+  try {
+    const { getEmbeddingColumnRegistry, resolveEmbeddingColumn, quoteIdentifier } =
+      await import('../core/search/embedding-column.ts');
+    const { loadConfig: _loadConfig } = await import('../core/config.ts');
+    const fileCfg = _loadConfig();
+    const mergedCfg = fileCfg ? await (await import('../core/config.ts')).loadConfigWithEngine(engine, fileCfg).catch(() => fileCfg) : null;
+    if (!mergedCfg) {
+      checks.push({
+        name: 'embedding_column_registry',
+        status: 'ok',
+        message: 'No brain config loaded — skipped',
+      });
+    } else {
+      const registry = getEmbeddingColumnRegistry(mergedCfg);
+      const declaredColumns = Object.keys(registry);
+      const activeCol = resolveEmbeddingColumn(undefined, mergedCfg).name;
+
+      // D13 — batch format_type probe via pg_attribute. udt_name only
+      // returns 'vector' vs 'halfvec'; format_type(atttypid, atttypmod)
+      // returns 'vector(1024)' / 'halfvec(2560)' so dim drift surfaces.
+      const formatRows = await engine.executeRaw<{ attname: string; formatted: string }>(
+        `SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS formatted
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public'
+            AND c.relname = 'content_chunks'
+            AND a.attname = ANY($1::text[])
+            AND NOT a.attisdropped`,
+        [declaredColumns],
+      );
+      const actualByName = new Map<string, string>();
+      for (const r of formatRows) actualByName.set(r.attname, r.formatted);
+
+      // D5 — batch index probe (Postgres only; PGLite indexing is implicit
+      // and the partial-index pattern doesn't surface in pg_indexes the
+      // same way). Reports informational, not blocking — search still
+      // works without an HNSW index, just slow.
+      const haveIndex = new Map<string, boolean>();
+      if (engine.kind === 'postgres') {
+        const indexRows = await engine.executeRaw<{ indexdef: string }>(
+          `SELECT indexdef FROM pg_indexes
+            WHERE tablename = 'content_chunks'
+              AND schemaname = 'public'`,
+        );
+        for (const col of declaredColumns) {
+          const found = indexRows.some(r => /USING\s+hnsw/i.test(r.indexdef) && r.indexdef.includes(`(${col} `));
+          haveIndex.set(col, found);
+        }
+      }
+
+      // Per-column health rollup.
+      const issues: string[] = [];
+      const okColumns: string[] = [];
+      for (const colName of declaredColumns) {
+        const entry = registry[colName];
+        const actual = actualByName.get(colName);
+        if (!actual) {
+          issues.push(`${colName}: declared but column does NOT exist in content_chunks`);
+          continue;
+        }
+        // Expected format: `vector(N)` or `halfvec(N)`.
+        const m = actual.match(/^(vector|halfvec)\((\d+)\)/i);
+        const actualType = m ? m[1].toLowerCase() : actual;
+        const actualDims = m ? parseInt(m[2], 10) : null;
+        if (actualType !== entry.type) {
+          issues.push(
+            `${colName}: declared type=${entry.type} but actual is ${actual}. ` +
+              `Fix: gbrain config set embedding_columns '<JSON>' OR ` +
+              `ALTER TABLE content_chunks ALTER COLUMN ${colName} TYPE ${entry.type}(${entry.dimensions});`,
+          );
+          continue;
+        }
+        if (actualDims !== null && actualDims !== entry.dimensions) {
+          issues.push(
+            `${colName}: declared dims=${entry.dimensions} but actual is ${actual}. ` +
+              `Fix one side: update config OR ` +
+              `ALTER TABLE content_chunks ALTER COLUMN ${colName} TYPE ${entry.type}(${entry.dimensions});`,
+          );
+          continue;
+        }
+        if (engine.kind === 'postgres' && haveIndex.get(colName) === false) {
+          issues.push(
+            `${colName}: no HNSW index. Search works but uses sequential scan. ` +
+              `Fix: CREATE INDEX IF NOT EXISTS idx_chunks_${colName} ON content_chunks USING hnsw (${quoteIdentifier(colName)} ${entry.type}_cosine_ops);`,
+          );
+          continue;
+        }
+        okColumns.push(colName);
+      }
+
+      // D14 — coverage gate on the ACTIVE default column. Catches the
+      // "user switched to a 5%-populated column" silent-degradation case.
+      let coverageWarn: string | null = null;
+      if (activeCol && actualByName.has(activeCol)) {
+        // Codex /ship #5: pull `total` alongside `pct` so a fresh brain
+        // (0 chunks → NULLIF makes pct NULL → coalesces to 0) doesn't
+        // false-warn "Active column 'embedding' is 0.0% populated".
+        const covRows = await engine.executeRaw<{ pct: number; total: number }>(
+          `SELECT (
+             COUNT(*) FILTER (WHERE ${quoteIdentifier(activeCol)} IS NOT NULL)::float
+             / NULLIF(COUNT(*), 0) * 100
+           )::float AS pct,
+           COUNT(*)::int AS total
+           FROM content_chunks`,
+        );
+        const pct = covRows[0]?.pct ?? 0;
+        const total = covRows[0]?.total ?? 0;
+        // Only warn when there's a real coverage gap. Empty brain (0 chunks)
+        // is a normal state for new installs — skip the gate entirely.
+        if (total > 0 && pct < 90) {
+          coverageWarn =
+            `Active column '${activeCol}' is ${pct.toFixed(1)}% populated. ` +
+            `Search quality silently degraded on un-embedded chunks. ` +
+            `Fix: gbrain embed --column ${activeCol} --stale (write-side support v2) ` +
+            `OR gbrain config set search_embedding_column embedding`;
+        }
+      }
+
+      if (issues.length === 0 && !coverageWarn) {
+        const indexNote = engine.kind === 'postgres' ? ' (all indexed)' : '';
+        checks.push({
+          name: 'embedding_column_registry',
+          status: 'ok',
+          message: `Registry healthy: ${okColumns.length} columns (${okColumns.join(', ')})${indexNote}; active='${activeCol}'`,
+        });
+      } else {
+        const allMessages = [
+          ...issues,
+          ...(coverageWarn ? [coverageWarn] : []),
+        ];
+        checks.push({
+          name: 'embedding_column_registry',
+          status: 'warn',
+          message: allMessages.join(' | '),
+        });
+      }
+    }
+  } catch (err) {
+    // Pre-config brains, registry-validation throws, etc. Surfaces the
+    // error message but doesn't fail the doctor run.
+    checks.push({
+      name: 'embedding_column_registry',
+      status: 'warn',
+      message: `Could not check embedding column registry: ${(err as Error).message}`,
+    });
+  }
+
   // 9. Graph health (link + timeline coverage on entity pages).
   // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
   //
@@ -1817,6 +2419,15 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // directly rather than the full `runDoctor` pipeline (codex review #7).
   progress.heartbeat('takes_weight_grid');
   checks.push(await takesWeightGridCheck(engine));
+
+  // 10c. Child-table orphan detection (closes #1063).
+  // The autopilot `orphans` phase scans for orphan pages (no inbound links)
+  // but does NOT detect orphan rows in FK-child tables. After a bulk page
+  // delete, child rows can persist if cascade didn't fire (pre-FK rows,
+  // race during bulk cascade, code path that bypassed cascade). This
+  // surfaces them with paste-ready cleanup SQL.
+  progress.heartbeat('child_table_orphans');
+  checks.push(await childTableOrphansCheck(engine));
 
   // v0.33: whoknows_health — fixture presence + row count. The eval
   // gate itself runs via `gbrain eval whoknows`; this check is the
@@ -2578,6 +3189,11 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
     progress.heartbeat('reranker_health');
     checks.push(await checkRerankerHealth(engine));
+    // v0.36.0.0 (A5): ZE embedding key health + schema/config width consistency.
+    progress.heartbeat('ze_embedding_health');
+    checks.push(await checkZeEmbeddingHealth(engine));
+    progress.heartbeat('embedding_width_consistency');
+    checks.push(await checkEmbeddingWidthConsistency(engine));
   }
 
   progress.finish();

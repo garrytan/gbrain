@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'founder']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -169,6 +169,10 @@ async function main() {
     const result = JSON.parse(JSON.stringify(rawResult));
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
+    if (op.name === 'query') {
+      const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
+      await awaitPendingSearchCacheWrites();
+    }
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       console.error(`Error [${e.code}]: ${e.message}`);
@@ -450,7 +454,7 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
-function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
+export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
   let posIdx = 0;
@@ -458,6 +462,14 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg.startsWith('--')) {
+      if (arg.startsWith('--no-')) {
+        const positiveKey = arg.slice(5).replace(/-/g, '_');
+        const positiveDef = op.params[positiveKey];
+        if (positiveDef?.type === 'boolean') {
+          params[positiveKey] = false;
+          continue;
+        }
+      }
       const key = arg.slice(2).replace(/-/g, '_');
       const paramDef = op.params[key];
       if (paramDef?.type === 'boolean') {
@@ -905,6 +917,19 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  if (command === 'ze-switch') {
+    // v0.36.0.0 — manual ZE-default switch lever. Owns its own engine lifecycle
+    // to mirror the doctor pattern.
+    const { runZeSwitch } = await import('./commands/ze-switch.ts');
+    const eng = await connectEngine();
+    try {
+      await runZeSwitch(args, eng);
+    } finally {
+      await eng.disconnect();
+    }
+    return;
+  }
+
   if (command === 'smoke-test') {
     // Run smoke tests — no DB connection needed, the script handles its own checks
     const { execSync } = await import('child_process');
@@ -1142,6 +1167,14 @@ async function handleCliOnly(command: string, args: string[]) {
         // happens inside runWhoknows via isThinClient(cfg) (v0.31.1 pattern).
         const { runWhoknows } = await import('./commands/whoknows.ts');
         await runWhoknows(engine, args);
+        break;
+      }
+      case 'calibration': {
+        // v0.36.1.0 (T7): print/regenerate the active calibration profile.
+        // MCP op `get_calibration_profile` (read-scoped) backs the same data path.
+        const { runCalibration } = await import('./commands/calibration.ts');
+        const calibrationConfig = loadConfig() ?? ({} as never);
+        await runCalibration(engine, args, calibrationConfig);
         break;
       }
       case 'transcripts': {

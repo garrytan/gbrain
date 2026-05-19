@@ -421,6 +421,52 @@ export interface SearchResult {
   effective_date_source?: string | null;
 }
 
+/**
+ * v0.36 (D12) — declared shape of one entry in the `embedding_columns`
+ * config registry. Users declare entries via `gbrain config set
+ * embedding_columns '...JSON...'` (DB plane); resolver merges with
+ * built-ins. Field validation lives in src/core/search/embedding-column.ts
+ * and runs at load time:
+ *
+ *   provider:   parseable 'provider:model' (e.g. 'voyage:voyage-3-large')
+ *   dimensions: positive integer 1..8192
+ *   type:       'vector' | 'halfvec'
+ *
+ * The registry KEY itself (the column name) is also regex-validated
+ * (/^[a-z_][a-z0-9_]*$/) so a malicious config write can't smuggle a
+ * SQL fragment in via the key.
+ */
+export interface EmbeddingColumnConfig {
+  /** 'provider:model' identifier, e.g. 'voyage:voyage-3-large'. */
+  provider: string;
+  /** Dimensions of the stored vector. Must match actual DB column. */
+  dimensions: number;
+  /** pgvector type — drives the SQL cast at search time. */
+  type: 'vector' | 'halfvec';
+}
+
+/**
+ * v0.36 (D11) — fully resolved descriptor for an embedding column. The
+ * resolver (src/core/search/embedding-column.ts) produces these at the
+ * hybrid/op boundary; engines consume them. The engine NEVER reads config
+ * or calls the resolver itself — it sees only this validated descriptor.
+ *
+ * `name` is identifier-quoted at SQL-build time by buildVectorCastFragment
+ * (D12 defense in depth), but the resolver also enforces a strict regex
+ * at load time so this string is already known-safe by the time the engine
+ * sees it.
+ */
+export interface ResolvedColumn {
+  /** Column name in content_chunks (already validated against the registry). */
+  name: string;
+  /** pgvector type — `$N::vector` or `$N::halfvec(N)`. */
+  type: 'vector' | 'halfvec';
+  /** Embedding dimensions — must match actual DB column dim. */
+  dimensions: number;
+  /** 'provider:model' identifier, e.g. 'voyage:voyage-3-large'. */
+  embeddingModel: string;
+}
+
 export interface SearchOpts {
   limit?: number;
   offset?: number;
@@ -490,14 +536,27 @@ export interface SearchOpts {
    */
   sourceIds?: string[];
   /**
-   * v0.27.1: target column for vector search. 'embedding' (default) hits
-   * the brain's primary text-embedding column. 'embedding_image' targets
-   * the multimodal column populated by importImageFile. The two columns
-   * may live in different dim spaces (e.g. OpenAI 1536 + Voyage 1024)
-   * which is why the dual-column schema landed in v0.27.1. searchKeyword
-   * is unaffected — modality filtering on the keyword path is independent.
+   * v0.27.1 / v0.36 (D11): target column for vector search. Two shapes:
+   *
+   * 1. String name (legacy + user-facing). Engine and hybridSearch convert
+   *    to ResolvedColumn at the boundary via `resolveEmbeddingColumn()`.
+   *    Built-in names: 'embedding' (default, text), 'embedding_image'
+   *    (multimodal). Custom user-declared names also accepted when
+   *    registered in `embedding_columns` config.
+   *
+   * 2. ResolvedColumn descriptor (internal). The engine ONLY accepts
+   *    this shape — hybridSearch resolves once at entry and passes the
+   *    descriptor in so the engine stays config-independent (D11 — engine
+   *    is a pure SQL composer).
+   *
+   * The two-shape union is the transition seam. External callers
+   * (operations.ts image branch, tests, gbrain-evals) pass strings;
+   * hybridSearch resolves; engine sees descriptor.
+   *
+   * searchKeyword is unaffected — modality filtering on the keyword path
+   * is independent.
    */
-  embeddingColumn?: 'embedding' | 'embedding_image';
+  embeddingColumn?: 'embedding' | 'embedding_image' | string | ResolvedColumn;
   /**
    * @deprecated v0.29.1: use `since` instead. Removed in v0.30.
    * v0.27.0: filter results to pages updated/created after this date. ISO-8601 string.
@@ -872,6 +931,19 @@ export interface EvalCandidateInput {
   remote: boolean;
   job_id: number | null;
   subagent_id: number | null;
+  /**
+   * v0.36 (D16 / CDX-10): the embedding column resolved at capture time.
+   * Optional for back-compat with pre-v0.36 callers + test fixtures.
+   * Engines coalesce undefined to NULL at insert time so the column is
+   * always either a known column name or DB NULL — never JS undefined.
+   *
+   * Replay (`gbrain eval replay`) re-runs the captured query against the
+   * brain. Without this field, a replay after the user flipped
+   * `search_embedding_column` produces "regressions" that are just
+   * column changes. Replay reads this and uses it as a per-row override
+   * so capture and replay run in the same embedding space.
+   */
+  embedding_column?: string | null;
 }
 
 export interface EvalCandidate extends EvalCandidateInput {
@@ -945,6 +1017,14 @@ export interface HybridSearchMeta {
    * the operator's `config.search.mode` setting if per-call overrides win).
    */
   mode?: 'conservative' | 'balanced' | 'tokenmax';
+  /**
+   * v0.36 (D16 / CDX-10): the embedding column that actually ran this
+   * search. Threaded through to eval_candidates capture so replay can
+   * use the same column even after `search_embedding_column` is
+   * flipped. Always set on hybridSearch paths; omitted on
+   * non-hybridSearch capture paths (keyword-only `search` op).
+   */
+  embedding_column?: string;
 }
 
 // Config

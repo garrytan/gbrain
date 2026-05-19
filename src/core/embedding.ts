@@ -30,9 +30,17 @@ export async function embed(text: string): Promise<Float32Array> {
  * embed seam so the provider returns query-side vectors. For symmetric
  * providers (OpenAI text-3, DashScope, Zhipu) the field is dropped — no
  * behavior change. Used by hybrid.ts on the search hot path.
+ *
+ * v0.36 (D10): optional `embeddingModel` + `dimensions` overrides so the
+ * dynamic-embedding-column path can embed via the column's provider rather
+ * than the globally-configured default. Bare `embedQuery(text)` preserves
+ * pre-v0.36 behavior.
  */
-export async function embedQuery(text: string): Promise<Float32Array> {
-  return gatewayEmbedQuery(text);
+export async function embedQuery(
+  text: string,
+  opts?: { embeddingModel?: string; dimensions?: number },
+): Promise<Float32Array> {
+  return gatewayEmbedQuery(text, opts);
 }
 
 export interface EmbedBatchOptions {

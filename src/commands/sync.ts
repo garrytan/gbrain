@@ -212,6 +212,10 @@ export function buildGitInvocation(repoPath: string, args: string[], configs: st
   return [...cfg, '-C', repoPath, ...args];
 }
 
+export function buildAutoEmbedArgs(slugs: string[], sourceId?: string): string[] {
+  return sourceId ? ['--source', sourceId, '--slugs', ...slugs] : ['--slugs', ...slugs];
+}
+
 /**
  * Shell out to git with a generous maxBuffer.
  *
@@ -228,6 +232,19 @@ function git(repoPath: string, args: string[], configs: string[] = []): string {
     timeout: 30000,
     maxBuffer: 100 * 1024 * 1024,
   }).trim();
+}
+
+function hasOriginRemote(repoPath: string): boolean {
+  try {
+    execFileSync('git', buildGitInvocation(repoPath, ['remote', 'get-url', 'origin']), {
+      encoding: 'utf-8',
+      timeout: 30000,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isDetachedHead(repoPath: string): boolean {
@@ -450,7 +467,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // hardening that cloneRepo applies. Route through pullRepo from
   // git-remote.ts so the flag set is consistent across initial clone and
   // ongoing pulls — single source of truth for the defensive flags.
-  if (!opts.noPull && !detachedHead) {
+  const originRemotePresent = !opts.noPull && !detachedHead ? hasOriginRemote(repoPath) : false;
+  if (!opts.noPull && !detachedHead && !originRemotePresent) {
+    console.error(`No origin remote on ${repoPath}; skipping git pull. Syncing from local working tree.`);
+  }
+
+  if (!opts.noPull && !detachedHead && originRemotePresent) {
     const _t0 = Date.now();
     console.error(`[gbrain phase] sync.git_pull start`);
     try {
@@ -962,19 +984,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
 
   // Auto-embed (skip for large syncs — embedding calls OpenAI).
-  // TODO(multi-source): runEmbed → src/commands/embed.ts:175 + :418 call
-  // upsertChunks defaulting to source='default'. For non-default-source syncs
-  // the page row lives at (sourceId, slug) so this fails with "Page not found"
-  // OR (when a same-slug 'default' row coexists) updates the wrong source's
-  // chunks. Data R1 MED 2 — deferred to a follow-up PR; threading sourceId
-  // through embed.ts is a larger refactor than this fix's scope. The current
-  // try/catch swallows the failure as best-effort, so the sync result still
-  // reports `embedded: 0` for the right reason.
+  // Thread sourceId so incremental source syncs embed the page row they just
+  // imported instead of falling back to the default source.
   let embedded = 0;
   if (!noEmbed && pagesAffected.length > 0 && pagesAffected.length <= 100) {
     try {
       const { runEmbed } = await import('./embed.ts');
-      await runEmbed(engine, ['--slugs', ...pagesAffected]);
+      await runEmbed(engine, buildAutoEmbedArgs(pagesAffected, opts.sourceId));
       // Before commit 2 lands: runEmbed is void. Best estimate is pagesAffected,
       // since runEmbed re-embeds every requested slug. Commit 2 sharpens this
       // with EmbedResult.embedded.

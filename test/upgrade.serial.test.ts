@@ -1,4 +1,8 @@
 import { describe, test, expect } from 'bun:test';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { tmpdir } from 'os';
+import { resolveBunGlobalRoot } from '../src/commands/upgrade.ts';
 
 // We can't easily mock process.execPath in bun, so we test the upgrade
 // command's --help output and the detection logic via subprocess
@@ -104,6 +108,11 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(source).toContain("execFileSync('bun', ['install']");
   });
 
+  test('bun global upgrade passes cwd to bun update', () => {
+    expect(source).toContain('const bunGlobalRoot = resolveBunGlobalRoot()');
+    expect(source).toContain("execFileSync('bun', ['update', 'gbrain'], { cwd: bunGlobalRoot");
+  });
+
   test('classifyBunInstall checks repository.url AND src/cli.ts marker', () => {
     // Codex feedback: repository.url alone is spoofable by future squatter
     // updates; the source-marker fallback (src/cli.ts presence) is
@@ -118,6 +127,69 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(source).toContain('git clone');
     expect(source).toContain('releases');
     expect(source).toContain('#658');
+  });
+});
+
+describe('resolveBunGlobalRoot', () => {
+  const originalBunInstall = process.env.BUN_INSTALL;
+  const originalHome = process.env.HOME;
+  const originalArgv1 = process.argv[1];
+
+  function restoreEnv() {
+    if (originalBunInstall === undefined) delete process.env.BUN_INSTALL;
+    else process.env.BUN_INSTALL = originalBunInstall;
+
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+
+    process.argv[1] = originalArgv1;
+  }
+
+  test('honors BUN_INSTALL override', () => {
+    try {
+      process.env.BUN_INSTALL = '/custom/bun';
+      process.env.HOME = '/ignored/home';
+      expect(resolveBunGlobalRoot()).toBe('/custom/bun/install/global');
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  test('uses canonical ~/.bun/install/global when present', () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-home-'));
+    try {
+      delete process.env.BUN_INSTALL;
+      process.env.HOME = home;
+      const globalRoot = join(home, '.bun', 'install', 'global');
+      mkdirSync(join(globalRoot, 'node_modules'), { recursive: true });
+      writeFileSync(join(globalRoot, 'package.json'), '{}');
+
+      expect(resolveBunGlobalRoot()).toBe(globalRoot);
+    } finally {
+      restoreEnv();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('falls back to the package root above node_modules/gbrain', () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-home-'));
+    const globalRoot = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-global-'));
+    try {
+      delete process.env.BUN_INSTALL;
+      process.env.HOME = home;
+      const cliPath = join(globalRoot, 'node_modules', 'gbrain', 'src', 'cli.ts');
+      mkdirSync(dirname(cliPath), { recursive: true });
+      mkdirSync(join(globalRoot, 'node_modules'), { recursive: true });
+      writeFileSync(join(globalRoot, 'package.json'), '{}');
+      writeFileSync(cliPath, '');
+      process.argv[1] = cliPath;
+
+      expect(resolveBunGlobalRoot()).toBe(realpathSync(globalRoot));
+    } finally {
+      restoreEnv();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(globalRoot, { recursive: true, force: true });
+    }
   });
 });
 

@@ -578,7 +578,20 @@ export interface BrainEngine {
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
   searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]>;
-  getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>>;
+  /**
+   * Hydrate embeddings for chunks already known by id. v0.36 (D9):
+   * optional `column` parameter selects which content_chunks column to
+   * fetch from (default 'embedding'). The dynamic-embedding-column
+   * search path hands its resolved column name here so cosineReScore
+   * rehydrates in the right embedding space — otherwise vector search
+   * against `embedding_voyage` would HNSW-rank against Voyage but
+   * rescore against OpenAI vectors (NaN / wrong rankings).
+   *
+   * The column name MUST be regex-validated by the caller (resolveEmbed-
+   * dingColumn rejects bad names). Engines identifier-quote on
+   * interpolation as defense in depth (D12).
+   */
+  getEmbeddingsByChunkIds(ids: number[], column?: string): Promise<Map<number, Float32Array>>;
 
   // Chunks
   /**

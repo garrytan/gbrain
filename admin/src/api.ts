@@ -22,6 +22,17 @@ async function apiFetch(path: string, options?: RequestInit) {
   return res.json();
 }
 
+// v0.36.1.0 (T15 / E6) — SVG fetch (text/plain payload, NOT JSON).
+async function apiFetchText(path: string) {
+  const res = await fetch(`${BASE}${path}`, { credentials: 'same-origin' });
+  if (res.status === 401) {
+    window.location.hash = '#login';
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
+}
+
 export const api = {
   login: (token: string) => apiFetch('/admin/login', { method: 'POST', body: JSON.stringify({ token }) }),
   signOutEverywhere: () => apiFetch('/admin/api/sign-out-everywhere', { method: 'POST' }),
@@ -34,4 +45,9 @@ export const api = {
   revokeApiKey: (name: string) => apiFetch('/admin/api/api-keys/revoke', { method: 'POST', body: JSON.stringify({ name }) }),
   updateClientTtl: (clientId: string, tokenTtl: number | null) => apiFetch('/admin/api/update-client-ttl', { method: 'POST', body: JSON.stringify({ clientId, tokenTtl }) }),
   revokeClient: (clientId: string) => apiFetch('/admin/api/revoke-client', { method: 'POST', body: JSON.stringify({ clientId }) }),
+  // v0.36.1.0 (T15 / E6) — calibration endpoints.
+  calibrationProfile: (holder?: string) =>
+    apiFetch(`/admin/api/calibration/profile${holder ? `?holder=${encodeURIComponent(holder)}` : ''}`),
+  calibrationChart: (type: string, holder?: string) =>
+    apiFetchText(`/admin/api/calibration/charts/${encodeURIComponent(type)}${holder ? `?holder=${encodeURIComponent(holder)}` : ''}`),
 };

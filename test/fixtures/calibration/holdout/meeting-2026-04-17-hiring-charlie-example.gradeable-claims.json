@@ -1,0 +1,51 @@
+{
+  "_meta": {
+    "fixture_version": "v0.36.1.0",
+    "page": "meeting-2026-04-17-hiring-charlie-example.md",
+    "synthetic": true,
+    "holdout": true,
+    "notes": "Hiring-meeting holdout. Tests propose_takes ability to extract genuinely-uncertain claims (conviction near 0.5) where many extractors drop the signal entirely."
+  },
+  "claims": [
+    {
+      "claim_text": "charlie-example hasn't operated at the velocity acme-example needs",
+      "kind": "judgment",
+      "domain": "hiring",
+      "conviction": 0.6,
+      "since_date": "2026-04-17",
+      "rationale": "Prose concern with reasoning"
+    },
+    {
+      "claim_text": "Founders adopt operating cadence of previous company more than they think",
+      "kind": "judgment",
+      "domain": "founder-patterns",
+      "conviction": 0.6,
+      "since_date": "2026-04-17",
+      "rationale": "Pattern claim 'I've seen this before'"
+    },
+    {
+      "claim_text": "charlie-example doesn't survive 12 months in COO role at acme-example",
+      "kind": "bet",
+      "domain": "hiring",
+      "conviction": 0.6,
+      "since_date": "2026-04-17",
+      "rationale": "Explicit moderate conviction in ## Takes"
+    },
+    {
+      "claim_text": "alice-example hires charlie-example despite the concern raised",
+      "kind": "prediction",
+      "domain": "decision-process",
+      "conviction": 0.85,
+      "since_date": "2026-04-17",
+      "rationale": "Explicit strong conviction in ## Takes"
+    },
+    {
+      "claim_text": "First 90 days look strong before velocity gap shows up around month 4",
+      "kind": "prediction",
+      "domain": "hiring",
+      "conviction": 0.55,
+      "since_date": "2026-04-17",
+      "rationale": "Explicit weak-moderate conviction in ## Takes"
+    }
+  ]
+}

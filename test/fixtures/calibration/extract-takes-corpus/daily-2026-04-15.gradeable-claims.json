@@ -1,0 +1,50 @@
+{
+  "_meta": {
+    "fixture_version": "v0.36.1.0",
+    "page": "daily-2026-04-15.md",
+    "synthetic": true,
+    "notes": "Daily-journal genre. Hedging language is the dominant signal — 'I think', 'I'm skeptical', 'maybe'. Tests propose_takes ability to extract from prose without explicit ## Takes section."
+  },
+  "claims": [
+    {
+      "claim_text": "acme-example pricing change at 40% is too aggressive given current data",
+      "kind": "judgment",
+      "domain": "pricing",
+      "conviction": 0.65,
+      "since_date": "2026-04-15",
+      "rationale": "'I think that's too aggressive' + data argument"
+    },
+    {
+      "claim_text": "widget-co international expansion in 2027 is the wrong call given unit economics",
+      "kind": "judgment",
+      "domain": "strategy",
+      "conviction": 0.7,
+      "since_date": "2026-04-15",
+      "rationale": "'I'm skeptical' + explicit reasoning"
+    },
+    {
+      "claim_text": "Founders who pivot late tend to outperform founders who pivot early (in this batch)",
+      "kind": "judgment",
+      "domain": "founder-patterns",
+      "conviction": 0.5,
+      "since_date": "2026-04-15",
+      "rationale": "Heuristic, hedged with 'maybe selection bias'"
+    },
+    {
+      "claim_text": "At least two fund-b portfolio companies will fold in next 12 months",
+      "kind": "prediction",
+      "domain": "fund-portfolio",
+      "conviction": 0.6,
+      "since_date": "2026-04-15",
+      "rationale": "Explicit moderate conviction"
+    },
+    {
+      "claim_text": "AI conference circuit quiets down by late 2026 as revenue numbers come in",
+      "kind": "prediction",
+      "domain": "market-sentiment",
+      "conviction": 0.55,
+      "since_date": "2026-04-15",
+      "rationale": "'Random small prediction' = self-tagged low-to-mid conviction"
+    }
+  ]
+}

@@ -43,7 +43,7 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 3 (1→2 v0.35.0.0 reranker; 2→3 v0.35.6.0 floor_ratio)', () => {
+  test('version is 3 (1→2 v0.35.0.0 reranker; 2→3 v0.35.6.0 floor_ratio + v0.36 embedding-column)', () => {
     expect(KNOBS_HASH_VERSION).toBe(3);
   });
 
@@ -149,5 +149,45 @@ describe('append-only convention (CDX2-F13)', () => {
     expect(limIdx).toBeGreaterThan(0);
     expect(rrIdx).toBeGreaterThan(0);
     expect(rrIdx).toBeGreaterThan(limIdx);
+  });
+
+  test('v=3 additions: col= and prov= appear AFTER the reranker block', async () => {
+    // v0.36 D8: cache-key contamination across embedding columns + providers.
+    // The two new tokens must sit at the bottom of parts[] so existing v=2
+    // hashes can only differ in those positions — keeping the append-only
+    // chain auditable for future v=4 readers.
+    const src = await Bun.file(
+      new URL('../../src/core/search/mode.ts', import.meta.url),
+    ).text();
+    const rrtIdx = src.indexOf('rrt=${knobs.reranker_timeout_ms');
+    const colIdx = src.indexOf('col=${ctx?.embeddingColumn');
+    const provIdx = src.indexOf('prov=${ctx?.embeddingModel');
+    expect(rrtIdx).toBeGreaterThan(0);
+    expect(colIdx).toBeGreaterThan(rrtIdx);
+    expect(provIdx).toBeGreaterThan(colIdx);
+  });
+
+  test('v=3 fields participate: column flip changes the hash', () => {
+    const k = baseKnobs();
+    const defaultCol = knobsHash(k, { embeddingColumn: 'embedding', embeddingModel: 'openai:text-embedding-3-large' });
+    const voyageCol = knobsHash(k, { embeddingColumn: 'embedding_voyage', embeddingModel: 'voyage:voyage-3-large' });
+    expect(defaultCol).not.toBe(voyageCol);
+  });
+
+  test('v=3 fields participate: same column + different provider → different hash', () => {
+    const k = baseKnobs();
+    const a = knobsHash(k, { embeddingColumn: 'embedding', embeddingModel: 'openai:text-embedding-3-large' });
+    const b = knobsHash(k, { embeddingColumn: 'embedding', embeddingModel: 'openai:text-embedding-3-small' });
+    expect(a).not.toBe(b);
+  });
+
+  test('v=3 fields fall back to embedding/default when ctx undefined', () => {
+    // Backward-compat: callers that don't know the column (e.g. telemetry
+    // helpers) should still produce a stable hash matching the default
+    // 'embedding' + 'default' provider pair.
+    const k = baseKnobs();
+    const bare = knobsHash(k);
+    const explicit = knobsHash(k, { embeddingColumn: 'embedding', embeddingModel: 'default' });
+    expect(bare).toBe(explicit);
   });
 });

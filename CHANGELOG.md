@@ -2,6 +2,419 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.36.3.0] - 2026-05-18
+
+**Search now routes through any embedding column you've populated, not just OpenAI 1536. Voyage and ZeroEntropy columns become first-class search targets in one config flip.**
+
+Until this release, gbrain hardcoded `embedding` (OpenAI 1536) as the only column hybrid search could read from. If you'd backfilled `embedding_voyage` (1024d) or `embedding_zeroentropy` (halfvec 2560d) on the side, the index was paid for but unusable. Now `gbrain config set search_embedding_column embedding_voyage` flips your whole brain to Voyage in a single line. The query op also takes `embedding_column` per-call for A/B benchmarking. Adversarial reviews on both the planning and shipping paths caught fifteen real bugs that aren't shipping today — config-plane drift, cosine-rescore corruption when the descriptor's space doesn't match the cache, prototype-pollution via `constructor` as a column key, validation bypass on the descriptor passthrough, and a doctor false-warn on fresh brains.
+
+The numbers that matter:
+
+| Surface | Before | After |
+|---|---|---|
+| Search columns reachable | `embedding` only (1536d OpenAI hardcoded) | Any column in the `embedding_columns` registry — vector or halfvec, any dim ≤ 8192 |
+| Per-call override | image-only via hidden internal flag | `gbrain query --json '{...,"embedding_column":"embedding_voyage"}'` |
+| Cross-column cache contamination | possible if you ever flipped columns | `knobs_hash` v=3 makes `(col, prov)` part of the cache key — silent corruption impossible |
+| `cosineReScore` rerank space | always pulled from `embedding` | pulls from the active column (D9 — Voyage HNSW now ranked against Voyage vectors, not OpenAI ones) |
+| Doctor diagnostics | `embeddings` check only | new `embedding_column_registry` check: format_type dim drift, missing HNSW indexes, coverage <90% gate |
+| Eval replay parity | results changed across column flips ("false regressions") | each `eval_candidates` row stores the column that ran; replay honors it |
+
+What this means: you can run a side-by-side provider eval today. Set `embedding_voyage` as the default for a session, run `gbrain query "..." --json` across your test queries, capture the results, flip back to `embedding`, replay the captured rows with `gbrain eval replay --against ...`, see the Jaccard@k drift between providers. The cache won't lie to you because it sits in a different keyspace for each provider. Doctor will yell if you accidentally point at a column that's only 50% populated.
+
+### Itemized changes
+
+#### Added
+
+- **`embedding_columns` config registry** — declare which content_chunks columns are searchable. JSON map keyed by column name, each entry has `{provider, dimensions, type}` where type ∈ `vector | halfvec`. Set via `gbrain config set embedding_columns '...JSON...'` (DB plane). Validation runs at config-set time: regex on keys, type/dim/provider field shapes. Bad config refuses to load with a paste-ready hint.
+- **`search_embedding_column` config key** — picks the default column for hybridSearch. `gbrain config set search_embedding_column embedding_voyage` flips your whole brain. Coverage gate: refuses the switch when the target column is <90% populated unless you pass `--coverage-override`.
+- **`embedding_column` MCP param on the `query` op** — per-call override for A/B benchmarking. Unknown column names throw a structured error with the list of registered names. The `search` op (keyword-only) deliberately does NOT accept the param — it would be silent UX (CDX-9).
+- **`gbrain doctor` registry check** — `embedding_column_registry` probes each declared column via `format_type(atttypid, atttypmod)` so dim drift (declared 1024d, actual 1536d) surfaces with a paste-ready ALTER. Postgres also checks HNSW index presence; warns if missing. Coverage % on the active default column; warns when below 90% (skips the warn on empty brains).
+- **`isCacheSafe(resolved, cfg)` helper** — the cache-skip decision compares full embedding space (name + dim + model) against cfg, not just the column name. A user who overrides the `embedding` builtin to point at Voyage doesn't accidentally keep using the OpenAI-sized cache.
+
+#### Changed
+
+- **`hybridSearch` resolves the column at the boundary** — engines now take a pre-validated `ResolvedColumn` descriptor, not a raw string. Engine code is config-free and unit-testable in isolation (D11 / CDX-5).
+- **`gateway.embedQuery(text, { embeddingModel, dimensions })`** — query-side embed path accepts a model override. The resolved column's provider drives the embed call, so a query against `embedding_voyage` actually embeds via Voyage, not the global default (D10).
+- **`gateway.isAvailable('embedding', modelOverride?)`** — the availability check honors the override. Hybrid skips vector search only when the column's provider is down, not the global default's (CDX-4).
+- **`engine.getEmbeddingsByChunkIds(ids, column?)`** — `cosineReScore` hydrates embeddings from the active column. Without this, Voyage HNSW retrieval rescored against OpenAI vectors → NaN or wrong rankings (CDX-3 / D9).
+- **`KNOBS_HASH_VERSION` bumped 2→3** — the cache key now folds in column + provider. Pre-v3 cache rows become unreachable on first re-query (one-time miss spike). Source change lives in `mode.ts`, not `query-cache.ts`.
+- **`eval_candidates.embedding_column`** — schema migration v68. Per-row column metadata so `gbrain eval replay` reproduces the same column the capture ran against. NULL-tolerant; pre-v0.36 rows fall back to current default.
+
+#### Fixed (codex /ship findings)
+
+- **Prototype-pollution-safe registry (#1)** — registry uses `Object.create(null)` + `Object.hasOwn`. `gbrain config set search_embedding_column constructor` now correctly rejects rather than resolving to `Object.prototype.constructor`.
+- **Descriptor passthrough re-validates (#2)** — internal SDK callers passing a hand-rolled `ResolvedColumn` get full validation (name regex, type ∈ {vector,halfvec}, dims in [1, 8192]). Eliminates the SQL-injection escape hatch through the descriptor field.
+- **DB-plane config works without a file (#3)** — `loadConfigWithEngine` synthesizes a minimal base when `loadConfig()` returns null. Env-only Postgres installs can `gbrain config set search_embedding_column X` and the resolver actually sees it.
+- **Cache skip is embedding-space-based (#4)** — replaced name-based `isDefaultColumn` with `isCacheSafe(resolved, cfg)` at the call site. User overrides of the `embedding` builtin no longer leak across vector spaces.
+- **Doctor empty-brain UX (#5)** — coverage gate short-circuits when chunk count is 0. Fresh installs no longer see "Active column 'embedding' is 0.0% populated".
+
+#### Tests
+
+- New: `test/search/embedding-column.test.ts` (50 cases — resolver, registry, validation, prototype-pollution, descriptor passthrough, `isCacheSafe`).
+- New: `test/gateway-embed-model-override.test.ts` (8 cases — model/dim override, `isAvailable` override).
+- New: `test/cosine-rescore-column.test.ts` (4 PGLite cases — column-parameter hydration).
+- New: `test/operations-embedding-column.test.ts` (6 cases — `query` accepts param, `search` rejects it).
+- New: `test/e2e/embedding-column-pglite.test.ts` (9 cases — multi-col, halfvec, cosineReScore, unknown-name throw).
+- New: `test/e2e/embedding-column-postgres.test.ts` (7 cases — real-pgvector halfvec, HNSW index visibility, format_type dim drift, coverage gate).
+- New: `test/e2e/eval-replay-column.test.ts` (5 cases — column metadata persistence + replay honors).
+- Extended: `test/search-mode.test.ts`, `test/search/knobs-hash-reranker.test.ts` — v=3 hash, col/prov fields, append-only convention.
+
+#### Plan reviewed
+
+`/plan-eng-review` + codex outside voice surfaced 16 findings during planning + shipping (D1-D16 in the plan + 5 codex /ship findings). Every one applied; the plan file is at `~/.claude/plans/system-instruction-you-are-working-sparkling-sun.md`.
+
+## To take advantage of v0.36.3.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns:
+
+1. Apply the schema migration:
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. (Optional, only if you've backfilled extra columns via ALTER TABLE) declare them in the registry:
+   ```bash
+   gbrain config set embedding_columns '{
+     "embedding_voyage": { "provider": "voyage:voyage-3-large", "dimensions": 1024, "type": "vector" },
+     "embedding_zeroentropy": { "provider": "zeroentropyai:zembed-1", "dimensions": 2560, "type": "halfvec" }
+   }'
+   ```
+3. Verify with doctor:
+   ```bash
+   gbrain doctor --json | jq '.checks[] | select(.name == "embedding_column_registry")'
+   ```
+4. (Optional) flip the default for an A/B run:
+   ```bash
+   gbrain config set search_embedding_column embedding_voyage
+   gbrain query "test query" --json | jq '.results[0]'
+   gbrain config set search_embedding_column embedding  # flip back
+   ```
+
+If any step fails, file an issue at https://github.com/garrytan/gbrain/issues with `gbrain doctor` output and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+## [0.36.2.0] - 2026-05-17
+
+**ZeroEntropy is the new default. Faster, cheaper, better quality on real queries. Existing users get a one-shot switch prompt with cost estimate; new installs land on it out of the box. README rewritten to match what gbrain actually is in 2026.**
+
+Track A flips the default embedding + reranker stack to ZeroEntropy. `zembed-1` at 1280 dims via Matryoshka for embeddings, `zerank-2` cross-encoder reranker on by default in the `balanced` mode bundle. The decision is reversible: `gbrain ze-switch --undo` restores your prior config with a symmetric cost-warning prompt. Track B is a zero-based README rewrite from 884 lines to 139, with the deep-dive content moved into dedicated docs files (`docs/INSTALL.md`, `docs/architecture/RETRIEVAL.md`, `docs/ethos/ORIGIN.md`).
+
+### The numbers that matter
+
+Comparison numbers come from a real-corpus benchmark across 20 hand-curated queries on a 17K-page brain. Three providers, head-to-head:
+
+| Metric | OpenAI | Voyage | ZeroEntropy |
+|---|---|---|---|
+| Top-1 wins (of 20 queries) | 6 | 4 | **11** |
+| Avg latency | 973ms | 559ms | **442ms** |
+| Cost per 1M tokens | $0.13 | $0.06 | **$0.05 (regular) / $0.025 (sale)** |
+| Reshuffle of top-1 as reranker | n/a | n/a | **60%** |
+| Cross-provider overlap | 10-18% (any pair) | — | — |
+
+The cross-provider overlap is the most interesting number: providers literally see different things. Pairing zembed-1 (primary) + zerank-2 (reranker) compounds; that's why default-balanced mode now enables the reranker (it was off in v0.35).
+
+### What this means for the user
+
+**New installs ship faster, cheaper retrieval by default.** No config required: `gbrain init` lands on `zeroentropyai:zembed-1` at 1280d with reranker on. Get a key from [zeroentropy.dev](https://dashboard.zeroentropy.dev), set it via `gbrain config set zeroentropy_api_key sk-...`, done. If you'd rather stay on OpenAI/Voyage, `gbrain config set embedding_model <provider:model>` overrides the default — your choice sticks.
+
+**Existing brains see a one-shot upgrade prompt** the first time you run `gbrain upgrade` to v0.36.2.0. The prompt:
+- Shows the comparison numbers above
+- Splits the cost into schema-change time vs re-embed time (two-line cost UX so the long-running step is honest)
+- Defaults on Enter to STAY (safest); explicit `s` to switch, `l` to ask later, `n` to never ask
+- Re-asks after 90 days if you said never (so a year-later contributor's "we have better benchmarks now" data gets surfaced)
+
+The prompt is TTY-only — non-TTY upgrades (CI, cron, docker) print an informational stderr line and skip. Re-run the switch interactively any time via `gbrain ze-switch`.
+
+**The switch consolidates with the v0.32.7 chunker-bump prompt.** If your brain has both pending (chunker version is stale AND you're switching providers), the `RetrievalUpgradePlanner` computes one combined cost and runs ONE re-embed pass. No double-charging. This was a real bug the original cutover plan had; codex outside-voice caught it pre-implementation.
+
+### What you can now do
+
+**Run with the data behind the default.** `gbrain ze-switch --dry-run` shows you the exact pages-pending, cost estimate, and schema-change time before any change. `--json` makes it agent-readable. `--undo` reverses the switch with a symmetric cost prompt (re-embedding back to the old width costs real money — the prompt is honest about that).
+
+**Switch without TTY.** `gbrain ze-switch --non-interactive` is scripted-deploy-friendly. Errors out without `ZEROENTROPY_API_KEY` set unless you also pass `--ignore-missing-key` (lets you stage the schema change before the key is ready; embeddings will fail loud until the key arrives).
+
+**Recover from a half-applied switch.** Power loss or SIGKILL between schema change and config write puts your brain in a known-bad state: schema width is 1280d but config still says 1536d. `gbrain doctor`'s new `embedding_width_consistency` check catches this and recommends `gbrain ze-switch --resume`, which completes whichever step was missing.
+
+**Verify your config matches your schema.** `gbrain doctor` ships two new ZE-aware checks: `ze_embedding_health` (warns if you configured ZE but no key is set), `embedding_width_consistency` (asserts config dim matches the actual vector(N) column width). Both have paste-ready `gbrain config set` fix hints in the message.
+
+### Itemized changes
+
+#### Track A — ZeroEntropy as default
+
+- `src/core/ai/gateway.ts:45-54` — `DEFAULT_EMBEDDING_MODEL='zeroentropyai:zembed-1'`, `DEFAULT_EMBEDDING_DIMENSIONS=1280`, `DEFAULT_RERANKER_MODEL='zeroentropyai:zerank-2'`. 1280d is the Matryoshka step closest to the prior OpenAI 1536d default; 1024 (Voyage's step) is NOT on ZE's valid-dim list — `ZEROENTROPY_VALID_DIMS = {2560, 1280, 640, 320, 160, 80, 40}`.
+- `src/core/search/mode.ts` — `balanced.reranker_enabled` flipped to `true`. The 60% top-1 reshuffle reaches every default install. Missing-key fail-open contract in `src/core/search/rerank.ts` handles unauthenticated cases (logs to audit JSONL, returns input order unchanged). Opt out with `gbrain config set search.reranker.enabled false`.
+- **NEW** `src/core/retrieval-upgrade-planner.ts` — `RetrievalUpgradePlanner` consolidates the v0.32.7 chunker-bump prompt with the new ZE-switch prompt. Tagged-union `ApplyResult` enum (six states: `applied`, `skipped_already_applied`, `skipped_no_work`, `declined`, `planned`, `failed`). Three config keys (`ze_switch_prompt_shown`, `ze_switch_requested`, `ze_switch_applied`) separate UI state from intent from work-done. `ze_switch_previous_snapshot` JSON captures full prior state for `--undo`. Cost math uses MAX not SUM for the consolidation case — one re-embed pass invalidates both chunker and dim surfaces.
+- **NEW** `src/core/retrieval-upgrade-prompt.ts` — interactive prompt UI. Two-line cost split (schema change ~Xs + re-embed ~$Y for N pages). Privacy callout when reranker flips on. Default-on-Enter = stay (safest). 90-day re-ask window for "never ask again".
+- **NEW** `src/commands/ze-switch.ts` — manual CLI lever (`--dry-run`, `--json`, `--resume`, `--force`, `--undo`, `--non-interactive`, `--confirm-reembed`, `--ignore-missing-key`).
+- `src/core/ai/dims.ts` — `AIConfigError` extended to OpenAI text-embedding-3-{small,large}. Fail-loud at the embed boundary when configured dim is outside the model's Matryoshka range, with a paste-ready `gbrain config set embedding_dimensions <N>` fix.
+- `src/commands/doctor.ts` — two new checks (`ze_embedding_health`, `embedding_width_consistency`).
+- Schema transition runs inside a single `engine.transaction()`: DROP indexes → ALTER COLUMN → CREATE INDEX. HNSW indexes are recreated atomically with the column change — no silent slow-search window where vector queries degrade to sequential scan.
+- **NEW** `skills/migrations/v0.36.2.0.md` — agent-facing migration skill. Tells the agent to surface the retrieval-upgrade prompt to the user post-upgrade.
+
+#### Track B — README rewrite
+
+- `README.md` — 884 lines → 139 lines. 33 H2s → 8. Three "New in vX.Y.Z" hero blocks deleted (CHANGELOG carries history; release notes don't belong in the front door). The 136-line `Commands` section moved to `gbrain --help`. The 6-table skills enumeration collapsed to a one-paragraph capability description + link to `skills/RESOLVER.md`.
+- **NEW** `docs/INSTALL.md` — every install path consolidated into one place. Agent platform, CLI standalone, MCP server (stdio + HTTP). Thin-client mode included.
+- **NEW** `docs/architecture/RETRIEVAL.md` — "why the hybrid + graph stack works." BrainBench numbers, why each strategy alone fails, how source-aware ranking + intent classification + multi-query expansion fit. Lifted from the old README's deep-dive section so the front door stays clean.
+- **NEW** `docs/ethos/ORIGIN.md` — origin story moved out of README. The hero stays factual + concrete (production numbers, benchmark numbers, ZE comparison numbers); the narrative arc lives in its own file.
+- Hero retains every load-bearing fact: OpenClaw + Hermes credit, production numbers (17,888 pages / 4,383 people / 723 companies), BrainBench numbers (P@5 49.1% / R@5 97.9% / +31.4 lift), ZE comparison numbers, install timing claim.
+
+#### Tests
+
+- **NEW** `test/retrieval-upgrade-planner.test.ts` (24 cases) — full state-machine coverage. C3 eligibility logic. Cost math C4 (MAX-not-SUM). Schema transition + HNSW recreation atomicity (D18). Crash recovery via `--resume`. Snapshot captured BEFORE config writes (D16). Undo round-trip.
+- **NEW** `test/ze-switch-cli.test.ts` (11 cases) — CLI shape: `--help`, `--dry-run`, `--json`, `--non-interactive`, `--ignore-missing-key`, `--resume`, `--undo`, `--confirm-reembed`.
+- **NEW** `test/asymmetric-encoding-contract.test.ts` (6 cases) — D17 behavior-test (replaces text-grep). `__setEmbedTransportForTests` captures the HTTP body; asserts `input_type='query'` for the search-time call. Source-text guard is the cheap second layer.
+- **NEW** `test/balanced-reranker-default.test.ts` (10 cases) — D6 mode-bundle flip pinned. Fail-open contract on missing key. Recall-preserving tail when topNIn < results.length.
+- **NEW** `test/doctor-ze-checks.test.ts` (8 cases) — A5 doctor checks.
+- **NEW** `test/ai/dims-openai.test.ts` (16 cases) — D13 OpenAI Matryoshka range validation. Paste-ready fix hint in `fix` field.
+- **NEW** `test/readme-hero-anchors.test.ts` (5 cases) — D9 regression guard. Five load-bearing strings: OpenClaw, Hermes, ZE, production-numbers regex, P@5/R@5.
+
+### To take advantage of v0.36.2.0
+
+`gbrain upgrade` runs the consolidated retrieval-upgrade prompt automatically.
+
+1. **Run the upgrade:**
+   ```bash
+   gbrain upgrade
+   ```
+2. **Read the comparison numbers in the prompt.** Press `s` to switch, Enter to stay (default), `l` to ask later, `n` to never ask.
+3. **If you switched: refill embeddings.** The schema is rebuilt at 1280d but embeddings are NULL until you re-embed:
+   ```bash
+   gbrain embed --stale     # serial; ~$X estimate from the upgrade prompt
+   ```
+   The autopilot cycle's embed phase also walks through this on its own cadence.
+4. **Verify:**
+   ```bash
+   gbrain doctor
+   ```
+   `ze_embedding_health` should be green; `embedding_width_consistency` should report schema and config both at 1280.
+5. **If you regret it:** `gbrain ze-switch --undo`. Restores your prior model + dim + reranker state. Re-embeds at the old width with the same symmetric cost prompt.
+
+If the prompt didn't fire (non-TTY upgrade, you already said "never"), run `gbrain ze-switch` manually to see it, or `gbrain ze-switch --force` to bypass the prompt-shown gate.
+
+If any step misbehaves, please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor --json` and the relevant `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+Credit: ZeroEntropy ([@zeroentropy](https://zeroentropy.dev)) for the embedding + reranker stack. Codex outside-voice review caught the double-re-embed bug class pre-implementation.
+## [0.36.1.1] - 2026-05-18
+
+**Twenty-eight community-reported bugs fix themselves on your next `gbrain upgrade`.** The most painful ones first: fresh installs work again, `/admin` actually serves the dashboard, `gbrain config set openai_api_key` stops echoing your secret to stderr, and `extract_facts` no longer dead-letters autopilot when a sync no-op passes an empty slug list.
+
+Here's what was happening. The community filed ~40 bug reports against gbrain over the last few weeks. Some were duplicates of fixes that already shipped in v0.35.x. Some were real, painful, and unfixed. Fresh PGLite installs wedged on the v0.11.0 Minions migration. Globally-installed `gbrain serve --http` returned 404 on `/admin` because the React dashboard was checked into git but never embedded into the compiled binary. Configs with `provider: voyage` + `model: voyage-3` silently fell through to OpenAI and errored out. Autopilot respawned in tight loops on brains where the orphans phase warned every cycle. None of these were one-line fixes — they all had real root causes worth understanding.
+
+This release is the cleanup pass. 22 community PRs + 14 issues closed as already-shipped (with thank-you notes attributing each contributor). 28 atomic fixes in this PR, one per commit, each with its regression test. No new features. No breaking changes. Just bugs that hurt users, fixed.
+
+### How to get it
+
+```bash
+gbrain upgrade
+```
+
+Your install picks up everything below. If `/admin` was broken for you, it works after this upgrade. If your `gbrain sync --source-id work` was silently writing to the default source — well, master already fixed that since v0.18, but the regression test suite locking it in is new in this release. If you were on `provider: voyage` config shape, gbrain now translates it to `embedding_model: voyage:...` and prints a one-line nudge to update your config.
+
+### The fixes that matter most
+
+**Fresh-install / upgrade reliability:**
+- `/admin` 404 on every globally-installed binary (#1090). The React SPA is now auto-embedded via `with { type: 'file' }` ESM imports — same pattern as the tree-sitter WASMs. New `scripts/build-admin-embedded.ts` generator + CI guard prevents the embed manifest from drifting against `admin/dist/`.
+- PGLite + `gbrain apply-migrations --yes` wedge (#1100). The pre-flight schema-version probe held the single-writer lock briefly and raced the v0.11.0 phase A subprocess; phase A spawned `gbrain init --migrate-only` which deadlocked. Pre-flight skips PGLite; phase A routes in-process for PGLite. Verified end-to-end on a fresh install — the full migration chain through v0.32.2 walks cleanly.
+- `gbrain upgrade` "no package.json" failure (#1029). Now resolves Bun's global install root via `$BUN_INSTALL` or `~/.bun/install/global`; works regardless of cwd. Contributed by @mvanhorn.
+
+**Data-loss / silent wrong-destination writes:**
+- `extract_facts` with `slugs: []` was triggering an unscoped full-brain walk (#1096). On multi-thousand-page brains this exceeded the autopilot-cycle timeout and dead-lettered the job. Empty array is now a real no-op; missing key preserves the legacy unscoped walk.
+- Voyage / Cohere / Mistral users with legacy `provider` + `model` config silently fell through to OpenAI (#1086). gbrain now translates to `embedding_model: <provider>:<model>` at load time with a one-line stderr nudge to update the config.
+- Embedding responses with mismatched length now fail loud before indexing (#925). Pre-fix, a provider returning N-1 embeddings for N inputs silently indexed an offset-shifted result.
+- `gbrain sync --source-id X` source-routing is now locked in with 6 PGLite regression cases (#891, #978, #1078). The threading was correct in master since v0.18, but no regression coverage existed — a future refactor could have silently re-introduced the bug.
+
+**Security / privilege:**
+- `gbrain config set openai_api_key sk-...` no longer echoes the key value to stderr (#892). Sensitive-key matcher uses word-boundary regex so `monkey` doesn't false-positive. Cherry-pick of @sharziki's PR.
+- `verifyAccessToken` now throws `InvalidTokenError` on expired/invalid tokens so the SDK's bearer-auth middleware returns 401 instead of 500 (#935). Cherry-pick of @Aashiqe10's PR.
+- Admin bootstrap token: new `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` env override (32+ char, validated) + `--suppress-bootstrap-token` CLI flag (#1024). Production deployments stop leaking the token to log aggregators on every supervisor restart.
+- Admin dashboard register-client supports `authorization_code` + PKCE public clients (claude.ai Custom Connector, Cursor) (#1077). Cherry-pick of @lukejduncan's PR.
+
+**Reliability / UX:**
+- Autopilot stop respawn-storm from steady-state `partial` cycles (#1113). Trips only on `failed` now. Cherry-pick of @sergeclaesen's PR.
+- `gbrain doctor` no longer warns about a missing whoknows fixture for every install that isn't standing in the source repo (#969). Cherry-pick of @mvanhorn's PR.
+- Frontmatter `--fix` backups land under `~/.gbrain/backups/frontmatter/` instead of polluting the brain repo (#902). Cherry-pick of @100yenadmin's PR.
+- `gbrain query` source-id routing fixes — `--no-expand` actually negates `expand` instead of being a literal `no_expand` key (#1124); cache writes drain before CLI exit so the warmup works (#1125). Cherry-picks of @hnshah's PRs.
+- 17 more cherry-picks across `serve-http.ts` (405 on GET /mcp, CORS, PKCE admin register), `sync.ts` (.tf/.tfvars/.hcl extensions, skip-pull-no-origin, scope auto-embed), `doctor.ts` (child-table orphan detection, whoknows fixture), `oauth-provider.ts` (InvalidTokenError), `autopilot.ts` (~/.zshenv source order), `backlinks.ts` (dedupe source/target pairs), and `cycle.ts` (dream audit-only).
+
+### What's deferred
+
+Four items shipped a clear roadmap message instead of an incomplete fix:
+- **#803 OAuth auth-code flow.** The MCP SDK does plaintext compare against `getClient().client_secret` — but we store the hash at rest (correct security posture). No clean SDK override seam exists. The proper fix is our own `/token` endpoint that bcrypt-verifies against `oauth_clients.client_secret_hash` and bypasses `mcpAuthRouter` for `/token`. ~1-2 day dedicated PR.
+- **#983 CORS allowlist.** Tightening CORS without a compatibility matrix of legitimate browser-based MCP origins (claude.ai, Perplexity dashboard, our own admin SPA) risks breaking real clients.
+- **#984 connection-manager disconnect cancel.** Touches the shutdown path; needs careful review against the v0.31.3 stdio-MCP lifecycle work.
+- **#888 fs wikilink slug resolution.** Conflicts with master's recent slug-resolution work; needs rebase + re-review.
+
+### To take advantage of v0.36.1.0
+
+`gbrain upgrade` handles this. Most fixes apply on next CLI invocation. The `/admin` embed fix and the schema-bootstrap fixes activate after the binary is replaced — `gbrain upgrade` does that automatically.
+
+Verify:
+```bash
+gbrain doctor --json | jq '.status'  # should be "ok"
+gbrain config show                   # confirm `provider`/`model` translated to `embedding_model` if you had the legacy shape
+gbrain --version                     # should be 0.36.1.0
+```
+
+If `gbrain doctor` still warns about anything after upgrade, please file an issue with the JSON output and your starting schema_version.
+
+### Acknowledgments
+
+Real appreciation for the community on this release. The bug-report volume was a strong signal — it's how we knew which structural fixes to prioritize. Contributors credited inline above and in `Co-Authored-By:` trailers on each commit: @100yenadmin, @aadachi, @Aashiqe10, @amreshtech, @ArshyaAI, @bnc-ss, @clarajohan, @Cossackx, @curtitoo, @DF-FrancoOS, @DmitryBMsk, @hesong12, @hnshah, @jatenner, @jeremyknows, @jeunessima, @johnybradshaw, @joshwilks111-max, @kkroo, @kyledeanjackson, @lubos-buracinsky, @lukejduncan, @mnuradli1, @mvanhorn, @navin-moorthy, @nezovskii, @p3ob7o, @panda850819, @rvdlaar, @sanaxr0001-tech, @seungsu-kr (legacy v0.31.3 stdio lifecycle), @sergeclaesen, @sharziki, @skalingclouds, @sliday, @SunOpt, @tkhattar14, @vincedk-alt, @yashkot007, @zzdisturbed.
+
+### Itemized changes
+
+#### Fixed
+
+- `src/commands/sync.ts` — Terraform / HCL extensions (`.tf`, `.tfvars`, `.hcl`) now in `CODE_EXTENSIONS`; previously invisible to `gbrain sync --strategy code`. Closes #878.
+- `src/commands/upgrade.ts` — `resolveBunGlobalRoot()` finds Bun's global install root via `$BUN_INSTALL` or `~/.bun/install/global`. Closes #1029. PR #1032.
+- `src/commands/config.ts` — `isSensitiveConfigKey()` + `redactConfigValue()` are the single source of truth for `show` and `set`; word-boundary regex avoids `monkey` false-positives. Closes #892.
+- `src/core/oauth-provider.ts` — `verifyAccessToken` throws `InvalidTokenError` on expired + invalid bearer; SDK middleware returns 401 not 500. Closes #935. PR #1012.
+- `src/commands/serve-http.ts` — `GET /mcp` returns 405 with `Allow: POST, DELETE` per MCP Streamable HTTP spec. PR #1076.
+- `src/commands/doctor.ts` — `resolveWhoknowsFixturePath()` walks from `import.meta.url` for source-repo signature; honors `GBRAIN_WHOKNOWS_FIXTURE_PATH` env override. Closes #969. PR #1034.
+- `src/commands/frontmatter.ts` + `src/core/brain-writer.ts` — `createFrontmatterBackup()` + `makeFrontmatterBackupRunId()`; backups land under `~/.gbrain/backups/frontmatter/`. Closes #902. PR #903.
+- `src/core/config.ts` — `path.isAbsolute()` and dual-separator `..` check for `GBRAIN_HOME` on Windows. Closes #1019. PR #1083.
+- `src/core/ai/gateway.ts` — `warnRecipesMissingBatchTokens()` filters to recipes whose provider id is referenced in `embedding_model` / `embedding_multimodal_model`. PR #1117.
+- `src/commands/sync.ts` — `hasOriginRemote()` probe; skip git pull when no `origin` remote. PR #1119.
+- `src/cli.ts` + `src/core/search/hybrid.ts` — `awaitPendingSearchCacheWrites()` drains in-flight cache writes before CLI exit. PR #1125.
+- `src/commands/backlinks.ts` — dedupe `(source, target)` pairs within a single source page. Closes #967. PR #967.
+- `src/core/cycle.ts` — backlinks phase runs in `check` mode during dream/autopilot. PR #1027.
+- `src/commands/autopilot.ts` — wrapper script sources `~/.zshenv` before `~/.zshrc`. PR #966.
+- `src/commands/apply-migrations.ts` — `process.exit(0)` on list / dry-run / up-to-date paths. PR #1062.
+- `src/commands/sync.ts` — `buildAutoEmbedArgs(slugs, sourceId)` threads `--source` to incremental auto-embed. PR #1120.
+- `src/cli.ts:parseOpArgs` — `--no-<key>` flips boolean param false; `query` op honors per-call `source_id` over `ctx.sourceId`. PR #1124.
+- `src/commands/doctor.ts` — `childTableOrphansCheck()` scans 10 FK columns across 8 tables for orphan rows; cascade-violation diagnostic with paste-ready cleanup SQL. Closes #1063. PR #1064.
+- `src/commands/autopilot.ts` + `src/core/cycle.ts` — autopilot trips circuit breaker only on `failed`; orphans phase uses ratio threshold (`count / total_pages > 0.5`) not absolute. PR #1113.
+- `src/core/ai/gateway.ts` — `embedSubBatch` validates response length AND per-embedding dim; partial responses throw before indexing. Closes #925. PR #926.
+- `src/commands/serve-http.ts` — admin register-client honors `grantTypes`, `redirectUris`, `tokenEndpointAuthMethod: 'none'` (PKCE public clients). PR #1077.
+- `src/core/cycle/extract-facts.ts` — `opts.slugs !== undefined` check; empty array is a no-op. Closes #1096.
+- `src/commands/serve-http.ts` + `src/admin-embedded.ts` + `scripts/build-admin-embedded.ts` + `scripts/check-admin-embedded.sh` — auto-generated manifest of admin/dist embedded via `with { type: 'file' }`; two-tier resolution (dev cwd vs binary). Closes #1090.
+- `test/source-id-routing.test.ts` — 6 PGLite regression cases for `importFromContent({sourceId})`. Locks in #891, #978, #1078.
+- `src/commands/migrations/v0_11_0.ts` + `src/commands/apply-migrations.ts` — Phase A routes in-process for PGLite; pre-flight schema-version warning skips PGLite. Closes #1100.
+- `src/commands/serve-http.ts` — `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` env override with `^[A-Za-z0-9_-]{32,}$` validation; `--suppress-bootstrap-token` flag. Closes #1024.
+- `src/core/config.ts` — `migrateLegacyEmbeddingConfig()` translates legacy `provider` + `model` shape to `embedding_model: <provider>:<model>` with stderr nudge. Closes #1086.
+- `test/brain-writer.test.ts` — assertion updated for centralized backup path (CI green).
+
+#### Maintenance
+
+- `test/upgrade.serial.test.ts` — renamed from `upgrade.test.ts`; quarantined for `process.env` mutation pattern per the test-isolation lint. Follow-up: migrate to `withEnv()` helper.
+
+### What was already shipped on master (closed as duplicates)
+
+#### Phase 1 close pass — 22 PRs + 14 issues closed with thank-you comments
+
+- **Cluster A** (v0.35.3.0): 11 PRs + 6 issues all reporting `extract_facts.entity_hints` array-schema items missing. The shared `paramDefToSchema` mapper in `src/mcp/tool-defs.ts` is now the single source of truth across stdio MCP, HTTP MCP, and the subagent registry; `test/mcp-tool-defs.test.ts` enforces structurally. (#904, #907, #910, #979, #980, #999, #1028, #1043, #1049, #1057, #1084, #1103, #806, #831, #833, #911, #1042, #1048.)
+- **Cluster B** (v0.35.3.0): 3 PRs + 2 issues on `--no-recurse-submodules` flag placement. `GIT_SSRF_FLAGS` (global config, before verb) is now distinct from `GIT_SSRF_SUBCOMMAND_FLAGS` (subcommand flags, after verb); position-anchored regression guard in `test/git-remote.test.ts`. (#963, #985, #1020, #1023, #1104, #800, #813.)
+- **Cluster C** (v0.35.5.0): 3 PRs + 2 issues on `oauth_clients` bootstrap. `applyForwardReferenceBootstrap` covers `files.source_id`, `files.page_id`, `oauth_clients.source_id`, `oauth_clients.federated_read`, `sources.archived/_at/_expires_at` before SCHEMA_SQL replay. `test/schema-bootstrap-coverage.test.ts` parses migrate.ts at PR time and fails the suite if any `(table, column)` pair isn't covered. (#1017, #1045, #1115, #1116, #974, #1018, #1092.)
+- **Cluster D singletons**: orphans soft-delete (v0.35.5.0), doctor `node_modules` walker (v0.35.5.0 `pruneDir`), Voyage 2048d `output_dimension` (v0.33.1.1 PR #962), doctor stale verb names (v0.31.7). (#922, #1033, #799, #865, #835, #1021.)
+- **Cluster E troll**: #1114 closed and locked.
+- **PRs absorbed by structural fixes**: #1050 (doctor crash count — v0.35.5.0 `summarizeCrashes()`), #1054 (schema v44→v45 wedge — v0.35.5.0 bootstrap extension), #1065 (embed PGLite hang — v66 partial index).
+## [0.36.1.0] - 2026-05-17
+
+**The brain learns how you tend to be wrong, then argues against your blind spots on every advice call.**
+
+Hindsight-inspired calibration loop. Three new cycle phases, eight expansions, one big admin tab. gbrain stops being a smart database and starts being a mirror that knows your track record. The brain extracts gradeable claims from your prose, grades them against reality, aggregates your record into a calibration profile, and surfaces it everywhere advice gets given — `gbrain think --with-calibration` rewrites questions against your known biases, contradictions point at the bias pattern that produced them, real-time nudges fire when you commit a high-conviction take in a domain where you've been wrong before.
+
+### What you can now do
+
+**Run `gbrain calibration`** and see your own track record narrated in conversational voice: "You called early-stage tactics well — 8 of 10 held up. Geography is your blind spot — 4 of 6 missed." Not "Brier 0.18." Not "conviction-bucket 0.8-0.9." Friend-not-doctor by design, voice-gated against academic slop.
+
+**Run `gbrain think --with-calibration "should we hire fast in NY?"`** and the answer surfaces both your prior AND the counter-prior from your hedged-domain self. The bias filter applies to question framing, not evidence interpretation (D22 placement: AFTER retrieval, BEFORE the question). Off by default — flip it when you trust the profile.
+
+**Open the admin SPA Calibration tab** at `gbrain serve --http`'s `/admin` and see your Brier-trend sparkline, per-domain accuracy bars, pattern statements, and "you committed to these and never revisited" abandoned-threads card. Server-rendered SVG, zero new chart library dep, follows the existing Linear-calm-clarity admin design.
+
+**Commit a high-conviction take in a known-biased domain** and a conversational stderr nudge fires: "Hey — you just bet pretty hard on this NY tech thing (0.85). Last year you made three similar geographic calls; two of them missed. Maybe dial it back to a 0.65 hunch?" 14-day cooldown per pattern so you don't get re-nudged on the same call.
+
+**Run `gbrain calibration --undo-wave v0.36.1.0`** to fully reverse the wave's mutations. Every new row carries `wave_version='v0.36.1.0'`; the undo command reverts auto-applied take resolutions, deletes calibration profiles, purges nudge logs, optionally scrubs gstack-coupled learnings. Dry-run mode shows what would change before you commit.
+
+### Validated by published benchmarks
+
+**First published benchmark for AI memory systems that reason about user track records.** Sibling repo [gbrain-evals](https://github.com/garrytan/gbrain-evals) ships two new categories specifically gating this wave:
+
+- **cat14 — advice quality A/B.** `think --with-calibration` vs baseline on 8 hand-authored probes covering 6 calibration scenarios (relevant bias, confidence boost, empty profile, irrelevant bias, multi-bias, voice stress). First live run: **75% calibrated wins / 0% baseline wins / 25% tie**, voice gate **100%**, force-fit prevention **100%**.
+- **cat15 — propose_takes F1.** Extract-takes prompt against 48 hand-labeled claims across 8 synthetic pages covering 5 prose genres. First live run: **0.952 F1 training / 0.922 F1 holdout**, train-holdout gap **0.03** (no overfitting). The tuned prompt back-ports verbatim into this wave's `EXTRACT_TAKES_PROMPT`, replacing the v1 stub.
+
+The iteration log at `eval/data/cat14-calibration/iteration-log.md` documents three same-day prompt variants where the gate caught two regressions before either could ship. Full benchmark report: [2026-05-18 BrainBench Cat 14 + Cat 15 Calibration](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-05-18-brainbench-cat14-cat15-calibration.md). No prior published baseline exists in the personal-AI calibration-loop space; Hindsight introduced the concept as a skills demo without quantified evaluation. cat14 + cat15 stake out the category.
+
+Reproduction: ~$0.15 per full eval run (cat14 + cat15), under 5 minutes wallclock on Apple Silicon.
+
+### Itemized changes
+
+#### Three new cycle phases
+
+- **`propose_takes`** — LLM scans markdown prose, proposes gradeable claims to a review queue. Idempotency cache on `(source_id, page_slug, content_hash, prompt_version)` — unchanged pages never re-spend tokens. F2 fence-dedup: the LLM sees existing canonical takes and dedupes. v0.36.1.0 ships the tuned `v0.36.1.0-tuned-cat15` prompt (replaces the v1 stub) — validated at **0.922 F1 holdout** by the cat15 eval against the hand-labeled corpus at `test/fixtures/calibration/`.
+- **`grade_takes`** — walks unresolved takes older than 6 months, retrieves evidence, asks a judge model. Auto-resolve DISABLED by default (D17 — earn trust first); operator opts in via `cycle.grade_takes.auto_resolve.enabled: true`. Conservative threshold: confidence >= 0.95 single-model OR >= 0.85 with 3/3 ensemble unanimous. Ensemble tiebreaker (E2) reuses v0.27.x cross-modal-eval substrate; fires on borderline single-model verdicts (0.6-0.95 band).
+- **`calibration_profile`** — aggregates resolved takes into 2-4 narrative pattern statements + active bias tags. Voice-gated via shared `gateVoice()` (D24 — five surfaces, one function). Cold-brain branch: skips when <5 resolved takes. `grade_completion` field surfaces partial-grade state to the dashboard "60% graded" badge.
+
+#### Eight expansions
+
+- **E1** Anti-bias prompt rewrite at think time (cathedral moment — see "What you can now do").
+- **E2** Multi-judge ensemble grading (3-model parallel via Promise.allSettled, 3/3 unanimous required for auto-apply).
+- **E3** Calibration-aware contradictions — v0.32.6 probe + bias-tag join; outputs flag "this contradiction fits your over-confident-geography pattern."
+- **E4** Outcome-driven gstack-learnings coupling — incorrect auto-resolutions write to `~/.gstack/projects/<slug>/learnings.jsonl` so plan-ceo-review / ship / investigate skills pull calibration data. Config-gated (off for external users until gstack-API stabilizes).
+- **E5** Brier-trend forecasting on new takes — inline blurb at write time. Pure math over existing scorecards, no LLM.
+- **E6** Admin SPA Calibration tab with 4 server-rendered SVG charts (Brier trend, per-domain accuracy, abandoned threads, clickable pattern drill-downs).
+- **E7** Real-time pattern surfacing on sync — conversational nudges with 14-day cooldown via `take_nudge_log`.
+- **E8** Team-brain calibration sharing via mounts — asymmetric publish-opt-in (D15) + D18 cross-brain query semantics (4 rules, pinned by `test/cross-brain-calibration.test.ts`).
+
+#### Schema (6 new migrations)
+
+- v67 `calibration_profiles` — per-(source, holder) row with scorecard + narrative + bias tags + voice-gate audit.
+- v68 `take_proposals` — propose_takes queue with composite idempotency unique key.
+- v69 `take_grade_cache` — grade_takes verdict cache (composite PK on take + prompt_version + judge + evidence_signature).
+- v70 `take_nudge_log` — E7 cooldown state (polymorphic FK: take_id OR proposal_id).
+- v71 `takes_resolved_at_idx` — partial index for Brier-trend aggregation (CONCURRENTLY on Postgres, plain on PGLite).
+- v72 `think_ab_results` — D19 A/B harness data for `gbrain think --ab`.
+
+Every row carries `wave_version='v0.36.1.0'` so `--undo-wave` can reverse precisely.
+
+#### Architecture
+
+- `BaseCyclePhase` abstract class (D21) enforces source-scope threading, budget metering, error envelope, and progress-reporter integration at the type level. Forgetting `sourceScopeOpts(ctx)` becomes a compile error — closes the v0.34.1 leak class structurally for every new phase.
+- Voice gate (D11 + D24): single `gateVoice()` function, mode parameter drives surface-specific rubrics. 2 regenerations then hand-written template fallback. Audit columns persisted on `calibration_profiles` rows so the operator can spot voice-rubric drift.
+- Cross-brain query semantics (D18): 4 rules, hermetically tested. Subagent prohibition gates on `ctx.viaSubagent && !allowedSlugPrefixes` — closes the OAuth-token-to-cross-brain-leak escalation surface.
+
+#### New surfaces
+
+- CLI: `gbrain calibration`, `gbrain calibration --regenerate`, `gbrain calibration --undo-wave <version> [--dry-run] [--scrub-gstack]`, `gbrain calibration ab-report [--days N]`, `gbrain takes revisit <slug>`, `gbrain takes nudge --reset <id>`, `gbrain think --with-calibration`.
+- MCP op: `get_calibration_profile` (scope: read).
+- HTTP routes: `/admin/api/calibration/profile`, `/admin/api/calibration/charts/:type`, `/admin/api/calibration/pattern/:id`.
+- Doctor checks (4): `abandoned_threads`, `calibration_freshness`, `grade_confidence_drift` (CDX-11 mitigation), `voice_gate_health`.
+
+#### Privacy
+
+- `test/fixtures/calibration/` ships a synthetic corpus (5 representative pages across 5 genres) for extract-takes prompt tuning. Every page is anonymized per the CLAUDE.md placeholder list — no real names, no real funds, no real deals.
+- `scripts/check-synthetic-corpus-privacy.sh` (CDX-14 mitigation) is wired into `bun run verify`. Greps for explicit dollar amounts + verifies every non-essay fixture references at least one canonical placeholder. Fail-fast on accidental leakage.
+- E7 nudges route to STDERR only in v0.36.1.0; multi-channel routing (webhook, admin SPA toast) is a v0.37+ follow-up.
+
+#### Tests
+
+- 290+ new tests across 13 new test files. All hermetic (no real LLM, no PGLite contention).
+- IRON RULE regression suite in `test/regressions/v0.36.1.0-iron-rule.test.ts` pins R1-R5: think baseline unchanged, contradictions output unchanged, takes resolution flow independent of grade_takes, search/list_pages/get_page unchanged, search modes unchanged.
+
+#### Plan + review trail
+
+- `/plan-ceo-review` cleared SCOPE_EXPANSION mode with 19 decisions + 8 accepted expansions.
+- `/plan-eng-review` cleared with 9 findings + 21 implementation tasks across 5 lanes.
+- `/plan-design-review` cleared with mockup variant-B (Linear calm clarity) approved.
+- Codex outside-voice surfaced 18 findings; 5 spec bugs auto-fixed, 6 strategic tensions resolved via D17/D18/D19.
+- 30 decisions D1-D30 resolved with explicit user input. Plan persisted at `~/.claude/plans/system-instruction-you-are-working-rippling-knuth.md`.
+
+#### Design system
+
+- `DESIGN.md` at the repo root formalizes the de facto admin tokens that landed v0.26.0. Calibration target for future `/plan-design-review` and `/design-review`.
+- `--text-muted` bumped from #555 to #777 globally for WCAG AA contrast (was 4.0 — below the 4.5 floor; now ~5.5).
+
+## To take advantage of v0.36.1.0
+
+`gbrain upgrade` is all you need for the schema. Calibration data only accumulates as you use the brain.
+
+1. Run `gbrain upgrade`. Six migrations v67-v72 land.
+2. Build up resolved takes. The calibration profile needs >= 5 resolved takes before it generates anything. Resolve takes manually via `gbrain takes resolve N --quality correct|incorrect|partial` OR wait for grade_takes auto-grading (opt in via `gbrain config set cycle.grade_takes.auto_resolve.enabled true`).
+3. Run a dream cycle: `gbrain dream` (or wait for autopilot). The new phases run in this order: propose_takes → grade_takes → calibration_profile.
+4. Read the profile: `gbrain calibration`.
+5. Try anti-bias think: `gbrain think --with-calibration "<your question>"`.
+6. Open the admin SPA: `gbrain serve --http` → /admin → Calibration tab.
+7. To roll back the entire wave: `gbrain calibration --undo-wave v0.36.1.0 --dry-run` first to see what would change, then drop `--dry-run`.
+8. If anything looks wrong, file an issue: https://github.com/garrytan/gbrain/issues with `gbrain doctor` output and which step broke.
+
 ## [0.36.0.0] - 2026-05-17
 
 **Skillpacks are scaffolding now, not amber. Scaffold once, own the files, fork freely.**
@@ -44,6 +457,7 @@ Major file/test surface changes:
 - Extended: `src/core/skillpack/bundle.ts` (frontmatter `sources:` validation, `enumerateScaffoldEntries`), `src/core/repo-root.ts` (`cwd_walk_up` tier)
 - New docs: `docs/guides/skillpacks-as-scaffolding.md` (model + workflow)
 - `src/core/skillpack/installer.ts` and `test/skillpack-install.test.ts` survive for now — the v0.32 `gbrain skillpack diff` informational command still uses `diffSkill` from there. Slated for deletion in v0.37 cleanup.
+
 ## [0.35.8.0] - 2026-05-17
 
 **Phantom unprefixed entity pages drain automatically on the next autopilot cycle. Your `alice.md` residue gets folded into `people/alice-example.md` with embeddings + strikethrough state preserved, no operator action needed.**
@@ -134,6 +548,7 @@ The original /plan-eng-review proposed reusing `writeFactsToFence` for the migra
    - output of `gbrain doctor`
    - contents of `~/.gbrain/audit/phantoms-*.jsonl`
    - which step looks wrong
+
 ## [0.35.7.0] - 2026-05-17
 
 **The contradiction probe grew up. Typed claims over time, regressions detected automatically, founder scorecards as a one-liner.**

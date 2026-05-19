@@ -59,6 +59,8 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
   });
 
   test('balanced bundle values are canonical', () => {
+    // v0.36.0.0 (D6): reranker_enabled flipped from false → true. The 60%
+    // top-1 reshuffle reaches the 80% of installs that stay on `balanced`.
     expect(MODE_BUNDLES.balanced).toEqual({
       cache_enabled: true,
       cache_similarity_threshold: 0.92,
@@ -67,7 +69,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       tokenBudget: 12000,
       expansion: false,
       searchLimit: 25,
-      reranker_enabled: false,
+      reranker_enabled: true,
       reranker_model: 'zeroentropyai:zerank-2',
       reranker_top_n_in: 30,
       reranker_top_n_out: null,
@@ -270,8 +272,11 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
 
   test('KNOBS_HASH_VERSION constant exposed for migrations to bump on schema change', () => {
     // v0.35.0.0+ bumped 1→2 to fold reranker fields into the cache key.
-    // v0.35.6.0   bumped 2→3 to fold floor_ratio into the cache key
-    // (codex outside-voice T1 — preventing cross-floor cache contamination).
+    // v0.35.6.0  bumped 2→3 to fold floor_ratio into the cache key
+    //   (codex T1 — preventing cross-floor cache contamination).
+    // v0.36     also extends v=3 with embedding column + provider (D8 / CDX-2)
+    //   so a query against `embedding_voyage` never shares a cache row with
+    //   `embedding`, even when all other knobs match.
     expect(KNOBS_HASH_VERSION).toBe(3);
   });
 

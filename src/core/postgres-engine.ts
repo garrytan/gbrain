@@ -18,6 +18,13 @@ import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes } from './vector-index.ts';
+import {
+  normalizeEngineColumn,
+  buildVectorCastFragment,
+  quoteIdentifier,
+  COLUMN_NAME_REGEX,
+  EmbeddingColumnNotRegisteredError,
+} from './search/embedding-column.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput, StaleChunkRow,
@@ -1292,9 +1299,20 @@ export class PostgresEngine implements BrainEngine {
     // wasting candidate slots on hidden rows.
     const visibilityClause = buildVisibilityClause('p', 's');
 
-    // v0.27.1: column routing. See pglite-engine.ts searchVector for rationale.
-    const col = opts?.embeddingColumn === 'embedding_image' ? 'embedding_image' : 'embedding';
-    const modalityFilter = col === 'embedding_image' ? `AND cc.modality = 'image'` : `AND cc.modality = 'text'`;
+    // v0.36 (D11): column routing via resolved descriptor. Engine doesn't
+    // read config — caller (hybrid/op) resolved it and passed it in.
+    // normalizeEngineColumn accepts the legacy union (string literals,
+    // ResolvedColumn, undefined) and produces a canonical descriptor.
+    const resolvedCol = normalizeEngineColumn(opts?.embeddingColumn);
+    const { col, castSql } = buildVectorCastFragment(resolvedCol);
+    // Modality filter: image rows live in modality='image'; text/code in
+    // 'text'. The image-column literal is the only one with image rows.
+    // For all other columns (default + user-declared), restrict to text
+    // mode to avoid cross-modality dim leaks. The check is on
+    // resolved.name (already validated, never raw input).
+    const modalityFilter = resolvedCol.name === 'embedding_image'
+      ? `AND cc.modality = 'image'`
+      : `AND cc.modality = 'text'`;
 
     const rawQuery = `
       WITH hnsw_candidates AS (
@@ -1302,7 +1320,7 @@ export class PostgresEngine implements BrainEngine {
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
           p.effective_date, p.effective_date_source,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-          1 - (cc.${col} <=> $1::vector) AS raw_score
+          1 - (cc.${col} <=> ${castSql}) AS raw_score
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         JOIN sources s ON s.id = p.source_id
@@ -1318,7 +1336,7 @@ export class PostgresEngine implements BrainEngine {
           ${sourceClause}
           ${hardExcludeClause}
           ${visibilityClause}
-        ORDER BY cc.${col} <=> $1::vector
+        ORDER BY cc.${col} <=> ${castSql}
         LIMIT ${innerLimitParam}
       )
       SELECT
@@ -1340,13 +1358,27 @@ export class PostgresEngine implements BrainEngine {
     return rows.map(rowToSearchResult);
   }
 
-  async getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>> {
+  async getEmbeddingsByChunkIds(
+    ids: number[],
+    column: string = 'embedding',
+  ): Promise<Map<number, Float32Array>> {
     if (ids.length === 0) return new Map();
+    // v0.36 (D9): column parameter used by hybrid.cosineReScore so
+    // rescoring rehydrates from the active column's embedding space,
+    // not always 'embedding'. Engine has no resolver access; the
+    // caller must pass a known column name. Identifier-quoted (D12
+    // defense layer 2) plus a strict regex check (D12 defense layer 1)
+    // so even a misconfigured caller can't smuggle a SQL fragment.
+    if (!COLUMN_NAME_REGEX.test(column)) {
+      throw new EmbeddingColumnNotRegisteredError(column, []);
+    }
+    const quotedCol = quoteIdentifier(column);
     const sql = this.sql;
-    const rows = await sql`
-      SELECT id, embedding FROM content_chunks
-      WHERE id = ANY(${ids}::int[]) AND embedding IS NOT NULL
+    const rawQuery = `
+      SELECT id, ${quotedCol} AS embedding FROM content_chunks
+      WHERE id = ANY($1::int[]) AND ${quotedCol} IS NOT NULL
     `;
+    const rows = await sql.unsafe(rawQuery, [ids] as Parameters<typeof sql.unsafe>[1]);
     const result = new Map<number, Float32Array>();
     for (const row of rows) {
       const embedding = tryParseEmbedding(row.embedding);
@@ -3784,11 +3816,11 @@ export class PostgresEngine implements BrainEngine {
       INSERT INTO eval_candidates (
         tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
         expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
-        latency_ms, remote, job_id, subagent_id
+        latency_ms, remote, job_id, subagent_id, embedding_column
       ) VALUES (
         ${input.tool_name}, ${input.query}, ${input.retrieved_slugs}, ${input.retrieved_chunk_ids}, ${input.source_ids},
         ${input.expand_enabled}, ${input.detail}, ${input.detail_resolved}, ${input.vector_enabled}, ${input.expansion_applied},
-        ${input.latency_ms}, ${input.remote}, ${input.job_id}, ${input.subagent_id}
+        ${input.latency_ms}, ${input.remote}, ${input.job_id}, ${input.subagent_id}, ${input.embedding_column ?? null}
       )
       RETURNING id
     `;

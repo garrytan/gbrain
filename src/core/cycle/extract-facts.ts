@@ -156,8 +156,16 @@ export async function runExtractFacts(
   result.phantomsMorePending = phantomResult.more_pending;
 
   // ── Resolve target slug set ───────────────────────────────────
+  // v0.36.x #1096: presence — not length — distinguishes the modes.
+  // `slugs: []` from an incremental sync no-op was previously treated
+  // identically to `slugs: undefined` (full-walk intent) because
+  // `opts.slugs && opts.slugs.length > 0` is falsy for both. On a
+  // multi-thousand-page brain the unintended full walk exceeds the
+  // autopilot-cycle timeout (~600s) and dead-letters the job.
   let slugs: string[];
-  if (opts.slugs && opts.slugs.length > 0) {
+  if (opts.slugs !== undefined) {
+    // Caller explicitly passed a list (possibly empty). Empty array is a
+    // real incremental no-op; don't escalate to full-brain walk.
     slugs = opts.slugs;
   } else {
     // Full walk: every page in the brain. Bounded by engine.getAllSlugs

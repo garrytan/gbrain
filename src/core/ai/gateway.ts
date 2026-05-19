@@ -42,8 +42,20 @@ import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 
 const MAX_CHARS = 8000;
-const DEFAULT_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
-const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
+// v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
+// new default for embedding. Real-corpus benchmark across 20 queries:
+//   - ZE wins 11/20 (OpenAI 6, Voyage 4)
+//   - 442ms avg vs OpenAI 973ms (2.2x faster)
+//   - $0.05/M tokens vs OpenAI $0.13/M (2.6x cheaper at regular pricing)
+// ZE valid Matryoshka steps are {2560, 1280, 640, 320, 160, 80, 40}; 1280 is
+// the closest analog to current OpenAI 1536d (smaller -> smaller HNSW index
+// -> faster queries) while staying in the high-recall zone of the Matryoshka
+// curve. 1024 (Voyage's step) is NOT a valid ZE dim — see
+// src/core/ai/dims.ts:ZEROENTROPY_VALID_DIMS.
+// New installs without ZEROENTROPY_API_KEY size for 1280d anyway — the
+// AIConfigError surfaces at first embed with a paste-ready setup hint.
+const DEFAULT_EMBEDDING_MODEL = 'zeroentropyai:zembed-1';
+const DEFAULT_EMBEDDING_DIMENSIONS = 1280;
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker default. Used only when search.reranker.enabled is set
@@ -398,18 +410,27 @@ function prefixWithProviderFrom(original: string, bare: string): string {
 const _warnedRecipes = new Set<string>();
 
 /**
- * Walk every registered recipe with an `embedding` touchpoint. Each one
- * missing `max_batch_tokens` gets exactly one stderr line per process for
- * its first appearance. Recipes WITH the field stay quiet. The
+ * Walk the configured embedding recipes. Each one missing `max_batch_tokens`
+ * gets exactly one stderr line per process for its first appearance. Recipes
+ * WITH the field stay quiet. The
  * recursive-halving safety net only fires when `max_batch_tokens` is set,
  * so a recipe that forgets it has no protection if the provider has a
  * batch cap. Loud-fail over silent-skip per CLAUDE.md; a future
  * Cohere/Mistral/Jina recipe that inherits the embedding-touchpoint
  * pattern but forgets the cap re-creates the v0.27 Voyage backfill loop.
- * The warning calls that out before production traffic hits it.
+ * The warning calls that out before production traffic hits it, while avoiding
+ * unrelated startup noise from recipes the current brain is not using.
  */
 function warnRecipesMissingBatchTokens(): void {
+  const configuredProviderIds = new Set<string>();
+  for (const model of [_config?.embedding_model, _config?.embedding_multimodal_model]) {
+    if (!model) continue;
+    const providerId = model.split(':')[0];
+    if (providerId) configuredProviderIds.add(providerId);
+  }
+
   for (const recipe of listRecipes()) {
+    if (!configuredProviderIds.has(recipe.id)) continue;
     const embedding = recipe.touchpoints?.embedding;
     if (!embedding || embedding.max_batch_tokens !== undefined) continue;
     // OpenAI is the canonical "no cap declared, fast path is intentional"
@@ -526,8 +547,15 @@ export function getRerankerModel(): string | undefined {
 /**
  * Check whether a touchpoint can be served given the current config.
  * Replaces scattered `!process.env.OPENAI_API_KEY` checks (Codex C3).
+ *
+ * v0.36 (D10): optional `modelOverride` to check a specific
+ * `provider:model` instead of the globally configured default for the
+ * touchpoint. Used by hybridSearch to ask "is the active column's
+ * provider reachable?" rather than "is the global default reachable?" —
+ * otherwise an unreachable global default disables vector search even
+ * when the active column's provider works fine.
  */
-export function isAvailable(touchpoint: TouchpointKind): boolean {
+export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string): boolean {
   // Test seam: when a transport stub is installed for this touchpoint, the
   // gateway is "available" for tests that exercise the whole pipeline without
   // configuring real providers. See __setChatTransportForTests /
@@ -537,7 +565,9 @@ export function isAvailable(touchpoint: TouchpointKind): boolean {
   if (!_config) return false;
   try {
     const modelStr =
-      touchpoint === 'embedding'
+      modelOverride
+        ? modelOverride
+        : touchpoint === 'embedding'
         ? getEmbeddingModel()
         : touchpoint === 'expansion'
         ? getExpansionModel()
@@ -1029,21 +1059,49 @@ export interface EmbedOpts {
    * resolver — the correct default for indexing paths).
    */
   inputType?: 'query' | 'document';
+  /**
+   * v0.36 (D10): explicit model override. When set, routes through this
+   * provider:model instead of the globally configured embedding_model.
+   * Used by the dynamic-embedding-column path so a single query can
+   * embed via the provider that matches the active column. NULL/absent
+   * preserves the existing global-default behavior.
+   *
+   * Format: 'provider:model' (e.g. 'voyage:voyage-3-large').
+   */
+  embeddingModel?: string;
+  /**
+   * v0.36 (D10): explicit dimensions override, paired with
+   * embeddingModel. When set, threads into `dimsProviderOptions` so the
+   * gateway sends the right `dimensions` / `output_dimension` to the
+   * provider. Must match the dim of the destination column or pgvector
+   * rejects the insert/search. NULL preserves the global-default.
+   */
+  dimensions?: number;
 }
 
 export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32Array[]> {
   if (!texts || texts.length === 0) return [];
 
   const cfg = requireConfig();
-  const { model, recipe, modelId } = await resolveEmbeddingProvider(getEmbeddingModel());
+  // v0.36 (D10): caller may override the model. Used by the dynamic-embedding-
+  // column path so hybridSearch can embed via the column's provider, not the
+  // global default. resolveEmbeddingProvider validates the override at the
+  // recipe layer — bad model strings throw AIConfigError with a clear hint.
+  const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
+  const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
   const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
+  // Dim override (D10) — when caller passes `dimensions`, use it. Otherwise
+  // fall back to the global cfg default. dimsProviderOptions throws a
+  // clear AIConfigError when a Voyage flexible-dim model gets an
+  // unsupported value (the existing v0.33.1.1 fail-loud path).
+  const effectiveDims = opts?.dimensions ?? cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
   const providerOpts = dimsProviderOptions(
     recipe.implementation,
     modelId,
-    cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
+    effectiveDims,
     opts?.inputType,
   );
-  const expected = cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
+  const expected = effectiveDims;
 
   const embedding = recipe.touchpoints?.embedding;
   const maxBatchTokens = embedding?.max_batch_tokens;
@@ -1190,12 +1248,20 @@ async function embedSubBatch(
       ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
     });
 
-    const first = result.embeddings?.[0];
-    if (first && Array.isArray(first) && first.length !== expectedDims) {
+    if (!Array.isArray(result.embeddings) || result.embeddings.length !== texts.length) {
       throw new AIConfigError(
-        `Embedding dim mismatch: model ${modelId} returned ${first.length} but schema expects ${expectedDims}.`,
-        `Run \`gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${first.length}\` or change models.`,
+        `Embedding provider returned ${result.embeddings?.length ?? 0} embedding(s) for ${texts.length} input(s).`,
+        `Retry the import after checking provider health; partial embedding responses are not safe to index.`,
       );
+    }
+
+    for (const embedding of result.embeddings) {
+      if (Array.isArray(embedding) && embedding.length !== expectedDims) {
+        throw new AIConfigError(
+          `Embedding dim mismatch: model ${modelId} returned ${embedding.length} but schema expects ${expectedDims}.`,
+          `Run \`gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${embedding.length}\` or change models.`,
+        );
+      }
     }
 
     recordSubBatchSuccess(recipe);
@@ -1236,8 +1302,15 @@ export async function embedOne(text: string): Promise<Float32Array> {
  *
  * Returns a single Float32Array (not a batch).
  */
-export async function embedQuery(text: string): Promise<Float32Array> {
-  const [v] = await embed([text], { inputType: 'query' });
+export async function embedQuery(
+  text: string,
+  opts?: { embeddingModel?: string; dimensions?: number },
+): Promise<Float32Array> {
+  const [v] = await embed([text], {
+    inputType: 'query',
+    embeddingModel: opts?.embeddingModel,
+    dimensions: opts?.dimensions,
+  });
   return v;
 }
 

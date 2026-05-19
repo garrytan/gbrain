@@ -57,6 +57,14 @@ export type CyclePhase =
   | 'lint' | 'backlinks' | 'sync' | 'synthesize' | 'extract' | 'extract_facts'
   | 'resolve_symbol_edges'
   | 'patterns' | 'recompute_emotional_weight' | 'consolidate'
+  // v0.36.1.0 Hindsight calibration wave:
+  //  - propose_takes: LLM scans markdown prose, proposes gradeable claims
+  //    to a review queue. User accepts/rejects via `gbrain takes propose`.
+  //  - grade_takes: walks unresolved takes, retrieves evidence, asks a
+  //    judge model to verdict them. Auto-resolve OFF by default (D17).
+  //  - calibration_profile: aggregates the resolved subset into 2-4
+  //    narrative pattern statements + active bias tags. Voice-gated.
+  | 'propose_takes' | 'grade_takes' | 'calibration_profile'
   | 'embed' | 'orphans' | 'purge';
 
 export const ALL_PHASES: CyclePhase[] = [
@@ -88,6 +96,20 @@ export const ALL_PHASES: CyclePhase[] = [
   // stay as audit trail. Placed AFTER patterns (graph-fresh) and BEFORE
   // embed (so the new takes get embedded same-cycle).
   'consolidate',
+  // v0.36.1.0 Hindsight calibration wave. Ordering rationale:
+  //   - propose_takes AFTER consolidate so the proposal LLM sees the
+  //     freshly-consolidated takes when deciding what's NOT yet captured
+  //     (F2 fence-dedup).
+  //   - grade_takes AFTER propose so newly-accepted proposals from the
+  //     queue are eligible for grading on the next cycle (manual accept
+  //     can land between cycle runs; auto-accept is intentionally NOT a
+  //     thing — user always reviews).
+  //   - calibration_profile AFTER grade so the profile reads fresh
+  //     resolutions. Voice-gated narrative; cheap (Haiku judge).
+  // Budget caps live in src/core/cycle/budget-meter.ts via BaseCyclePhase.
+  'propose_takes',
+  'grade_takes',
+  'calibration_profile',
   'embed',
   'orphans',
   // v0.26.5: hard-deletes soft-deleted pages and expired archived sources past
@@ -118,6 +140,12 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   // v0.29 — writes pages.emotional_weight column.
   'recompute_emotional_weight',
   'consolidate',
+  // v0.36.1.0 — propose_takes / grade_takes / calibration_profile all
+  // mutate DB state (take_proposals, take_grade_cache, calibration_profiles)
+  // so they coordinate via the cycle lock.
+  'propose_takes',
+  'grade_takes',
+  'calibration_profile',
   'embed',
   'purge',
 ]);
@@ -523,27 +551,28 @@ async function runPhaseLint(brainDir: string, dryRun: boolean): Promise<PhaseRes
 
 async function runPhaseBacklinks(brainDir: string, dryRun: boolean): Promise<PhaseResult> {
   try {
-    // Library function path — the v0.15 backlinks.ts exports
-    // runBacklinksCore when --fix is requested.
+    // Maintenance cycles must not rewrite tracked brain pages with generated
+    // "Referenced in" timeline bullets. The graph extractor/auto-link path is
+    // the canonical link store during sync/dream/autopilot; the legacy
+    // filesystem fixer remains available explicitly via `gbrain check-backlinks
+    // fix` for users who truly want markdown backlinks materialized.
     const { runBacklinksCore } = await import('../commands/backlinks.ts');
     const result = await runBacklinksCore({
-      action: 'fix',
+      action: 'check',
       dir: brainDir,
       dryRun,
     });
     const gaps = result.gaps_found ?? 0;
     const added = result.fixed ?? 0;
-    const remaining = Math.max(0, gaps - added);
-    const status: PhaseStatus =
-      gaps === 0 || (!dryRun && remaining === 0) ? 'ok' : 'warn';
+    const status: PhaseStatus = 'ok';
     return {
       phase: 'backlinks',
       status,
       duration_ms: 0,
-      summary: dryRun
-        ? `${gaps} missing back-link(s) (dry-run)`
-        : `${added} back-link(s) added, ${remaining} remaining`,
-      details: { gaps, added, pages_affected: result.pages_affected, dryRun },
+      summary: gaps === 0
+        ? 'no missing back-links found'
+        : `${gaps} missing back-link(s) found (audit-only; run gbrain check-backlinks fix to materialize)`,
+      details: { gaps, added, pages_affected: result.pages_affected, dryRun, mode: 'audit-only' },
     };
   } catch (e) {
     return {
@@ -976,9 +1005,19 @@ async function runPhaseOrphans(engine: BrainEngine): Promise<PhaseResult> {
     const { findOrphans } = await import('../commands/orphans.ts');
     const result = await findOrphans(engine);
     const count = result.total_orphans;
+    // Orphans are a code-smell signal, not a fatal condition. The
+    // original `count > 20` cutoff was tuned for small dev brains; on
+    // any corpus past a few hundred pages it fires 'warn' every cycle
+    // in steady state. Combined with the autopilot circuit-breaker
+    // historically tripping on cycle.status='partial', that produced
+    // respawn storms under KeepAlive=true. Switch to a ratio: warn
+    // only when more than half the corpus is orphaned (the real "your
+    // graph fell apart" signal). total_pages=0 is a defensive 'ok'.
+    const status: PhaseStatus =
+      result.total_pages > 0 && count / result.total_pages > 0.5 ? 'warn' : 'ok';
     return {
       phase: 'orphans',
-      status: count > 20 ? 'warn' : 'ok',
+      status,
       duration_ms: 0,
       summary: `${count} orphan page(s) out of ${result.total_pages} total`,
       details: {
@@ -1338,6 +1377,79 @@ export async function runCycle(
         progress.finish();
       }
       await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── v0.36.1.0 calibration phases (propose_takes → grade_takes →
+    //    calibration_profile). These run AFTER consolidate so the proposal
+    //    LLM sees newly-promoted facts, AFTER any take resolutions made
+    //    earlier in the cycle, and BEFORE embed so the calibration
+    //    narrative is available for downstream surfaces.
+    //
+    //    The three phases construct an OperationContext on the fly. The
+    //    cycle is a trusted-workspace caller (operator CLI / autopilot
+    //    daemon), so `remote: false` is the correct trust tier. sourceId
+    //    is resolved via the same `resolveSourceForDir` helper sync uses.
+    if (phases.includes('propose_takes') ||
+        phases.includes('grade_takes') ||
+        phases.includes('calibration_profile')) {
+      if (engine) {
+        const cfgMod = await import('./config.ts');
+        const calibrationConfig = cfgMod.loadConfig() ?? ({} as ReturnType<typeof cfgMod.loadConfig> & object);
+        const calibrationSourceId = await resolveSourceForDir(engine, opts.brainDir);
+        const calibrationCtx = {
+          engine,
+          config: calibrationConfig,
+          logger: { info() {}, warn() {}, error() {} } as never,
+          dryRun,
+          remote: false as const,
+          sourceId: calibrationSourceId,
+        } as never;
+
+        if (phases.includes('propose_takes')) {
+          checkAborted(opts.signal);
+          progress.start('cycle.propose_takes');
+          const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: opts.brainDir }) as Promise<PhaseResult>);
+          result.duration_ms = duration_ms;
+          phaseResults.push(result);
+          progress.finish();
+          await safeYield(opts.yieldBetweenPhases);
+        }
+
+        if (phases.includes('grade_takes')) {
+          checkAborted(opts.signal);
+          progress.start('cycle.grade_takes');
+          const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
+          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, {}) as Promise<PhaseResult>);
+          result.duration_ms = duration_ms;
+          phaseResults.push(result);
+          progress.finish();
+          await safeYield(opts.yieldBetweenPhases);
+        }
+
+        if (phases.includes('calibration_profile')) {
+          checkAborted(opts.signal);
+          progress.start('cycle.calibration_profile');
+          const { runPhaseCalibrationProfile } = await import('./cycle/calibration-profile.ts');
+          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, {}) as Promise<PhaseResult>);
+          result.duration_ms = duration_ms;
+          phaseResults.push(result);
+          progress.finish();
+          await safeYield(opts.yieldBetweenPhases);
+        }
+      } else {
+        for (const p of (['propose_takes', 'grade_takes', 'calibration_profile'] as const)) {
+          if (phases.includes(p)) {
+            phaseResults.push({
+              phase: p,
+              status: 'skipped',
+              duration_ms: 0,
+              summary: 'no database connected',
+              details: { reason: 'no_database' },
+            });
+          }
+        }
+      }
     }
 
     // ── Phase 8: embed ──────────────────────────────────────────

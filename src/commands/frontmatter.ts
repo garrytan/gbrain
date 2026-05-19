@@ -3,8 +3,9 @@
  *
  * Subcommands:
  *   gbrain frontmatter validate <path> [--json] [--fix] [--dry-run]
- *     Validate one file or recursively a directory. --fix writes .bak then
- *     rewrites in place. --dry-run previews without writing.
+ *     Validate one file or recursively a directory. --fix writes centralized
+ *     backups under ~/.gbrain/backups/frontmatter/... then rewrites in place.
+ *     --dry-run previews without writing.
  *
  *   gbrain frontmatter audit [--source <id>] [--json]
  *     Read-only scan across all registered sources (or one with --source).
@@ -14,7 +15,7 @@
  * validate. Pass an explicit path to validate a non-source-registered tree.
  */
 
-import { readFileSync, writeFileSync, existsSync, lstatSync, readdirSync, copyFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, lstatSync, readdirSync } from 'fs';
 import { join, relative, resolve } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
@@ -22,6 +23,8 @@ import { createEngine } from '../core/engine-factory.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 import {
   autoFixFrontmatter,
+  createFrontmatterBackup,
+  makeFrontmatterBackupRunId,
   scanBrainSources,
   type AuditReport,
   type AuditFix,
@@ -79,7 +82,7 @@ function printHelp() {
 
 Usage:
   gbrain frontmatter validate <path> [--json] [--fix] [--dry-run]
-  gbrain frontmatter generate <path> [--fix] [--dry-run] [--json]
+  gbrain frontmatter generate <path> [--fix] [--dry-run] [--json] [--include-catch-all]
   gbrain frontmatter audit [--source <id>] [--json]
   gbrain frontmatter install-hook [--source <id>] [--force] [--uninstall]
 
@@ -90,9 +93,10 @@ validate
     NULL_BYTES, NESTED_QUOTES, EMPTY_FRONTMATTER
 
   --fix      Auto-repair the fixable subset (NULL_BYTES, MISSING_CLOSE,
-             NESTED_QUOTES, SLUG_MISMATCH). Writes <file>.bak before any
-             in-place rewrite. .bak is the safety contract; works for both
-             git and non-git brain repos.
+             NESTED_QUOTES, SLUG_MISMATCH). Writes a backup under
+             ~/.gbrain/backups/frontmatter/... before any in-place rewrite.
+             Backups work for both git and non-git brain repos without
+             littering the source tree.
   --dry-run  Preview --fix without writing.
   --json     Emit a JSON envelope on stdout.
 
@@ -102,7 +106,10 @@ generate
   the filesystem path and file content. Zero LLM calls, fully deterministic.
 
   Without --fix: dry-run preview showing what would be generated.
-  With --fix: writes frontmatter to files (with .bak safety backups).
+  With --fix: writes frontmatter to files with centralized safety backups.
+  Unknown/catch-all files are skipped by default so GBrain does not stamp
+  meaningless "type: note" metadata onto arbitrary workspace documents. Pass
+  --include-catch-all to opt into the legacy catch-all note behavior.
 
   Rules are defined in src/core/frontmatter-inference.ts DIRECTORY_RULES.
   Add new directory conventions by adding rules to the table.
@@ -112,9 +119,12 @@ generate
     gbrain frontmatter generate /path/to/brain --fix        # write all
     gbrain frontmatter generate /path/to/brain/people/ --fix # just people/
 
-  --fix      Write generated frontmatter to files (.bak safety backups).
+  --fix      Write generated frontmatter to files with centralized backups.
   --dry-run  Preview without writing (default when --fix is omitted).
   --json     Emit JSON output.
+  --include-catch-all
+             Also write the default catch-all rule ("type: note") for paths
+             that do not match a more specific directory rule.
 
 audit
   Read-only scan across all registered sources (or one with --source <id>).
@@ -140,6 +150,7 @@ interface FileValidation {
   path: string;
   errors: { code: ParseValidationCode; message: string; line?: number }[];
   fixesApplied?: AuditFix[];
+  backupPath?: string;
 }
 
 async function runValidate(rest: string[]): Promise<void> {
@@ -166,6 +177,7 @@ async function runValidate(rest: string[]): Promise<void> {
 
   const files = collectFiles(resolved);
   const results: FileValidation[] = [];
+  const backupRunId = makeFrontmatterBackupRunId();
 
   for (const file of files) {
     const content = readFileSync(file, 'utf8');
@@ -181,7 +193,7 @@ async function runValidate(rest: string[]): Promise<void> {
       const { content: fixed, fixes } = autoFixFrontmatter(content, { filePath: file });
       result.fixesApplied = fixes;
       if (fixes.length > 0 && !flags.dryRun) {
-        copyFileSync(file, file + '.bak');
+        result.backupPath = createFrontmatterBackup(file, { sourcePath: resolved, runId: backupRunId });
         writeFileSync(file, fixed, 'utf8');
       }
     }
@@ -225,7 +237,7 @@ async function runValidate(rest: string[]): Promise<void> {
         }
       }
       if (flags.fix && !flags.dryRun) {
-        console.log(`\nWrote .bak backups for ${filesFixed} file(s).`);
+        console.log(`\nWrote centralized backups for ${filesFixed} file(s) under ~/.gbrain/backups/frontmatter/.`);
       }
     }
   }
@@ -299,7 +311,10 @@ function printAuditHumanReport(report: AuditReport): void {
     console.log('No registered sources to audit. Run `gbrain sources list` to inspect.');
     return;
   }
-  console.log(`Frontmatter audit — ${report.total} issue(s) across ${report.per_source.length} source(s) (scanned at ${report.scanned_at})`);
+  console.log(`Frontmatter audit — ${report.total} malformed issue(s) across ${report.per_source.length} source(s) (scanned at ${report.scanned_at})`);
+  if (report.ignored_missing_open) {
+    console.log(`Missing frontmatter ignored: ${report.ignored_missing_open} file(s). Use \`frontmatter validate\` for strict per-file checks or \`frontmatter generate\` to add meaningful metadata.`);
+  }
   for (const src of report.per_source) {
     console.log(`\n[${src.source_id}] ${src.source_path}`);
     if (src.total === 0) {
@@ -332,6 +347,7 @@ async function runGenerate(args: string[]): Promise<void> {
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
   const jsonOut = args.includes('--json');
+  const includeCatchAll = args.includes('--include-catch-all') || args.includes('--allow-catch-all');
 
   if (!targetPath) {
     console.error('error: gbrain frontmatter generate requires a <path> argument');
@@ -342,7 +358,7 @@ async function runGenerate(args: string[]): Promise<void> {
 
   const { inferFrontmatter, serializeFrontmatter } = await import('../core/frontmatter-inference.ts');
   const { resolve, relative, join, basename } = await import('path');
-  const { readFileSync, writeFileSync, copyFileSync, statSync, readdirSync, lstatSync } = await import('fs');
+  const { readFileSync, writeFileSync, statSync, lstatSync } = await import('fs');
 
   const rootPath = resolve(targetPath);
   const isDir = statSync(rootPath).isDirectory();
@@ -376,12 +392,14 @@ async function runGenerate(args: string[]): Promise<void> {
   const results: GenerateResult[] = [];
   let scanned = 0;
   let skipped = 0;
+  let skippedCatchAll = 0;
   let generated = 0;
   let written = 0;
+  const backupRunId = makeFrontmatterBackupRunId();
 
   function processFile(absPath: string, relPath: string) {
     scanned++;
-    if (!absPath.endsWith('.md')) return;
+    if (!isSyncable(relPath, { strategy: 'markdown' })) return;
 
     // Skip symlinks
     try { if (lstatSync(absPath).isSymbolicLink()) return; } catch { return; }
@@ -392,6 +410,10 @@ async function runGenerate(args: string[]): Promise<void> {
     const inferred = inferFrontmatter(relPath, content);
     if (inferred.skipped) {
       skipped++;
+      return;
+    }
+    if (!includeCatchAll && inferred.matchedRule === '(default)') {
+      skippedCatchAll++;
       return;
     }
 
@@ -407,32 +429,17 @@ async function runGenerate(args: string[]): Promise<void> {
     if (doFix && !dryRun) {
       const fm = serializeFrontmatter(inferred);
       const newContent = fm + '\n' + content;
-      // Safety: write .bak first
-      copyFileSync(absPath, absPath + '.bak');
+      // Safety: write a centralized backup first.
+      createFrontmatterBackup(absPath, { sourcePath: brainRoot, runId: backupRunId });
       writeFileSync(absPath, newContent, 'utf-8');
       written++;
     }
   }
 
-  function walkDir(dir: string, rootForRel: string) {
-    let entries: string[];
-    try { entries = readdirSync(dir); } catch { return; }
-    for (const entry of entries) {
-      if (entry === '.git' || entry === 'node_modules' || entry === '.obsidian') continue;
-      const abs = join(dir, entry);
-      try {
-        const stat = statSync(abs);
-        if (stat.isDirectory()) {
-          walkDir(abs, rootForRel);
-        } else if (stat.isFile() && entry.endsWith('.md')) {
-          processFile(abs, relative(rootForRel, abs));
-        }
-      } catch { /* skip unreadable */ }
-    }
-  }
-
   if (isDir) {
-    walkDir(rootPath, brainRoot);
+    for (const absPath of collectFiles(rootPath)) {
+      processFile(absPath, relative(brainRoot, absPath));
+    }
   } else {
     const relPath = relative(brainRoot, rootPath) || basename(rootPath);
     processFile(rootPath, relPath);
@@ -443,6 +450,7 @@ async function runGenerate(args: string[]): Promise<void> {
     console.log(JSON.stringify({
       scanned,
       skipped,
+      skippedCatchAll,
       generated,
       written,
       dryRun: !doFix || dryRun,
@@ -457,9 +465,12 @@ async function runGenerate(args: string[]): Promise<void> {
   console.log(`\nFrontmatter generation (${mode})`);
   console.log(`  Scanned: ${scanned} files`);
   console.log(`  Already have frontmatter: ${skipped}`);
+  if (skippedCatchAll > 0) {
+    console.log(`  Skipped catch-all/unknown: ${skippedCatchAll} (pass --include-catch-all to write type: note)`);
+  }
   console.log(`  Would generate: ${generated}`);
   if (doFix && !dryRun) {
-    console.log(`  Written: ${written} (with .bak backups)`);
+    console.log(`  Written: ${written} (with centralized backups)`);
   }
 
   // Show sample by type

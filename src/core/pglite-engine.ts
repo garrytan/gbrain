@@ -41,6 +41,13 @@ import { GBrainError, PAGE_SORT_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
+import {
+  normalizeEngineColumn,
+  buildVectorCastFragment,
+  quoteIdentifier,
+  COLUMN_NAME_REGEX,
+  EmbeddingColumnNotRegisteredError,
+} from './search/embedding-column.ts';
 import { hasCJK, escapeLikePattern } from './cjk.ts';
 
 type PGLiteDB = PGlite;
@@ -1279,15 +1286,18 @@ export class PGLiteEngine implements BrainEngine {
     // same candidate count it always did. See postgres-engine.ts for rationale.
     const visibilityClause = buildVisibilityClause('p', 's');
 
-    // v0.27.1: column routing. Default 'embedding' targets the brain's
-    // primary text-embedding column; 'embedding_image' targets the
-    // multimodal column populated by importImageFile. Image-similarity
-    // queries pass embeddingColumn='embedding_image' AND a 1024-dim vector
-    // produced by gateway.embedMultimodal — must match the column dim.
-    const col = opts?.embeddingColumn === 'embedding_image' ? 'embedding_image' : 'embedding';
+    // v0.36 (D11): column routing via resolved descriptor. Engine doesn't
+    // read config — caller resolved at hybrid/op boundary. The cast SQL
+    // ($1::vector vs $1::halfvec(N)) comes from buildVectorCastFragment.
+    const resolvedCol = normalizeEngineColumn(opts?.embeddingColumn);
+    const { col, castSql } = buildVectorCastFragment(resolvedCol);
     // Image rows live in modality='image'; text/code in 'text'. Restrict
-    // to the modality matching the column to avoid cross-mode dim leaks.
-    const modalityFilter = col === 'embedding_image' ? `AND cc.modality = 'image'` : `AND cc.modality = 'text'`;
+    // by modality so non-image columns can't accidentally pull image
+    // chunks (or vice versa). resolved.name has already passed regex
+    // validation; never compares against raw input.
+    const modalityFilter = resolvedCol.name === 'embedding_image'
+      ? `AND cc.modality = 'image'`
+      : `AND cc.modality = 'text'`;
 
     const { rows } = await this.db.query(
       `WITH hnsw_candidates AS (
@@ -1295,12 +1305,12 @@ export class PGLiteEngine implements BrainEngine {
            p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
            p.effective_date, p.effective_date_source,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-           1 - (cc.${col} <=> $1::vector) AS raw_score
+           1 - (cc.${col} <=> ${castSql}) AS raw_score
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
          WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-         ORDER BY cc.${col} <=> $1::vector
+         ORDER BY cc.${col} <=> ${castSql}
          LIMIT $2
        )
        SELECT
@@ -1321,10 +1331,21 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
   }
 
-  async getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>> {
+  async getEmbeddingsByChunkIds(
+    ids: number[],
+    column: string = 'embedding',
+  ): Promise<Map<number, Float32Array>> {
     if (ids.length === 0) return new Map();
+    // v0.36 (D9): column parameter so hybrid.cosineReScore can rehydrate
+    // from the active embedding space (Voyage 1024d, ZE halfvec 2560d,
+    // etc.). Identifier-quoted (D12 layer 2) plus strict regex on the
+    // column name (D12 layer 1) before interpolation.
+    if (!COLUMN_NAME_REGEX.test(column)) {
+      throw new EmbeddingColumnNotRegisteredError(column, []);
+    }
+    const quotedCol = quoteIdentifier(column);
     const { rows } = await this.db.query(
-      `SELECT id, embedding FROM content_chunks WHERE id = ANY($1::int[]) AND embedding IS NOT NULL`,
+      `SELECT id, ${quotedCol} AS embedding FROM content_chunks WHERE id = ANY($1::int[]) AND ${quotedCol} IS NOT NULL`,
       [ids]
     );
     const result = new Map<number, Float32Array>();
@@ -3821,8 +3842,8 @@ export class PGLiteEngine implements BrainEngine {
       `INSERT INTO eval_candidates (
          tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
          expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
-         latency_ms, remote, job_id, subagent_id
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         latency_ms, remote, job_id, subagent_id, embedding_column
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING id`,
       [
         input.tool_name,
@@ -3839,6 +3860,7 @@ export class PGLiteEngine implements BrainEngine {
         input.remote,
         input.job_id,
         input.subagent_id,
+        input.embedding_column ?? null,
       ]
     );
     return rows[0]!.id;
