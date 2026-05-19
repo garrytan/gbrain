@@ -47,6 +47,15 @@ async function pageCountBySource(): Promise<Record<string, number>> {
   return out;
 }
 
+async function readSourceSyncState(sourceId: string): Promise<{ last_commit: string | null; last_sync_at: string | null }> {
+  const rows = await engine.executeRaw<{ last_commit: string | null; last_sync_at: string | null }>(
+    `SELECT last_commit, last_sync_at::text AS last_sync_at FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  expect(rows).toHaveLength(1);
+  return rows[0];
+}
+
 describe('performFullSync threads sourceId end-to-end', () => {
   beforeAll(async () => {
     engine = new PGLiteEngine();
@@ -135,5 +144,45 @@ describe('performFullSync threads sourceId end-to-end', () => {
     // Back-compat: callers that omit sourceId continue to target source 'default'.
     expect(counts['default']).toBeGreaterThan(0);
     expect(counts['testsrc-pfs'] ?? 0).toBe(0);
+  });
+
+  test('successful no-op source sync refreshes last_sync_at without forcing --full', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+
+    const first = await performSync(engine, {
+      repoPath,
+      sourceId: 'testsrc-pfs',
+      noPull: true,
+      noEmbed: true,
+    });
+    expect(['first_sync', 'synced']).toContain(first.status);
+
+    const seeded = await readSourceSyncState('testsrc-pfs');
+    expect(seeded.last_commit).toBeTruthy();
+    expect(seeded.last_sync_at).toBeTruthy();
+
+    await engine.executeRaw(
+      `UPDATE sources
+         SET last_sync_at = now() - interval '5 days'
+       WHERE id = 'testsrc-pfs'`,
+    );
+
+    const stale = await readSourceSyncState('testsrc-pfs');
+    expect(stale.last_commit).toBe(seeded.last_commit);
+    expect(stale.last_sync_at).not.toBeNull();
+
+    const second = await performSync(engine, {
+      repoPath,
+      sourceId: 'testsrc-pfs',
+      noPull: true,
+      noEmbed: true,
+    });
+
+    expect(second.status).toBe('up_to_date');
+
+    const refreshed = await readSourceSyncState('testsrc-pfs');
+    expect(refreshed.last_commit).toBe(seeded.last_commit);
+    expect(refreshed.last_sync_at).not.toBeNull();
+    expect(new Date(refreshed.last_sync_at!).getTime()).toBeGreaterThan(new Date(stale.last_sync_at!).getTime());
   });
 });

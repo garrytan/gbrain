@@ -320,6 +320,17 @@ async function writeSyncAnchor(
   await engine.setConfig(`sync.${which}`, value);
 }
 
+async function touchSyncFreshness(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+): Promise<void> {
+  if (!sourceId) return;
+  await engine.executeRaw(
+    `UPDATE sources SET last_sync_at = now() WHERE id = $1`,
+    [sourceId],
+  );
+}
+
 /**
  * v0.20.0 Cathedral II Layer 12 (SP-1 fix) — read/write the chunker version
  * last used to sync a given source. When it mismatches CURRENT_CHUNKER_VERSION,
@@ -543,6 +554,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    // sync_freshness keys off sources.last_sync_at, so a successful source-scoped
+    // no-op sync must still refresh the heartbeat even when the bookmark is
+    // already aligned with HEAD.
+    await touchSyncFreshness(engine, opts.sourceId);
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
