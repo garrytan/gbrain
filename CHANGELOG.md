@@ -2,6 +2,199 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.36.4.0] - 2026-05-18
+
+**Your agent can now drive your brain to 90/100 by itself, on a cron, without you watching.**
+
+Here is the problem this fixes. Your brain accumulates rot. Pages drift stale,
+embeddings go missing after the next sync, back-links break when slugs get
+renamed, and unsynthesized transcripts pile up in the dream queue. Each fix is
+a one-line command — `gbrain embed --stale`, `gbrain backlinks fix`,
+`gbrain sync` — but knowing WHICH command to run when, and in WHAT order, was
+on you. Run them in the wrong order and you re-do work; skip one and the next
+agent search returns half-stale results.
+
+What ships in this release: one new command that does the whole loop for you.
+
+    gbrain doctor --remediation-plan --json
+    gbrain doctor --remediate --yes --target-score 90 --max-usd 5
+
+The first prints what would be fixed. The second actually fixes it, one job at
+a time, in dependency order, with a spend cap so a synthesize loop can't run
+up your Anthropic bill while you're at lunch. The cap is yours to set per run;
+the plan shows the estimate before you commit. Autopilot (`gbrain autopilot
+--install`) does the same thing automatically on its existing 5-minute tick —
+small problems get a targeted handler, big problems get the full cycle, and a
+healthy brain just sleeps.
+
+### What you can do now that you couldn't before
+
+- **One command takes a degraded brain to your target score.** No more
+  remembering "run sync first, then embed, then backlinks." `gbrain doctor
+  --remediate` figures out the order from a stable dependency graph and walks
+  it sequentially with a re-check between every step.
+- **Cron can drive brain maintenance without supervision.** Pass `--yes
+  --max-usd 5` (or whatever cap you're comfortable with) and it runs
+  unattended. Per-job idempotency keys are content-hashed, so if a job fails
+  the next pass retries with a bumped suffix instead of silently re-serving
+  the dead row.
+- **Spend shows up before you commit.** The plan output prints
+  `est_total_usd_cost` and refuses to submit when it exceeds `--max-usd`.
+  Synthesize / patterns / consolidate carry real Anthropic estimates from
+  `anthropic-pricing.ts`; embed carries OpenAI / Voyage estimates from
+  `embedding-pricing.ts`. Pick the cap that fits your wallet — the loop
+  won't run past it.
+- **Empty brains stop spinning forever.** If your brain is markdown-only
+  (no entity pages) or your embedding API key isn't configured, `--remediate`
+  computes a `max_reachable_score` ceiling and refuses to run when your target
+  exceeds it. Tells you what's missing instead of looping.
+- **`gbrain embed --stale --background` finally exists.** Submits as a Minion
+  job, prints `job_id=N`, exits. Composable in shell pipelines:
+
+      JOB=$(gbrain embed --stale --background | grep -oE 'job_id=[0-9]+' | cut -d= -f2)
+      gbrain jobs follow $JOB
+
+- **Autopilot stops over-running healthy brains.** On a brain at score 95+
+  with nothing to fix, autopilot sleeps for 60 minutes between full cycles
+  instead of grinding through synthesize+patterns+embed every 5 minutes. Real
+  work gets done on degraded brains; healthy brains stop spending tokens on
+  work that has nothing to do.
+- **Eleven new things you can submit as background jobs.** `reindex`,
+  `repair-jsonb`, `orphans`, `integrity`, `purge`, plus six cycle phases
+  (synthesize, patterns, consolidate, extract_facts, resolve_symbol_edges,
+  recompute_emotional_weight) that previously only ran as part of the full
+  autopilot cycle. Three of these (synthesize, patterns, consolidate) are
+  PROTECTED — they can spend Anthropic credits via internal subagent calls,
+  so an MCP-connected agent can't submit them on your behalf. Only trusted
+  local callers (CLI, autopilot, doctor --remediate) can. Your provider bill
+  stays in your hands.
+
+### How autopilot picks what to run
+
+Each tick, autopilot computes a tiny remediation plan from
+`engine.getHealth()` (one SQL count query) and routes by shape:
+
+    score >= 95 AND no plan AND <60min since last full   →  sleep
+    score >= 95 AND no plan AND >=60min                  →  submit autopilot-cycle (phase-coupling exercise)
+    plan <= 3 steps AND est <5min                        →  submit individual handlers (targeted)
+    plan large OR score < 70                             →  submit autopilot-cycle (the hammer)
+
+The cycle lock (`gbrain-cycle`) ensures targeted submissions and the full
+cycle can't run concurrently. The "60-min floor" runs the full phase set
+even on a healthy brain so phase-coupling invariants (lint-first,
+synthesize-before-patterns, embed-after-consolidate) keep getting exercised.
+
+### The numbers that matter
+
+| Operation                     | Before        | After          |
+|-------------------------------|---------------|----------------|
+| Manual brain → score 90       | 4-6 commands  | 1 command      |
+| Autopilot tick cost (healthy) | full cycle    | 1 SQL count    |
+| Failed-job replay window      | wait 60 min   | next pass      |
+| MCP can submit synthesize     | yes (silent)  | no (PROTECTED) |
+| Cron with spend cap           | not possible  | `--max-usd N`  |
+| --background flag             | not supported | composable     |
+
+### To take advantage of v0.36.4.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain
+doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+
+       gbrain apply-migrations --yes
+
+2. **Verify the outcome:**
+
+       gbrain doctor --remediation-plan --json
+       gbrain doctor --json
+
+   The first should print a plan (possibly empty if your brain is at target).
+   The second should report `schema_version: 2` (unchanged from prior — the
+   new `Check.remediation` field is additive optional).
+
+3. **If you want autopilot to drive your brain autonomously**, add the
+   bootstrap step described in `gbrain autopilot --install`. The new
+   targeted-submit logic activates automatically; no config change needed.
+
+4. **If any step fails or the numbers look wrong**, file an issue at
+   <https://github.com/garrytan/gbrain/issues> with output of `gbrain doctor`
+   and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+- **Schema migration v67 + v68.** `op_checkpoints (op, fingerprint,
+  completed_keys JSONB, updated_at)` is the new shared checkpoint table for
+  long-running ops; pre-fix each op carried its own file-backed JSON or none,
+  which broke on Postgres multi-worker hosts and silently collided across
+  parameter variations. `minion_jobs_doctor_run_id_idx` is a partial GIN on
+  `data WHERE data ? 'doctor_run_id'` so audit queries don't sequential-scan
+  months of cron history.
+- **`src/core/op-checkpoint.ts`** (new). DB-backed checkpoint primitive with
+  per-op fingerprint helpers (`embedFingerprint`, `extractFingerprint`,
+  `reindexFingerprint`, etc.). Fingerprint = sha8 of canonical-JSON of
+  relevant params per op. Closes codex #10–#16 from the outside-voice review.
+- **`src/core/brain-score-recommendations.ts`** (new). Pure data layer
+  consumed by both doctor and features (D15). `computeRecommendations`,
+  `classifyChecks` (remediable / human_only / blocked per D13), and
+  `maxReachableScore` for the ceiling check.
+- **`src/commands/jobs.ts`** registers 11 new Minion handlers: `reindex`,
+  `repair-jsonb`, `orphans`, `integrity`, `purge`, `synthesize` (PROTECTED),
+  `patterns` (PROTECTED), `consolidate` (PROTECTED), `extract_facts`,
+  `resolve_symbol_edges`, `recompute_emotional_weight`. Phase wrappers
+  delegate to `runCycle({phases:[name]})` so cycle.ts remains the single
+  source of truth for phase semantics.
+- **`src/core/minions/protected-names.ts`** extends `PROTECTED_JOB_NAMES`
+  with synthesize/patterns/consolidate. These phases internally submit
+  `subagent` children with `allowProtectedSubmit=true`, so they CAN spend
+  Anthropic credits. Treating them as "data-quality maintenance" was a
+  misread caught by codex outside-voice (#6).
+- **Sync handler fix.** `src/commands/jobs.ts` standalone `sync` handler
+  now passes `noExtract: true` matching `runPhaseSync`'s contract. Pre-fix,
+  doctor's remediation plan emitting `[sync, extract]` caused
+  double-extraction. Closes codex #5.
+- **`src/commands/doctor.ts`** new `--remediation-plan` and `--remediate`
+  CLI surfaces. Stable JSON envelope with `Remediation[]` carrying stable
+  `id`, content-hash `idempotency_key`, `severity`, `est_seconds`,
+  `est_usd_cost`, `depends_on` (referencing ids per D14). `--max-usd N`
+  for cost-bounded cron submissions. `--target-score N` defaults to 90;
+  `max_reachable_score()` refuses unreachable targets with a clear
+  blocker list.
+- **`src/core/cli-options.ts`** new `maybeBackground()` helper. Same
+  semantics in TTY and cron (D9): submit-and-exit. `--background --follow`
+  execs `gbrain jobs follow <id>`. PGLite degrades to inline with a clear
+  stderr note.
+- **`src/commands/embed.ts`** wires `--background` as the reference
+  integration. The other six commands (extract, lint, backlinks, reindex,
+  integrity, pages) adopt the same 4-line pattern in follow-up.
+- **`src/commands/autopilot.ts`** targeted-submit loop replaces blanket
+  `autopilot-cycle` dispatch (T8). Computes plan from cheap path
+  (`engine.getHealth()` + `computeRecommendations`), routes by shape. The
+  60-minute full-cycle floor exercises phase-coupling even on healthy
+  brains. `maxWaiting: 1` per submit closes codex #17.
+- **`src/core/cycle.ts`** purge phase extended (+C folded scope) to GC
+  stale `op_checkpoints` rows (7-day TTL). Non-fatal on pre-v67 brains.
+- **Tests.** 42 new unit tests across `brain-score-recommendations.test.ts`
+  + `op-checkpoint.test.ts` pin D6 #5 (determinism), D9 (content-hash
+  idempotency), D12 (DB-backed checkpoints), D13 (three-state triage),
+  and codex #11/#12/#15 (per-op fingerprint scoping).
+
+Plan: `~/.claude/plans/system-instruction-you-are-working-fluttering-ocean.md`.
+15 decisions locked during `/plan-eng-review`; codex outside-voice surfaced 23
+findings of which 15 were resolved by D9–D15 and 3 expanded scope (cost-budget
+gate, doctor_run_id GIN index, op_checkpoints GC).
+
+### For contributors
+
+- New tasks JSONL artifact at `~/.gstack/projects/garrytan-gbrain/tasks-eng-review-*.jsonl`.
+- T3 (full standalone phase extraction), T11 (E2E test suite), and the
+  remaining 6-of-7 `--background` command integrations are filed as
+  follow-up — the load-bearing pieces (DB-backed checkpoints, shared data
+  layer, new handlers, doctor surface, autopilot rework) shipped this wave.
+- `import-checkpoint.ts` was NOT refactored to a thin shim over op-checkpoint;
+  doing so requires async-propagating the 4 sync call sites in
+  `src/commands/import.ts` and re-writing 18 tests. Deferred — both
+  checkpoint systems coexist for now without conflict.
 ## [0.36.3.0] - 2026-05-18
 
 **Search now routes through any embedding column you've populated, not just OpenAI 1536. Voyage and ZeroEntropy columns become first-class search targets in one config flip.**

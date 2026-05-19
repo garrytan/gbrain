@@ -896,6 +896,22 @@ async function handleCliOnly(command: string, args: string[]) {
       return;
     }
 
+    // v0.36+ brain-health-100: --remediation-plan and --remediate go
+    // through dedicated functions that compute from engine.getHealth()
+    // (cheap path D7), NOT the full doctor walk.
+    if (args.includes('--remediation-plan')) {
+      const { runRemediationPlan } = await import('./commands/doctor.ts');
+      const eng = await connectEngine();
+      try { await runRemediationPlan(eng, args); } finally { await eng.disconnect(); }
+      return;
+    }
+    if (args.includes('--remediate')) {
+      const { runRemediate } = await import('./commands/doctor.ts');
+      const eng = await connectEngine();
+      try { await runRemediate(eng, args); } finally { await eng.disconnect(); }
+      return;
+    }
+
     // Doctor runs filesystem checks first (no DB needed), then DB checks.
     // --fast skips DB checks entirely.
     const { runDoctor } = await import('./commands/doctor.ts');

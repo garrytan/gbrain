@@ -193,3 +193,104 @@ export function childGlobalFlags(cliOpts?: CliOptions): string {
   }
   return parts.length > 0 ? ' ' + parts.join(' ') : '';
 }
+
+// ============================================================
+// v0.36+ brain-health-100 wave: --background flag (D9 + T7)
+//
+// Per the locked decision: --background means submit-and-exit ALWAYS.
+// Same semantics in TTY and cron. Composable in shell pipelines:
+//
+//   JOB=$(gbrain embed --stale --background | grep -oE 'job_id=[0-9]+' | cut -d= -f2)
+//   gbrain jobs get $JOB
+//
+// `--background --follow` submits then execs `gbrain jobs follow <id>`
+// so the user sees live stream while still getting durable queue
+// semantics (worker survives if user disconnects).
+//
+// PGLite degrades to inline with a clear stderr note. NOT a no-op,
+// NOT silent. Doc-stated semantic difference because PGLite has no
+// worker daemon.
+// ============================================================
+
+import type { BrainEngine } from './engine.ts';
+import { createHash } from 'crypto';
+
+export interface MaybeBackgroundOpts {
+  engine: BrainEngine;
+  args: string[];
+  jobName: string;
+  paramBuilder: (args: string[]) => Record<string, unknown>;
+  /** Source id for the idempotency key namespace. Default 'cli'. */
+  source?: string;
+}
+
+/**
+ * If `--background` is in args, submit a Minion job and return true
+ * (caller should exit). Otherwise return false (caller does inline work).
+ *
+ * Strips `--background` and `--follow` from args before paramBuilder
+ * runs so the param shape stays clean. On submit failure, prints stderr
+ * + exits 1 (no orphan job; no silent fallthrough to inline).
+ *
+ * @returns true if backgrounded (caller MUST exit), false otherwise.
+ */
+export async function maybeBackground(opts: MaybeBackgroundOpts): Promise<boolean> {
+  if (!opts.args.includes('--background')) return false;
+
+  const filtered = opts.args.filter((a) => a !== '--background' && a !== '--follow');
+  const params = opts.paramBuilder(filtered);
+  const follow = opts.args.includes('--follow');
+  const source = opts.source ?? 'cli';
+
+  // PGLite has no worker daemon. Per the doc-stated semantics, degrade
+  // to inline with a clear stderr note rather than silently failing.
+  if (opts.engine.kind === 'pglite') {
+    process.stderr.write(
+      `[--background] PGLite has no worker daemon; running inline.\n`,
+    );
+    return false;  // caller runs inline
+  }
+
+  // D9: content-hash idempotency key. No time-slot — same intent = same
+  // key. Failed-row replay is the doctor --remediate loop's job, not
+  // the CLI --background path's job.
+  const idempotency_key = `${source}:${opts.jobName}:${sha8(canonicalJson(params))}`;
+
+  try {
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(opts.engine);
+    const job = await queue.add(opts.jobName, params, {
+      queue: 'default',
+      idempotency_key,
+      max_attempts: 2,
+    });
+    process.stdout.write(`job_id=${job.id}\n`);
+
+    if (follow) {
+      // exec `gbrain jobs follow <id>` so the user sees live stream
+      // without losing the durable-queue submission.
+      const { spawn } = await import('child_process');
+      const cmd = process.argv[0] ?? 'bun';
+      const script = process.argv[1] ?? '';
+      const child = spawn(cmd, [script, 'jobs', 'follow', String(job.id)], {
+        stdio: 'inherit',
+      });
+      await new Promise<void>((resolve) => child.on('exit', () => resolve()));
+    }
+    return true;  // caller exits
+  } catch (e) {
+    process.stderr.write(`[--background] submit failed: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+}
+
+function sha8(s: string): string {
+  return createHash('sha256').update(s).digest('hex').slice(0, 8);
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`).join(',')}}`;
+}

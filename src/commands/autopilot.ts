@@ -250,6 +250,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   // before the queue piles up.
   const NO_WORKER_WARN_TICKS = 3;
   let noWorkerConsecutiveIdle = 0;
+  // v0.36+ T8: track time since last full cycle for the 60-min floor.
+  // Initialized to "long ago" so the first tick on a healthy brain still
+  // runs the full cycle (phase-coupling exercise) before settling into
+  // targeted-submit mode.
+  let lastFullCycleAt = 0;
 
   while (!stopping) {
     const cycleStart = Date.now();
@@ -307,35 +312,106 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     }
 
     if (useMinionsDispatch) {
-      // Submit ONE autopilot-cycle job per cycle slot. The idempotency key
-      // dedupes overrun submissions — if a cycle's job runs longer than
-      // the interval, the next submission is a no-op at the DB layer
-      // (ON CONFLICT DO NOTHING on the unique partial index).
+      // v0.36+ brain-health-100 wave (T8): targeted-submit loop.
+      //
+      // Pre-fix: every tick submitted ONE autopilot-cycle job, full phase
+      // set, regardless of brain state. On a healthy brain this was pure
+      // overhead. On a degraded brain it bundled fast wins (embed) with
+      // slow phases (synthesize) so the user waited for the slowest.
+      //
+      // New logic: compute the remediation plan (cheap; no full doctor
+      // walk), then route to the right level of intervention:
+      //   - Score >= 95 + empty plan: full cycle every 60min (phase-
+      //     coupling exercise), otherwise sleep.
+      //   - Small plan (<=3 steps, <5min): submit individual handlers.
+      //   - Large plan or low score: full autopilot-cycle (the hammer).
+      //
+      // D10 cycle-lock invariant ensures targeted-submit and
+      // autopilot-cycle can never run concurrently (both acquire
+      // gbrain-cycle), so the "60-min floor double-processes queued
+      // targeted jobs" failure mode is closed by the lock.
       try {
         const { MinionQueue } = await import('../core/minions/queue.ts');
+        const { computeRecommendations } = await import('../core/brain-score-recommendations.ts');
         const queue = new MinionQueue(engine);
         const slotMs = Math.floor(Date.now() / (baseInterval * 1000)) * baseInterval * 1000;
         const slot = new Date(slotMs).toISOString();
         const timeoutMs = Math.max(baseInterval * 2 * 1000, 300_000);
-        const job = await queue.add('autopilot-cycle',
-          { repoPath },
-          {
-            queue: 'default',
-            idempotency_key: `autopilot-cycle:${slot}`,
-            max_attempts: 2,
-            timeout_ms: timeoutMs,
-            // Submission backpressure: when the worker is dead or wedged,
-            // idempotency_key only dedupes within a slot; cross-slot pile-up
-            // is what produced the 28+ waiting-jobs production incident.
-            // maxWaiting: 1 caps at 1 active + 1 waiting; queue.add coalesces
-            // the 3rd+ submission and writes a backpressure-audit JSONL line.
-            maxWaiting: 1,
-          },
-        );
-        if (jsonMode) {
-          process.stderr.write(JSON.stringify({ event: 'dispatched', job_id: job.id, slot }) + '\n');
+
+        // Cheap path: engine.getHealth() is a single SQL count query.
+        const health = await engine.getHealth();
+        const score = health.brain_score;
+        const ctx = {
+          repoPath,
+          hasEmbeddingApiKey: !!(process.env.OPENAI_API_KEY || await engine.getConfig('openai_api_key')),
+          hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || await engine.getConfig('anthropic_api_key')),
+        };
+        const plan = computeRecommendations(health, ctx).filter((r) => r.status === 'remediable');
+        const estTotal = plan.reduce((s, r) => s + r.est_seconds, 0);
+
+        // Track time since last full cycle for the 60-min floor.
+        const FULL_CYCLE_FLOOR_MIN = 60;
+        const minutesSinceLastFull = (Date.now() - lastFullCycleAt) / 60000;
+
+        const shouldFullCycle =
+          (score >= 95 && plan.length === 0 && minutesSinceLastFull >= FULL_CYCLE_FLOOR_MIN) ||
+          plan.length > 3 ||
+          estTotal >= 300 ||
+          score < 70;
+
+        const shouldSleep = score >= 95 && plan.length === 0 && minutesSinceLastFull < FULL_CYCLE_FLOOR_MIN;
+
+        if (shouldSleep) {
+          if (jsonMode) {
+            process.stderr.write(JSON.stringify({ event: 'skip_healthy', score, plan_size: 0 }) + '\n');
+          }
+        } else if (shouldFullCycle) {
+          const job = await queue.add('autopilot-cycle',
+            { repoPath },
+            {
+              queue: 'default',
+              idempotency_key: `autopilot-cycle:${slot}`,
+              max_attempts: 2,
+              timeout_ms: timeoutMs,
+              maxWaiting: 1,
+            },
+          );
+          lastFullCycleAt = Date.now();
+          if (jsonMode) {
+            process.stderr.write(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'full', slot, score, plan_size: plan.length }) + '\n');
+          } else {
+            console.log(`[dispatch] job #${job.id} autopilot-cycle (full; score=${score})`);
+          }
         } else {
-          console.log(`[dispatch] job #${job.id} autopilot-cycle slot=${slot}`);
+          // Small targeted plan — submit individual handlers per step.
+          // D9 content-hash idempotency keys (from computeRecommendations).
+          // maxWaiting:1 per submit per codex #17 (closes the backpressure
+          // gap the prior implementation had for targeted submits).
+          for (const step of plan) {
+            try {
+              const isProtected = !!step.protected;
+              const submitOpts = {
+                queue: 'default',
+                idempotency_key: step.idempotency_key,
+                max_attempts: 2,
+                timeout_ms: timeoutMs,
+                maxWaiting: 1,
+              };
+              const job = await queue.add(
+                step.job,
+                step.params,
+                submitOpts,
+                isProtected ? { allowProtectedSubmit: true } : undefined,
+              );
+              if (jsonMode) {
+                process.stderr.write(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'targeted', step: step.id, score, plan_size: plan.length }) + '\n');
+              } else {
+                console.log(`[dispatch] job #${job.id} ${step.job} (targeted: ${step.id}; score=${score})`);
+              }
+            } catch (e) {
+              logError('dispatch.step', e);
+            }
+          }
         }
       } catch (e) { logError('dispatch', e); cycleOk = false; }
     } else {

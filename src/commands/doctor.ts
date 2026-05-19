@@ -18,6 +18,26 @@ export interface Check {
   status: 'ok' | 'warn' | 'fail';
   message: string;
   issues?: Array<{ type: string; skill: string; action: string; fix?: any }>;
+  /**
+   * v0.36+ brain-health-100: structured remediation jobs per check.
+   * Populated by the recommendation generator; consumed by
+   * `gbrain doctor --remediation-plan` / `--remediate`. Optional and
+   * additive — schema_version stays at 2 (D4).
+   */
+  remediation?: Array<{
+    id: string;
+    job: string;
+    params: Record<string, unknown>;
+    idempotency_key: string;
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    est_seconds: number;
+    est_usd_cost?: number;
+    depends_on?: string[];
+    rationale: string;
+    protected?: boolean;
+  }>;
+  /** Top-level triage state per D13. */
+  remediation_status?: 'remediable' | 'human_only' | 'blocked';
 }
 
 /**
@@ -3382,4 +3402,294 @@ async function runLocksCheck(engine: BrainEngine | null, jsonOutput: boolean): P
   console.log('These connections may block ALTER TABLE DDL during migration.');
   console.log('After terminating, retry: gbrain apply-migrations --yes');
   process.exit(1);
+}
+
+// ============================================================
+// v0.36+ brain-health-100 wave: --remediation-plan + --remediate
+//
+// Plan: ~/.claude/plans/system-instruction-you-are-working-fluttering-ocean.md
+// Decisions: D1 (per-job re-eval), D3 (sequential submit),
+// D5 (depends_on cascade on failure), D7 (scoped recheck),
+// D9 (content-hash idempotency), D13 (three-state classification),
+// D14 (stable remediation_id), +A (cost-budget gate).
+// ============================================================
+
+/**
+ * Emit ordered Remediation list to drive brain to --target-score.
+ *
+ * Read-only — never enqueues, never mutates. The agent contract:
+ * inspect the plan with --remediation-plan --json before committing
+ * to --remediate. The JSON shape is stable; consumers that parse it
+ * can rely on it across releases.
+ */
+export async function runRemediationPlan(
+  engine: BrainEngine,
+  args: string[],
+): Promise<void> {
+  const { computeRecommendations, classifyChecks, maxReachableScore } =
+    await import('../core/brain-score-recommendations.ts');
+
+  const targetScore = parseIntFlag(args, '--target-score') ?? 90;
+  const jsonOutput = args.includes('--json');
+
+  // Cheap path (D7) — don't run slow doctor checks for the plan surface.
+  // The recommendation generator works from BrainHealth + context alone.
+  const health = await engine.getHealth();
+  const ctx = await loadRecommendationContext(engine);
+  const recs = computeRecommendations(health, ctx);
+  // Synthetic check list for classification — we don't need full doctor
+  // output, just the check names the recommendations care about.
+  const syntheticChecks = [
+    { name: 'brain_score', status: 'ok' as const },
+    { name: 'sync_freshness', status: 'ok' as const },
+    { name: 'missing_embeddings', status: 'ok' as const },
+    { name: 'dead_links', status: 'ok' as const },
+    { name: 'orphan_pages', status: 'ok' as const },
+  ];
+  const classifications = classifyChecks(syntheticChecks, ctx);
+  const ceiling = maxReachableScore(health, classifications);
+
+  const filteredRecs = recs.filter((r) => r.status === 'remediable');
+  const estTotalSeconds = filteredRecs.reduce((sum, r) => sum + r.est_seconds, 0);
+  const estTotalUsd = filteredRecs.reduce((sum, r) => sum + (r.est_usd_cost ?? 0), 0);
+
+  const blocked = classifications
+    .filter((c) => c.status === 'blocked')
+    .map((c) => ({ check: c.check, reason: c.reason ?? 'prerequisite missing' }));
+
+  const plan = {
+    schema_version: 2,
+    brain_score_current: health.brain_score,
+    brain_score_target: targetScore,
+    max_reachable_score: ceiling,
+    target_unreachable: targetScore > ceiling,
+    plan: filteredRecs.map((r, i) => ({ step: i + 1, ...r })),
+    est_total_seconds: estTotalSeconds,
+    est_total_usd_cost: Number(estTotalUsd.toFixed(2)),
+    blocked,
+  };
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(plan, null, 2));
+    return;
+  }
+
+  // Human output
+  console.log(`Brain score: ${health.brain_score}/100 → target ${targetScore}`);
+  if (plan.target_unreachable) {
+    console.log(`Target unreachable: max with autonomous remediation is ${ceiling}/100.`);
+  }
+  if (plan.plan.length === 0) {
+    console.log('No remediations needed. Brain is at target.');
+  } else {
+    console.log(`Plan: ${plan.plan.length} step(s), est ${plan.est_total_seconds}s, est $${plan.est_total_usd_cost.toFixed(2)}`);
+    for (const step of plan.plan) {
+      const protectedMark = step.protected ? ' [PROTECTED]' : '';
+      const costMark = step.est_usd_cost ? ` ($${step.est_usd_cost.toFixed(2)})` : '';
+      console.log(`  ${step.step}. [${step.severity}] ${step.job}${protectedMark} — ${step.rationale}${costMark}`);
+    }
+  }
+  if (blocked.length > 0) {
+    console.log(`\nBlocked checks (prereq missing):`);
+    for (const b of blocked) {
+      console.log(`  - ${b.check}: ${b.reason}`);
+    }
+  }
+}
+
+/**
+ * Submit ordered Remediation jobs sequentially per D3, with D5 cascade
+ * on failure and D7 scoped recheck between steps.
+ *
+ * Default behavior: submit-and-wait per step. --dry-run skips submission.
+ * --max-usd N refuses if est_total_usd_cost > N. --max-jobs N caps the
+ * inner loop.
+ *
+ * PGLite path: synchronous in-process execution (no durable queue).
+ */
+export async function runRemediate(
+  engine: BrainEngine,
+  args: string[],
+): Promise<void> {
+  const targetScore = parseIntFlag(args, '--target-score') ?? 90;
+  const maxJobs = parseIntFlag(args, '--max-jobs') ?? Infinity;
+  const maxUsd = parseFloatFlag(args, '--max-usd');
+  const dryRun = args.includes('--dry-run');
+  const skipConfirm = args.includes('--yes');
+  const jsonOutput = args.includes('--json');
+
+  const { computeRecommendations, classifyChecks, maxReachableScore } =
+    await import('../core/brain-score-recommendations.ts');
+
+  const ctx = await loadRecommendationContext(engine);
+
+  // Pre-flight ceiling check (D13)
+  const initialHealth = await engine.getHealth();
+  const syntheticChecks = [
+    { name: 'brain_score', status: 'ok' as const },
+    { name: 'sync_freshness', status: 'ok' as const },
+    { name: 'missing_embeddings', status: 'ok' as const },
+    { name: 'dead_links', status: 'ok' as const },
+    { name: 'orphan_pages', status: 'ok' as const },
+  ];
+  const classifications = classifyChecks(syntheticChecks, ctx);
+  const ceiling = maxReachableScore(initialHealth, classifications);
+  if (targetScore > ceiling) {
+    console.error(
+      `[remediate] target ${targetScore} unreachable; max autonomous = ${ceiling}/100. ` +
+      `Configure missing prereqs (see --remediation-plan blocked output) or lower --target-score.`,
+    );
+    process.exit(2);
+  }
+
+  // Initial plan
+  let recs = computeRecommendations(initialHealth, ctx).filter((r) => r.status === 'remediable');
+  if (recs.length === 0) {
+    console.log(`Brain at score ${initialHealth.brain_score}/100, target ${targetScore}. Nothing to do.`);
+    return;
+  }
+
+  const estTotalUsd = recs.reduce((sum, r) => sum + (r.est_usd_cost ?? 0), 0);
+  if (maxUsd !== null && estTotalUsd > maxUsd) {
+    console.error(
+      `[remediate] est cost $${estTotalUsd.toFixed(2)} exceeds --max-usd $${maxUsd.toFixed(2)}. Aborting.`,
+    );
+    process.exit(2);
+  }
+
+  if (!skipConfirm && process.stdout.isTTY) {
+    console.log(`About to submit ${recs.length} job(s), est ${Math.round(recs.reduce((s, r) => s + r.est_seconds, 0))}s, est $${estTotalUsd.toFixed(2)}`);
+    console.log('Pass --yes to proceed (cron-friendly).');
+    process.exit(1);
+  }
+
+  if (dryRun) {
+    console.log(`[remediate --dry-run] Would submit ${recs.length} jobs:`);
+    for (const r of recs) console.log(`  - ${r.id} (${r.job})`);
+    return;
+  }
+
+  // Sequential submit per D3, with D5 cascade on failure and D7
+  // scoped recheck between steps.
+  const submitted: Array<{ step: number; id: string; job_id: number | null; status: string }> = [];
+  const abortedIds = new Set<string>();
+  const doctorRunId = crypto.randomUUID();
+
+  const isPGLite = engine.kind === 'pglite';
+  if (isPGLite) {
+    console.error('[remediate] PGLite engine: running inline (no durable queue).');
+  }
+
+  const { MinionQueue } = await import('../core/minions/queue.ts');
+  const { waitForCompletion } = await import('../core/minions/wait-for-completion.ts');
+  const queue = new MinionQueue(engine);
+
+  let stepCount = 0;
+  while (recs.length > 0 && stepCount < maxJobs) {
+    const step = recs[0];
+    if (!step) break;
+    stepCount++;
+
+    // D5: if depends_on intersects aborted, skip + cascade
+    if (step.depends_on && step.depends_on.some((d) => abortedIds.has(d))) {
+      submitted.push({ step: stepCount, id: step.id, job_id: null, status: 'skipped_dep_aborted' });
+      abortedIds.add(step.id);
+      recs.shift();
+      continue;
+    }
+
+    try {
+      const isProtected = !!step.protected;
+      const job = await queue.add(
+        step.job,
+        { ...step.params, doctor_run_id: doctorRunId },
+        {
+          queue: 'default',
+          idempotency_key: step.idempotency_key,
+          max_attempts: 2,
+          maxWaiting: 1,
+        },
+        isProtected ? { allowProtectedSubmit: true } : undefined,
+      );
+      submitted.push({ step: stepCount, id: step.id, job_id: job.id, status: 'submitted' });
+
+      // Wait for terminal state. PGLite is in-process — short poll.
+      const terminal = await waitForCompletion(queue, job.id, {
+        pollMs: isPGLite ? 250 : 1000,
+        timeoutMs: (step.est_seconds + 60) * 1000,
+      });
+      const lastSub = submitted[submitted.length - 1];
+      if (lastSub) lastSub.status = terminal.status;
+
+      if (terminal.status !== 'completed') {
+        abortedIds.add(step.id);
+      }
+    } catch (e) {
+      submitted.push({
+        step: stepCount, id: step.id, job_id: null,
+        status: `error: ${(e as Error).message.slice(0, 100)}`,
+      });
+      abortedIds.add(step.id);
+    }
+
+    recs.shift();
+    // D7: scoped recheck — re-compute plan from fresh health snapshot.
+    // The next plan may drop completed steps and re-introduce failed
+    // steps with bumped retry suffix (D1).
+    if (recs.length === 0 || stepCount >= maxJobs) break;
+    const freshHealth = await engine.getHealth();
+    recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
+  }
+
+  const finalHealth = await engine.getHealth();
+  const result = {
+    doctor_run_id: doctorRunId,
+    brain_score_initial: initialHealth.brain_score,
+    brain_score_final: finalHealth.brain_score,
+    brain_score_target: targetScore,
+    target_reached: finalHealth.brain_score >= targetScore,
+    submitted,
+    aborted_count: abortedIds.size,
+  };
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(`\nBrain score: ${initialHealth.brain_score} → ${finalHealth.brain_score} (target ${targetScore})`);
+    console.log(`Submitted: ${submitted.length} job(s), ${abortedIds.size} aborted/failed`);
+  }
+
+  const anyFailed = submitted.some((s) => s.status !== 'completed' && s.status !== 'submitted');
+  if (anyFailed) process.exit(1);
+}
+
+/**
+ * Build RecommendationContext from engine + config.
+ * Pure read; no side effects.
+ */
+async function loadRecommendationContext(engine: BrainEngine) {
+  const repoPath = await engine.getConfig('sync.repo_path');
+  const embeddingModel = await engine.getConfig('embedding_model');
+  const embeddingDimensions = await engine.getConfig('embedding_dimensions');
+  return {
+    repoPath: repoPath ?? undefined,
+    embeddingModel: embeddingModel ?? undefined,
+    embeddingDimensions: embeddingDimensions ? Number(embeddingDimensions) : undefined,
+    hasEmbeddingApiKey: !!(process.env.OPENAI_API_KEY || await engine.getConfig('openai_api_key')),
+    hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || await engine.getConfig('anthropic_api_key')),
+  };
+}
+
+function parseIntFlag(args: string[], flag: string): number | null {
+  const i = args.indexOf(flag);
+  if (i === -1 || i === args.length - 1) return null;
+  const v = parseInt(args[i + 1] ?? '', 10);
+  return isNaN(v) ? null : v;
+}
+
+function parseFloatFlag(args: string[], flag: string): number | null {
+  const i = args.indexOf(flag);
+  if (i === -1 || i === args.length - 1) return null;
+  const v = parseFloat(args[i + 1] ?? '');
+  return isNaN(v) ? null : v;
 }

@@ -98,6 +98,31 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
 }
 
 export async function runEmbed(engine: BrainEngine, args: string[]): Promise<EmbedResult | undefined> {
+  // v0.36+ T7: --background submits via Minion queue, returns job_id to
+  // stdout, exits. Same semantics in TTY and cron (D9).
+  if (args.includes('--background')) {
+    const { maybeBackground } = await import('../core/cli-options.ts');
+    const backgrounded = await maybeBackground({
+      engine,
+      args,
+      jobName: 'embed',
+      paramBuilder: (cleanArgs) => {
+        const slugsI = cleanArgs.indexOf('--slugs');
+        const srcI = cleanArgs.indexOf('--source');
+        return {
+          all: cleanArgs.includes('--all'),
+          stale: cleanArgs.includes('--stale'),
+          dryRun: cleanArgs.includes('--dry-run'),
+          slugs: slugsI >= 0 ? cleanArgs.slice(slugsI + 1).filter(a => !a.startsWith('--')) : undefined,
+          sourceId: srcI >= 0 ? cleanArgs[srcI + 1] : undefined,
+        };
+      },
+      source: 'cli',
+    });
+    if (backgrounded) return;
+    // PGLite degraded to inline — fall through.
+  }
+
   const slugsIdx = args.indexOf('--slugs');
   const all = args.includes('--all');
   const stale = args.includes('--stale');

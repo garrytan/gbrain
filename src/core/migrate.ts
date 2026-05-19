@@ -3546,6 +3546,63 @@ export const MIGRATIONS: Migration[] = [
       `,
     },
   },
+  {
+    version: 75,
+    name: 'op_checkpoints_table',
+    // v0.36+ autonomous-remediation wave (renumbered v67→v75 during master
+    // merge — master's v0.36.1.0 calibration + v0.36.3.0 captured v67-v74).
+    // Shared checkpoint table for long-running ops (embed, extract, lint,
+    // backlinks, reindex, integrity). Pre-fix, each op had its own
+    // file-backed checkpoint (or none), which broke on Postgres multi-worker
+    // hosts and silently fingerprint-collided across param variations
+    // (extract links vs extract timeline shared one file). DB-backed primary;
+    // PGLite engine falls back to file-backed at
+    // ~/.gbrain/checkpoints/<op>-<fingerprint>.json because it's single-host
+    // by construction.
+    //
+    // Fingerprint = sha8 of canonical-JSON of relevant params per op
+    // (chunker_version + embedding_model for embed, mode for extract, etc.).
+    // completed_keys are op-defined strings: chunk ids for embed, file paths
+    // for extract/lint/backlinks/reindex, page slugs for integrity.
+    //
+    // GC: cycle's purge phase drops rows older than 7 days.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS op_checkpoints (
+        op TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (op, fingerprint)
+      );
+      CREATE INDEX IF NOT EXISTS op_checkpoints_updated_at_idx
+        ON op_checkpoints (updated_at);
+    `,
+  },
+  {
+    version: 76,
+    name: 'minion_jobs_doctor_run_id_index',
+    // v0.36+ autonomous-remediation wave (renumbered v68→v76 during master
+    // merge). Partial GIN on minion_jobs.data for `data ? 'doctor_run_id'`.
+    // Lets `gbrain doctor --remediate` runs be queried by run id for audit
+    // trail without sequential-scanning months of cron history. Partial so
+    // only doctor-submitted jobs are indexed; ordinary cron submissions
+    // don't bloat the index.
+    //
+    // PGLite skips via empty sqlFor — JSONB GIN partial indexes aren't
+    // supported the same way; audit query falls through to sequential
+    // scan, which is fine for PGLite's single-host scope.
+    idempotent: true,
+    sql: '',
+    sqlFor: {
+      postgres: `
+        CREATE INDEX IF NOT EXISTS minion_jobs_doctor_run_id_idx
+          ON minion_jobs USING GIN (data jsonb_path_ops)
+          WHERE data ? 'doctor_run_id';
+      `,
+      pglite: '',
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

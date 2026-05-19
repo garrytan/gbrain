@@ -968,13 +968,23 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     const purgedSources = await purgeExpiredSources(engine);
     const purgedPages = await engine.purgeDeletedPages(SOFT_DELETE_TTL_HOURS_FOR_PURGE);
     const purgedClones = await purgeOrphanClones(SOFT_DELETE_TTL_HOURS_FOR_PURGE);
+    // v0.36+ folded scope item +C: GC stale op_checkpoints rows.
+    // 7-day TTL is deliberately generous; any reasonable long-running op
+    // finishes inside that window. Cheap (few KB per row).
+    let purgedCheckpoints = 0;
+    try {
+      const { purgeStaleCheckpoints } = await import('./op-checkpoint.ts');
+      purgedCheckpoints = await purgeStaleCheckpoints(engine, 7);
+    } catch {
+      // Non-fatal: op_checkpoints table may not exist yet on pre-v67 brains.
+    }
     return {
       phase: 'purge',
       status: 'ok',
       duration_ms: 0,
       summary:
-        `purged ${purgedSources.length} source(s), ${purgedPages.count} page(s), and ` +
-        `${purgedClones.count} orphan clone temp dir(s) past the 72h recovery window`,
+        `purged ${purgedSources.length} source(s), ${purgedPages.count} page(s), ` +
+        `${purgedClones.count} orphan clone temp dir(s), and ${purgedCheckpoints} stale op_checkpoint(s)`,
       details: {
         purged_sources_count: purgedSources.length,
         purged_pages_count: purgedPages.count,
@@ -982,6 +992,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         purged_orphan_clone_names: purgedClones.names,
         purged_sources: purgedSources,
         purged_page_slugs: purgedPages.slugs,
+        purged_checkpoints_count: purgedCheckpoints,
       },
     };
   } catch (e) {

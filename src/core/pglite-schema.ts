@@ -761,6 +761,22 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 );
 
 -- ============================================================
+-- op_checkpoints (v0.36+ autonomous-remediation wave, migration v67)
+-- Shared checkpoint table for long-running ops. See migrate.ts:67 for
+-- the design rationale; PGLite engine can also fall back to file-backed
+-- storage per src/core/op-checkpoint.ts.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS op_checkpoints (
+  op             TEXT NOT NULL,
+  fingerprint    TEXT NOT NULL,
+  completed_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (op, fingerprint)
+);
+CREATE INDEX IF NOT EXISTS op_checkpoints_updated_at_idx
+  ON op_checkpoints (updated_at);
+
+-- ============================================================
 -- Trigger-based search_vector (spans pages + timeline_entries)
 -- ============================================================
 ALTER TABLE pages ADD COLUMN IF NOT EXISTS search_vector tsvector;
