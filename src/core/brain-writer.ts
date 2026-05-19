@@ -62,9 +62,12 @@ const SAMPLE_PER_SOURCE = 20;
  *                          the YAML zone
  *   - SLUG_MISMATCH     — remove `slug:` line (gbrain derives slug from path)
  *
- * Idempotent: running twice is a no-op on already-clean input. Any error class
- * not in the list above is left untouched (e.g. EMPTY_FRONTMATTER, YAML_PARSE,
- * MISSING_OPEN — those need human review).
+ * Idempotent: running twice is a no-op on already-clean input. This now also
+ * repairs the common YAML_PARSE patterns we actually see in the wild:
+ *   - Obsidian wikilink CSV values (`related: [[A]], [[B]]`) → YAML string arrays
+ *   - Plain scalar values containing `: ` (e.g. unquoted titles) → quoted scalars
+ *
+ * Truly ambiguous cases are still left untouched (e.g. EMPTY_FRONTMATTER).
  */
 export function autoFixFrontmatter(
   content: string,
@@ -156,7 +159,60 @@ export function autoFixFrontmatter(
     }
   }
 
-  // 4. SLUG_MISMATCH — remove `slug:` line if filePath is provided and the
+  // 4. YAML_PARSE — repair the common plain-scalar mistakes seen in curated
+  //    HQ sources: Obsidian wikilink CSVs and unquoted values containing `: `.
+  {
+    const lines = working.split('\n');
+    let firstNonEmpty = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim().length > 0) { firstNonEmpty = i; break; }
+    }
+    if (firstNonEmpty >= 0 && lines[firstNonEmpty].trim() === '---') {
+      let closeIdx = lines.length;
+      for (let i = firstNonEmpty + 1; i < lines.length; i++) {
+        if (lines[i].trim() === '---') { closeIdx = i; break; }
+      }
+      let fixedAny = false;
+      for (let i = firstNonEmpty + 1; i < closeIdx; i++) {
+        const m = lines[i].match(/^(\s*[A-Za-z_][\w-]*\s*:\s*)(.+?)\s*$/);
+        if (!m) continue;
+        const [, prefix, rawValue] = m;
+        const value = rawValue.trim();
+        if (!value) continue;
+
+        const wikilinks = Array.from(value.matchAll(/\[\[[^\]]+\]\]/g)).map(match => match[0]);
+        if (wikilinks.length > 0) {
+          const remainder = value.replace(/\[\[[^\]]+\]\]/g, '').replace(/[\s,]/g, '');
+          if (remainder.length === 0) {
+            if (wikilinks.length === 1 && value === wikilinks[0]) {
+              lines[i] = `${prefix}"${wikilinks[0].replace(/"/g, '\\"')}"`;
+            } else {
+              const rendered = wikilinks.map(link => `"${link.replace(/"/g, '\\"')}"`).join(', ');
+              lines[i] = `${prefix}[${rendered}]`;
+            }
+            fixedAny = true;
+            continue;
+          }
+        }
+
+        if (/^["'\[{]|^[>|]/.test(value)) continue;
+
+        if (value.includes(': ') && !value.includes('://')) {
+          lines[i] = `${prefix}"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+          fixedAny = true;
+        }
+      }
+      if (fixedAny) {
+        working = lines.join('\n');
+        fixes.push({
+          code: 'YAML_PARSE',
+          description: 'Repaired common YAML plain-scalar parse failures',
+        });
+      }
+    }
+  }
+
+  // 5. SLUG_MISMATCH — remove `slug:` line if filePath is provided and the
   //    declared slug doesn't match the path-derived one. Per PR #392 spec,
   //    gbrain derives slug from path; the field shouldn't be in frontmatter.
   if (opts?.filePath) {

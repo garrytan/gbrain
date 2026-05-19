@@ -95,6 +95,28 @@ describe('gbrain frontmatter CLI (B4)', () => {
     expect(existsSync(f + '.bak')).toBe(true);
   });
 
+  test('validate --fix generates frontmatter for files with none', () => {
+    const f = join(tmp, 'founder-note.md');
+    const original = '# Founder Note\n\nA short memo.';
+    writeFileSync(f, original);
+    const { code } = runCli(['validate', f, '--fix']);
+    expect(code).toBe(0);
+    expect(existsSync(f + '.bak')).toBe(true);
+    const rewritten = readFileSync(f, 'utf8');
+    expect(rewritten).toMatch(/^---\n/);
+    expect(rewritten).toContain('title: Founder Note');
+    expect(rewritten).toContain(original);
+  });
+
+  test('validate --fix repairs common YAML parse failures', () => {
+    const f = join(tmp, 'broken-yaml.md');
+    writeFileSync(f, `${fence}\ntype: concept\nrelated: [[AI-as-Audience]], [[Pilot Impact Measurement]]\n${fence}\n\nbody`);
+    const { code } = runCli(['validate', f, '--fix']);
+    expect(code).toBe(0);
+    expect(existsSync(f + '.bak')).toBe(true);
+    expect(readFileSync(f, 'utf8')).toContain('related: ["[[AI-as-Audience]]", "[[Pilot Impact Measurement]]"]');
+  });
+
   test('validate scans a directory recursively, skips non-.md files', () => {
     mkdirSync(join(tmp, 'subdir'), { recursive: true });
     writeFileSync(join(tmp, 'a.md'), `${fence}\ntype: concept\ntitle: A\n${fence}\n\nbody`);

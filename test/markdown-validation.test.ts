@@ -133,6 +133,12 @@ describe('parseMarkdown validation surface', () => {
       const parsed = parseMarkdown(md, undefined, { validate: true });
       expect(parsed.errors!.map(e => e.code)).not.toContain('NESTED_QUOTES');
     });
+
+    test('quoted YAML arrays do not trigger', () => {
+      const md = `${fence}\ntype: concept\nrelated: ["[[AI-as-Audience]]", "[[Machine-Targeted Content]]"]\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.map(e => e.code)).not.toContain('NESTED_QUOTES');
+    });
   });
 
   describe('EMPTY_FRONTMATTER', () => {

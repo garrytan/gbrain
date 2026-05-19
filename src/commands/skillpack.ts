@@ -122,8 +122,8 @@ function resolveAbs(p: string): string {
   return isAbsolute(p) ? p : resolvePath(process.cwd(), p);
 }
 
-function findGbrainOrDie(): string {
-  const root = findGbrainRoot();
+function findGbrainOrDie(opts?: { allowInstallPathFallback?: boolean }): string {
+  const root = findGbrainRoot(undefined, opts);
   if (!root) {
     console.error('Error: could not find gbrain repo root.');
     process.exit(2);
@@ -152,7 +152,7 @@ async function cmdList(args: string[]): Promise<void> {
     process.exit(0);
   }
   const json = args.includes('--json');
-  const gbrainRoot = findGbrainOrDie();
+  const gbrainRoot = findGbrainOrDie({ allowInstallPathFallback: true });
   let manifest;
   try {
     manifest = loadBundleManifest(gbrainRoot);
@@ -292,7 +292,7 @@ async function cmdReference(args: string[]): Promise<void> {
     process.exit(2);
   }
 
-  const gbrainRoot = findGbrainOrDie();
+  const gbrainRoot = findGbrainOrDie({ allowInstallPathFallback: true });
   const targetWorkspace = resolveWorkspace({ workspace });
 
   try {
@@ -602,7 +602,7 @@ async function cmdDiff(args: string[]): Promise<void> {
     console.error('Error: pass a skill name.');
     process.exit(2);
   }
-  const gbrainRoot = findGbrainOrDie();
+  const gbrainRoot = findGbrainOrDie({ allowInstallPathFallback: true });
   const targetSkillsDir = skillsDir
     ? resolveAbs(skillsDir)
     : join(resolveWorkspace({ workspace }), 'skills');

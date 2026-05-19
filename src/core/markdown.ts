@@ -223,7 +223,8 @@ function collectValidationErrors(
     const line = lines[i];
     const m = line.match(/^\s*[A-Za-z_][\w-]*\s*:\s*(.*)$/);
     if (!m) continue;
-    const value = m[1];
+    const value = m[1].trim();
+    if (value.startsWith('[')) continue; // valid YAML arrays often contain many quoted items
     let count = 0;
     for (let j = 0; j < value.length; j++) {
       if (value[j] === '"' && (j === 0 || value[j - 1] !== '\\')) count++;

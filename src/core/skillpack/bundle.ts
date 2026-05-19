@@ -9,6 +9,7 @@
 
 import { existsSync, readFileSync, statSync, readdirSync } from 'fs';
 import { join, dirname, isAbsolute, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
 import { parseMarkdown } from '../markdown.ts';
 
@@ -38,8 +39,16 @@ export class BundleError extends Error {
 /**
  * Walk up from `start` (default cwd) looking for an `openclaw.plugin.json`
  * sibling to `src/cli.ts`. That pair identifies a gbrain repo root.
+ *
+ * For read-only callers, an optional install-path fallback walks up from
+ * this module's location. That lets commands like `gbrain skillpack list`
+ * work from outside the repo checkout without letting write paths silently
+ * target the bundled source tree.
  */
-export function findGbrainRoot(start: string = process.cwd()): string | null {
+export function findGbrainRoot(
+  start: string = process.cwd(),
+  opts?: { allowInstallPathFallback?: boolean },
+): string | null {
   let dir = resolve(start);
   for (let i = 0; i < 10; i++) {
     if (
@@ -52,6 +61,22 @@ export function findGbrainRoot(start: string = process.cwd()): string | null {
     if (parent === dir) break;
     dir = parent;
   }
+
+  if (opts?.allowInstallPathFallback) {
+    let installDir = dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 10; i++) {
+      if (
+        existsSync(join(installDir, 'openclaw.plugin.json')) &&
+        existsSync(join(installDir, 'src', 'cli.ts'))
+      ) {
+        return installDir;
+      }
+      const parent = dirname(installDir);
+      if (parent === installDir) break;
+      installDir = parent;
+    }
+  }
+
   return null;
 }
 

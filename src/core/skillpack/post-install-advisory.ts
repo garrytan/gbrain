@@ -141,8 +141,8 @@ export function buildAdvisory(opts: {
     missing,
     installCommand:
       missing.length === V0_25_1_RECOMMENDED.length
-        ? 'gbrain skillpack install --all'
-        : `gbrain skillpack install ${missing.map((s) => s.slug).join(' ')}`,
+        ? 'gbrain skillpack scaffold --all'
+        : `gbrain skillpack scaffold ${missing.map((s) => s.slug).join(' ')}`,
   });
 }
 
@@ -154,7 +154,7 @@ function buildAdvisoryWithoutWorkspace(
     version,
     context,
     missing: V0_25_1_RECOMMENDED,
-    installCommand: 'gbrain skillpack install --all',
+    installCommand: 'gbrain skillpack scaffold --all',
     workspaceNotDetected: true,
   });
 }
@@ -184,7 +184,7 @@ function renderAdvisory(opts: {
   if (opts.workspaceNotDetected) {
     lines.push(
       '(NOTE: No OpenClaw workspace was detected at the default location. ' +
-        'Set $OPENCLAW_WORKSPACE or pass --skills-dir to gbrain skillpack install.)',
+        'Set $OPENCLAW_WORKSPACE or pass --workspace to gbrain skillpack scaffold.)',
     );
     lines.push('');
   }
@@ -206,8 +206,8 @@ function renderAdvisory(opts: {
   lines.push('');
   lines.push('  4. If NO, tell them they can install any time with:');
   lines.push('');
-  lines.push('         gbrain skillpack install <name>      # one skill');
-  lines.push('         gbrain skillpack install --all       # all bundled');
+  lines.push('         gbrain skillpack scaffold <name>     # one skill');
+  lines.push('         gbrain skillpack scaffold --all      # all bundled');
   lines.push('         gbrain skillpack list                # see all options');
   lines.push('');
   lines.push('  Do NOT install without asking. The user owns this decision.');

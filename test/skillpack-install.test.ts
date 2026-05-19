@@ -122,6 +122,13 @@ describe('findGbrainRoot', () => {
     mkdirSync(nested, { recursive: true });
     expect(findGbrainRoot(nested)).toBe(gbrainRoot);
   });
+
+  it('can fall back to the installed module path for read-only callers', () => {
+    expect(
+      findGbrainRoot('/tmp/definitely-not-a-gbrain-repo-XYZ', { allowInstallPathFallback: true }),
+    ).toBe('/Users/prashantagarwal/gbrain');
+  });
+
   it('returns null when no gbrain root above', () => {
     expect(findGbrainRoot('/tmp/definitely-not-a-gbrain-repo-XYZ')).toBeNull();
   });

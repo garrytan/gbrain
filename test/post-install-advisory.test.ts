@@ -113,7 +113,7 @@ describe('buildAdvisory — partial-install path', () => {
     expect(advisory).toContain('book-mirror');
     expect(advisory).not.toContain('article-enrichment');
     expect(advisory).not.toContain('strategic-reading');
-    expect(advisory).toContain('gbrain skillpack install book-mirror');
+    expect(advisory).toContain('gbrain skillpack scaffold book-mirror');
   });
 
   it('uses --all command when ALL recommended are missing (fresh workspace)', () => {
@@ -125,7 +125,7 @@ describe('buildAdvisory — partial-install path', () => {
       targetSkillsDir: skillsDir,
     });
     expect(advisory).not.toBeNull();
-    expect(advisory).toContain('gbrain skillpack install --all');
+    expect(advisory).toContain('gbrain skillpack scaffold --all');
     expect(advisory).toContain('book-mirror');
     expect(advisory).toContain('article-enrichment');
     expect(advisory).toContain('strategic-reading');
@@ -213,7 +213,7 @@ describe('buildAdvisory — agent-readable framing', () => {
       targetWorkspace: workspace,
       targetSkillsDir: skillsDir,
     })!;
-    expect(advisory).toContain('gbrain skillpack install --all');
+    expect(advisory).toContain('gbrain skillpack scaffold --all');
     expect(advisory).toContain('gbrain skillpack list');
   });
 });
@@ -228,6 +228,6 @@ describe('buildAdvisory — no workspace detected', () => {
     });
     expect(advisory).not.toBeNull();
     // No workspace -> empty installed set -> all recommended treated as missing.
-    expect(advisory).toContain('gbrain skillpack install --all');
+    expect(advisory).toContain('gbrain skillpack scaffold --all');
   });
 });

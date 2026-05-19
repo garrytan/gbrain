@@ -15,7 +15,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, lstatSync, readdirSync, copyFileSync } from 'fs';
-import { join, relative, resolve } from 'path';
+import { basename, dirname, join, relative, resolve } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
@@ -26,6 +26,7 @@ import {
   type AuditReport,
   type AuditFix,
 } from '../core/brain-writer.ts';
+import { inferFrontmatter, serializeFrontmatter } from '../core/frontmatter-inference.ts';
 import { isSyncable, slugifyPath } from '../core/sync.ts';
 
 export async function runFrontmatter(args: string[]): Promise<void> {
@@ -166,6 +167,8 @@ async function runValidate(rest: string[]): Promise<void> {
 
   const files = collectFiles(resolved);
   const results: FileValidation[] = [];
+  const targetIsFile = lstatSync(resolved).isFile();
+  const inferenceRoot = targetIsFile ? dirname(resolved) : resolved;
 
   for (const file of files) {
     const content = readFileSync(file, 'utf8');
@@ -178,9 +181,22 @@ async function runValidate(rest: string[]): Promise<void> {
     };
 
     if (flags.fix && errs.length > 0) {
-      const { content: fixed, fixes } = autoFixFrontmatter(content, { filePath: file });
-      result.fixesApplied = fixes;
-      if (fixes.length > 0 && !flags.dryRun) {
+      let fixed = content;
+      const fixList: AuditFix[] = [];
+      const hasMissingOpen = errs.some(e => e.code === 'MISSING_OPEN');
+      if (hasMissingOpen) {
+        const relPath = relative(inferenceRoot, file) || basename(file);
+        const inferred = inferFrontmatter(relPath, fixed);
+        if (!inferred.skipped) {
+          fixed = serializeFrontmatter(inferred) + '\n' + fixed;
+          fixList.push({ code: 'MISSING_OPEN', description: 'Generated frontmatter for file with none' });
+        }
+      }
+      const auto = autoFixFrontmatter(fixed, { filePath: file });
+      fixed = auto.content;
+      fixList.push(...auto.fixes);
+      result.fixesApplied = fixList;
+      if (fixList.length > 0 && !flags.dryRun) {
         copyFileSync(file, file + '.bak');
         writeFileSync(file, fixed, 'utf8');
       }

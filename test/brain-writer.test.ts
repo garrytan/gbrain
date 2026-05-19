@@ -55,6 +55,20 @@ describe('autoFixFrontmatter', () => {
     expect(second.fixes).toEqual([]);
   });
 
+  test('repairs Obsidian wikilink CSV into a YAML string array', () => {
+    const input = `${fence}\ntags: [concept]\nrelated: [[AI-as-Audience]], [[Pilot Impact Measurement]]\n${fence}\n\nbody`;
+    const { content, fixes } = autoFixFrontmatter(input);
+    expect(fixes.some(f => f.code === 'YAML_PARSE')).toBe(true);
+    expect(content).toContain('related: ["[[AI-as-Audience]]", "[[Pilot Impact Measurement]]"]');
+  });
+
+  test('quotes plain scalar values that contain colon-space', () => {
+    const input = `${fence}\ntitle: The Drum — From GEO to GEM: why CMOs need to think bigger\n${fence}\n\nbody`;
+    const { content, fixes } = autoFixFrontmatter(input);
+    expect(fixes.some(f => f.code === 'YAML_PARSE')).toBe(true);
+    expect(content).toContain('title: "The Drum — From GEO to GEM: why CMOs need to think bigger"');
+  });
+
   test('clean input: no fixes, content unchanged', () => {
     const input = `${fence}\ntype: concept\ntitle: ok\n${fence}\n\nbody`;
     const { content, fixes } = autoFixFrontmatter(input);
