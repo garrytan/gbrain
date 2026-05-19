@@ -6,11 +6,19 @@ start here.
 
 ## Install (5 min)
 
-1. Clone: `git clone https://github.com/garrytan/gbrain ~/gbrain && cd ~/gbrain`
-2. Install: `bun install`
-3. Init the brain: `gbrain init` (defaults to PGLite, zero-config). For 1000+ files or
+1. Install gbrain via Bun (the canonical path):
+   ```bash
+   curl -fsSL https://bun.sh/install | bash
+   export PATH="$HOME/.bun/bin:$PATH"
+   bun install -g github:garrytan/gbrain
+   ```
+   If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`,
+   the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218).
+   Run `gbrain apply-migrations --yes` to recover, or fall back to the
+   deterministic install: `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
+2. Init the brain: `gbrain init` (defaults to PGLite, zero-config). For 1000+ files or
    multi-machine sync, init suggests Postgres + pgvector via Supabase.
-4. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
+3. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
    default but printed a 9-cell cost matrix (mode × downstream model)
    preceded by `[AGENT]` markers. You MUST relay the matrix to the operator
    and confirm their choice before continuing. Cost spread between corners
@@ -18,7 +26,7 @@ start here.
    [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) Step 3.5 for the
    exact ask-the-user protocol. Same banner fires on `gbrain post-upgrade`
    for existing users (search modes were added in v0.32.3).
-5. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full 9-step flow
+4. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full 9-step flow
    (API keys, identity, cron, verification).
 
 ## Read this order
@@ -49,8 +57,9 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   [`docs/mcp/DEPLOY.md`](./docs/mcp/DEPLOY.md).
 - **Debug:** [`docs/GBRAIN_VERIFY.md`](./docs/GBRAIN_VERIFY.md),
   [`docs/guides/minions-fix.md`](./docs/guides/minions-fix.md), `gbrain doctor --fix`.
-- **Migrate:** [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
-  [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations`.
+- **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
+  [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
+  [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes` (manual schema-only).
 - **Eval retrieval changes:** capture is off by default. To benchmark a
   retrieval change against real captured queries, set
   `GBRAIN_CONTRIBUTOR_MODE=1`, then `gbrain eval export --since 7d > base.ndjson`

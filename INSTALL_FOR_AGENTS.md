@@ -16,32 +16,43 @@ If you fetched this file by URL without cloning yet, the companion files live at
 
 ## Step 1: Install GBrain
 
+Default path (Bun is required — gbrain is a Bun + TypeScript runtime):
+
 ```bash
-git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
 curl -fsSL https://bun.sh/install | bash
 export PATH="$HOME/.bun/bin:$PATH"
-bun install && bun link
+bun install -g github:garrytan/gbrain
 ```
 
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
 restart the shell or add the PATH export to the shell profile.
 
-> **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
-> postinstall hook on global installs, so schema migrations never run and the CLI
-> aborts with `Aborted()` when it opens PGLite. Use the `git clone + bun link` path
-> above. Tracking issue: [#218](https://github.com/garrytan/gbrain/issues/218).
+> **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`** (Bun
+> occasionally blocks the top-level postinstall hook on global installs, so schema
+> migrations don't run automatically), the CLI prints a recovery hint pointing at
+> [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain apply-migrations --yes`
+> to recover. If that doesn't work, fall back to the deterministic install path:
+>
+> ```bash
+> git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
+> bun install && bun link
+> ```
 
 ## Step 2: API Keys
 
-Ask the user for these:
+Ask the user for these. gbrain defaults to the ZeroEntropy embedding + reranker stack
+(as of v0.36.2.0); OpenAI/Voyage are still supported as fallbacks via `gbrain config
+set embedding_model <provider:model>`.
 
 ```bash
-export OPENAI_API_KEY=sk-...          # required for vector search
-export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality
+export ZEROENTROPY_API_KEY=ze-...     # default embedding + reranker (v0.36.2.0+)
+export OPENAI_API_KEY=sk-...          # fallback for vector search; also used for chat models
+export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality via query expansion
 ```
 
-Save to shell profile or `.env`. Without OpenAI, keyword search still works.
-Without Anthropic, search works but skips query expansion.
+Save to shell profile or `.env`. Keys are picked up by `gbrain config set` automatically
+or can be stored in `~/.gbrain/config.json` (file plane). Without any embedding provider,
+keyword search still works. Without Anthropic, search works but skips query expansion.
 
 ## Step 3: Create the Brain
 
@@ -152,8 +163,24 @@ and supports `--since YYYY-MM-DD` for incremental runs.
 
 ## Step 5: Load Skills
 
-Read `~/gbrain/skills/RESOLVER.md`. This is the skill dispatcher. It tells you which
-skill to read for any task. Save this to your memory permanently.
+If you're running an agent platform (OpenClaw, Hermes, or any repo with a workspace),
+scaffold the bundled skills into it:
+
+```bash
+cd /path/to/agent/workspace
+gbrain skillpack scaffold --all       # copy 43 curated skills + RESOLVER.md
+```
+
+Scaffolded skills are first-class files in your repo. Edit freely; re-running scaffold
+refuses to overwrite anything that exists. Use `gbrain skillpack reference <name>` to
+diff against gbrain's bundle when you want upstream improvements. (The legacy
+`gbrain skillpack install` managed-block model was retired in v0.36.0.0 — run
+`gbrain skillpack migrate-fence` once if upgrading from an older release.)
+
+Whether you scaffolded or not, read `skills/RESOLVER.md` (in your workspace, or the
+bundled copy at `~/gbrain/skills/RESOLVER.md` when running from the cloned repo). It's
+the skill dispatcher — tells you which skill to read for any task. Save this to your
+memory permanently.
 
 The three most important skills to adopt immediately:
 
@@ -181,14 +208,17 @@ If skipped, minimal defaults are installed automatically.
 
 ## Step 7: Recurring Jobs
 
-Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab):
+Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab), or skip the
+platform glue entirely with `gbrain autopilot --install` (built-in self-maintaining daemon):
 
 - **Live sync** (every 15 min): `gbrain sync --repo ~/brain && gbrain embed --stale`
-- **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install)
-- **Dream cycle** (nightly): read `docs/guides/cron-schedule.md` for the full protocol.
+  — or `gbrain sync --watch` for a continuous loop.
+- **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install).
+- **Dream cycle** (nightly): `gbrain dream` runs the 8-phase overnight maintenance cycle.
   Entity sweep, citation fixes, memory consolidation, plus (v0.23+) overnight conversation
-  synthesis and cross-session pattern detection. 8 phases, one cron-friendly command. This
-  is what makes the brain compound. Do not skip it.
+  synthesis and cross-session pattern detection. One cron-friendly command. This is what
+  makes the brain compound. Do not skip it. See `docs/guides/cron-schedule.md` for the
+  full protocol.
 - **Weekly**: `gbrain doctor --json && gbrain embed --stale`
 
 ## Step 8: Integrations
@@ -206,9 +236,18 @@ actually works) is the most important.
 
 ## Upgrade
 
+If you installed via `bun install -g`:
+
+```bash
+gbrain upgrade                        # self-updates the binary, runs schema migrations,
+                                      # and prints post-upgrade notes for the version range
+```
+
+If you installed via `git clone + bun link`:
+
 ```bash
 cd ~/gbrain && git pull origin master && bun install
-gbrain init                           # apply schema migrations (idempotent)
+gbrain apply-migrations --yes         # apply schema migrations (idempotent)
 gbrain post-upgrade                   # show migration notes for the version range
 ```
 

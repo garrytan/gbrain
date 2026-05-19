@@ -22,14 +22,14 @@ GBrain runs in three shapes. Pick the one that matches how you use AI agents tod
 
 ### Run with your agent platform
 
-Already using [OpenClaw](https://github.com/garrytan/openclaw) or [Hermes](https://github.com/garrytan/hermes)? GBrain installs as a skillpack into your agent's workspace.
+Already using [OpenClaw](https://github.com/garrytan/openclaw) or [Hermes](https://github.com/garrytan/hermes)? GBrain installs as a skillpack scaffold into your agent's workspace.
 
 ```bash
 gbrain init --pglite
-gbrain skillpack install
+gbrain skillpack scaffold --all   # or: scaffold <name> per skill
 ```
 
-That's it. Your agent picks up 43 skills (signal detection, brain-ops, ingest, enrich, citation-fixer, daily-task-manager, cron-scheduler, eval framework, and 35 more). Routing lives in `skills/RESOLVER.md` — the agent reads it once per request, picks the right skill, executes.
+That's it. Your agent picks up 43 skills (signal detection, brain-ops, ingest, enrich, citation-fixer, daily-task-manager, cron-scheduler, eval framework, and 35 more). Routing lives in `skills/RESOLVER.md` — the agent reads it once per request, picks the right skill, executes. Scaffolded skills are first-class members of your agent repo — you own them, edit freely; `gbrain skillpack reference <name>` diffs your copy against gbrain's bundle when you want to pull upstream improvements. (The legacy `gbrain skillpack install` managed-block model was retired in v0.36.0.0; run `gbrain skillpack migrate-fence` once if you're upgrading from an older release.)
 
 ### CLI standalone
 
@@ -94,7 +94,7 @@ The whole loop is described in [`docs/architecture/topologies.md`](docs/architec
 
 Data flowing into the brain. Each integration is a recipe — markdown + setup hints — that ships in `recipes/` and is discoverable via `gbrain integrations list`.
 
-- **Voice**: Whisper or Groq voice-to-brain capture. Setup in [`docs/integrations/voice.md`](docs/integrations/voice.md).
+- **Voice**: Phone calls create brain pages via Twilio + OpenAI Realtime (or DIY STT+LLM+TTS). Setup recipe: [`recipes/twilio-voice-brain.md`](recipes/twilio-voice-brain.md).
 - **Email + calendar**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
 - **Embedding providers**: 14 recipes covering OpenAI (default fallback), Voyage, ZeroEntropy (default), Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy. Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md).
 - **Credential gateway**: vault-aware secret distribution. [`docs/integrations/credential-gateway.md`](docs/integrations/credential-gateway.md).
