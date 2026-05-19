@@ -4,7 +4,12 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { buildStructuralContextMapEntry, workspaceContextMapId } from '../src/core/services/context-map-service.ts';
+import {
+  buildCodeLaneContextMapEntry,
+  buildStructuralContextMapEntry,
+  codeLaneContextMapId,
+  workspaceContextMapId,
+} from '../src/core/services/context-map-service.ts';
 import { queryStructuralContextMap } from '../src/core/services/context-map-query-service.ts';
 
 test('context-map query service ranks deterministic node matches for a direct map read', async () => {
@@ -138,6 +143,56 @@ test('context-map query service keeps stale maps queryable with explicit warning
     expect(result.result?.status).toBe('stale');
     expect(result.result?.summary_lines).toContain('Context map status is stale.');
     expect(result.result?.summary_lines).toContain('Rebuild the context map before trusting this query result for broad routing.');
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('context-map query service excludes code-lane maps from structural query selection', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-context-map-query-code-lane-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'systems/code-lane', [
+      '---',
+      'type: system',
+      'title: Code Lane',
+      'repo_path: /workspace/example',
+      'codemap:',
+      '  - system: systems/code-lane',
+      '    repo_path: /workspace/example',
+      '    pointers:',
+      '      - path: src/example.ts',
+      '        symbol: run',
+      '        content_hash: sha256:example',
+      '---',
+      '# Overview',
+      'Derived code lane orientation.',
+    ].join('\n'), { path: 'systems/code-lane.md' });
+
+    const codeLane = await buildCodeLaneContextMapEntry(engine);
+
+    const byKind = await queryStructuralContextMap(engine, {
+      kind: 'code_lane',
+      query: 'run',
+    });
+    const byId = await queryStructuralContextMap(engine, {
+      map_id: codeLane.id,
+      query: 'run',
+    });
+
+    expect(codeLane.id).toBe(codeLaneContextMapId('workspace:default'));
+    expect(byKind.selection_reason).toBe('no_match');
+    expect(byKind.candidate_count).toBe(0);
+    expect(byKind.result).toBeNull();
+    expect(byId.selection_reason).toBe('map_not_found');
+    expect(byId.candidate_count).toBe(0);
+    expect(byId.result).toBeNull();
   } finally {
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });

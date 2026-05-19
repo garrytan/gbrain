@@ -1703,6 +1703,11 @@ function parseCodeClaimParamItem(value: unknown, key: string): CodeClaim {
     ...(hasSymbol ? { symbol: String(claim.symbol) } : {}),
     ...(typeof claim.branch_name === 'string' && claim.branch_name.length > 0 ? { branch_name: claim.branch_name } : {}),
     ...(typeof claim.source_trace_id === 'string' && claim.source_trace_id.length > 0 ? { source_trace_id: claim.source_trace_id } : {}),
+    ...(typeof claim.expected_content_hash === 'string' && claim.expected_content_hash.trim().length > 0 ? { expected_content_hash: claim.expected_content_hash } : {}),
+    ...(typeof claim.verification_hint === 'string' && claim.verification_hint.trim().length > 0 ? { verification_hint: claim.verification_hint } : {}),
+    ...(typeof claim.verification_mode === 'string' && claim.verification_mode.trim().length > 0 ? { verification_mode: claim.verification_mode } : {}),
+    ...(typeof claim.source_ref === 'string' && claim.source_ref.trim().length > 0 ? { source_ref: claim.source_ref } : {}),
+    ...(typeof claim.symbol_id === 'string' && claim.symbol_id.trim().length > 0 ? { symbol_id: claim.symbol_id } : {}),
   };
 }
 
@@ -4919,7 +4924,7 @@ const reverify_code_claims: Operation = {
   params: {
     repo_path: { type: 'string', required: true, description: 'Repository root used to verify file and symbol claims' },
     branch_name: { type: 'string', description: 'Current branch name for branch-sensitive claims' },
-    claims: { type: 'array', items: { type: 'object' }, description: 'Code claims to verify directly' },
+    claims: { type: 'array', items: { type: 'object' }, description: 'Code claims to verify directly, optionally including expected_content_hash, verification_hint, verification_mode, source_ref, and symbol_id' },
     trace_id: { type: 'string', description: 'Retrieval trace id containing code_claim verification entries' },
   },
   mutating: true,

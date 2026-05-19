@@ -2651,6 +2651,11 @@ export interface CodeClaim {
   symbol?: string;
   branch_name?: string;
   source_trace_id?: string;
+  expected_content_hash?: string;
+  verification_hint?: string;
+  verification_mode?: string;
+  source_ref?: string;
+  symbol_id?: string;
 }
 
 export type CodeClaimVerificationStatus = 'current' | 'stale' | 'unverifiable';
@@ -2658,8 +2663,19 @@ export type CodeClaimVerificationStatus = 'current' | 'stale' | 'unverifiable';
 export interface CodeClaimVerificationResult {
   claim: CodeClaim;
   status: CodeClaimVerificationStatus;
-  reason: 'ok' | 'file_missing' | 'symbol_missing' | 'symbol_path_missing' | 'branch_mismatch' | 'branch_unknown' | 'repo_missing';
+  reason:
+    | 'ok'
+    | 'file_missing'
+    | 'symbol_missing'
+    | 'symbol_path_missing'
+    | 'branch_mismatch'
+    | 'branch_unknown'
+    | 'repo_missing'
+    | 'branch_required'
+    | 'content_hash_required'
+    | 'content_hash_mismatch';
   checked_at: string;
+  actual_content_hash?: string;
 }
 
 export interface RetrievalTraceWindowFilters {

@@ -134,6 +134,35 @@ Expected:
 - contradictions route to candidates, while task mechanics remain a direct no-write boundary
 - S28 uses existing SQLite-capable services and operations only; it does not add new DB tables, Postgres-only behavior, or facts/takes storage
 
+## GBrain Absorption GA-P5 Verification
+
+Run:
+
+```bash
+bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s30-gbrain-code-lane.test.ts
+```
+
+For the full GA-P5 slice, also run:
+
+```bash
+bun test test/context-map-code-lane-service.test.ts test/code-claim-verification-service.test.ts test/code-claim-verification-operations.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s30-gbrain-code-lane.test.ts
+bun run test:scenarios
+bunx tsc --noEmit --pretty false
+```
+
+Expected:
+
+- `test/fixtures/gbrain-absorption/ga-p5-code-lane.fixture.json` uses the
+  `GA-P5` stage and covers definition, references, callers, callees, nearby
+  context, and stale code-claim cases
+- code lane stays derived orientation and current code claims require live
+  content-hash verification
+- symbol graph expansion is opt-in, depth-limited, fanout-capped, and bounded
+- graph walk remains default-off until chunk-grain metadata and evaluation
+  justify enabling it
+- stale `expected_content_hash` claims fail through `reverify_code_claims` with
+  `content_hash_mismatch`
+
 ## Phase 1 operational-memory verification
 
 Run:

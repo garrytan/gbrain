@@ -168,4 +168,30 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(doc).toContain('bun test test/memory-activation-policy-service.test.ts test/memory-writeback-router-service.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s28-gbrain-memory-authority.test.ts');
     expect(doc).toContain('profile memory and personal episodes report their own authority after scope allow');
   });
+
+  test('anchors GA-P5 code-lane runtime in context-map and evaluation docs', () => {
+    const contextMap = readRepoFile('docs/architecture/redesign/05-workstream-context-map.md');
+    const evaluation = readRepoFile('docs/architecture/redesign/08-evaluation-and-acceptance.md');
+
+    expect(contextMap).toContain('## GA-P5 Code Lane Runtime Contract');
+    expect(contextMap).toContain('Code-lane runtime entries are derived orientation, not current code truth.');
+    expect(contextMap).toContain('Chunk-grain metadata is required before graph-walk retrieval can become default.');
+    expect(contextMap).toContain('Symbol graph expansion is opt-in, depth-limited, fanout-capped, and bounded.');
+    expect(contextMap).toContain('Extractor/chunker version changes must invalidate or rebuild derived code-lane artifacts.');
+    expect(contextMap).toContain('Current code claims require live file, symbol, branch, and content-hash verification.');
+    expect(evaluation).toContain('## GBrain Absorption GA-P5 Code Lane');
+    expect(evaluation).toContain('ga-p5-code-lane.fixture.json');
+    expect(evaluation).toContain('code_lane_cases');
+    expect(evaluation).toContain('content_hash_mismatch');
+    expect(evaluation).toContain('lane_grants_authority: false');
+  });
+
+  test('updates the install verification runbook for GA-P5', () => {
+    const doc = readRepoFile('docs/MBRAIN_VERIFY.md');
+
+    expect(doc).toContain('## GBrain Absorption GA-P5 Verification');
+    expect(doc).toContain('bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s30-gbrain-code-lane.test.ts');
+    expect(doc).toContain('code lane stays derived orientation and current code claims require live');
+    expect(doc).toContain('stale `expected_content_hash` claims fail through `reverify_code_claims` with');
+  });
 });

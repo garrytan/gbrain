@@ -193,6 +193,35 @@ GA-P4 fixture rules:
 6. GA-P4 does not add new database tables, Postgres-only behavior, or facts/takes
    storage.
 
+## GBrain Absorption GA-P5 Code Lane
+
+GA-P5 accepts the code-lane foundation only when executable replay proves that
+code graph data stays derived orientation and current code claims pass through a
+live workspace gate. The executable fixture is
+`test/fixtures/gbrain-absorption/ga-p5-code-lane.fixture.json`, and S30
+exercises it through codemap import, code-lane Context Map build, bounded graph
+expansion, and `reverify_code_claims`.
+
+The fixture has one family:
+
+| Fixture field | Existing verification surface | Regression guarded |
+|---|---|---|
+| `code_lane_cases` | codemap import, `buildCodeLaneContextMapEntry`, `expandCodeLaneGraph`, and `reverify_code_claims` | Definition, reference, caller, callee, and nearby-context lookups remain orienting only; stale `expected_content_hash` claims fail as `content_hash_mismatch`. |
+
+GA-P5 fixture rules:
+
+1. Code-lane runtime entries are derived orientation, not current code truth.
+2. Chunk-grain metadata is required before graph-walk retrieval can become
+   default.
+3. Symbol graph expansion is opt-in, depth-limited, fanout-capped, and bounded.
+4. Extractor/chunker version changes must invalidate or rebuild derived
+   code-lane artifacts.
+5. Current code claims require live file, symbol, branch, and content-hash
+   verification.
+6. `definition_lookup`, `references_lookup`, `callers_lookup`, `callees_lookup`,
+   `nearby_context`, and `stale_code_claim` cases must all record
+   `lane_grants_authority: false`.
+
 ## Repeated-Work Prevention Evaluation
 
 This evaluation corresponds to the operational-memory workstream and later phases that depend on resume quality.

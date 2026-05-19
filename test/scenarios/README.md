@@ -50,6 +50,7 @@ agent planning/spec files are intentionally not tracked.
 | S27 | `s27-gbrain-evaluation-foundation.test.ts` | GA-P2, E1, L5, L6, L7, G1 | ✅ green |
 | S28 | `s28-gbrain-memory-authority.test.ts` | GA-P4, L4, L5, L6, G1 | ✅ green |
 | S29 | `s29-gbrain-corpus-lanes.test.ts` | GA-P3, I5, L6, G1 | ✅ green |
+| S30 | `s30-gbrain-code-lane.test.ts` | GA-P5, L4, L6, E1 | ✅ green |
 
 Legend:
 - ✅ green = passes on current code
@@ -60,8 +61,8 @@ interaction-identity contracts, S22 agentic canonical retrieval transcript
 coverage, S23 duplicate review governance coverage, plus S24 duplicate review
 acceptance coverage, S25 memory consolidation retention coverage, S26
 GBrain absorption contract coverage, S27 GA-P2 evaluation foundation, and S28
-GA-P4 memory authority, and S29 GA-P3 corpus lane provenance
-coverage. Run this as
+GA-P4 memory authority, S29 GA-P3 corpus lane provenance coverage, and S30
+GA-P5 code lane derived-orientation coverage. Run this as
 part of final acceptance:
 
 ```sh

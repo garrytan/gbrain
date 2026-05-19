@@ -48,6 +48,61 @@ test('reverify_code_claims verifies direct claims without writing a trace', asyn
   }
 });
 
+test('reverify_code_claims preserves direct claim metadata and reports content hash mismatches', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-code-claim-op-hash-'));
+  const databasePath = join(dir, 'brain.db');
+  const repoPath = join(dir, 'repo');
+  const engine = new SQLiteEngine();
+  const op = operationsByName.reverify_code_claims;
+
+  if (!op) throw new Error('reverify_code_claims operation is missing');
+
+  try {
+    mkdirSync(join(repoPath, 'src'), { recursive: true });
+    writeFileSync(join(repoPath, 'src/example.ts'), 'export function presentSymbol() { return true; }\n');
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    const report = await op.handler({
+      engine,
+      config: {} as any,
+      logger: console,
+      dryRun: false,
+    }, {
+      repo_path: repoPath,
+      branch_name: 'main',
+      claims: [{
+        path: 'src/example.ts',
+        symbol: 'presentSymbol',
+        branch_name: 'main',
+        expected_content_hash: 'sha256:not-current',
+        verification_hint: 'run rg presentSymbol src/example.ts',
+        verification_mode: 'live_workspace_check',
+        source_ref: 'brain/systems/example.md',
+        symbol_id: 'system:src/example.ts#presentSymbol',
+      }],
+    }) as any;
+
+    expect(report.results[0]?.status).toBe('stale');
+    expect(report.results[0]?.reason).toBe('content_hash_mismatch');
+    expect(report.results[0]?.actual_content_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(report.results[0]?.claim).toEqual({
+      path: 'src/example.ts',
+      symbol: 'presentSymbol',
+      branch_name: 'main',
+      expected_content_hash: 'sha256:not-current',
+      verification_hint: 'run rg presentSymbol src/example.ts',
+      verification_mode: 'live_workspace_check',
+      source_ref: 'brain/systems/example.md',
+      symbol_id: 'system:src/example.ts#presentSymbol',
+    });
+    expect(report.written_trace).toBeNull();
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('reverify_code_claims extracts trace code claims and writes an operational stale marker', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-code-claim-op-trace-'));
   const databasePath = join(dir, 'brain.db');

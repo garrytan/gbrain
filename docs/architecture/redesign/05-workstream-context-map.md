@@ -310,6 +310,23 @@ Code-lane rules:
 6. Code-lane retrieval must keep `rg`, exact file reads, and direct workspace
    verification available as higher-authority current evidence.
 
+## GA-P5 Code Lane Runtime Contract
+
+GA-P5 makes the code lane executable as a Context Map entry while preserving the
+same authority boundary. Code-lane runtime entries are derived orientation, not current code truth.
+
+Runtime requirements:
+
+1. Each code-lane entry records `authority: "derived_orientation"` and must not
+   grant answer authority, write authority, or candidate-promotion authority.
+2. Chunk-grain metadata is required before graph-walk retrieval can become default.
+3. Symbol graph expansion is opt-in, depth-limited, fanout-capped, and bounded.
+4. Extractor/chunker version changes must invalidate or rebuild derived code-lane artifacts.
+5. Current code claims require live file, symbol, branch, and content-hash verification.
+6. `definition_lookup`, `references_lookup`, `callers_lookup`, `callees_lookup`,
+   and `nearby_context` may orient the agent, but the agent must still verify
+   current code with direct workspace reads or `reverify_code_claims`.
+
 ## Tests and Evaluation
 
 This workstream needs both correctness tests and utility evaluation.

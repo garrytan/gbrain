@@ -66,6 +66,110 @@ test('code claim verification marks a missing symbol stale', () => {
   }
 });
 
+test('code claim verification marks content hash mismatches stale before symbol matching', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-code-claim-hash-mismatch-'));
+
+  try {
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src/example.ts'), 'export function presentSymbol() { return true; }\n');
+
+    const [result] = verifyCodeClaims({
+      repo_path: dir,
+      claims: [{
+        path: 'src/example.ts',
+        symbol: 'presentSymbol',
+        expected_content_hash: 'sha256:not-current',
+      }],
+      now: new Date('2026-05-19T00:00:00.000Z'),
+    });
+
+    expect(result?.status).toBe('stale');
+    expect(result?.reason).toBe('content_hash_mismatch');
+    expect(result?.actual_content_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('code claim verification requires branch and content hash for live-workspace mode', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-code-claim-live-workspace-mode-'));
+
+  try {
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src/example.ts'), 'export function presentSymbol() { return true; }\n');
+
+    const [missingBranch] = verifyCodeClaims({
+      repo_path: dir,
+      branch_name: 'main',
+      claims: [{
+        path: 'src/example.ts',
+        symbol: 'presentSymbol',
+        expected_content_hash: 'sha256:not-current',
+        verification_mode: 'live_workspace_check',
+      }],
+      now: new Date('2026-05-19T00:00:01.000Z'),
+    });
+    const [missingHash] = verifyCodeClaims({
+      repo_path: dir,
+      branch_name: 'main',
+      claims: [{
+        path: 'src/example.ts',
+        symbol: 'presentSymbol',
+        branch_name: 'main',
+        verification_mode: 'live_workspace_check',
+      }],
+      now: new Date('2026-05-19T00:00:02.000Z'),
+    });
+
+    expect(missingBranch?.status).toBe('unverifiable');
+    expect(missingBranch?.reason).toBe('branch_required');
+    expect(missingHash?.status).toBe('unverifiable');
+    expect(missingHash?.reason).toBe('content_hash_required');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('code claim verification treats code-lane claims as live-workspace checks even without explicit mode', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-code-claim-code-lane-strict-'));
+
+  try {
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src/example.ts'), 'export function presentSymbol() { return true; }\n');
+
+    const [missingBranch] = verifyCodeClaims({
+      repo_path: dir,
+      branch_name: 'main',
+      claims: [{
+        path: 'src/example.ts',
+        symbol: 'presentSymbol',
+        expected_content_hash: 'sha256:not-current',
+        source_ref: 'test/fixtures/gbrain-absorption/ga-p5-code-lane.fixture.json#definition_lookup',
+        symbol_id: 'code:symbol:systems/example:/workspace/src/example.ts#presentSymbol',
+      }],
+      now: new Date('2026-05-19T00:00:03.000Z'),
+    });
+    const [missingHash] = verifyCodeClaims({
+      repo_path: dir,
+      branch_name: 'main',
+      claims: [{
+        path: 'src/example.ts',
+        symbol: 'presentSymbol',
+        branch_name: 'main',
+        symbol_id: 'code:symbol:systems/example:/workspace/src/example.ts#presentSymbol',
+      }],
+      now: new Date('2026-05-19T00:00:04.000Z'),
+    });
+
+    expect(missingBranch?.status).toBe('unverifiable');
+    expect(missingBranch?.reason).toBe('branch_required');
+    expect(missingHash?.status).toBe('unverifiable');
+    expect(missingHash?.reason).toBe('content_hash_required');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('code claim verification does not accept identifier substrings as symbols', () => {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-code-claim-symbol-substring-'));
 
@@ -198,6 +302,24 @@ test('code claim parser accepts pathless symbol claims as unverifiable inputs', 
   expect(claim).toEqual({
     symbol: 'MissingSymbol',
     source_trace_id: 'trace-symbol-only',
+  });
+});
+
+test('code claim parser preserves JSON verification metadata fields', () => {
+  const claim = parseCodeClaimVerificationEntry(
+    'code_claim:{"path":"src/example.ts","symbol":"presentSymbol","expected_content_hash":"sha256:abc","verification_hint":"run rg","verification_mode":"live_workspace_check","source_ref":"brain/systems/example.md","symbol_id":"system:src/example.ts#presentSymbol"}',
+    'trace-json-metadata',
+  );
+
+  expect(claim).toEqual({
+    path: 'src/example.ts',
+    symbol: 'presentSymbol',
+    expected_content_hash: 'sha256:abc',
+    verification_hint: 'run rg',
+    verification_mode: 'live_workspace_check',
+    source_ref: 'brain/systems/example.md',
+    symbol_id: 'system:src/example.ts#presentSymbol',
+    source_trace_id: 'trace-json-metadata',
   });
 });
 

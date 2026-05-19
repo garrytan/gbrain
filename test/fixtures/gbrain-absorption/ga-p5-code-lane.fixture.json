@@ -1,0 +1,84 @@
+{
+  "stage_id": "GA-P5",
+  "fixture_format": "gbrain_absorption_replay_v1",
+  "description": "GA-P5 code-lane cases prove code graph data is derived orientation and current claims require live workspace verification.",
+  "verification_commands": [
+    "bun test test/context-map-code-lane-service.test.ts test/code-claim-verification-service.test.ts test/code-claim-verification-operations.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s30-gbrain-code-lane.test.ts",
+    "bun run test:scenarios",
+    "bunx tsc --noEmit --pretty false"
+  ],
+  "code_lane_cases": [
+    {
+      "case_id": "definition_lookup",
+      "lookup_kind": "definition",
+      "path": "src/core/services/context-map-code-lane-service.ts",
+      "symbol": "buildCodeLaneContextMapEntry",
+      "expected_authority": "derived_orientation",
+      "lane_grants_authority": false,
+      "graph_walk": "default_off",
+      "expected_edge_kind": "declares",
+      "verification_mode": "live_workspace_check",
+      "verification_hint": "reverify_code_claims path+symbol+expected_content_hash before repeating current code claims"
+    },
+    {
+      "case_id": "references_lookup",
+      "lookup_kind": "references",
+      "path": "src/core/services/context-map-code-lane-service.ts",
+      "symbol": "expandCodeLaneGraph",
+      "expected_authority": "derived_orientation",
+      "lane_grants_authority": false,
+      "graph_walk": "default_off",
+      "expected_edge_kind": "references",
+      "verification_mode": "live_workspace_check",
+      "verification_hint": "reverify_code_claims verifies live file, symbol, branch, and content hash"
+    },
+    {
+      "case_id": "callers_lookup",
+      "lookup_kind": "callers",
+      "path": "src/core/services/context-map-code-lane-service.ts",
+      "symbol": "expandCodeLaneGraph",
+      "expected_neighbor_symbol": "buildCodeLaneContextMapEntry",
+      "expected_authority": "derived_orientation",
+      "lane_grants_authority": false,
+      "graph_walk": "opt_in_bounded",
+      "expected_edge_kind": "calls",
+      "verification_mode": "live_workspace_check"
+    },
+    {
+      "case_id": "callees_lookup",
+      "lookup_kind": "callees",
+      "path": "src/core/services/context-map-code-lane-service.ts",
+      "symbol": "buildCodeLaneContextMapEntry",
+      "expected_neighbor_symbol": "expandCodeLaneGraph",
+      "expected_authority": "derived_orientation",
+      "lane_grants_authority": false,
+      "graph_walk": "opt_in_bounded",
+      "expected_edge_kind": "calls",
+      "verification_mode": "live_workspace_check"
+    },
+    {
+      "case_id": "nearby_context",
+      "lookup_kind": "nearby_context",
+      "path": "src/core/operations.ts",
+      "symbol": "reverify_code_claims",
+      "expected_neighbor_symbol": "parseCodeClaimParamItem",
+      "expected_authority": "derived_orientation",
+      "lane_grants_authority": false,
+      "graph_walk": "opt_in_depth_1_fanout_capped",
+      "expected_edge_kind": "references",
+      "verification_mode": "live_workspace_check"
+    },
+    {
+      "case_id": "stale_code_claim",
+      "lookup_kind": "stale_code_claim",
+      "path": "src/core/services/context-map-code-lane-service.ts",
+      "symbol": "buildCodeLaneContextMapEntry",
+      "expected_content_hash": "sha256:not-current",
+      "expected_reverify_reason": "content_hash_mismatch",
+      "expected_authority": "derived_orientation",
+      "lane_grants_authority": false,
+      "graph_walk": "default_off",
+      "verification_mode": "live_workspace_check"
+    }
+  ]
+}

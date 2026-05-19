@@ -1,4 +1,5 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type {
   CodeClaim,
@@ -96,8 +97,22 @@ function parseJsonCodeClaim(payload: string, sourceTraceId?: string): CodeClaim 
     ...(path ? { path } : {}),
     ...(symbol ? { symbol } : {}),
     ...(typeof value.branch_name === 'string' && value.branch_name.length > 0 ? { branch_name: value.branch_name } : {}),
+    ...optionalStringField(value, 'expected_content_hash'),
+    ...optionalStringField(value, 'verification_hint'),
+    ...optionalStringField(value, 'verification_mode'),
+    ...optionalStringField(value, 'source_ref'),
+    ...optionalStringField(value, 'symbol_id'),
     ...(sourceTraceId ? { source_trace_id: sourceTraceId } : {}),
   };
+}
+
+function optionalStringField<T extends keyof CodeClaim>(
+  value: Record<string, unknown>,
+  key: T,
+): Pick<CodeClaim, T> | {} {
+  return typeof value[key] === 'string' && value[key].trim().length > 0
+    ? { [key]: value[key] } as Pick<CodeClaim, T>
+    : {};
 }
 
 function verifyOneClaim(input: {
@@ -109,6 +124,11 @@ function verifyOneClaim(input: {
   if (!input.claim.path) {
     const reason = input.claim.symbol ? 'symbol_path_missing' : 'file_missing';
     return buildResult(input.claim, 'unverifiable', reason, input.checkedAt);
+  }
+
+  const strictLiveWorkspaceCheck = requiresLiveWorkspaceCheck(input.claim);
+  if (strictLiveWorkspaceCheck && !input.claim.branch_name) {
+    return buildResult(input.claim, 'unverifiable', 'branch_required', input.checkedAt);
   }
 
   if (input.claim.branch_name) {
@@ -125,14 +145,49 @@ function verifyOneClaim(input: {
     return buildResult(input.claim, 'stale', 'file_missing', input.checkedAt);
   }
 
+  if (
+    strictLiveWorkspaceCheck
+    && (typeof input.claim.expected_content_hash !== 'string'
+      || input.claim.expected_content_hash.length === 0)
+  ) {
+    return buildResult(input.claim, 'unverifiable', 'content_hash_required', input.checkedAt);
+  }
+
+  const fileContent = readFileSync(filePath);
+  const actualContentHash = hashFileContent(fileContent);
+  if (
+    typeof input.claim.expected_content_hash === 'string'
+    && input.claim.expected_content_hash.length > 0
+    && input.claim.expected_content_hash !== actualContentHash
+  ) {
+    return buildResult(
+      input.claim,
+      'stale',
+      'content_hash_mismatch',
+      input.checkedAt,
+      actualContentHash,
+    );
+  }
+
   if (input.claim.symbol) {
-    const content = readFileSync(filePath, 'utf8');
+    const content = fileContent.toString('utf8');
     if (!hasVerifiableSymbol(content, input.claim.symbol)) {
       return buildResult(input.claim, 'stale', 'symbol_missing', input.checkedAt);
     }
   }
 
   return buildResult(input.claim, 'current', 'ok', input.checkedAt);
+}
+
+function hashFileContent(content: Buffer): string {
+  return `sha256:${createHash('sha256').update(content).digest('hex')}`;
+}
+
+function requiresLiveWorkspaceCheck(claim: CodeClaim): boolean {
+  if (claim.verification_mode === 'live_workspace_check') return true;
+  if (typeof claim.symbol_id === 'string' && claim.symbol_id.startsWith('code:symbol:')) return true;
+  if (typeof claim.source_ref === 'string' && claim.source_ref.includes('code-lane')) return true;
+  return false;
 }
 
 function hasVerifiableSymbol(content: string, symbol: string): boolean {
@@ -256,12 +311,14 @@ function buildResult(
   status: CodeClaimVerificationResult['status'],
   reason: CodeClaimVerificationResult['reason'],
   checkedAt: string,
+  actualContentHash?: string,
 ): CodeClaimVerificationResult {
   return {
     claim,
     status,
     reason,
     checked_at: checkedAt,
+    ...(actualContentHash ? { actual_content_hash: actualContentHash } : {}),
   };
 }
 
