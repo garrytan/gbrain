@@ -6,7 +6,7 @@
 
 | 名號 | Repo | 說明 |
 |------|------|------|
-| **靈機** | [lingji](https://github.com/RYN6666999/lingji) | Python LLM 執行層，讀玉簡、遵律令、行任務 |
+| **靈機** | [numen](https://github.com/RYN6666999/numen) | Python LLM 執行層，讀玉簡、遵律令、行任務 |
 | **玉簡** | 本 repo | GBrain 腦庫，知識載體，13 頁活文件常駐其中 |
 | **律令** | [luling](https://github.com/RYN6666999/luling) | 軍工級 contract 守門框架 |
 | **煉丹** | `skills/` in lingji | 技法鍛造，按需載入 |
