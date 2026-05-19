@@ -190,7 +190,7 @@ See `docs/ENGINES.md` for the full guide. In short:
 3. Run the test suite against your engine
 4. Document in `docs/`
 
-The SQLite engine is designed and ready for implementation. See `docs/SQLITE_ENGINE.md`.
+The original SQLite engine plan was superseded by PGLite (embedded Postgres 17 via WASM), which uses the same SQL dialect as Postgres and eliminates the need for a separate FTS5/sqlite-vss translation layer. See [`docs/ENGINES.md`](docs/ENGINES.md) for the engine architecture and the rationale.
 
 ## CONTRIBUTOR_MODE — turn on the dev loop
 

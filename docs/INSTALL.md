@@ -8,14 +8,16 @@ Already running [OpenClaw](https://github.com/garrytan/openclaw) or [Hermes](htt
 
 ```bash
 bun install -g github:garrytan/gbrain
-gbrain init --pglite              # 2 seconds; no server
-gbrain skillpack install          # 43 skills into your agent workspace
-gbrain doctor                     # green checks all the way down
+gbrain init --pglite                  # 2 seconds; no server
+gbrain skillpack scaffold --all       # 43 skills scaffolded into your agent workspace
+gbrain doctor                         # green checks all the way down
 ```
 
 Your agent now reads `skills/RESOLVER.md` once per request, routes intent to the right skill, executes. New entity mentions create new pages. Daily cron runs enrichment overnight.
 
-To upgrade later: `gbrain upgrade` runs schema migrations + post-upgrade prompts (chunker bumps, the v0.36.0.0 ZE switch). Always TTY-only; non-TTY upgrades skip prompts with informational stderr lines.
+Scaffolded skills are first-class files in your agent repo — edit freely. To pull upstream gbrain improvements later, `gbrain skillpack reference <name>` diffs your local copy vs the bundle. The legacy `skillpack install` managed-block model was retired in v0.36.0.0; if you're upgrading from an older release, run `gbrain skillpack migrate-fence` once to strip the legacy fence and keep your existing skill rows.
+
+To upgrade later: `gbrain upgrade` runs schema migrations + post-upgrade prompts (chunker bumps, the v0.36.2.0 ZeroEntropy switch). Always TTY-only; non-TTY upgrades skip prompts with informational stderr lines.
 
 ## 2. CLI standalone
 
@@ -25,6 +27,8 @@ No agent platform, just shell + MCP-aware editor.
 bun install -g github:garrytan/gbrain
 gbrain init --pglite
 ```
+
+> **If `bun install -g` hits a postinstall error** (Bun blocks postinstall hooks in some environments), the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain doctor` to diagnose, then `gbrain apply-migrations --yes` manually. The deterministic fallback is `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
 
 The init flow detects your repo size and suggests Supabase for brains > 1000 markdown files. To switch later:
 
