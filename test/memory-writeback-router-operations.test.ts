@@ -143,6 +143,57 @@ describe('memory writeback router operation', () => {
     expect(result.canonical_write_requirements.expected_content_hash).toBeNull();
   });
 
+  test('accepts corpus_lane as post-scope provenance metadata', async () => {
+    const engine = new Proxy({}, {
+      get() {
+        throw new Error('route_memory_writeback planning must not read the engine');
+      },
+    }) as unknown as OperationContext['engine'];
+
+    const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+      content: 'The imported source contains lane-aware provenance.',
+      source_kind: 'import',
+      evidence_kind: 'source_extracted',
+      source_refs: sourceRefs,
+      corpus_lane: {
+        lane_id: 'imports',
+        source_record: 'source-record:meeting-42',
+        import_origin: 'imports/meeting-42.md',
+      },
+    }) as any;
+
+    expect(result.decision).toBe('create_candidate');
+    expect(result.candidate_input.source_refs).toEqual(expect.arrayContaining([
+      'corpus_lane:imports',
+      'source_record:source-record:meeting-42',
+      'import_origin:imports/meeting-42.md',
+    ]));
+  });
+
+  test('rejects blank corpus_lane fields', async () => {
+    const engine = {} as unknown as OperationContext['engine'];
+
+    await expect(operationsByName.route_memory_writeback.handler(ctx(engine), {
+      content: 'The imported source contains invalid lane provenance.',
+      source_kind: 'import',
+      evidence_kind: 'source_extracted',
+      source_refs: sourceRefs,
+      corpus_lane: { lane_id: '   ' },
+    })).rejects.toThrow(/corpus_lane\.lane_id/);
+  });
+
+  test('rejects invalid corpus_lane artifact kinds', async () => {
+    const engine = {} as unknown as OperationContext['engine'];
+
+    await expect(operationsByName.route_memory_writeback.handler(ctx(engine), {
+      content: 'The imported source contains invalid lane provenance.',
+      source_kind: 'import',
+      evidence_kind: 'source_extracted',
+      source_refs: sourceRefs,
+      corpus_lane: { lane_id: 'imports', artifact_kind: 'not-real' },
+    })).rejects.toThrow(/corpus_lane\.artifact_kind/);
+  });
+
   test('rejects invalid target_snapshot_hash values', async () => {
     const engine = {} as unknown as OperationContext['engine'];
 

@@ -65,6 +65,7 @@ import { selectActivationPolicy } from './services/memory-activation-policy-serv
 import { classifyMemoryScenario } from './services/memory-scenario-classifier-service.ts';
 import { planScenarioMemoryRequest } from './services/scenario-memory-request-planner-service.ts';
 import { getWorkspaceCorpusCard } from './services/workspace-corpus-card-service.ts';
+import { CORPUS_LANE_ARTIFACT_KINDS } from './services/corpus-lane-service.ts';
 import { getWorkspaceOrientationBundle } from './services/workspace-orientation-bundle-service.ts';
 import { getWorkspaceProjectCard } from './services/workspace-project-card-service.ts';
 import { getWorkspaceSystemCard } from './services/workspace-system-card-service.ts';
@@ -98,6 +99,7 @@ import type {
   MemoryScenarioSourceKind,
   PersonalEpisodeSourceKind,
   ProfileMemoryType,
+  CorpusLaneMetadata,
   RetrievalRequestPlannerInput,
   RetrievalRouteIntent,
   RetrievalSelector,
@@ -1486,8 +1488,40 @@ function parseRetrievalSelectorObject(value: unknown, key: string): RetrievalSel
       throw new OperationError('invalid_params', `${key}.source_refs must be an array of strings.`);
     }
   }
+  if (selector.corpus_lane !== undefined) {
+    selector.corpus_lane = parseCorpusLaneMetadata(selector.corpus_lane, `${key}.corpus_lane`);
+  }
 
   return selector as unknown as RetrievalSelector;
+}
+
+function parseCorpusLaneMetadata(value: unknown, key: string): CorpusLaneMetadata {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new OperationError('invalid_params', `${key} must be an object.`);
+  }
+  const lane = value as Record<string, unknown>;
+  const output: Record<string, string> = {};
+  for (const field of ['lane_id', 'source_record', 'import_origin', 'artifact_kind']) {
+    if (lane[field] === undefined) continue;
+    if (typeof lane[field] !== 'string') {
+      throw new OperationError('invalid_params', `${key}.${field} must be a string.`);
+    }
+    const trimmed = lane[field].trim();
+    if (trimmed.length === 0) {
+      throw new OperationError('invalid_params', `${key}.${field} must be a non-empty string.`);
+    }
+    if (field === 'artifact_kind' && !(CORPUS_LANE_ARTIFACT_KINDS as readonly string[]).includes(trimmed)) {
+      throw new OperationError(
+        'invalid_params',
+        `${key}.artifact_kind must be one of: ${CORPUS_LANE_ARTIFACT_KINDS.join(', ')}.`,
+      );
+    }
+    output[field] = trimmed;
+  }
+  if (!output.lane_id) {
+    throw new OperationError('invalid_params', `${key}.lane_id must be a string.`);
+  }
+  return output as unknown as CorpusLaneMetadata;
 }
 
 function parseActivationArtifacts(

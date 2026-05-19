@@ -134,6 +134,41 @@ describe('memory writeback router service', () => {
     expect(result.candidate_input).toBeUndefined();
   });
 
+  test('does not treat lane id alone as writeback provenance', () => {
+    const result = routeMemoryWriteback({
+      content: 'The imported source states a durable claim but only names a lane.',
+      source_kind: 'import',
+      evidence_kind: 'source_extracted',
+      corpus_lane: { lane_id: 'imports' },
+    });
+
+    expect(result.decision).toBe('defer');
+    expect(result.intended_operation).toBe('none');
+    expect(result.reasons).toContain('candidate_missing_provenance');
+    expect(result.missing_requirements).toContain('source_refs');
+    expect(result.candidate_input).toBeUndefined();
+  });
+
+  test('does not allow canonical write when only lane id is present', () => {
+    const result = routeMemoryWriteback({
+      content: 'The imported source requests a canonical write but only names a lane.',
+      source_kind: 'import',
+      evidence_kind: 'source_extracted',
+      corpus_lane: { lane_id: 'imports' },
+      allow_canonical_write: true,
+      target_object_type: 'curated_note',
+      target_object_id: 'systems/mbrain',
+      target_snapshot_hash: currentHash,
+      sensitivity: 'work',
+    });
+
+    expect(result.decision).toBe('defer');
+    expect(result.intended_operation).toBe('none');
+    expect(result.reasons).toContain('canonical_provenance_required');
+    expect(result.missing_requirements).toContain('source_refs');
+    expect(result.canonical_write_requirements).toBeUndefined();
+  });
+
   test('allows direct canonical write only with explicit allow flag and target binding', () => {
     const result = routeMemoryWriteback({
       content: 'The user stated that docs/superpowers must stay local-only.',
@@ -180,6 +215,51 @@ describe('memory writeback router service', () => {
       sensitivity: 'work',
     });
     expect(result.candidate_input).toBeUndefined();
+  });
+
+  test('defers imported source-extracted writeback when lane provenance is absent', () => {
+    const result = routeMemoryWriteback({
+      content: 'The imported source states a durable claim but lacks lane provenance.',
+      source_kind: 'import',
+      evidence_kind: 'source_extracted',
+      source_refs: sourceRefs,
+    });
+
+    expect(result.decision).toBe('defer');
+    expect(result.intended_operation).toBe('none');
+    expect(result.reasons).toContain('import_lane_required');
+    expect(result.missing_requirements).toContain('corpus_lane');
+    expect(result.candidate_input).toBeUndefined();
+  });
+
+  test('routes imported source-extracted writeback when corpus lane input is present', () => {
+    const result = routeMemoryWriteback({
+      content: 'The imported source states a durable claim with lane provenance.',
+      source_kind: 'import',
+      evidence_kind: 'source_extracted',
+      source_refs: sourceRefs,
+      corpus_lane: { lane_id: 'imports', source_record: 'source-record:meeting-42' },
+    });
+
+    expect(result.decision).toBe('create_candidate');
+    expect(result.reasons).toContain('extracted_signal_without_canonical_request');
+    expect(result.candidate_input?.source_refs).toEqual(expect.arrayContaining([
+      ...sourceRefs,
+      'corpus_lane:imports',
+      'source_record:source-record:meeting-42',
+    ]));
+  });
+
+  test('routes imported source-extracted writeback when source refs carry lane provenance', () => {
+    const result = routeMemoryWriteback({
+      content: 'The imported source states a durable claim with source-record provenance.',
+      source_kind: 'import',
+      evidence_kind: 'source_extracted',
+      source_refs: [...sourceRefs, 'source_record:source-record:meeting-42'],
+    });
+
+    expect(result.decision).toBe('create_candidate');
+    expect(result.candidate_input?.source_refs).toContain('source_record:source-record:meeting-42');
   });
 
   test('defers canonical writes until the caller supplies a target snapshot hash', () => {

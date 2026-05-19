@@ -101,6 +101,31 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(doc).toContain('replay fixture families cover retrieval, candidate lifecycle, task resume, scope leak, and derived refresh regressions');
   });
 
+  test('anchors GA-P3 corpus-lane implementation in context-map, scope, and evaluation docs', () => {
+    const contextMap = readRepoFile('docs/architecture/redesign/05-workstream-context-map.md');
+    const scope = readRepoFile('docs/architecture/redesign/07-workstream-profile-memory-and-scope.md');
+    const evaluation = readRepoFile('docs/architecture/redesign/08-evaluation-and-acceptance.md');
+
+    expect(contextMap).toContain('## GA-P3 Corpus Lane Runtime Contract');
+    expect(contextMap).toContain('Corpus lanes are post-scope metadata only.');
+    expect(contextMap).toContain('retrievalSelectorId');
+    expect(contextMap).toContain('include lane ids');
+    expect(scope).toContain('GA-P3 keeps the lane resolver after the Scope Gate');
+    expect(scope).toContain('`route_memory_writeback` must');
+    expect(scope).toContain('defer ambiguous imported source-extracted writes');
+    expect(evaluation).toContain('## GBrain Absorption GA-P3 Corpus Lanes');
+    expect(evaluation).toContain('ga-p3-corpus-lanes.fixture.json');
+    expect(evaluation).toContain('lane_grants_authority: false');
+  });
+
+  test('updates the install verification runbook for GA-P3', () => {
+    const doc = readRepoFile('docs/MBRAIN_VERIFY.md');
+
+    expect(doc).toContain('## GBrain Absorption GA-P3 Verification');
+    expect(doc).toContain('bun test test/corpus-lane-service.test.ts test/import-file.test.ts test/read-context-service.test.ts test/retrieval-context-operations.test.ts test/memory-writeback-router-service.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s29-gbrain-corpus-lanes.test.ts');
+    expect(doc).toContain('corpus lanes remain post-scope provenance metadata and never become scopes, authority, or storage roots');
+  });
+
   test('anchors GA-P4 memory authority in the protocol owner', () => {
     const doc = readRepoFile('docs/architecture/redesign/02-memory-loop-and-protocols.md');
 

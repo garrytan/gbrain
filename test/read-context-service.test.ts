@@ -102,6 +102,62 @@ describe('read context service', () => {
     });
   });
 
+  test('decorates section reads and persisted traces with corpus lane provenance', async () => {
+    await withEngine('section-corpus-lane', async (engine) => {
+      await engine.createTaskThread({
+        id: 'task-read-corpus-lane',
+        scope: 'work',
+        title: 'Read Corpus Lane',
+        status: 'active',
+        repo_path: '/repo/mbrain',
+        branch_name: 'ga-p3-corpus-lane',
+        current_summary: 'Trace lane-aware read context.',
+      });
+      await importFromContent(engine, 'sources/lane-transcript', [
+        '---',
+        'type: source',
+        'title: Lane Transcript',
+        'corpus_lane: transcripts',
+        'source_record: source-record:meeting-42',
+        'import_origin: imports/meeting-42.md',
+        'artifact_kind: transcript',
+        '---',
+        '# Summary',
+        'The transcript lane is provenance metadata only.',
+      ].join('\n'), { path: 'imports/meeting-42.md' });
+
+      const sections = await engine.listNoteSectionEntries({
+        scope_id: 'workspace:default',
+        page_slug: 'sources/lane-transcript',
+        limit: 10,
+      });
+      const summary = sections.find((section) => section.heading_text === 'Summary');
+      if (!summary) throw new Error('summary section fixture missing');
+
+      const result = await readContext(engine, {
+        selectors: [{ kind: 'section', section_id: summary.section_id }],
+        task_id: 'task-read-corpus-lane',
+        persist_trace: true,
+        token_budget: 200,
+      });
+
+      expect(result.answer_ready.ready).toBe(true);
+      expect(result.canonical_reads[0]!.authority).toBe('canonical_compiled_truth');
+      expect(result.canonical_reads[0]!.corpus_lane?.lane_id).toBe('transcripts');
+      expect(result.canonical_reads[0]!.source_refs).toEqual(expect.arrayContaining([
+        'corpus_lane:transcripts',
+        'source_record:source-record:meeting-42',
+        'import_origin:imports/meeting-42.md',
+      ]));
+      expect(result.trace?.source_refs).toEqual(expect.arrayContaining([
+        'section:workspace:default:sources/lane-transcript#summary',
+        'corpus_lane:transcripts',
+        'source_record:source-record:meeting-42',
+        'import_origin:imports/meeting-42.md',
+      ]));
+    });
+  });
+
   test('accepts page content_hash for section selectors', async () => {
     await withEngine('section-page-hash', async (engine) => {
       await importFromContent(engine, 'systems/section-page-hash', [

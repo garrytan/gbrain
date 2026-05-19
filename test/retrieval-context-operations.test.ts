@@ -165,6 +165,62 @@ describe('agentic retrieval context operations', () => {
     expect(output).toContain('Canonical evidence');
   });
 
+  test('retrieval selector parsing accepts corpus_lane metadata without changing selector ids', async () => {
+    const op = operationsByName.retrieve_context;
+    if (!op) throw new Error('retrieve_context operation is missing');
+
+    const engine = {
+      listMemoryCandidateEntries: async () => [],
+      listCanonicalHandoffEntries: async () => [],
+    };
+
+    const result = await op.handler(opContext(engine), {
+      selectors: [{
+        kind: 'compiled_truth',
+        slug: 'concepts/retrieval',
+        corpus_lane: {
+          lane_id: 'transcripts',
+          source_record: 'source-record:meeting-42',
+          import_origin: 'imports/meeting-42.md',
+          artifact_kind: 'transcript',
+        },
+      }],
+    }) as any;
+
+    expect(result.required_reads[0].corpus_lane).toEqual({
+      lane_id: 'transcripts',
+      source_record: 'source-record:meeting-42',
+      import_origin: 'imports/meeting-42.md',
+      artifact_kind: 'transcript',
+    });
+    expect(result.required_reads[0].selector_id).toBe('compiled_truth:workspace:default:concepts/retrieval');
+  });
+
+  test('retrieval selector parsing rejects invalid corpus_lane shapes', async () => {
+    const op = operationsByName.retrieve_context;
+    if (!op) throw new Error('retrieve_context operation is missing');
+
+    await expect(op.handler(opContext({}), {
+      selectors: [{ kind: 'compiled_truth', slug: 'concepts/retrieval', corpus_lane: 'transcripts' }],
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+
+    await expect(op.handler(opContext({}), {
+      selectors: [{
+        kind: 'compiled_truth',
+        slug: 'concepts/retrieval',
+        corpus_lane: { lane_id: 'transcripts', source_record: 42 },
+      }],
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+
+    await expect(op.handler(opContext({}), {
+      selectors: [{
+        kind: 'compiled_truth',
+        slug: 'concepts/retrieval',
+        corpus_lane: { lane_id: 'transcripts', artifact_kind: 'not-real' },
+      }],
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+  });
+
   test('read_context rejects invalid selector JSON with invalid_params', async () => {
     const op = operationsByName.read_context;
     if (!op) throw new Error('read_context operation is missing');

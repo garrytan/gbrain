@@ -1,0 +1,62 @@
+{
+  "stage_id": "GA-P3",
+  "fixture_format": "gbrain_absorption_replay_v1",
+  "description": "GA-P3 corpus-lane cases prove lanes are post-scope provenance metadata, not authority, scope, or storage roots.",
+  "verification_commands": [
+    "bun test test/corpus-lane-service.test.ts test/import-file.test.ts test/read-context-service.test.ts test/retrieval-context-operations.test.ts test/memory-writeback-router-service.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s29-gbrain-corpus-lanes.test.ts",
+    "bun run test:scenarios",
+    "bunx tsc --noEmit --pretty false"
+  ],
+  "lane_cases": [
+    {
+      "case_id": "notes_lane",
+      "lane_id": "notes",
+      "lane_grants_authority": false,
+      "scope_gate": "required_before_lane_resolution",
+      "source_record": "source-record:note-42",
+      "import_origin": "notes/note-42.md",
+      "retrieval_trace": "lane refs only after selector ids",
+      "canonical_selector": "compiled_truth:workspace:default:notes/note-42"
+    },
+    {
+      "case_id": "worktree_lane",
+      "lane_id": "worktree",
+      "lane_grants_authority": false,
+      "scope_gate": "required_before_lane_resolution",
+      "source_record": "source-record:worktree-42",
+      "import_origin": "worktrees/feature-42.md",
+      "retrieval_trace": "lane refs only after selector ids",
+      "canonical_selector": "compiled_truth:workspace:default:worktrees/feature-42"
+    },
+    {
+      "case_id": "transcripts_lane",
+      "lane_id": "transcripts",
+      "lane_grants_authority": false,
+      "scope_gate": "required_before_lane_resolution",
+      "source_record": "source-record:meeting-42",
+      "import_origin": "imports/meeting-42.md",
+      "retrieval_trace": "lane refs only after selector ids",
+      "canonical_selector": "section:workspace:default:sources/ga-p3-transcript#summary"
+    },
+    {
+      "case_id": "imports_lane",
+      "lane_id": "imports",
+      "lane_grants_authority": false,
+      "scope_gate": "required_before_lane_resolution",
+      "source_record": "source-record:import-42",
+      "import_origin": "imports/raw-42.md",
+      "retrieval_trace": "lane refs only after selector ids",
+      "canonical_selector": "compiled_truth:workspace:default:imports/raw-42"
+    },
+    {
+      "case_id": "derived_lane",
+      "lane_id": "derived",
+      "lane_grants_authority": false,
+      "scope_gate": "required_before_lane_resolution",
+      "source_record": "source-record:derived-42",
+      "import_origin": "derived/context-map-42.md",
+      "retrieval_trace": "lane refs only after selector ids",
+      "canonical_selector": "compiled_truth:workspace:default:derived/context-map-42"
+    }
+  ]
+}

@@ -97,6 +97,25 @@ Expected:
 - task resume preserves the current goal, blocker, failed attempt, decision in force, and verification warning fields needed for before/after evaluation
 - GA-P2 stays an evaluation foundation and does not add GA-P3+ corpus-lane behavior or new production services
 
+## GBrain Absorption GA-P3 Verification
+
+Run:
+
+```bash
+bun test test/corpus-lane-service.test.ts test/import-file.test.ts test/read-context-service.test.ts test/retrieval-context-operations.test.ts test/memory-writeback-router-service.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s29-gbrain-corpus-lanes.test.ts
+bun run test:scenarios
+bunx tsc --noEmit --pretty false
+```
+
+Expected:
+
+- `test/fixtures/gbrain-absorption/ga-p3-corpus-lanes.fixture.json` uses the `GA-P3` stage and covers notes, worktree, transcripts, imports, and derived lane cases
+- corpus lanes remain post-scope provenance metadata and never become scopes, authority, or storage roots
+- import projections preserve lane refs on manifest and section `source_refs`
+- `retrieve_context` and `read_context` return lane-aware citations without changing selector ids
+- retrieval traces include selector ids plus lane/source refs and mark lane metadata as post-scope
+- imported source-extracted writeback without lane provenance defers instead of silently picking a lane
+
 ## GBrain Absorption GA-P4 Verification
 
 Run:

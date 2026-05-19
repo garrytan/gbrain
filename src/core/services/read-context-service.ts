@@ -16,6 +16,12 @@ import type {
   ScopeGateScope,
 } from '../types.ts';
 import { scalarLength, sliceScalars } from '../text-offsets.ts';
+import {
+  corpusLaneFromSourceRefs,
+  extractFrontmatterSourceRefs,
+  laneOnlySourceRefs,
+  mergeSourceRefs,
+} from './corpus-lane-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 import { normalizeRetrievalSelector, retrievalSelectorId } from './retrieval-selector-service.ts';
 import { retrieveContext } from './retrieve-context-service.ts';
@@ -418,7 +424,9 @@ async function readProjectedPageField(
     title: field === 'timeline' ? `Timeline: ${projection.slug}` : projection.title,
     window,
     authority: field === 'timeline' ? 'source_or_timeline_evidence' : 'canonical_compiled_truth',
-    source_refs: options.include_source_refs ? extractSourceRefs(window.text) : [],
+    source_refs: options.include_source_refs
+      ? mergeSourceRefs(extractSourceRefs(window.text), extractFrontmatterSourceRefs(projection.frontmatter))
+      : [],
     include_source_refs: options.include_source_refs,
     token_budget: options.token_budget,
   });
@@ -454,7 +462,12 @@ async function readProjectedPageWithTimeline(
   );
   const sourceRefs: string[] = [];
   let text = compiledWindow.text.trim();
-  if (options.include_source_refs && text) sourceRefs.push(...extractSourceRefs(text));
+  if (options.include_source_refs && text) {
+    sourceRefs.push(...mergeSourceRefs(
+      extractSourceRefs(text),
+      extractFrontmatterSourceRefs(projection.frontmatter),
+    ));
+  }
 
   let continuation = compiledWindow.has_more
     ? pageFieldContinuationSelector(normalizedSelector, 'compiled_truth', compiledWindow.next_char_start)
@@ -487,7 +500,8 @@ async function readProjectedPageWithTimeline(
     authority: 'canonical_compiled_truth',
     title: projection.title,
     text,
-    source_refs: options.include_source_refs ? [...new Set(sourceRefs)] : [],
+    source_refs: options.include_source_refs ? mergeSourceRefs(sourceRefs) : [],
+    corpus_lane: corpusLaneFromSourceRefs(sourceRefs),
     token_estimate: estimateTokens(text),
     has_more: continuation !== undefined,
     continuation_selector: continuation,
@@ -667,15 +681,17 @@ function buildRead(input: {
   const sourceRefs = !input.include_source_refs
     ? []
     : textHasSourceMarkers(input.text)
-      ? extractSourceRefs(clipped.text)
+      ? mergeSourceRefs(extractSourceRefs(clipped.text), laneOnlySourceRefs(input.source_refs))
       : input.source_refs;
+  const corpusLane = corpusLaneFromSourceRefs(sourceRefs);
 
   return {
     selector,
     authority: input.authority,
     title: input.title,
     text: clipped.text,
-    source_refs: [...new Set(sourceRefs)],
+    source_refs: mergeSourceRefs(sourceRefs),
+    ...(corpusLane ? { corpus_lane: corpusLane } : {}),
     token_estimate: estimateTokens(clipped.text),
     has_more: hasMore,
     continuation_selector: continuation,
@@ -704,15 +720,17 @@ function buildWindowRead(input: {
   const sourceRefs = !input.include_source_refs
     ? []
     : textHasSourceMarkers(input.window.text)
-      ? extractSourceRefs(clipped.text)
+      ? mergeSourceRefs(extractSourceRefs(clipped.text), laneOnlySourceRefs(input.source_refs))
       : input.source_refs;
+  const corpusLane = corpusLaneFromSourceRefs(sourceRefs);
 
   return {
     selector,
     authority: input.authority,
     title: input.title,
     text: clipped.text,
-    source_refs: [...new Set(sourceRefs)],
+    source_refs: mergeSourceRefs(sourceRefs),
+    ...(corpusLane ? { corpus_lane: corpusLane } : {}),
     token_estimate: estimateTokens(clipped.text),
     has_more: hasMore,
     continuation_selector: continuation,
@@ -1153,12 +1171,13 @@ async function persistReadTrace(
     task_id: thread ? input.task_id! : null,
     scope,
     route: ['read_context'],
-    source_refs: result.canonical_reads.map((read) => retrievalSelectorId(read.selector)),
+    source_refs: traceSourceRefs(result.canonical_reads),
     derived_consulted: [],
     verification: [
       `answer_ready:${result.answer_ready.ready ? 'ready' : 'not_ready'}`,
       ...result.answer_ready.unsupported_reasons.map((reason) => `unsupported:${reason}`),
       ...buildScopeGateVerification(result.scope_gate),
+      ...corpusLaneVerification(result.canonical_reads.map((read) => read.corpus_lane)),
     ],
     write_outcome: 'no_durable_write',
     selected_intent: intentFromReads(result.canonical_reads.map((read) => read.selector)),
@@ -1168,6 +1187,19 @@ async function persistReadTrace(
       ? 'read_context returned canonical evidence'
       : 'read_context could not return complete answer-ready evidence',
   });
+}
+
+function traceSourceRefs(reads: CanonicalContextRead[]): string[] {
+  return mergeSourceRefs(
+    reads.map((read) => retrievalSelectorId(read.selector)),
+    reads.flatMap((read) => read.source_refs),
+  );
+}
+
+function corpusLaneVerification(lanes: Array<CanonicalContextRead['corpus_lane']>): string[] {
+  return mergeSourceRefs(lanes
+    .filter((lane): lane is NonNullable<CanonicalContextRead['corpus_lane']> => lane !== undefined)
+    .map((lane) => `corpus_lane:${lane.lane_id}:post_scope_metadata`));
 }
 
 function intentFromReads(selectors: RetrievalSelector[]): RetrievalRouteIntent {

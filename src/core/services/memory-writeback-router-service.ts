@@ -10,6 +10,11 @@ import type {
   RouteMemoryWritebackInput,
   RouteMemoryWritebackResult,
 } from '../types.ts';
+import {
+  corpusLaneProvenanceSourceRefs,
+  corpusLaneSourceRefs,
+  mergeSourceRefs,
+} from './corpus-lane-service.ts';
 
 export const MEMORY_WRITEBACK_EVIDENCE_KINDS = [
   'direct_user_statement',
@@ -55,7 +60,15 @@ export function routeMemoryWriteback(
   input: RouteMemoryWritebackInput,
 ): RouteMemoryWritebackResult {
   const content = input.content.trim();
-  const sourceRefs = normalizeSourceRefs(input.source_refs);
+  const explicitSourceRefs = normalizeSourceRefs(input.source_refs);
+  const sourceRefs = mergeSourceRefs(
+    explicitSourceRefs,
+    corpusLaneSourceRefs(input.corpus_lane),
+  );
+  const provenanceRefs = mergeSourceRefs(
+    explicitSourceRefs.filter(isAnswerGroundingProvenanceRef),
+    corpusLaneProvenanceSourceRefs(input.corpus_lane),
+  );
   const scopeId = normalizeOptionalString(input.scope_id) ?? DEFAULT_SCOPE_ID;
   const sourceKind = input.source_kind ?? null;
   const sensitivity = input.sensitivity ?? 'work';
@@ -92,9 +105,25 @@ export function routeMemoryWriteback(
     });
   }
 
+  if (requiresImportLane(input, sourceRefs)) {
+    return baseResult(input, {
+      decision: 'defer',
+      intended_operation: 'none',
+      reasons: ['import_lane_required'],
+      missing_requirements: ['corpus_lane'],
+      source_kind: sourceKind,
+      scope_id: scopeId,
+      sensitivity,
+      candidate_type: null,
+      extraction_kind: null,
+      target_object_type: targetObjectType,
+      target_object_id: targetObjectId,
+    });
+  }
+
   const canonicalMissing = canonicalMissingRequirements(
     input,
-    sourceRefs,
+    provenanceRefs,
     targetObjectType,
     targetObjectId,
     sensitivity,
@@ -118,6 +147,7 @@ export function routeMemoryWriteback(
   const canonicalWriteRequirements = canonicalWriteRequirementsFor(
     input,
     sourceRefs,
+    provenanceRefs,
     targetObjectType,
     targetObjectId,
     sensitivity,
@@ -161,7 +191,7 @@ export function routeMemoryWriteback(
     });
   }
 
-  if (sourceRefs.length === 0) {
+  if (provenanceRefs.length === 0) {
     return baseResult(input, {
       decision: 'defer',
       intended_operation: 'none',
@@ -273,6 +303,24 @@ function normalizeSourceRefs(value: string[] | undefined): string[] {
   return value.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
 }
 
+function requiresImportLane(input: RouteMemoryWritebackInput, sourceRefs: string[]): boolean {
+  if (input.source_kind !== 'import' || input.evidence_kind !== 'source_extracted') return false;
+  if (input.corpus_lane?.lane_id?.trim()) return false;
+  return !sourceRefs.some((ref) =>
+    hasNonEmptyPrefixedValue(ref, 'corpus_lane:')
+    || hasNonEmptyPrefixedValue(ref, 'source_record:')
+    || hasNonEmptyPrefixedValue(ref, 'import_origin:')
+  );
+}
+
+function hasNonEmptyPrefixedValue(value: string, prefix: string): boolean {
+  return value.startsWith(prefix) && value.slice(prefix.length).trim().length > 0;
+}
+
+function isAnswerGroundingProvenanceRef(value: string): boolean {
+  return !hasNonEmptyPrefixedValue(value, 'corpus_lane:');
+}
+
 function normalizeOptionalString(value: string | null | undefined): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -287,6 +335,7 @@ function normalizeScore(value: number | undefined, fallback: number): number {
 function canonicalWriteRequirementsFor(
   input: RouteMemoryWritebackInput,
   sourceRefs: string[],
+  provenanceRefs: string[],
   targetObjectType: MemoryCandidateTargetObjectType | null,
   targetObjectId: string | null,
   sensitivity: MemoryCandidateSensitivity,
@@ -295,7 +344,7 @@ function canonicalWriteRequirementsFor(
   if (input.evidence_kind !== 'direct_user_statement' && input.evidence_kind !== 'source_extracted') {
     return null;
   }
-  if (sourceRefs.length === 0) return null;
+  if (provenanceRefs.length === 0) return null;
   if (!targetObjectType || targetObjectType === 'other') return null;
   if (!isPageBackedCanonicalTargetType(targetObjectType)) return null;
   if (!targetObjectId) return null;

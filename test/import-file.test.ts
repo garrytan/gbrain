@@ -193,6 +193,56 @@ Body`;
     }
   });
 
+  test('imports corpus lane provenance into manifest and section source refs', async () => {
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: ':memory:' });
+    try {
+      await engine.initSchema();
+
+      const content = [
+        '---',
+        'title: Imported Transcript',
+        'type: source',
+        'corpus_lane: transcripts',
+        'source_record: source-record:meeting-42',
+        'import_origin: imports/meeting-42.md',
+        'artifact_kind: transcript',
+        'source_refs:',
+        '  - Source: imported transcript, 2026-05-19',
+        '---',
+        '# Summary',
+        'Meeting 42 discussed corpus lane provenance.',
+      ].join('\n');
+
+      await importFromContent(engine, 'sources/imported-transcript', content, {
+        path: 'imports/meeting-42.md',
+      });
+
+      const manifest = await engine.getNoteManifestEntry('workspace:default', 'sources/imported-transcript');
+      expect(manifest?.source_refs).toEqual(expect.arrayContaining([
+        'Source: imported transcript, 2026-05-19',
+        'corpus_lane:transcripts',
+        'source_record:source-record:meeting-42',
+        'import_origin:imports/meeting-42.md',
+      ]));
+
+      const sections = await engine.listNoteSectionEntries({
+        scope_id: 'workspace:default',
+        page_slug: 'sources/imported-transcript',
+        limit: 10,
+      });
+      expect(sections.length).toBeGreaterThan(0);
+      expect(sections[0]!.source_refs).toEqual(expect.arrayContaining([
+        'Source: imported transcript, 2026-05-19',
+        'corpus_lane:transcripts',
+        'source_record:source-record:meeting-42',
+        'import_origin:imports/meeting-42.md',
+      ]));
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
   test('infers system page type from systems path during import', async () => {
     const filePath = join(TMP, 'llvm.md');
     writeFileSync(filePath, `---

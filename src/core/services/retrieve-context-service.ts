@@ -19,6 +19,11 @@ import { getBroadSynthesisRoute } from './broad-synthesis-route-service.ts';
 import { classifyMemoryScenario } from './memory-scenario-classifier-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 import {
+  corpusLaneFromSourceRefs,
+  mergeSourceRefs,
+  corpusLaneSourceRefs,
+} from './corpus-lane-service.ts';
+import {
   normalizeRetrievalSelector,
   retrievalSelectorId,
   selectorFromRouteRead,
@@ -296,22 +301,29 @@ async function groupCandidatesByCanonicalPage(
     if (candidates.length >= limit) break;
     const readResult = bestTimelineSearchResult(group.results) ?? group.top;
     const selector = await bestReadSelectorForSearchResult(engine, readResult);
+    const corpusLane = selector.corpus_lane
+      ?? corpusLaneFromSourceRefs(selector.source_refs ?? [])
+      ?? await corpusLaneForPage(engine, group.slug);
+    const readSelector = corpusLane
+      ? normalizeRetrievalSelector({ ...selector, corpus_lane: corpusLane })
+      : selector;
     candidates.push({
       candidate_id: `candidate:${group.slug}`,
       canonical_target: {
-        kind: selector.kind,
+        kind: readSelector.kind,
         slug: group.slug,
         title: group.top.title,
         type: group.top.type,
-        path: selector.path,
-        section_id: selector.section_id,
-        scope_id: selector.scope_id,
+        path: readSelector.path,
+        section_id: readSelector.section_id,
+        scope_id: readSelector.scope_id,
+        ...(corpusLane ? { corpus_lane: corpusLane } : {}),
       },
-      matched_chunks: group.results.map(toMatchedChunk),
+      matched_chunks: group.results.map((result) => toMatchedChunk(result, corpusLane)),
       why_matched: [`matched ${group.results.length} search chunk${group.results.length === 1 ? '' : 's'}`],
       activation: group.top.stale ? 'verify_first' : 'candidate_only',
       read_priority: candidates.length + 1,
-      read_selector: selector,
+      read_selector: readSelector,
     });
   }
 
@@ -416,6 +428,7 @@ async function buildOrientation(
 }
 
 function candidateFromSelector(selector: RetrievalSelector, priority: number): RetrieveContextCandidate {
+  const corpusLane = selector.corpus_lane ?? corpusLaneFromSourceRefs(selector.source_refs ?? []);
   return {
     candidate_id: `candidate:${retrievalSelectorId(selector)}`,
     canonical_target: {
@@ -424,12 +437,15 @@ function candidateFromSelector(selector: RetrievalSelector, priority: number): R
       path: selector.path,
       section_id: selector.section_id,
       scope_id: selector.scope_id,
+      ...(corpusLane ? { corpus_lane: corpusLane } : {}),
     },
     matched_chunks: [],
     why_matched: ['explicit selector'],
     activation: 'candidate_only',
     read_priority: priority,
-    read_selector: selector,
+    read_selector: corpusLane
+      ? normalizeRetrievalSelector({ ...selector, corpus_lane: corpusLane })
+      : selector,
   };
 }
 
@@ -441,7 +457,7 @@ function emptyOrientation(): RetrieveContextOrientation {
   };
 }
 
-function toMatchedChunk(result: SearchResult): RetrievalMatchedChunk {
+function toMatchedChunk(result: SearchResult, corpusLane?: RetrievalMatchedChunk['corpus_lane']): RetrievalMatchedChunk {
   return {
     slug: result.slug,
     page_id: result.page_id,
@@ -450,7 +466,17 @@ function toMatchedChunk(result: SearchResult): RetrievalMatchedChunk {
     chunk_source: result.chunk_source,
     score: result.score,
     stale: result.stale,
+    ...(corpusLane ? { corpus_lane: corpusLane } : {}),
   };
+}
+
+async function corpusLaneForPage(
+  engine: BrainEngine,
+  slug: string,
+): Promise<RetrievalMatchedChunk['corpus_lane'] | undefined> {
+  if (typeof engine.getNoteManifestEntry !== 'function') return undefined;
+  const manifest = await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, slug);
+  return manifest ? corpusLaneFromSourceRefs(manifest.source_refs) : undefined;
 }
 
 function dedupeSelectors(selectors: RetrievalSelector[]): RetrievalSelector[] {
@@ -525,12 +551,13 @@ async function persistRetrieveTrace(
     task_id: thread ? input.task_id! : null,
     scope,
     route,
-    source_refs: result.required_reads.map(retrievalSelectorId),
+    source_refs: traceSourceRefs(result.required_reads),
     derived_consulted: result.orientation.derived_consulted,
     verification: [
       `scenario:${result.scenario}`,
       ...result.answerability.reason_codes.map((code) => `answerability:${code}`),
       ...buildScopeGateVerification(result.scope_gate),
+      ...corpusLaneVerification(result.required_reads),
       ...buildCandidateSignalVerification(result),
     ],
     write_outcome: 'no_durable_write',
@@ -541,6 +568,21 @@ async function persistRetrieveTrace(
       ? 'retrieve_context selected canonical read candidates'
       : 'retrieve_context found no canonical read candidates',
   });
+}
+
+function traceSourceRefs(selectors: RetrievalSelector[]): string[] {
+  return mergeSourceRefs(
+    selectors.map(retrievalSelectorId),
+    selectors.flatMap((selector) => selector.source_refs ?? []),
+  );
+}
+
+function corpusLaneVerification(selectors: RetrievalSelector[]): string[] {
+  return mergeSourceRefs(selectors.flatMap((selector) =>
+    corpusLaneSourceRefs(selector.corpus_lane ?? corpusLaneFromSourceRefs(selector.source_refs ?? []))
+      .filter((ref) => ref.startsWith('corpus_lane:'))
+      .map((ref) => `${ref}:post_scope_metadata`)
+  ));
 }
 
 function intentFromScenario(scenario: RetrieveContextResult['scenario']): RetrievalRouteIntent {

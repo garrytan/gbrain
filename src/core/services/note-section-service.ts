@@ -2,6 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { NoteManifestEntry, NoteSectionEntry, NoteSectionEntryInput, Page, PageInput } from '../types.ts';
 import { slugifyPath } from '../sync.ts';
 import { importContentHash } from '../utils.ts';
+import { extractFrontmatterSourceRefs, mergeSourceRefs } from './corpus-lane-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 
 export const NOTE_SECTION_EXTRACTOR_VERSION = 'phase2-sections-v1';
@@ -20,6 +21,7 @@ export interface BuildNoteSectionEntriesInput {
 export function buildNoteSectionEntries(input: BuildNoteSectionEntriesInput): NoteSectionEntryInput[] {
   const scopeId = input.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID;
   const body = joinCanonicalBody(input.page.compiled_truth, input.page.timeline ?? '');
+  const pageSourceRefs = extractFrontmatterSourceRefs(input.page.frontmatter ?? {}, input.page_path);
   const lines = body.split('\n');
   const stack: Array<{ depth: number; slug: string; section_id: string }> = [];
 
@@ -53,7 +55,7 @@ export function buildNoteSectionEntries(input: BuildNoteSectionEntriesInput): No
       section_text: sectionText,
       outgoing_wikilinks: extractOutgoingWikilinks(sectionText),
       outgoing_urls: extractOutgoingUrls(sectionText),
-      source_refs: extractSourceRefs(sectionText),
+      source_refs: mergeSourceRefs(extractSourceRefs(sectionText), pageSourceRefs),
       content_hash: importContentHash({
         title: input.page.title,
         type: input.page.type,

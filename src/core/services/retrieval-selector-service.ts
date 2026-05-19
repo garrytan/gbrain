@@ -4,6 +4,7 @@ import type {
   RetrievalSelectorKind,
   SearchResult,
 } from '../types.ts';
+import { corpusLaneSourceRefs, mergeSourceRefs } from './corpus-lane-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 
 export function normalizeRetrievalSelector(
@@ -14,7 +15,7 @@ export function normalizeRetrievalSelector(
   const normalized: RetrievalSelector = {
     ...selector,
     scope_id: scopeId,
-    source_refs: selector.source_refs ?? [],
+    source_refs: mergeSourceRefs(selector.source_refs, corpusLaneSourceRefs(selector.corpus_lane)),
     freshness: selector.freshness ?? 'unknown',
   };
 

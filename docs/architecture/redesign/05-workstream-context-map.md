@@ -261,6 +261,26 @@ Lane rules:
 6. Lane-aware retrieval must still map evidence back to Source Records and
    import origins before making factual claims.
 
+## GA-P3 Corpus Lane Runtime Contract
+
+Corpus lanes are post-scope metadata only. They decorate existing imports,
+selectors, reads, citations, and retrieval traces after the Scope Gate has
+allowed the request.
+
+Runtime rules:
+
+1. Corpus lanes do not create scopes, authority labels, storage roots, or schema
+   tables.
+2. Import projections preserve page frontmatter lane refs on manifest and
+   section `source_refs`.
+3. `retrieve_context` and `read_context` may return `corpus_lane` metadata and
+   lane source refs only alongside canonical selectors and source evidence.
+4. `selector_id` and `retrievalSelectorId` stay stable; selector ids do not
+   include lane ids.
+5. Retrieval traces may include `corpus_lane:*`, `source_record:*`, and
+   `import_origin:*` refs as provenance, plus verification entries that mark
+   the lane as post-scope metadata.
+
 ## Code Lane Derived Artifact Contract
 
 `reference/gbrain` proves that code-aware retrieval needs more than symbol

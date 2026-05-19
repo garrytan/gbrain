@@ -142,6 +142,27 @@ GA-P2 fixture rules:
    corpus-lane behavior, GA-P4 authority-model changes, or GA-P6 maintenance
    automation.
 
+## GBrain Absorption GA-P3 Corpus Lanes
+
+GA-P3 accepts corpus lanes only when executable tests prove they are provenance
+metadata layered onto existing imports, retrieval selectors, reads, and traces.
+The executable fixture is
+`test/fixtures/gbrain-absorption/ga-p3-corpus-lanes.fixture.json`, and S29
+exercises it through SQLite-capable import, retrieval, read, trace, and
+writeback-router flows.
+
+GA-P3 fixture rules:
+
+1. The fixture uses `stage_id: "GA-P3"` and includes `notes`, `worktree`,
+   `transcripts`, `imports`, and `derived` lane cases.
+2. Every lane case records `lane_grants_authority: false`.
+3. Every lane case preserves `scope_gate`, `source_record`, `import_origin`,
+   `retrieval_trace`, and `canonical_selector` fields.
+4. A replay pass fails if lane metadata changes selector identity or bypasses
+   the Scope Gate.
+5. Ambiguous imported source-extracted writeback must defer with
+   `import_lane_required` rather than inventing a lane.
+
 ## GBrain Absorption GA-P4 Memory Authority
 
 GA-P4 accepts the memory-authority slice only if the system can replay and

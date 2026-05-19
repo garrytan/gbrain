@@ -4,9 +4,11 @@ import {
   MEMORY_WRITEBACK_EVIDENCE_KINDS,
   routeMemoryWriteback,
 } from './services/memory-writeback-router-service.ts';
+import { CORPUS_LANE_ARTIFACT_KINDS } from './services/corpus-lane-service.ts';
 import { createMemoryCandidateEntryWithStatusEvent } from './services/memory-inbox-service.ts';
 import { reviewDuplicateMemory } from './services/duplicate-memory-review-service.ts';
 import type {
+  CorpusLaneMetadata,
   MemoryCandidateSensitivity,
   MemoryCandidateTargetObjectType,
   MemoryCandidateType,
@@ -162,6 +164,48 @@ function optionalBoolean(
   return value;
 }
 
+function optionalCorpusLaneMetadata(
+  deps: { OperationError: OperationErrorCtor },
+  field: string,
+  value: unknown,
+): CorpusLaneMetadata | undefined {
+  if (value == null) return undefined;
+  let parsed = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw invalidParams(deps, `${field} must be valid JSON when passed as a string`);
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw invalidParams(deps, `${field} must be an object`);
+  }
+  const lane = parsed as Record<string, unknown>;
+  const output: Record<string, string> = {};
+  for (const laneField of ['lane_id', 'source_record', 'import_origin', 'artifact_kind']) {
+    if (lane[laneField] === undefined) continue;
+    if (typeof lane[laneField] !== 'string') {
+      throw invalidParams(deps, `${field}.${laneField} must be a string`);
+    }
+    const trimmed = lane[laneField].trim();
+    if (trimmed.length === 0) {
+      throw invalidParams(deps, `${field}.${laneField} must be a non-empty string`);
+    }
+    if (laneField === 'artifact_kind' && !(CORPUS_LANE_ARTIFACT_KINDS as readonly string[]).includes(trimmed)) {
+      throw invalidParams(
+        deps,
+        `${field}.artifact_kind must be one of: ${CORPUS_LANE_ARTIFACT_KINDS.join(', ')}`,
+      );
+    }
+    output[laneField] = trimmed;
+  }
+  if (!output.lane_id) {
+    throw invalidParams(deps, `${field}.lane_id must be a string`);
+  }
+  return output as unknown as CorpusLaneMetadata;
+}
+
 function requireEnumValue<T extends string>(
   deps: { OperationError: OperationErrorCtor },
   field: string,
@@ -191,6 +235,7 @@ function parseRouteMemoryWritebackInput(
   return {
     content: requireString(deps, 'content', params.content),
     source_refs: optionalStringArray(deps, 'source_refs', params.source_refs),
+    corpus_lane: optionalCorpusLaneMetadata(deps, 'corpus_lane', params.corpus_lane),
     source_kind: optionalEnumValue(deps, 'source_kind', params.source_kind, MEMORY_SCENARIO_SOURCE_KIND_VALUES),
     evidence_kind: requireEnumValue(deps, 'evidence_kind', params.evidence_kind, MEMORY_WRITEBACK_EVIDENCE_KINDS),
     candidate_type: optionalEnumValue(deps, 'candidate_type', params.candidate_type, MEMORY_CANDIDATE_TYPE_VALUES),
@@ -222,6 +267,7 @@ export function createMemoryWritebackRouterOperations(
     params: {
       content: { type: 'string', required: true, description: 'Claim, observation, or proposed memory content to route' },
       source_refs: { type: 'array', items: { type: 'string' }, description: 'Provenance references for the writeback signal' },
+      corpus_lane: { type: ['object', 'string'], description: 'Optional post-scope corpus lane provenance metadata' },
       source_kind: { type: 'string', description: 'Source kind for the writeback signal', enum: [...MEMORY_SCENARIO_SOURCE_KIND_VALUES] },
       evidence_kind: {
         type: 'string',

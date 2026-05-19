@@ -175,6 +175,11 @@ Rules:
 6. Lane-aware citations should include the lane only as provenance metadata, not
    as a replacement for source refs or scope decisions.
 
+GA-P3 keeps the lane resolver after the Scope Gate. Imported source-extracted
+writeback may use lane refs as provenance, but `route_memory_writeback` must
+defer ambiguous imported source-extracted writes instead of choosing a lane from
+content, target path, or default scope.
+
 Useful lane examples inside personal `mbrain`:
 
 | Lane | Scope relationship | Allowed use |

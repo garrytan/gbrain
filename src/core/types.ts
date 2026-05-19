@@ -1786,6 +1786,7 @@ export type MemoryWritebackIntendedOperation =
 export interface RouteMemoryWritebackInput {
   content: string;
   source_refs?: string[];
+  corpus_lane?: CorpusLaneMetadata;
   source_kind?: MemoryScenarioSourceKind;
   evidence_kind: MemoryWritebackEvidenceKind;
   candidate_type?: MemoryCandidateType;
@@ -1925,6 +1926,21 @@ export type ProbeAnswerKind = 'mention_existence' | 'slug_disambiguation' | 'non
 export type ContextReadMode = 'explicit' | 'auto';
 export type ContextTimelineMode = 'auto' | 'include' | 'exclude';
 
+export type CorpusLaneArtifactKind =
+  | 'note'
+  | 'worktree'
+  | 'transcript'
+  | 'import'
+  | 'source_record'
+  | 'derived';
+
+export interface CorpusLaneMetadata {
+  lane_id: string;
+  source_record?: string;
+  import_origin?: string;
+  artifact_kind?: CorpusLaneArtifactKind;
+}
+
 export interface RetrievalSelector {
   selector_id?: string;
   kind: RetrievalSelectorKind;
@@ -1939,6 +1955,7 @@ export interface RetrievalSelector {
   source_ref?: string;
   object_id?: string;
   source_refs?: string[];
+  corpus_lane?: CorpusLaneMetadata;
   content_hash?: string;
   freshness?: RetrievalFreshness;
 }
@@ -1951,6 +1968,7 @@ export interface RetrievalCanonicalTarget {
   path?: string;
   section_id?: string;
   scope_id?: string;
+  corpus_lane?: CorpusLaneMetadata;
 }
 
 export interface RetrievalMatchedChunk {
@@ -1961,6 +1979,7 @@ export interface RetrievalMatchedChunk {
   chunk_source: ChunkSource;
   score: number;
   stale: boolean;
+  corpus_lane?: CorpusLaneMetadata;
 }
 
 export interface RetrieveContextCandidate {
@@ -2097,6 +2116,7 @@ export interface CanonicalContextRead {
   title: string;
   text: string;
   source_refs: string[];
+  corpus_lane?: CorpusLaneMetadata;
   token_estimate: number;
   has_more: boolean;
   continuation_selector?: RetrievalSelector;
@@ -2616,6 +2636,7 @@ export interface RetrievalTraceInput {
   scope: ScopeGateScope;
   route?: string[];
   source_refs?: string[];
+  corpus_lane?: CorpusLaneMetadata;
   derived_consulted?: string[];
   verification?: string[];
   write_outcome?: RetrievalTraceWriteOutcome;

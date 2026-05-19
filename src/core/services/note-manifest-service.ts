@@ -2,6 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { NoteManifestEntry, NoteManifestEntryInput, NoteManifestHeading, Page, PageInput } from '../types.ts';
 import { slugifyPath } from '../sync.ts';
 import { importContentHash } from '../utils.ts';
+import { extractFrontmatterSourceRefs, mergeSourceRefs } from './corpus-lane-service.ts';
 
 export const DEFAULT_NOTE_MANIFEST_SCOPE_ID = 'workspace:default';
 export const NOTE_MANIFEST_EXTRACTOR_VERSION = 'phase2-structural-v1';
@@ -38,7 +39,10 @@ export function buildNoteManifestEntry(input: BuildNoteManifestEntryInput): Note
     tags,
     outgoing_wikilinks: extractOutgoingWikilinks(body),
     outgoing_urls: extractOutgoingUrls(body),
-    source_refs: extractSourceRefs(body),
+    source_refs: mergeSourceRefs(
+      extractSourceRefs(body),
+      extractFrontmatterSourceRefs(page.frontmatter ?? {}, path),
+    ),
     heading_index: extractHeadingIndex(body),
     content_hash: input.content_hash
       ?? page.content_hash
