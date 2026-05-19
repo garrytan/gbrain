@@ -84,6 +84,18 @@ export interface LinkBatchInput {
   from_source_id?: string;
   to_source_id?: string;
   origin_source_id?: string;
+  /**
+   * v0.36.0 (TIM-28): which extraction-time resolver pinned `to_slug`.
+   *   - 'qualified'    — `[[source-id:slug]]` literal source prefix
+   *   - 'unqualified'  — bare `[[slug]]` exact-path match
+   *   - 'path'         — markdown `[Name](path)` or wikilink path that resolved
+   *                      against the local-source slug set
+   *   - 'alias'        — fell through to a page's frontmatter `aliases:` entry
+   *   - 'title'        — fell through to a page's H1 heading text
+   *   - 'basename'     — fell through to a slug's last `/`-segment
+   * NULL for frontmatter/manual edges (they aren't subject to wikilink drift).
+   */
+  resolution_type?: string;
 }
 
 /** Input row for addTimelineEntriesBatch. Optional fields default to '' (matches NOT NULL DDL). */

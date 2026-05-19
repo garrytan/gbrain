@@ -3241,6 +3241,37 @@ export const MIGRATIONS: Migration[] = [
         WHERE claim_metric IS NOT NULL;
     `,
   },
+  {
+    version: 68,
+    name: 'links_resolution_type_widen',
+    // v0.36.0 (TIM-28) — widen links.resolution_type to record which
+    // wikilink-fallback resolver pinned each edge. Before this migration the
+    // column was limited to 'qualified'/'unqualified', mirroring the v0.17
+    // source-id resolver. TIM-28 adds three more values:
+    //   - 'path'      — exact path-equality against the local-source slug set
+    //                   (the normal happy path for `[Name](path)` markdown
+    //                   refs and wikilinks whose target is already a slug)
+    //   - 'alias'     — fell through to a page's frontmatter `aliases:` entry
+    //   - 'title'     — fell through to a page's H1 heading text
+    //   - 'basename'  — fell through to a slug's last `/`-segment
+    //
+    // We drop the old constraint and add a wider one. The column itself stays
+    // nullable so frontmatter/manual edges keep their current shape.
+    idempotent: true,
+    sql: `
+      ALTER TABLE links DROP CONSTRAINT IF EXISTS links_resolution_type_check;
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'links_resolution_type_check'
+        ) THEN
+          ALTER TABLE links ADD CONSTRAINT links_resolution_type_check
+            CHECK (resolution_type IS NULL OR resolution_type IN (
+              'qualified', 'unqualified', 'path', 'alias', 'title', 'basename'
+            ));
+        END IF;
+      END $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

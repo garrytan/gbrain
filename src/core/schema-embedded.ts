@@ -275,7 +275,13 @@ CREATE TABLE IF NOT EXISTS links (
   -- [[source:slug]] (target source pinned). 'unqualified' when written
   -- as bare [[slug]] and resolved via local-first fallback at
   -- extraction time. NULL for legacy/manual/frontmatter edges.
-  resolution_type TEXT   CHECK (resolution_type IS NULL OR resolution_type IN ('qualified', 'unqualified')),
+  --
+  -- v0.36.0 (TIM-28): widened to record which wikilink-fallback resolver
+  -- pinned each edge — 'path' (exact slug), 'alias' (frontmatter aliases),
+  -- 'title' (H1 heading), 'basename' (filename last segment).
+  resolution_type TEXT   CHECK (resolution_type IS NULL OR resolution_type IN (
+                           'qualified', 'unqualified', 'path', 'alias', 'title', 'basename'
+                         )),
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- NULLS NOT DISTINCT (PG15+) so two rows with link_source IS NULL or
   -- origin_page_id IS NULL collide as expected. Without this, every row with
