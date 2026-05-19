@@ -163,6 +163,35 @@ Expected:
 - stale `expected_content_hash` claims fail through `reverify_code_claims` with
   `content_hash_mismatch`
 
+## GBrain Absorption GA-P6 Verification
+
+Run:
+
+```bash
+bun test test/dream-cycle-maintenance-service.test.ts test/dream-cycle-maintenance-operations.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s31-gbrain-personal-maintenance-cycle.test.ts
+```
+
+For the full GA-P6 contract surface, also run:
+
+```bash
+bun run test:phase8
+bun run test:phase9
+bun run test:scenarios
+bunx tsc --noEmit --pretty false
+```
+
+Expected:
+
+- `test/fixtures/gbrain-absorption/ga-p6-personal-maintenance-cycle.fixture.json`
+  uses the `GA-P6` stage and covers report-only, stale candidate review,
+  duplicate merge suggestion, derived freshness, and governed apply controls
+- personal maintenance defaults to report and suggestion output
+- optional apply requires the existing control plane with active realm/session,
+  mutation ledger, target snapshot, dry-run/apply parity, and redaction
+  fail-closed checks
+- candidate writes remain governed candidate state and never become compiled
+  truth by maintenance shortcut
+
 ## Phase 1 operational-memory verification
 
 Run:

@@ -194,4 +194,35 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(doc).toContain('code lane stays derived orientation and current code claims require live');
     expect(doc).toContain('stale `expected_content_hash` claims fail through `reverify_code_claims` with');
   });
+
+  test('anchors GA-P6 personal maintenance cycle in governance and evaluation docs', () => {
+    const governance = readRepoFile('docs/architecture/redesign/06-workstream-governance-and-inbox.md');
+    const evaluation = readRepoFile('docs/architecture/redesign/08-evaluation-and-acceptance.md');
+
+    expect(governance).toContain('## GA-P6 Personal Maintenance Cycle Runtime Contract');
+    expect(governance).toContain('GA-P6 makes personal maintenance report-first.');
+    expect(governance).toContain('Apply is optional and may only run through the existing memory operations');
+    expect(governance).toContain('control plane. It requires an active write-capable realm/session');
+    expect(governance).toContain('active write-capable realm/session');
+    expect(governance).toContain('Dry-run and apply validation must stay parity-checked');
+    expect(governance).toContain('Redaction and sensitive maintenance operations fail closed');
+    expect(evaluation).toContain('## GBrain Absorption GA-P6 Personal Maintenance Cycle');
+    expect(evaluation).toContain('ga-p6-personal-maintenance-cycle.fixture.json');
+    expect(evaluation).toContain('maintenance_report_cases');
+    expect(evaluation).toContain('maintenance_apply_control_cases');
+    expect(evaluation).toContain('Phase 8 accepts report and suggestion quality');
+    expect(evaluation).toContain('Phase 9 accepts apply only through the existing memory operations control');
+    expect(evaluation).toContain('plane; maintenance does not define a parallel write path.');
+  });
+
+  test('updates the install verification runbook and scenario registry for GA-P6', () => {
+    const verify = readRepoFile('docs/MBRAIN_VERIFY.md');
+    const scenarios = readRepoFile('test/scenarios/README.md');
+
+    expect(verify).toContain('## GBrain Absorption GA-P6 Verification');
+    expect(verify).toContain('bun test test/dream-cycle-maintenance-service.test.ts test/dream-cycle-maintenance-operations.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s31-gbrain-personal-maintenance-cycle.test.ts');
+    expect(verify).toContain('personal maintenance defaults to report and suggestion output');
+    expect(verify).toContain('optional apply requires the existing control plane with active realm/session');
+    expect(scenarios).toContain('| S31 | `s31-gbrain-personal-maintenance-cycle.test.ts` | GA-P6, G1, G2, L5, L6 | ✅ green |');
+  });
 });

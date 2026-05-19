@@ -1,35 +1,102 @@
 import type { BrainEngine } from '../engine.ts';
 import type {
+  ContextMapEntry,
   MemoryCandidateEntry,
   MemoryCandidateEntryInput,
   MemoryCandidateSensitivity,
   MemoryCandidateTargetObjectType,
   MemoryCandidateType,
 } from '../types.ts';
+import {
+  WORKSPACE_CONTEXT_MAP_KIND,
+  listCodeLaneContextMapEntries,
+  listStructuralContextMapEntries,
+} from './context-map-service.ts';
 import { assessHistoricalValidity } from './historical-validity-service.ts';
 import { buildMemoryCandidateReviewBacklog } from './memory-candidate-dedup-service.ts';
 import {
   createMemoryCandidateEntryWithStatusEvent,
   MemoryInboxServiceError,
 } from './memory-inbox-service.ts';
+import { resolveTargetSnapshotHash } from './target-snapshot-hash-service.ts';
 
 type DreamCycleSuggestionType = 'recap' | 'stale_claim_challenge' | 'duplicate_merge';
 type DreamCycleSuggestionStatus = 'created' | 'dry_run';
+type DreamCycleMaintenancePhaseId =
+  | 'candidate_recap'
+  | 'stale_candidate_review'
+  | 'duplicate_merge_review'
+  | 'derived_artifact_freshness'
+  | 'apply_control_plane';
+type DreamCycleMaintenancePhaseStatus = 'reported' | 'suggested' | 'created' | 'blocked' | 'skipped';
 
 export interface RunDreamCycleMaintenanceInput {
   scope_id: string;
   now?: Date | string | null;
   limit?: number;
   write_candidates?: boolean;
+  include_derived_freshness?: boolean;
+  derived_freshness_limit?: number;
 }
 
 export interface DreamCycleMaintenanceSuggestion {
   suggestion_type: DreamCycleSuggestionType;
   candidate_id: string | null;
+  scope_id: string;
   source_candidate_ids: string[];
+  source_refs: string[];
   target_object_type: MemoryCandidateTargetObjectType | null;
   target_object_id: string | null;
+  sensitivity: MemoryCandidateSensitivity;
+  confidence_score: number;
+  importance_score: number;
+  expected_target_snapshot_hash: string | null;
+  policy_checks: {
+    canonical_write_allowed: false;
+    source_refs_present: boolean;
+    scope_present: boolean;
+    target_identified: boolean;
+    target_snapshot_required_for_apply: true;
+  };
+  redaction_checks: {
+    fail_closed: true;
+    status: 'not_applicable';
+  };
   status: DreamCycleSuggestionStatus;
+  summary_lines: string[];
+}
+
+export interface DreamCycleMaintenancePhase {
+  phase_id: DreamCycleMaintenancePhaseId;
+  output_kind: 'report' | 'candidate' | 'governed_apply_request';
+  status: DreamCycleMaintenancePhaseStatus;
+  summary_lines: string[];
+}
+
+export interface DreamCycleDerivedArtifactFreshness {
+  artifact_kind: 'context_map';
+  id: string;
+  kind: string;
+  status: string;
+  stale_reason: string | null;
+}
+
+export interface DreamCycleDerivedFreshnessReport {
+  enabled: boolean;
+  artifact_count: number;
+  stale_count: number;
+  artifacts: DreamCycleDerivedArtifactFreshness[];
+  summary_lines: string[];
+}
+
+export interface DreamCycleApplyControlPlane {
+  allowed_without_control_plane: false;
+  requires_active_realm_session: true;
+  requires_mutation_ledger: true;
+  requires_target_snapshot: true;
+  dry_run_apply_validation_parity: true;
+  redaction_fail_closed: true;
+  supported_operations: string[];
   summary_lines: string[];
 }
 
@@ -37,7 +104,12 @@ export interface DreamCycleMaintenanceResult {
   scope_id: string;
   generated_at: string;
   write_candidates: boolean;
+  authority: 'report_or_candidate_only';
+  canonical_write_allowed: false;
   suggestions: DreamCycleMaintenanceSuggestion[];
+  maintenance_phases: DreamCycleMaintenancePhase[];
+  derived_freshness_report: DreamCycleDerivedFreshnessReport;
+  apply_control_plane: DreamCycleApplyControlPlane;
   summary_lines: string[];
 }
 
@@ -60,6 +132,8 @@ interface DraftSuggestion {
 const DEFAULT_DREAM_CYCLE_LIMIT = 20;
 const MAX_DREAM_CYCLE_LIMIT = 100;
 const MAX_DREAM_CYCLE_INPUT_CANDIDATES = 100;
+const DEFAULT_DERIVED_FRESHNESS_LIMIT = 50;
+const MAX_DERIVED_FRESHNESS_LIMIT = 200;
 const ISO_DATETIME_PREFIX = /^\d{4}-\d{2}-\d{2}T/;
 
 export async function runDreamCycleMaintenance(
@@ -69,17 +143,28 @@ export async function runDreamCycleMaintenance(
   const scopeId = normalizeScopeId(input.scope_id);
   const now = normalizeNow(input.now);
   const limit = normalizeLimit(input.limit);
-  const writeCandidates = input.write_candidates ?? true;
+  const writeCandidates = input.write_candidates === true;
+  const derivedFreshnessLimit = normalizeDerivedFreshnessLimit(input.derived_freshness_limit);
   if (limit <= 0) {
+    const derivedReport = input.include_derived_freshness === true
+      ? await buildDerivedFreshnessReport(engine, scopeId, derivedFreshnessLimit)
+      : emptyDerivedFreshnessReport(false);
+    const applyControlPlane = buildApplyControlPlane();
     return {
       scope_id: scopeId,
       generated_at: now.toISOString(),
       write_candidates: writeCandidates,
+      authority: 'report_or_candidate_only',
+      canonical_write_allowed: false,
       suggestions: [],
+      maintenance_phases: buildMaintenancePhases([], derivedReport, applyControlPlane),
+      derived_freshness_report: derivedReport,
+      apply_control_plane: applyControlPlane,
       summary_lines: [
         `Dream-cycle maintenance inspected 0 candidates in ${scopeId}.`,
         'Emitted 0 bounded suggestions.',
         `Write candidates: ${writeCandidates ? 'yes' : 'no'}.`,
+        'Canonical writes: no; apply-capable work must use the memory operations control plane.',
       ],
     };
   }
@@ -101,42 +186,108 @@ export async function runDreamCycleMaintenance(
           toCandidateInput(scopeId, draft, now),
         )).id;
 
-        suggestions.push(toSuggestion(draft, candidateId, 'created'));
+        suggestions.push(await toSuggestion(tx, scopeId, draft, candidateId, 'created'));
       }
     });
   } else {
     for (const draft of drafts) {
-      suggestions.push(toSuggestion(draft, null, 'dry_run'));
+      suggestions.push(await toSuggestion(engine, scopeId, draft, null, 'dry_run'));
     }
   }
+  const derivedReport = input.include_derived_freshness === true
+    ? await buildDerivedFreshnessReport(engine, scopeId, derivedFreshnessLimit)
+    : emptyDerivedFreshnessReport(false);
+  const applyControlPlane = buildApplyControlPlane();
 
   return {
     scope_id: scopeId,
     generated_at: now.toISOString(),
     write_candidates: writeCandidates,
+    authority: 'report_or_candidate_only',
+    canonical_write_allowed: false,
     suggestions,
+    maintenance_phases: buildMaintenancePhases(suggestions, derivedReport, applyControlPlane),
+    derived_freshness_report: derivedReport,
+    apply_control_plane: applyControlPlane,
     summary_lines: [
       `Dream-cycle maintenance inspected ${candidates.length} candidates in ${scopeId}.`,
       `Emitted ${suggestions.length} bounded suggestions.`,
       `Write candidates: ${writeCandidates ? 'yes' : 'no'}.`,
+      'Canonical writes: no; apply-capable work must use the memory operations control plane.',
     ],
   };
 }
 
-function toSuggestion(
+async function toSuggestion(
+  engine: BrainEngine,
+  scopeId: string,
   draft: DraftSuggestion,
   candidateId: string | null,
   status: DreamCycleSuggestionStatus,
-): DreamCycleMaintenanceSuggestion {
+): Promise<DreamCycleMaintenanceSuggestion> {
+  const expectedTargetSnapshotHash = await resolveSuggestionTargetSnapshotHash(engine, draft);
+
   return {
     suggestion_type: draft.suggestion_type,
     candidate_id: candidateId,
+    scope_id: scopeId,
     source_candidate_ids: draft.source_candidate_ids,
+    source_refs: draft.source_refs,
     target_object_type: draft.target_object_type,
     target_object_id: draft.target_object_id,
+    sensitivity: draft.sensitivity,
+    confidence_score: draft.confidence_score,
+    importance_score: draft.importance_score,
+    expected_target_snapshot_hash: expectedTargetSnapshotHash,
+    policy_checks: {
+      canonical_write_allowed: false,
+      source_refs_present: draft.source_refs.length > 0,
+      scope_present: scopeId.length > 0,
+      target_identified: draft.target_object_type != null && draft.target_object_id != null,
+      target_snapshot_required_for_apply: true,
+    },
+    redaction_checks: {
+      fail_closed: true,
+      status: 'not_applicable',
+    },
     status,
     summary_lines: draft.summary_lines,
   };
+}
+
+async function resolveSuggestionTargetSnapshotHash(
+  engine: BrainEngine,
+  draft: DraftSuggestion,
+): Promise<string | null> {
+  if (!draft.target_object_type || !draft.target_object_id) {
+    return null;
+  }
+
+  const targetKind = targetKindForCandidateObject(draft.target_object_type);
+  if (!targetKind) {
+    return null;
+  }
+
+  return (await resolveTargetSnapshotHash(engine, {
+    target_kind: targetKind,
+    target_id: draft.target_object_id,
+  }))?.target_snapshot_hash ?? null;
+}
+
+function targetKindForCandidateObject(
+  objectType: MemoryCandidateTargetObjectType,
+): 'page' | 'profile_memory' | 'personal_episode' | null {
+  switch (objectType) {
+    case 'curated_note':
+    case 'procedure':
+      return 'page';
+    case 'profile_memory':
+      return 'profile_memory';
+    case 'personal_episode':
+      return 'personal_episode';
+    case 'other':
+      return null;
+  }
 }
 
 async function buildDraftSuggestions(
@@ -301,6 +452,133 @@ async function listMaintenanceCandidateWindow(engine: BrainEngine, scopeId: stri
   });
 }
 
+async function buildDerivedFreshnessReport(
+  engine: BrainEngine,
+  scopeId: string,
+  limit: number,
+): Promise<DreamCycleDerivedFreshnessReport> {
+  if (limit <= 0) {
+    return emptyDerivedFreshnessReport(true);
+  }
+
+  const [structuralMaps, codeLaneMaps] = await Promise.all([
+    listStructuralContextMapEntries(engine, {
+      scope_id: scopeId,
+      kind: WORKSPACE_CONTEXT_MAP_KIND,
+      limit,
+    }),
+    listCodeLaneContextMapEntries(engine, { scope_id: scopeId, limit }),
+  ]);
+  const artifacts = [...structuralMaps, ...codeLaneMaps]
+    .sort((left, right) => left.kind.localeCompare(right.kind) || left.id.localeCompare(right.id))
+    .map(toDerivedArtifactFreshness);
+  const staleCount = artifacts.filter((artifact) => artifact.status === 'stale').length;
+
+  return {
+    enabled: true,
+    artifact_count: artifacts.length,
+    stale_count: staleCount,
+    artifacts,
+    summary_lines: [
+      `Derived freshness inspected ${artifacts.length} context map artifact${artifacts.length === 1 ? '' : 's'} in ${scopeId}.`,
+      `Stale derived artifacts: ${staleCount}.`,
+      'Derived artifacts remain orientation and do not become answer authority.',
+    ],
+  };
+}
+
+function emptyDerivedFreshnessReport(enabled: boolean): DreamCycleDerivedFreshnessReport {
+  return {
+    enabled,
+    artifact_count: 0,
+    stale_count: 0,
+    artifacts: [],
+    summary_lines: enabled
+      ? [
+          'Derived freshness inspected 0 context map artifacts.',
+          'Stale derived artifacts: 0.',
+          'Derived artifacts remain orientation and do not become answer authority.',
+        ]
+      : ['Derived freshness report was not requested.'],
+  };
+}
+
+function toDerivedArtifactFreshness(entry: ContextMapEntry): DreamCycleDerivedArtifactFreshness {
+  return {
+    artifact_kind: 'context_map',
+    id: entry.id,
+    kind: entry.kind,
+    status: entry.status,
+    stale_reason: entry.stale_reason,
+  };
+}
+
+function buildApplyControlPlane(): DreamCycleApplyControlPlane {
+  return {
+    allowed_without_control_plane: false,
+    requires_active_realm_session: true,
+    requires_mutation_ledger: true,
+    requires_target_snapshot: true,
+    dry_run_apply_validation_parity: true,
+    redaction_fail_closed: true,
+    supported_operations: [
+      'dry_run_memory_mutation',
+      'apply_memory_patch_candidate',
+    ],
+    summary_lines: [
+      'Maintenance apply is disabled unless routed through the existing control plane.',
+      'Apply-capable maintenance requires active realm/session, mutation ledger, target snapshot, dry-run/apply parity, and redaction fail-closed behavior.',
+    ],
+  };
+}
+
+function buildMaintenancePhases(
+  suggestions: DreamCycleMaintenanceSuggestion[],
+  derivedReport: DreamCycleDerivedFreshnessReport,
+  applyControlPlane: DreamCycleApplyControlPlane,
+): DreamCycleMaintenancePhase[] {
+  const hasSuggestion = (type: DreamCycleSuggestionType) =>
+    suggestions.some((suggestion) => suggestion.suggestion_type === type);
+  const candidateStatus = (type: DreamCycleSuggestionType): DreamCycleMaintenancePhaseStatus => {
+    const matching = suggestions.filter((suggestion) => suggestion.suggestion_type === type);
+    if (matching.length === 0) return 'skipped';
+    return matching.some((suggestion) => suggestion.status === 'created') ? 'created' : 'suggested';
+  };
+
+  return [
+    {
+      phase_id: 'candidate_recap',
+      output_kind: 'report',
+      status: hasSuggestion('recap') ? 'reported' : 'skipped',
+      summary_lines: ['Summarize candidate backlog without canonical mutation.'],
+    },
+    {
+      phase_id: 'stale_candidate_review',
+      output_kind: 'candidate',
+      status: candidateStatus('stale_claim_challenge'),
+      summary_lines: ['Create or preview stale-claim challenges as candidate-only governance state.'],
+    },
+    {
+      phase_id: 'duplicate_merge_review',
+      output_kind: 'candidate',
+      status: candidateStatus('duplicate_merge'),
+      summary_lines: ['Create or preview duplicate-merge suggestions without merging canonical truth.'],
+    },
+    {
+      phase_id: 'derived_artifact_freshness',
+      output_kind: 'report',
+      status: derivedReport.enabled ? 'reported' : 'skipped',
+      summary_lines: derivedReport.summary_lines,
+    },
+    {
+      phase_id: 'apply_control_plane',
+      output_kind: 'governed_apply_request',
+      status: applyControlPlane.allowed_without_control_plane ? 'reported' : 'blocked',
+      summary_lines: applyControlPlane.summary_lines,
+    },
+  ];
+}
+
 function normalizeScopeId(value: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new MemoryInboxServiceError('invalid_status_transition', 'scope_id must be a non-empty string.');
@@ -316,6 +594,16 @@ function normalizeLimit(value: number | undefined): number {
     throw new MemoryInboxServiceError('invalid_status_transition', 'limit must be a non-negative number.');
   }
   return Math.min(Math.floor(value), MAX_DREAM_CYCLE_LIMIT);
+}
+
+function normalizeDerivedFreshnessLimit(value: number | undefined): number {
+  if (value == null) {
+    return DEFAULT_DERIVED_FRESHNESS_LIMIT;
+  }
+  if (!Number.isFinite(value) || value < 0) {
+    throw new MemoryInboxServiceError('invalid_status_transition', 'derived_freshness_limit must be a non-negative number.');
+  }
+  return Math.min(Math.floor(value), MAX_DERIVED_FRESHNESS_LIMIT);
 }
 
 function normalizeNow(value: Date | string | null | undefined): Date {

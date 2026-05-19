@@ -1,0 +1,95 @@
+{
+  "stage_id": "GA-P6",
+  "fixture_format": "gbrain_absorption_replay_v1",
+  "description": "GA-P6 personal maintenance cases prove maintenance defaults to report/suggestion output and apply remains governed by the existing control plane.",
+  "verification_commands": [
+    "bun test test/dream-cycle-maintenance-service.test.ts test/dream-cycle-maintenance-operations.test.ts test/gbrain-absorption-docs-contract.test.ts test/scenarios/s31-gbrain-personal-maintenance-cycle.test.ts",
+    "bun run test:phase8",
+    "bun run test:phase9",
+    "bun run test:scenarios",
+    "bunx tsc --noEmit --pretty false"
+  ],
+  "maintenance_report_cases": [
+    {
+      "case_id": "report_only_default",
+      "maintenance_mode": "report",
+      "expected_mutation": false,
+      "expected_output": "bounded_status_report",
+      "expected_authority": "operator_report",
+      "requires_realm_session": false,
+      "ledger_event": "none"
+    },
+    {
+      "case_id": "stale_candidate_review",
+      "maintenance_mode": "suggestion",
+      "target_surface": "memory_candidate",
+      "expected_output": "stale_candidate_review_suggestion",
+      "expected_mutation": false,
+      "candidate_grants_truth": false,
+      "expected_authority": "candidate_only"
+    },
+    {
+      "case_id": "duplicate_merge_suggestion",
+      "maintenance_mode": "suggestion",
+      "target_surface": "memory_candidate",
+      "expected_output": "duplicate_merge_suggestion",
+      "expected_mutation": false,
+      "requires_human_review": true,
+      "expected_authority": "governance_suggestion"
+    },
+    {
+      "case_id": "derived_artifact_freshness",
+      "maintenance_mode": "report",
+      "target_surface": "context_map",
+      "expected_output": "derived_artifact_freshness_warning",
+      "expected_mutation": false,
+      "derived_grants_truth": false,
+      "expected_authority": "derived_orientation"
+    }
+  ],
+  "maintenance_apply_control_cases": [
+    {
+      "case_id": "candidate_write_governed_not_truth",
+      "requested_mode": "apply",
+      "target_surface": "memory_candidate",
+      "expected_decision": "staged_for_review",
+      "expected_mutation_surface": "governance_state",
+      "candidate_grants_truth": false,
+      "requires_source_refs": true
+    },
+    {
+      "case_id": "apply_requires_realm_session",
+      "requested_mode": "apply",
+      "missing_requirement": "active_realm_session",
+      "expected_decision": "denied",
+      "expected_ledger_outcome": "denied",
+      "expected_mutation": false
+    },
+    {
+      "case_id": "apply_requires_target_snapshot",
+      "requested_mode": "apply",
+      "missing_requirement": "target_snapshot",
+      "expected_decision": "conflict",
+      "expected_ledger_outcome": "conflict",
+      "expected_mutation": false
+    },
+    {
+      "case_id": "dry_run_apply_validation_parity",
+      "requested_mode": "dry_run",
+      "comparison_mode": "apply",
+      "expected_validation_parity": true,
+      "expected_dry_run_ledger_outcome": "dry_run",
+      "expected_apply_ledger_outcome": "applied_or_conflict",
+      "expected_mutation": false
+    },
+    {
+      "case_id": "redaction_fail_closed",
+      "requested_mode": "apply",
+      "target_surface": "redaction_plan",
+      "unsupported_target_behavior": "fail_closed",
+      "expected_decision": "failed",
+      "expected_ledger_outcome": "redacted_or_failed",
+      "must_not_expose_raw_sensitive_text": true
+    }
+  ]
+}

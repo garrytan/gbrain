@@ -234,6 +234,20 @@ function normalizeLimit(
   return Math.min(Math.floor(value), MAX_MEMORY_CANDIDATE_LIMIT);
 }
 
+function normalizeOptionalNonNegativeInteger(
+  deps: { OperationError: OperationErrorCtor },
+  field: string,
+  value: unknown,
+): number | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw invalidParams(deps, `${field} must be a non-negative number`);
+  }
+  return Math.floor(value);
+}
+
 function normalizeOffset(
   deps: { OperationError: OperationErrorCtor },
   value: unknown,
@@ -2395,6 +2409,9 @@ export function createMemoryInboxOperations(
       scope_id: { type: 'string', description: `Memory candidate scope id (default: ${deps.defaultScopeId})` },
       now: { type: 'string', description: 'Optional ISO datetime used for stale-claim checks' },
       limit: { type: 'number', description: `Max emitted suggestions (default 20, cap ${MAX_MEMORY_CANDIDATE_LIMIT})` },
+      write_candidates: { type: 'boolean', description: 'Create governed Memory Inbox suggestions. Default false; dry-run always false' },
+      include_derived_freshness: { type: 'boolean', description: 'Include a report-only scan of derived context-map freshness' },
+      derived_freshness_limit: { type: 'number', description: 'Max derived context-map artifacts per family to inspect for freshness (default 50)' },
     },
     mutating: true,
     handler: async (ctx, p) => {
@@ -2407,7 +2424,9 @@ export function createMemoryInboxOperations(
           scope_id: String(p.scope_id ?? deps.defaultScopeId),
           now: now ?? undefined,
           limit: normalizeLimit(deps, p.limit),
-          write_candidates: !ctx.dryRun,
+          write_candidates: ctx.dryRun ? false : normalizeOptionalBoolean(deps, 'write_candidates', p.write_candidates) === true,
+          include_derived_freshness: p.include_derived_freshness === true,
+          derived_freshness_limit: normalizeOptionalNonNegativeInteger(deps, 'derived_freshness_limit', p.derived_freshness_limit),
         });
       } catch (error) {
         if (error instanceof MemoryInboxServiceError) {

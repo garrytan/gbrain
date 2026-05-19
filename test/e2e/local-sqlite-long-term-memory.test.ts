@@ -244,6 +244,7 @@ describe('local SQLite long-term memory lifecycle', () => {
     const dream = h.call<any>('run_dream_cycle_maintenance', {
       now: '2026-04-25T00:00:00Z',
       limit: 10,
+      write_candidates: true,
     });
     expect(dream.write_candidates).toBe(true);
     expect(dream.suggestions.some((entry: any) => entry.suggestion_type === 'stale_claim_challenge')).toBe(true);

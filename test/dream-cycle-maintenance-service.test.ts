@@ -3,10 +3,15 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 import { advanceMemoryCandidateStatus } from '../src/core/services/memory-inbox-service.ts';
 import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
 import { recordCanonicalHandoff } from '../src/core/services/canonical-handoff-service.ts';
 import { runDreamCycleMaintenance } from '../src/core/services/dream-cycle-maintenance-service.ts';
+import {
+  buildCodeLaneContextMapEntry,
+  buildStructuralContextMapEntry,
+} from '../src/core/services/context-map-service.ts';
 
 test('dream-cycle maintenance creates only governed dream-cycle candidates', async () => {
   const harness = await createHarness('writes');
@@ -72,6 +77,26 @@ test('dream-cycle dry-run emits bounded suggestions without creating candidates'
     expect(result.suggestions).toHaveLength(1);
     expect(result.suggestions[0]?.suggestion_type).toBe('recap');
     expect(result.suggestions[0]?.candidate_id).toBeNull();
+    expect(result.suggestions[0]).toMatchObject({
+      scope_id: 'workspace:default',
+      source_refs: [
+        'memory_candidate:workspace:default:dup-a',
+        'memory_candidate:workspace:default:dup-b',
+      ],
+      sensitivity: 'work',
+      expected_target_snapshot_hash: null,
+      policy_checks: {
+        canonical_write_allowed: false,
+        source_refs_present: true,
+        scope_present: true,
+        target_identified: false,
+        target_snapshot_required_for_apply: true,
+      },
+      redaction_checks: {
+        fail_closed: true,
+        status: 'not_applicable',
+      },
+    });
 
     const after = await harness.engine.listMemoryCandidateEntries({
       scope_id: 'workspace:default',
@@ -82,6 +107,180 @@ test('dream-cycle dry-run emits bounded suggestions without creating candidates'
   } finally {
     await harness.cleanup();
   }
+});
+
+test('dream-cycle maintenance defaults to report-only output', async () => {
+  const harness = await createHarness('default-report-only');
+
+  try {
+    await seedDuplicateCandidates(harness.engine, 'workspace:default');
+    const result = await runDreamCycleMaintenance(harness.engine, {
+      scope_id: 'workspace:default',
+      now: '2026-04-23T12:00:00.000Z',
+      limit: 2,
+    });
+
+    expect(result.write_candidates).toBe(false);
+    expect(result.suggestions).toHaveLength(2);
+    expect(result.suggestions.every((suggestion) => suggestion.status === 'dry_run')).toBe(true);
+    expect(result.suggestions.every((suggestion) => suggestion.candidate_id === null)).toBe(true);
+
+    const entries = await harness.engine.listMemoryCandidateEntries({
+      scope_id: 'workspace:default',
+      limit: 100,
+      offset: 0,
+    });
+    expect(entries.filter((entry) => entry.generated_by === 'dream_cycle')).toEqual([]);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('dream-cycle maintenance reports derived freshness without granting authority', async () => {
+  const harness = await createHarness('derived-freshness');
+
+  try {
+    await importFromContent(harness.engine, 'systems/mbrain-ga-p6', [
+      '---',
+      'type: system',
+      'title: MBrain GA-P6',
+      '---',
+      '# Overview',
+      'See [[concepts/ga-p6-derived]].',
+    ].join('\n'), { path: 'systems/mbrain-ga-p6.md' });
+    await importFromContent(harness.engine, 'concepts/ga-p6-derived', [
+      '---',
+      'type: concept',
+      'title: GA-P6 Derived Artifact',
+      '---',
+      '# Purpose',
+      'Derived maps orient maintenance.',
+    ].join('\n'), { path: 'concepts/ga-p6-derived.md' });
+    await buildStructuralContextMapEntry(harness.engine);
+    await importFromContent(harness.engine, 'concepts/ga-p6-derived', [
+      '---',
+      'type: concept',
+      'title: GA-P6 Derived Artifact',
+      '---',
+      '# Purpose',
+      'Derived maps orient maintenance after a source change.',
+    ].join('\n'), { path: 'concepts/ga-p6-derived.md' });
+
+    const result = await runDreamCycleMaintenance(harness.engine, {
+      scope_id: 'workspace:default',
+      now: '2026-04-23T12:00:00.000Z',
+      limit: 5,
+      write_candidates: false,
+      include_derived_freshness: true,
+    });
+
+    expect(result.authority).toBe('report_or_candidate_only');
+    expect(result.canonical_write_allowed).toBe(false);
+    expect(result.derived_freshness_report.enabled).toBe(true);
+    expect(result.derived_freshness_report.artifact_count).toBe(1);
+    expect(result.derived_freshness_report.stale_count).toBe(1);
+    expect(result.derived_freshness_report.artifacts[0]).toMatchObject({
+      artifact_kind: 'context_map',
+      status: 'stale',
+      stale_reason: 'source_set_changed',
+    });
+    expect(result.maintenance_phases).toContainEqual(expect.objectContaining({
+      phase_id: 'derived_artifact_freshness',
+      output_kind: 'report',
+      status: 'reported',
+    }));
+    expect(result.maintenance_phases).toContainEqual(expect.objectContaining({
+      phase_id: 'apply_control_plane',
+      output_kind: 'governed_apply_request',
+      status: 'blocked',
+    }));
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('dream-cycle derived freshness uses its own per-family cap', async () => {
+  const harness = await createHarness('derived-limit');
+
+  try {
+    await importFromContent(harness.engine, 'systems/mbrain-ga-p6-code', [
+      '---',
+      'type: system',
+      'title: MBrain GA-P6 Code',
+      'repo_path: /workspaces/mbrain',
+      'codemap:',
+      '  - system: systems/mbrain-ga-p6-code',
+      '    pointers:',
+      '      - path: src/core/services/dream-cycle-maintenance-service.ts',
+      '        symbol: runDreamCycleMaintenance()',
+      '        role: Runs personal maintenance',
+      '        source_ref: "Source: GA-P6 derived freshness test"',
+      '---',
+      '# Overview',
+      'Maintains personal memory by reporting bounded suggestions.',
+    ].join('\n'), { path: 'systems/mbrain-ga-p6-code.md' });
+    await buildStructuralContextMapEntry(harness.engine);
+    await buildCodeLaneContextMapEntry(harness.engine);
+    await importFromContent(harness.engine, 'systems/mbrain-ga-p6-code', [
+      '---',
+      'type: system',
+      'title: MBrain GA-P6 Code',
+      'repo_path: /workspaces/mbrain',
+      'codemap:',
+      '  - system: systems/mbrain-ga-p6-code',
+      '    pointers:',
+      '      - path: src/core/services/dream-cycle-maintenance-service.ts',
+      '        symbol: runDreamCycleMaintenanceReport()',
+      '        role: Runs personal maintenance after a source change',
+      '        source_ref: "Source: GA-P6 derived freshness test"',
+      '---',
+      '# Overview',
+      'Maintains personal memory by reporting bounded suggestions after source changes.',
+    ].join('\n'), { path: 'systems/mbrain-ga-p6-code.md' });
+
+    const result = await runDreamCycleMaintenance(harness.engine, {
+      scope_id: 'workspace:default',
+      now: '2026-04-23T12:00:00.000Z',
+      limit: 0,
+      include_derived_freshness: true,
+      derived_freshness_limit: 1,
+    });
+
+    expect(result.suggestions).toEqual([]);
+    expect(result.derived_freshness_report.enabled).toBe(true);
+    expect(result.derived_freshness_report.artifact_count).toBe(2);
+    expect(result.derived_freshness_report.stale_count).toBe(2);
+    expect(result.derived_freshness_report.artifacts.map((artifact) => artifact.kind).sort()).toEqual([
+      'code_lane',
+      'workspace',
+    ]);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test('dream-cycle maintenance exposes apply control-plane requirements', async () => {
+  const result = await runDreamCycleMaintenance({
+    listMemoryCandidateEntries: async () => [],
+  } as any, {
+    scope_id: 'workspace:default',
+    now: '2026-04-23T12:00:00.000Z',
+    limit: 1,
+    write_candidates: false,
+  });
+
+  expect(result.apply_control_plane).toMatchObject({
+    allowed_without_control_plane: false,
+    requires_active_realm_session: true,
+    requires_mutation_ledger: true,
+    requires_target_snapshot: true,
+    dry_run_apply_validation_parity: true,
+    redaction_fail_closed: true,
+  });
+  expect(result.apply_control_plane.supported_operations).toContain('dry_run_memory_mutation');
+  expect(result.apply_control_plane.supported_operations).toContain('apply_memory_patch_candidate');
+  expect(result.apply_control_plane.supported_operations).not.toContain('record_memory_mutation_event');
+  expect(result.apply_control_plane.supported_operations).not.toContain('apply_memory_redaction_plan');
 });
 
 test('dream-cycle limit zero emits no suggestions before reading candidates', async () => {

@@ -222,6 +222,36 @@ GA-P5 fixture rules:
    `nearby_context`, and `stale_code_claim` cases must all record
    `lane_grants_authority: false`.
 
+## GBrain Absorption GA-P6 Personal Maintenance Cycle
+
+GA-P6 accepts the personal maintenance contract only when replay proves that
+maintenance is report-first and apply remains inside the Phase 9 control plane.
+The executable fixture is
+`test/fixtures/gbrain-absorption/ga-p6-personal-maintenance-cycle.fixture.json`,
+and S31 replays the runtime report, suggestion, derived freshness, and
+control-plane guard behavior.
+
+The fixture has two families:
+
+| Fixture field | Existing verification surface | Regression guarded |
+|---|---|---|
+| `maintenance_report_cases` | report-only and suggestion-shaped fixture replay | Maintenance defaults to bounded reports, stale candidate review, duplicate merge suggestions, and derived freshness warnings without mutation. |
+| `maintenance_apply_control_cases` | Phase 9 memory operations control-plane invariants | Apply requires active realm/session, mutation ledger, target snapshot, dry-run/apply parity, and redaction fail-closed behavior. |
+
+GA-P6 fixture rules:
+
+1. Phase 8 accepts report and suggestion quality only when no canonical mutation
+   occurs by default.
+2. Phase 9 accepts apply only through the existing memory operations control
+   plane; maintenance does not define a parallel write path.
+3. `report_only_default`, `stale_candidate_review`,
+   `duplicate_merge_suggestion`, and `derived_artifact_freshness` must remain
+   non-mutating replay cases.
+4. `candidate_write_governed_not_truth`, `apply_requires_realm_session`,
+   `apply_requires_target_snapshot`, `dry_run_apply_validation_parity`, and
+   `redaction_fail_closed` must preserve the same replay expectations as
+   interactive governed memory operations.
+
 ## Repeated-Work Prevention Evaluation
 
 This evaluation corresponds to the operational-memory workstream and later phases that depend on resume quality.

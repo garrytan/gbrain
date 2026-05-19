@@ -85,6 +85,34 @@ Rules:
 6. Maintenance must never suppress contradiction, supersession, or redaction
    history to make a report look cleaner.
 
+## GA-P6 Personal Maintenance Cycle Runtime Contract
+
+GA-P6 makes personal maintenance report-first. The default cycle produces
+bounded reports and suggestions: stale candidate review, duplicate merge
+suggestions, derived-artifact freshness warnings, and health signals. These
+outputs may point at work, but they do not mutate canonical truth.
+
+Dry-run output must name the target object, source refs, scope, sensitivity,
+expected target snapshot, policy checks, and redaction checks that apply would
+use. Apply is optional and may only run through the existing memory operations
+control plane. It requires an active write-capable realm/session, a mutation
+ledger event, target snapshot validation, and the same validation as dry-run
+before any mutation.
+
+GA-P6 rules:
+
+1. Report and suggestion modes are the default and require no mutation
+   authority.
+2. Candidate writes create or update governed candidate state, not compiled
+   truth.
+3. Apply without an active realm/session is denied and recorded.
+4. Apply without a target snapshot is a conflict or defer outcome, never a blind
+   overwrite.
+5. Dry-run and apply validation must stay parity-checked so dry-run cannot hide
+   a policy, scope, snapshot, or redaction failure.
+6. Redaction and sensitive maintenance operations fail closed when the target is
+   unsupported, stale, ambiguous, or unsafe to rewrite.
+
 ## Candidate Sources
 
 Candidates may come from several parts of the system, but they all arrive in the same review boundary before becoming durable truth.
