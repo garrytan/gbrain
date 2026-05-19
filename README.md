@@ -2,17 +2,14 @@
 
 > 靈機讀玉簡，遵律令，以煉丹之法鍛技。
 
-此 fork 在 GBrain（**玉簡**）之上加入了 `harness/`（**靈機**）— 一個 Python LLM 執行層。
-GBrain 本體零修改，全部 2685 行新增程式碼皆為原創 Python。
+此 fork 是**玉簡**的核心 — GBrain 腦庫本體，零修改上游程式碼。
 
-| 名號 | 實體 | 說明 |
+| 名號 | Repo | 說明 |
 |------|------|------|
-| **靈機** | `harness/` | Python 執行層，讀玉簡、遵律令、行任務 |
-| **玉簡** | GBrain 腦庫 | 知識載體，13 頁活文件常駐其中 |
-| **律令** | `openspec/` pipeline | 軍工級 contract 守門流程 |
-| **煉丹** | `skills/` | 技法鍛造，按需載入 |
-
-**→ [harness/README.md](harness/README.md)** — 完整說明：18 件工具、活文件系統、Genspark 協作協議、律令流水線。
+| **靈機** | [lingji](https://github.com/RYN6666999/lingji) | Python LLM 執行層，讀玉簡、遵律令、行任務 |
+| **玉簡** | 本 repo | GBrain 腦庫，知識載體，13 頁活文件常駐其中 |
+| **律令** | [luling](https://github.com/RYN6666999/luling) | 軍工級 contract 守門框架 |
+| **煉丹** | `skills/` in lingji | 技法鍛造，按需載入 |
 
 ---
 
