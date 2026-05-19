@@ -102,6 +102,8 @@ Run [LiteLLM](https://docs.litellm.ai/docs/proxy/quick_start) in front of any pr
 
 This is the catch-all for "my provider isn't in the list above." Set up LiteLLM, then `gbrain init --embedding-model litellm:<your-model-id> --embedding-dimensions <N>`.
 
+**Large-page handling.** LiteLLM ships without a static batch cap because the proxy can front any backend, and the per-request token limit depends on which backend is wired up. For brains that index large files (vendored Unicode tables, generated code, etc.), pin the downstream backend's cap via `LITELLM_MAX_BATCH_TOKENS=<N>` so gbrain pre-splits each embed batch under that ceiling. Typical values: `300000` when LiteLLM fronts OpenAI, `120000` when fronting Voyage. Without this env var the recipe stays uncapped (current default behavior).
+
 ## Choosing dimensions
 
 Three numbers matter:

@@ -31,6 +31,7 @@ import { z } from 'zod';
 
 import type {
   AIGatewayConfig,
+  EmbeddingTouchpoint,
   MultimodalInput,
   Recipe,
   TouchpointKind,
@@ -433,13 +434,12 @@ function warnRecipesMissingBatchTokens(): void {
     if (!configuredProviderIds.has(recipe.id)) continue;
     const embedding = recipe.touchpoints?.embedding;
     if (!embedding || embedding.max_batch_tokens !== undefined) continue;
-    // OpenAI is the canonical "no cap declared, fast path is intentional"
-    // recipe; suppress the warning for it. Every other recipe missing the
-    // field is suspicious.
-    if (recipe.id === 'openai') continue;
     // v0.32 (#779): explicit opt-out for dynamic-cap recipes (Ollama,
     // LiteLLM proxy, llama-server) — they ship without a static cap because
     // the cap depends on a user-launched server. Warning is noise for them.
+    // (OpenAI used to be suppressed by id here as the "intentional no-cap
+    // fast path"; #1080 closed that gap by declaring max_batch_tokens, so
+    // OpenAI now exits at the earlier line above.)
     if (embedding.no_batch_cap === true) continue;
     if (_warnedRecipes.has(recipe.id)) continue;
     _warnedRecipes.add(recipe.id);
@@ -996,13 +996,15 @@ const MIN_SUB_BATCH = 1;
  *   ├─ resolve recipe + model
  *   ├─ truncate each text to MAX_CHARS (8000)
  *   ├─ read recipe.touchpoints.embedding.{max_batch_tokens, chars_per_token, safety_factor}
+ *   ├─ resolveMaxBatchTokens(recipe, embedding, env) — recipe field, plus
+ *   │     env override for the litellm proxy recipe (LITELLM_MAX_BATCH_TOKENS)
  *   │
- *   ├─ if max_batch_tokens declared (Voyage path):
+ *   ├─ if effective max_batch_tokens > 0 (Voyage / OpenAI / Azure / capped litellm):
  *   │     budget = max_batch_tokens × shrinkState[recipe].factor (default = recipe.safety_factor)
  *   │     splitByTokenBudget(texts, budget, recipe.chars_per_token)
  *   │     for each sub-batch: embedSubBatch(...)
  *   │
- *   └─ else (OpenAI fast path):
+ *   └─ else (uncapped litellm / Ollama / llama-server):
  *         embedSubBatch(texts, ...) once  // no pre-split, no token-limit safety net
  *
  * embedSubBatch(texts, ...)
@@ -1104,11 +1106,13 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const expected = effectiveDims;
 
   const embedding = recipe.touchpoints?.embedding;
-  const maxBatchTokens = embedding?.max_batch_tokens;
+  const maxBatchTokens = resolveMaxBatchTokens(recipe, embedding, cfg.env);
   const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
 
-  // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
-  // ride the fast path: one embedMany call, no recursion safety net.
+  // Pre-split is gated on max_batch_tokens. Recipes without it ride the fast
+  // path: one embedMany call, no recursion safety net. After #1080, OpenAI
+  // and Azure declare caps; litellm picks up an optional env-driven cap when
+  // users know their proxy's downstream backend.
   const batches = maxBatchTokens
     ? splitByTokenBudget(truncated, Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
     : [truncated];
@@ -1171,8 +1175,45 @@ export function isTokenLimitError(err: unknown): boolean {
   return (
     /max.*allowed.*tokens.*batch/i.test(msg) ||
     /batch.*too.*many.*tokens/i.test(msg) ||
-    /token.*limit.*exceeded/i.test(msg)
+    /token.*limit.*exceeded/i.test(msg) ||
+    // OpenAI/Azure/litellm-proxied-OpenAI report oversize embed requests as
+    // `Invalid 'input': maximum request size is N tokens per request.`
+    // Real-world hit: vendored chip-register .h files at >300K tokens
+    // (verified against in-cluster litellm proxy). Recursive halving in
+    // embedSubBatch needs to recognize this so the page isn't dropped.
+    /maximum request size.*tokens/i.test(msg) ||
+    /max.*request size.*tokens/i.test(msg)
   );
+}
+
+/**
+ * Resolve the effective batch-token cap for a recipe, consulting env-driven
+ * overrides where applicable.
+ *
+ * The `litellm` recipe declares `no_batch_cap: true` because the proxy can
+ * front any provider — we can't know the downstream cap statically. But in
+ * practice users do know (their proxy fronts OpenAI, Bedrock, etc.), and
+ * without a cap a single oversize page is rejected wholesale by the
+ * downstream API. `LITELLM_MAX_BATCH_TOKENS` lets the user pin a cap that
+ * matches their backend. Closes #1080 for litellm-fronted deployments.
+ *
+ * For other recipes, this is a passthrough of the declared cap.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function resolveMaxBatchTokens(
+  recipe: Recipe,
+  embedding: EmbeddingTouchpoint | undefined,
+  env: Record<string, string | undefined>,
+): number | undefined {
+  if (recipe.id === 'litellm') {
+    const raw = env.LITELLM_MAX_BATCH_TOKENS;
+    if (raw !== undefined && raw !== '') {
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+    }
+  }
+  return embedding?.max_batch_tokens;
 }
 
 /**
