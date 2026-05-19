@@ -185,4 +185,44 @@ describe('performFullSync threads sourceId end-to-end', () => {
     expect(refreshed.last_sync_at).not.toBeNull();
     expect(new Date(refreshed.last_sync_at!).getTime()).toBeGreaterThan(new Date(stale.last_sync_at!).getTime());
   });
+
+  test('source-scoped no-op dry-run does not refresh last_sync_at', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+
+    const first = await performSync(engine, {
+      repoPath,
+      sourceId: 'testsrc-pfs',
+      noPull: true,
+      noEmbed: true,
+    });
+    expect(['first_sync', 'synced']).toContain(first.status);
+
+    const seeded = await readSourceSyncState('testsrc-pfs');
+    expect(seeded.last_commit).toBeTruthy();
+    expect(seeded.last_sync_at).toBeTruthy();
+
+    await engine.executeRaw(
+      `UPDATE sources
+         SET last_sync_at = now() - interval '5 days'
+       WHERE id = 'testsrc-pfs'`,
+    );
+
+    const stale = await readSourceSyncState('testsrc-pfs');
+    expect(stale.last_commit).toBe(seeded.last_commit);
+    expect(stale.last_sync_at).not.toBeNull();
+
+    const second = await performSync(engine, {
+      repoPath,
+      sourceId: 'testsrc-pfs',
+      dryRun: true,
+      noPull: true,
+      noEmbed: true,
+    });
+
+    expect(second.status).toBe('dry_run');
+
+    const afterDryRun = await readSourceSyncState('testsrc-pfs');
+    expect(afterDryRun.last_commit).toBe(seeded.last_commit);
+    expect(afterDryRun.last_sync_at).toBe(stale.last_sync_at);
+  });
 });

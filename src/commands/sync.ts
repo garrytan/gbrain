@@ -557,9 +557,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // sync_freshness keys off sources.last_sync_at, so a successful source-scoped
     // no-op sync must still refresh the heartbeat even when the bookmark is
     // already aligned with HEAD.
-    await touchSyncFreshness(engine, opts.sourceId);
+    if (!opts.dryRun) {
+      await touchSyncFreshness(engine, opts.sourceId);
+    }
     return {
-      status: 'up_to_date',
+      status: opts.dryRun ? 'dry_run' : 'up_to_date',
       fromCommit: lastCommit,
       toCommit: headCommit,
       added: 0, modified: 0, deleted: 0, renamed: 0,
