@@ -1,6 +1,6 @@
 # Embedding providers
 
-GBrain ships with 14 embedding-provider recipes covering OpenAI, the major hosted alternatives, three local options, and a universal escape hatch (LiteLLM proxy). Run `gbrain providers list` to see the live registry; `gbrain providers explain --json` emits a machine-readable matrix for agents.
+GBrain ships with 15 embedding-provider recipes covering OpenAI, the major hosted alternatives, three local options, and a universal escape hatch (LiteLLM proxy). Run `gbrain providers list` to see the live registry; `gbrain providers explain --json` emits a machine-readable matrix for agents.
 
 This page is the human-readable counterpart: capability per provider, env-var setup, dimensions, cost, and known constraints.
 
@@ -20,6 +20,7 @@ gbrain init --pglite --model voyage            # use a non-default provider
 | `openai` | `OPENAI_API_KEY` | 1536 | 0.13 | no | no |
 | `voyage` | `VOYAGE_API_KEY` | 1024 | 0.18 | no | yes (`voyage-multimodal-3`) |
 | `google` | `GOOGLE_GENERATIVE_AI_API_KEY` | 768 | 0.025 | no | no |
+| `openrouter` | `OPENROUTER_API_KEY` | 1536 | 0.02 | no | model-dependent |
 | `azure-openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` | 1536 | 0.13 | no | no |
 | `minimax` | `MINIMAX_API_KEY` | 1536 | 0.07 | no | no |
 | `dashscope` | `DASHSCOPE_API_KEY` | 1024 | varies | no | no |
@@ -37,6 +38,7 @@ gbrain init --pglite --model voyage            # use a non-default provider
 - **Cost-sensitive, English-only**: Ollama (free, local) or Voyage (paid, best quality per dollar).
 - **Quality-first**: Voyage `voyage-4-large` (1024-2048 dims, ~3-4× more dense tokens than OpenAI tiktoken).
 - **Reranking pair**: Voyage (their reranker `rerank-2.5` pairs cleanly with Voyage embeddings).
+- **One key for many hosted models**: OpenRouter. Set `OPENROUTER_API_KEY` and use `openrouter:<model-id>`.
 - **Enterprise compliance**: Azure OpenAI (data residency + private endpoints) or self-hosted via llama-server / Ollama.
 - **China region**: DashScope (Alibaba) or Zhipu (BigModel). DashScope's international endpoint at `dashscope-intl.aliyuncs.com`; override `provider_base_urls.dashscope` for the China endpoint.
 - **OSS local, full control**: llama-server (`llama.cpp`) for any GGUF model; Ollama for the curated catalog.
@@ -59,6 +61,12 @@ Voyage 4 family shares an embedding space across all variants, so you can index 
 Set `GOOGLE_GENERATIVE_AI_API_KEY` (the AI Studio public API key). Model: `gemini-embedding-001`. Default 768 dims; Matryoshka up to 3072. Cheap.
 
 For GCP service-account / Vertex AI auth (production deployments), see the v0.32.x follow-up — Vertex ADC is on the roadmap.
+
+### OpenRouter
+
+Set `OPENROUTER_API_KEY`. Optional `OPENROUTER_BASE_URL` overrides the default `https://openrouter.ai/api/v1`. Default embedding model: `openai/text-embedding-3-small` (1536 dims). OpenRouter's catalog is dynamic; use `gbrain providers test --model openrouter:<model-id>` to smoke-test any embedding model listed in OpenRouter's embeddings catalog.
+
+Chat models route through the same OpenAI-compatible endpoint, so `openrouter:<model-id>` works for model IDs such as `openai/gpt-5.2`, `anthropic/claude-haiku-4.5`, or any other OpenRouter chat model your account can access. Tool-calling behavior remains model-dependent.
 
 ### Azure OpenAI
 
@@ -113,11 +121,12 @@ For most users: **stay at 1024 or 1536**. Bigger isn't better below the noise fl
 
 ## My provider isn't listed
 
-Three options:
+Four options:
 
 1. **Use LiteLLM proxy** (above) — the universal escape hatch. Works for 100+ providers.
-2. **Open a feature request** at [github.com/garrytan/gbrain/issues](https://github.com/garrytan/gbrain/issues) with the provider's API docs URL and a setup snippet. Recipes are ~30-40 lines of TypeScript.
-3. **Submit a recipe**: clone, copy `src/core/ai/recipes/voyage.ts` as the gold-standard openai-compat template, register in `src/core/ai/recipes/index.ts`, add a per-recipe smoke test under `test/ai/recipe-<name>.test.ts`. The recipe contract test (`test/ai/recipes-contract.test.ts`) and IRON RULE regression test pin the structural invariants.
+2. **Use OpenRouter** when the provider/model is available through their OpenAI-compatible API.
+3. **Open a feature request** at [github.com/garrytan/gbrain/issues](https://github.com/garrytan/gbrain/issues) with the provider's API docs URL and a setup snippet. Recipes are ~30-40 lines of TypeScript.
+4. **Submit a recipe**: clone, copy `src/core/ai/recipes/voyage.ts` as the gold-standard openai-compat template, register in `src/core/ai/recipes/index.ts`, add a per-recipe smoke test under `test/ai/recipe-<name>.test.ts`. The recipe contract test (`test/ai/recipes-contract.test.ts`) and IRON RULE regression test pin the structural invariants.
 
 ## Switching providers on an existing brain
 
