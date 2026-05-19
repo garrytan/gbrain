@@ -2,14 +2,17 @@
 
 > 靈機讀玉簡，遵律令，以煉丹之法鍛技。
 
-此 fork 是**玉簡**的核心 — GBrain 腦庫本體，零修改上游程式碼。
+**LB-arcanum**（玉簡）是 LifeBuilder 生態系的知識庫核心 — GBrain fork，零修改上游程式碼。
+
+## LifeBuilder 生態系
 
 | 名號 | Repo | 說明 |
 |------|------|------|
-| **靈機** | [numen](https://github.com/RYN6666999/numen) | Python LLM 執行層，讀玉簡、遵律令、行任務 |
-| **玉簡** | 本 repo | GBrain 腦庫，知識載體，13 頁活文件常駐其中 |
-| **律令** | [luling](https://github.com/RYN6666999/luling) | 軍工級 contract 守門框架 |
-| **煉丹** | `skills/` in lingji | 技法鍛造，按需載入 |
+| **靈機 · Numen** | [LB-numen](https://github.com/RYN6666999/LB-numen) | Python LLM 執行層，讀玉簡、遵律令、行任務 |
+| **玉簡 · Arcanum** | [LB-arcanum](https://github.com/RYN6666999/LB-arcanum)（本 repo）| GBrain 知識庫，13 頁活文件常駐其中 |
+| **律令 · Nexus** | [LB-nexus](https://github.com/RYN6666999/LB-nexus) | 軍工級 contract 守門框架 |
+| **煉丹爐 · Athanor** | `skills/athanor.md` in LB-numen | 元技能：煉出 Azoth 標準技能 |
+| **大還丹 · Azoth** | `openspec/changes/azoth/` in LB-numen | 技能自循環標準 |
 
 ---
 
