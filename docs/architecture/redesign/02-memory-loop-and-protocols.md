@@ -98,6 +98,59 @@ Write behavior follows the same scope and intent discipline as retrieval. Not ev
 
 The candidate lifecycle exists to keep derivation useful without letting it pollute canonical memory. A strong hint is still a candidate until it has passed the promotion boundary.
 
+## GBrain Absorption Authority Routing Contract
+
+`gbrain`'s facts/takes distinction is useful because it separates fast capture
+from slower consolidation. `mbrain` absorbs that idea through domain-specific
+write routing, not through cloned facts and takes tables.
+
+Domain-specific write homes are selected before candidate or canonical write selection.
+
+| Session signal | First routing question | Allowed destination | Forbidden shortcut |
+|---|---|---|---|
+| Active task state changed | Does this affect ongoing work continuity? | Task Thread, Working Set, Event, Attempt, or Decision. | Forcing operational continuity through Memory Inbox. |
+| User states a durable personal preference or fact | Has the Scope Gate resolved personal scope and sensitivity? | Profile Memory, Personal Episode, or Memory Candidate for profile review. | Writing personal memory into work-visible canonical notes. |
+| User states curated topic knowledge | Is there authoritative provenance and a target Markdown note or procedure? | Curated Markdown, Procedure, Source Record, or Memory Candidate. | Treating a conversational summary as compiled truth without source refs. |
+| Imported or observed artifact | What source evidence must be preserved before synthesis? | Source Record plus derived indexes or candidates. | Promoting extracted claims without preserving the source boundary. |
+| Inferred relationship or surprising link | Is the claim derived, ambiguous, or contradictory? | Memory Candidate with extraction kind and target object when known. | Treating a map edge or recurrence score as answer-grounding truth. |
+| Code-sensitive claim | Can the current workspace verify path, symbol, branch, and test assumptions? | Verified response, operational stale marker, or Memory Candidate after verification. | Reusing historical code memory as current truth. |
+
+Authority-routing rules:
+
+1. The route starts with scope and domain, not with hot versus cold storage.
+2. Direct canonical writes are allowed only when `02` and the owning workstream
+   already classify the signal as authoritative for that domain.
+3. Candidate-only state remains governance history until promotion, rejection,
+   supersession, or canonical handoff finishes.
+4. Promotion and handoff preserve Source Records, target identity, scope,
+   sensitivity, and expected target snapshot evidence.
+5. If no safe write home is clear, the signal stays ephemeral or becomes an
+   explicitly ambiguous Memory Candidate.
+
+## Personal Maintenance Phase Contract
+
+Personal maintenance borrows the phase-runner discipline of `gbrain dream`, but
+not its authority model. Maintenance phases produce reports, candidates, or governed apply requests.
+
+Allowed phase outputs:
+
+| Output | Authority | Example |
+|---|---|---|
+| Report | Non-mutating orientation | stale candidate report, derived freshness report, duplicate group summary |
+| Candidate | Governance state, not truth | stale-claim challenge, duplicate-merge suggestion, profile update proposal |
+| Governed apply request | Pending mutation request | reviewed canonical handoff or patch candidate that still needs control-plane validation |
+
+Maintenance routing rules:
+
+1. A phase may refresh derived artifacts when the owning derived layer permits it.
+2. A phase may create Memory Candidates for inferred, ambiguous, stale, or
+   contradictory signals.
+3. A phase may not patch canonical Markdown, Profile Memory, or operational state
+   directly unless the existing governed write path is invoked.
+4. Apply-capable phases must expose dry-run behavior before mutation.
+5. Phase results must be inspectable in retrieval traces, audit reports, or
+   mutation ledger records when they influence later reads or writes.
+
 ## Retrieval Trace Requirements
 
 Retrieval Traces are persisted as canonical operational records when the system needs durable explainability for how an answer was assembled or how a write was justified.

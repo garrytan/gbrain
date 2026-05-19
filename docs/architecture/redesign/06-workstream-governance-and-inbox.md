@@ -56,6 +56,35 @@ Control-plane rules:
 6. Health reporting should expose bounded operator status without pretending
    sampled counts are full-table totals.
 
+## Personal Maintenance Apply Boundary
+
+Personal maintenance may discover useful work, but it does not gain special
+write authority. Any maintenance output that wants to mutate canonical or
+governance state must pass the same control plane as an interactive write.
+
+Apply-capable maintenance requires:
+
+| Requirement | Why it exists |
+|---|---|
+| active realm and session | Proves the maintenance actor has write authority for the target scope. |
+| mutation ledger | Records applied, denied, dry-run, conflict, failed, staged, or redacted outcomes. |
+| target snapshot | Prevents stale maintenance from overwriting a newer canonical target. |
+| dry-run/apply parity | Ensures dry-run validates the same target and policy checks as apply. |
+| redaction fail-closed behavior | Prevents maintenance from exposing or partially rewriting sensitive data. |
+
+Rules:
+
+1. Report-only phases need no mutation authority.
+2. Candidate-creating phases write governance state, not truth, and must preserve
+   source refs and extraction kind.
+3. Apply requests must name the target object, expected target snapshot, source
+   refs, scope, sensitivity, and interaction or maintenance run id.
+4. dry-run and apply paths must perform the same validation, except apply may
+   mutate after authorization and conflict checks pass.
+5. Failed apply requests remain auditable in the mutation ledger.
+6. Maintenance must never suppress contradiction, supersession, or redaction
+   history to make a report look cleaner.
+
 ## Candidate Sources
 
 Candidates may come from several parts of the system, but they all arrive in the same review boundary before becoming durable truth.

@@ -135,6 +135,34 @@ Rules:
 
 The key boundary is that scope determines destination. Retrieval convenience is never a sufficient reason to change memory domain.
 
+## Corpus Lane Scope Boundary
+
+Personal corpus lanes may help retrieval explain which corpus contributed a
+result, but they do not decide whether a request is work, personal, or mixed.
+
+The lane resolver runs after the Scope Gate.
+
+Rules:
+
+1. A lane cannot turn work retrieval into personal retrieval.
+2. A lane cannot turn personal retrieval into work retrieval.
+3. A lane cannot authorize a write into Profile Memory, Personal Episodes,
+   Task Threads, Working Sets, curated Markdown, or governance state.
+4. Profile Memory routing still follows the Scope Gate and write isolation rules.
+5. Mixed-scope retrieval must still name the cross-scope bridge even when both
+   sides have lane metadata.
+6. Lane-aware citations should include the lane only as provenance metadata, not
+   as a replacement for source refs or scope decisions.
+
+Useful lane examples inside personal `mbrain`:
+
+| Lane | Scope relationship | Allowed use |
+|---|---|---|
+| `notes` | Work or personal, depending on resolved scope | Citation and import provenance. |
+| `worktree` | Usually work | Code/source orientation after work scope is allowed. |
+| `transcripts` | Work, personal, or mixed by source | Source evidence after scope classification. |
+| `imports` | Determined by source artifact | Provenance and derived refresh selection. |
+
 ## Export and Visibility Boundaries
 
 Personal memory is not automatically as shareable as work notes.

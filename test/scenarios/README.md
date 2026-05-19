@@ -46,6 +46,7 @@ agent planning/spec files are intentionally not tracked.
 | S23 | `s23-duplicate-review-governance.test.ts` | G1, L6 | ✅ green |
 | S24 | `s24-duplicate-review-acceptance.test.ts` | G1, G2, L6 | ✅ green |
 | S25 | `s25-memory-consolidation-retention.test.ts` | L5/L6/G1 | ✅ green |
+| S26 | `s26-gbrain-absorption-contracts.test.ts` | GA-P0, GA-P1, I4, I5, L4, L6, G1 | ✅ green |
 
 Legend:
 - ✅ green = passes on current code
@@ -54,7 +55,8 @@ The redesign scenario suite currently has zero placeholder tests. It covers the
 original S1-S14 redesign contracts, S15-S21 loop-observability and
 interaction-identity contracts, S22 agentic canonical retrieval transcript
 coverage, S23 duplicate review governance coverage, plus S24 duplicate review
-acceptance coverage and S25 memory consolidation retention coverage. Run this as
+acceptance coverage, S25 memory consolidation retention coverage, and S26
+GBrain absorption contract coverage. Run this as
 part of final acceptance:
 
 ```sh

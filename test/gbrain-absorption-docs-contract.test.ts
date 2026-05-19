@@ -1,0 +1,83 @@
+import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'fs';
+
+function readRepoFile(path: string): string {
+  return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+}
+
+describe('personal gbrain absorption docs contracts', () => {
+  test('records a GA-P0 upstream classification checkpoint', () => {
+    const doc = readRepoFile('docs/UPSTREAM_SYNC.md');
+
+    expect(doc).toContain('## Roadmap 2026-05-19 - GA-P0 personal gbrain absorption classification checkpoint');
+    expect(doc).toContain('03947665e4dbfeaf8a5542d160a0f4b89e4ae747');
+    expect(doc).toContain('| Reference area | Decision | MBrain-shaped action | Boundary rationale |');
+    expect(doc).toContain('| System-of-record and reconciler discipline | adapt |');
+    expect(doc).toContain('| HTTP MCP, OAuth, admin UI, teammate-scoped writes | reject |');
+    expect(doc).toContain('| Minions, durable job runtime, hosted agent runtime | reject |');
+    expect(doc).toContain('| Eval capture and replay | adapt |');
+    expect(doc).toContain('| Code intelligence and tree-sitter symbol graph | later |');
+    expect(doc).toContain('### Direct-port denylist');
+    expect(doc).toContain('### Useful upstream evidence ledger');
+  });
+
+  test('anchors authority routing in the memory-loop protocol owner', () => {
+    const doc = readRepoFile('docs/architecture/redesign/02-memory-loop-and-protocols.md');
+
+    expect(doc).toContain('## GBrain Absorption Authority Routing Contract');
+    expect(doc).toContain('| Session signal | First routing question | Allowed destination | Forbidden shortcut |');
+    expect(doc).toContain('Domain-specific write homes are selected before candidate or canonical write selection.');
+    expect(doc).toContain('## Personal Maintenance Phase Contract');
+    expect(doc).toContain('Maintenance phases produce reports, candidates, or governed apply requests.');
+  });
+
+  test('anchors corpus lanes and code lane in the context-map owner', () => {
+    const doc = readRepoFile('docs/architecture/redesign/05-workstream-context-map.md');
+
+    expect(doc).toContain('## Personal Corpus Lane Metadata Contract');
+    expect(doc).toContain('A corpus lane is not a scope.');
+    expect(doc).toContain('Corpus lanes are source and artifact metadata inside an already resolved scopeId.');
+    expect(doc).toContain('Corpus lanes never replace Source Records, imported-artifact boundaries, retrieval traces, or Scope Gate decisions.');
+    expect(doc).toContain('## Code Lane Derived Artifact Contract');
+    expect(doc).toContain('Graph expansion is opt-in until evaluation proves it improves code retrieval.');
+    expect(doc).toContain('reindex and invalidation plan');
+  });
+
+  test('anchors maintenance apply controls in the governance owner', () => {
+    const doc = readRepoFile('docs/architecture/redesign/06-workstream-governance-and-inbox.md');
+
+    expect(doc).toContain('## Personal Maintenance Apply Boundary');
+    expect(doc).toContain('active realm and session');
+    expect(doc).toContain('mutation ledger');
+    expect(doc).toContain('target snapshot');
+    expect(doc).toContain('dry-run and apply paths must perform the same validation');
+  });
+
+  test('anchors corpus lane scope boundaries in the profile/scope owner', () => {
+    const doc = readRepoFile('docs/architecture/redesign/07-workstream-profile-memory-and-scope.md');
+
+    expect(doc).toContain('## Corpus Lane Scope Boundary');
+    expect(doc).toContain('The lane resolver runs after the Scope Gate.');
+    expect(doc).toContain('A lane cannot turn work retrieval into personal retrieval.');
+    expect(doc).toContain('Profile Memory routing still follows the Scope Gate and write isolation rules.');
+  });
+
+  test('anchors replay fixtures and gates in the evaluation owner', () => {
+    const doc = readRepoFile('docs/architecture/redesign/08-evaluation-and-acceptance.md');
+
+    expect(doc).toContain('## GBrain Absorption Replay Fixture Contract');
+    expect(doc).toContain('GA-P fixture namespace');
+    expect(doc).toContain('candidate_authority');
+    expect(doc).toContain('lane_scope_decision');
+    expect(doc).toContain('code_verification');
+    expect(doc).toContain('maintenance_apply_result');
+  });
+
+  test('updates the install verification runbook for GA-P0 and GA-P1', () => {
+    const doc = readRepoFile('docs/MBRAIN_VERIFY.md');
+
+    expect(doc).toContain('## GBrain Absorption GA-P0/GA-P1 Verification');
+    expect(doc).toContain('bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s26-gbrain-absorption-contracts.test.ts');
+    expect(doc).toContain('bun run test:scenarios');
+  });
+});

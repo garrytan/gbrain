@@ -60,6 +60,59 @@ Baseline capture rules:
 - keep the baseline payload small enough that later comparisons are readable
 - refresh the baseline only when the contract itself changes, not when the result is inconvenient
 
+## GBrain Absorption Replay Fixture Contract
+
+GBrain-style replay is useful only if it measures `mbrain` boundaries, not just
+retrieval overlap. Replay fixtures for this roadmap must preserve enough fields
+to evaluate retrieval, governance, scope, code verification, and maintenance
+apply behavior.
+
+GA-P fixture namespace: absorption fixtures use `GA-P*` stage identifiers so
+they do not collide with the existing redesign phase acceptance packs.
+
+Minimum fixture shape:
+
+```json
+{
+  "fixture_id": "ga-p1-example",
+  "stage_id": "GA-P1",
+  "query": "resume the retrieval routing task",
+  "requested_scope": "work",
+  "expected_intent": "task_resume",
+  "expected_canonical_refs": ["task_thread:example"],
+  "candidate_authority": "candidate_only",
+  "lane_scope_decision": {
+    "scope_id": "work",
+    "lane_id": "worktree",
+    "lane_grants_authority": false
+  },
+  "code_verification": {
+    "required": true,
+    "repo_path": "/path/to/repo",
+    "expected_mode": "live_workspace_check"
+  },
+  "maintenance_apply_result": {
+    "allowed_without_control_plane": false,
+    "requires_realm_session": true,
+    "requires_mutation_ledger": true,
+    "requires_target_snapshot": true
+  }
+}
+```
+
+Replay rules:
+
+1. Fixtures must identify expected canonical refs separately from candidate
+   signals and derived refs.
+2. Candidate authority must be explicit: `answer_ground`, `candidate_only`,
+   `historical`, or `not_expected`.
+3. Lane decisions must record that lanes do not grant authority.
+4. Code verification must state whether live workspace checks are required.
+5. Maintenance apply expectations must state whether realm/session, mutation
+   ledger, and target snapshot checks are required.
+6. A replay pass fails if retrieval gets the right text by violating scope,
+   candidate authority, or control-plane boundaries.
+
 ## Repeated-Work Prevention Evaluation
 
 This evaluation corresponds to the operational-memory workstream and later phases that depend on resume quality.

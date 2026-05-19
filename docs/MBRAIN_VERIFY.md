@@ -54,6 +54,33 @@ Expected:
 - Postgres runs when `DATABASE_URL` is configured.
 - Missing Postgres coverage is reported as an explicit skip reason, not as a silent reduction in the supported surface.
 
+## GBrain Absorption GA-P0/GA-P1 Verification
+
+Run:
+
+```bash
+bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s26-gbrain-absorption-contracts.test.ts
+```
+
+Expected:
+
+- the reviewed `reference/gbrain` baseline is pinned to `03947665e4dbfeaf8a5542d160a0f4b89e4ae747`
+- `docs/UPSTREAM_SYNC.md` records the `GA-P0` classification, direct-port denylist, and useful upstream evidence ledger
+- corpus lanes remain metadata inside `scopeId` and do not replace Source Records, import origins, retrieval traces, or Scope Gate decisions
+- replay fixtures use the `GA-P*` namespace and preserve candidate authority, lane scope decisions, code verification, and maintenance apply controls
+- each new contract family maps to at least one executable surface: `retrieve_context`, `read_context`, `route_memory_writeback`, `reverify_code_claims`, scenario tests, or phase acceptance packs
+
+Then run:
+
+```bash
+bun run test:scenarios
+```
+
+Expected:
+
+- existing scenario coverage still passes after adding the GA-P fixture scenario
+- no GA-P fixture can pass by changing prose only while omitting executable surfaces
+
 ## Phase 1 operational-memory verification
 
 Run:

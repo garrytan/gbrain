@@ -230,6 +230,66 @@ Freshness metadata must stay explicit:
 
 Staleness is a retrieval-quality problem, not a truth corruption problem. The correct failure mode is loss of map utility, not loss of canonical knowledge.
 
+## Personal Corpus Lane Metadata Contract
+
+`gbrain` sources are an important reference for separating corpora. `mbrain`
+uses the idea as personal corpus lane metadata, not as a second scope system.
+
+A corpus lane is not a scope. Corpus lanes are source and artifact metadata inside an already resolved scopeId.
+
+Corpus lanes never replace Source Records, imported-artifact boundaries, retrieval traces, or Scope Gate decisions.
+
+Lane metadata may identify:
+
+- imported note corpus
+- active worktree corpus
+- transcript corpus
+- raw import or source-evidence corpus
+- derived context-map or atlas corpus
+
+Lane rules:
+
+1. The Scope Gate resolves work, personal, mixed, or unknown before any lane
+   resolver runs.
+2. A lane may narrow source-set hashes, derived refresh sets, citations, and
+   import provenance.
+3. A lane may not grant read or write authority.
+4. A lane may not copy work-only data into personal memory or personal data into
+   work memory.
+5. Context maps may record lane metadata on nodes and source-set hashes only as
+   derived orientation.
+6. Lane-aware retrieval must still map evidence back to Source Records and
+   import origins before making factual claims.
+
+## Code Lane Derived Artifact Contract
+
+`reference/gbrain` proves that code-aware retrieval needs more than symbol
+names. `mbrain` may add a Context Map code lane only when the derived layer can
+track indexing prerequisites, backfill, invalidation, and bounded expansion.
+
+Required code-lane metadata:
+
+| Field | Purpose |
+|---|---|
+| `source_ref` | Canonical evidence or workspace source for the indexed code. |
+| `repo_path` | Workspace root used for live verification. |
+| `content_hash` | Detects stale extracted symbols. |
+| `extractor_version` | Forces reindex when chunking or symbol extraction changes. |
+| `symbol_id` | Stable derived identifier for a symbol node. |
+| `edge_kind` | Distinguishes call, reference, import, declaration, or containment edges. |
+| `verification_hint` | Records what live check is needed before a current code claim is repeated. |
+
+Code-lane rules:
+
+1. Symbol nodes and edges are derived orientation, not current code truth.
+2. Current code claims still require live path, symbol, branch, and test
+   verification.
+3. Graph expansion is opt-in until evaluation proves it improves code retrieval.
+4. High-fan-out symbols need explicit caps and bounded output.
+5. Every extractor or chunker version change needs a reindex and invalidation plan before the new graph can influence retrieval.
+6. Code-lane retrieval must keep `rg`, exact file reads, and direct workspace
+   verification available as higher-authority current evidence.
+
 ## Tests and Evaluation
 
 This workstream needs both correctness tests and utility evaluation.

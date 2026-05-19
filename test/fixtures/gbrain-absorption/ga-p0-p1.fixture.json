@@ -1,0 +1,135 @@
+{
+  "stage_id": "GA-P0/GA-P1",
+  "upstream_baseline": {
+    "path": "reference/gbrain",
+    "sha": "03947665e4dbfeaf8a5542d160a0f4b89e4ae747",
+    "tag": "v0.36.0.0"
+  },
+  "contract_cases": [
+    {
+      "case_id": "authority-routing",
+      "fixture_id": "ga-p1-authority-routing",
+      "query": "route a durable personal preference into the correct memory home",
+      "requested_scope": "personal",
+      "expected_intent": "auto_accumulation",
+      "expected_canonical_refs": ["profile_memory:durable-preference"],
+      "candidate_authority": "candidate_only",
+      "lane_scope_decision": {
+        "scope_id": "personal",
+        "lane_id": "profile",
+        "lane_grants_authority": false
+      },
+      "code_verification": {
+        "required": false,
+        "repo_path": "",
+        "expected_mode": "not_required"
+      },
+      "maintenance_apply_result": {
+        "allowed_without_control_plane": false,
+        "requires_realm_session": true,
+        "requires_mutation_ledger": true,
+        "requires_target_snapshot": true
+      },
+      "existing_surfaces": ["retrieve_context", "read_context", "route_memory_writeback"],
+      "must_preserve": ["candidate_authority", "source_refs", "target_snapshot"],
+      "verification_commands": [
+        "bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s26-gbrain-absorption-contracts.test.ts",
+        "bun run test:scenarios"
+      ]
+    },
+    {
+      "case_id": "corpus-lane-boundary",
+      "fixture_id": "ga-p1-corpus-lane-boundary",
+      "query": "read imported notes without letting lane metadata override scope",
+      "requested_scope": "work",
+      "expected_intent": "broad_synthesis",
+      "expected_canonical_refs": ["source_record:import-origin"],
+      "candidate_authority": "not_expected",
+      "lane_scope_decision": {
+        "scope_id": "work",
+        "lane_id": "imports",
+        "lane_grants_authority": false
+      },
+      "code_verification": {
+        "required": false,
+        "repo_path": "",
+        "expected_mode": "not_required"
+      },
+      "maintenance_apply_result": {
+        "allowed_without_control_plane": false,
+        "requires_realm_session": true,
+        "requires_mutation_ledger": true,
+        "requires_target_snapshot": true
+      },
+      "existing_surfaces": ["read_context", "retrieval_traces"],
+      "must_preserve": ["scope_gate", "source_record", "import_origin"],
+      "lane_grants_authority": false,
+      "verification_commands": [
+        "bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s26-gbrain-absorption-contracts.test.ts",
+        "bun run test:scenarios"
+      ]
+    },
+    {
+      "case_id": "code-lane-derived-artifact",
+      "fixture_id": "ga-p1-code-lane-derived-artifact",
+      "query": "verify a remembered code symbol before repeating it as current truth",
+      "requested_scope": "work",
+      "expected_intent": "precision_lookup",
+      "expected_canonical_refs": ["workspace:live-code"],
+      "candidate_authority": "historical",
+      "lane_scope_decision": {
+        "scope_id": "work",
+        "lane_id": "worktree",
+        "lane_grants_authority": false
+      },
+      "code_verification": {
+        "required": true,
+        "repo_path": "/path/to/repo",
+        "expected_mode": "live_workspace_check"
+      },
+      "maintenance_apply_result": {
+        "allowed_without_control_plane": false,
+        "requires_realm_session": true,
+        "requires_mutation_ledger": true,
+        "requires_target_snapshot": true
+      },
+      "existing_surfaces": ["reverify_code_claims"],
+      "must_preserve": ["live_workspace_check", "default_off_graph_expansion", "reindex_and_invalidation"],
+      "verification_commands": [
+        "bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s26-gbrain-absorption-contracts.test.ts",
+        "bun run test:scenarios"
+      ]
+    },
+    {
+      "case_id": "maintenance-apply-boundary",
+      "fixture_id": "ga-p1-maintenance-apply-boundary",
+      "query": "apply a reviewed maintenance suggestion to canonical memory",
+      "requested_scope": "personal",
+      "expected_intent": "maintenance_apply",
+      "expected_canonical_refs": ["memory_mutation_event:target-snapshot"],
+      "candidate_authority": "candidate_only",
+      "lane_scope_decision": {
+        "scope_id": "personal",
+        "lane_id": "maintenance",
+        "lane_grants_authority": false
+      },
+      "code_verification": {
+        "required": false,
+        "repo_path": "",
+        "expected_mode": "not_required"
+      },
+      "maintenance_apply_result": {
+        "allowed_without_control_plane": false,
+        "requires_realm_session": true,
+        "requires_mutation_ledger": true,
+        "requires_target_snapshot": true
+      },
+      "existing_surfaces": ["route_memory_writeback", "memory_mutation_ledger"],
+      "must_preserve": ["realm_session", "dry_run_apply_parity", "redaction_fail_closed"],
+      "verification_commands": [
+        "bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s26-gbrain-absorption-contracts.test.ts",
+        "bun run test:scenarios"
+      ]
+    }
+  ]
+}

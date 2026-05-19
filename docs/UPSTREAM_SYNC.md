@@ -46,6 +46,68 @@ file explains upstream provenance when upstream code was considered.
 
 ---
 
+## Roadmap 2026-05-19 - GA-P0 personal gbrain absorption classification checkpoint
+
+- **Project baseline before roadmap**: `48ec6f6` (merge of memory consolidation evaluation)
+- **Roadmap branch**: `codex/gbrain-personal-roadmap-20260519`
+- **Reference repo path**: `reference/gbrain`
+- **Reference upstream HEAD**: `03947665e4dbfeaf8a5542d160a0f4b89e4ae747` (`v0.36.0.0`)
+- **Roadmap spec**: `docs/superpowers/specs/2026-05-19-personal-gbrain-absorption-roadmap-design.md`
+
+This checkpoint classifies `reference/gbrain` as a source of proven operating
+patterns, not as a merge target. Future implementation should absorb the
+principles below through the owning `mbrain` redesign workstreams and tests.
+
+| Reference area | Decision | MBrain-shaped action | Boundary rationale |
+|---|---|---|---|
+| Dream cycle phase runner | adapt | Define a personal maintenance phase contract that emits reports, candidates, or governed apply requests. | Useful operating regimen, but canonical writes must still pass Memory Inbox, handoff, mutation ledger, realm/session, and snapshot checks. |
+| Facts/takes distinction | adapt | Translate hot/cold memory into domain-specific write routing and authority stages. | Do not clone upstream tables or a one-way facts-to-takes bridge; `mbrain` has multiple canonical homes. |
+| System-of-record and reconciler discipline | adapt | Preserve Markdown/canonical evidence as the durable source while treating DB/index projections as rebuildable, reconciled artifacts. | This is a deeper safety lesson than hot/cold storage alone; any adapted projection must preserve round-trip evidence and Source Record ownership. |
+| Eval capture and replay | adapt | Define replay fixtures for retrieval, candidate lifecycle, task resume, scope isolation, code verification, and maintenance apply outcomes. | Evaluation should precede automation and must measure governance boundaries, not only retrieval quality. |
+| Multi-source brains | adapt | Reduce source ideas to personal corpus lane metadata inside an existing `scopeId`. | Lanes must not become a second scope system or grant write authority. |
+| Code intelligence and tree-sitter symbol graph | later | Treat symbol metadata and graph walking as a future Context Map code lane with backfill, invalidation, fanout caps, and default-off expansion. | Valuable but high-risk; it must not become current code truth without live verification. |
+| Source-aware ranking | adopt | Keep the existing `mbrain` reimplementation and evaluate future tuning against local fixtures. | Already adopted in `mbrain` as engine-neutral ranking. |
+| Frontmatter guards and resolver warnings | later | Fold useful checks into existing lint/import validation only after a focused design. | Useful quality guard, but not part of the `GA-P0` / `GA-P1` foundation. |
+| HTTP MCP, OAuth, admin UI, teammate-scoped writes | reject | Keep out of the personal roadmap. | Company/team runtime scope conflicts with the personal `mbrain` target. |
+| Minions, durable job runtime, hosted agent runtime | reject | Do not port as a prerequisite for personal maintenance. | `mbrain` should remain the durable memory layer under agents, not a competing job runtime. |
+| Supabase/TUS hosted storage flows | reject | Revisit only if local-first large-file semantics are designed first. | Hosted storage assumptions conflict with local/offline default behavior. |
+
+### Direct-port denylist
+
+Do not port these surfaces directly:
+
+- `reference/gbrain/src/server/**` HTTP MCP, OAuth, admin, and thin-client surfaces.
+- `reference/gbrain/src/minions/**`, Minions handlers, durable job queue, and hosted agent runtime.
+- Supabase/TUS storage flows and remote artifact assumptions.
+- Postgres-only migrations or SQL that would change the SQLite/local-first core contract.
+- `facts` and `takes` tables as direct clones.
+- Code Cathedral/tree-sitter indexing code before `GA-P5` defines local/offline invalidation, fanout, and live-verification gates.
+- Source-scoped client write authority or teammate ACL behavior.
+
+### Useful upstream evidence ledger
+
+| Upstream evidence | Use in `mbrain` | GA-P owner |
+|---|---|---|
+| `reference/gbrain/src/core/cycle.ts` | Dream-cycle phase ordering, reports, and guarded apply inspiration. | `GA-P1`, `GA-P6` |
+| `reference/gbrain/docs/takes-vs-facts.md` | Hot/cold memory distinction and one-way consolidation risks. | `GA-P4` |
+| `reference/gbrain/docs/architecture/system-of-record.md` | Markdown-grounded system-of-record and rebuildable projection discipline. | `GA-P0`, `GA-P4` |
+| `reference/gbrain/docs/architecture/brains-and-sources.md` and `reference/gbrain/docs/guides/multi-source-brains.md` | Source separation to reinterpret as personal corpus lane metadata. | `GA-P1`, `GA-P3` |
+| `reference/gbrain/docs/eval-bench.md`, `reference/gbrain/docs/eval-capture.md`, `reference/gbrain/docs/eval-takes-quality.md` | Replay fixture and quality-gate inspiration. | `GA-P1`, `GA-P2` |
+| `reference/gbrain/docs/designs/CODE_CATHEDRAL_II.md` | Code-lane design reference only after derived/current truth gates exist. | `GA-P5` |
+
+Rules for later implementation:
+
+1. Direct ports require an owning redesign workstream and a focused test.
+2. Corpus lanes are metadata inside scope, not scope or write authority.
+3. Maintenance apply paths must use realm/session authorization, mutation ledger,
+   target snapshot checks, dry-run/apply parity, and redaction fail-closed rules.
+4. Code graph retrieval stays default-off until local/offline and retrieval
+   regression gates prove it is safe.
+5. `docs/UPSTREAM_SYNC.md` must be updated whenever a later GA-P phase adopts,
+   adapts, rejects, or defers a new `gbrain` reference area.
+
+---
+
 ## Sync 2026-05-01 — source-aware search ranking only
 
 - **Project baseline before sync**: `8f24b92` (PR #80 — sync and release safety)
