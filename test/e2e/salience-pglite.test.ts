@@ -112,4 +112,27 @@ describe('v0.29 E2E — getRecentSalience (Garry test)', () => {
     const rows = await engine.getRecentSalience({ days: 7, slugPrefix: 'nope/does-not-exist/' });
     expect(rows).toEqual([]);
   });
+
+  // TIM-37: the daily briefing writes to the vault and re-ingests as
+  // `briefings/<date>`. Without this filter the briefing itself would top
+  // every subsequent Brain Pulse — self-reference with no signal.
+  describe('TIM-37 — briefings excluded from their own Brain Pulse', () => {
+    test('default query hides briefings/* slugs', async () => {
+      await engine.putPage('briefings/2026-05-19', {
+        type: 'note',
+        title: 'Daily Briefing — 2026-05-19',
+        compiled_truth: 'Auto-generated cron briefing.',
+      });
+      const rows = await engine.getRecentSalience({ days: 7, limit: 50 });
+      expect(rows.some(r => r.slug.startsWith('briefings/'))).toBe(false);
+    });
+
+    test('explicit slugPrefix=briefings/ still returns them', async () => {
+      const rows = await engine.getRecentSalience({ days: 7, slugPrefix: 'briefings/' });
+      expect(rows.length).toBeGreaterThan(0);
+      for (const r of rows) {
+        expect(r.slug.startsWith('briefings/')).toBe(true);
+      }
+    });
+  });
 });
