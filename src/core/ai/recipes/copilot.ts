@@ -27,6 +27,7 @@ export const copilot: Recipe = {
     embedding: {
       models: ['metis-1024-I16-Binary'],
       default_dims: 1024,
+      max_batch_tokens: 8192,
       cost_per_1m_tokens_usd: undefined,
       price_last_verified: '2026-05-06',
     },
