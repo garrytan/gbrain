@@ -783,7 +783,7 @@ export async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
  * user has no DB configured anywhere; otherwise the caller chose --fast or
  * we failed to connect despite a configured URL.
  */
-export async function runDoctor(engine: BrainEngine | null, args: string[], dbSource?: DbUrlSource) {
+export async function runDoctor(engine: BrainEngine | null, args: string[], dbSource?: DbUrlSource, opts?: { lockHeldByMcp?: boolean }) {
   const jsonOutput = args.includes('--json');
   const fastMode = args.includes('--fast');
   const doFix = args.includes('--fix');
@@ -1260,14 +1260,24 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       // skipped the connection. When null, there really is no config
       // anywhere.
       let msg: string;
+      let status: 'ok' | 'warn' | 'fail' = 'warn';
       if (fastMode && dbSource) {
         msg = `Skipping DB checks (--fast mode, URL present from ${dbSource})`;
+      } else if (!fastMode && dbSource && opts?.lockHeldByMcp) {
+        // PGLite single-writer lock held by another process (typically
+        // `gbrain serve` MCP). Co-existence with MCP is expected, not an
+        // error: filesystem checks still ran; DB-backed health is reachable
+        // via the MCP surface (mcp__gbrain__get_health). Demoting to `ok`
+        // with an info-prefixed message so this stops surfacing as a warning
+        // every time a user runs `gbrain doctor` alongside an attached MCP.
+        msg = `info: DB owned by another process (likely 'gbrain serve' MCP holding the PGLite single-writer lock). Filesystem checks ran; use 'mcp__gbrain__get_health' for DB-backed checks.`;
+        status = 'ok';
       } else if (!fastMode && dbSource) {
         msg = `Could not connect to configured DB (URL from ${dbSource}); filesystem checks only`;
       } else {
         msg = 'No database configured (filesystem checks only). Set GBRAIN_DATABASE_URL or run `gbrain init`.';
       }
-      checks.push({ name: 'connection', status: 'warn', message: msg });
+      checks.push({ name: 'connection', status, message: msg });
     }
     const earlyFail1 = outputResults(checks, jsonOutput);
     process.exit(earlyFail1 ? 1 : 0);

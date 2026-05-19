@@ -898,8 +898,21 @@ async function handleCliOnly(command: string, args: string[]) {
         await runDoctor(eng, args);
         await eng.disconnect();
       } catch {
-        // DB unavailable — still run filesystem checks
-        await runDoctor(null, args, getDbUrlSource());
+        // DB unavailable — still run filesystem checks. Detect the common
+        // case where PGLite is locked by an attached `gbrain serve` MCP
+        // (co-existence is expected, not an error) so doctor can demote
+        // the connection warning to an info-level ok message.
+        const fs = await import('fs');
+        const path = await import('path');
+        const { gbrainPath } = await import('./core/config.ts');
+        let lockHeldByMcp = false;
+        try {
+          const pidFile = path.join(gbrainPath('brain.pglite'), 'postmaster.pid');
+          lockHeldByMcp = fs.existsSync(pidFile);
+        } catch {
+          // best-effort detection
+        }
+        await runDoctor(null, args, getDbUrlSource(), { lockHeldByMcp });
       }
     }
     return;
