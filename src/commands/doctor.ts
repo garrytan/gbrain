@@ -1332,6 +1332,16 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     checks.push(conformanceResult);
   }
 
+  // 2b. Skill brain-first coverage — detect skills that do external lookups
+  // without a brain/gbrain search step. The brain has 100K+ pages; external
+  // APIs should never be the first call when the brain likely has the answer.
+  {
+    const workspaceSkillsDir = process.env.OPENCLAW_WORKSPACE
+      ? join(process.env.OPENCLAW_WORKSPACE, 'skills')
+      : join(process.env.HOME || '', '.openclaw', 'workspace', 'skills');
+    checks.push(skillBrainFirstCheck(workspaceSkillsDir));
+  }
+
   // 3. Half-migrated Minions detection (filesystem-only).
   // If completed.jsonl has any status:"partial" entry with no later
   // status:"complete" for the same version, the install is mid-migration.
@@ -3285,6 +3295,138 @@ function checkSkillConformance(skillsDir: string): Check {
     };
   } catch {
     return { name: 'skill_conformance', status: 'warn', message: 'Could not parse manifest.json' };
+  }
+}
+
+/**
+ * Skill brain-first coverage check.
+ *
+ * Scans SKILL.md files in the OpenClaw workspace and detects skills that
+ * reference external lookup tools (web_search, Exa, Perplexity, Happenstance,
+ * Crustdata, Captain API, etc.) without also including a brain/gbrain search
+ * step. The brain has 100K+ pages — external APIs should never be the first
+ * call when the brain likely has the answer.
+ *
+ * The tweet-shield incident (2026-05-19) is the motivating case: cross-modal
+ * eval flagged Garry’s Palantir tweet as risky because the models didn’t know
+ * he built it — but the brain already had “designed the entire Finance product
+ * UI” and “150+ PSDs from April-December 2006.” If the shield had checked
+ * brain first, it would never have flagged.
+ *
+ * Pure filesystem check — no DB needed.
+ */
+export function skillBrainFirstCheck(workspaceSkillsDir: string): Check {
+  try {
+    if (!existsSync(workspaceSkillsDir)) {
+      return {
+        name: 'skill_brain_first',
+        status: 'ok',
+        message: `OpenClaw workspace skills dir not found at ${workspaceSkillsDir} — skipped`,
+      };
+    }
+
+    // Patterns that indicate external lookups
+    const EXTERNAL_LOOKUP_PATTERNS = [
+      /\bweb_search\b/i,
+      /\bweb_fetch\b/i,
+      /\bexa[\s._]/i,
+      /\bperplexity/i,
+      /\bhappenstance/i,
+      /\bcrustdata/i,
+      /\bcaptain[\s._-]?api/i,
+      /\bfirecrawl/i,
+      /\bcurl\b.*api/i,
+    ];
+
+    // Patterns that indicate a brain-first search step
+    const BRAIN_FIRST_PATTERNS = [
+      /\bgbrain\s+search\b/i,
+      /\bbrain\s+search\b/i,
+      /\bbrain[\s-]first\b/i,
+      /\bsearch\s+(the\s+)?brain\b/i,
+      /step\s*0.*brain/i,
+      /brain\s*context/i,
+      /\bgbrain\s+get\b/i,
+      /\bgbrain\s+query\b/i,
+      /check\s+(the\s+)?brain/i,
+      /query\s+(the\s+)?brain/i,
+      /\bbrain\s+lookup\b/i,
+    ];
+
+    // Skills that are inherently brain-internal or infrastructure and don't
+    // need a brain-first step (they ARE the brain, or they're pure infra).
+    const EXEMPT_SKILLS = new Set([
+      'brain-ops', 'brain-commit', 'brain-enrichment-pipeline', 'brain-export',
+      'brain-ingest-gate', 'brain-librarian', 'brain-link-refs', 'brain-link-report',
+      'brain-pdf', 'brain-pdf-auto', 'brain-plan', 'brain-publish', 'brain-storage',
+      'brain-storage-links', 'brain-taxonomist', 'gbrain', 'gbrain-pr', 'gbrain-upgrade',
+      'benchmark-gbrain', 'exa', 'happenstance', 'crustdata', 'captain-api',
+      'healthcheck', 'backblaze', 'browser', 'browser-use', 'binary-deps',
+      'captcha-solver', 'container-restart', 'durable-service', 'data-loss-gate',
+      'channel-discovery', 'clawvisor', 'clawvisor-shield', 'cron-scheduler',
+      'cronify', 'correction-pipeline', 'acknowledge', 'ask-user', 'backoff',
+      'acp-coding', 'code-pr', 'skill-creator', 'ingest', 'freshness-monitor',
+    ]);
+
+    const entries = readdirSync(workspaceSkillsDir, { withFileTypes: true });
+    const missing: string[] = [];
+    let scanned = 0;
+    let withExternal = 0;
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skillName = entry.name;
+      if (EXEMPT_SKILLS.has(skillName)) continue;
+      if (skillName.startsWith('_') || skillName.startsWith('.')) continue;
+
+      const skillPath = join(workspaceSkillsDir, skillName, 'SKILL.md');
+      if (!existsSync(skillPath)) continue;
+
+      let content: string;
+      try {
+        content = readFileSync(skillPath, 'utf-8');
+      } catch {
+        continue;
+      }
+
+      scanned++;
+
+      // Check if skill references external lookups
+      const hasExternalLookup = EXTERNAL_LOOKUP_PATTERNS.some(p => p.test(content));
+      if (!hasExternalLookup) continue;
+
+      withExternal++;
+
+      // Check if skill also has a brain-first step
+      const hasBrainFirst = BRAIN_FIRST_PATTERNS.some(p => p.test(content));
+      if (!hasBrainFirst) {
+        missing.push(skillName);
+      }
+    }
+
+    if (missing.length === 0) {
+      return {
+        name: 'skill_brain_first',
+        status: 'ok',
+        message: `${withExternal} skill(s) with external lookups all include brain-first checks (${scanned} scanned)`,
+      };
+    }
+
+    return {
+      name: 'skill_brain_first',
+      status: 'warn',
+      message:
+        `${missing.length} skill(s) do external lookups without a brain-first search step: ` +
+        `${missing.sort().join(', ')}. ` +
+        `Fix: add a "Step 0: Brain Context" section that runs gbrain search before external APIs.`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'skill_brain_first',
+      status: 'warn',
+      message: `Could not scan skills for brain-first coverage: ${msg}`,
+    };
   }
 }
 
