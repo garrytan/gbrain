@@ -167,6 +167,53 @@ JSON envelope (when `--json` is passed):
 
 `gbrain frontmatter validate <path> --json` returns a similar envelope keyed on per-file results instead of per-source.
 
+## Prevention — Writing Valid Frontmatter
+
+**This is the most important section.** Fixing broken frontmatter is good. Not breaking it is better.
+
+### YAML arrays (the #1 error source)
+
+```yaml
+# ✅ CORRECT — single-quoted YAML flow
+tags: ['yc', 'w2025', 'ai']
+
+# ✅ CORRECT — unquoted (if values have no special chars)
+tags: [yc, w2025, ai]
+
+# ✅ CORRECT — block style
+tags:
+  - yc
+  - w2025
+
+# ❌ WRONG — JSON-style double quotes (causes NESTED_QUOTES)
+tags: ["yc", "w2025"]
+
+# ❌ WRONG — mixed JSON objects and strings
+tags: [{"name": "sports"}, "posterous"]
+```
+
+**Why this happens:** `JSON.stringify()` wraps strings in double quotes. When code does `tags: [${items.map(t => JSON.stringify(t)).join(', ')}]`, it produces the broken pattern. Use single quotes instead: `tags: [${items.map(t => "'" + t + "'").join(', ')}]` (with apostrophe fallback to double quotes).
+
+### Quoted scalars
+
+```yaml
+# ✅ CORRECT — single quotes for values with special chars
+title: 'My "Quoted" Title'
+
+# ✅ CORRECT — double quotes when value has apostrophes
+title: "Men's Fashion Guide"
+
+# ❌ WRONG — double quotes wrapping inner double quotes
+title: "My "Quoted" Title"
+```
+
+### When to quote at all
+
+- **Unquoted** is fine for simple values: `type: person`, `batch: w2025`
+- **Quote** when the value contains `: " ' # [ ] { } | > & * ! ? ,` or starts with `@`
+- **Single quotes** are the default safe choice
+- **Double quotes** only when the value itself contains apostrophes
+
 ## Anti-Patterns
 
 **Don't auto-fix `MISSING_OPEN` or `EMPTY_FRONTMATTER` without user input.** These usually mean a human author started a page and didn't finish — silently inserting `---` markers around an unfinished draft is wrong.

@@ -216,14 +216,28 @@ function collectValidationErrors(
     });
   }
 
-  // 5. NESTED_QUOTES — common breakage pattern: `title: "Name "Nick" Last"`.
-  //    Detect any frontmatter `key: ...` line whose value contains 3 or more
-  //    unescaped double-quote characters. A clean quoted value has 2.
+  // 5. NESTED_QUOTES — two sub-patterns:
+  //    5a. JSON-style arrays: `tags: ["yc", "w2025"]` — the #1 source.
+  //        LLMs and ingestion scripts use JSON.stringify for array items.
+  //    5b. Nested scalar quotes: `title: "Name "Nick" Last"` — 3+ unescaped
+  //        double-quote characters in a scalar value.
   for (let i = firstNonEmpty + 1; i < closeLine; i++) {
     const line = lines[i];
     const m = line.match(/^\s*[A-Za-z_][\w-]*\s*:\s*(.*)$/);
     if (!m) continue;
     const value = m[1];
+
+    // 5a. JSON-style array: ["...", "..."]
+    if (/^\[.*".*".*\]$/.test(value.trim())) {
+      errors.push({
+        code: 'NESTED_QUOTES',
+        message: 'JSON-style double-quoted array in YAML (use single quotes: [\'val1\', \'val2\'])',
+        line: i + 1,
+      });
+      continue;
+    }
+
+    // 5b. Nested scalar quotes: 3+ unescaped double-quote chars.
     let count = 0;
     for (let j = 0; j < value.length; j++) {
       if (value[j] === '"' && (j === 0 || value[j - 1] !== '\\')) count++;

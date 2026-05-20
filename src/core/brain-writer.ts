@@ -152,7 +152,67 @@ export function autoFixFrontmatter(
     }
   }
 
-  // 3. NESTED_QUOTES — rewrite `key: "...inner..."` lines that have 3+ unescaped
+  // 3a. JSON_ARRAY_IN_YAML — rewrite `key: ["x", "y"]` to `key: ['x', 'y']`.
+  //    This is the #1 source of NESTED_QUOTES errors. LLMs and ingestion
+  //    scripts serialize YAML arrays with JSON.stringify, producing double-
+  //    quoted items that break YAML parsing. Fix: single-quote each item,
+  //    falling back to double quotes only when the value itself contains
+  //    an apostrophe.
+  {
+    const lines = working.split('\n');
+    let firstNonEmpty = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim().length > 0) { firstNonEmpty = i; break; }
+    }
+    if (firstNonEmpty >= 0 && lines[firstNonEmpty].trim() === '---') {
+      let closeIdx = lines.length;
+      for (let i = firstNonEmpty + 1; i < lines.length; i++) {
+        if (lines[i].trim() === '---') { closeIdx = i; break; }
+      }
+      let fixedAny = false;
+      for (let i = firstNonEmpty + 1; i < closeIdx; i++) {
+        // Detect JSON-style arrays: key: ["val1", "val2"]
+        const arrMatch = lines[i].match(/^(\s*[A-Za-z_][\w-]*\s*:\s*)\[(.*)\]\s*$/);
+        if (arrMatch && arrMatch[2].includes('"')) {
+          const [, prefix, inner] = arrMatch;
+          // Parse the items: split on ", " boundaries respecting quotes
+          const items: string[] = [];
+          let current = '';
+          let inQuote = false;
+          for (let j = 0; j < inner.length; j++) {
+            const ch = inner[j];
+            if (ch === '"' && (j === 0 || inner[j - 1] !== '\\')) {
+              inQuote = !inQuote;
+            } else if (ch === ',' && !inQuote) {
+              items.push(current.trim());
+              current = '';
+            } else {
+              current += ch;
+            }
+          }
+          if (current.trim()) items.push(current.trim());
+
+          // Re-quote each item with single quotes (double if it contains apostrophe)
+          const reQuoted = items.map(v => {
+            const clean = v.replace(/^"|"$/g, '').trim();
+            if (!clean) return "''";
+            return clean.includes("'") ? `"${clean}"` : `'${clean}'`;
+          });
+          lines[i] = `${prefix}[${reQuoted.join(', ')}]`;
+          fixedAny = true;
+        }
+      }
+      if (fixedAny) {
+        working = lines.join('\n');
+        fixes.push({
+          code: 'NESTED_QUOTES',
+          description: 'Rewrote JSON-style double-quoted arrays to single-quoted YAML',
+        });
+      }
+    }
+  }
+
+  // 3b. NESTED_QUOTES — rewrite `key: "...inner..."` lines that have 3+ unescaped
   //    double-quotes by switching the outer wrapper to single quotes and
   //    leaving inner quotes alone.
   {
@@ -175,12 +235,7 @@ export function autoFixFrontmatter(
         for (let j = 0; j < inner.length; j++) {
           if (inner[j] === '"' && (j === 0 || inner[j - 1] !== '\\')) count++;
         }
-        // Total " on the line includes the two outer quotes the regex
-        // captured, plus whatever's in inner. We need 3+ to trigger.
         if (count >= 1) {
-          // Inner already has unescaped " — outer wrap is causing the YAML
-          // parse failure. Rewrite to 'single-quoted'. YAML escapes `'` inside
-          // a single-quoted string by doubling it.
           const escapedInner = inner.replace(/'/g, "''");
           lines[i] = `${prefix}'${escapedInner}'${trailing ? ' ' + trailing : ''}`.replace(/\s+$/, '');
           fixedAny = true;

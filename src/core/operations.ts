@@ -585,7 +585,19 @@ const put_page: Operation = {
     // default-source clobber path. importFromContent already accepts
     // opts.sourceId (PR #707/#757 engine work); previously the op handler
     // just didn't pass it.
-    const result = await importFromContent(ctx.engine, slug, p.content as string, {
+    // Pre-write normalization: auto-fix mechanical frontmatter issues
+    // (JSON-style arrays, nested quotes) before import. Non-blocking —
+    // if autoFixFrontmatter throws, fall through with original content.
+    let normalizedContent = p.content as string;
+    try {
+      const { autoFixFrontmatter } = await import('./brain-writer.ts');
+      const { content: fixed } = autoFixFrontmatter(normalizedContent);
+      normalizedContent = fixed;
+    } catch {
+      // Non-fatal; proceed with original content.
+    }
+
+    const result = await importFromContent(ctx.engine, slug, normalizedContent, {
       noEmbed,
       ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}),
     });
