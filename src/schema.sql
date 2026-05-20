@@ -942,9 +942,10 @@ CREATE INDEX IF NOT EXISTS calibration_profiles_published_idx
   ON calibration_profiles (source_id, published, holder)
   WHERE published = true;
 
--- take_proposals: propose_takes phase queue. Idempotency cache via the
--- composite unique index (source_id, page_slug, content_hash, prompt_version)
--- mirrors v0.23 dream_verdicts. proposal_run_id supports --rollback by run.
+-- take_proposals: propose_takes phase queue. Operator-facing rows only;
+-- successful per-page scan idempotency lives in take_proposal_page_scans so
+-- pages whose extractor result is [] are cached without polluting the queue.
+-- proposal_run_id supports --rollback by run.
 CREATE TABLE IF NOT EXISTS take_proposals (
   id                          BIGSERIAL PRIMARY KEY,
   source_id                   TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -969,13 +970,34 @@ CREATE TABLE IF NOT EXISTS take_proposals (
   predicted_brier             REAL,
   predicted_brier_bucket_n    INTEGER
 );
-CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_idempotency_idx
-  ON take_proposals (source_id, page_slug, content_hash, prompt_version);
+CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_proposal_dedup_idx
+  ON take_proposals (source_id, page_slug, content_hash, prompt_version, claim_text);
 CREATE INDEX IF NOT EXISTS take_proposals_pending_idx
   ON take_proposals (source_id, status, proposed_at DESC)
   WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS take_proposals_run_id_idx
   ON take_proposals (proposal_run_id);
+
+-- take_proposal_page_scans: successful propose_takes extractor-call cache.
+-- Separate from take_proposals because [] is a valid, successful result and
+-- must not create a fake pending proposal just to make idempotency work.
+CREATE TABLE IF NOT EXISTS take_proposal_page_scans (
+  source_id                   TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  page_slug                   TEXT         NOT NULL,
+  content_hash                TEXT         NOT NULL,
+  prompt_version              TEXT         NOT NULL,
+  wave_version                TEXT         NOT NULL DEFAULT 'v0.37.1.1',
+  scanned_at                  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  proposal_run_id             TEXT         NOT NULL,
+  proposals_count             INTEGER      NOT NULL DEFAULT 0 CHECK (proposals_count >= 0),
+  model_id                    TEXT         NOT NULL,
+  dedup_against_fence_rows    JSONB,
+  PRIMARY KEY (source_id, page_slug, content_hash, prompt_version)
+);
+CREATE INDEX IF NOT EXISTS take_proposal_page_scans_recent_idx
+  ON take_proposal_page_scans (source_id, scanned_at DESC);
+CREATE INDEX IF NOT EXISTS take_proposal_page_scans_run_id_idx
+  ON take_proposal_page_scans (proposal_run_id);
 
 -- take_grade_cache: grade_takes verdict cache. Composite PK on
 -- (take_id, prompt_version, judge_model_id, evidence_signature) means
@@ -1101,6 +1123,7 @@ BEGIN
     -- v0.36.1.0 Hindsight calibration wave tables
     ALTER TABLE calibration_profiles ENABLE ROW LEVEL SECURITY;
     ALTER TABLE take_proposals ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE take_proposal_page_scans ENABLE ROW LEVEL SECURITY;
     ALTER TABLE take_grade_cache ENABLE ROW LEVEL SECURITY;
     ALTER TABLE take_nudge_log ENABLE ROW LEVEL SECURITY;
     -- v0.26 OAuth 2.1 tables
