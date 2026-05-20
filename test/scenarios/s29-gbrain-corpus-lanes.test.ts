@@ -43,10 +43,58 @@ function opContext(engine: OperationContext['engine']): OperationContext {
   };
 }
 
-function laneCase(caseId: string): LaneCase {
-  const found = fixture.lane_cases.find((entry) => entry.case_id === caseId);
-  if (!found) throw new Error(`Missing GA-P3 lane case ${caseId}`);
-  return found;
+function slugFromSelector(selector: string): string {
+  const compiledTruthPrefix = 'compiled_truth:workspace:default:';
+  const sectionPrefix = 'section:workspace:default:';
+  if (selector.startsWith(compiledTruthPrefix)) {
+    return selector.slice(compiledTruthPrefix.length);
+  }
+  if (selector.startsWith(sectionPrefix)) {
+    return selector.slice(sectionPrefix.length).split('#')[0] ?? '';
+  }
+  throw new Error(`Unsupported GA-P3 selector: ${selector}`);
+}
+
+function artifactKindForLane(lane: LaneCase): string {
+  switch (lane.lane_id) {
+    case 'notes':
+      return 'note';
+    case 'worktree':
+      return 'worktree';
+    case 'transcripts':
+      return 'transcript';
+    case 'imports':
+      return 'import';
+    case 'derived':
+      return 'derived';
+    default:
+      throw new Error(`Unsupported GA-P3 lane id: ${lane.lane_id}`);
+  }
+}
+
+function laneNeedle(lane: LaneCase): string {
+  return `GA-P3 ${lane.lane_id} lane provenance metadata only canonical needle.`;
+}
+
+async function importLanePage(engine: OperationContext['engine'], lane: LaneCase): Promise<void> {
+  const slug = slugFromSelector(lane.canonical_selector);
+  const body = lane.canonical_selector.startsWith('section:')
+    ? ['# Summary', laneNeedle(lane)]
+    : [laneNeedle(lane)];
+
+  await importFromContent(engine, slug, [
+    '---',
+    'type: source',
+    `title: GA-P3 ${lane.lane_id} Lane`,
+    `corpus_lane: ${lane.lane_id}`,
+    `source_record: ${lane.source_record}`,
+    `import_origin: ${lane.import_origin}`,
+    `artifact_kind: ${artifactKindForLane(lane)}`,
+    'source_refs:',
+    `  - Source: imported ${lane.lane_id}, 2026-05-19`,
+    '---',
+    ...body,
+  ].join('\n'), { path: lane.import_origin });
 }
 
 describe('S29 - gbrain corpus lanes', () => {
@@ -73,83 +121,104 @@ describe('S29 - gbrain corpus lanes', () => {
     }
   });
 
-  test('replays import, retrieve, read, trace, and ambiguous-writeback lane behavior', async () => {
+  test('replays every lane through import, retrieve, read, trace, and writeback boundaries', async () => {
     const handle = await allocateSqliteBrain('s29-corpus-lanes');
 
     try {
-      const transcript = laneCase('transcripts_lane');
-      await importFromContent(handle.engine, 'sources/ga-p3-transcript', [
-        '---',
-        'type: source',
-        'title: GA-P3 Transcript',
-        'corpus_lane: transcripts',
-        `source_record: ${transcript.source_record}`,
-        `import_origin: ${transcript.import_origin}`,
-        'artifact_kind: transcript',
-        'source_refs:',
-        '  - Source: imported transcript, 2026-05-19',
-        '---',
-        '# Summary',
-        'GA-P3 lane provenance metadata only canonical needle.',
-      ].join('\n'), { path: transcript.import_origin });
-
-      const manifest = await handle.engine.getNoteManifestEntry('workspace:default', 'sources/ga-p3-transcript');
-      expect(manifest?.source_refs).toEqual(expect.arrayContaining([
-        'Source: imported transcript, 2026-05-19',
-        'corpus_lane:transcripts',
-        `source_record:${transcript.source_record}`,
-        `import_origin:${transcript.import_origin}`,
-      ]));
-      const sections = await handle.engine.listNoteSectionEntries({
-        scope_id: 'workspace:default',
-        page_slug: 'sources/ga-p3-transcript',
-        limit: 10,
-      });
-      expect(sections[0]?.source_refs).toEqual(expect.arrayContaining([
-        'corpus_lane:transcripts',
-        `source_record:${transcript.source_record}`,
-        `import_origin:${transcript.import_origin}`,
-      ]));
+      for (const lane of fixture.lane_cases) {
+        await importLanePage(handle.engine, lane);
+      }
 
       const ctx = opContext(handle.engine);
-      const retrieve = await operationsByName.retrieve_context.handler(ctx, {
-        query: 'GA-P3 lane provenance metadata only canonical needle',
-        requested_scope: 'work',
-        include_orientation: false,
-        persist_trace: true,
-      }) as RetrieveContextResult;
+      for (const lane of fixture.lane_cases) {
+        const slug = slugFromSelector(lane.canonical_selector);
+        const manifest = await handle.engine.getNoteManifestEntry('workspace:default', slug);
+        expect(manifest?.source_refs).toEqual(expect.arrayContaining([
+          `Source: imported ${lane.lane_id}, 2026-05-19`,
+          `corpus_lane:${lane.lane_id}`,
+          `source_record:${lane.source_record}`,
+          `import_origin:${lane.import_origin}`,
+        ]));
 
-      expect(retrieve.scope_gate?.policy).toBe('allow');
-      expect(retrieve.required_reads[0]?.selector_id).toBe(transcript.canonical_selector);
-      expect(retrieve.required_reads[0]?.corpus_lane?.lane_id).toBe('transcripts');
-      expect(retrieve.candidates[0]?.canonical_target.corpus_lane?.lane_id).toBe('transcripts');
-      expect(retrieve.candidates[0]?.matched_chunks[0]?.corpus_lane?.lane_id).toBe('transcripts');
-      expect(retrieve.trace?.source_refs).toEqual(expect.arrayContaining([
-        transcript.canonical_selector,
-        'corpus_lane:transcripts',
-        `source_record:${transcript.source_record}`,
-        `import_origin:${transcript.import_origin}`,
-      ]));
-      expect(retrieve.trace?.verification).toContain('corpus_lane:transcripts:post_scope_metadata');
+        const sections = await handle.engine.listNoteSectionEntries({
+          scope_id: 'workspace:default',
+          page_slug: slug,
+          limit: 10,
+        });
+        if (sections.length > 0) {
+          expect(sections[0]?.source_refs).toEqual(expect.arrayContaining([
+            `corpus_lane:${lane.lane_id}`,
+            `source_record:${lane.source_record}`,
+            `import_origin:${lane.import_origin}`,
+          ]));
+        }
 
-      const read = await operationsByName.read_context.handler(ctx, {
-        selectors: retrieve.required_reads,
-        token_budget: 400,
-        persist_trace: true,
-      }) as ReadContextResult;
+        const retrieve = await operationsByName.retrieve_context.handler(ctx, {
+          query: laneNeedle(lane),
+          requested_scope: 'work',
+          include_orientation: false,
+          persist_trace: true,
+        }) as RetrieveContextResult;
 
-      expect(read.answer_ready.ready).toBe(true);
-      expect(read.canonical_reads[0]?.authority).toBe('canonical_compiled_truth');
-      expect(read.canonical_reads[0]?.corpus_lane?.lane_id).toBe('transcripts');
-      expect(read.canonical_reads[0]?.source_refs).toEqual(expect.arrayContaining([
-        'corpus_lane:transcripts',
-        `source_record:${transcript.source_record}`,
-        `import_origin:${transcript.import_origin}`,
-      ]));
-      expect(read.trace?.source_refs).toEqual(expect.arrayContaining([
-        transcript.canonical_selector,
-        'corpus_lane:transcripts',
-      ]));
+        expect(retrieve.scope_gate?.policy).toBe('allow');
+        expect(retrieve.required_reads[0]?.selector_id).toBe(lane.canonical_selector);
+        expect(retrieve.required_reads[0]?.corpus_lane?.lane_id).toBe(lane.lane_id);
+        expect(retrieve.candidates[0]?.canonical_target.corpus_lane?.lane_id).toBe(lane.lane_id);
+        expect(retrieve.candidates[0]?.matched_chunks[0]?.corpus_lane?.lane_id).toBe(lane.lane_id);
+        expect(retrieve.trace?.source_refs).toEqual(expect.arrayContaining([
+          lane.canonical_selector,
+          `corpus_lane:${lane.lane_id}`,
+          `source_record:${lane.source_record}`,
+          `import_origin:${lane.import_origin}`,
+        ]));
+        expect(retrieve.trace?.verification).toContain(`corpus_lane:${lane.lane_id}:post_scope_metadata`);
+
+        const read = await operationsByName.read_context.handler(ctx, {
+          selectors: retrieve.required_reads,
+          token_budget: 400,
+          persist_trace: true,
+        }) as ReadContextResult;
+
+        expect(read.answer_ready.ready).toBe(true);
+        expect(read.canonical_reads[0]?.authority).toBe('canonical_compiled_truth');
+        expect(read.canonical_reads[0]?.corpus_lane?.lane_id).toBe(lane.lane_id);
+        expect(read.canonical_reads[0]?.source_refs).toEqual(expect.arrayContaining([
+          `corpus_lane:${lane.lane_id}`,
+          `source_record:${lane.source_record}`,
+          `import_origin:${lane.import_origin}`,
+        ]));
+        expect(read.trace?.source_refs).toEqual(expect.arrayContaining([
+          lane.canonical_selector,
+          `corpus_lane:${lane.lane_id}`,
+        ]));
+
+        const laneWriteback = await operationsByName.route_memory_writeback.handler(ctx, {
+          content: `Imported ${lane.lane_id} source-extracted writeback stays candidate-only.`,
+          source_kind: 'import',
+          evidence_kind: 'source_extracted',
+          source_refs: [`Source: imported ${lane.lane_id}, 2026-05-19`],
+          corpus_lane: {
+            lane_id: lane.lane_id,
+            source_record: lane.source_record,
+            import_origin: lane.import_origin,
+            artifact_kind: artifactKindForLane(lane),
+          },
+        }) as {
+          decision: string;
+          intended_operation: string;
+          candidate_input?: { source_refs: string[] };
+          canonical_write_requirements?: unknown;
+        };
+
+        expect(laneWriteback.decision).toBe('create_candidate');
+        expect(laneWriteback.intended_operation).toBe('create_memory_candidate_entry');
+        expect(laneWriteback.candidate_input?.source_refs).toEqual(expect.arrayContaining([
+          `corpus_lane:${lane.lane_id}`,
+          `source_record:${lane.source_record}`,
+          `import_origin:${lane.import_origin}`,
+        ]));
+        expect(laneWriteback.canonical_write_requirements).toBeUndefined();
+      }
 
       const ambiguous = await operationsByName.route_memory_writeback.handler(ctx, {
         content: 'Imported source-extracted writeback should not pick a lane silently.',

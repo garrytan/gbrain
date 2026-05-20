@@ -201,6 +201,7 @@ bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s32-gbrain-
 bun run test:scenarios
 bunx tsc --noEmit --pretty false
 git diff --check
+git diff --name-only ffa2676858f9898782fa93d9090984a136049efd..51dd5dc1b6ef5d8cac1360607db6a6ce81f5c3b2
 ```
 
 Expected:
@@ -229,6 +230,9 @@ Expected:
 - GA-P6 coverage remains tied to
   `test/fixtures/gbrain-absorption/ga-p6-personal-maintenance-cycle.fixture.json`
   and `test/scenarios/s31-gbrain-personal-maintenance-cycle.test.ts`
+- the GA-P7 changed-path allowlist contains only docs, fixture, scenario
+  registry, and docs-contract test files; it contains no `src/`, `supabase/`,
+  `scripts/`, or workflow runtime changes
 - No network, database, or production runtime service is required for S32.
 
 ## Phase 1 operational-memory verification

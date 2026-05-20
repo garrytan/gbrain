@@ -7,7 +7,9 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { execFileSync } from 'child_process';
 import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 type ConsolidationCase = {
   case_id: string;
@@ -17,6 +19,13 @@ type ConsolidationCase = {
   expected_runtime_change: boolean;
 };
 
+type RuntimeChangeGuard = {
+  base_commit: string;
+  head_commit: string;
+  allowed_changed_paths: string[];
+  disallowed_path_prefixes: string[];
+};
+
 const fixture = JSON.parse(readFileSync(
   new URL('../fixtures/gbrain-absorption/ga-p7-upstream-discipline.fixture.json', import.meta.url),
   'utf8',
@@ -24,9 +33,12 @@ const fixture = JSON.parse(readFileSync(
   stage_id: string;
   fixture_format: string;
   verification_commands: string[];
+  runtime_change_guard: RuntimeChangeGuard;
   coverage: Record<string, { fixture: string; scenario: string; verification: string }>;
   consolidation_cases: ConsolidationCase[];
 };
+
+const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 function readRepoFile(path: string): string {
   return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
@@ -45,6 +57,30 @@ function expectCaseTermsInDeclaredDoc(entry: ConsolidationCase): void {
   }
 }
 
+function readGuardedChangedPaths(guard: RuntimeChangeGuard): string[] {
+  try {
+    return execFileSync('git', [
+      'diff',
+      '--name-only',
+      `${guard.base_commit}..${guard.head_commit}`,
+    ], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .sort();
+  } catch (error) {
+    throw new Error([
+      'Unable to read GA-P7 guarded changed paths.',
+      `Run with git history containing ${guard.base_commit} and ${guard.head_commit}.`,
+      `Original error: ${(error as Error).message}`,
+    ].join(' '));
+  }
+}
+
 describe('S32 - gbrain upstream discipline', () => {
   test('defines the GA-P7 consolidation fixture and required cases', () => {
     expect(fixture.stage_id).toBe('GA-P7');
@@ -54,6 +90,7 @@ describe('S32 - gbrain upstream discipline', () => {
       'bun run test:scenarios',
       'bunx tsc --noEmit --pretty false',
       'git diff --check',
+      'git diff --name-only ffa2676858f9898782fa93d9090984a136049efd..51dd5dc1b6ef5d8cac1360607db6a6ce81f5c3b2',
     ]));
 
     expect(fixture.consolidation_cases.map((entry) => entry.case_id).sort()).toEqual([
@@ -141,5 +178,30 @@ describe('S32 - gbrain upstream discipline', () => {
     for (const term of alignmentCase.required_terms) {
       expect(`${evaluation}\n${verify}`).toContain(term);
     }
+  });
+
+  test('guards the GA-P7 changed path allowlist against production runtime files', () => {
+    const guard = fixture.runtime_change_guard;
+    const allowed = [...guard.allowed_changed_paths].sort();
+    expect(guard.base_commit).toBe('ffa2676858f9898782fa93d9090984a136049efd');
+    expect(guard.head_commit).toBe('51dd5dc1b6ef5d8cac1360607db6a6ce81f5c3b2');
+    expect(allowed).toEqual([
+      'docs/MBRAIN_VERIFY.md',
+      'docs/UPSTREAM_SYNC.md',
+      'docs/architecture/redesign/08-evaluation-and-acceptance.md',
+      'docs/superpowers/plans/2026-05-19-gbrain-absorption-ga-p7-consolidation-upstream-discipline.md',
+      'test/fixtures/gbrain-absorption/ga-p7-upstream-discipline.fixture.json',
+      'test/gbrain-absorption-docs-contract.test.ts',
+      'test/scenarios/README.md',
+      'test/scenarios/s32-gbrain-upstream-discipline.test.ts',
+    ].sort());
+    for (const path of allowed) {
+      expect(guard.disallowed_path_prefixes.some((prefix) => path.startsWith(prefix))).toBe(false);
+    }
+
+    expect(readGuardedChangedPaths(guard)).toEqual(allowed);
+
+    const verify = readRepoFile('docs/MBRAIN_VERIFY.md');
+    expect(verify).toContain(`git diff --name-only ${guard.base_commit}..${guard.head_commit}`);
   });
 });

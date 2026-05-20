@@ -6,8 +6,29 @@
     "bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s32-gbrain-upstream-discipline.test.ts",
     "bun run test:scenarios",
     "bunx tsc --noEmit --pretty false",
-    "git diff --check"
+    "git diff --check",
+    "git diff --name-only ffa2676858f9898782fa93d9090984a136049efd..51dd5dc1b6ef5d8cac1360607db6a6ce81f5c3b2"
   ],
+  "runtime_change_guard": {
+    "base_commit": "ffa2676858f9898782fa93d9090984a136049efd",
+    "head_commit": "51dd5dc1b6ef5d8cac1360607db6a6ce81f5c3b2",
+    "allowed_changed_paths": [
+      "docs/MBRAIN_VERIFY.md",
+      "docs/UPSTREAM_SYNC.md",
+      "docs/architecture/redesign/08-evaluation-and-acceptance.md",
+      "docs/superpowers/plans/2026-05-19-gbrain-absorption-ga-p7-consolidation-upstream-discipline.md",
+      "test/fixtures/gbrain-absorption/ga-p7-upstream-discipline.fixture.json",
+      "test/gbrain-absorption-docs-contract.test.ts",
+      "test/scenarios/README.md",
+      "test/scenarios/s32-gbrain-upstream-discipline.test.ts"
+    ],
+    "disallowed_path_prefixes": [
+      "src/",
+      "supabase/",
+      "scripts/",
+      ".github/workflows/"
+    ]
+  },
   "coverage": {
     "ga_p2": {
       "fixture": "test/fixtures/gbrain-absorption/ga-p2-evaluation-foundation.fixture.json",

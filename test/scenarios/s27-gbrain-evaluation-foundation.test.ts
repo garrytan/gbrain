@@ -22,6 +22,7 @@ import {
 import { selectRetrievalRoute } from '../../src/core/services/retrieval-route-selector-service.ts';
 import type {
   MemoryActivationDecision,
+  MemoryCandidateStatus,
   MemoryCandidateStatusEventKind,
   ReadContextResult,
   RetrievalRouteIntent,
@@ -64,6 +65,10 @@ function replayCase(caseId: string): ReplayCase {
   const found = fixture.replay_cases.find((entry) => entry.case_id === caseId);
   if (!found) throw new Error(`Missing GA-P2 replay case ${caseId}`);
   return found;
+}
+
+function nextTick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 2));
 }
 
 function expectedActivation(authority: ReplayCase['candidate_authority']): MemoryActivationDecision {
@@ -177,15 +182,18 @@ describe('S27 - gbrain evaluation foundation', () => {
         target_object_type: 'curated_note',
         target_object_id: 'concepts/ga-p2-candidate-target',
       });
+      await nextTick();
       await advanceMemoryCandidateStatus(handle.engine, {
         id: 'candidate-ga-p2-rejected',
         next_status: 'candidate',
       });
+      await nextTick();
       await advanceMemoryCandidateStatus(handle.engine, {
         id: 'candidate-ga-p2-rejected',
         next_status: 'staged_for_review',
         review_reason: 'Prepare GA-P2 lifecycle replay.',
       });
+      await nextTick();
       const rejected = await rejectMemoryCandidateEntry(handle.engine, {
         id: 'candidate-ga-p2-rejected',
         review_reason: 'Rejected by GA-P2 replay fixture.',
@@ -197,13 +205,21 @@ describe('S27 - gbrain evaluation foundation', () => {
         candidate_id: 'candidate-ga-p2-rejected',
         limit: 20,
       });
-      const expectedEvents: MemoryCandidateStatusEventKind[] = [
-        'created',
-        'advanced',
-        'advanced',
-        'rejected',
+      const expectedNewestFirst: Array<{
+        event_kind: MemoryCandidateStatusEventKind;
+        from_status: MemoryCandidateStatus | null;
+        to_status: MemoryCandidateStatus;
+      }> = [
+        { event_kind: 'rejected', from_status: 'staged_for_review', to_status: 'rejected' },
+        { event_kind: 'advanced', from_status: 'candidate', to_status: 'staged_for_review' },
+        { event_kind: 'advanced', from_status: 'captured', to_status: 'candidate' },
+        { event_kind: 'created', from_status: null, to_status: 'captured' },
       ];
-      expect(events.map((event) => event.event_kind).sort()).toEqual(expectedEvents.sort());
+      expect(events.map((event) => ({
+        event_kind: event.event_kind,
+        from_status: event.from_status,
+        to_status: event.to_status,
+      }))).toEqual(expectedNewestFirst);
 
       const rejectedList = await handle.engine.listMemoryCandidateEntries({
         status: 'rejected',

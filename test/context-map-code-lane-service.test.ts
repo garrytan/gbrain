@@ -94,6 +94,70 @@ test('code-lane graph walk stays default-off and caps high fanout expansion', as
   }
 });
 
+test('code-lane graph expansion keeps caller and callee directions distinct', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-code-lane-direction-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+    await importCodeLanePages(engine);
+
+    const snapshot = await buildCodeLaneGraphSnapshot(engine);
+    const caller = snapshot.nodes.find((node) => node.symbol_name === 'buildStructuralContextMapEntry()');
+    const callee = snapshot.nodes.find((node) => node.symbol_name === 'computeContextMapSourceSetHash()');
+    if (!caller || !callee) throw new Error('direction fixture nodes missing');
+
+    const callees = expandCodeLaneGraph(snapshot, caller.symbol_id, {
+      requested: true,
+      direction: 'out',
+      depth_limit: 1,
+      fanout_cap: 10,
+    });
+    expect(callees.edges.some((edge) =>
+      edge.edge_kind === 'calls'
+      && edge.from_symbol_id === caller.symbol_id
+      && edge.to_symbol_id === callee.symbol_id)).toBe(true);
+
+    const notCallers = expandCodeLaneGraph(snapshot, caller.symbol_id, {
+      requested: true,
+      direction: 'in',
+      depth_limit: 1,
+      fanout_cap: 10,
+    });
+    expect(notCallers.edges.some((edge) =>
+      edge.edge_kind === 'calls'
+      && edge.from_symbol_id === caller.symbol_id
+      && edge.to_symbol_id === callee.symbol_id)).toBe(false);
+
+    const callers = expandCodeLaneGraph(snapshot, callee.symbol_id, {
+      requested: true,
+      direction: 'in',
+      depth_limit: 1,
+      fanout_cap: 10,
+    });
+    expect(callers.edges.some((edge) =>
+      edge.edge_kind === 'calls'
+      && edge.from_symbol_id === caller.symbol_id
+      && edge.to_symbol_id === callee.symbol_id)).toBe(true);
+
+    const notCallees = expandCodeLaneGraph(snapshot, callee.symbol_id, {
+      requested: true,
+      direction: 'out',
+      depth_limit: 1,
+      fanout_cap: 10,
+    });
+    expect(notCallees.edges.some((edge) =>
+      edge.edge_kind === 'calls'
+      && edge.from_symbol_id === caller.symbol_id
+      && edge.to_symbol_id === callee.symbol_id)).toBe(false);
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('code-lane context map persists code_lane entries and marks codemap changes stale', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-code-lane-map-'));
   const databasePath = join(dir, 'brain.db');

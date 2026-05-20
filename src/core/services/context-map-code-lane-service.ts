@@ -14,10 +14,12 @@ export const DEFAULT_CODE_LANE_GRAPH_WALK_CONTROLS = {
   fanout_cap: 50,
   max_nodes: 100,
   bounded_output: true,
+  direction: 'both',
 } as const;
 
 export type CodeLaneAuthority = 'derived_orientation';
 export type CodeLaneEdgeKind = 'declares' | 'calls' | 'references' | 'imports' | 'contains';
+export type CodeLaneGraphDirection = 'out' | 'in' | 'both';
 
 export interface CodeLaneNode {
   source_ref: string;
@@ -63,6 +65,7 @@ export interface CodeLaneGraphSnapshot {
 export interface CodeLaneGraphExpansion {
   root_symbol_id: string;
   requested: boolean;
+  direction: CodeLaneGraphDirection;
   depth_limit: number;
   fanout_cap: number;
   max_nodes: number;
@@ -139,12 +142,14 @@ export function expandCodeLaneGraph(
   rootSymbolId: string,
   controls: {
     requested?: boolean;
+    direction?: CodeLaneGraphDirection;
     depth_limit?: number;
     fanout_cap?: number;
     max_nodes?: number;
   } = {},
 ): CodeLaneGraphExpansion {
   const requested = controls.requested === true;
+  const direction = normalizeGraphDirection(controls.direction);
   const depthLimit = boundedPositiveInteger(controls.depth_limit, DEFAULT_CODE_LANE_GRAPH_WALK_CONTROLS.depth_limit);
   const fanoutCap = boundedPositiveInteger(controls.fanout_cap, DEFAULT_CODE_LANE_GRAPH_WALK_CONTROLS.fanout_cap);
   const maxNodes = boundedPositiveInteger(controls.max_nodes, DEFAULT_CODE_LANE_GRAPH_WALK_CONTROLS.max_nodes);
@@ -154,6 +159,7 @@ export function expandCodeLaneGraph(
     return {
       root_symbol_id: rootSymbolId,
       requested,
+      direction,
       depth_limit: depthLimit,
       fanout_cap: fanoutCap,
       max_nodes: maxNodes,
@@ -165,7 +171,7 @@ export function expandCodeLaneGraph(
   }
 
   const nodeById = new Map(snapshot.nodes.map((node) => [node.symbol_id, node]));
-  const adjacency = buildAdjacency(snapshot.edges);
+  const adjacency = buildAdjacency(snapshot.edges, direction);
   const visitedNodes = new Set<string>([rootSymbolId]);
   const selectedEdges: CodeLaneEdge[] = [];
   const queue: Array<{ symbol_id: string; depth: number }> = [{ symbol_id: rootSymbolId, depth: 0 }];
@@ -216,6 +222,7 @@ export function expandCodeLaneGraph(
   return {
     root_symbol_id: rootSymbolId,
     requested,
+    direction,
     depth_limit: depthLimit,
     fanout_cap: fanoutCap,
     max_nodes: maxNodes,
@@ -460,14 +467,19 @@ function verificationHintFor(path: string, symbolName: string, contentHash: stri
     ?? `reverify_code_claims path=${path} symbol=${symbolName} expected_content_hash=${contentHash}`;
 }
 
-function buildAdjacency(edges: CodeLaneEdge[]): Map<string, CodeLaneEdge[]> {
+function buildAdjacency(
+  edges: CodeLaneEdge[],
+  direction: CodeLaneGraphDirection,
+): Map<string, CodeLaneEdge[]> {
   const adjacency = new Map<string, CodeLaneEdge[]>();
   for (const edge of edges) {
-    const fromEdges = adjacency.get(edge.from_symbol_id) ?? [];
-    fromEdges.push(edge);
-    adjacency.set(edge.from_symbol_id, fromEdges);
+    if (direction === 'out' || direction === 'both') {
+      const fromEdges = adjacency.get(edge.from_symbol_id) ?? [];
+      fromEdges.push(edge);
+      adjacency.set(edge.from_symbol_id, fromEdges);
+    }
 
-    if (edge.from_symbol_id !== edge.to_symbol_id) {
+    if ((direction === 'in' || direction === 'both') && edge.from_symbol_id !== edge.to_symbol_id) {
       const toEdges = adjacency.get(edge.to_symbol_id) ?? [];
       toEdges.push(edge);
       adjacency.set(edge.to_symbol_id, toEdges);
@@ -478,6 +490,12 @@ function buildAdjacency(edges: CodeLaneEdge[]): Map<string, CodeLaneEdge[]> {
     entry.sort(compareEdges);
   }
   return adjacency;
+}
+
+function normalizeGraphDirection(value: CodeLaneGraphDirection | undefined): CodeLaneGraphDirection {
+  return value === 'out' || value === 'in' || value === 'both'
+    ? value
+    : DEFAULT_CODE_LANE_GRAPH_WALK_CONTROLS.direction;
 }
 
 function boundedPositiveInteger(value: unknown, fallback: number): number {

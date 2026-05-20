@@ -296,7 +296,17 @@ export function createMemoryWritebackRouterOperations(
     mutating: true,
     handler: async (ctx, params) => {
       const input = parseRouteMemoryWritebackInput(deps, params);
-      const routed = routeMemoryWriteback(input);
+      let routed = routeMemoryWriteback(input);
+
+      if (
+        routed.decision === 'canonical_write_allowed'
+        && routed.canonical_write_requirements?.expected_content_hash === null
+      ) {
+        const existing = await ctx.engine.getPage(routed.canonical_write_requirements.target_object_id);
+        if (existing) {
+          routed = deferExistingTargetForNullSnapshot(routed);
+        }
+      }
 
       if (ctx.dryRun) {
         return {
@@ -341,4 +351,17 @@ export function createMemoryWritebackRouterOperations(
   };
 
   return [route_memory_writeback];
+}
+
+function deferExistingTargetForNullSnapshot(
+  routed: ReturnType<typeof routeMemoryWriteback>,
+): ReturnType<typeof routeMemoryWriteback> {
+  return {
+    ...routed,
+    decision: 'defer',
+    intended_operation: 'none',
+    reasons: ['canonical_target_exists_for_null_snapshot'],
+    missing_requirements: [...new Set([...routed.missing_requirements, 'target_snapshot_hash'])],
+    canonical_write_requirements: undefined,
+  };
 }

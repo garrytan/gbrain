@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { importFromContent } from '../src/core/import-file.ts';
 import { operationsByName, parseOpArgs, type OperationContext } from '../src/core/operations.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
@@ -121,26 +122,51 @@ describe('memory writeback router operation', () => {
     expect(result.canonical_write_requirements.expected_content_hash).toBe(currentHash);
   });
 
-  test('canonical write routing accepts null target_snapshot_hash for create-only writes', async () => {
-    const engine = new Proxy({}, {
-      get() {
-        throw new Error('route_memory_writeback planning must not read the engine');
-      },
-    }) as unknown as OperationContext['engine'];
+  test('canonical write routing accepts null target_snapshot_hash only after the target is absent', async () => {
+    await withEngine(async (engine) => {
+      const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'The user stated that absent targets can be created with a null precondition.',
+        evidence_kind: 'direct_user_statement',
+        source_refs: sourceRefs,
+        allow_canonical_write: true,
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/new-mbrain-page',
+        target_snapshot_hash: null,
+        sensitivity: 'work',
+      }) as any;
 
-    const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
-      content: 'The user stated that absent targets can be created with a null precondition.',
-      evidence_kind: 'direct_user_statement',
-      source_refs: sourceRefs,
-      allow_canonical_write: true,
-      target_object_type: 'curated_note',
-      target_object_id: 'systems/new-mbrain-page',
-      target_snapshot_hash: null,
-      sensitivity: 'work',
-    }) as any;
+      expect(result.decision).toBe('canonical_write_allowed');
+      expect(result.canonical_write_requirements.expected_content_hash).toBeNull();
+    });
+  });
 
-    expect(result.decision).toBe('canonical_write_allowed');
-    expect(result.canonical_write_requirements.expected_content_hash).toBeNull();
+  test('canonical write routing defers null target_snapshot_hash when the page exists', async () => {
+    await withEngine(async (engine) => {
+      await importFromContent(engine, 'systems/mbrain', [
+        '---',
+        'type: system',
+        'title: MBrain',
+        '---',
+        'MBrain existing page. [Source: User, direct message, 2026-05-10 12:00 KST]',
+      ].join('\n'), { path: 'systems/mbrain.md' });
+
+      const result = await operationsByName.route_memory_writeback.handler(ctx(engine), {
+        content: 'The user stated that existing targets need a real target snapshot.',
+        evidence_kind: 'direct_user_statement',
+        source_refs: sourceRefs,
+        allow_canonical_write: true,
+        target_object_type: 'curated_note',
+        target_object_id: 'systems/mbrain',
+        target_snapshot_hash: null,
+        sensitivity: 'work',
+      }) as any;
+
+      expect(result.decision).toBe('defer');
+      expect(result.intended_operation).toBe('none');
+      expect(result.reasons).toContain('canonical_target_exists_for_null_snapshot');
+      expect(result.missing_requirements).toContain('target_snapshot_hash');
+      expect(result.canonical_write_requirements).toBeUndefined();
+    });
   });
 
   test('accepts corpus_lane as post-scope provenance metadata', async () => {

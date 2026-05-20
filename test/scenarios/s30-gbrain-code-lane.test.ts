@@ -21,6 +21,7 @@ type CodeLaneCase = {
   expected_authority: 'derived_orientation';
   lane_grants_authority: boolean;
   graph_walk: string;
+  graph_direction: 'out' | 'in' | 'both';
   expected_edge_kind?: string;
   expected_content_hash?: string;
   expected_reverify_reason?: string;
@@ -48,7 +49,7 @@ type CodeLaneApis = {
   expandCodeLaneGraph: (
     snapshot: CodeLaneSnapshot,
     symbolId: string,
-    controls: { requested: boolean; depth_limit?: number; fanout_cap?: number },
+    controls: { requested: boolean; direction?: 'out' | 'in' | 'both'; depth_limit?: number; fanout_cap?: number },
   ) => Record<string, unknown>;
   source: string;
 };
@@ -261,6 +262,7 @@ describe('S30 - gbrain code lane', () => {
       expect(entry.expected_authority).toBe('derived_orientation');
       expect(entry.lane_grants_authority).toBe(false);
       expect(entry.verification_mode).toBe('live_workspace_check');
+      expect(['out', 'in', 'both']).toContain(entry.graph_direction);
     }
   });
 
@@ -305,7 +307,7 @@ describe('S30 - gbrain code lane', () => {
       const expanded = apis.expandCodeLaneGraph(
         snapshot,
         String(definitionNode.symbol_id),
-        { requested: true, depth_limit: 1, fanout_cap: 3 },
+        { requested: true, direction: 'out', depth_limit: 1, fanout_cap: 3 },
       );
       const expandedEdges = Array.isArray(expanded.edges) ? expanded.edges : [];
       expect(expandedEdges.length).toBeGreaterThan(0);
@@ -322,7 +324,12 @@ describe('S30 - gbrain code lane', () => {
         const replayExpanded = apis.expandCodeLaneGraph(
           snapshot,
           String(rootNode.symbol_id),
-          { requested: true, depth_limit: 1, fanout_cap: 3 },
+          {
+            requested: true,
+            direction: replayCase.graph_direction ?? 'both',
+            depth_limit: 1,
+            fanout_cap: 3,
+          },
         );
         const replayEdges = Array.isArray(replayExpanded.edges)
           ? replayExpanded.edges as Array<Record<string, unknown>>
@@ -338,6 +345,27 @@ describe('S30 - gbrain code lane', () => {
           edgeKind(edge) === replayCase.expected_edge_kind
           && String(edge.from_symbol_id ?? '') === expectedFrom
           && String(edge.to_symbol_id ?? '') === expectedTo)).toBe(true);
+
+        if (replayCase.graph_direction === 'in' || replayCase.graph_direction === 'out') {
+          const wrongDirection = replayCase.graph_direction === 'in' ? 'out' : 'in';
+          const wrongDirectionExpanded = apis.expandCodeLaneGraph(
+            snapshot,
+            String(rootNode.symbol_id),
+            {
+              requested: true,
+              direction: wrongDirection,
+              depth_limit: 1,
+              fanout_cap: 3,
+            },
+          );
+          const wrongDirectionEdges = Array.isArray(wrongDirectionExpanded.edges)
+            ? wrongDirectionExpanded.edges as Array<Record<string, unknown>>
+            : [];
+          expect(wrongDirectionEdges.some((edge) =>
+            edgeKind(edge) === replayCase.expected_edge_kind
+            && String(edge.from_symbol_id ?? '') === expectedFrom
+            && String(edge.to_symbol_id ?? '') === expectedTo)).toBe(false);
+        }
       }
 
       const report = await operationsByName.reverify_code_claims.handler(opContext(handle.engine), {
