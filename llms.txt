@@ -7,7 +7,10 @@ Repo: https://github.com/garrytan/gbrain
 ## Core entry points
 
 - [AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md): Start here if you are not Claude Code. Install order, trust boundary, skill resolver, config/debug/migration pointers.
-- [CLAUDE.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CLAUDE.md): Architecture reference. Key files, trust boundaries, engine factory, test layout.
+- [CLAUDE.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CLAUDE.md): Architecture overview + agent-facing rules (eval discipline, skill routing, post-ship requirements, privacy, responsible disclosure). Trust boundaries inline.
+- [docs/architecture/KEY_FILES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/KEY_FILES.md): Per-file inventory of `src/` with trust-boundary annotations and version-tagged behaviors.
+- [docs/TESTING.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/TESTING.md): Test layout, harnesses, fixtures, regression categories.
+- [docs/RELEASING.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/RELEASING.md): Release process - version locations, pre-ship gates, CHANGELOG voice, migration discipline.
 - [INSTALL_FOR_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md): 9-step agent installation.
 - [skills/RESOLVER.md](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/RESOLVER.md): Skill dispatcher. Read first for any task.
 - [README.md](https://raw.githubusercontent.com/garrytan/gbrain/master/README.md): Project overview, benchmarks, 30-minute setup.
