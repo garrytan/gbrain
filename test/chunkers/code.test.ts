@@ -10,8 +10,8 @@ import { describe, test, expect } from 'bun:test';
 import { chunkCodeText, detectCodeLanguage, CHUNKER_VERSION } from '../../src/core/chunkers/code.ts';
 
 describe('CHUNKER_VERSION', () => {
-  test('v0.20.0 Cathedral II Layer 12 bumped to 4', () => {
-    expect(CHUNKER_VERSION).toBe(4);
+  test('v0.20.1 Cathedral II A4 bumped to 5', () => {
+    expect(CHUNKER_VERSION).toBe(5);
   });
 });
 
@@ -248,5 +248,112 @@ describe('chunkCodeText — empty input', () => {
   test('empty source returns empty array', async () => {
     expect(await chunkCodeText('', 'foo.ts')).toEqual([]);
     expect(await chunkCodeText('   \n  ', 'foo.ts')).toEqual([]);
+  });
+});
+
+describe('doc_comment extraction — Cathedral II A4', () => {
+  test('TypeScript: JSDoc comment is extracted into metadata.docComment', async () => {
+    const src = `/**
+ * Calculates the average of an array.
+ * @param nums - input numbers
+ */
+export function average(nums: number[]): number {
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+}`;
+    const chunks = await chunkCodeText(src, 'math.ts');
+    const fn = chunks.find(c => c.metadata.symbolName === 'average');
+    expect(fn).toBeDefined();
+    expect(fn!.metadata.docComment).toContain('Calculates the average');
+    expect(fn!.metadata.docComment).toContain('@param nums');
+  });
+
+  test('TypeScript: inline comment is extracted', async () => {
+    const src = `// Returns the doubled value
+function double(x: number): number {
+  return x * 2;
+}`;
+    const chunks = await chunkCodeText(src, 'math.ts');
+    const fn = chunks.find(c => c.metadata.symbolName === 'double');
+    expect(fn).toBeDefined();
+    expect(fn!.metadata.docComment).toContain('Returns the doubled value');
+  });
+
+  test('TypeScript: no preceding comment yields null docComment', async () => {
+    const src = `export function noComment(x: number): number {
+  return x + 1;
+}`;
+    const chunks = await chunkCodeText(src, 'math.ts');
+    expect(chunks.length).toBeGreaterThanOrEqual(1);
+    expect(chunks[0]!.metadata.docComment).toBeNull();
+  });
+
+  test('Python: docstring is extracted from function body', async () => {
+    const src = `def compute_score(items):
+    """Compute the total score from a list of items.
+
+    Args:
+        items: list of numeric values
+    Returns:
+        float score
+    """
+    return sum(items) / len(items)
+`;
+    const chunks = await chunkCodeText(src, 'score.py');
+    const fn = chunks.find(c => c.metadata.symbolName === 'compute_score');
+    expect(fn).toBeDefined();
+    expect(fn!.metadata.docComment).toContain('Compute the total score');
+  });
+
+  test('Python: function without docstring yields null docComment', async () => {
+    const src = `def add(a, b):
+    return a + b
+`;
+    const chunks = await chunkCodeText(src, 'math.py');
+    const fn = chunks.find(c => c.metadata.symbolName === 'add');
+    expect(fn).toBeDefined();
+    expect(fn!.metadata.docComment).toBeNull();
+  });
+
+  test('Go: preceding comment block is extracted', async () => {
+    const src = `// Greet returns a greeting string for the given name.
+func Greet(name string) string {
+\treturn "Hello, " + name
+}
+`;
+    const chunks = await chunkCodeText(src, 'greet.go');
+    const fn = chunks.find(c => c.metadata.symbolName === 'Greet');
+    expect(fn).toBeDefined();
+    expect(fn!.metadata.docComment).toContain('Greet returns a greeting string');
+  });
+
+  test('TypeScript class method: JSDoc extracted for nested method', async () => {
+    const src = `class Calculator {
+  /** Adds two numbers. */
+  add(a: number, b: number): number {
+    return a + b;
+  }
+}`;
+    const chunks = await chunkCodeText(src, 'calc.ts');
+    const method = chunks.find(c => c.metadata.symbolName === 'add');
+    expect(method).toBeDefined();
+    expect(method!.metadata.docComment).toContain('Adds two numbers');
+  });
+
+  test('comment more than 2 lines away is not attributed', async () => {
+    const src = `// This comment is for something else
+
+// Another unrelated comment
+
+
+function farAway(x: number): number {
+  return x;
+}`;
+    const chunks = await chunkCodeText(src, 'test.ts');
+    const fn = chunks.find(c => c.metadata.symbolName === 'farAway');
+    // The comment 3+ blank lines away should not be attributed
+    if (fn) {
+      // Either null or at most the immediately-adjacent comment
+      expect(fn.metadata.docComment).toBeNull();
+    }
   });
 });

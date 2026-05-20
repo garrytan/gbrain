@@ -79,38 +79,48 @@ export function detectBlockShape(lines: string[], lineIdx: number): BlockShape {
   return 'paragraph';
 }
 
-/** Expand a bullet item: start at the bullet line, end at the next sibling
- *  or shallower bullet (sub-bullets included). */
+/**
+ * Expand a bullet item: start at the bullet line, end at the next sibling
+ * or shallower bullet (sub-bullets included).
+ *
+ * Fix 3 (v0.20.1): the original walk-up was dead code — it only ran when
+ * lineIdx was already a bullet-marker line (because of the `indentMatch`
+ * guard), making "walk up to find the start" unreachable for continuation
+ * lines. Rewritten to first walk up to the owning bullet when lineIdx is
+ * a continuation line, then walk down to the end of the block.
+ */
 export function expandBullet(lines: string[], lineIdx: number): Block | null {
-  const line = lines[lineIdx] ?? '';
-  const indentMatch = line.match(/^(\s*)(?:[-*]\s|\d+\.\s)/);
+  const BULLET_RE = /^(\s*)(?:[-*]\s|\d+\.\s)/;
+  let bulletIdx = lineIdx;
+
+  if (!BULLET_RE.test(lines[lineIdx] ?? '')) {
+    // lineIdx is a continuation line — walk up to find the owning bullet.
+    let found = -1;
+    for (let i = lineIdx - 1; i >= 0; i--) {
+      if ((lines[i] ?? '').trim() === '') break;
+      if (BULLET_RE.test(lines[i] ?? '')) { found = i; break; }
+    }
+    if (found === -1) return null;
+    bulletIdx = found;
+  }
+
+  const bulletLine = lines[bulletIdx] ?? '';
+  const indentMatch = bulletLine.match(BULLET_RE);
   if (!indentMatch) return null;
   const baseIndent = indentMatch[1].length;
 
-  // Walk up to find the start of THIS bullet (in case match is on a
-  // continuation line of a multi-line bullet).
-  let start = lineIdx;
-  while (start > 0) {
-    const prev = lines[start - 1];
-    const prevIsBullet = /^(\s*)(?:[-*]\s|\d+\.\s)/.test(prev);
-    const prevIndent = prev.match(/^(\s*)/)?.[1].length ?? 0;
-    if (prevIsBullet && prevIndent <= baseIndent) break;
-    if (prev.trim() === '') break;
-    start--;
-  }
-
   // Walk down: continue until a bullet at <= baseIndent (sibling or
   // shallower), a blank line, or end of file.
-  let end = lineIdx;
-  for (let i = lineIdx + 1; i < lines.length; i++) {
-    const l = lines[i];
+  let end = bulletIdx;
+  for (let i = bulletIdx + 1; i < lines.length; i++) {
+    const l = lines[i] ?? '';
     if (l.trim() === '') break;
-    const isBullet = /^(\s*)(?:[-*]\s|\d+\.\s)/.test(l);
+    const isBullet = BULLET_RE.test(l);
     const indent = l.match(/^(\s*)/)?.[1].length ?? 0;
     if (isBullet && indent <= baseIndent) break;
     end = i;
   }
-  return { startLine: start, endLine: end };
+  return { startLine: bulletIdx, endLine: end };
 }
 
 /** Expand a blockquote: contiguous `>` lines. Returns null if the block is
@@ -149,13 +159,19 @@ export const expanders: Record<BlockShape, (lines: string[], lineIdx: number) =>
 // Guards
 // ---------------------------------------------------------------------------
 
-/** True when the match offset sits inside a fenced code block (``` ... ```).
- *  Counts triple-backtick fences at line starts. Odd count = inside. */
+/**
+ * True when the match offset sits inside a fenced code block.
+ *
+ * Fix 2 (v0.20.1): extend beyond triple-backtick to also catch N-backtick
+ * (N >= 3) and tilde (~~~ / ~~~~) fences, which are CommonMark-legal.
+ * Backtick and tilde counts are tracked independently — a ~~~ fence does
+ * not close a ``` fence.
+ */
 export function isInsideCodeFence(content: string, offset: number): boolean {
   const before = content.slice(0, offset);
-  const fenceRe = /^```/gm;
-  const fenceCount = (before.match(fenceRe) || []).length;
-  return fenceCount % 2 === 1;
+  const backtickCount = (before.match(/^`{3,}/gm) || []).length;
+  const tildeCount = (before.match(/^~{3,}/gm) || []).length;
+  return (backtickCount % 2 === 1) || (tildeCount % 2 === 1);
 }
 
 export type WorkingTreeStatus = 'clean' | 'dirty' | 'not_a_repo';
@@ -211,6 +227,9 @@ export function autoFixDryViolations(
   const fixed: FixOutcome[] = [];
   const skipped: FixOutcome[] = [];
   const { skills: manifest } = loadOrDeriveManifest(skillsDir);
+  // Fix 5 (v0.20.1): cache git status per skill path so the N skills ×
+  // M patterns loop doesn't spawn `git status` N×M times per invocation.
+  const gitCache = new Map<string, WorkingTreeStatus>();
 
   for (const skill of manifest) {
     const skillPath = join(skillsDir, skill.path);
@@ -240,7 +259,7 @@ export function autoFixDryViolations(
     let delegations = extractDelegationTargets(content);
 
     for (const cut of CROSS_CUTTING_PATTERNS) {
-      const outcome = attemptFix(skill.name, skillPath, content, delegations, cut, opts);
+      const outcome = attemptFix(skill.name, skillPath, content, delegations, cut, opts, gitCache);
       if (!outcome) continue;
       if (outcome.status === 'applied' || outcome.status === 'proposed') {
         fixed.push(outcome);
@@ -267,7 +286,10 @@ function attemptFix(
   content: string,
   delegations: ReturnType<typeof extractDelegationTargets>,
   cut: CrossCuttingPattern,
-  opts: AutoFixOptions
+  opts: AutoFixOptions,
+  // Fix 5 (v0.20.1): per-invocation cache so git status is only spawned
+  // once per skill path, not once per skill × pattern.
+  gitCache?: Map<string, WorkingTreeStatus>
 ): FixOutcome | null {
   const base = {
     skill: skillName,
@@ -275,7 +297,7 @@ function attemptFix(
     patternLabel: cut.label,
   };
 
-  // Find ALL matches first (for multi-match detection).
+  // Find ALL matches (for multi-match handling).
   const globalRe = new RegExp(
     cut.pattern.source,
     cut.pattern.flags.includes('g') ? cut.pattern.flags : cut.pattern.flags + 'g'
@@ -283,29 +305,64 @@ function attemptFix(
   const matches = [...content.matchAll(globalRe)];
   if (matches.length === 0) return null;
 
-  if (matches.length > 1) {
-    return { ...base, status: 'skipped', reason: 'ambiguous_multiple_matches' };
+  let selectedMatch: RegExpMatchArray;
+
+  if (matches.length === 1) {
+    // Single match — fall through to individual guard checks below so we
+    // preserve the specific skip reasons (inside_code_fence, already_delegated)
+    // that existing tests and humans rely on for actionable feedback.
+    selectedMatch = matches[0]!;
+  } else {
+    // Fix 4 (v0.20.1): multiple matches — filter out fence and already-delegated
+    // occurrences, then fix the single remaining eligible one. The outer loop
+    // re-reads after each apply, so any leftover matches get a follow-up pass.
+    // This resolves the "TOC + body" case that returned ambiguous_multiple_matches
+    // forever: once the body occurrence is fixed, the TOC reference is already
+    // a delegation and the next pass skips cleanly.
+    const eligible = matches.filter(m => {
+      const off = m.index ?? 0;
+      if (isInsideCodeFence(content, off)) return false;
+      const ln = content.slice(0, off).split('\n').length;
+      return !delegations.some(
+        d => cut.conventions.includes(d.convention) && Math.abs(d.line - ln) <= DRY_PROXIMITY_LINES
+      );
+    });
+    if (eligible.length === 0) return null;
+    if (eligible.length > 1) {
+      return { ...base, status: 'skipped', reason: 'ambiguous_multiple_matches' };
+    }
+    selectedMatch = eligible[0]!;
   }
 
-  const m = matches[0];
-  const offset = m.index ?? 0;
+  const offset = selectedMatch.index ?? 0;
 
-  if (isInsideCodeFence(content, offset)) {
-    return { ...base, status: 'skipped', reason: 'inside_code_fence' };
+  // Individual guards (only reached on the single-match path; multi-match
+  // already filtered these above, so we skip straight to the block expander).
+  if (matches.length === 1) {
+    if (isInsideCodeFence(content, offset)) {
+      return { ...base, status: 'skipped', reason: 'inside_code_fence' };
+    }
   }
 
-  // Compute match line (1-indexed) to evaluate idempotency.
-  // Use the same proximity window as the detector (DRY_PROXIMITY_LINES)
-  // so the fixer can't re-fire on blocks the detector already suppresses.
   const matchLine = content.slice(0, offset).split('\n').length;
-  const alreadyDelegated = delegations.some(
-    d => cut.conventions.includes(d.convention) && Math.abs(d.line - matchLine) <= DRY_PROXIMITY_LINES
-  );
-  if (alreadyDelegated) {
-    return { ...base, status: 'skipped', reason: 'already_delegated' };
+
+  if (matches.length === 1) {
+    const alreadyDelegated = delegations.some(
+      d => cut.conventions.includes(d.convention) && Math.abs(d.line - matchLine) <= DRY_PROXIMITY_LINES
+    );
+    if (alreadyDelegated) {
+      return { ...base, status: 'skipped', reason: 'already_delegated' };
+    }
   }
 
-  const treeStatus = getWorkingTreeStatus(skillPath);
+  // Fix 5: use the per-invocation cache to avoid spawning git status per pattern.
+  let treeStatus: WorkingTreeStatus;
+  if (gitCache) {
+    if (!gitCache.has(skillPath)) gitCache.set(skillPath, getWorkingTreeStatus(skillPath));
+    treeStatus = gitCache.get(skillPath)!;
+  } else {
+    treeStatus = getWorkingTreeStatus(skillPath);
+  }
   if (treeStatus === 'dirty') {
     return { ...base, status: 'skipped', reason: 'working_tree_dirty' };
   }
@@ -355,7 +412,18 @@ function attemptFix(
   }
 
   try {
+    // Fix 1 (v0.20.1): TOCTOU guard. Re-read immediately before writing
+    // and verify the file hasn't changed since we computed the edit.
+    // A concurrent editor save between our read and write would otherwise
+    // be silently overwritten with our stale edit.
+    const currentContent = readFileSync(skillPath, 'utf-8');
+    if (currentContent !== content) {
+      return { ...base, status: 'skipped', reason: 'working_tree_dirty' };
+    }
     writeFileSync(skillPath, next, 'utf-8');
+    // Invalidate the cached git status so re-reads on the next pattern
+    // reflect the newly-written file.
+    gitCache?.delete(skillPath);
   } catch {
     return { ...base, status: 'error', reason: 'write_error' };
   }

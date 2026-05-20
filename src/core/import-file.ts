@@ -584,6 +584,7 @@ export async function importCodeFile(
         ? c.metadata.parentSymbolPath
         : undefined,
     symbol_name_qualified: c.metadata.symbolNameQualified || undefined,
+    doc_comment: c.metadata.docComment || undefined,
   }));
 
   // v0.19.0 E2 — incremental chunking. Embedding calls dominate the cost
