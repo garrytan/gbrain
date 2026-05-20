@@ -2,6 +2,116 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.36.5.0] - 2026-05-18
+
+**Your agent picks which secrets to pass to a shell job by name. The worker resolves the values; names land in the row, values don't.**
+
+If you submit a `gbrain` CLI command as a shell job, you have hit the env-stripping wall and probably worked around it the way PR #1137 documented: write secrets into `~/.gbrain/config.json` plaintext, or pass `env: { GBRAIN_DATABASE_URL: "..." }` per job. Both work. The per-job pattern in particular lands the URL in `minion_jobs.data` (a real DB row) and in the shell-audit JSONL — so if your brain ever travels (shared via mounts, dumped, backed up), the URL travels with it.
+
+v0.36.5.0 adds a new shell-job field: `inherit: ["database_url", "anthropic_api_key", ...]`. Pass any snake_case config-key name on it. The worker resolves the value from its `loadConfig()` at child-spawn time and injects it into the child env (`database_url` → `GBRAIN_DATABASE_URL`; `anthropic_api_key` → `ANTHROPIC_API_KEY`; convention is uppercase). Names persist to the row + audit; values resolve fresh on every spawn and never persist from `inherit:` itself. Validation runs **pre-enqueue** in both submit surfaces — `gbrain jobs submit shell` (CLI) and the `submit_job` MCP op — so a malformed payload never lands in `minion_jobs.data`.
+
+The validator does NOT police WHICH config keys you inherit. The agent submitting the minion is in the same uid as the worker; it's the agent's call. If you want a value in the row (non-secret correlation token, OR a secret you've decided is fine to persist), keep using `env:` — that path is unchanged. Use `inherit:` when you want the value OUT of the row.
+
+This wave started as a 4-layer cathedral (encrypted vault + Unix-socket broker + SO_PEERCRED + per-call tokens). The /cso audit cut it as security theater for the single-uid topology that's actually deployed — gbrain runs on your machine, hermes and openclaw run as your uid, defending against same-uid attackers is moot. Codex's outside-voice pass then caught the load-bearing correctness bug in the "minimum-scope" plan: validation in the worker handler runs AFTER `queue.add()` has already persisted the row, so the headline "input-secrets never persist" claim was technically false. Fixed by lifting validation to a shared module called pre-enqueue from both submit paths.
+
+### What you can now do
+
+**Submit shell jobs that pass any subset of secrets the agent needs.**
+
+```bash
+gbrain jobs submit shell --params '{
+  "cmd": "gbrain sync --skip-failed && gbrain embed --stale",
+  "cwd": "/data/gbrain",
+  "inherit": ["database_url", "anthropic_api_key", "voyage_api_key"]
+}'
+```
+
+The worker resolves each name from its config and injects values under the derived env-key names. The `minion_jobs.data` row carries `inherit: ["database_url", "anthropic_api_key", "voyage_api_key"]` — names only. The shell-audit JSONL records the same. Pre-enqueue validation rejects the submission if the worker can't resolve a requested name, with a paste-ready `gbrain config set <X>` hint.
+
+**Inherit any custom config-key.** If you stuff `my_custom_token` into `~/.gbrain/config.json`, `inherit: ["my_custom_token"]` works — child env gets `MY_CUSTOM_TOKEN`. No allowlist. The validator only enforces snake_case shape (prototype-pollution defense for the `__proto__` / `constructor` family).
+
+**Use `env:` when you want the value in the row.** `env: { CORRELATION_TOKEN: "audit-trail-uuid-abc" }` works the same as it always has. The validator doesn't second-guess.
+
+**Surface `~/.gbrain` worktree risk via `gbrain doctor`.** New check `home_dir_in_worktree` walks up from `gbrainPath()` (honoring `GBRAIN_HOME`) looking for a `.git` directory OR file — both shapes — and warns if found. Handles linked worktrees correctly (the Conductor + git-worktrees topology this branch was developed in literally hits this path). Walk terminates at `$HOME` so a `.git` above your home doesn't false-positive.
+
+**Get `~/.gbrain/.gitignore` retroactively.** Every `saveConfig()` call AND every `gbrain post-upgrade` now lays down a single-line `*` gitignore in `~/.gbrain/`. Idempotent — never clobbers user customization. Honest scope: this blocks casual `git add ~/.gbrain` from inside an enclosing worktree, but does NOT cover already-tracked files, screenshots, backup tools (Time Machine / iCloud / Dropbox), or `git add -f`. The doctor check surfaces what the `.gitignore` can't.
+
+**Read `docs/guides/agent-to-gbrain.md`** for the canonical two-domain framing for downstream agent authors: MCP ops via thin-client OAuth for everything with an MCP equivalent, shell job + `inherit:` for the `localOnly` admin ops (`sync`, `embed`, `dream`, `doctor`, `autopilot`). Not a fallback hierarchy — pick by op.
+
+### Itemized changes
+
+- **`src/core/minions/handlers/shell-inherit.ts`** (NEW) — three small helpers. `INHERIT_NAME_RE` (snake_case regex), `deriveEnvKey(name)` (config-key → child-env-key with `database_url` → `GBRAIN_DATABASE_URL` override), `resolveInheritValue(cfg, name)` (uses `Object.hasOwn` to defeat prototype-pollution lookups).
+- **`src/core/minions/handlers/shell-validate.ts`** (NEW) — `validateShellJobParams(data, opts?)` shared validator called pre-enqueue from both submit surfaces. Existing cmd/argv/cwd/env shape checks + new `inherit` shape check (array of snake_case strings) + fail-fast on missing config value. The test seam `opts.config` lets unit tests drive the validator hermetically.
+- **`src/commands/jobs.ts`** — `gbrain jobs submit shell` calls `validateShellJobParams(data)` before `queue.add()`. Audit-log call extends to record `inherit: [...]` names.
+- **`src/core/operations.ts`** — `submit_job` op for `name === 'shell'` runs the same pre-enqueue validator AND lifts the shell-audit JSONL write so the MCP-op path also produces audit lines (codex F-CDX-4).
+- **`src/core/minions/handlers/shell.ts`** — `ShellJobParams.inherit?: string[]` + `ShellJobParams.redact_secrets?: boolean`. `buildChildEnv` resolves names via `resolveInheritValue` and injects under `deriveEnvKey(name)`. When `redact_secrets` is true, the handler builds a redaction map (inherit-name → value) and post-processes `stdout_tail` / `stderr_tail` via `redactSecretsInText` before throw/return. Handler-entry re-validation as defense-in-depth catches pre-existing rows.
+- **`src/core/minions/handlers/shell-redact.ts`** (NEW) — pure `redactSecretsInText(text, secrets)` helper. String-mode `replaceAll` so regex metacharacters in values are treated as literal (safety property). Empty values in the map are skipped.
+- **`src/commands/jobs.ts`** — CLI flag `--redact-secrets` merges `redact_secrets: true` into params before validation. Convenience for `gbrain jobs submit shell --redact-secrets`.
+- **`src/core/minions/handlers/shell-audit.ts`** — `ShellAuditEvent.inherit?: string[]` (names only).
+- **`src/core/config.ts`** — `ensureGitignore()` helper. Idempotent; never clobbers user content. Called from `saveConfig()`.
+- **`src/commands/upgrade.ts:runPostUpgrade`** — calls `ensureGitignore()` once per upgrade.
+- **`src/commands/doctor.ts`** — new `home_dir_in_worktree` filesystem check.
+- **`docs/guides/minions-shell-jobs.md`** — new `#secrets` section. Documents free-form `inherit:`, output-side leakage caveat, error catalog.
+- **`docs/guides/agent-to-gbrain.md`** (NEW) — single-page guide for downstream agent authors. Two-domain framing (MCP ops via thin-client OAuth vs `localOnly` admin ops via shell-job `inherit:`), decision table, migration recipe.
+- **`docs/UPGRADING_DOWNSTREAM_AGENTS.md`** — v0.36.5.0 section with before/after recipe and error-handling table.
+- **New tests** (50+ cases across 5 files):
+  - `test/minions-shell-validate.test.ts` — every validation path (shape, snake_case regex, fail-fast, prototype-pollution defense, the deliberate non-rules) + T1 regression guard pinning the load-bearing invariant.
+  - `test/minions-shell-inherit.test.ts` — `INHERIT_NAME_RE` matrix (10 accepts, 10 rejects), `deriveEnvKey` per-name behavior, `resolveInheritValue` round-trip including `__proto__` / `constructor` / `toString` prototype-pollution cases.
+  - `test/config-ensure-gitignore.test.ts` (6 cases) — idempotency, no-clobber, GBRAIN_HOME honored.
+  - `test/doctor-home-dir-in-worktree.test.ts` (5 cases) — walks dir-style + file-style `.git`, walk termination at $HOME, GBRAIN_HOME override.
+  - `test/e2e/minions-shell-pglite.test.ts` (+2 cases) — full PGLite round-trip: `inherit: ["database_url"]` resolves into child env (negative-shape JSON assertion that value is NOT in row), AND a separate `inherit: ["anthropic_api_key"]` test proving the mechanism is genuinely free-form.
+
+### Output-side redaction (opt-in)
+
+**`redact_secrets: true`** (or `--redact-secrets` on the CLI) opts into
+output-side scrubbing. When set, the worker resolves each `inherit:` name
+to a value, runs the child, then literal-string-replaces every occurrence
+of those values in `stdout_tail` / `stderr_tail` (and in the `error_text`
+derived from `stderr_tail` on non-zero exit) with `<REDACTED:name>` before
+persistence. Only `inherit:`-resolved values are scrubbed; caller-supplied
+`env:` values are not (those are the "I'm fine with this in the row" channel
+by design).
+
+```bash
+gbrain jobs submit shell --params '{
+  "cmd": "gbrain sync --skip-failed",
+  "cwd": "/data/gbrain",
+  "inherit": ["database_url"],
+  "redact_secrets": true
+}'
+```
+
+**Heuristic, not perfect.** Literal string-replace. A script that
+base64-encodes the secret before printing, or emits it one character at a
+time, bypasses the scrub. Those are adversarial shapes; the agent and the
+script are in the same trust domain, so this layer defends against
+accidental echo (the common case), not deliberate exfiltration. Default is
+`false` for back-compat — no behavior change for callers who don't opt in.
+
+### For contributors
+
+The wave's bug-class lesson is worth recording: **in queue-based job systems, validation must run before `queue.add()` if the row contents are part of the security boundary.** Validation in the worker handler runs AFTER persistence; rejecting there leaves the bad payload in the DB row. Codex caught this in plan review; the in-Claude eng review missed it on the first pass. The shared `validateShellJobParams` module exists specifically to make pre-enqueue validation the only path on both CLI and op-handler surfaces; the handler-side call is defense-in-depth only.
+
+Design note on the closed-vs-free-form arc: an early draft of v0.36.5.0 used a closed `INHERITABLE` enum (one record per allowed secret name, with hardcoded shadow-key sets and inline-cmd regex scans). After codex's pre-landing review surfaced multiple bypass paths the closed enum invited (cmd-inline assignments, missed shadow names like `GBRAIN_DIRECT_DATABASE_URL`), the deeper question was: what threat does the allowlist actually defend? On a single-uid topology the agent and worker share trust; refusing to let the agent inherit `voyage_api_key` because it's not on a hand-curated list is paternalism, not security. The shipped design opens `inherit:` to any snake_case config-key. The closed enum is the failure mode this skill avoids.
+
+## To take advantage of v0.36.5.0
+
+`gbrain upgrade` does this automatically — no migrations to run, no host action required.
+
+1. **Verify the new pattern works on your worker host:**
+   ```bash
+   gbrain jobs submit shell --params '{"cmd":"gbrain stats","cwd":"/tmp","inherit":["database_url"]}' --follow
+   ```
+   Expect: page count, exit 0. If you see `shell: inherit requested "database_url" but worker has no database_url configured`, run `gbrain config set database_url <value>` on the worker host once.
+2. **Update your agent code** if it submits shell jobs with `env: { GBRAIN_DATABASE_URL: ... }`. Swap to `inherit: ["database_url"]`. The error message tells you exactly what to change.
+3. **Check the doctor for worktree hygiene:**
+   ```bash
+   gbrain doctor --json | grep -A1 home_dir_in_worktree
+   ```
+   Warn means `~/.gbrain/` lives inside a git worktree. The retroactive `.gitignore` blocks casual `git add`, but consider moving the brain out or setting `GBRAIN_HOME` if you also need backup/screenshare hygiene.
+4. **If any step fails**, file an issue: https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and the contents of `~/.gbrain/upgrade-errors.jsonl` if it exists. This feedback loop is how the wedge incidents get caught.
+
+Credit: this wave exists because @garrytan-agents filed PR #1137 documenting the env-stripping gap. The doc made the underlying problem visible enough to fix in code. Thank you.
 ## [0.36.4.0] - 2026-05-18
 
 **Your agent can now drive your brain to 90/100 by itself, on a cron, without you watching.**
@@ -616,17 +726,17 @@ GBrain v0.36 retires the managed-block install model. `gbrain skillpack install`
 
 ### What you can now do
 
-**Scaffold a skill into your real agent repo and own it outright.** `cd ~/git/wintermute && gbrain skillpack scaffold book-mirror` copies the skill markdown, any sibling routing-eval fixtures, and any paired source files declared in the skill's frontmatter `sources:` array. No managed-block fence written to your `RESOLVER.md`. No `cumulative-slugs` receipt. No `.gbrain-skillpack.lock` file. The files are yours. Edit freely; re-scaffolding refuses to overwrite anything that exists.
+**Scaffold a skill into your real agent repo and own it outright.** `cd ~/git/PR #1137 author && gbrain skillpack scaffold book-mirror` copies the skill markdown, any sibling routing-eval fixtures, and any paired source files declared in the skill's frontmatter `sources:` array. No managed-block fence written to your `RESOLVER.md`. No `cumulative-slugs` receipt. No `.gbrain-skillpack.lock` file. The files are yours. Edit freely; re-scaffolding refuses to overwrite anything that exists.
 
 **Read the diff against gbrain's bundle as reference, not as a force-update.** `gbrain skillpack reference book-mirror` prints per-file status (`identical` / `differs` / `missing`) plus unified diffs for any drift, framed with an agent-readable header: "These files live at <path> as reference. Read them and decide what (if anything) to integrate into your local skills/. Your local edits are intentional — do not blindly overwrite." For a one-line-per-skill sweep, `reference --all`. For two-way auto-apply of non-conflicting hunks, `reference <name> --apply-clean-hunks` (with a documented two-way merge limitation — no scaffold-time base tracking, by design).
 
 **Migrate off the old managed block with one command.** `gbrain skillpack migrate-fence` strips `<!-- gbrain:skillpack:begin -->` / `end -->` markers and the manifest receipt comment from your resolver file, preserving every row inside the fence verbatim as user-owned routing. Cumulative-slugs receipt missing or stale → falls back to row-parsing with a loud warning. Idempotent; re-runs are no-ops. Once your agent confirms it walks frontmatter `triggers:` for routing, `gbrain skillpack scrub-legacy-fence-rows` tears down the bridge — removes legacy rows whose skill exists AND declares non-empty triggers, preserves anything user-added.
 
-**Lift a proven skill back into gbrain so other clients can scaffold it.** `gbrain skillpack harvest my-skill --from ~/git/wintermute` is the inverse loop. Reads the host skill's `skills/<slug>/` + any paired source files, copies into gbrain's tree, updates `openclaw.plugin.json` (sorted), and runs a default-on privacy linter against `~/.gbrain/harvest-private-patterns.txt` (built-in defaults catch `\bWintermute\b`, common email regex, Slack channel patterns). Any match → rollback (delete the copy) and exit non-zero so the editorial pass surfaces the leak. Symlinks in the host skill dir are rejected; canonical-path containment prevents path traversal. The companion editorial skill `skillpack-harvest` walks the genericization checklist (scrub fork names, generalize triggers, lift fork-specific conventions to references).
+**Lift a proven skill back into gbrain so other clients can scaffold it.** `gbrain skillpack harvest my-skill --from ~/git/PR #1137 author` is the inverse loop. Reads the host skill's `skills/<slug>/` + any paired source files, copies into gbrain's tree, updates `openclaw.plugin.json` (sorted), and runs a default-on privacy linter against `~/.gbrain/harvest-private-patterns.txt` (built-in defaults catch `\bPR #1137 author\b`, common email regex, Slack channel patterns). Any match → rollback (delete the copy) and exit non-zero so the editorial pass surfaces the leak. Symlinks in the host skill dir are rejected; canonical-path containment prevents path traversal. The companion editorial skill `skillpack-harvest` walks the genericization checklist (scrub fork names, generalize triggers, lift fork-specific conventions to references).
 
 **Gate CI on bundle drift without breaking interactive use.** `gbrain skillpack check` defaults to informational (exit 0 even with drift) when invoked as a subcommand. Pass `--strict` to opt into exit-1 on action-needed for CI gating. Top-level `gbrain skillpack-check` (the cron entry point) keeps its existing exit-1 behavior for backwards compat.
 
-**Auto-detect a target workspace in non-OpenClaw repos.** `autoDetectSkillsDir` gains a `cwd_walk_up` tier ahead of the `~/.openclaw/workspace` fallback. `cd ~/git/wintermute && gbrain skillpack scaffold ...` finds wintermute automatically. `$OPENCLAW_WORKSPACE` precedence preserved when explicitly set — the precedence regression (R5) is pinned by a test.
+**Auto-detect a target workspace in non-OpenClaw repos.** `autoDetectSkillsDir` gains a `cwd_walk_up` tier ahead of the `~/.openclaw/workspace` fallback. `cd ~/git/PR #1137 author && gbrain skillpack scaffold ...` finds PR #1137 author automatically. `$OPENCLAW_WORKSPACE` precedence preserved when explicitly set — the precedence regression (R5) is pinned by a test.
 
 ### Migration
 
@@ -1114,7 +1224,7 @@ The judge now sees the page-level `effective_date` for each chunk via a `(from: 
 
 **Cap the cost of the post-bump re-judge.** The `PROMPT_VERSION` change invalidates the entire judge cache (the prompt shape changed, old verdicts no longer apply). Before that re-judge spends any tokens, the runner prints an upper-bound cost estimate and waits 10 seconds in TTY for Ctrl-C; set `GBRAIN_NO_PROBE_PROMPT=1` to skip or `GBRAIN_PROBE_PROMPT_GRACE_SECONDS=0` to proceed immediately. Non-TTY (autopilot) auto-proceeds with a stderr note. `--budget-usd N` hard-caps the run when cumulative cost exceeds the cap. The judge model now resolves through `models.eval.contradictions_judge` (defaults to Haiku tier), so `gbrain config set models.eval.contradictions_judge` works the same way as every other model config key. `gbrain models doctor` surfaces the new touchpoint.
 
-**Block PII in `docs/proposals/*.md` at CI time.** A new `scripts/check-proposal-pii.sh` (wired into `bun run verify` and `bun run check:all`) catches the specific PII classes that surfaced in past RFC drafts: private repo references (`garrytan/brain`), personal-relationship vocabulary (`trial separation`, `couples session`, `divorce attorney`, etc.), death-context phrases, and the literal `Wintermute` agent name. Bare common words (`separation`, `funeral`) are intentionally not banned. The denylist names patterns rather than real names, so the script's own source doesn't re-introduce PII into the repo.
+**Block PII in `docs/proposals/*.md` at CI time.** A new `scripts/check-proposal-pii.sh` (wired into `bun run verify` and `bun run check:all`) catches the specific PII classes that surfaced in past RFC drafts: private repo references (`garrytan/brain`), personal-relationship vocabulary (`trial separation`, `couples session`, `divorce attorney`, etc.), death-context phrases, and the literal `PR #1137 author` agent name. Bare common words (`separation`, `funeral`) are intentionally not banned. The denylist names patterns rather than real names, so the script's own source doesn't re-introduce PII into the repo.
 
 ### Itemized changes
 
@@ -1128,7 +1238,7 @@ The judge now sees the page-level `effective_date` for each chunk via a `(from: 
 - `date-filter.ts`: `shouldSkipForDateMismatch` accepts optional `effectiveDateA` and `effectiveDateB`. When both are non-null, returns `skip=false` with new `'both_have_effective_date'` reason. Other rules preserved.
 - `src/commands/eval-suspected-contradictions.ts`: new `--budget-usd N` hard cap (was pre-existing for runtime; help text now explains it), new cost-estimate prompt wired via `src/core/eval-contradictions/cost-prompt.ts`. `--severity` accepts `info`. `--severity` output shows `[verdict]` tag. Judge model routes through `resolveModel({configKey: 'models.eval.contradictions_judge', tier: 'utility', envVar: 'GBRAIN_CONTRADICTIONS_JUDGE_MODEL'})`. Human summary and trend chart show the per-verdict breakdown.
 - `src/commands/models.ts` registers `models.eval.contradictions_judge` as a tracked per-task model key so `gbrain models` and `gbrain models doctor` surface it.
-- `scripts/check-proposal-pii.sh` + denylist (structural patterns only, no real names) + 15-case test in `test/scripts/check-proposal-pii.test.ts`. Wired into `bun run verify`, `bun run check:all`, and as the new `bun run check:proposal-pii` standalone target. Two privacy-guard test fixtures naming `Wintermute` allowlisted in `scripts/check-test-real-names.sh`; the new privacy-guard scripts themselves allowlisted in `scripts/check-privacy.sh`.
+- `scripts/check-proposal-pii.sh` + denylist (structural patterns only, no real names) + 15-case test in `test/scripts/check-proposal-pii.test.ts`. Wired into `bun run verify`, `bun run check:all`, and as the new `bun run check:proposal-pii` standalone target. Two privacy-guard test fixtures naming `PR #1137 author` allowlisted in `scripts/check-test-real-names.sh`; the new privacy-guard scripts themselves allowlisted in `scripts/check-privacy.sh`.
 - Six IRON-RULE regression test suites pin the wave's invariants: R1 date-filter rule 3 relaxation preserves rules 1+2 (6 cases), R2 cache invalidation on `PROMPT_VERSION` bump, R3 verdict-enum migration (compile-time via `tsc --noEmit`), R4 runner emit predicate fires for every non-`no_contradiction` verdict (6 cases), R5 cache key tuple stays 5 fields, R6 contradiction severity unchanged (4 cases). Plus 9 cases on the cost-prompt helper.
 - The source RFC (`docs/proposals/temporal-contradiction-probe.md`) and PR title/body/commit/branch-name all scrubbed of PII at draft time. The new CI lint prevents the next one from slipping through.
 
@@ -2613,7 +2723,7 @@ The bigger swing (chunk-level `revises` field + ranking change + synthesize-prom
 **Time, place, and what you're doing — reinjected on every turn, no matter how hard the session got compacted.**
 **A new OpenClaw context engine that kills the "time warp" bug class with zero LLM calls and <5ms overhead.**
 
-When a long session compacts, the LLM loses track of what time it is, where Garry is, and what he's working on. The headline incident: Wintermute responded to a Sunday-night photo as if it were Monday morning, and reported Pacific Time while Garry was in Toronto. Both are downstream of the same architectural gap — compaction discards live state, and there was no mechanism to put it back.
+When a long session compacts, the LLM loses track of what time it is, where Garry is, and what he's working on. The headline incident: PR #1137 author responded to a Sunday-night photo as if it were Monday morning, and reported Pacific Time while Garry was in Toronto. Both are downstream of the same architectural gap — compaction discards live state, and there was no mechanism to put it back.
 
 v0.32.5 ships `gbrain-context`, an OpenClaw plugin that owns the `systemPromptAddition` slot on every `assemble()` call. It reads `memory/heartbeat-state.json`, `memory/upcoming-flights.json`, `memory/calendar-cache.json`, and `ops/tasks.md` from the agent workspace, and injects a structured block: current local time + day-of-week (computed from the location's timezone, not hardcoded US/Pacific), current city + country, home time when traveling, active flight + route when in transit, the meeting Garry is in right now, the next three calendar events within a 4-hour window, and unchecked tasks under "Today." Compaction can be as aggressive as it wants — the next turn rebuilds the block from disk in under 5ms.
 
@@ -3733,7 +3843,7 @@ Tests: 4570 unit pass / 1 pre-existing master flake (`BrainRegistry — lazy ini
 **Thin-client mode actually works now. `gbrain init --mcp-only` is no longer a half-built bridge.**
 **Every read + write + admin op routes through MCP; refused commands carry pinpoint hints.**
 
-Hermes/Neuromancer hit this in production: thin-client install of wintermute (102k pages,
+Hermes/Neuromancer hit this in production: thin-client install of PR #1137 author (102k pages,
 265k chunks). Every CLI search returned zero rows. Exit code 0. No warning. The agent
 configured `gbrain init --mcp-only`, then walked into a wall of "no results found" against
 a brain that had everything it needed. The CLI was opening the empty local PGLite,
@@ -3802,7 +3912,7 @@ warns about the new `oauth_client_scopes_probe` check:
    gbrain stats
    ```
    Both should now show real numbers and an identity banner like
-   `[thin-client → wintermute:3131 · brain: 102k pages, 265k chunks · v0.31.1]`.
+   `[thin-client → PR #1137 author:3131 · brain: 102k pages, 265k chunks · v0.31.1]`.
 
 4. **If any step fails or the numbers look wrong**, file an issue at
    https://github.com/garrytan/gbrain/issues with `gbrain remote doctor` output.
@@ -4029,7 +4139,7 @@ PGLite test (CI default) and a Postgres parity test
 
 The v0.30 dream cycle has been stalled since May 2 for one user — daily aggregated transcripts at 2.7-4.5MB each generate 1.7M-token Anthropic prompts, which hit the 1M-token hard limit and 400. The subagent handler treated those failures as renewable, so every doomed transcript stalled three times before dead-lettering, and every new cycle re-discovered and re-submitted the same fat transcripts. Six days of synth backlog, queue full of doomed work.
 
-v0.30.2 adds model-aware chunking + terminal-error classification + a poison-pill-free skip path. Wintermute's [PR #748](https://github.com/garrytan/gbrain/pull/748) supplied the boundary heuristics (`## Topic:` → `---` → `\n` ladder) and the `dream.synthesize.max_prompt_tokens` config surface. Garry's branch extended that with model-aware budgets, deterministic chunk identity for partial-progress safety, orchestrator-side slug rewriting for zero Sonnet trust on collisions, and doctor-surface visibility.
+v0.30.2 adds model-aware chunking + terminal-error classification + a poison-pill-free skip path. PR #1137's [PR #748](https://github.com/garrytan/gbrain/pull/748) supplied the boundary heuristics (`## Topic:` → `---` → `\n` ladder) and the `dream.synthesize.max_prompt_tokens` config surface. Garry's branch extended that with model-aware budgets, deterministic chunk identity for partial-progress safety, orchestrator-side slug rewriting for zero Sonnet trust on collisions, and doctor-surface visibility.
 
 ### What you can now do
 
@@ -4500,7 +4610,7 @@ path mirroring `gbrain reindex-code`.
    https://github.com/garrytan/gbrain/issues
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
-Co-Authored-By: Wintermute <wintermute@garrytan.com>
+Co-Authored-By: PR #1137 author <PR #1137 author@garrytan.com>
 
 ## [0.29.0] - 2026-05-03
 
@@ -6328,7 +6438,7 @@ If you're a contributor:
 - The privacy gate (`scripts/check-privacy.sh`) was previously only in the now-removed `bun run test` chain. It now runs via `bun run verify` and CI's `.github/workflows/test.yml` calls `bun run verify` directly — single source of truth for "what's the ship gate."
 
 #### CI tightening
-- **`.github/workflows/test.yml`** now runs `bun run verify` (was: 4 specific scripts inlined). Privacy check now actually fires on every CI run; previously it ran only when somebody manually invoked `bun run test`. The pre-existing `Wintermute` references in `src/core/mounts-cache.ts:6` and `:324` (introduced in earlier commits and surviving every CI green) were caught by the now-firing gate and replaced with `your OpenClaw` per the privacy rule.
+- **`.github/workflows/test.yml`** now runs `bun run verify` (was: 4 specific scripts inlined). Privacy check now actually fires on every CI run; previously it ran only when somebody manually invoked `bun run test`. The pre-existing `PR #1137 author` references in `src/core/mounts-cache.ts:6` and `:324` (introduced in earlier commits and surviving every CI green) were caught by the now-firing gate and replaced with `your OpenClaw` per the privacy rule.
 
 #### Failure-first logging
 - **`.context/test-failures.log`** — extracted failure blocks per shard, prefixed with `--- shard N: <test name> ---`. Cleared at the start of every wrapper run. Falls back to `/tmp/gbrain-test-failures.log` if `.context/` is unwritable.

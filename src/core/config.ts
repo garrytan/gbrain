@@ -328,6 +328,60 @@ export function saveConfig(config: GBrainConfig): void {
   } catch {
     // chmod may fail on some platforms
   }
+  // v0.35.8.0: ensure the per-home `.gitignore` exists on every config-write
+  // path. Cheap, idempotent, doesn't clobber user edits. Catches the case
+  // where `~/.gbrain/` lives inside a git worktree (Conductor + gstack
+  // workspaces hit this) so `git add` doesn't accidentally stage the brain.
+  // The doctor check `home_dir_in_worktree` surfaces vectors this can't
+  // close (already-tracked files, screenshots, backups, `git add -f`).
+  ensureGitignore();
+}
+
+/**
+ * Idempotently lay down `~/.gbrain/.gitignore` containing the single line `*`.
+ * Honors GBRAIN_HOME via `configDir()`. Best-effort: errors are logged to
+ * stderr and never block the caller. Never clobbers a `.gitignore` whose
+ * content the user has customized.
+ *
+ * Called from:
+ *   - `saveConfig()` so any config-writing path lays it down.
+ *   - `gbrain post-upgrade` so existing users get it on next upgrade.
+ *
+ * What this DOES cover: a casual `git add ~/.gbrain` from inside an enclosing
+ * worktree — the directory-local `.gitignore` blocks everything below it.
+ *
+ * What this does NOT cover (the CHANGELOG names these honestly):
+ *   - Files already tracked before the .gitignore landed (no remediation here).
+ *   - Screenshots, sync folders (Dropbox/iCloud), Time Machine backups.
+ *   - `git add -f ~/.gbrain` (deliberate force-add bypasses .gitignore).
+ *   - Out-of-band copy operations (rsync, cp -r, scp).
+ *
+ * The doctor check `home_dir_in_worktree` surfaces these vectors at audit
+ * time so the user can act on them.
+ */
+export function ensureGitignore(): void {
+  try {
+    const dir = configDir();
+    const file = join(dir, '.gitignore');
+    mkdirSync(dir, { recursive: true });
+    if (existsSync(file)) {
+      // Don't clobber user customization. Only write when the file is missing
+      // OR when its content is empty (zero-byte placeholder).
+      try {
+        const existing = readFileSync(file, 'utf-8');
+        if (existing.trim().length > 0) return;
+      } catch {
+        // Read failed but file exists — leave it alone to be safe.
+        return;
+      }
+    }
+    writeFileSync(file, '*\n', { mode: 0o600 });
+    try { chmodSync(file, 0o600); } catch { /* platform-specific */ }
+  } catch (e) {
+    // Best-effort: log to stderr, never block the caller.
+    const msg = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`[gbrain] ensureGitignore failed (${msg}); continuing\n`);
+  }
 }
 
 export function toEngineConfig(config: GBrainConfig): EngineConfig {

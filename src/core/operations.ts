@@ -2092,13 +2092,57 @@ const submit_job: Operation = {
     // Trusted flag fires ONLY for an explicit local CLI submission of a protected
     // name. Strict `=== false` so an untyped/cast context can't escalate.
     const trusted = ctx.remote === false && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
-    return queue.add(name, (p.data as Record<string, unknown>) || {}, {
+
+    const jobData = (p.data as Record<string, unknown>) || {};
+
+    // v0.35.8.0: pre-enqueue shell-job validation, parity with the CLI submit
+    // path. Closes the bug class where shell.ts handler-time validation ran
+    // AFTER queue.add() persisted the row (codex F-CDX-1). Note: this branch
+    // only fires for trusted local submitters (`ctx.remote === false` AND
+    // protected-name allowlist), so remote MCP callers never reach it — but
+    // it stays here as defense-in-depth in case a future code path widens
+    // the trust gate above.
+    if (name === 'shell' && trusted) {
+      const { validateShellJobParams } = await import('./minions/handlers/shell-validate.ts');
+      validateShellJobParams(jobData);
+    }
+
+    const job = await queue.add(name, jobData, {
       queue: (p.queue as string) || 'default',
       priority: (p.priority as number) || 0,
       max_attempts: (p.max_attempts as number) || 3,
       delay: (p.delay as number) || undefined,
       timeout_ms: (p.timeout_ms as number) || undefined,
     }, trusted);
+
+    // v0.35.8.0: submit_job audit-log parity with the CLI path (codex F-CDX-4).
+    // Pre-v0.35.8.0 the op handler bypassed the shell-audit JSONL writer
+    // entirely. Lift the call here so both submit surfaces produce one
+    // operational-trace line per shell submission. Best-effort; audit
+    // failures never block submission.
+    if (name === 'shell' && trusted) {
+      try {
+        const { logShellSubmission } = await import('./minions/handlers/shell-audit.ts');
+        const inheritNames = Array.isArray(jobData.inherit)
+          ? (jobData.inherit as unknown[]).filter((s): s is string => typeof s === 'string')
+          : undefined;
+        logShellSubmission({
+          caller: 'mcp',
+          // Gated on `trusted` (which requires ctx.remote === false), so
+          // we know this path is a local trusted submitter — log it that way.
+          remote: false,
+          job_id: job.id,
+          cwd: typeof jobData.cwd === 'string' ? jobData.cwd : '',
+          cmd_display: typeof jobData.cmd === 'string' ? (jobData.cmd as string).slice(0, 80) : undefined,
+          argv_display: Array.isArray(jobData.argv)
+            ? (jobData.argv as unknown[]).filter((a): a is string => typeof a === 'string').map((a) => a.slice(0, 80))
+            : undefined,
+          inherit: inheritNames && inheritNames.length > 0 ? inheritNames : undefined,
+        });
+      } catch { /* audit failures never block submission */ }
+    }
+
+    return job;
   },
 };
 
