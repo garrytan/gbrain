@@ -286,3 +286,36 @@ describe('runExtractFacts — multi-source isolation', () => {
     expect(homeRows.rows[0].fact).toBe('home fact');
   });
 });
+
+describe('runExtractFacts — empty-slugs guard (v0.36.x #1096 regression)', () => {
+  test('slugs:[] returns immediately without a full-brain walk', async () => {
+    // Seed many pages; full-walk over them would be slow and would
+    // populate pagesScanned > 0. With the bug, slugs:[] fell through
+    // to engine.getAllSlugs() and walked every seed page.
+    for (let i = 0; i < 5; i++) {
+      await putPage(`people/seed-${i}`, FACT_FENCE(`| 1 | Seed ${i} | fact | 1.0 | world | high | 2017-01-01 |  | seed |  |`));
+    }
+    const r = await runExtractFacts(engine, { slugs: [] });
+    expect(r.pagesScanned).toBe(0);
+    expect(r.factsInserted).toBe(0);
+  });
+
+  test('slugs:undefined still triggers full-brain walk (regression guard for the other side of the bug)', async () => {
+    await putPage('people/unscoped-walk', FACT_FENCE(`| 1 | Unscoped fact | fact | 1.0 | world | high | 2017-01-01 |  | seed |  |`));
+    const r = await runExtractFacts(engine, {});
+    expect(r.pagesScanned).toBeGreaterThan(0);
+    // The unscoped fact should be seen at least once
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const seen = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/unscoped-walk' AND fact = 'Unscoped fact'`,
+    );
+    expect(seen.rows.length).toBeGreaterThan(0);
+  });
+
+  test('slugs:["a"] walks just the one slug, no full-brain fallback', async () => {
+    await putPage('people/just-this-one', FACT_FENCE(`| 1 | Just one fact | fact | 1.0 | world | high | 2017-01-01 |  | seed |  |`));
+    await putPage('people/sibling', FACT_FENCE(`| 1 | Sibling fact | fact | 1.0 | world | high | 2017-01-01 |  | seed |  |`));
+    const r = await runExtractFacts(engine, { slugs: ['people/just-this-one'] });
+    expect(r.pagesScanned).toBe(1);
+  });
+});

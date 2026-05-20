@@ -13,9 +13,11 @@ import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
+import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
+import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
 import { applyReranker } from './rerank.ts';
-import { autoDetectDetail, classifyQuery } from './query-intent.ts';
+import { autoDetectDetail, classifyQuery, isAmbiguousModalityQuery } from './query-intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { enforceTokenBudget } from './token-budget.ts';
 import { recordSearchTelemetry } from './telemetry.ts';
@@ -29,8 +31,19 @@ import {
   loadCacheConfig,
 } from './query-cache.ts';
 
-const RRF_K = 60;
+export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
+const pendingCacheWrites = new Set<Promise<unknown>>();
+
+export async function awaitPendingSearchCacheWrites(): Promise<void> {
+  if (pendingCacheWrites.size === 0) return;
+  await Promise.allSettled([...pendingCacheWrites]);
+}
+
+function trackCacheWrite(promise: Promise<unknown>): void {
+  pendingCacheWrites.add(promise);
+  promise.finally(() => pendingCacheWrites.delete(promise)).catch(() => { /* swallow */ });
+}
 /**
  * Backlink boost coefficient. Score is multiplied by (1 + BACKLINK_BOOST_COEF * log(1 + count)).
  * - 0 backlinks: factor = 1.0 (no boost).
@@ -347,6 +360,19 @@ export async function hybridSearch(
     },
   });
 
+  // v0.36 (D7+D11): resolve embedding column once at entry. Single
+  // round-trip to read DB-plane config (mirrors loadSearchModeConfig).
+  // Resolver throws on unknown name with a paste-ready hint; let it
+  // propagate — a misconfig should be loud, not silently fall back.
+  // Failing cfg load (pre-config brain, mid-migration, no engine.getConfig)
+  // falls through to the file-plane sync loadConfig() — same shape, just
+  // misses DB-plane overrides.
+  const mergedCfg = await loadConfigWithEngine(engine).catch(() => null);
+  const cfgForColumn = mergedCfg ?? ((await import('../config.ts')).loadConfig()) ?? null;
+  const resolvedCol = cfgForColumn
+    ? resolveEmbeddingColumn(opts, cfgForColumn)
+    : resolveEmbeddingColumn(opts, { engine: 'pglite' });
+
   const limit = opts?.limit || resolvedMode.searchLimit;
   const offset = opts?.offset || 0;
   const innerLimit = Math.min(limit * 2, MAX_SEARCH_LIMIT);
@@ -391,6 +417,10 @@ export async function hybridSearch(
     // ordering means we can't lazy-spread the full opts).
     sourceId: opts?.sourceId,
     sourceIds: opts?.sourceIds,
+    // v0.36 (D11): pass the pre-validated descriptor into the engine so
+    // it never has to read config. Engines normalize string-or-descriptor
+    // via normalizeEngineColumn; the descriptor path is the strict one.
+    embeddingColumn: resolvedCol,
   };
   // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never
@@ -424,8 +454,22 @@ export async function hybridSearch(
     console.error(`[search-debug] auto-detail=${detail} for query="${query}"`);
   }
 
-  // Run keyword search (always available, no API key needed)
-  const keywordResults = await engine.searchKeyword(query, searchOpts);
+  // Run keyword search (always available, no API key needed).
+  //
+  // v0.36 cross-modal (D9): skip keyword for 'image'-only modality. Image
+  // chunks may have OCR text in chunk_text, but a text-only keyword scan
+  // would also surface every text chunk containing the query phrase —
+  // not what an image-intent query asked for. Image vector search is the
+  // canonical channel for image-modality queries.
+  //
+  // We classify modality early (it's also computed after for the modality
+  // branch). The classification is pure regex via classifyQuery; running it
+  // here is cheap.
+  const earlyModality = (opts?.crossModal && opts.crossModal !== 'auto')
+    ? opts.crossModal
+    : (suggestions.suggestedModality ?? 'text');
+  const keywordResults: SearchResult[] =
+    earlyModality === 'image' ? [] : await engine.searchKeyword(query, searchOpts);
 
   // v0.29.1: resolve salience/recency from caller (back-compat aliases for
   // PR #618's `recencyBoost` numeric scale) or fall back to the heuristic.
@@ -467,8 +511,13 @@ export async function hybridSearch(
   };
 
   // Skip vector search entirely if the gateway has no embedding provider configured (Codex C3).
+  // v0.36 (D10): ask "is the RESOLVED column's provider reachable?" rather
+  // than "is the global default reachable?" — otherwise an unreachable
+  // global default disables vector search even when the active column's
+  // provider (Voyage, ZE) works fine.
   const { isAvailable } = await import('../ai/gateway.ts');
-  if (!isAvailable('embedding')) {
+  const providerProbe = resolvedCol.embeddingModel || undefined;
+  if (!isAvailable('embedding', providerProbe)) {
     if (keywordResults.length > 0) {
       await runPostFusionStages(engine, keywordResults, postFusionOpts);
       keywordResults.sort((a, b) => b.score - a.score);
@@ -483,6 +532,7 @@ export async function hybridSearch(
       expansion_applied: false,
       intent: suggestions.intent,
       mode: resolvedMode.resolved_mode,
+      embedding_column: resolvedCol.name,
       ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
         ? { token_budget: noEmbedBudgetMeta }
         : {}),
@@ -490,14 +540,62 @@ export async function hybridSearch(
     return noEmbedBudgeted;
   }
 
+  // v0.36 cross-modal wave: determine the effective modality once.
+  //
+  // Precedence (D22-1 normalization): literal 'auto' is normalized to
+  // undefined so it doesn't reach the modality branch directly. Resolution:
+  //   explicit opts.crossModal ('text'|'image'|'both') wins
+  //   else suggestions.suggestedModality (regex-driven)
+  //   else (Commit 4) opt-in LLM tie-break for genuinely ambiguous queries
+  //   else 'text' (default)
+  //
+  // D9 mode-bundle override matrix: when effectiveModality === 'image',
+  // cross-modal path overrides bundle knobs (expansion=false, no keyword
+  // search). Voyage handles synonyms in-space; zerank-2 can't rerank image
+  // embeddings.
+  //
+  // Phase 3 (D8): when search.unified_multimodal is true, ALL queries
+  // route through the multimodal model + embedding_multimodal column,
+  // regardless of detected modality.
+  //
+  // Commit 4 (LLM intent escalation): when search.cross_modal.llm_intent
+  // is true AND regex returned 'text' AND isAmbiguousModalityQuery fires,
+  // await a Haiku tie-break. Fail-open to regex result on any error.
+  const explicitModality =
+    opts?.crossModal && opts.crossModal !== 'auto' ? opts.crossModal : undefined;
+  let regexModality = explicitModality ?? suggestions.suggestedModality ?? 'text';
+  // LLM tie-break fires ONLY when:
+  //   - no explicit per-call override
+  //   - regex returned 'text' (not confident image/both)
+  //   - operator opted in via search.cross_modal.llm_intent
+  //   - isAmbiguousModalityQuery says the query is genuinely ambiguous
+  if (
+    explicitModality === undefined &&
+    regexModality === 'text' &&
+    resolvedMode.cross_modal_llm_intent &&
+    isAmbiguousModalityQuery(query)
+  ) {
+    try {
+      const { classifyModalityWithLLM } = await import('./llm-intent.ts');
+      regexModality = await classifyModalityWithLLM(query, 'text');
+    } catch {
+      // Fail-open: regex result stands.
+    }
+  }
+  const effectiveModality = regexModality;
+  const unifiedRouting = resolvedMode.unified_multimodal === true;
+
   // Determine query variants (optionally with expansion)
   // expandQuery already includes the original query in its return value,
   // so we use it directly instead of prepending query again.
   // v0.32.3 search-lite: expansion fires when (a) resolved mode says yes and
   // (b) an expandFn is wired in. The mode bundle is the default; per-call
   // SearchOpts.expansion still wins via resolveSearchMode's chain.
+  //
+  // D9: image-modality skips expansion regardless of mode bundle.
   let queries = [query];
-  if (resolvedMode.expansion && opts?.expandFn) {
+  const expansionAllowed = resolvedMode.expansion && effectiveModality !== 'image';
+  if (expansionAllowed && opts?.expandFn) {
     try {
       queries = await opts.expandFn(query);
       if (queries.length === 0) queries = [query];
@@ -508,20 +606,121 @@ export async function hybridSearch(
     }
   }
 
-  // Embed all query variants and run vector search
+  // Embed all query variants and run vector search.
+  //
+  // v0.36 cross-modal wave routing:
+  //   - 'text' (default): existing text-embedding path, unchanged
+  //   - 'image': embedQueryMultimodal + searchVector(embedding_image), skip keyword
+  //   - 'both': text + image vector searches in parallel; merged via weighted RRF
   let vectorLists: SearchResult[][] = [];
   let queryEmbedding: Float32Array | null = null;
-  try {
-    // v0.35.0.0+: query-side embedding. For asymmetric providers (ZE zembed-1,
-    // Voyage v3+) routes input_type='query' through the embed seam; symmetric
-    // providers ignore the field — no behavior change.
-    const embeddings = await Promise.all(queries.map(q => embedQuery(q)));
-    queryEmbedding = embeddings[0];
-    vectorLists = await Promise.all(
-      embeddings.map(emb => engine.searchVector(emb, searchOpts)),
-    );
-  } catch {
-    // Embedding failure is non-fatal, fall back to keyword-only
+  let imageVectorList: SearchResult[] | null = null;
+  let crossModalFellOpen = false;
+
+  // Phase 3 unified routing: when on, route ALL queries through Voyage
+  // multimodal-3 + embedding_multimodal column. Bypasses the dual-column
+  // branching below — but with D8 fail-open: if the unified path returns
+  // zero rows AND the operator hasn't opted into strict unified-only mode,
+  // fall through to the dual-column text path. unified_multimodal_only
+  // disables the fallback.
+  let unifiedDone = false;
+  if (unifiedRouting) {
+    try {
+      const { isAvailable: aiIsAvailable, embedQueryMultimodal } = await import('../ai/gateway.ts');
+      if (!aiIsAvailable('embedding')) {
+        throw new Error('gateway not configured for embedding — unified multimodal would also fail');
+      }
+      const unifiedEmbedding = await embedQueryMultimodal(query);
+      const unifiedSearchOpts: SearchOpts = {
+        ...searchOpts,
+        embeddingColumn: 'embedding_multimodal',
+      };
+      const unifiedList = await engine.searchVector(unifiedEmbedding, unifiedSearchOpts);
+      // D8 fail-open: zero rows + not strict-mode → fall through to dual-column.
+      if (unifiedList.length === 0 && !resolvedMode.unified_multimodal_only) {
+        console.error(
+          `[cross-modal] unified_multimodal returned zero rows for query="${query.slice(0, 60)}". ` +
+          `Falling back to dual-column text path (partial coverage during reindex). ` +
+          `Set search.unified_multimodal_only=true to bypass this fallback when reindex completes.`,
+        );
+      } else {
+        vectorLists = [unifiedList];
+        queryEmbedding = unifiedEmbedding;
+        unifiedDone = true;
+      }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[cross-modal] unified_multimodal embed failed; falling back to dual-column path. reason=${reason}`,
+      );
+      crossModalFellOpen = true;
+    }
+  }
+
+  if (!unifiedDone && (effectiveModality === 'image' || effectiveModality === 'both')) {
+    // Attempt image-side embedding. Fail-open: if multimodal is unconfigured
+    // OR the embed throws, log a structured warning and fall through to text.
+    try {
+      const { isAvailable: aiIsAvailable, embedQueryMultimodal } = await import('../ai/gateway.ts');
+      if (!aiIsAvailable('embedding')) {
+        throw new Error('gateway not configured for embedding — multimodal would also fail');
+      }
+      const imageEmbedding = await embedQueryMultimodal(query);
+      const imageSearchOpts: SearchOpts = {
+        ...searchOpts,
+        embeddingColumn: 'embedding_image',
+      };
+      const imageList = await engine.searchVector(imageEmbedding, imageSearchOpts);
+      for (const r of imageList) {
+        r.modality = r.modality ?? 'image';
+      }
+      imageVectorList = imageList;
+    } catch (err) {
+      // Fail-open per behavioral invariant 2.
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[cross-modal] image-side embed failed for modality=${effectiveModality}; falling back to text-only. reason=${reason}`,
+      );
+      crossModalFellOpen = true;
+    }
+  }
+
+  if (unifiedDone) {
+    // Unified routing already populated vectorLists + queryEmbedding;
+    // skip the dual-column branching.
+  } else if (effectiveModality === 'image' && imageVectorList !== null) {
+    // Image-only path: results come entirely from the image column.
+    vectorLists = [imageVectorList];
+    queryEmbedding = null; // no text embedding to cosine-re-score against
+  } else {
+    // 'text' or 'both' (or 'image' that fell open to text). Run the text
+    // path normally, with v0.36 (D10) provider-aware embed routing so a
+    // query against `embedding_voyage` actually embeds via Voyage, not
+    // the global default. Empty embeddingModel falls back to gateway
+    // default — preserves pre-v0.36 behavior for the builtin 'embedding'
+    // column.
+    try {
+      const embedOpts = resolvedCol.embeddingModel
+        ? { embeddingModel: resolvedCol.embeddingModel, dimensions: resolvedCol.dimensions }
+        : undefined;
+      const embeddings = await Promise.all(queries.map(q => embedQuery(q, embedOpts)));
+      queryEmbedding = embeddings[0];
+      const textLists = await Promise.all(
+        embeddings.map(emb => engine.searchVector(emb, searchOpts)),
+      );
+      for (const list of textLists) {
+        for (const r of list) {
+          r.modality = r.modality ?? 'text';
+        }
+      }
+      vectorLists = textLists;
+      // 'both' mode: also include the image-side list as another input to RRF.
+      if (effectiveModality === 'both' && imageVectorList !== null) {
+        vectorLists = [...vectorLists, imageVectorList];
+      }
+    } catch {
+      // Embedding failure is non-fatal, fall back to keyword-only
+    }
   }
 
   if (vectorLists.length === 0) {
@@ -543,6 +742,7 @@ export async function hybridSearch(
       expansion_applied: expansionApplied,
       intent: suggestions.intent,
       mode: resolvedMode.resolved_mode,
+      embedding_column: resolvedCol.name,
       ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
         ? { token_budget: kwBudgetMeta }
         : {}),
@@ -560,15 +760,37 @@ export async function hybridSearch(
   const baseRrfK = opts?.rrfK ?? RRF_K;
   const keywordK = effectiveRrfK(baseRrfK, intentWeights.keywordWeight);
   const vectorK = effectiveRrfK(baseRrfK, intentWeights.vectorWeight);
-  const allLists: Array<{ list: SearchResult[]; k: number }> = [
-    ...vectorLists.map(list => ({ list, k: vectorK })),
-    { list: keywordResults, k: keywordK },
-  ];
+
+  // v0.36 cross-modal (D6): in 'both' mode, vectorLists carries
+  // [textList, imageList]. Apply per-modality RRF weights so the merge
+  // reflects the configured text/image balance. In 'text' and 'image'
+  // modes only one branch is present, so per-modality K reduces to
+  // the standard vectorK (no behavior change vs pre-v0.36).
+  const textRrfK = effectiveRrfK(baseRrfK, resolvedMode.cross_modal_both_text_weight);
+  const imageRrfK = effectiveRrfK(baseRrfK, resolvedMode.cross_modal_both_image_weight);
+  const isBothMode = effectiveModality === 'both' && vectorLists.length >= 2;
+
+  const allLists: Array<{ list: SearchResult[]; k: number }> = isBothMode
+    ? [
+      // Last list in vectorLists is the image branch (we appended it above).
+      // All preceding lists (1 or more text-query embeddings if expansion ran)
+      // get textRrfK. Image branch gets imageRrfK.
+      ...vectorLists.slice(0, -1).map(list => ({ list, k: textRrfK })),
+      { list: vectorLists[vectorLists.length - 1], k: imageRrfK },
+      { list: keywordResults, k: keywordK },
+    ]
+    : [
+      ...vectorLists.map(list => ({ list, k: vectorK })),
+      { list: keywordResults, k: keywordK },
+    ];
   let fused = rrfFusionWeighted(allLists, detail !== 'high');
 
-  // Cosine re-scoring before dedup so semantically better chunks survive
+  // Cosine re-scoring before dedup so semantically better chunks survive.
+  // v0.36 (D9): hydrate from the active embedding column so rescore happens
+  // in the same vector space the HNSW just ranked in. Pre-v0.36 this
+  // always pulled from `embedding` and silently corrupted alt-column ranks.
   if (queryEmbedding) {
-    fused = await cosineReScore(engine, fused, queryEmbedding);
+    fused = await cosineReScore(engine, fused, queryEmbedding, resolvedCol.name);
   }
 
   // v0.29.1: post-fusion stages (backlink + salience + recency) run via
@@ -676,6 +898,7 @@ export async function hybridSearch(
     expansion_applied: expansionApplied,
     intent: suggestions.intent,
     mode: resolvedMode.resolved_mode,
+    embedding_column: resolvedCol.name,
     ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
       ? { token_budget: budgetMeta }
       : {}),
@@ -731,7 +954,26 @@ export async function hybridSearchCached(
       floor_ratio: opts?.floorRatio,
     },
   });
-  const cacheKnobsHash = knobsHash(resolvedForCache);
+  // v0.36 (D8 / CDX-2 + codex /ship #4): resolve column for the cache
+  // decision. The query_cache.embedding column has one fixed pgvector dim
+  // sized at brain init; storing a 1024d Voyage or 2560d ZE cache
+  // embedding fails or corrupts results. Name-based check ("is it the
+  // default `embedding` column?") is insufficient — the registry
+  // explicitly allows overriding builtin `embedding` to a different
+  // provider/dim. isCacheSafe compares the resolved column's full
+  // embedding space (name + dim + model) against cfg and returns true
+  // only when ALL match. Otherwise skip.
+  const mergedCfgCached = await loadConfigWithEngine(engine).catch(() => null);
+  const cfgCached = mergedCfgCached ?? ((await import('../config.ts')).loadConfig()) ?? { engine: 'pglite' as const };
+  const resolvedColCached = resolveEmbeddingColumn(opts, cfgCached);
+  const isNonDefaultColumn = !isCacheSafe(resolvedColCached, cfgCached);
+
+  // Cache key carries the column + provider so different embedding spaces
+  // never collide on the same `(source_id, query_text)` row.
+  const cacheKnobsHash = knobsHash(resolvedForCache, {
+    embeddingColumn: resolvedColCached.name,
+    embeddingModel: resolvedColCached.embeddingModel,
+  });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global
   // config wins over mode bundle default. Mode bundle is on for all 3 modes
@@ -745,14 +987,15 @@ export async function hybridSearchCached(
     ttlSeconds: resolvedForCache.cache_ttl_seconds,
   });
 
-  // Skip cache entirely when the request asks for two-pass walks or has
-  // a non-default embedding column — those interact with structural state
-  // that the cache can't safely express.
+  // Skip cache entirely when the request asks for two-pass walks, has
+  // a non-default embedding column (per-call or via config default —
+  // D8 closes the silent-corruption bug class), or near-symbol mode
+  // (structural state that the cache can't safely express).
   const skipCache =
     !cache.isEnabled() ||
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
-    (opts?.embeddingColumn && opts.embeddingColumn !== 'embedding');
+    isNonDefaultColumn;
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
   let cacheSimilarity: number | undefined;
@@ -767,7 +1010,13 @@ export async function hybridSearchCached(
   if (!skipCache) {
     try {
       const { isAvailable } = await import('../ai/gateway.ts');
-      if (isAvailable('embedding')) {
+      // v0.36 (D10): for the cache-lookup embedding, also use the resolved
+      // column's provider. The cache lookup is always against the default
+      // 'embedding' column (skipCache short-circuits non-default above),
+      // so this is the default embeddingModel — but threading it keeps
+      // the provider probe consistent with the bare hybridSearch path.
+      const providerProbeCached = resolvedColCached.embeddingModel || undefined;
+      if (isAvailable('embedding', providerProbeCached)) {
         // v0.35.0.0+: query-side embedding (cache lookup path).
         queryEmbedding = await embedQuery(query);
       } else {
@@ -861,9 +1110,11 @@ export async function hybridSearchCached(
     results.length > 0 &&
     (innerMeta?.vector_enabled ?? false)
   ) {
-    void cache
-      .store(query, queryEmbedding, results, finalMeta, { sourceId: opts?.sourceId, knobsHash: cacheKnobsHash })
-      .catch(() => { /* swallow */ });
+    trackCacheWrite(
+      cache
+        .store(query, queryEmbedding, results, finalMeta, { sourceId: opts?.sourceId, knobsHash: cacheKnobsHash })
+        .catch(() => { /* swallow */ }),
+    );
   }
 
   return budgeted;
@@ -970,6 +1221,7 @@ async function cosineReScore(
   engine: BrainEngine,
   results: SearchResult[],
   queryEmbedding: Float32Array,
+  column: string = 'embedding',
 ): Promise<SearchResult[]> {
   const chunkIds = results
     .map(r => r.chunk_id)
@@ -979,7 +1231,11 @@ async function cosineReScore(
 
   let embeddingMap: Map<number, Float32Array>;
   try {
-    embeddingMap = await engine.getEmbeddingsByChunkIds(chunkIds);
+    // v0.36 (D9): hydrate from the active column so rescore happens in
+    // the same embedding space the HNSW just ranked in. Without this,
+    // a Voyage HNSW retrieval would HNSW-rank against Voyage vectors but
+    // rescore against OpenAI vectors → NaN or wrong rankings.
+    embeddingMap = await engine.getEmbeddingsByChunkIds(chunkIds, column);
   } catch {
     // DB error is non-fatal, return results without re-scoring
     return results;

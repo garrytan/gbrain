@@ -104,15 +104,52 @@ export interface EmbeddingTouchpoint {
 
 /**
  * v0.27.1: input shape for gateway.embedMultimodal(). Discriminated union;
- * today the only kind is image_base64 (raw bytes encoded by the caller).
- * Future kinds (image_url, video_keyframe) extend the union without
- * widening callers because the discriminator is exhaustive.
+ * variants extend without widening callers because the discriminator is
+ * exhaustive.
  *
  * No image_url variant: SSRF surface. Callers must read the bytes and
- * base64-encode them; the gateway never fetches external URLs.
+ * base64-encode them; the gateway never fetches external URLs. For
+ * remote-callable image-as-query, the dedicated SSRF-defended loader at
+ * `src/core/search/image-loader.ts` resolves URLs to base64 first.
+ *
+ * v0.36 (cross-modal wave) adds the `text` variant for query-side
+ * multimodal embedding (`embedQueryMultimodal(text)`) — Voyage's
+ * multimodal endpoint accepts a content array mixing text + image entries.
  */
 export type MultimodalInput =
-  | { kind: 'image_base64'; data: string; mime: string };
+  | { kind: 'image_base64'; data: string; mime: string }
+  | { kind: 'text'; text: string };
+
+/**
+ * v0.36 — opts for gateway.embedMultimodal().
+ *
+ * `inputType` threads Voyage's retrieval discipline through:
+ *   - 'document' (default) — embedding side of asymmetric retrieval
+ *   - 'query' — query side; routes to the matching half of Voyage's space
+ *
+ * Mixing inputType across calls is fine; mixing within one batch is not
+ * supported (Voyage requires one input_type per request).
+ */
+export interface EmbedMultimodalOpts {
+  inputType?: 'document' | 'query';
+}
+
+/**
+ * v0.36 — return shape for partial-failure-aware multimodal batching.
+ *
+ * Used by `embedMultimodalSafe()` (the Phase-3-reindex-safe variant). The
+ * default `embedMultimodal()` throws on first failure to preserve the
+ * pre-v0.36 contract; callers who can persist partial progress opt into
+ * the safe variant explicitly.
+ */
+export interface MultimodalBatchResult {
+  /** Successful embeddings, indexed parallel to the original inputs (may contain holes as undefined). */
+  embeddings: Array<Float32Array | undefined>;
+  /** Indices of inputs that failed to embed, in original-input order. */
+  failedIndices: number[];
+  /** Last error encountered (for diagnostics; not necessarily the only failure). */
+  lastError?: Error;
+}
 
 export interface ExpansionTouchpoint {
   models: string[];

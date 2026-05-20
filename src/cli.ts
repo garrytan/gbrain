@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -169,6 +169,10 @@ async function main() {
     const result = JSON.parse(JSON.stringify(rawResult));
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
+    if (op.name === 'query') {
+      const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
+      await awaitPendingSearchCacheWrites();
+    }
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       console.error(`Error [${e.code}]: ${e.message}`);
@@ -450,7 +454,7 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
-function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
+export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
   let posIdx = 0;
@@ -458,6 +462,14 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg.startsWith('--')) {
+      if (arg.startsWith('--no-')) {
+        const positiveKey = arg.slice(5).replace(/-/g, '_');
+        const positiveDef = op.params[positiveKey];
+        if (positiveDef?.type === 'boolean') {
+          params[positiveKey] = false;
+          continue;
+        }
+      }
       const key = arg.slice(2).replace(/-/g, '_');
       const paramDef = op.params[key];
       if (paramDef?.type === 'boolean') {
@@ -884,6 +896,22 @@ async function handleCliOnly(command: string, args: string[]) {
       return;
     }
 
+    // v0.36+ brain-health-100: --remediation-plan and --remediate go
+    // through dedicated functions that compute from engine.getHealth()
+    // (cheap path D7), NOT the full doctor walk.
+    if (args.includes('--remediation-plan')) {
+      const { runRemediationPlan } = await import('./commands/doctor.ts');
+      const eng = await connectEngine();
+      try { await runRemediationPlan(eng, args); } finally { await eng.disconnect(); }
+      return;
+    }
+    if (args.includes('--remediate')) {
+      const { runRemediate } = await import('./commands/doctor.ts');
+      const eng = await connectEngine();
+      try { await runRemediate(eng, args); } finally { await eng.disconnect(); }
+      return;
+    }
+
     // Doctor runs filesystem checks first (no DB needed), then DB checks.
     // --fast skips DB checks entirely.
     const { runDoctor } = await import('./commands/doctor.ts');
@@ -901,6 +929,19 @@ async function handleCliOnly(command: string, args: string[]) {
         // DB unavailable — still run filesystem checks
         await runDoctor(null, args, getDbUrlSource());
       }
+    }
+    return;
+  }
+
+  if (command === 'ze-switch') {
+    // v0.36.0.0 — manual ZE-default switch lever. Owns its own engine lifecycle
+    // to mirror the doctor pattern.
+    const { runZeSwitch } = await import('./commands/ze-switch.ts');
+    const eng = await connectEngine();
+    try {
+      await runZeSwitch(args, eng);
+    } finally {
+      await eng.disconnect();
     }
     return;
   }
@@ -1111,7 +1152,28 @@ async function handleCliOnly(command: string, args: string[]) {
         break;
       }
       // v0.32.7 CJK wave — post-upgrade markdown re-chunk sweep.
+      // v0.36 Phase 3 wave — `gbrain reindex --multimodal` re-embeds content_chunks
+      // into the unified Voyage multimodal-3 column.
       case 'reindex': {
+        if (args.includes('--multimodal')) {
+          const { runReindexMultimodal } = await import('./commands/reindex-multimodal.ts');
+          const limitIdx = args.indexOf('--limit');
+          const limitVal = limitIdx >= 0 && limitIdx + 1 < args.length ? parseInt(args[limitIdx + 1], 10) : undefined;
+          const result = await runReindexMultimodal(engine, {
+            limit: Number.isFinite(limitVal as number) ? (limitVal as number) : undefined,
+            dryRun: args.includes('--dry-run'),
+            costEstimate: args.includes('--cost-estimate'),
+            noEmbed: args.includes('--no-embed'),
+            json: args.includes('--json'),
+            yes: args.includes('--yes'),
+          });
+          if (args.includes('--json')) {
+            console.log(JSON.stringify(result, null, 2));
+          } else {
+            console.log(`reindex --multimodal: ${result.reembedded} re-embedded, ${result.failed} failed, ${result.pending_after} pending. est. cost: $${result.cost_usd_estimate.toFixed(2)}`);
+          }
+          break;
+        }
         const { runReindex } = await import('./commands/reindex.ts');
         await runReindex(engine, args);
         break;
@@ -1144,6 +1206,14 @@ async function handleCliOnly(command: string, args: string[]) {
         await runWhoknows(engine, args);
         break;
       }
+      case 'calibration': {
+        // v0.36.1.0 (T7): print/regenerate the active calibration profile.
+        // MCP op `get_calibration_profile` (read-scoped) backs the same data path.
+        const { runCalibration } = await import('./commands/calibration.ts');
+        const calibrationConfig = loadConfig() ?? ({} as never);
+        await runCalibration(engine, args, calibrationConfig);
+        break;
+      }
       case 'transcripts': {
         const { runTranscripts } = await import('./commands/transcripts.ts');
         await runTranscripts(engine, args);
@@ -1163,6 +1233,15 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'takes': {
         const { runTakes } = await import('./commands/takes.ts');
         await runTakes(engine, args);
+        break;
+      }
+      case 'founder': {
+        // v0.35.4 (T7) — founder scorecard. `gbrain founder scorecard <slug>`
+        // rolls up Phase 2's typed-claim substrate into the four scorecard
+        // metrics (claim accuracy, consistency, growth trajectory, red flags).
+        // Thin-client routing handled inside the command file.
+        const { runFounder } = await import('./commands/founder-scorecard.ts');
+        await runFounder(engine, args);
         break;
       }
       case 'think': {

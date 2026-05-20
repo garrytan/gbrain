@@ -18,6 +18,13 @@ import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes } from './vector-index.ts';
+import {
+  normalizeEngineColumn,
+  buildVectorCastFragment,
+  quoteIdentifier,
+  COLUMN_NAME_REGEX,
+  EmbeddingColumnNotRegisteredError,
+} from './search/embedding-column.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput, StaleChunkRow,
@@ -774,6 +781,55 @@ export class PostgresEngine implements BrainEngine {
     return { slugs, count: slugs.length };
   }
 
+  async refreshPageBody(
+    slug: string,
+    sourceId: string,
+    compiledTruth: string,
+    timeline: string,
+    contentHash: string,
+  ): Promise<void> {
+    const sql = this.sql;
+    // Narrow UPDATE — leaves frontmatter, type, chunks, links, embeddings,
+    // tags, takes untouched. Skips soft-deleted rows so a redirect retry
+    // can't accidentally reanimate the body of a deleted canonical.
+    await sql`
+      UPDATE pages
+      SET compiled_truth = ${compiledTruth},
+          timeline = ${timeline},
+          content_hash = ${contentHash},
+          updated_at = now()
+      WHERE source_id = ${sourceId}
+        AND slug = ${slug}
+        AND deleted_at IS NULL
+    `;
+  }
+
+  async migrateFactsToCanonical(
+    phantomSlug: string,
+    canonicalSlug: string,
+    sourceId: string,
+  ): Promise<{ migrated: number }> {
+    const sql = this.sql;
+    // UPDATE preserves every other column (embedding, valid_*, kind,
+    // status, notability, confidence, source_session, ...). Idempotent
+    // by virtue of the WHERE clause matching nothing on re-run.
+    //
+    // We scope to `expired_at IS NULL` so the migration touches only
+    // active facts. Forgotten / superseded rows that already carry an
+    // expiry stay where they are — soft-deleting the phantom page is
+    // sufficient to make them invisible without rewriting their slug
+    // (and rewriting would break the audit trail in listSupersessions).
+    const result = await sql`
+      UPDATE facts
+      SET entity_slug = ${canonicalSlug},
+          source_markdown_slug = ${canonicalSlug}
+      WHERE source_id = ${sourceId}
+        AND source_markdown_slug = ${phantomSlug}
+        AND expired_at IS NULL
+    `;
+    return { migrated: result.count ?? 0 };
+  }
+
   async listPages(filters?: PageFilters): Promise<Page[]> {
     const sql = this.sql;
     const limit = filters?.limit || 100;
@@ -1243,9 +1299,25 @@ export class PostgresEngine implements BrainEngine {
     // wasting candidate slots on hidden rows.
     const visibilityClause = buildVisibilityClause('p', 's');
 
-    // v0.27.1: column routing. See pglite-engine.ts searchVector for rationale.
-    const col = opts?.embeddingColumn === 'embedding_image' ? 'embedding_image' : 'embedding';
-    const modalityFilter = col === 'embedding_image' ? `AND cc.modality = 'image'` : `AND cc.modality = 'text'`;
+    // v0.36 (D11): column routing via resolved descriptor. Engine doesn't
+    // read config — caller (hybrid/op) resolved it and passed it in.
+    // normalizeEngineColumn accepts the legacy union (string literals,
+    // ResolvedColumn, undefined) and produces a canonical descriptor.
+    //
+    // v0.36 Phase 3: 'embedding_multimodal' is the unified column populated
+    // by `gbrain reindex --multimodal`. Carries BOTH text and image content
+    // in Voyage multimodal-3 space — no modality filter; the column itself
+    // is the discriminator (rows without embedding_multimodal aren't searched).
+    const resolvedCol = normalizeEngineColumn(opts?.embeddingColumn);
+    const { col, castSql } = buildVectorCastFragment(resolvedCol);
+    let modalityFilter: string;
+    if (resolvedCol.name === 'embedding_image') {
+      modalityFilter = `AND cc.modality = 'image'`;
+    } else if (resolvedCol.name === 'embedding_multimodal') {
+      modalityFilter = '';
+    } else {
+      modalityFilter = `AND cc.modality = 'text'`;
+    }
 
     const rawQuery = `
       WITH hnsw_candidates AS (
@@ -1253,7 +1325,7 @@ export class PostgresEngine implements BrainEngine {
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
           p.effective_date, p.effective_date_source,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-          1 - (cc.${col} <=> $1::vector) AS raw_score
+          1 - (cc.${col} <=> ${castSql}) AS raw_score
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         JOIN sources s ON s.id = p.source_id
@@ -1269,7 +1341,7 @@ export class PostgresEngine implements BrainEngine {
           ${sourceClause}
           ${hardExcludeClause}
           ${visibilityClause}
-        ORDER BY cc.${col} <=> $1::vector
+        ORDER BY cc.${col} <=> ${castSql}
         LIMIT ${innerLimitParam}
       )
       SELECT
@@ -1291,13 +1363,27 @@ export class PostgresEngine implements BrainEngine {
     return rows.map(rowToSearchResult);
   }
 
-  async getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>> {
+  async getEmbeddingsByChunkIds(
+    ids: number[],
+    column: string = 'embedding',
+  ): Promise<Map<number, Float32Array>> {
     if (ids.length === 0) return new Map();
+    // v0.36 (D9): column parameter used by hybrid.cosineReScore so
+    // rescoring rehydrates from the active column's embedding space,
+    // not always 'embedding'. Engine has no resolver access; the
+    // caller must pass a known column name. Identifier-quoted (D12
+    // defense layer 2) plus a strict regex check (D12 defense layer 1)
+    // so even a misconfigured caller can't smuggle a SQL fragment.
+    if (!COLUMN_NAME_REGEX.test(column)) {
+      throw new EmbeddingColumnNotRegisteredError(column, []);
+    }
+    const quotedCol = quoteIdentifier(column);
     const sql = this.sql;
-    const rows = await sql`
-      SELECT id, embedding FROM content_chunks
-      WHERE id = ANY(${ids}::int[]) AND embedding IS NOT NULL
+    const rawQuery = `
+      SELECT id, ${quotedCol} AS embedding FROM content_chunks
+      WHERE id = ANY($1::int[]) AND ${quotedCol} IS NOT NULL
     `;
+    const rows = await sql.unsafe(rawQuery, [ids] as Parameters<typeof sql.unsafe>[1]);
     const result = new Map<number, Float32Array>();
     for (const row of rows) {
       const embedding = tryParseEmbedding(row.embedding);
@@ -2342,6 +2428,11 @@ export class PostgresEngine implements BrainEngine {
     const embedding = input.embedding ?? null;
     const embeddedAt = embedding ? new Date() : null;
     const embedLit = embedding ? toPgVectorLiteral(embedding) : null;
+    // v0.35.4 (D-CDX-5) — typed-claim columns. All four nullable.
+    const claimMetric = input.claim_metric ?? null;
+    const claimValue  = input.claim_value  ?? null;
+    const claimUnit   = input.claim_unit   ?? null;
+    const claimPeriod = input.claim_period ?? null;
 
     if (ctx.supersedeId !== undefined) {
       // Per-entity advisory lock + atomic insert + supersede in one txn.
@@ -2354,11 +2445,13 @@ export class PostgresEngine implements BrainEngine {
           INSERT INTO facts (
             source_id, entity_slug, fact, kind, visibility, notability, context,
             valid_from, valid_until, source, source_session, confidence,
-            embedding, embedded_at
+            embedding, embedded_at,
+            claim_metric, claim_value, claim_unit, claim_period
           ) VALUES (
             ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${notability}, ${context},
             ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
-            ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt}
+            ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt},
+            ${claimMetric}, ${claimValue}, ${claimUnit}, ${claimPeriod}
           ) RETURNING id
         `;
         const id = Number(ins[0].id);
@@ -2378,11 +2471,13 @@ export class PostgresEngine implements BrainEngine {
         INSERT INTO facts (
           source_id, entity_slug, fact, kind, visibility, notability, context,
           valid_from, valid_until, source, source_session, confidence,
-          embedding, embedded_at
+          embedding, embedded_at,
+          claim_metric, claim_value, claim_unit, claim_period
         ) VALUES (
           ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${notability}, ${context},
           ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
-          ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt}
+          ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt},
+          ${claimMetric}, ${claimValue}, ${claimUnit}, ${claimPeriod}
         ) RETURNING id
       `;
       return Number(ins[0].id);
@@ -2429,18 +2524,25 @@ export class PostgresEngine implements BrainEngine {
         const embedding = input.embedding ?? null;
         const embeddedAt = embedding ? new Date() : null;
         const embedLit = embedding ? toPgVectorLiteral(embedding) : null;
+        // v0.35.4 (D-CDX-5) — typed-claim columns. All four nullable.
+        const claimMetric = input.claim_metric ?? null;
+        const claimValue  = input.claim_value  ?? null;
+        const claimUnit   = input.claim_unit   ?? null;
+        const claimPeriod = input.claim_period ?? null;
 
         const ins = await tx<Array<{ id: number }>>`
           INSERT INTO facts (
             source_id, entity_slug, fact, kind, visibility, notability, context,
             valid_from, valid_until, source, source_session, confidence,
             embedding, embedded_at,
-            row_num, source_markdown_slug
+            row_num, source_markdown_slug,
+            claim_metric, claim_value, claim_unit, claim_period
           ) VALUES (
             ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${notability}, ${context},
             ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
             ${embedLit === null ? null : tx.unsafe(`'${embedLit}'::vector`)}, ${embeddedAt},
-            ${input.row_num}, ${input.source_markdown_slug}
+            ${input.row_num}, ${input.source_markdown_slug},
+            ${claimMetric}, ${claimValue}, ${claimUnit}, ${claimPeriod}
           ) RETURNING id
         `;
         out.push(Number(ins[0].id));
@@ -2597,6 +2699,62 @@ export class PostgresEngine implements BrainEngine {
   async consolidateFact(id: number, takeId: number): Promise<void> {
     const sql = this.sql;
     await sql`UPDATE facts SET consolidated_at = now(), consolidated_into = ${takeId} WHERE id = ${id}`;
+  }
+
+  async findTrajectory(opts: import('./engine.ts').TrajectoryOpts): Promise<import('./engine.ts').TrajectoryPoint[]> {
+    const sql = this.sql;
+    const limit = clampSearchLimit(opts.limit, 100, 500);
+    const sinceDate = opts.since ? new Date(opts.since) : null;
+    const untilDate = opts.until ? new Date(opts.until) : null;
+    const metric = opts.metric ?? null;
+    const useArray = Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0;
+    const sourceIds = useArray ? opts.sourceIds! : null;
+    const sourceId = opts.sourceId ?? 'default';
+    const remoteFilter = opts.remote === true;
+
+    // Source-scope predicate: array path (federated) wins over scalar.
+    // Engine.ts contract: returns chronological points; regressions +
+    // drift_score are computed by the caller (src/core/trajectory.ts).
+    const rows = await sql<Array<{
+      id: number;
+      valid_from: Date;
+      claim_metric: string | null;
+      claim_value: number | null;
+      claim_unit: string | null;
+      claim_period: string | null;
+      fact: string;
+      source_session: string | null;
+      source_markdown_slug: string | null;
+      embedding: string | null;
+    }>>`
+      SELECT id, valid_from,
+             claim_metric, claim_value, claim_unit, claim_period,
+             fact, source_session, source_markdown_slug,
+             embedding::text AS embedding
+      FROM facts
+      WHERE ${useArray ? sql`source_id = ANY(${sourceIds}::text[])` : sql`source_id = ${sourceId}`}
+        AND entity_slug = ${opts.entitySlug}
+        AND expired_at IS NULL
+        ${remoteFilter ? sql`AND visibility = 'world'` : sql``}
+        ${metric !== null ? sql`AND claim_metric = ${metric}` : sql``}
+        ${sinceDate ? sql`AND valid_from >= ${sinceDate}` : sql``}
+        ${untilDate ? sql`AND valid_from <= ${untilDate}` : sql``}
+      ORDER BY valid_from ASC, id ASC
+      LIMIT ${limit}
+    `;
+
+    return rows.map(r => ({
+      fact_id: Number(r.id),
+      valid_from: r.valid_from,
+      metric: r.claim_metric,
+      value: r.claim_value === null ? null : Number(r.claim_value),
+      unit: r.claim_unit,
+      period: r.claim_period,
+      text: r.fact,
+      source_session: r.source_session,
+      source_markdown_slug: r.source_markdown_slug,
+      embedding: tryParseEmbedding(r.embedding),
+    }));
   }
 
   async getFactsHealth(source_id: string): Promise<FactsHealth> {
@@ -3656,11 +3814,11 @@ export class PostgresEngine implements BrainEngine {
       INSERT INTO eval_candidates (
         tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
         expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
-        latency_ms, remote, job_id, subagent_id
+        latency_ms, remote, job_id, subagent_id, embedding_column
       ) VALUES (
         ${input.tool_name}, ${input.query}, ${input.retrieved_slugs}, ${input.retrieved_chunk_ids}, ${input.source_ids},
         ${input.expand_enabled}, ${input.detail}, ${input.detail_resolved}, ${input.vector_enabled}, ${input.expansion_applied},
-        ${input.latency_ms}, ${input.remote}, ${input.job_id}, ${input.subagent_id}
+        ${input.latency_ms}, ${input.remote}, ${input.job_id}, ${input.subagent_id}, ${input.embedding_column ?? null}
       )
       RETURNING id
     `;

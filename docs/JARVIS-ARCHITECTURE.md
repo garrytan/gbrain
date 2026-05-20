@@ -3682,6 +3682,161 @@ old and new servers bind same `:7225`.
 
 ---
 
+## 6.29 Upstream v0.37.0.0 sync (2026-05-19)
+
+最大一次 fork sync：12 commits 跨 11 版本（v0.35.6.0 → v0.37.0.0），
+333 文件 / +52455 / -3317 LoC。**仅 4 个 conflict**（远少于历史 31/10/5 的
+规模），fork-protected 区域（`skills/kos-jarvis/`、`server/`、`workers/`、
+`scripts/launchd/`）零侵入。Schema 自动从 v66 升到 **v78**(12 个 migration
+全部走 `applyForwardReferenceBootstrap`，零手动 ALTER — v0.35.5.0 加固的成
+果再次验证)。Health score **70 → 80**(11 个新 doctor check 全 OK，
+pre-sync 的 skill_conformance/connection warning 全消)。
+
+### 上游 11 版本与 fork 关系
+
+| 版本 | 主题 | 对 fork 影响 |
+|---|---|---|
+| v0.37.0.0 | Skillpack registry cathedral — 第三方 publish/install + 10/10 quality bar | RESOLVER 加 1 行 skillpack-harvest 在 L62；fork `## KOS-Jarvis extensions` 段在 L128 末尾保留 |
+| v0.36.6.0 | Cross-modal text↔image search wave；schema v75 加 `content_chunks.embedding_multimodal vector(1024)` | brain 全 markdown — multimodal column 加但 0 rows，零功能改动 |
+| v0.36.5.0 | Shell jobs `inherit: [...]` 替代 env 暴露 secret；新 doctor check `home_dir_in_worktree` | 5 plist 用 EnvironmentVariables 不受影响(inherit 是 minion job 路径)；`~/.gbrain/` 不在 worktree → check PASS |
+| v0.36.4.0 | `gbrain doctor --remediate --target-score 90 --max-usd 5` + autopilot 健康循环 | 留 P2 评估替换 kos-patrol(M4 候选)；本次 sync 不动 |
+| v0.36.3.0 | Search 走任意 embedding column；`embedding_columns` registry；schema v68 + `eval_candidates.embedding_column`；cosineReScore 走 active column | doctor 新 check `embedding_column_registry` 在我们 `embedding` 默认 column 上自动 PASS；留 P1 可选显式 declare(节省 follow-up doctor) |
+| v0.36.2.0 | **ZeroEntropy `zembed-1` 1280d 变默认 + ze-switch CLI**；存量 brain 带 TTY 升级 prompt | 关键风险点 — non-TTY launchd cron 自动 skip；通过 `gbrain config set ze_switch_declined_at` + `ze_switch_prompt_shown=true` 锁死 stay(90 天不弹) |
+| v0.36.1.1 | 28 atomic fixes (community PR triage) — 含 `#1083` "warn only for configured embedding provider" filter path | **不**等效 fork PR #1016(declare max_batch_tokens path)。Upstream 走 gateway filter；fork 仍带 google.ts +7 行 max_batch_tokens block。两路径并存兼容(filter + declared) |
+| v0.36.1.0 | Hindsight calibration wave — dream-cycle phase **13 → 16** (propose_takes/grade_takes/calibration_profile, 全 LLM)；schema v67 加 `calibration_profiles` 表；新 MCP op `get_calibration_profile` | dream-cycle 03:11 daily 自动跑新 phase — **LLM spend 涨**(留 P1 观察)；exit code 兼容 0/1/2 不破 dream-wrap |
+| v0.36.0.0 | Skillpack 退役 `install/uninstall` → `scaffold` 模式 | fork `## KOS-Jarvis extensions` 是 append-only 段不是 managed-block fence, migrate-fence 是 no-op；零影响 |
+| v0.35.8.0 | Phantom-page redirect inside extract_facts；新 method `refreshPageBody` + `migrateFactsToCanonical` | facts:absorb 路径周边改进；P1 (TODO L831 "no DB conn") 复测留 P1 |
+| v0.35.7.0 | Schema v67 加 `facts.claim_{metric,value,unit,period}`；新 MCP op `find_trajectory`；新 CLI `gbrain eval trajectory`/`gbrain founder scorecard`；extract_facts 现在 batch-embed | schema 自动迁移；新 op 不破 kos-worker 3 tool 契约；可选未来用于 OH transcripts |
+
+### Conflict resolution (4 个 — 远少于预期 ~10)
+
+| File | Decision | Rationale |
+|---|---|---|
+| `CLAUDE.md` | take fork (`--ours`) | 上游 content 已搬 `docs/CLAUDE-UPSTREAM.md`(1607 行)；新 v0.36/v0.37 section 留 follow-up 增补 |
+| `llms-full.txt` | take upstream → `bun run build:llms` | 211K regenerated 干净 |
+| `test/ai/adaptive-embed-batch.test.ts` | **post-conflict revert to fork**(发现 v0.36.1.1 不等效 fork path) | upstream test 期望 google warn；fork google.ts 已 declare max_batch_tokens → expect undefined。Take fork view |
+| `test/ai/no-batch-cap-suppression.serial.test.ts` | post-conflict revert to fork | 同上 |
+
+**Auto-merged 干净**：VERSION (→ 0.37.0.0)、CHANGELOG.md (fork voice
+prepend + 上游 1142 行 prepend)、README.md、package.json (保 fork
+`@electric-sql/pglite 0.4.4` override)、bun.lock、.gitignore、
+`skills/RESOLVER.md`(上游 L62 加 skillpack-harvest + fork L128 KOS 段保留)、
+`skills/manifest.json`(46 + 1 = 47 entries，fork 4 KOS-Jarvis entries 保留)、
+**`src/core/pglite-engine.ts` (WAL fork patch 从 L200 漂移到 L207，pg_switch_wal
+仍存活 — 上游新增 imports + `refreshPageBody`/`migrateFactsToCanonical`
+method 集中在文件头部，未触及 WAL 块)**。
+
+Fork-protected paths 零改动验证：`git diff master..HEAD --stat --
+skills/kos-jarvis/ server/ workers/ scripts/launchd/` 返回空。
+
+### Schema migrations (v66 → v78, 12 步)
+
+`bin/gbrain init --migrate-only` 一句解决，零手动 ALTER：
+
+```
+[67] facts_typed_claim_columns (claim_metric/value/unit/period)
+[67] calibration_profiles
+[68] eval_candidates_embedding_column
+[68] takes_quality_columns
+...
+[74] eval_candidates_embedding_column
+[75] op_checkpoints_table
+[76] minion_jobs_doctor_run_id_index
+[77] mcp_spend_log
+[78] embedding_multimodal_column
+```
+
+NOTICE on `op_checkpoints already exists, skipping` — Postgres
+idempotent CREATE IF NOT EXISTS，非 ERROR。
+
+### ZeroEntropy decision lock (v0.36.2.0 新风险点)
+
+升级后 `gbrain ze-switch --dry-run --json`：
+
+```json
+{
+  "ze_switch_offered": true,
+  "ze_switch_already_declined": false,
+  "current_embedding_model": "text-embedding-3-large",
+  "target_embedding_model": "zeroentropyai:zembed-1",
+  "est_cost_usd": 0.47,
+  "est_minutes": 53
+}
+```
+
+CLI 没有 `--decline` non-TTY flag(`gbrain ze-switch` interactive 才能 set
+declined_forever)，但 `gbrain config set` 可直接写两 key:
+
+```bash
+bin/gbrain config set ze_switch_declined_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+bin/gbrain config set ze_switch_prompt_shown true
+```
+
+Lock 后 ze-switch dry-run 报 `ze_switch_offered: false /
+ze_switch_already_declined: true / target: null` — 90 天不再弹 prompt。
+**注意**：launchd 5 cron 是 non-TTY 自动 skip，本来就不会触发，lock 是给
+Lucien 手动跑 gbrain 命令时的保护。
+
+### Health score before/after
+
+| 维度 | Pre-sync (v0.35.6.0) | Post-sync (v0.37.0.0) |
+|---|---|---|
+| health_score | 70 | **80** |
+| status | unhealthy | warnings |
+| 0 ERROR | ✓ | ✓ |
+| warning count | 4 | 4 (内容变好) |
+| resolver_health | **FAIL** (57 issues) | warn (改进) |
+| skill_conformance | warn (manifest.json not found) | **ok** |
+| connection | warn (--fast skip) | **ok** |
+| 新加 doctor checks (v0.36.x) | n/a | home_dir_in_worktree ok / embedding_column_registry ok / cross_modal_modality_backfill ok / unified_multimodal_coverage ok / markdown_body_completeness ok / takes_weight_grid ok / child_table_orphans ok |
+
+### Smoke evidence
+
+- `bin/gbrain --version` → `0.37.0.0` (recompile via `bun run build`)
+- `bun run typecheck` clean (~3s)
+- `bun run check:all` exit 0 (14 scripts)
+- `bun test test/ai/` **224 pass / 0 fail / 764 expect()** in 455ms
+- `curl https://kos.chenge.ink/health` → `{"status":"ok","version":"0.37.0.0","engine":"postgres"}`
+- `curl http://127.0.0.1:7225/health` → same
+- pages count: **3140** (baseline 3140, ±0)
+- vector dim: `vector(1536)` unchanged
+- embedding_multimodal_column: **0 chunks** (markdown brain, expected)
+- query smoke Chinese `知识管理` → top hit 0.2853 syntheses/
+- query smoke English `Lucien` → top hit 0.5110 concepts/
+- kos-patrol kickstart → exit 0, dashboard `knowledge-health-2026-05-20.md` 写出
+
+### Branch ops + TODO follow-ups
+
+**Closed** (本次 sync 后立即可关):
+- TODO L801 P2 PR #1016 max_batch_tokens — **NOT superseded**(v0.36.1.1
+  走不同 fix path)；fork patch 保留为 active local diff，PR 仍 open
+  待上游 maintainer review
+- Deleted local branches: `upstream-fix/bootstrap-mcp-log-cols`、
+  `upstream-fix/bootstrap-oauth-clients-cols`(对应 PR #627/#1017 已 closed
+  superseded by 上游 fixwave)
+
+**Retained**:
+- `upstream-fix/dream-archive-dir` (PR #1133 仍 open)
+- `upstream-fix/google-recipe-max-batch-tokens` (PR #1016 仍 open，但上游
+  走不同 path — verdict 修正：不会 auto-drop on next sync)
+
+**New P1/P2 (added 2026-05-19)**:
+- (v0.36.3.0) Declare `embedding_columns` registry for `embedding` @ 1536d (15 min config, doctor 已自动 PASS 仅显式化)
+- (v0.36.1.0) Observe dream-cycle Anthropic spend delta from propose_takes/grade_takes/calibration_profile (前 2-3 晚)
+- (v0.36.6.0) Image ingestion roadmap (decision待Lucien)
+
+### Phase 7.5: doctor --remediate vs kos-patrol evaluation
+
+(详见专门 evaluation note `~/brain/.agent/reports/doctor-remediate-vs-kos-patrol-2026-05-19.md`)
+
+### Linked docs
+
+- [`skills/kos-jarvis/TODO.md`](../skills/kos-jarvis/TODO.md) — post-sync entries
+- [`docs/CLAUDE-UPSTREAM.md`](CLAUDE-UPSTREAM.md) — upstream CLAUDE.md mirror (待 selective 增补 v0.36/v0.37 sections)
+- Migration plan: `~/.claude/plans/plan-ultrathink-delegated-curry.md`
+
+---
+
 ## 8. Cost and performance snapshot
 
 | Metric | v1 | v2 |

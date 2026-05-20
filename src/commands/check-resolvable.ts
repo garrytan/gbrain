@@ -163,6 +163,7 @@ export function resolveSkillsDir(flags: Flags): {
     openclaw_workspace_env_root: '$OPENCLAW_WORKSPACE (AGENTS.md at workspace root)',
     openclaw_workspace_home: '~/.openclaw/workspace/skills',
     openclaw_workspace_home_root: '~/.openclaw/workspace (AGENTS.md at workspace root)',
+    cwd_walk_up: 'skills/ found by walking up from cwd (v0.33)',
     cwd_skills: './skills',
     install_path: 'gbrain install path (read-only fallback)',
   }[detected.source!]!;

@@ -46,10 +46,13 @@ pass:
 **What the env allowlist does AND does not do.** Shell jobs run with a minimal
 env: `PATH, HOME, USER, LANG, TZ, NODE_ENV`. Your secrets like `OPENAI_API_KEY`
 and `DATABASE_URL` are NOT passed to the child. You opt-in additional keys per
-job via `env: { ... }`. This stops accidental `$OPENAI_API_KEY` interpolation in
-a user-authored script. It does **not** sandbox filesystem reads: a shell
-script can `cat ~/.env` or any file the worker process can read. The operator
-picks a safe `cwd`. That is the trust boundary.
+job via `env: { ... }` (non-secret values only — see "Secrets" below) or via
+`inherit: ["database_url"]` (recommended for secrets — names only in the row,
+values resolved at child-spawn from `gbrain config set`). This stops accidental
+`$OPENAI_API_KEY` interpolation in a user-authored script. It does **not**
+sandbox filesystem reads: a shell script can `cat ~/.env` or any file the
+worker process can read. The operator picks a safe `cwd`. That is the trust
+boundary.
 
 **Audit trail, not forensic insurance.** Every submission writes a JSONL line
 to `~/.gbrain/audit/shell-jobs-YYYY-Www.jsonl` (ISO-week rotation; override
@@ -106,6 +109,115 @@ Note: `--follow` blocks the crontab slot until the job finishes. If 14 shell
 crons land at the same minute and each takes 30s, they serialize through
 crontab's spawning limits. Postgres + persistent worker scales better.
 
+### Calling `gbrain` itself from a shell job — use `inherit:` for DATABASE_URL {#secrets}
+
+A common pattern is submitting shell jobs that run `gbrain` CLI commands:
+
+```bash
+gbrain jobs submit shell --params '{
+  "cmd": "gbrain sync --skip-failed && gbrain embed --stale",
+  "cwd": "/data/gbrain",
+  "inherit": ["database_url"]
+}'
+```
+
+`inherit: ["database_url"]` tells the worker to look up `database_url` from its
+own `loadConfig()` (file + env merged) and inject the value into the child's
+env as `GBRAIN_DATABASE_URL`. The job row in `minion_jobs.data` stores
+`inherit: ["database_url"]` — **names only, never values**. The shell-audit
+JSONL records the same. Pre-enqueue validation rejects the submission if the
+worker can't resolve the requested key, with a paste-ready
+`gbrain config set database_url <value>` hint.
+
+**Why not just write the URL into `env:` directly?** Pre-v0.36.5.0 callers
+wrote things like:
+
+```jsonc
+// ❌ Deprecated as of v0.36.5.0 — REJECTED at submit time.
+{
+  "cmd": "gbrain stats",
+  "cwd": "/data/gbrain",
+  "env": { "GBRAIN_DATABASE_URL": "postgresql://..." }
+}
+```
+
+This planted plaintext secrets in `minion_jobs.data` (DB row) and in the
+shell-audit JSONL. Anyone with read access to the brain DB (or a brain dump,
+or a shared brain via the mounts feature) saw the URL. v0.36.5.0 doesn't
+forbid that pattern — the validator trusts the agent — but **prefer
+`inherit:`** for any secret you want kept out of the row. Names land in the
+row; values resolve at child-spawn from the worker's config.
+
+**Scope:** v0.36.5.0 `inherit:` is **free-form**. Pass any snake_case
+config-key name and the worker resolves the value from `loadConfig()` at
+child-spawn time:
+
+- `inherit: ["database_url"]` → child env `GBRAIN_DATABASE_URL`
+- `inherit: ["anthropic_api_key"]` → child env `ANTHROPIC_API_KEY`
+- `inherit: ["openai_api_key"]` → child env `OPENAI_API_KEY`
+- `inherit: ["voyage_api_key"]` → child env `VOYAGE_API_KEY`
+- `inherit: ["groq_api_key", "zeroentropy_api_key"]` → both injected
+- Or any arbitrary config-key your worker has (`my_custom_field` →
+  `MY_CUSTOM_FIELD`)
+
+The env-key name is derived by uppercasing the config-key name. The one
+override is `database_url` → `GBRAIN_DATABASE_URL` (plain `DATABASE_URL` is
+ambiguous in most Postgres-app contexts).
+
+Pre-enqueue validation fail-fasts if the worker can't resolve a requested
+name. The validator does NOT police which secrets you choose to inherit —
+the agent submitting the minion is in the same uid as the worker, so it's
+your call.
+
+**Output-side leakage (read this).** The `inherit:` allowlist prevents
+secrets from landing in the JOB ROW INPUT fields (`data.cmd`, `data.argv`,
+`data.env`). By default it does NOT scrub the OUTPUT fields — if your
+script prints the secret to stdout or stderr (`echo "$GBRAIN_DATABASE_URL"`,
+`psql "$GBRAIN_DATABASE_URL"` echoing the URL on error), the value lands
+plaintext in `result.stdout_tail` / `result.stderr_tail` / `error_text`,
+and from there into the brain DB row.
+
+**`redact_secrets: true` opts into output-side scrubbing.** Set it per-job
+(or pass `--redact-secrets` on the CLI):
+
+```bash
+gbrain jobs submit shell --params '{
+  "cmd": "gbrain sync --skip-failed",
+  "cwd": "/data/gbrain",
+  "inherit": ["database_url"],
+  "redact_secrets": true
+}'
+
+# Or, equivalently:
+gbrain jobs submit shell \
+  --params '{"cmd":"gbrain sync --skip-failed","cwd":"/data/gbrain","inherit":["database_url"]}' \
+  --redact-secrets
+```
+
+When `redact_secrets: true`, the worker resolves each name in `inherit:` to
+a value, runs the child, then string-replaces every occurrence of those
+values in `stdout_tail` / `stderr_tail` (and in the `error_text` derived from
+`stderr_tail` on non-zero exit) with `<REDACTED:name>` before persistence.
+Only `inherit:`-resolved values are scrubbed; caller-supplied `env:` values
+are not (those are the "I'm fine with this in the row" channel by design).
+
+**Heuristic, not perfect.** The redactor uses literal string-replace. A
+script that base64-encodes the secret before printing, or that emits it
+one character at a time, will bypass the scrub. Those are adversarial
+shapes — the agent + the script are in the same trust domain, so this
+layer defends against accidental echo (the common case), not deliberate
+exfiltration.
+
+**Three rules for shell-job authors who deal with secrets:**
+
+- **Prefer not to echo secrets at all.** Even with `redact_secrets`, less
+  output means less risk if the redactor ever has an edge-case miss.
+- **Wrap noisy CLI tools to suppress URLs on error.** `psql --quiet`,
+  `pg_dump --quiet`, or pipe through
+  `2>&1 | sed 's|postgresql://[^@]*@|postgresql://REDACTED@|g'`.
+- **Inspect with `gbrain jobs get <id>` after a failure** to verify what
+  actually persisted.
+
 ### Submitting with `argv` (no shell interpolation)
 
 For programmatic callers assembling commands from JSON, use `argv` instead of
@@ -161,6 +273,11 @@ gbrain jobs list --status waiting --name shell
 | `shell: cwd is required and must be an absolute path` | `cwd` must be a string starting with `/`. | Set `cwd` in `--params` to an absolute path. |
 | `shell: argv must be an array of strings` | `argv` has a non-string entry or isn't an array. | Pass `argv: ["bin","arg1","arg2"]`. |
 | `shell: env values must all be strings` | `env` has a number/bool/object value. | Stringify: `"env":{"COUNT":"3"}` not `"env":{"COUNT":3}`. |
+| `shell: inherit must be an array of config-key names` | `inherit` wasn't an array. | Pass `"inherit": ["database_url", ...]`. |
+| `shell: inherit entries must be non-empty strings` | An element of `inherit` was empty, non-string, or null. | Use snake_case config-key names like `database_url`, `anthropic_api_key`. |
+| `shell: inherit name "<X>" must match [a-z][a-z0-9_]*` | Name failed snake_case regex (uppercase, leading digit/underscore, special char). | Use the config-key name verbatim — `database_url`, not `DATABASE_URL`. |
+| `shell: inherit requested "<X>" but worker has no <X> configured` | Worker can't resolve the requested name from `loadConfig()`. | Run `gbrain config set <X> <value>` on the worker host, OR check the config file at `~/.gbrain/config.json`. |
+| `shell: redact_secrets must be a boolean if set` | Caller passed a non-boolean for `redact_secrets`. | Pass `true` or `false` (or omit). The CLI `--redact-secrets` flag sets it automatically. |
 | `permission_denied: shell jobs cannot be submitted over MCP` | An MCP client tried to submit a shell job. By design CLI-only. | Submit from CLI or via a trusted operation handler (`ctx.remote === false`). |
 | `protected job name 'shell' requires CLI or operation-local submitter` | A caller invoked `MinionQueue.add('shell', ...)` without the `trusted` opt-in. | Pass `{ allowProtectedSubmit: true }` as the 4th arg. CLI and `submit_job` do this automatically. |
 | `aborted: timeout` / `aborted: cancel` / `aborted: shutdown` / `aborted: lock-lost` | The worker's abort signal fired mid-execution. Child got SIGTERM, 5s grace, then SIGKILL. | Expected: timeout / user cancel / deploy restart / stall. Inspect `gbrain jobs get` to see which. |
