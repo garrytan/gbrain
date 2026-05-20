@@ -1,5 +1,34 @@
-# kos-jarvis — Outstanding Work (post v0.35.6.0 sync, 2026-05-17)
+# kos-jarvis — Outstanding Work (post v0.37.0.0 sync, 2026-05-19)
 
+> **Updated 2026-05-19**: v0.37.0.0 upstream sync landed (12 commits,
+> 11 versions, v0.35.6.0 → v0.37.0.0, 333 files, +52455 / -3317 LoC).
+> Story in `docs/JARVIS-ARCHITECTURE.md` §6.29. **Only 4 merge conflicts**
+> (CLAUDE.md / llms-full.txt / 2 test/ai/ files — last 2 reverted to
+> fork view because v0.36.1.1 #1083 went a different fix path from our
+> PR #1016). Schema **v66 → v78** automatically via `applyForwardReferenceBootstrap`
+> (12 migrations applied, zero manual ALTER). WAL fork patch survived
+> at `src/core/pglite-engine.ts:207` (line shift from L200 due to upstream
+> imports). Doctor **health_score 70 → 80**: new v0.36.x checks (home_dir_in_worktree,
+> embedding_column_registry, cross_modal_modality_backfill, unified_multimodal_coverage,
+> takes_weight_grid, child_table_orphans, markdown_body_completeness) all PASS.
+> ZeroEntropy switch lock applied via `gbrain config set ze_switch_declined_at` +
+> `ze_switch_prompt_shown=true` (90-day re-ask gate). 3140 pages preserved.
+>
+> **Active fork dirs**: **10** unchanged.
+> **Branch cleanup deferred to Lucien**: `upstream-fix/bootstrap-mcp-log-cols`
+> (PR #627 closed superseded) + `upstream-fix/bootstrap-oauth-clients-cols`
+> (PR #1017 closed superseded) both occupy historical worktrees at
+> `~/Projects/jarvis-kos-v2-pr` + `/private/tmp/gbrain-upstream-prs`;
+> `git branch -D` blocked by worktree ref. Delete safely via
+> `git worktree remove <path>; git branch -D <name>` when Lucien confirms
+> nothing to keep in those worktrees.
+> **Retained**: `upstream-fix/dream-archive-dir` (PR #1133 still open),
+> `upstream-fix/google-recipe-max-batch-tokens` (PR #1016 verdict revised — NOT
+> superseded by v0.36.1.1; upstream chose warning-filter path, fork keeps
+> declare-max_batch_tokens path; co-exists cleanly).
+>
+> ---
+>
 > **Updated 2026-05-17**: v0.35.6.0 upstream sync landed (108 commits,
 > 9 versions, v0.34.4 → v0.35.6.0). Story in
 > `docs/JARVIS-ARCHITECTURE.md` §6.26. **PR #1017 (oauth_clients
@@ -130,6 +159,70 @@ prepend (但 diff 这么小,PR 路径应赢)。
 COLUMN IF NOT EXISTS …` 过了,生产 schema v34, 不依赖此 PR merge。
 
 ### [x] 服务 smoke check — DONE 2026-05-04 (详见 Done section)
+
+## P1 — Post-v0.37.0.0 sync follow-ups (added 2026-05-19)
+
+### [ ] (v0.36.1.0) Observe dream-cycle LLM spend delta from new calibration phases
+
+dream-cycle phase **13 → 16** post-sync (新 propose_takes/grade_takes/
+calibration_profile — 全 LLM Anthropic phase)。Cron 03:11 daily 跑。
+
+**What**: 前 2-3 晚后查 `~/brain/.agent/dream-cycles/*.json` 看
+`total_cost_usd` 涨多少 vs pre-sync baseline。若涨幅 >$0.5/night,
+评估 `GBRAIN_DREAM_SKIP_CALIBRATION` env (若 upstream 有此 flag) 或
+plist 加 `--phase-exclude propose_takes,grade_takes,calibration_profile`。
+
+**Scope**: 30 min spot-check 跨 2 晚 + decision。
+
+### [ ] (v0.36.3.0) Declare embedding_columns registry for `embedding` @ 1536d
+
+`gbrain doctor` v0.36.3 加的 `embedding_column_registry` check **现在
+auto-PASS**(doctor 检测默认 column 配置 OK)。但显式 declare 可保未来 doctor
+不假阴性 + 给 column override workflow(per-query embedding column for A/B)
+开门。
+
+```bash
+bin/gbrain config set embedding_columns '{
+  "embedding": {
+    "provider": "google:gemini-embedding-001",
+    "dimensions": 1536,
+    "type": "vector"
+  }
+}'
+bin/gbrain doctor --json | jq '.checks[] | select(.name=="embedding_column_registry")'
+```
+
+**Scope**: 15 min config + verify。
+
+### [ ] (v0.36.6.0) Image ingestion roadmap decision
+
+Schema v75 加 `content_chunks.embedding_multimodal vector(1024)` +
+`gbrain search --image` + `search_by_image` MCP op + `gbrain reindex
+--multimodal`。Brain 当前全 markdown，column 留空无害。
+
+**What**: Lucien 决策 — 是否启用 `~/Pictures/` 或 Notion 附件 image
+ingestion。若 yes，roadmap 已就绪。若 no，标 N/A 关闭。
+
+**Scope**: decision 30 min；实施(若 do)2-3 h。
+
+### [ ] (v0.36.4.0) doctor --remediate vs kos-patrol overlap — see Phase 7.5 evaluation
+
+完整 evaluation note: `~/brain/.agent/reports/doctor-remediate-vs-kos-patrol-2026-05-19.md`
+
+实施替换决策（option a/b/c 见 evaluation note）留 M4 milestone window。
+
+### [ ] (v0.35.7.0) Typed-claim fence (`claim_metric/value/unit/period`) for OH transcripts
+
+Schema v67 加 `facts.claim_{metric,value,unit,period}` + 14-column
+`## Facts` fence 写法。在 OH transcripts(creators / founders / IRL
+conversations) 上 declarative claim 时可用 — `gbrain eval trajectory
+<entity>` + `gbrain founder scorecard <entity>` 命令依赖此 fence。
+
+**What**: Lucien 决定 — 是否在新 OH transcripts 写作时强制 typed-claim
+fence。若 yes，TODO 配 prompt template + lint。若 no，仅作 advisory
+notes。
+
+**Scope**: decision 30 min。
 
 ## P1 — Post-v0.34.4 sync follow-ups (added 2026-05-15)
 
@@ -813,11 +906,20 @@ Upstream PR filed 2026-05-15:
 **[garrytan/gbrain#1016](https://github.com/garrytan/gbrain/pull/1016)** —
 branch `upstream-fix/google-recipe-max-batch-tokens` cut from
 `upstream/master` (HEAD `24881f60` v0.34.4), 3 files / +25 -7 / `bun
-test test/ai/` 144/144 green. On merge the next fork sync auto-drops
-the local diff (additive field change + matching test edits, clean
-text merge). Fork master `test/ai/no-batch-cap-suppression.serial.test.ts`
-+ `test/ai/adaptive-embed-batch.test.ts` backported in the same
-session so `bun test test/ai/` stays 144/144 here too.
+test test/ai/` 144/144 green.
+
+**Verdict revised 2026-05-19 (v0.37.0.0 sync)**: upstream v0.36.1.1
+`#1083` cherry-pick went a **different** fix path — narrowed gateway
+warning filter to the configured embedding provider only (gateway.ts),
+NOT declared `max_batch_tokens` on `google.ts`. Both paths achieve
+"silence google warning under default OpenAI config" but the fork path
+has additional business value (CJK pre-split via `max_batch_tokens=20_000`
++ `chars_per_token=2` reduces reactive token-cap discovery overhead).
+Fork google.ts +7 lines retained through v0.37.0.0 merge; upstream
+test versions reverted to fork view (expect 0 google warnings under
+fork config). On v0.37.0.0 sync verified: `bun test test/ai/` 224/224
+green with both paths co-existing. PR #1016 still open in upstream —
+re-evaluate close/keep on next maintainer response.
 
 **Diagnostic correction** — the original P2 framing suggested this
 was just log noise. A 2026-05-15 morning probe initially read the
