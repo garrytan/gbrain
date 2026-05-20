@@ -117,6 +117,36 @@ export interface BrainstormOptions {
   embedQueryFn?: (text: string) => Promise<Float32Array>;
   /** Stderr sink — defaults to process.stderr.write. Tests pipe into a buffer. */
   stderrWrite?: (s: string) => void;
+  /**
+   * Maximum projected cost in USD before the run aborts. Default $5.
+   * The pre-run estimate is compared against this ceiling; if higher, we
+   * abort with a paste-ready error (unless `skipCostPreview` is set AND
+   * the caller is non-interactive — then we still abort, the ceiling is
+   * a hard limit).
+   */
+  maxCostUsd?: number;
+  /**
+   * Hard cap on the domain-bank far set. Default 50. Threaded into
+   * `fetchFar` to prevent the "2K prefix" explosion on large brains.
+   */
+  maxFarSet?: number;
+  /**
+   * When true, abort mid-run if running token usage exceeds 5× the original
+   * estimate. Default false (warn-only). Pair with `maxCostUsd` for a hard
+   * ceiling.
+   */
+  strictBudget?: boolean;
+  /**
+   * Override the model used for the judge phase. Larger-context models
+   * (e.g. Gemini 2M / Claude 200K) help when judging large idea sets.
+   * Falls back to `modelOverride` then the gateway default.
+   */
+  judgeModel?: string;
+  /**
+   * Max ideas per judge LLM call. Default 100. Larger batches save calls
+   * but risk context overflow; smaller batches are slower but safer.
+   */
+  maxIdeasPerJudgeCall?: number;
 }
 
 /** One idea emitted to the user, with citation transparency (D6). */
@@ -279,6 +309,21 @@ export async function loadCalibrationContext(
 // Idea generation prompts + response parsing
 // ---------------------------------------------------------------------------
 
+/**
+ * Strip lone/orphaned UTF-16 surrogates that would crash JSON encoding
+ * downstream. The Anthropic SDK and some gateway transports refuse strings
+ * containing unpaired surrogates (U+D800–U+DFFF). Page content that came
+ * in via OCR or older imports occasionally has them.
+ */
+function sanitizeUnicode(s: string): string {
+  if (!s) return s;
+  // Replace lone high surrogates (D800-DBFF) not followed by a low surrogate.
+  // Replace lone low surrogates (DC00-DFFF) not preceded by a high surrogate.
+  return s
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '\uFFFD')
+    .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '$1\uFFFD');
+}
+
 /** Build a single (close × far) cross-generation prompt. */
 function buildCrossPrompt(opts: {
   profile: BrainstormProfile;
@@ -296,16 +341,25 @@ Style rules:
 - Cite BOTH the close and far slug verbatim — these are the user's own notes.
 - Never fabricate facts, figures, or quotes. Stay grounded in the cited pages.${opts.profile.generator_constraint ? `\n- ${opts.profile.generator_constraint}` : ''}`;
 
+  // Sanitize: unicode surrogates in page content (from OCR or older imports)
+  // can crash JSON encoding in the chat transport, which would void the
+  // entire cross. Cheap to fix here.
+  const closeContent = sanitizeUnicode(opts.close.content);
+  const farContent = sanitizeUnicode(opts.far.content);
+  const closeTitle = sanitizeUnicode(opts.close.title ?? '(untitled)');
+  const farTitle = sanitizeUnicode(opts.far.title ?? '(untitled)');
+  const question = sanitizeUnicode(opts.question);
+
   const user = `QUESTION:
-${opts.question}
+${question}
 
 CLOSE PAGE (related to the question — context anchor):
-[${opts.close.slug}] ${opts.close.title ?? '(untitled)'}
-${opts.close.content.slice(0, 1500)}
+[${opts.close.slug}] ${closeTitle}
+${closeContent.slice(0, 1500)}
 
 FAR PAGE (from a distant region of the user's brain — the collision partner):
-[${opts.far.slug}] ${opts.far.title ?? '(untitled)'}
-${opts.far.content}
+[${opts.far.slug}] ${farTitle}
+${farContent}
 
 Generate exactly ${opts.profile.ideas_per_cross} ideas from cross-pollinating these pages.
 
@@ -399,6 +453,21 @@ export async function runBrainstorm(
     throw new Error('brainstorm: aborted before run (Ctrl-C during cost preview window)');
   }
 
+  // ---- Phase 0.5: hard cost ceiling (circuit breaker) ----
+  //
+  // The TTY grace window is a soft check. This is the hard one. On large
+  // brains the pre-run estimate is itself an under-estimate (53× over in
+  // the wild on a 13K-page brain) because `m_far` got blown out by
+  // un-capped prefix sampling. We refuse to start if the *estimate alone*
+  // already exceeds the user's ceiling.
+  const maxCostUsd = opts.maxCostUsd ?? 5;
+  if (estimate > maxCostUsd) {
+    throw new Error(
+      `${profile.label}: estimated cost ${fmtUsd(estimate)} exceeds --max-cost ${fmtUsd(maxCostUsd)}. ` +
+      `Lower --limit, raise --max-cost, or pass --max-far-set <n> to cap the domain bank.`
+    );
+  }
+
   // ---- Phase 1: question embedding + close-set retrieval ----
   let questionEmbedding: Float32Array | null = null;
   try {
@@ -440,6 +509,9 @@ export async function runBrainstorm(
     staleBias: profile.stale_bias,
     sourceId: opts.sourceId,
     sourceIds: opts.sourceIds,
+    // Cap the prefix-stratified far set. Defaults to max(m * 4, 50) inside
+    // fetchFar; we forward the CLI flag when set.
+    maxFarSet: opts.maxFarSet,
   });
   if (farResult.short_of_target) {
     // D11 data-driven warning text.
@@ -518,6 +590,22 @@ export async function runBrainstorm(
       totalUsage.input_tokens += result.usage.input_tokens;
       totalUsage.output_tokens += result.usage.output_tokens;
       crossModel = result.model;
+      // Mid-run cost guard: if running spend already exceeds the projected
+      // ceiling by 5x or the absolute cap, abort the remaining crosses.
+      const runningPricing = ANTHROPIC_PRICING[result.model] ?? { input: 3, output: 15 };
+      const runningUsd =
+        (totalUsage.input_tokens / 1_000_000) * runningPricing.input +
+        (totalUsage.output_tokens / 1_000_000) * runningPricing.output;
+      if (runningUsd > maxCostUsd) {
+        throw new Error(
+          `${profile.label}: running cost ${fmtUsd(runningUsd)} exceeded --max-cost ${fmtUsd(maxCostUsd)} mid-run; aborting remaining crosses`
+        );
+      }
+      if (opts.strictBudget === true && runningUsd > estimate * 5) {
+        throw new Error(
+          `${profile.label}: running cost ${fmtUsd(runningUsd)} exceeded 5× estimate (${fmtUsd(estimate)}) under --strict-budget`
+        );
+      }
       const parsed = parseIdeaResponse(result.text);
       return parsed.slice(0, profile.ideas_per_cross).map((text) => ({
         text,
@@ -527,6 +615,12 @@ export async function runBrainstorm(
       }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // Cost-cap errors must propagate (caller can't ignore them); other
+      // per-cross errors are warned + swallowed so one bad cross doesn't
+      // void the rest of the run.
+      if (msg.includes('--max-cost') || msg.includes('--strict-budget')) {
+        throw err;
+      }
       stderr(`[${profile.label}] WARN: cross [${cross.close.slug}] × [${cross.far.slug}] failed: ${msg}\n`);
       return [];
     }
@@ -559,10 +653,12 @@ export async function runBrainstorm(
       far_slug: i.far_slug,
     }));
     const judgeResult = await runJudge(profile.judge_config, judgeInput, {
-      modelOverride: opts.modelOverride,
+      modelOverride: opts.judgeModel ?? opts.modelOverride,
       chatFn: opts.chatFn,
       activeBiasTags: activeBiasTags ?? undefined,
       abortSignal: opts.abortSignal,
+      maxIdeasPerCall: opts.maxIdeasPerJudgeCall,
+      stderrWrite: stderr,
     });
     for (const idea of judgeResult.ideas) {
       judgedById.set(idea.id, idea);

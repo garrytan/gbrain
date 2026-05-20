@@ -29,6 +29,16 @@ export interface BrainstormCliArgs {
   save?: boolean;
   yes: boolean;
   limit?: number;
+  /** Cost ceiling in USD; aborts pre-run if estimate exceeds. Default $5. */
+  maxCost?: number;
+  /** Hard cap on far-set prefix sampling. Default 50. */
+  maxFarSet?: number;
+  /** When true, abort mid-run if running spend exceeds 5× estimate. */
+  strictBudget?: boolean;
+  /** Override the model used for the judge phase. */
+  judgeModel?: string;
+  /** Max ideas per judge LLM call. Default 100. */
+  maxIdeasPerJudgeCall?: number;
   help: boolean;
   error?: string;
 }
@@ -57,6 +67,39 @@ export function parseBrainstormArgs(args: string[]): BrainstormCliArgs {
         return out;
       }
       out.limit = n;
+    } else if (arg === '--max-cost') {
+      const v = args[++i];
+      const n = v ? parseFloat(v) : NaN;
+      if (!Number.isFinite(n) || n <= 0) {
+        out.error = `--max-cost requires a positive number in USD (got ${v})`;
+        return out;
+      }
+      out.maxCost = n;
+    } else if (arg === '--max-far-set') {
+      const v = args[++i];
+      const n = v ? parseInt(v, 10) : NaN;
+      if (!Number.isFinite(n) || n <= 0) {
+        out.error = `--max-far-set requires a positive integer (got ${v})`;
+        return out;
+      }
+      out.maxFarSet = n;
+    } else if (arg === '--strict-budget') {
+      out.strictBudget = true;
+    } else if (arg === '--judge-model') {
+      const v = args[++i];
+      if (!v) {
+        out.error = `--judge-model requires a model id (e.g. anthropic:claude-sonnet-4-6)`;
+        return out;
+      }
+      out.judgeModel = v;
+    } else if (arg === '--max-ideas-per-judge-call') {
+      const v = args[++i];
+      const n = v ? parseInt(v, 10) : NaN;
+      if (!Number.isFinite(n) || n <= 0) {
+        out.error = `--max-ideas-per-judge-call requires a positive integer (got ${v})`;
+        return out;
+      }
+      out.maxIdeasPerJudgeCall = n;
     } else if (arg.startsWith('--')) {
       out.error = `unknown flag: ${arg}`;
       return out;
@@ -79,12 +122,17 @@ them, judges with a 5-axis rubric. Output cites close + far slugs with a
 0-1 distance score so you can see how far each collision actually traveled.
 
 Options:
-  --json              Emit BrainstormResult as JSON (for agents)
-  --save              Save to wiki/ideas/<date>-brainstorm-<slug>.md (default ON)
-  --no-save           Don't save; print only
-  --yes, -y           Skip the 10s cost-preview wait (TTY only)
-  --limit N           Override the far-bank size (default 6 brainstorm / 12 LSD)
-  --help, -h          Show this help
+  --json                          Emit BrainstormResult as JSON (for agents)
+  --save                          Save to wiki/ideas/<date>-brainstorm-<slug>.md (default ON)
+  --no-save                       Don't save; print only
+  --yes, -y                       Skip the 10s cost-preview wait (TTY only)
+  --limit N                       Override the far-bank size (default 6 brainstorm / 12 LSD)
+  --max-cost USD                  Abort if estimated cost exceeds USD (default 5)
+  --max-far-set N                 Cap domain bank prefix sampling (default 50)
+  --strict-budget                 Abort if running cost exceeds 5× the estimate
+  --judge-model MODEL             Override the judge LLM (larger-context for big runs)
+  --max-ideas-per-judge-call N    Max ideas per judge LLM call (default 100)
+  --help, -h                      Show this help
 
 Examples:
   gbrain brainstorm "why are AI coding tools converging on the same UX?"
@@ -107,11 +155,16 @@ have thought of this without LSD"), every idea must invert at least one
 implicit axiom. Output is ephemeral by default — pass --save if an idea lands.
 
 Options:
-  --json              Emit BrainstormResult as JSON
-  --save              Persist to wiki/ideas/<date>-lsd-<slug>.md (default OFF)
-  --yes, -y           Skip the 10s cost-preview wait (TTY only)
-  --limit N           Override the far-bank size (default 12)
-  --help, -h          Show this help
+  --json                          Emit BrainstormResult as JSON
+  --save                          Persist to wiki/ideas/<date>-lsd-<slug>.md (default OFF)
+  --yes, -y                       Skip the 10s cost-preview wait (TTY only)
+  --limit N                       Override the far-bank size (default 12)
+  --max-cost USD                  Abort if estimated cost exceeds USD (default 5)
+  --max-far-set N                 Cap domain bank prefix sampling (default 50)
+  --strict-budget                 Abort if running cost exceeds 5× the estimate
+  --judge-model MODEL             Override the judge LLM (larger-context for big runs)
+  --max-ideas-per-judge-call N    Max ideas per judge LLM call (default 100)
+  --help, -h                      Show this help
 
 Examples:
   gbrain lsd "why are AI coding tools converging on the same UX?"
@@ -160,6 +213,11 @@ async function runBrainstormCli(
     question: parsed.question,
     profile: effectiveProfile,
     skipCostPreview: skipPreview,
+    maxCostUsd: parsed.maxCost,
+    maxFarSet: parsed.maxFarSet,
+    strictBudget: parsed.strictBudget,
+    judgeModel: parsed.judgeModel,
+    maxIdeasPerJudgeCall: parsed.maxIdeasPerJudgeCall,
   });
 
   if (parsed.json) {

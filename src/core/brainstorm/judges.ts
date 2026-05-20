@@ -347,12 +347,28 @@ export interface RunJudgeOptions {
   activeBiasTags?: string[];
   /** AbortSignal for Ctrl-C / shutdown propagation. */
   abortSignal?: AbortSignal;
+  /**
+   * Maximum ideas to send in a single judge LLM call. Defaults to 100.
+   * Large idea sets (e.g. 15K ideas from a 13K-page brain) blow past the
+   * model's context window when sent as one batch. We chunk into batches
+   * of `maxIdeasPerCall` and concatenate the results.
+   */
+  maxIdeasPerCall?: number;
+  /** Stderr sink for chunk-progress reporting. Defaults to process.stderr.write. */
+  stderrWrite?: (s: string) => void;
 }
 
+/** Default judge chunk size. ~350 tokens/idea × 100 ideas ≈ 35K input tokens, safely under any model context. */
+const DEFAULT_JUDGE_CHUNK_SIZE = 100;
+
 /**
- * Single batch — caller chunks large idea sets to keep prompt size bounded.
- * Throws on parse failure (caller maps to judge_failed:true + saves unscored,
- * per D12).
+ * Judge a batch of ideas. Automatically chunks large idea sets into
+ * `maxIdeasPerCall`-sized sub-batches (default 100) to avoid blowing past
+ * the model's context window. Each chunk is a separate LLM call; results
+ * are concatenated. Throws on parse failure of *any* chunk (caller maps to
+ * judge_failed:true + saves unscored, per D12), but on a partial failure
+ * (some chunks succeed, one fails) we still throw — callers who want
+ * partial-result resilience should call `runJudge` per-chunk themselves.
  */
 export async function runJudge(
   config: JudgeConfig,
@@ -364,6 +380,56 @@ export async function runJudge(
     // returning a well-formed empty result is more ergonomic.
     return { ideas: [], pass_count: 0, model: 'noop', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } };
   }
+  const chunkSize = Math.max(1, options.maxIdeasPerCall ?? DEFAULT_JUDGE_CHUNK_SIZE);
+  const stderr = options.stderrWrite ?? ((s: string) => { process.stderr.write(s); });
+
+  // Split ideas into chunks. For small idea sets (<= chunkSize) this is a
+  // single chunk and behaves identically to the pre-fix single-call path.
+  const chunks: JudgeIdea[][] = [];
+  for (let i = 0; i < ideas.length; i += chunkSize) {
+    chunks.push(ideas.slice(i, i + chunkSize));
+  }
+  if (chunks.length > 1) {
+    stderr(`[${config.label}-judge] chunking ${ideas.length} ideas into ${chunks.length} batches of ≤${chunkSize}\n`);
+  }
+
+  const allIdeaResults: JudgeIdeaResult[] = [];
+  let lastModel = 'noop';
+  const totalUsage: ChatResult['usage'] = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
+  };
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const chunkResult = await runJudgeChunk(config, chunk, options);
+    allIdeaResults.push(...chunkResult.ideas);
+    lastModel = chunkResult.model;
+    totalUsage.input_tokens += chunkResult.usage.input_tokens;
+    totalUsage.output_tokens += chunkResult.usage.output_tokens;
+    if (typeof chunkResult.usage.cache_read_tokens === 'number') {
+      totalUsage.cache_read_tokens = (totalUsage.cache_read_tokens ?? 0) + chunkResult.usage.cache_read_tokens;
+    }
+    if (typeof chunkResult.usage.cache_creation_tokens === 'number') {
+      totalUsage.cache_creation_tokens = (totalUsage.cache_creation_tokens ?? 0) + chunkResult.usage.cache_creation_tokens;
+    }
+  }
+
+  return {
+    ideas: allIdeaResults,
+    pass_count: allIdeaResults.filter((i) => i.passes).length,
+    model: lastModel,
+    usage: totalUsage,
+  };
+}
+
+/** Single-chunk inner loop. Extracted so `runJudge` can chunk + concatenate. */
+async function runJudgeChunk(
+  config: JudgeConfig,
+  ideas: JudgeIdea[],
+  options: RunJudgeOptions
+): Promise<JudgeResult> {
   const chat = options.chatFn ?? defaultChat;
   const prompt = buildJudgePrompt(config, ideas);
 
@@ -401,15 +467,15 @@ export async function runJudge(
       continue;
     }
     const weighted_score = weightedScore(validated.scores, config.weights);
-    const result: JudgeIdeaResult = {
+    const ir: JudgeIdeaResult = {
       id: validated.id,
       scores: validated.scores,
       weighted_score,
       passes: false, // filled below
       note: validated.note,
     };
-    result.passes = ideaPasses(result, config);
-    ideaResults.push(result);
+    ir.passes = ideaPasses(ir, config);
+    ideaResults.push(ir);
   }
 
   return {
