@@ -23,7 +23,21 @@ import {
 
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
-  const memGB = totalmem() / (1024 ** 3);
+  // Container-aware memory sizing. `os.totalmem()` returns the host machine's
+  // RAM on Linux even inside a cgroup-constrained container — so on a 32 GB
+  // container running on a 322 GB host, the byMem cap silently becomes
+  // 644 workers, and `Math.min(byPool=8, ...)` clamps to 8 workers that each
+  // buffer file contents + embeddings. Result: OOM kills on Railway/Fly.io/
+  // ECS/Cloud Run/Docker-with-limits hosts.
+  //
+  // `process.constrainedMemory()` (Node 19.6+, supported by Bun) returns the
+  // cgroup memory limit when running in a constrained environment, and 0 or
+  // undefined otherwise. Fall back to `totalmem()` when unconstrained.
+  const constrained = typeof process.constrainedMemory === 'function'
+    ? process.constrainedMemory()
+    : 0;
+  const effectiveMemBytes = constrained && constrained > 0 ? constrained : totalmem();
+  const memGB = effectiveMemBytes / (1024 ** 3);
   // Network-bound, so we can go higher than CPU count.
   // Cap by: DB pool (leave 2 for other queries), CPU, memory.
   const byPool = 8;
