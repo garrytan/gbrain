@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- `propose_takes` now caches successful zero-proposal page scans in `take_proposal_page_scans`, so unchanged pages that correctly produce `[]` do not re-spend LLM tokens on every autopilot cycle. The operator-facing `take_proposals` queue remains proposal-only; extractor failures are deliberately uncached so transient model/API errors retry later.
+
 ## [0.37.1.0] - 2026-05-19
 
 **Your brain can now collide its own ideas.**

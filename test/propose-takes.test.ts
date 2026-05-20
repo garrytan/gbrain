@@ -18,6 +18,8 @@ import { describe, test, expect } from 'bun:test';
 import {
   runPhaseProposeTakes,
   parseExtractorOutput,
+  parseExtractorOutputDetailed,
+  parseExtractorOutputStrict,
   contentHash,
   hasCompleteFence,
   extractExistingTakesForDedup,
@@ -39,9 +41,12 @@ interface CapturedSql {
 function buildMockEngine(opts: {
   pages: Page[];
   existingProposals?: Set<string>; // composite-key strings already in take_proposals
+  existingPageScans?: Set<string>; // composite-key strings already in take_proposal_page_scans
 }): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
+  const pageScans = opts.existingPageScans ?? new Set<string>();
+  const proposalRows = new Set<string>();
 
   const engine = {
     kind: 'pglite',
@@ -57,7 +62,28 @@ function buildMockEngine(opts: {
         if (existing.has(key)) return [{ id: 1 } as unknown as T];
         return [];
       }
-      // INSERT — return nothing
+      // SELECT idempotency check for successful scans, including zero-proposal scans.
+      if (sql.includes('FROM take_proposal_page_scans')) {
+        const [sourceId, slug, ch, pv] = params ?? [];
+        const key = `${sourceId}|${slug}|${ch}|${pv}`;
+        if (pageScans.has(key)) return [{ id: 1 } as unknown as T];
+        return [];
+      }
+      // INSERT proposal queue rows. Mirror ON CONFLICT ... DO NOTHING RETURNING id.
+      if (sql.includes('INSERT INTO take_proposals')) {
+        const [sourceId, slug, ch, pv, _runId, claimText] = params ?? [];
+        const key = `${sourceId}|${slug}|${ch}|${pv}|${claimText}`;
+        if (proposalRows.has(key)) return [];
+        proposalRows.add(key);
+        return [{ id: proposalRows.size } as unknown as T];
+      }
+      // INSERT successful page-scan cache rows.
+      if (sql.includes('INSERT INTO take_proposal_page_scans')) {
+        const [sourceId, slug, ch, pv] = params ?? [];
+        pageScans.add(`${sourceId}|${slug}|${ch}|${pv}`);
+        return [];
+      }
+      // Other statements return nothing
       return [];
     },
   } as unknown as BrainEngine;
@@ -130,6 +156,28 @@ describe('parseExtractorOutput', () => {
   test('returns [] on malformed JSON without throwing', () => {
     expect(parseExtractorOutput('[not valid json')).toEqual([]);
     expect(parseExtractorOutput('completely unrelated prose')).toEqual([]);
+  });
+
+  test('detailed parser distinguishes literal JSON [] from malformed output', () => {
+    expect(parseExtractorOutputDetailed('[]')).toEqual({ ok: true, proposals: [] });
+    expect(parseExtractorOutputDetailed('[not valid json')).toEqual({ ok: false, proposals: [] });
+    expect(parseExtractorOutputDetailed('completely unrelated prose')).toEqual({ ok: false, proposals: [] });
+    expect(parseExtractorOutputDetailed('')).toEqual({ ok: false, proposals: [] });
+  });
+
+  test('detailed parser rejects parseable but wrong-shape JSON', () => {
+    expect(parseExtractorOutputDetailed('{"claims":[]}')).toEqual({ ok: false, proposals: [] });
+    expect(parseExtractorOutputDetailed('[{"claim":"missing claim_text"}]')).toEqual({ ok: false, proposals: [] });
+    expect(parseExtractorOutputDetailed('[{"claim_text":"valid"},{"claim":"ignored"}]')).toEqual({
+      ok: true,
+      proposals: [{ claim_text: 'valid', kind: 'take', holder: 'brain', weight: 0.5, domain: undefined }],
+    });
+  });
+
+  test('strict parser throws on malformed model output so callers do not cache it', () => {
+    expect(() => parseExtractorOutputStrict('completely unrelated prose')).toThrow('extractor returned malformed JSON');
+    expect(() => parseExtractorOutputStrict('{"claims":[]}')).toThrow('extractor returned malformed JSON');
+    expect(parseExtractorOutputStrict('[]')).toEqual([]);
   });
 
   test('drops rows without claim_text and rows over 500 chars', () => {
@@ -257,12 +305,37 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(details.cache_misses).toBe(1);
     expect(details.cache_hits).toBe(0);
     expect(details.proposals_inserted).toBe(1);
+    expect(details.scan_cache_writes).toBe(1);
+
+    const scanCacheSelect = captured.find(c => c.sql.includes('FROM take_proposal_page_scans'));
+    expect(scanCacheSelect?.sql).toContain('SELECT 1');
+    expect(scanCacheSelect?.sql).not.toContain('SELECT id');
 
     const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
     expect(inserts).toHaveLength(1);
     expect(inserts[0]!.params[5]).toBe('Marketplaces with cold-start liquidity win'); // claim_text
     expect(inserts[0]!.params[6]).toBe('bet'); // kind
     expect(inserts[0]!.params[9]).toBe('market'); // domain
+  });
+
+  test('same-page distinct proposals are queued separately; duplicate claims are not counted as inserted', async () => {
+    const pages = [buildPage({ slug: 'wiki/multiple-claims', body: 'Two gradeable claims in one page.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [
+      { claim_text: 'first distinct claim', kind: 'take', holder: 'brain', weight: 0.55 },
+      { claim_text: 'second distinct claim', kind: 'bet', holder: 'brain', weight: 0.7 },
+      { claim_text: 'first distinct claim', kind: 'take', holder: 'brain', weight: 0.55 },
+    ];
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    const proposalInserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(proposalInserts).toHaveLength(3);
+    expect(proposalInserts[0]!.sql).toContain('ON CONFLICT (source_id, page_slug, content_hash, prompt_version, claim_text) DO NOTHING');
+    expect(proposalInserts[0]!.sql).toContain('RETURNING id');
+    expect(proposalInserts.map(i => i.params[5])).toEqual(['first distinct claim', 'second distinct claim', 'first distinct claim']);
+    expect((result.details as Record<string, unknown>).proposals_inserted).toBe(2);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposal_page_scans'))).toHaveLength(1);
   });
 
   test('cache hit: page already in take_proposals is skipped', async () => {
@@ -283,6 +356,66 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(details.cache_hits).toBe(1);
     expect(details.proposals_inserted).toBe(0);
     expect(captured.filter(c => c.sql.includes('INSERT'))).toHaveLength(0);
+  });
+
+  test('dry-run skips extractor calls and writes while reporting cache misses', async () => {
+    const body = 'Dry-run should inspect the page but not spend tokens or write cache rows.';
+    const pages = [buildPage({ slug: 'wiki/dry-run', body })];
+    const { engine, captured } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      return [{ claim_text: 'should never be produced', kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+    const ctx = buildCtx(engine);
+    ctx.dryRun = true;
+
+    const result = await runPhaseProposeTakes(ctx, { extractor });
+
+    expect(extractorCalls).toBe(0);
+    const details = result.details as Record<string, unknown>;
+    expect(details.dry_run).toBe(true);
+    expect(details.cache_misses).toBe(1);
+    expect(details.llm_calls_skipped).toBe(1);
+    expect(details.proposals_inserted).toBe(0);
+    expect(details.scan_cache_writes).toBe(0);
+    expect(captured.filter(c => c.sql.includes('INSERT'))).toHaveLength(0);
+  });
+
+  test('empty extractor result is cached so unchanged pages do not re-spend LLM calls', async () => {
+    const body = 'This page has prose, but no gradeable claims.';
+    const pages = [buildPage({ slug: 'wiki/no-claims', body })];
+    const { engine, captured } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      return [];
+    };
+
+    const first = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    const second = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(extractorCalls).toBe(1);
+    expect((first.details as Record<string, unknown>).cache_misses).toBe(1);
+    expect((second.details as Record<string, unknown>).cache_hits).toBe(1);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposal_page_scans'))).toHaveLength(1);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
+  });
+
+  test('extractor failures are not cached, so transient LLM errors retry later', async () => {
+    const pages = [buildPage({ slug: 'wiki/transient-failure', body: 'retryable prose' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      throw new Error('temporary upstream timeout');
+    };
+
+    await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(extractorCalls).toBe(2);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposal_page_scans'))).toHaveLength(0);
   });
 
   test('passes existing fence rows to extractor as dedup context (F2 fix)', async () => {

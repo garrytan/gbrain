@@ -3713,6 +3713,83 @@ export const MIGRATIONS: Migration[] = [
         ON pages (last_retrieved_at);
     `,
   },
+  {
+    version: 80,
+    name: 'take_proposal_page_scans_v0_37_1_1',
+    // v0.37.1.1 — cost/idempotency fix for propose_takes.
+    //
+    // take_proposals is the operator-facing queue and cannot represent the
+    // valid extractor result [] without fabricating a pending proposal. The
+    // phase therefore needs a separate per-page successful-scan cache keyed on
+    // the same tuple: (source_id, page_slug, content_hash, prompt_version).
+    // With scan idempotency moved out of the queue, take_proposals can dedup by
+    // claim text instead of collapsing every same-page multi-claim run to one
+    // row. Successful scans with proposals write both tables; successful scans
+    // with zero proposals write only this table. Extractor failures deliberately
+    // do NOT write here so transient API/model errors retry later.
+    //
+    // Fresh installs get the same table from src/schema.sql + pglite-schema.ts.
+    idempotent: true,
+    sql: `
+      DROP INDEX IF EXISTS take_proposals_idempotency_idx;
+      CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_proposal_dedup_idx
+        ON take_proposals (source_id, page_slug, content_hash, prompt_version, claim_text);
+
+      CREATE TABLE IF NOT EXISTS take_proposal_page_scans (
+        source_id                   TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        page_slug                   TEXT         NOT NULL,
+        content_hash                TEXT         NOT NULL,
+        prompt_version              TEXT         NOT NULL,
+        wave_version                TEXT         NOT NULL DEFAULT 'v0.37.1.1',
+        scanned_at                  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        proposal_run_id             TEXT         NOT NULL,
+        proposals_count             INTEGER      NOT NULL DEFAULT 0 CHECK (proposals_count >= 0),
+        model_id                    TEXT         NOT NULL,
+        dedup_against_fence_rows    JSONB,
+        PRIMARY KEY (source_id, page_slug, content_hash, prompt_version)
+      );
+      CREATE INDEX IF NOT EXISTS take_proposal_page_scans_recent_idx
+        ON take_proposal_page_scans (source_id, scanned_at DESC);
+      CREATE INDEX IF NOT EXISTS take_proposal_page_scans_run_id_idx
+        ON take_proposal_page_scans (proposal_run_id);
+
+      DO $$
+      DECLARE
+        has_bypass BOOLEAN;
+      BEGIN
+        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        IF NOT has_bypass THEN
+          RAISE EXCEPTION 'v80 take_proposal_page_scans_v0_37_1_1: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+        END IF;
+        ALTER TABLE take_proposal_page_scans ENABLE ROW LEVEL SECURITY;
+      END $$;
+    `,
+    sqlFor: {
+      pglite: `
+        DROP INDEX IF EXISTS take_proposals_idempotency_idx;
+        CREATE UNIQUE INDEX IF NOT EXISTS take_proposals_proposal_dedup_idx
+          ON take_proposals (source_id, page_slug, content_hash, prompt_version, claim_text);
+
+        CREATE TABLE IF NOT EXISTS take_proposal_page_scans (
+          source_id                   TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+          page_slug                   TEXT         NOT NULL,
+          content_hash                TEXT         NOT NULL,
+          prompt_version              TEXT         NOT NULL,
+          wave_version                TEXT         NOT NULL DEFAULT 'v0.37.1.1',
+          scanned_at                  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+          proposal_run_id             TEXT         NOT NULL,
+          proposals_count             INTEGER      NOT NULL DEFAULT 0 CHECK (proposals_count >= 0),
+          model_id                    TEXT         NOT NULL,
+          dedup_against_fence_rows    JSONB,
+          PRIMARY KEY (source_id, page_slug, content_hash, prompt_version)
+        );
+        CREATE INDEX IF NOT EXISTS take_proposal_page_scans_recent_idx
+          ON take_proposal_page_scans (source_id, scanned_at DESC);
+        CREATE INDEX IF NOT EXISTS take_proposal_page_scans_run_id_idx
+          ON take_proposal_page_scans (proposal_run_id);
+      `,
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

@@ -5,10 +5,11 @@
  * a tuned LLM extractor, writes the extracted gradeable claims to the
  * `take_proposals` queue. User accepts/rejects via `gbrain takes propose`.
  *
- * Idempotency contract (D17 schema spec):
- *   The unique index on (source_id, page_slug, content_hash, prompt_version)
- *   means an unchanged page never re-spends LLM tokens. Bumping
- *   PROPOSE_TAKES_PROMPT_VERSION cleanly invalidates the cache so a tuned
+ * Idempotency contract (D17 schema spec + v0.37.1.1 cost fix):
+ *   `take_proposal_page_scans` records every successful extractor call keyed by
+ *   (source_id, page_slug, content_hash, prompt_version), even when the LLM
+ *   returns []. `take_proposals` remains the operator-facing queue. Bumping
+ *   PROPOSE_TAKES_PROMPT_VERSION cleanly invalidates the scan cache so a tuned
  *   prompt re-runs proposals on every page.
  *
  * F2 fence dedup:
@@ -49,7 +50,10 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
 /**
  * Bump when the extractor prompt or the JSON output shape changes. Old
  * verdicts in `take_proposals` (composite key includes prompt_version) stay
- * valid as audit history; new runs re-spend LLM tokens on every page.
+ * valid as audit history; new runs re-spend LLM tokens on every page. The
+ * companion `take_proposal_page_scans` cache uses the same key and also
+ * records successful zero-proposal scans so unchanged pages do not churn the
+ * extractor forever.
  */
 export const PROPOSE_TAKES_PROMPT_VERSION = 'v0.36.1.0-tuned-cat15';
 
@@ -150,6 +154,10 @@ export interface ProposeTakesResult {
   cache_hits: number;
   cache_misses: number;
   proposals_inserted: number;
+  scan_cache_writes: number;
+  empty_results_cached: number;
+  llm_calls_skipped: number;
+  dry_run: boolean;
   budget_exhausted: boolean;
   warnings: string[];
 }
@@ -210,8 +218,9 @@ export function extractExistingTakesForDedup(pageBody: string): Array<{
 
 /**
  * Production extractor — calls gateway.chat with the EXTRACT_TAKES_PROMPT
- * and parses the JSON array output. Returns [] on parse failure (logged as
- * warning, not thrown — one bad page must not abort the phase).
+ * and parses the JSON array output. Throws on malformed model output so the
+ * caller treats it as a retryable extractor failure instead of caching it as a
+ * successful zero-proposal scan.
  *
  * Stub-prompt note: the v0.36.1.0 ship-state prompt is a placeholder. Real
  * extractor lands when T19 corpus build produces the tuned prompt. Until
@@ -231,8 +240,10 @@ export async function defaultExtractor(
     maxTokens: 2048,
   });
 
-  // ChatResult.text is already the concatenated text content.
-  return parseExtractorOutput(result.text);
+  // ChatResult.text is already the concatenated text content. Malformed
+  // extractor output is a retryable extractor failure, not a successful []
+  // result, so the caller must not cache it as processed.
+  return parseExtractorOutputStrict(result.text);
 }
 
 /**
@@ -242,7 +253,16 @@ export async function defaultExtractor(
  * than throwing.
  */
 export function parseExtractorOutput(raw: string): ProposedTake[] {
-  if (!raw || raw.trim().length === 0) return [];
+  return parseExtractorOutputDetailed(raw).proposals;
+}
+
+/**
+ * Detailed parser for production extractor calls. `ok=false` means the model
+ * failed to return parseable JSON, which is a retryable extractor failure and
+ * must not be cached as a successful zero-proposal scan.
+ */
+export function parseExtractorOutputDetailed(raw: string): { ok: boolean; proposals: ProposedTake[] } {
+  if (!raw || raw.trim().length === 0) return { ok: false, proposals: [] };
   let text = raw.trim();
   // Strip markdown code fence wrapper.
   const fenced = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
@@ -250,16 +270,16 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
   // First-array-or-object substring extraction (defends against leading prose).
   const firstArr = text.indexOf('[');
   const firstObj = text.indexOf('{');
-  if (firstArr === -1 && firstObj === -1) return [];
+  if (firstArr === -1 && firstObj === -1) return { ok: false, proposals: [] };
   const start = firstArr !== -1 && (firstObj === -1 || firstArr < firstObj) ? firstArr : firstObj;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text.slice(start));
   } catch {
-    return [];
+    return { ok: false, proposals: [] };
   }
   const arr = Array.isArray(parsed) ? parsed : [parsed];
-  const out: ProposedTake[] = [];
+  const proposals: ProposedTake[] = [];
   for (const raw of arr) {
     if (typeof raw !== 'object' || raw === null) continue;
     const r = raw as Record<string, unknown>;
@@ -272,9 +292,24 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
     const weightRaw = typeof r.weight === 'number' ? r.weight : 0.5;
     const weight = Math.max(0, Math.min(1, weightRaw));
     const domain = typeof r.domain === 'string' && r.domain.length > 0 ? r.domain : undefined;
-    out.push({ claim_text, kind, holder, weight, domain });
+    proposals.push({ claim_text, kind, holder, weight, domain });
   }
-  return out;
+  if (arr.length > 0 && proposals.length === 0) {
+    return { ok: false, proposals: [] };
+  }
+  return { ok: true, proposals };
+}
+
+/**
+ * Strict parser for production extractor calls. Malformed output is a
+ * retryable extractor failure, not a successful empty result.
+ */
+export function parseExtractorOutputStrict(raw: string): ProposedTake[] {
+  const parsed = parseExtractorOutputDetailed(raw);
+  if (!parsed.ok) {
+    throw new Error('extractor returned malformed JSON');
+  }
+  return parsed.proposals;
 }
 
 /**
@@ -305,6 +340,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
+    const dryRun = opts.dryRun ?? _ctx.dryRun ?? false;
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
     const result: ProposeTakesResult = {
@@ -312,6 +348,10 @@ class ProposeTakesPhase extends BaseCyclePhase {
       cache_hits: 0,
       cache_misses: 0,
       proposals_inserted: 0,
+      scan_cache_writes: 0,
+      empty_results_cached: 0,
+      llm_calls_skipped: 0,
+      dry_run: dryRun,
       budget_exhausted: false,
       warnings: [],
     };
@@ -340,20 +380,37 @@ class ProposeTakesPhase extends BaseCyclePhase {
       const ch = contentHash(body);
       const existingTakes = extractExistingTakesForDedup(body);
 
-      // Idempotency check. If a row exists for (source_id, page_slug, content_hash,
-      // prompt_version), this page was already processed — skip and count as cache hit.
+      // Idempotency check. `take_proposal_page_scans` is the authoritative
+      // per-page cache because it records successful extractor calls even when
+      // the extractor returned []. `take_proposals` is checked as a legacy cache
+      // so users upgrading from v0.36 do not re-spend on pages that already have
+      // pending/accepted/rejected proposals.
       const sourceId = page.source_id ?? scope.sourceId ?? 'default';
-      const cached = await engine.executeRaw<{ id: number }>(
+      const cachedScan = await engine.executeRaw<{ found: number }>(
+        `SELECT 1 AS found FROM take_proposal_page_scans
+         WHERE source_id = $1 AND page_slug = $2 AND content_hash = $3 AND prompt_version = $4
+         LIMIT 1`,
+        [sourceId, page.slug, ch, promptVersion],
+      );
+      if (cachedScan.length > 0) {
+        result.cache_hits += 1;
+        continue;
+      }
+      const cachedProposal = await engine.executeRaw<{ id: number }>(
         `SELECT id FROM take_proposals
          WHERE source_id = $1 AND page_slug = $2 AND content_hash = $3 AND prompt_version = $4
          LIMIT 1`,
         [sourceId, page.slug, ch, promptVersion],
       );
-      if (cached.length > 0) {
+      if (cachedProposal.length > 0) {
         result.cache_hits += 1;
         continue;
       }
       result.cache_misses += 1;
+      if (dryRun) {
+        result.llm_calls_skipped += 1;
+        continue;
+      }
 
       // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
       const budget = this.checkBudget({
@@ -384,16 +441,17 @@ class ProposeTakesPhase extends BaseCyclePhase {
         continue;
       }
 
-      // Write proposals to take_proposals. Each row is a separate INSERT
-      // because the composite idempotency key is on the per-page tuple — a
-      // bulk UPSERT would collapse a same-page-multi-claim run into one row.
+      // Write proposals to take_proposals. The scan cache owns per-page
+      // idempotency; the proposal queue dedups only identical claims from the
+      // same page/prompt so a single page can surface multiple distinct takes.
       for (const p of proposals) {
-        await engine.executeRaw(
+        const insertedRows = await engine.executeRaw<{ id: number }>(
           `INSERT INTO take_proposals
              (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
               claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version, claim_text) DO NOTHING
+           RETURNING id`,
           [
             sourceId,
             page.slug,
@@ -409,8 +467,36 @@ class ProposeTakesPhase extends BaseCyclePhase {
             opts.model ?? 'claude-sonnet-4-6',
           ],
         );
-        result.proposals_inserted += 1;
+        result.proposals_inserted += insertedRows.length;
       }
+
+      // Cache every successful extractor call, including the common [] result.
+      // Failures above intentionally do not write here so transient model/API
+      // errors retry on a later cycle.
+      await engine.executeRaw(
+        `INSERT INTO take_proposal_page_scans
+           (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+            proposals_count, model_id, dedup_against_fence_rows)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO UPDATE SET
+           scanned_at = now(),
+           proposal_run_id = EXCLUDED.proposal_run_id,
+           proposals_count = EXCLUDED.proposals_count,
+           model_id = EXCLUDED.model_id,
+           dedup_against_fence_rows = EXCLUDED.dedup_against_fence_rows`,
+        [
+          sourceId,
+          page.slug,
+          ch,
+          promptVersion,
+          proposalRunId,
+          proposals.length,
+          opts.model ?? 'claude-sonnet-4-6',
+          JSON.stringify(existingTakes),
+        ],
+      );
+      result.scan_cache_writes += 1;
+      if (proposals.length === 0) result.empty_results_cached += 1;
     }
 
     if (opts.reporter) opts.reporter.finish();
