@@ -26,6 +26,7 @@ export interface CodeLaneNode {
   repo_path: string;
   content_hash: string;
   extractor_version: string;
+  system: string;
   symbol_id: string;
   path: string;
   symbol_name: string;
@@ -285,13 +286,15 @@ function buildNode(
   const sourceRef = stringValue(pointer.source_ref) ?? sourceRefFor(manifest);
   const contentHash = stringValue(pointer.content_hash) ?? 'missing';
   const symbolIdentity = stringValue(pointer.qualified_name) ?? symbolName;
+  const system = codemapSystem(codemap, manifest);
 
   return withoutUndefined({
     source_ref: sourceRef,
     repo_path: repoPath,
     content_hash: contentHash,
     extractor_version: CODE_LANE_EXTRACTOR_VERSION,
-    symbol_id: codeLaneSymbolId(codemapSystem(codemap, manifest), repoPath, path, symbolIdentity),
+    system,
+    symbol_id: codeLaneSymbolId(system, repoPath, path, symbolIdentity),
     path,
     symbol_name: symbolName,
     qualified_name: stringValue(pointer.qualified_name),
@@ -389,23 +392,22 @@ export function codeLaneSymbolId(
 ): string {
   return [
     'code:symbol',
-    normalizeSymbolComponent(system),
-    normalizeSymbolComponent(repoPath),
-    normalizeSymbolComponent(path),
-  ].join(':') + `#${normalizeSymbolComponent(symbolIdentity)}`;
+    encodeSymbolIdComponent(system),
+    encodeSymbolIdComponent(repoPath),
+    encodeSymbolIdComponent(path),
+  ].join(':') + `#${encodeSymbolIdComponent(symbolIdentity)}`;
 }
 
 function unresolvedCodeLaneSymbolId(system: string, symbolName: string): string {
-  return `code:symbol:${normalizeSymbolComponent(system)}:unresolved#${normalizeSymbolComponent(symbolName)}`;
+  return `code:symbol:${encodeSymbolIdComponent(system)}:unresolved#${encodeSymbolIdComponent(symbolName)}`;
 }
 
 function buildSymbolLookup(nodes: CodeLaneNode[]): Map<string, string[]> {
   const lookup = new Map<string, string[]>();
   for (const node of nodes) {
-    const system = node.symbol_id.split(':')[2] ?? '';
-    addSymbolLookup(lookup, symbolLookupKey(system, node.symbol_name), node.symbol_id);
+    addSymbolLookup(lookup, symbolLookupKey(node.system, node.symbol_name), node.symbol_id);
     if (node.qualified_name) {
-      addSymbolLookup(lookup, symbolLookupKey(system, node.qualified_name), node.symbol_id);
+      addSymbolLookup(lookup, symbolLookupKey(node.system, node.qualified_name), node.symbol_id);
     }
   }
   return lookup;
@@ -421,6 +423,10 @@ function symbolLookupKey(system: string, symbolName: string): string {
 
 function normalizeSymbolComponent(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
+}
+
+function encodeSymbolIdComponent(value: string): string {
+  return encodeURIComponent(normalizeSymbolComponent(value)).replace(/%2F/gi, '/');
 }
 
 function normalizeEdgeKind(value: unknown): CodeLaneEdgeKind {

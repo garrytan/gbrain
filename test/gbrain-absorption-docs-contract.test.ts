@@ -267,6 +267,9 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(verify).toContain('test/scenarios/s29-gbrain-corpus-lanes.test.ts');
     expect(verify).toContain('test/scenarios/s30-gbrain-code-lane.test.ts');
     expect(verify).toContain('test/scenarios/s31-gbrain-personal-maintenance-cycle.test.ts');
+    expect(verify).toContain("--grep='Add GA-P7 upstream discipline checkpoint'");
+    expect(verify).toContain('git diff --name-only "${GA_P7_COMMIT}^..${GA_P7_COMMIT}"');
+    expect(verify).not.toMatch(/[0-9a-f]{40}\.\.[0-9a-f]{40}/);
     expect(scenarios).toContain('| S32 | `s32-gbrain-upstream-discipline.test.ts` | GA-P7, E1, L4, L6, G1 | ✅ green |');
   });
 });

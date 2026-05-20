@@ -201,7 +201,9 @@ bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s32-gbrain-
 bun run test:scenarios
 bunx tsc --noEmit --pretty false
 git diff --check
-git diff --name-only ffa2676858f9898782fa93d9090984a136049efd..51dd5dc1b6ef5d8cac1360607db6a6ce81f5c3b2
+GA_P7_COMMIT="$(git log --format=%H --fixed-strings --grep='Add GA-P7 upstream discipline checkpoint' -n 1)"
+test -n "$GA_P7_COMMIT"
+git diff --name-only "${GA_P7_COMMIT}^..${GA_P7_COMMIT}"
 ```
 
 Expected:

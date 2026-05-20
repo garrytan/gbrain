@@ -273,7 +273,57 @@ test('code-lane symbol ids include file path so same-named symbols do not collid
       'code:symbol:systems/collision:/workspaces/collision:src/b.ts#init',
     ]);
     expect(ambiguousCall?.resolution).toBe('ambiguous');
-    expect(ambiguousCall?.to_symbol_id).toBe('code:symbol:systems/collision:unresolved#ambiguous:init');
+    expect(ambiguousCall?.to_symbol_id).toBe('code:symbol:systems/collision:unresolved#ambiguous%3Ainit');
+  } finally {
+    await engine.disconnect();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('code-lane symbol ids encode delimiters without breaking symbol resolution', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-code-lane-symbol-delimiters-'));
+  const databasePath = join(dir, 'brain.db');
+  const engine = new SQLiteEngine();
+
+  try {
+    await engine.connect({ engine: 'sqlite', database_path: databasePath });
+    await engine.initSchema();
+
+    await importFromContent(engine, 'systems/delimiter-safe', [
+      '---',
+      'type: system',
+      'title: Delimiter Safe Code Lane',
+      'repo_path: "/workspaces/example:repo"',
+      'codemap:',
+      '  - system: "systems/with:colon"',
+      '    repo_path: "/workspaces/example:repo"',
+      '    pointers:',
+      '      - path: "src/parser:core.ts"',
+      '        symbol: "parse:core#fast"',
+      '        content_hash: sha256:parser',
+      '      - path: "src/caller.ts"',
+      '        symbol: run',
+      '        content_hash: sha256:caller',
+      '        edges:',
+      '          - kind: calls',
+      '            to_symbol: "parse:core#fast"',
+      '---',
+      '# Delimiter Safe Code Lane',
+      'Code-lane identifiers can include delimiters in source metadata.',
+    ].join('\n'), { path: 'systems/delimiter-safe.md' });
+
+    const snapshot = await buildCodeLaneGraphSnapshot(engine);
+    const parser = snapshot.nodes.find((node) => node.symbol_name === 'parse:core#fast');
+    const call = snapshot.edges.find((edge) => edge.edge_kind === 'calls');
+
+    expect(parser?.symbol_id).toContain('systems/with%3Acolon');
+    expect(parser?.symbol_id).toContain('/workspaces/example%3Arepo');
+    expect(parser?.symbol_id).toContain('src/parser%3Acore.ts');
+    expect(parser?.symbol_id).toContain('#parse%3Acore%23fast');
+    expect(call).toEqual(expect.objectContaining({
+      resolution: 'resolved',
+      to_symbol_id: parser?.symbol_id,
+    }));
   } finally {
     await engine.disconnect();
     rmSync(dir, { recursive: true, force: true });

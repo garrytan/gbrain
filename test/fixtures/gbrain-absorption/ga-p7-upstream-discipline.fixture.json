@@ -7,11 +7,12 @@
     "bun run test:scenarios",
     "bunx tsc --noEmit --pretty false",
     "git diff --check",
-    "git diff --name-only ffa2676858f9898782fa93d9090984a136049efd..51dd5dc1b6ef5d8cac1360607db6a6ce81f5c3b2"
+    "GA_P7_COMMIT=\"$(git log --format=%H --fixed-strings --grep='Add GA-P7 upstream discipline checkpoint' -n 1)\"",
+    "git diff --name-only \"${GA_P7_COMMIT}^..${GA_P7_COMMIT}\""
   ],
   "runtime_change_guard": {
-    "base_commit": "ffa2676858f9898782fa93d9090984a136049efd",
-    "head_commit": "51dd5dc1b6ef5d8cac1360607db6a6ce81f5c3b2",
+    "commit_subject": "Add GA-P7 upstream discipline checkpoint",
+    "diff_range": "commit_parent_to_commit",
     "allowed_changed_paths": [
       "docs/MBRAIN_VERIFY.md",
       "docs/UPSTREAM_SYNC.md",

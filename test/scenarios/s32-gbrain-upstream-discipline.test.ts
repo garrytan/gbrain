@@ -20,8 +20,8 @@ type ConsolidationCase = {
 };
 
 type RuntimeChangeGuard = {
-  base_commit: string;
-  head_commit: string;
+  commit_subject: string;
+  diff_range: string;
   allowed_changed_paths: string[];
   disallowed_path_prefixes: string[];
 };
@@ -59,10 +59,27 @@ function expectCaseTermsInDeclaredDoc(entry: ConsolidationCase): void {
 
 function readGuardedChangedPaths(guard: RuntimeChangeGuard): string[] {
   try {
+    const commit = execFileSync('git', [
+      'log',
+      '--format=%H',
+      '--fixed-strings',
+      `--grep=${guard.commit_subject}`,
+      '-n',
+      '1',
+    ], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+
+    if (!commit) {
+      throw new Error(`No commit found with subject "${guard.commit_subject}"`);
+    }
+
     return execFileSync('git', [
       'diff',
       '--name-only',
-      `${guard.base_commit}..${guard.head_commit}`,
+      `${commit}^..${commit}`,
     ], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
@@ -75,7 +92,7 @@ function readGuardedChangedPaths(guard: RuntimeChangeGuard): string[] {
   } catch (error) {
     throw new Error([
       'Unable to read GA-P7 guarded changed paths.',
-      `Run with git history containing ${guard.base_commit} and ${guard.head_commit}.`,
+      `Run with git history containing a commit titled "${guard.commit_subject}".`,
       `Original error: ${(error as Error).message}`,
     ].join(' '));
   }
@@ -90,8 +107,10 @@ describe('S32 - gbrain upstream discipline', () => {
       'bun run test:scenarios',
       'bunx tsc --noEmit --pretty false',
       'git diff --check',
-      'git diff --name-only ffa2676858f9898782fa93d9090984a136049efd..51dd5dc1b6ef5d8cac1360607db6a6ce81f5c3b2',
+      'GA_P7_COMMIT="$(git log --format=%H --fixed-strings --grep=\'Add GA-P7 upstream discipline checkpoint\' -n 1)"',
+      'git diff --name-only "${GA_P7_COMMIT}^..${GA_P7_COMMIT}"',
     ]));
+    expect(fixture.verification_commands.join('\n')).not.toMatch(/[0-9a-f]{40}\.\.[0-9a-f]{40}/);
 
     expect(fixture.consolidation_cases.map((entry) => entry.case_id).sort()).toEqual([
       'deferred_surfaces_remain_explicit',
@@ -183,8 +202,8 @@ describe('S32 - gbrain upstream discipline', () => {
   test('guards the GA-P7 changed path allowlist against production runtime files', () => {
     const guard = fixture.runtime_change_guard;
     const allowed = [...guard.allowed_changed_paths].sort();
-    expect(guard.base_commit).toBe('ffa2676858f9898782fa93d9090984a136049efd');
-    expect(guard.head_commit).toBe('51dd5dc1b6ef5d8cac1360607db6a6ce81f5c3b2');
+    expect(guard.commit_subject).toBe('Add GA-P7 upstream discipline checkpoint');
+    expect(guard.diff_range).toBe('commit_parent_to_commit');
     expect(allowed).toEqual([
       'docs/MBRAIN_VERIFY.md',
       'docs/UPSTREAM_SYNC.md',
@@ -202,6 +221,8 @@ describe('S32 - gbrain upstream discipline', () => {
     expect(readGuardedChangedPaths(guard)).toEqual(allowed);
 
     const verify = readRepoFile('docs/MBRAIN_VERIFY.md');
-    expect(verify).toContain(`git diff --name-only ${guard.base_commit}..${guard.head_commit}`);
+    expect(verify).toContain(`--grep='${guard.commit_subject}'`);
+    expect(verify).toContain('git diff --name-only "${GA_P7_COMMIT}^..${GA_P7_COMMIT}"');
+    expect(verify).not.toMatch(/[0-9a-f]{40}\.\.[0-9a-f]{40}/);
   });
 });
