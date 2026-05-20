@@ -109,6 +109,37 @@ describe('extractEntityRefs', () => {
     expect(refs.length).toBe(1);
     expect(refs[0].dir).toBe('meetings');
   });
+
+  // Generic wikilinks: `[[bare-name]]` outside DIR_PATTERN. Tagged with
+  // needsResolution so callers route them through a resolver. See #769
+  // follow-up — wiki/topic/learning content uses these heavily.
+  test('extracts generic wikilinks with needsResolution flag', () => {
+    const refs = extractEntityRefs('See [[Fast-Weigh]] and [[2026-05-07-cost-plan-rosa-pilot]] for context.');
+    expect(refs.length).toBe(2);
+    expect(refs.every(r => r.needsResolution === true)).toBe(true);
+    expect(refs.map(r => r.slug).sort()).toEqual(['2026-05-07-cost-plan-rosa-pilot', 'Fast-Weigh']);
+  });
+
+  test('does not double-emit: DIR_PATTERN wikilinks stay untagged', () => {
+    const refs = extractEntityRefs('See [[people/alice]] and [[Fast-Weigh]].');
+    const peopleRef = refs.find(r => r.slug === 'people/alice');
+    const wikiRef = refs.find(r => r.slug === 'Fast-Weigh');
+    expect(peopleRef).toBeDefined();
+    expect(peopleRef!.needsResolution).toBeUndefined();
+    expect(wikiRef).toBeDefined();
+    expect(wikiRef!.needsResolution).toBe(true);
+  });
+
+  test('skips qualified-syntax tokens (those are 2a job)', () => {
+    // [[wiki:topics/ai]] should be handled by qualified pass, not generic
+    const refs = extractEntityRefs('See [[wiki:topics/ai]] and [[bare-name]].');
+    const bare = refs.find(r => r.slug === 'bare-name');
+    expect(bare).toBeDefined();
+    expect(bare!.needsResolution).toBe(true);
+    // The qualified one shouldn't get a needsResolution duplicate.
+    const qualifiedDups = refs.filter(r => r.slug.includes('topics/ai') && r.needsResolution);
+    expect(qualifiedDups.length).toBe(0);
+  });
 });
 
 // ─── extractPageLinks ──────────────────────────────────────────
@@ -171,6 +202,50 @@ describe('extractPageLinks', () => {
       'docs/x', 'Plain text with no links.', {}, 'concept', nullResolver,
     );
     expect(candidates).toEqual([]);
+  });
+
+  // Generic wikilink resolution (#769 follow-up). Pages that link via
+  // `[[bare-name]]` outside DIR_PATTERN now route through the resolver.
+  // The resolver maps short names to full slugs (`Fast-Weigh` →
+  // `topics/aggregate-scale-software/companies/fast-weigh`); unresolvable
+  // links are silently dropped, not persisted as dangling rows.
+  test('resolves generic wikilinks via resolver', async () => {
+    const fakeResolver: SlugResolver = {
+      resolve: async (name) => {
+        if (name === 'Fast-Weigh') return 'topics/aggregate-scale-software/companies/fast-weigh';
+        if (name === '2026-05-07-cost-plan') return 'topics/dragon-pilot/raw/notes/2026-05-07-cost-plan';
+        return null;
+      },
+    };
+    const { candidates } = await extractPageLinks(
+      'topics/wiki/index',
+      'Comparing [[Fast-Weigh]] vs [[Apex-AI]] (the latter has no page yet). Also see [[2026-05-07-cost-plan]].',
+      {}, 'concept', fakeResolver,
+    );
+    const slugs = candidates.map(c => c.targetSlug).sort();
+    expect(slugs).toEqual([
+      'topics/aggregate-scale-software/companies/fast-weigh',
+      'topics/dragon-pilot/raw/notes/2026-05-07-cost-plan',
+    ]);
+    // Apex-AI silently dropped (resolver returned null), no dangling row.
+    expect(candidates.find(c => c.targetSlug === 'Apex-AI')).toBeUndefined();
+    // Resolved wikilinks are tagged distinctly from raw markdown refs.
+    expect(candidates.every(c => c.linkSource === 'wikilink-resolved')).toBe(true);
+  });
+
+  test('skipFrontmatter opt suppresses frontmatter pass', async () => {
+    const fakeResolver: SlugResolver = {
+      resolve: async (name) => name === 'meetings/2026-01-15' ? 'meetings/2026-01-15' : null,
+    };
+    const fm = { source: 'meetings/2026-01-15' };
+    const withFm = await extractPageLinks(
+      'docs/x', 'plain', fm, 'person', fakeResolver, { skipFrontmatter: false },
+    );
+    const withoutFm = await extractPageLinks(
+      'docs/x', 'plain', fm, 'person', fakeResolver, { skipFrontmatter: true },
+    );
+    expect(withFm.candidates.find(c => c.linkType === 'source')).toBeDefined();
+    expect(withoutFm.candidates.find(c => c.linkType === 'source')).toBeUndefined();
   });
 
   test('meeting page references default to attended type', async () => {
