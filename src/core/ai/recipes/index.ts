@@ -21,6 +21,7 @@ import { dashscope } from './dashscope.ts';
 import { zhipu } from './zhipu.ts';
 import { azureOpenAI } from './azure-openai.ts';
 import { zeroentropyai } from './zeroentropyai.ts';
+import { composioOpenAI } from './composio-openai.ts';
 
 const ALL: Recipe[] = [
   openai,
@@ -38,6 +39,7 @@ const ALL: Recipe[] = [
   zhipu,
   azureOpenAI,
   zeroentropyai,
+  composioOpenAI,
 ];
 
 /** Map from `provider:id` key to recipe. */

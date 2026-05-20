@@ -135,6 +135,22 @@ export function dimsProviderOptions(
       }
       return undefined;
     }
+    case 'composio-openai': {
+      // Composio proxies OpenAI's embeddings endpoint, so it honors the same
+      // dimensions contract as native OpenAI text-embedding-3 models.
+      if (modelId.startsWith('text-embedding-3')) {
+        if (isOpenAITextEmbedding3Model(modelId) && !isValidOpenAITextEmbedding3Dim(modelId, dims)) {
+          const max = maxOpenAITextEmbedding3Dim(modelId)!;
+          throw new AIConfigError(
+            `OpenAI model "${modelId}" supports embedding_dimensions in 1..${max}, got ${dims}.`,
+            `Set \`embedding_dimensions\` to a value between 1 and ${max} ` +
+            `(\`gbrain config set embedding_dimensions ${Math.min(1024, max)}\` is a common default).`,
+          );
+        }
+        return { openai: { dimensions: dims } };
+      }
+      return undefined;
+    }
     case 'native-google': {
       if (modelId.startsWith('gemini-embedding') || modelId === 'text-embedding-004') {
         return { google: { outputDimensionality: dims } };

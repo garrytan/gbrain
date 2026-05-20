@@ -28,6 +28,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
+import { readFileSync } from 'fs';
 
 import type {
   AIGatewayConfig,
@@ -185,6 +186,7 @@ export class VoyageResponseTooLargeError extends Error {
  * pinning the Voyage name. Unification is a follow-up cleanup.
  */
 const MAX_ZEROENTROPY_RESPONSE_BYTES = 256 * 1024 * 1024;
+const COMPOSIO_EMBEDDING_BATCH_SIZE = 20;
 
 export class ZeroEntropyResponseTooLargeError extends Error {
   constructor(message: string) {
@@ -953,6 +955,12 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       throw new AIConfigError(
         `Anthropic has no embedding model. Use openai or google for embeddings.`,
       );
+    case 'composio-openai':
+      if (!cfg.env.COMPOSIO_CLI) throw new AIConfigError(
+        `Composio OpenAI embedding requires COMPOSIO_CLI.`,
+        recipe.setup_hint,
+      );
+      return { composioCli: cfg.env.COMPOSIO_CLI, modelId, env: cfg.env };
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'embedding');
@@ -983,6 +991,121 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
     default:
       throw new AIConfigError(`Unknown implementation: ${(recipe as any).implementation}`);
   }
+}
+
+function parseComposioEnvelope(stdout: string): any {
+  const firstJson = stdout.indexOf('{');
+  if (firstJson < 0) {
+    throw new AIConfigError(
+      `Composio CLI returned no JSON envelope.`,
+      `Check COMPOSIO_CLI and run \`$COMPOSIO_CLI whoami\`.`,
+    );
+  }
+  const envelope = JSON.parse(stdout.slice(firstJson));
+  if (!envelope.successful) {
+    throw new AIConfigError(
+      `Composio OpenAI embeddings failed: ${envelope.error || 'unknown error'}`,
+      `Check the Composio OpenAI connection and retry.`,
+    );
+  }
+  if (envelope.storedInFile && envelope.outputFilePath) {
+    return JSON.parse(readFileSync(envelope.outputFilePath, 'utf-8'));
+  }
+  return envelope;
+}
+
+function extractComposioEmbeddingRows(payload: any): Array<{ index?: number; embedding: number[] }> {
+  const rows =
+    payload?.data?.data ??
+    payload?.data?.response?.data?.data ??
+    payload?.response?.data?.data ??
+    payload?.response?.data ??
+    payload?.data ??
+    [];
+  if (!Array.isArray(rows)) {
+    throw new AIConfigError(
+      `Composio OpenAI embeddings response did not include a data array.`,
+      `Inspect the Composio OPENAI_CREATE_EMBEDDINGS tool output schema.`,
+    );
+  }
+  return rows.slice().sort((a, b) => Number(a?.index ?? 0) - Number(b?.index ?? 0));
+}
+
+async function embedComposioOpenAISubBatch(
+  texts: string[],
+  modelId: string,
+  expectedDims: number,
+  composioCli: string,
+  env: Record<string, string | undefined>,
+): Promise<Float32Array[]> {
+  const proc = Bun.spawn([
+    composioCli,
+    'execute',
+    'OPENAI_CREATE_EMBEDDINGS',
+    '-d',
+    JSON.stringify({
+      model: modelId,
+      input: texts,
+      dimensions: expectedDims,
+      encoding_format: 'float',
+    }),
+  ], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (exitCode !== 0) {
+    throw new AITransientError(
+      `Composio CLI exited ${exitCode}: ${stderr.trim() || stdout.trim()}`,
+      `Check COMPOSIO_CLI and the Composio OpenAI connection.`,
+    );
+  }
+  const payload = parseComposioEnvelope(stdout);
+  const rows = extractComposioEmbeddingRows(payload);
+  if (rows.length !== texts.length) {
+    throw new AIConfigError(
+      `Composio OpenAI returned ${rows.length} embedding(s) for ${texts.length} input(s).`,
+      `Retry the import after checking provider health; partial embedding responses are not safe to index.`,
+    );
+  }
+  return rows.map(row => {
+    if (!Array.isArray(row.embedding)) {
+      throw new AIConfigError(
+        `Composio OpenAI embedding row did not include a numeric embedding array.`,
+        `Inspect the Composio OPENAI_CREATE_EMBEDDINGS tool output schema.`,
+      );
+    }
+    if (row.embedding.length !== expectedDims) {
+      throw new AIConfigError(
+        `Embedding dim mismatch: model ${modelId} returned ${row.embedding.length} but schema expects ${expectedDims}.`,
+        `Run \`gbrain migrate --embedding-model composio-openai:${modelId} --embedding-dimensions ${row.embedding.length}\` or change models.`,
+      );
+    }
+    return new Float32Array(row.embedding);
+  });
+}
+
+async function embedComposioOpenAI(
+  texts: string[],
+  model: { composioCli: string; modelId: string; env: Record<string, string | undefined> },
+  expectedDims: number,
+): Promise<Float32Array[]> {
+  const out: Float32Array[] = [];
+  for (let i = 0; i < texts.length; i += COMPOSIO_EMBEDDING_BATCH_SIZE) {
+    out.push(...await embedComposioOpenAISubBatch(
+      texts.slice(i, i + COMPOSIO_EMBEDDING_BATCH_SIZE),
+      model.modelId,
+      expectedDims,
+      model.composioCli,
+      model.env,
+    ));
+  }
+  return out;
 }
 
 /** Minimum sub-batch size before we give up splitting and just throw. */
@@ -1239,6 +1362,11 @@ async function embedSubBatch(
   opts?: EmbedOpts,
 ): Promise<Float32Array[]> {
   try {
+    if (recipe.implementation === 'composio-openai') {
+      const embeddings = await embedComposioOpenAI(texts, model, expectedDims);
+      recordSubBatchSuccess(recipe);
+      return embeddings;
+    }
     const result = await _embedTransport({
       model,
       values: texts,
