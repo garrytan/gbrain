@@ -14,14 +14,13 @@
 > ZeroEntropy switch lock applied via `gbrain config set ze_switch_declined_at` +
 > `ze_switch_prompt_shown=true` (90-day re-ask gate). 3140 pages preserved.
 >
-> **Active fork dirs**: **10** unchanged.
-> **Branch cleanup deferred to Lucien**: `upstream-fix/bootstrap-mcp-log-cols`
-> (PR #627 closed superseded) + `upstream-fix/bootstrap-oauth-clients-cols`
-> (PR #1017 closed superseded) both occupy historical worktrees at
-> `~/Projects/jarvis-kos-v2-pr` + `/private/tmp/gbrain-upstream-prs`;
-> `git branch -D` blocked by worktree ref. Delete safely via
-> `git worktree remove <path>; git branch -D <name>` when Lucien confirms
-> nothing to keep in those worktrees.
+> **Active fork dirs**: **11** (8 skills + 2 helpers + _archived) —
+> image-ingest scaffold added 2026-05-19 (decision F-1, awaits
+> VOYAGE_API_KEY + IMAGE_SOURCE_DIR fill before bootstrap).
+> **Branches retired 2026-05-19**: 2 worktrees + 4 branch refs
+> (`upstream-fix/bootstrap-mcp-log-cols` + `upstream-fix/bootstrap-oauth-clients-cols`,
+> both local + origin) deleted via `git worktree remove` + `git branch -D`
+> + `git push origin --delete` after Lucien confirmed nothing to keep.
 > **Retained**: `upstream-fix/dream-archive-dir` (PR #1133 still open),
 > `upstream-fix/google-recipe-max-batch-tokens` (PR #1016 verdict revised — NOT
 > superseded by v0.36.1.1; upstream chose warning-filter path, fork keeps
@@ -194,16 +193,40 @@ bin/gbrain doctor --json | jq '.checks[] | select(.name=="embedding_column_regis
 
 **Scope**: 15 min config + verify。
 
-### [ ] (v0.36.6.0) Image ingestion roadmap decision
+### [ ] (v0.36.6.0) Image ingestion roadmap decision — SCAFFOLDED 2026-05-19, awaits Lucien bootstrap
 
-Schema v75 加 `content_chunks.embedding_multimodal vector(1024)` +
-`gbrain search --image` + `search_by_image` MCP op + `gbrain reindex
---multimodal`。Brain 当前全 markdown，column 留空无害。
+**Decision 2026-05-19**: option (a) Full enable + cron — Lucien 选这条。
+Scaffold 落地，bootstrap 阻塞在 prereq fill 上。
 
-**What**: Lucien 决策 — 是否启用 `~/Pictures/` 或 Notion 附件 image
-ingestion。若 yes，roadmap 已就绪。若 no，标 N/A 关闭。
+**Scaffold artifacts** (committed):
+- `skills/kos-jarvis/image-ingest/SKILL.md` — 5-step bootstrap walkthrough
+- `skills/kos-jarvis/image-ingest/run.ts` — wrapper that calls
+  `gbrain import <IMAGE_SOURCE_DIR> --json`, archives result to
+  `~/brain/.agent/image-ingest/<ISO>.json` + `latest.json` symlink,
+  estimates Voyage spend (~500 token/image × $0.05/M)
+- `scripts/launchd/com.jarvis.image-ingest.plist.template` — daily 04:33
+  cron (between dream-cycle 03:11 and kos-patrol 08:07), 3 `<FILL:*>`
+  markers
 
-**Scope**: decision 30 min；实施(若 do)2-3 h。
+**Lucien todo (manual, ~30 min)** before bootstrap:
+1. Register Voyage account at https://www.voyageai.com → get API key
+   (~$0.05/M tokens, multimodal-3)
+2. Pick / create `IMAGE_SOURCE_DIR` (e.g. `~/jarvis-images/`) and drop
+   some test images
+3. `cp scripts/launchd/com.jarvis.image-ingest.plist.template ~/Library/LaunchAgents/com.jarvis.image-ingest.plist`
+4. Edit deployed plist: replace `<FILL:NANO_BANANA_API_KEY>` / `<FILL:VOYAGE_API_KEY>`
+   / `<FILL:IMAGE_SOURCE_DIR>` with real values
+5. `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.jarvis.image-ingest.plist`
+6. First manual kick: `launchctl kickstart -k gui/$UID/com.jarvis.image-ingest`
+7. Smoke: `tail -50 skills/kos-jarvis/image-ingest/image-ingest.stdout.log`
+   + `psql -c "SELECT COUNT(*) FROM content_chunks WHERE embedding_multimodal IS NOT NULL;"`
+   + `bin/gbrain search --image <test-image-path>` 看返结果
+
+**Status close trigger**: after step 6 successful + step 7 returns >0
+multimodal chunks。Re-open with bug filing if any step fails.
+
+**Manifest**: image-ingest entry added to `skills/manifest.json` (47 → 48
+entries). Active fork dirs: 10 → 11.
 
 ### [ ] (v0.36.4.0) doctor --remediate vs kos-patrol overlap — see Phase 7.5 evaluation
 
@@ -211,18 +234,28 @@ ingestion。若 yes，roadmap 已就绪。若 no，标 N/A 关闭。
 
 实施替换决策（option a/b/c 见 evaluation note）留 M4 milestone window。
 
-### [ ] (v0.35.7.0) Typed-claim fence (`claim_metric/value/unit/period`) for OH transcripts
+### [x] (v0.35.7.0) Typed-claim fence (`claim_metric/value/unit/period`) for OH transcripts — RESOLVED 2026-05-19 (optional prompt template added, no enforcement)
 
-Schema v67 加 `facts.claim_{metric,value,unit,period}` + 14-column
-`## Facts` fence 写法。在 OH transcripts(creators / founders / IRL
-conversations) 上 declarative claim 时可用 — `gbrain eval trajectory
-<entity>` + `gbrain founder scorecard <entity>` 命令依赖此 fence。
+**Decision 2026-05-19**: option (b) **加进 prompt template 作为可选** —
+Lucien 在写 OH transcripts 时可 copy template 起手，未来真有 metric
+变化时手动勾上 typed-claim row。不加 lint 强制。
 
-**What**: Lucien 决定 — 是否在新 OH transcripts 写作时强制 typed-claim
-fence。若 yes，TODO 配 prompt template + lint。若 no，仅作 advisory
-notes。
+**Implementation**:
+- New template at [`templates/oh-transcript-page.md`](templates/oh-transcript-page.md)
+  — source-kind frontmatter + holders + summary + 14-col typed-claim
+  fence example (3 rows: pure-fact / commitment / prose-only) + quotes +
+  linked entities/concepts + open questions
+- Template 注释解释了 `claim_metric` 闭合词表 (mrr/arr/team_size/runway/
+  burn_rate/cac/ltv/mau/dau/churn_rate/revenue/fundraise/headcount/
+  gross_margin/users) 和 normalize 规则
+- `skills/kos-jarvis/README.md` templates 段加该文件引用 (9 + 1 specialized)
 
-**Scope**: decision 30 min。
+**Usage**: `cp skills/kos-jarvis/templates/oh-transcript-page.md
+sources/oh-transcripts/<founder-slug>-<date>.md` then fill in。
+
+**Re-evaluate trigger**: 如果 1+ month OH transcripts 写作没人 actually
+fill 14-col fence (仅写 prose-only rows) → 简化为 10-col fence；如果
+开始 frequently fill metric columns → 加 lint check 强制写完整 14 col。
 
 ## P1 — Post-v0.34.4 sync follow-ups (added 2026-05-15)
 
@@ -930,39 +963,31 @@ era (Path 3 root-caused 2026-04-29). 38 MB stderr rotated to
 `.archive.gz` and `.gitignore` extended so future rotations stay
 out of git.
 
-### [ ] (facts:absorb) Sub-process facts:absorb writer has no DB connection (added 2026-05-15)
+### [x] (facts:absorb) Sub-process facts:absorb writer has no DB connection — RESOLVED 2026-05-19 (root cause removed by §6.28 cutover)
 
-While verifying the max_batch fix, every `kos-compat-api /ingest`
-response output still carries:
-`[facts:absorb] failed to log gateway_error for sources/<slug>: No
-database connection: connect() has not been called. Fix: Run gbrain
-init --supabase or gbrain init --url <connection_string>`.
+Root cause was `kos-compat-api /ingest` spawning `gbrain sync` sub-process
+without calling `BrainDb.connect()` on its path. **§6.28 (2026-05-17)
+retired kos-compat-api**; the sub-process path no longer exists. Notion
+Knowledge Agent now talks via OAuth + MCP `put_page` directly to
+`gbrain serve --http` which is a single-process op handler (no sub-process
+fork, BrainDb already connected).
 
-Source: `src/core/facts/absorb-log.ts:76`. The writer runs inside a
-`gbrain sync` sub-process spawned by `kos-compat-api`; that
-sub-process inherits env but `BrainDb.connect()` is never called on
-its path. Ingest itself succeeds (page lands, chunks embed, sync
-returns 0), so this is **log-only** today — but it means
-`ingest_log.source_type='facts:absorb'` rows for `gateway_error`
-events from compat-api never land. `gbrain doctor`'s
-facts_extraction_health check (`src/commands/doctor.ts:1894+`) reads
-from that table, so detection windows are blind to compat-api
-embedding errors.
+**Verification 2026-05-19 (post v0.37.0.0 sync)**:
+- `bin/gbrain doctor --json` → `facts_extraction_health: ok ("No facts:absorb
+  failures in the last 24h.")` + `facts_health: ok`
+- `ingest_log` 全历史 `source_type='facts:absorb'` count = **0** (从未触发,
+  说明 noise source 已彻底消失)
+- v0.35.8.0 phantom-page 改进 (新加 `refreshPageBody` + `migrateFactsToCanonical`)
+  作为 bonus 加固了 facts:absorb 周边路径,但不是本 entry 的 fix path
 
-Either (a) ensure the sub-process initializes the DB connection
-before facts:absorb fires, or (b) treat compat-api spawned sync as a
-"detached" context and skip facts:absorb logging there with an
-explicit guard. Filed for upstream-side decision — fork can't fix it
-without `src/core/facts/` edits.
-
-**Scope**: 30-60 min to locate the init gap + decide (a) vs (b);
-upstream PR after.
+Closing without upstream PR — entry premise无效后，fork 无需 src/core/facts/
+edit。Done sec.
 
 ---
 
 ## P2 — post-§6.28 cutover follow-ups (added 2026-05-17)
 
-### [ ] (entity-graph latency) Evaluate dream-cycle 24h backfill 足够否
+### [ ] (entity-graph latency) Evaluate dream-cycle 24h backfill 足够否 — DECISION 2026-05-19: defer, spot-check next session
 
 **Why**: §6.28 Complete-A 接受 Notion Agent put_page 24h 内 entity-graph 弱
 (auto_links + auto_timeline remote-skip safety gate at
@@ -970,27 +995,52 @@ upstream PR after.
 03:11 daily) `synthesize` + `patterns` phase 应当 backfill — 但实际效果
 need empirical verification on this brain shape.
 
-**What**: 1 周观察期后 spot-check 5-10 个新 Notion Agent 写的 page,
-查 `pages.frontmatter -> 'links'` 是否有 outbound entries + `links` 表
-是否含 inbound rows for the slug. 若 24h 后仍空 → 评估加 15-min cron
-跑 `gbrain enrich --only-recent` (轻量 backfill, ~50 LoC fork-side shim 调
-upstream `enrich` MCP op with `updated_after=<15 min ago>`)。
+**Decision 2026-05-19** (post v0.37.0.0 sync): **defer** — option (c)
+spot-check after observation. dream-cycle 跑后 24h 应能 backfill,但还没积累足够
+empirical evidence 决定加 cron。v0.37.0.0 sync 期间没有大量新 Notion Agent
+writes (Notion Knowledge Agent 上线后流量不大,§6.28 cutover 当天 setup
+smoke 20 calls,之后 1 call/day)。先观察。
 
-**Scope**: 30 min spot-check + 决策。如果决策加 cron: 独立 PR 2-3 h
-(launchd plist + thin shim script + monitoring).
+**Next-session spot-check protocol**:
+1. `psql -c "SELECT slug, created_at FROM pages WHERE source_id='default' AND created_at > now() - interval '24 hours' ORDER BY created_at DESC LIMIT 10;"`
+2. For each slug from (1):
+   - `gbrain backlinks <slug>` — expect inbound links if dream-cycle backfilled
+   - `psql -c "SELECT frontmatter -> 'links' FROM pages WHERE slug = '<slug>';"` — expect outbound auto_links populated
+3. If 24h+ stale (no graph entries on aged Notion-Agent-written pages) →
+   re-open this entry to add 15-min cron running
+   `gbrain doctor --remediate --yes --target-score 80 --max-usd 0` (Lucien's
+   decision sec's option (b), zero-LLM mechanical handlers only)
 
-### [ ] (mcp_request_log retention) Add cron deleting old audit rows
+**Re-evaluate triggers**:
+- Notion Knowledge Agent 流量上升到 10+ calls/day stable
+- spot-check 发现 24h 后 entity-graph 仍空
+- 或 1 month 后再 spot-check 一次
 
-**Why**: §6.28 切换 OAuth per-call audit 全 land 进 `mcp_request_log` 表。
-Plan agent R3 指出无 retention 会无限增长。Lucien 频率 (~50-200 calls/day)
-= ~70K rows/year, 单表 OK 但 admin dashboard 用 `count(*)` over `created_at >
-now() - interval '24 hours'` 在 100K+ 时 latency 上升。
+**Scope (if reopened)**: 30 min spot-check + 1 h cron 实施 (launchd plist +
+shim script)。
 
-**What**: 加一个 launchd cron (周一 04:30) 跑 `psql ... -c "DELETE FROM
-mcp_request_log WHERE created_at < now() - interval '90 days'"`. 或者上游
-v0.36+ 可能 ship 自动 retention — 若是，本任务直接 close。
+### [x] (mcp_request_log retention) Add cron deleting old audit rows — RESOLVED 2026-05-19 (premature optimization, verified)
 
-**Scope**: 30 min 看上游 v0.36 changelog；如果上游没 ship，1 h 写 cron + plist。
+**Verdict**: close as premature.
+
+**Evidence (2026-05-19 post v0.37.0.0 sync)**:
+- `mcp_request_log`: **22 rows / 8KB total / 2 day history** (20 rows from
+  §6.28 cutover day smoke + 1 row/day since). Notion Knowledge Agent
+  hasn't ramped up — modeled "50-200 calls/day" never materialized.
+- `mcp_spend_log` (new v0.36.4.0 v77 table): **0 rows**, same situation.
+- Upstream v0.36.x did NOT ship auto-retention. Both tables grow unboud.
+
+**Why now-close**: Plan agent R3's 70K rows/year extrapolation was
+hypothetical. Actual rate is <1 row/day. At true scale (500 calls/day
+steady state hypothetical future) = 180K rows/year — still small for
+Postgres with idx on `created_at`. Admin dashboard `count(*) FILTER
+(WHERE created_at > now() - interval '24h')` is fast at <1M rows.
+
+**Re-evaluate trigger**:
+- `SELECT COUNT(*) FROM mcp_request_log` > 50K, OR
+- admin dashboard p95 query latency > 1s
+
+Until then: no cron, no plist, no script. Build when problem exists.
 
 ### [x] (cloudflared) `kos.chenge.ink` route cleanup on mbp-office — RESOLVED 2026-05-17 (Lucien chose port flip not hostname switch; no separate cleanup needed)
 

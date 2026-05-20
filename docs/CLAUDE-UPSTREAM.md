@@ -1605,3 +1605,160 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
+
+---
+
+## v0.36/v0.37 quick reference (mirror added 2026-05-19, post v0.37.0.0 sync)
+
+> This section is a **fork-curated digest** of the seven CLAUDE.md sections
+> that landed upstream between v0.36.0.0 and v0.37.0.0. It doesn't replace
+> reading `git show upstream/master:CLAUDE.md` for full detail — it captures
+> only the surfaces fork agents most often need to recognize. See
+> `docs/JARVIS-ARCHITECTURE.md` §6.29 for the sync story.
+
+### v0.37.0.0 — Skillpack registry cathedral
+
+Third-party skillpacks become a real ecosystem.
+
+- `gbrain skillpack scaffold <owner/repo>` — copy a third-party pack into
+  agent workspace (additive, refuses to overwrite). Records source URL +
+  pinned commit + tarball SHA in `~/.gbrain/skillpack-state.json`.
+- `gbrain skillpack search [query] [--tier T]` / `info <name>` / `init <name>` /
+  `pack` / `doctor <pack-dir>` / `endorse <name>` — full lifecycle CLI.
+- 10-dimension quality rubric at `src/core/skillpack/rubric.ts` (single source
+  of truth). `gbrain skillpack doctor` scores 0-10 with paste-ready fixes.
+- Reference pack at `examples/skillpack-reference/` — regression-pinned at 10/10.
+- **Fork impact**: zero — `## KOS-Jarvis extensions` is append-only section,
+  not managed-block fence; migrate-fence is no-op for fork.
+
+### v0.36.6.0 — Cross-modal text↔image search
+
+- Schema v75: `content_chunks.embedding_multimodal vector(1024)`.
+- New CLI: `gbrain search --image <path>` accepts image as query.
+- New CLI: `gbrain reindex --multimodal` flattens text+image into single space.
+- New MCP op: `search_by_image` with daily Voyage spend cap per OAuth client.
+- Hybrid routing via `search.cross_modal.llm_intent=true` adds Haiku tie-break
+  for ambiguous wording (<1% queries, ~$0.0001 per escalation, fail-open).
+- **Fork impact**: brain is markdown-only — column added but 0 rows. Image
+  ingestion roadmap is a Lucien decision (P2 in TODO).
+
+### v0.36.5.0 — Shell job secret inheritance
+
+- New `inherit: ["database_url", "anthropic_api_key", ...]` field on shell job
+  params (snake_case names). Worker resolves from `loadConfig()` at spawn time;
+  names persist in `minion_jobs.data`, values resolve fresh per spawn.
+- Convention: `database_url` → `GBRAIN_DATABASE_URL`; everything else uppercased.
+- New `gbrain doctor home_dir_in_worktree` check warns when `~/.gbrain/` lives
+  inside a git worktree.
+- New `docs/guides/agent-to-gbrain.md` — canonical two-domain framing for
+  downstream agents (MCP-OAuth vs shell-job inherit).
+- **Fork impact**: 5 launchd plists use `EnvironmentVariables` (not minion jobs)
+  — unaffected. `home_dir_in_worktree` check passes (`~/.gbrain/` outside any
+  worktree). The pattern is useful if fork adds new gbrain-shell-job-spawning
+  workflows later.
+
+### v0.36.4.0 — Brain-health-100 (autonomous remediation)
+
+- `gbrain doctor --remediation-plan [--json]` — print what would be fixed,
+  no action taken. Shows `est_total_usd_cost`, `est_minutes`, `max_reachable_score`.
+- `gbrain doctor --remediate --yes --target-score 90 --max-usd 5` — actually
+  run handlers in dependency order with spend cap; re-checks between steps.
+- 11 new background jobs submittable via `gbrain jobs submit`: `reindex`,
+  `repair-jsonb`, `orphans`, `integrity`, `purge`, `synthesize`*, `patterns`*,
+  `consolidate`*, `extract_facts`, `resolve_symbol_edges`,
+  `recompute_emotional_weight`. *Protected — only local trusted callers
+  (CLI, autopilot, doctor --remediate) can submit; MCP clients blocked.
+- Autopilot sleeps 60min between full cycles when score ≥95 + nothing to fix.
+- `gbrain embed --stale --background` now exists.
+- **Fork impact**: kos-patrol vs doctor --remediate evaluation at
+  `~/brain/.agent/reports/doctor-remediate-vs-kos-patrol-2026-05-19.md` —
+  verdict (a) status quo. doctor --remediate is action-taking; kos-patrol is
+  reporting-only. Complementary, not redundant.
+
+### v0.36.3.0 — Dynamic embedding column selection
+
+- Schema v68: `eval_candidates.embedding_column` (per-row column metadata for
+  replay parity).
+- `embedding_columns` config registry — JSON map of declared columns:
+  `gbrain config set embedding_columns '{"embedding":{"provider":"...","dimensions":N,"type":"vector|halfvec"}}'`
+- `search_embedding_column` config key picks default for hybridSearch.
+- `embedding_column` MCP param on `query` op (per-call override for A/B).
+- `cosineReScore` now hydrates from the active column (not always `embedding`).
+- New `gbrain doctor embedding_column_registry` check — declared dim vs actual
+  `vector(N)` width, HNSW index presence, coverage % on active column.
+- **Fork applied**: registry declared 2026-05-19 for `embedding` @ 1536d:
+  `{"embedding":{"provider":"google:gemini-embedding-001","dimensions":1536,"type":"vector"}}`.
+  Doctor reports `Registry healthy: 2 columns (embedding, embedding_image)
+  (all indexed); active='embedding'`.
+
+### v0.36.2.0 — ZeroEntropy default + ze-switch CLI
+
+- Default embedding model: `openai:text-embedding-3-large` (1536d) →
+  `zeroentropyai:zembed-1` (1280d Matryoshka). Reranker `zerank-2` default-on
+  in `balanced` mode.
+- Existing brains see a **TTY upgrade prompt** on first command post-upgrade.
+  Default-on-Enter = **stay**. Non-TTY = auto-skip with stderr line.
+- CLI: `gbrain ze-switch [--dry-run] [--non-interactive] [--undo] [--force]
+  [--resume] [--ignore-missing-key] [--confirm-reembed]`.
+- Five new config keys: `ze_switch_prompt_shown`, `ze_switch_requested`,
+  `ze_switch_applied`, `ze_switch_previous_snapshot`, `ze_switch_declined_at`.
+- 90-day re-ask gate via `ze_switch_declined_at` timestamp.
+- New `gbrain doctor ze_embedding_health` + `embedding_width_consistency` checks.
+- **Fork applied**: locked via `gbrain config set ze_switch_declined_at <ISO>`
+  + `ze_switch_prompt_shown true` (CLI has no non-TTY decline flag — config
+  set is the direct path). `ze_switch_already_declined: true` confirmed via
+  `gbrain ze-switch --dry-run --json`. We stay on `google:gemini-embedding-001`
+  @ 1536d for the 90-day window (re-evaluate when ze_switch_declined_at expires).
+
+### v0.36.1.0 — Hindsight calibration wave
+
+- Schema v67: `calibration_profiles` + `take_proposals` + `take_grade_cache`
+  + `take_nudge_log` + `facts.claim_{metric,value,unit,period}` columns
+  (typed-claim 14-col fence variant).
+- Three new dream-cycle phases: `propose_takes` → `grade_takes` →
+  `calibration_profile`. dream-cycle phase count 13 → 16.
+- All three are LLM phases — expect Anthropic spend delta on cron-driven
+  dream runs.
+- New MCP op: `get_calibration_profile` (read scope).
+- New CLI: `gbrain think --with-calibration`, `gbrain eval trajectory <entity>`,
+  `gbrain founder scorecard <entity>` (last two from v0.35.7.0 actually).
+- New convention skill: `skills/conventions/calibration.md`.
+- Cycle phase abstract class `BaseCyclePhase` enforces source-scope threading
+  at type level — D21 hardening.
+- **Fork impact**: dream-cycle 03:11 daily cron auto-runs new phases. Spend
+  observation queued for tomorrow's run output. `BaseCyclePhase` is structural
+  improvement — no fork action.
+
+### v0.36.0.0 — Skillpack scaffold pattern
+
+- Retires `gbrain skillpack install` / `uninstall` (managed-block era ended).
+- New CLI surface: `scaffold` (one-time additive copy), `reference` (read-only
+  diff), `migrate-fence` (one-shot transition), `scrub-legacy-fence-rows`,
+  `harvest`.
+- Companion skill at `skills/skillpack-harvest/SKILL.md` for the harvest
+  editorial workflow.
+- **Fork impact**: zero — fork RESOLVER.md uses `## KOS-Jarvis extensions`
+  append-only section, never had managed-block fence. `migrate-fence` is no-op.
+
+### v0.35.8.0 + v0.35.7.0 — Phantom-page + typed-claim
+
+- v0.35.8.0: `refreshPageBody()` + `migrateFactsToCanonical()` methods on
+  both PostgresEngine + PGLiteEngine (phantom-page redirect inside
+  extract_facts cycle phase).
+- v0.35.7.0: Schema v67 adds `facts.claim_{metric,value,unit,period}`
+  (optional, NULL-tolerant). `## Facts` fence widens from 10 → 14 columns
+  when typed-claim data carried. Backward compat preserved.
+- New MCP op: `find_trajectory` (read scope, federated).
+- `extract_facts` cycle phase now batch-embeds facts before insert + threads
+  `pages.effective_date` as fallback `valid_from`.
+- **Fork impact**: typed-claim fence is opt-in. Useful for OH transcripts
+  with metric assertions (MRR, ARR, team size, etc.). Lucien decision pending.
+
+### Sources for full detail
+
+- Upstream `CLAUDE.md` HEAD (live): `git show upstream/master:CLAUDE.md`
+- Per-version migration docs: `git show upstream/master:skills/migrations/v0.35.7.0.md`
+  (similar paths for v0.36.2.0, v0.36.5.0 — these are the most detailed)
+- CHANGELOG: `git show upstream/master:CHANGELOG.md` — first ~1200 lines
+  cover v0.35.7.0 → v0.37.0.0
+- Fork sync story: `docs/JARVIS-ARCHITECTURE.md` §6.29

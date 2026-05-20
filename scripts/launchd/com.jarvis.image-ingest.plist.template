@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarvis.image-ingest</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/chenyuanquan/.bun/bin/bun</string>
+        <string>run</string>
+        <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/skills/kos-jarvis/image-ingest/run.ts</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/chenyuanquan/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+
+        <!-- gbrain native gateway (fork rule per CLAUDE.md L27-36) -->
+        <key>GOOGLE_GENERATIVE_AI_API_KEY</key>
+        <string><FILL:NANO_BANANA_API_KEY></string>
+        <key>GBRAIN_EMBEDDING_MODEL</key>
+        <string>google:gemini-embedding-001</string>
+        <key>GBRAIN_EMBEDDING_DIMENSIONS</key>
+        <string>1536</string>
+
+        <!-- v0.36.6.0 multimodal — required to enable image dispatch in
+             gbrain import + reindex --multimodal paths. -->
+        <key>GBRAIN_EMBEDDING_MULTIMODAL</key>
+        <string>true</string>
+        <key>VOYAGE_API_KEY</key>
+        <string><FILL:VOYAGE_API_KEY></string>
+
+        <!-- The directory image-ingest will walk. Should contain stable,
+             append-mostly content (e.g. ~/jarvis-images/). Avoid points
+             at non-individually-addressable Photos.app library bundles. -->
+        <key>IMAGE_SOURCE_DIR</key>
+        <string><FILL:IMAGE_SOURCE_DIR></string>
+    </dict>
+
+    <!-- Daily 04:30 — between dream-cycle (03:11) and kos-patrol (08:07).
+         Off the :00 and :30 marks would be ideal, but 04:30 mirrors the
+         fork's existing weekly-job convention (see gbrain-backup 03:33). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>33</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- run.ts exit codes: 0 = clean / ok, 1 = some import errors,
+         2 = wrapper-level error (env unset, dir missing, binary missing). -->
+
+    <key>StandardOutPath</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/skills/kos-jarvis/image-ingest/image-ingest.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/skills/kos-jarvis/image-ingest/image-ingest.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2</string>
+</dict>
+</plist>

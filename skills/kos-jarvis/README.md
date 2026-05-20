@@ -44,7 +44,7 @@ skills/kos-jarvis/
 ├── README.md                       # 本文件
 ├── PLAN-ADJUSTMENTS.md             # 迁移期间发现的计划偏差记录
 ├── type-mapping.md                 # KOS 9 types ↔ GBrain 20 dirs 映射
-├── templates/                      # 9 种 KOS 页面模板（Week 1 搬运）
+├── templates/                      # 9 种 KOS 页面模板（Week 1 搬运）+ 专用变体
 │   ├── source-page.md
 │   ├── entity-page.md
 │   ├── concept-page.md
@@ -53,7 +53,8 @@ skills/kos-jarvis/
 │   ├── synthesis-page.md
 │   ├── comparison-page.md
 │   ├── protocol-page.md
-│   └── timeline-page.md
+│   ├── timeline-page.md
+│   └── oh-transcript-page.md       # OH/founder transcript w/ typed-claim fence (v0.35.7.0)
 ├── kos-patrol/                     # Week 2(phase 2 lint 已 noop,kos-lint archived 2026-05-10)
 ├── digest-to-memory/               # Week 3(保留澄清点)
 ├── notion-ingest-delta/            # 2026-05-17 RETIRED — workers/notion-poller/ → _archived/ (death by 0 net ingest, §6.27); replaced by planned mailagent kos push (方案 B, GitHub issue #TBD)
