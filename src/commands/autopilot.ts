@@ -118,10 +118,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
-  // Lock file to prevent concurrent instances (#14)
-  const lockPath = join(process.env.HOME || '', '.gbrain', 'autopilot.lock');
+  // Lock file to prevent concurrent instances (#14).
+  // Must be scoped to GBRAIN_HOME so multiple brains (e.g. main + side brain
+  // sharing a host) each get their own lock instead of starving each other.
+  const gbrainHome = process.env.GBRAIN_HOME || join(process.env.HOME || '', '.gbrain');
+  const lockPath = join(gbrainHome, 'autopilot.lock');
   try {
-    mkdirSync(join(process.env.HOME || '', '.gbrain'), { recursive: true });
+    mkdirSync(gbrainHome, { recursive: true });
     if (existsSync(lockPath)) {
       const stat = require('fs').statSync(lockPath);
       const ageMinutes = (Date.now() - stat.mtimeMs) / 60000;
