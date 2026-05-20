@@ -257,6 +257,163 @@ sources/oh-transcripts/<founder-slug>-<date>.md` then fill in。
 fill 14-col fence (仅写 prose-only rows) → 简化为 10-col fence；如果
 开始 frequently fill metric columns → 加 lint check 强制写完整 14 col。
 
+## P1/P2/P3 — System review findings (added 2026-05-19, post v0.37.0.0 followups audit)
+
+> System-wide review run 2026-05-19 evening, post all followup commits.
+> 10 new findings consolidated below: 3 P1 functional, 2 P2 structural,
+> 5 P3 cosmetic/hygiene. Full review reasoning in conversation transcript
+> 2026-05-19 evening.
+
+### [ ] (P1) `feishu` agent daily 08:08-08:10 phantom traffic — caller unknown
+
+`mcp_request_log` 显示 `agent_name='feishu'` (`client_id=gbrain_cl_ffe0727090...`)
+每天 08:08-08:10 跑 1 次 `list_pages`，连续 5/18 + 5/19 都有。但 CLAUDE.md
+L82 说 feishu "dormant since 2026-05-05"。Caller source 未知。
+
+**Possible sources** (rank by likelihood):
+1. mbp-office (cloudflared host) 上某 cron 用 feishu credentials 做 daily
+   brain health probe
+2. `~/.openclaw/extensions/` 仍残留某 feishu signal-detector cron 没被
+   5/05 retire 干净
+3. 你自己 ad-hoc 写的某 Cloudflare Worker / shell script 没 record in docs
+
+**Investigation steps**:
+- `ssh mbp-office "crontab -l; launchctl list | grep -i feishu"` (本机 ssh
+  访问 mbp-office)
+- `ls -la ~/.openclaw/extensions/` 看是否有 feishu-related dir 残留 (前提:
+  TODO L1163-1168 说 5/05 已 retire jarvis-feishu-signal-detector，但是否真删)
+- Cloudflare dashboard → kos.chenge.ink tunnel → access logs filter by
+  client_id `gbrain_cl_ffe07270...` → 看 source IP
+- 如真找不到 caller: `bin/gbrain auth revoke-client gbrain_cl_ffe0727090...`
+  + `rm ~/.gbrain/oauth-clients/feishu.json`，等 24h 看是否有 401 报错弹出
+
+**Why it matters**: Unknown client with `put_page` scope (5/17 写过
+`sources/handoff-smoke-1779083446` 来证明 scope 有 write) 是 supply-chain
+风险。即使是 Lucien own script，docs 应该 capture。
+
+### [ ] (P1) Notion Knowledge Agent 停摆 + 缺 daily `gbrain sync` cron
+
+**Evidence**:
+- `kos-worker` MCP traffic: **5/17 setup smoke 后 0 calls**（每日 mcp_request_log
+  从未再现 kos-worker client_id）
+- pages 增长: 5/15=56 → 5/16=10 → 5/17=3 → **5/18+5/19=0**
+- `git_sync` ingest_log: 5/15=142 → 5/16=51 → 5/17=2 → **5/18=1 / 5/19=0**
+- Doctor warning: `sync_freshness: Source 'default' last synced 41h ago`
+- `ls ~/Library/LaunchAgents/com.jarvis.*sync*` → 0 matches (no sync cron)
+
+**Two-part problem**:
+1. **Notion Knowledge Agent 没真用** — 你需要 verify Notion Agent UI v2→v3
+   update (`docs/NOTION-AGENT-UPDATE-CHECKLIST.md` 5 步) 是否真完成，OAuth
+   client + worker token 是否真有效。manual smoke: 在 Notion Agent UI 触发
+   一次 ingest，看 mcp_request_log 是否 record new kos-worker call。
+2. **没 fork-side sync cron** — notion-poller §6.27 retire 后，markdown
+   brain (`~/brain/`) 改动 (人工 vim edits / dream-cycle 写 takes) 没人
+   定期 push 进 DB。需加 launchd cron 跑 `bin/gbrain sync --skip-failed
+   --no-pull` daily (suggested 02:30 之间 dream-cycle 03:11 前 + 不 conflict
+   with image-ingest 04:33)。
+
+**Scope**: 30 min Notion Agent verify + 1 h sync cron 实施 (plist
+template + bootstrap + smoke)。
+
+### [ ] (P1) `frontmatter->>'source'` empty on 3139/3140 pages (provenance gap)
+
+Top 15 frontmatter keys 都没含 `notion_id` / `source` / `source_url` (top:
+updated/kind/created/status/id/confidence/owners/source_of_truth/source_refs/
+aliases/related/source_date/source_type/source_url/raw_path)。`source_type` /
+`source_url` 各只 23 pages 含。
+
+**Impact**: 无法 spot-check 某 page 是 Notion 写的 / git_sync 进来的 /
+人工编辑的。`gbrain doctor` 也无法 break down "% from Notion" stats。
+
+**Cause**: kos-worker `put_page` builder (workers/kos-worker/src/index.ts
+frontmatter builder section) 未 set provenance fields。原 notion-poller
+也未 set (历史 git_sync 数据)。
+
+**Fix sketch**:
+1. kos-worker 改 frontmatter builder：每个 put_page 时加
+   `{ source: 'notion-agent', notion_id: <page_id>, ingested_at: <iso> }`
+2. 历史 page backfill: scan markdown body for "From Notion" / "URL: ...notion.so/...",
+   set provenance from inference。Scope 中等 (~3140 pages, mostly programmatic)。
+
+### [ ] (P2) `graph_coverage 0% / timeline 0%` — 485 entity pages no link/timeline
+
+Doctor 主动 suggests `gbrain extract all`。这是 markdown brain 的 known
+state (per §6.19) — entity-extract 没在 cron 跑。
+
+**Quick action**: `bin/gbrain extract all` 一次 backfill (estimate ~10-15
+min for 3140 pages). 之后 graph_coverage warning 消去。dream-cycle 已含
+extract phase (`[cycle.extract] done` 见 dream.stderr.log)，但只对 dream
+phase scope 的 pages 做。一次性 extract all 把历史 page 一次补齐。
+
+**Scope**: 15 min run + verify doctor warning gone.
+
+### [ ] (P2) sync_freshness 41h — symptom of P1-2 (no sync cron)
+
+Doctor: `Source 'default' last synced 41h ago. Run gbrain sync --source <id>`.
+
+Standalone action: `bin/gbrain sync --skip-failed --no-pull` 一次清 41h
+gap。但根因 = 缺 sync cron (P1-2)。可单独 ad-hoc 跑作为 stop-gap.
+
+### [ ] (P3) Stale log files — `_archived/gemini-embed-shim/` 占 1.7 MB (70% of fork repo)
+
+| Path | Size | mtime |
+|---|---|---|
+| `_archived/gemini-embed-shim/shim.stderr.log` | 777K | 5/1 |
+| `_archived/gemini-embed-shim/shim.stdout.log` | 900K | 5/9 |
+| `dream-wrap/dream.stderr.log` | 62K | 5/19 (daily growing) |
+| `kos-patrol/patrol.stderr.log` | 234B | 5/9 (M1 retire-era kos-lint errors) |
+| `enrich-sweep/sweep.stderr.log` | 3K | 5/17 (pre-§6.28 embed shim errors) |
+
+**Action options**:
+- `rm skills/kos-jarvis/_archived/gemini-embed-shim/shim.{stdout,stderr}.log`
+  (skill code retain, just kill 1.7 MB logs from retired service) — 10 sec
+- Add logrotate script for active services (dream-wrap 每天 62K += 22 MB/year
+  unbounded)
+
+### [ ] (P3) `whoknows_health` doctor warning — fixture path env unset
+
+Doctor warning: `whoknows eval fixture path could not be resolved. Set
+GBRAIN_WHOKNOWS_FIXTURE_PATH to the absolute path for
+test/fixtures/whoknows-eval.jsonl`.
+
+**Fix**: 1-line config set, OR `unset` the check (we don't actively use
+whoknows eval). If we want it on:
+```bash
+bin/gbrain config set whoknows_fixture_path \
+  /Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/test/fixtures/whoknows-eval.jsonl
+```
+
+### [ ] (P3) `eval_candidates` capture mode unused — 1 row in 18 days
+
+`GBRAIN_CONTRIBUTOR_MODE` enabled (per TODO §"2026-05-01 v0.25.0 sync"
+decision) but only 1 row captured since 5/1. Either:
+- Actually use the eval data (write a fork-side eval consumer)
+- Disable to reduce noise (`unset GBRAIN_CONTRIBUTOR_MODE` + remove from
+  any plist)
+
+**Scope**: 10 min decision + cleanup if disable.
+
+### [ ] (P3) `kos-patrol/run.ts` retains retired kos-lint references
+
+L7 docblock: `*   2. Lint (delegate to kos-lint/run.ts)` — describes
+retired phase
+L135-144: retirement note + archived path reference (informational, OK)
+L404: `...(lint.errors > 0 ? ["- Fix kos-lint ERROR findings ..."]:[])` —
+**dead branch** (phase2 returns hard-coded `errors=0`, never fires)
+
+**Action**: 5 min cleanup — delete L404 dead branch, update L7 docblock
+to say "Lint (retired 2026-05-10 — see L135 note)".
+
+### [ ] (P3) `resolver_health: 8 warnings` (down from 57 pre-sync — investigate residual)
+
+doctor `resolver_health` improved from 57 issues (29 err + 28 warn) to **8
+warnings (0 errors)** after v0.37.0.0 sync. But 8 残留 warnings 内容 unknown.
+
+**Action**: `bin/gbrain doctor --json | jq '.checks[] | select(.name=="resolver_health") | .issues'`
+inspect remaining warnings. Most likely 都是 cross-boundary refs to
+`~/.openclaw/workspace` AGENTS.md (non-fork responsibility) per TODO L72,
+but verify after sync.
+
 ## P1 — Post-v0.34.4 sync follow-ups (added 2026-05-15)
 
 ### [x] (PR-3) Upstream PR: `gbrain dream --archive-dir` flag — FILED 2026-05-17 ([#1133](https://github.com/garrytan/gbrain/pull/1133))
