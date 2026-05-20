@@ -408,7 +408,7 @@ export function serializeFrontmatter(fm: InferredFrontmatter): string {
   }
 
   if (fm.tags && fm.tags.length > 0) {
-    lines.push(`tags: [${fm.tags.map(t => JSON.stringify(t)).join(', ')}]`);
+    lines.push(`tags: [${fm.tags.map(t => t.includes("'") ? JSON.stringify(t) : `'${t}'`).join(', ')}]`);
   }
 
   lines.push('---');
