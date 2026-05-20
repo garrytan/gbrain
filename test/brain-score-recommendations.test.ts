@@ -4,6 +4,7 @@ import {
   classifyChecks,
   maxReachableScore,
   estimateAnthropicCost,
+  checksForRemediationContext,
 } from '../src/core/brain-score-recommendations.ts';
 import type { BrainHealth } from '../src/core/types.ts';
 
@@ -157,6 +158,37 @@ describe('computeRecommendations', () => {
     });
     const embed = recs.find((r) => r.id === 'embed.stale')!;
     expect(embed.est_usd_cost).toBeGreaterThan(0);
+  });
+});
+
+describe('checksForRemediationContext', () => {
+  test('does not surface missing_embeddings when embedding coverage is complete', () => {
+    const health = makeHealth({
+      brain_score: 45,
+      missing_embeddings: 0,
+      dead_links: 0,
+      stale_pages: 0,
+      orphan_pages: 0,
+    });
+    const names = checksForRemediationContext(health).map((c) => c.name);
+    expect(names).toEqual(['brain_score']);
+  });
+
+  test('surfaces only active remediation deficits', () => {
+    const health = makeHealth({
+      stale_pages: 3,
+      missing_embeddings: 2,
+      dead_links: 1,
+      orphan_pages: 4,
+    });
+    const names = checksForRemediationContext(health).map((c) => c.name);
+    expect(names).toEqual([
+      'brain_score',
+      'sync_freshness',
+      'missing_embeddings',
+      'dead_links',
+      'orphan_pages',
+    ]);
   });
 });
 

@@ -3724,7 +3724,7 @@ export async function runRemediationPlan(
   engine: BrainEngine,
   args: string[],
 ): Promise<void> {
-  const { computeRecommendations, classifyChecks, maxReachableScore } =
+  const { computeRecommendations, classifyChecks, maxReachableScore, checksForRemediationContext } =
     await import('../core/brain-score-recommendations.ts');
 
   const targetScore = parseIntFlag(args, '--target-score') ?? 90;
@@ -3735,16 +3735,7 @@ export async function runRemediationPlan(
   const health = await engine.getHealth();
   const ctx = await loadRecommendationContext(engine);
   const recs = computeRecommendations(health, ctx);
-  // Synthetic check list for classification — we don't need full doctor
-  // output, just the check names the recommendations care about.
-  const syntheticChecks = [
-    { name: 'brain_score', status: 'ok' as const },
-    { name: 'sync_freshness', status: 'ok' as const },
-    { name: 'missing_embeddings', status: 'ok' as const },
-    { name: 'dead_links', status: 'ok' as const },
-    { name: 'orphan_pages', status: 'ok' as const },
-  ];
-  const classifications = classifyChecks(syntheticChecks, ctx);
+  const classifications = classifyChecks(checksForRemediationContext(health), ctx);
   const ceiling = maxReachableScore(health, classifications);
 
   const filteredRecs = recs.filter((r) => r.status === 'remediable');
@@ -3816,21 +3807,14 @@ export async function runRemediate(
   const skipConfirm = args.includes('--yes');
   const jsonOutput = args.includes('--json');
 
-  const { computeRecommendations, classifyChecks, maxReachableScore } =
+  const { computeRecommendations, classifyChecks, maxReachableScore, checksForRemediationContext } =
     await import('../core/brain-score-recommendations.ts');
 
   const ctx = await loadRecommendationContext(engine);
 
   // Pre-flight ceiling check (D13)
   const initialHealth = await engine.getHealth();
-  const syntheticChecks = [
-    { name: 'brain_score', status: 'ok' as const },
-    { name: 'sync_freshness', status: 'ok' as const },
-    { name: 'missing_embeddings', status: 'ok' as const },
-    { name: 'dead_links', status: 'ok' as const },
-    { name: 'orphan_pages', status: 'ok' as const },
-  ];
-  const classifications = classifyChecks(syntheticChecks, ctx);
+  const classifications = classifyChecks(checksForRemediationContext(initialHealth), ctx);
   const ceiling = maxReachableScore(initialHealth, classifications);
   if (targetScore > ceiling) {
     console.error(
@@ -3973,9 +3957,21 @@ async function loadRecommendationContext(engine: BrainEngine) {
     repoPath: repoPath ?? undefined,
     embeddingModel: embeddingModel ?? undefined,
     embeddingDimensions: embeddingDimensions ? Number(embeddingDimensions) : undefined,
-    hasEmbeddingApiKey: !!(process.env.OPENAI_API_KEY || await engine.getConfig('openai_api_key')),
-    hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || await engine.getConfig('anthropic_api_key')),
+    hasEmbeddingApiKey: await isGatewayTouchpointAvailable('embedding'),
+    hasChatApiKey: await isGatewayTouchpointAvailable('chat'),
   };
+}
+
+async function isGatewayTouchpointAvailable(touchpoint: 'embedding' | 'chat'): Promise<boolean> {
+  try {
+    // connectEngine() configures the gateway from the merged config plane
+    // (env + ~/.gbrain/config.json + DB). Direct env/DB key checks miss
+    // file-local credentials and non-OpenAI embedding providers.
+    const { isAvailable } = await import('../core/ai/gateway.ts');
+    return isAvailable(touchpoint);
+  } catch {
+    return false;
+  }
 }
 
 function parseIntFlag(args: string[], flag: string): number | null {

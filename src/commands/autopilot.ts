@@ -343,8 +343,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         const score = health.brain_score;
         const ctx = {
           repoPath,
-          hasEmbeddingApiKey: !!(process.env.OPENAI_API_KEY || await engine.getConfig('openai_api_key')),
-          hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || await engine.getConfig('anthropic_api_key')),
+          hasEmbeddingApiKey: await isGatewayTouchpointAvailable('embedding'),
+          hasChatApiKey: await isGatewayTouchpointAvailable('chat'),
         };
         const plan = computeRecommendations(health, ctx).filter((r) => r.status === 'remediable');
         const estTotal = plan.reduce((s, r) => s + r.est_seconds, 0);
@@ -908,4 +908,16 @@ function showStatus(json: boolean) {
 
 function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function isGatewayTouchpointAvailable(touchpoint: 'embedding' | 'chat'): Promise<boolean> {
+  try {
+    // The CLI configures the gateway from the merged config plane before
+    // invoking autopilot. Direct env/DB key checks miss file-local credentials
+    // and non-OpenAI embedding providers.
+    const { isAvailable } = await import('../core/ai/gateway.ts');
+    return isAvailable(touchpoint);
+  } catch {
+    return false;
+  }
 }

@@ -107,6 +107,24 @@ export interface CheckClassification {
 }
 
 /**
+ * Build the minimal check list used by doctor remediation surfaces.
+ *
+ * Only include deficit-specific checks when the health snapshot actually has
+ * that deficit. The previous caller-side synthetic list always included
+ * `missing_embeddings` and `dead_links`, which could surface blocked or
+ * remediable states for problems that were not present in the current brain
+ * health snapshot.
+ */
+export function checksForRemediationContext(health: BrainHealth): Check[] {
+  const checks: Check[] = [{ name: 'brain_score', status: 'ok' }];
+  if (health.stale_pages > 0) checks.push({ name: 'sync_freshness', status: 'warn' });
+  if (health.missing_embeddings > 0) checks.push({ name: 'missing_embeddings', status: 'warn' });
+  if (health.dead_links > 0) checks.push({ name: 'dead_links', status: 'warn' });
+  if (health.orphan_pages > 0) checks.push({ name: 'orphan_pages', status: 'warn' });
+  return checks;
+}
+
+/**
  * Generate ordered Remediation list from health snapshot + context.
  *
  * Sort: severity (critical > high > medium > low), then est_seconds asc.
