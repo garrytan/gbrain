@@ -9,14 +9,36 @@ import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
-import { join } from 'path';
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { gbrainPath } from '../core/config.ts';
+import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
+import { fileURLToPath } from 'url';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 
 export interface Check {
   name: string;
   status: 'ok' | 'warn' | 'fail';
   message: string;
   issues?: Array<{ type: string; skill: string; action: string; fix?: any }>;
+  /**
+   * v0.36+ brain-health-100: structured remediation jobs per check.
+   * Populated by the recommendation generator; consumed by
+   * `gbrain doctor --remediation-plan` / `--remediate`. Optional and
+   * additive — schema_version stays at 2 (D4).
+   */
+  remediation?: Array<{
+    id: string;
+    job: string;
+    params: Record<string, unknown>;
+    idempotency_key: string;
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    est_seconds: number;
+    est_usd_cost?: number;
+    depends_on?: string[];
+    rationale: string;
+    protected?: boolean;
+  }>;
+  /** Top-level triage state per D13. */
+  remediation_status?: 'remediable' | 'human_only' | 'blocked';
 }
 
 /**
@@ -86,6 +108,41 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
  * Tolerance matches migration v48: any value with abs(weight - on_grid) > 1e-3
  * is genuinely off-grid (the 0.05 grid is 5e-2; float32 noise is ~1e-7).
  */
+const WHOKNOWS_FIXTURE_RELATIVE_PATH = 'test/fixtures/whoknows-eval.jsonl';
+
+function isGbrainSourceRoot(dir: string): boolean {
+  return (
+    existsSync(join(dir, 'src', 'cli.ts')) &&
+    existsSync(join(dir, 'skills', 'RESOLVER.md'))
+  );
+}
+
+export function resolveWhoknowsFixturePath(
+  env: NodeJS.ProcessEnv = process.env,
+  moduleUrl: string = import.meta.url,
+): string | null {
+  if (env.GBRAIN_WHOKNOWS_FIXTURE_PATH) {
+    return isAbsolute(env.GBRAIN_WHOKNOWS_FIXTURE_PATH)
+      ? env.GBRAIN_WHOKNOWS_FIXTURE_PATH
+      : resolvePath(process.cwd(), env.GBRAIN_WHOKNOWS_FIXTURE_PATH);
+  }
+
+  try {
+    let dir = dirname(fileURLToPath(moduleUrl));
+    for (let i = 0; i < 10; i++) {
+      if (isGbrainSourceRoot(dir)) return join(dir, WHOKNOWS_FIXTURE_RELATIVE_PATH);
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // Some bundlers/runtimes may not expose a normal file: import URL.
+    // Doctor should surface an override hint instead of fabricating a path.
+  }
+
+  return null;
+}
+
 /**
  * v0.33: whoknows_health — verify the eval fixture is present at the
  * documented path. Lightweight; just checks file existence and row count,
@@ -98,15 +155,19 @@ export function computeDoctorReport(checks: Check[]): DoctorReport {
  */
 export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> {
   try {
-    const { existsSync, readFileSync, statSync } = await import('fs');
-    const path = await import('path');
-    const repoRoot = process.cwd();
-    const fixturePath = path.join(repoRoot, 'test/fixtures/whoknows-eval.jsonl');
+    const fixturePath = resolveWhoknowsFixturePath();
+    if (!fixturePath) {
+      return {
+        name: 'whoknows_health',
+        status: 'warn',
+        message: 'whoknows eval fixture path could not be resolved. Set GBRAIN_WHOKNOWS_FIXTURE_PATH to the absolute path for test/fixtures/whoknows-eval.jsonl.',
+      };
+    }
     if (!existsSync(fixturePath)) {
       return {
         name: 'whoknows_health',
         status: 'warn',
-        message: `whoknows eval fixture missing at test/fixtures/whoknows-eval.jsonl. Fix: hand-label 10 queries you'd actually run, format {query, expected_top_3_slugs, notes}.`,
+        message: `whoknows eval fixture missing at ${fixturePath}. Fix: hand-label 10 queries you'd actually run, format {query, expected_top_3_slugs, notes}.`,
       };
     }
     const stat = statSync(fixturePath);
@@ -191,6 +252,97 @@ export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> 
       message: `Could not check takes weight grid: ${msg}`,
     };
   }
+}
+
+/**
+ * Child-table orphan detection (closes #1063).
+ *
+ * The autopilot `orphans` phase (src/core/cycle.ts:runPhaseOrphans) detects
+ * orphan PAGES (pages with no inbound links via the page-graph). It does NOT
+ * scan FK-child tables for orphan rows. When a bulk page delete leaves
+ * orphans in `content_chunks` / `page_versions` / `tags` / `takes` / etc.
+ * — whether from pre-FK migrations, race conditions, or a code path that
+ * bypassed cascade — they persist indefinitely until manual SQL cleanup.
+ *
+ * All ten FK-to-pages tables declare `ON DELETE CASCADE` in the live schema
+ * (verified via `pg_constraint` snapshot in the issue body), so finding any
+ * orphan row is by definition unexpected. The check ships paste-ready
+ * cleanup SQL when orphans surface.
+ *
+ * Excluded: `files.page_id` and `links.origin_page_id` — both declared as
+ * `ON DELETE SET NULL`, so a NULL value is a valid state (file/link survives
+ * after page deletion); only NOT-NULL-but-page-missing is an orphan there.
+ * The check encodes that distinction for the two SET NULL columns.
+ *
+ * Pure helper for parity with `takesWeightGridCheck` so tests can target it
+ * directly without driving the full `runDoctor` pipeline.
+ */
+export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check> {
+  // (table, fk_column, allow_null). When allow_null=true, NULL is a valid
+  // state (FK was declared ON DELETE SET NULL); the orphan predicate filters
+  // out NULL values. When false, NULL is impossible by NOT NULL constraint;
+  // any value not in pages.id is an orphan.
+  const targets: Array<{ table: string; col: string; allowNull: boolean }> = [
+    { table: 'content_chunks',   col: 'page_id',          allowNull: false },
+    { table: 'page_versions',    col: 'page_id',          allowNull: false },
+    { table: 'tags',             col: 'page_id',          allowNull: false },
+    { table: 'takes',            col: 'page_id',          allowNull: false },
+    { table: 'raw_data',         col: 'page_id',          allowNull: false },
+    { table: 'timeline_entries', col: 'page_id',          allowNull: false },
+    { table: 'links',            col: 'from_page_id',     allowNull: false },
+    { table: 'links',            col: 'to_page_id',       allowNull: false },
+    { table: 'links',            col: 'origin_page_id',   allowNull: true  },
+    { table: 'files',            col: 'page_id',          allowNull: true  },
+  ];
+  let totalOrphans = 0;
+  const breakdown: string[] = [];
+  const cleanupSql: string[] = [];
+  const errors: string[] = [];
+  for (const { table, col, allowNull } of targets) {
+    try {
+      // NOT IN subquery is portable across postgres + PGLite. The `pages.id`
+      // subquery covers every existing parent row.
+      const nullFilter = allowNull ? `${col} IS NOT NULL AND ` : '';
+      const rows = await engine.executeRaw<{ n: string | number }>(
+        `SELECT COUNT(*)::int AS n FROM ${table} WHERE ${nullFilter}${col} NOT IN (SELECT id FROM pages)`,
+      );
+      const n = Number(rows[0]?.n ?? 0);
+      if (n > 0) {
+        totalOrphans += n;
+        breakdown.push(`${table}.${col}=${n}`);
+        cleanupSql.push(
+          `DELETE FROM ${table} WHERE ${nullFilter}${col} NOT IN (SELECT id FROM pages);`,
+        );
+      }
+    } catch (e) {
+      // Table or column may not exist on older schemas — skip and continue.
+      // Aggregate the errors so doctor surfaces "could not check N tables"
+      // when a real failure shape appears (network, lock, syntax).
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`${table}.${col}: ${msg.slice(0, 80)}`);
+    }
+  }
+  if (totalOrphans === 0 && errors.length === 0) {
+    return {
+      name: 'child_table_orphans',
+      status: 'ok',
+      message: 'All FK-child tables clean (10 tables checked)',
+    };
+  }
+  if (totalOrphans === 0 && errors.length > 0) {
+    return {
+      name: 'child_table_orphans',
+      status: 'warn',
+      message: `Could not check ${errors.length}/10 FK-child tables (older schema or transient error): ${errors.slice(0, 3).join('; ')}`,
+    };
+  }
+  return {
+    name: 'child_table_orphans',
+    status: 'warn',
+    message:
+      `${totalOrphans} orphan row(s) in FK-child tables (${breakdown.join(', ')}). ` +
+      `Cleanup: ${cleanupSql.join(' ')}`,
+  };
 }
 
 export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorReport> {
@@ -421,7 +573,190 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // things when reranker is on vs off.
   checks.push(await checkRerankerHealth(engine));
 
+  // 10. v0.36.1.0 Hindsight calibration wave (T12) — four new checks:
+  //   - abandoned_threads: high-conviction takes never revisited
+  //   - calibration_freshness: profile is older than 7 days
+  //   - grade_confidence_drift: judge self-reported confidence vs actual accuracy (CDX-11 mitigation)
+  //   - voice_gate_health: voice gate failure rate over the last 7 days
+  checks.push(await checkAbandonedThreads(engine));
+  checks.push(await checkCalibrationFreshness(engine));
+  checks.push(await checkGradeConfidenceDrift(engine));
+  checks.push(await checkVoiceGateHealth(engine));
+
   return computeDoctorReport(checks);
+}
+
+// --- v0.36.1.0 calibration doctor checks (T12) ---
+
+/**
+ * abandoned_threads: surfaces active high-conviction takes (weight >= 0.7)
+ * older than 12 months that have neither been superseded nor linked to a
+ * follow-up page. These are commitments the user made and never revisited.
+ * Status 'ok' with a count; never warns/fails (this is signal, not error).
+ */
+export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM takes
+         WHERE active = true
+           AND resolved_at IS NULL
+           AND superseded_by IS NULL
+           AND weight >= 0.7
+           AND since_date IS NOT NULL
+           AND since_date::date < (now() - INTERVAL '12 months')`,
+    );
+    const count = rows[0]?.count ?? 0;
+    if (count === 0) {
+      return {
+        name: 'abandoned_threads',
+        status: 'ok',
+        message: 'No abandoned high-conviction threads',
+      };
+    }
+    return {
+      name: 'abandoned_threads',
+      status: 'ok',
+      message: `${count} high-conviction take(s) older than 12 months and never revisited — see \`gbrain calibration\` for details`,
+    };
+  } catch (e) {
+    return {
+      name: 'abandoned_threads',
+      status: 'warn',
+      message: `Could not check abandoned threads: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * calibration_freshness: warns when the active calibration profile is
+ * older than 7 days (configurable). Default holder 'garry'. Multi-source
+ * brains see one row per source; this check uses the most recent across
+ * all sources.
+ */
+export async function checkCalibrationFreshness(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ generated_at: Date | null }>(
+      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = 'garry'`,
+    );
+    const generated = rows[0]?.generated_at;
+    if (!generated) {
+      return {
+        name: 'calibration_freshness',
+        status: 'ok',
+        message: 'No calibration profile yet (builds after 5+ resolved takes)',
+      };
+    }
+    const ageMs = Date.now() - new Date(generated).getTime();
+    const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
+    const staleDays = 7;
+    if (ageDays > staleDays) {
+      return {
+        name: 'calibration_freshness',
+        status: 'warn',
+        message: `Calibration profile is ${ageDays} days old (stale at >${staleDays}d). Run \`gbrain calibration --regenerate\``,
+      };
+    }
+    return {
+      name: 'calibration_freshness',
+      status: 'ok',
+      message: `Calibration profile generated ${ageDays}d ago`,
+    };
+  } catch (e) {
+    return {
+      name: 'calibration_freshness',
+      status: 'warn',
+      message: `Could not check calibration freshness: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * grade_confidence_drift (CDX-11 mitigation): compare the judge's
+ * self-reported confidence on auto-applied verdicts against the eventual
+ * accuracy on those same takes. When auto-resolutions diverge from
+ * confidence prediction, the judge is mis-calibrated and the operator
+ * should retune the prompt or revisit the threshold.
+ *
+ * v0.36.1.0 ship state: returns 'ok' with a counter — actual drift math
+ * requires a measurement window we haven't accumulated yet. The check
+ * exists so the surface is wired; the math arrives once we have N >= 30
+ * auto-applied verdicts to compare.
+ */
+export async function checkGradeConfidenceDrift(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ applied_count: number }>(
+      `SELECT COUNT(*)::int AS applied_count FROM take_grade_cache WHERE applied = true`,
+    );
+    const applied = rows[0]?.applied_count ?? 0;
+    if (applied < 30) {
+      return {
+        name: 'grade_confidence_drift',
+        status: 'ok',
+        message: `Only ${applied} auto-applied verdicts — need 30+ for drift detection`,
+      };
+    }
+    // v0.37+ TODO: compute confidence-vs-accuracy correlation; warn when
+    // mean(applied verdicts' confidence) deviates from the actual accuracy
+    // rate (cross-checked against later manual corrections via the
+    // contradictions probe). For v0.36.1.0 the check surfaces only the
+    // count and a "calibration math pending" status.
+    return {
+      name: 'grade_confidence_drift',
+      status: 'ok',
+      message: `${applied} auto-applied verdicts; drift math arrives in v0.37+`,
+    };
+  } catch (e) {
+    return {
+      name: 'grade_confidence_drift',
+      status: 'warn',
+      message: `Could not check grade confidence drift: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * voice_gate_health: warns when calibration_profiles rows show a high rate
+ * of voice gate failures over the last 7 days. Failures aren't bad in
+ * isolation (template fallback is fine), but a sustained high rate signals
+ * the rubric needs tuning.
+ */
+export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ total: number; failures: number }>(
+      `SELECT COUNT(*)::int AS total,
+              COALESCE(SUM(CASE WHEN voice_gate_passed = false THEN 1 ELSE 0 END), 0)::int AS failures
+         FROM calibration_profiles
+         WHERE generated_at >= (now() - INTERVAL '7 days')`,
+    );
+    const total = rows[0]?.total ?? 0;
+    const failures = rows[0]?.failures ?? 0;
+    if (total === 0) {
+      return {
+        name: 'voice_gate_health',
+        status: 'ok',
+        message: 'No calibration profile generation in the last 7 days',
+      };
+    }
+    const failRate = failures / total;
+    if (failRate >= 0.3) {
+      return {
+        name: 'voice_gate_health',
+        status: 'warn',
+        message: `Voice gate failed ${failures}/${total} (${Math.round(failRate * 100)}%) in last 7 days. Review src/core/calibration/voice-gate.ts rubric.`,
+      };
+    }
+    return {
+      name: 'voice_gate_health',
+      status: 'ok',
+      message: `Voice gate ${failures}/${total} failed in last 7 days (${Math.round(failRate * 100)}%)`,
+    };
+  } catch (e) {
+    return {
+      name: 'voice_gate_health',
+      status: 'warn',
+      message: `Could not check voice gate health: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
 }
 
 /**
@@ -498,6 +833,136 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       name: 'reranker_health',
       status: 'warn',
       message: `Could not check reranker audit: ${msg}`,
+    };
+  }
+}
+
+/**
+ * v0.36.0.0 (A5): ze_embedding_health doctor check.
+ *
+ * When the configured embedding_model starts with `zeroentropyai:`, verify
+ * the API key is set. Doesn't make a network call by default — the existing
+ * `gbrain models doctor` probe covers that, and we don't want every
+ * `gbrain doctor` run to spend tokens. Surfaces a paste-ready fix when the
+ * key is missing.
+ */
+export async function checkZeEmbeddingHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const model = await engine.getConfig('embedding_model') ?? '';
+    if (!model.startsWith('zeroentropyai:')) {
+      return {
+        name: 'ze_embedding_health',
+        status: 'ok',
+        message: `Configured embedding model "${model || 'default'}" is not ZeroEntropy — skip.`,
+      };
+    }
+    const envKey = process.env.ZEROENTROPY_API_KEY;
+    const configKey = await engine.getConfig('zeroentropy_api_key');
+    if (!envKey && !configKey) {
+      return {
+        name: 'ze_embedding_health',
+        status: 'warn',
+        message:
+          `embedding_model="${model}" but ZEROENTROPY_API_KEY is not set. ` +
+          `Fix: get a key at https://dashboard.zeroentropy.dev and run ` +
+          `\`gbrain config set zeroentropy_api_key <YOUR_KEY>\` (or export ZEROENTROPY_API_KEY).`,
+      };
+    }
+    return {
+      name: 'ze_embedding_health',
+      status: 'ok',
+      message: `embedding_model="${model}" with key configured`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'ze_embedding_health',
+      status: 'warn',
+      message: `Could not check ZE embedding health: ${msg}`,
+    };
+  }
+}
+
+/**
+ * v0.36.0.0 (A5): embedding_width_consistency doctor check.
+ *
+ * Cross-checks that `config.embedding_dimensions` matches the actual
+ * `vector(N)` width on `content_chunks.embedding`. Drift here means the
+ * ze-switch was interrupted mid-flight (schema changed but config write
+ * crashed, or vice versa). Surfaces a paste-ready `gbrain ze-switch
+ * --resume` hint.
+ */
+export async function checkEmbeddingWidthConsistency(engine: BrainEngine): Promise<Check> {
+  try {
+    const configDimStr = await engine.getConfig('embedding_dimensions');
+    if (!configDimStr) {
+      // Pre-v0.27 brain or never configured. Not our problem.
+      return {
+        name: 'embedding_width_consistency',
+        status: 'ok',
+        message: 'embedding_dimensions not configured — using defaults.',
+      };
+    }
+    const configDim = parseInt(configDimStr, 10);
+    if (!Number.isFinite(configDim) || configDim <= 0) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message: `embedding_dimensions config value "${configDimStr}" is not a positive integer. Fix: \`gbrain config set embedding_dimensions <N>\`.`,
+      };
+    }
+
+    // Read the actual column width from pg_attribute / information_schema.
+    // Postgres + PGLite both expose vector typmod via atttypmod (vectors
+    // store dim as typmod). atttypmod==-1 means no constraint; >=0 is the
+    // dim+VARHDRSZ — we use format_type for portability.
+    const rows = await engine.executeRaw<{ format_type: string }>(
+      `SELECT format_type(atttypid, atttypmod) AS format_type
+         FROM pg_attribute
+        WHERE attrelid = 'content_chunks'::regclass
+          AND attname = 'embedding'
+          AND NOT attisdropped`,
+    );
+    if (rows.length === 0) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message: 'content_chunks.embedding column not found. Fix: run `gbrain init --migrate-only` or check schema.',
+      };
+    }
+    const formatType = rows[0].format_type;
+    // Parse 'vector(N)' shape.
+    const m = formatType.match(/vector\((\d+)\)/i);
+    if (!m) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message: `Unexpected column type for content_chunks.embedding: "${formatType}".`,
+      };
+    }
+    const schemaDim = parseInt(m[1], 10);
+    if (schemaDim !== configDim) {
+      return {
+        name: 'embedding_width_consistency',
+        status: 'warn',
+        message:
+          `Schema width mismatch: content_chunks.embedding is vector(${schemaDim}) but ` +
+          `embedding_dimensions config = ${configDim}. ` +
+          `Fix: \`gbrain ze-switch --resume\` if you were mid-switch, or ` +
+          `\`gbrain config set embedding_dimensions ${schemaDim}\` to match the schema.`,
+      };
+    }
+    return {
+      name: 'embedding_width_consistency',
+      status: 'ok',
+      message: `Schema width (${schemaDim}d) matches embedding_dimensions config`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'embedding_width_consistency',
+      status: 'warn',
+      message: `Could not check embedding width: ${msg}`,
     };
   }
 }
@@ -679,7 +1144,10 @@ function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
  * Failure messages embed `source.id` so the fix command
  * `gbrain sync --source <id>` matches what the user copy-pastes.
  */
-export async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
+export async function checkSyncFreshness(
+  engine: BrainEngine,
+  opts?: { nowMs?: number },
+): Promise<Check> {
   try {
     const sources = await engine.executeRaw<{
       id: string;
@@ -703,7 +1171,13 @@ export async function checkSyncFreshness(engine: BrainEngine): Promise<Check> {
     const warnMs = warnHours * 60 * 60 * 1000;
     const failMs = failHours * 60 * 60 * 1000;
 
-    const now = Date.now();
+    // `opts.nowMs` is a test-only injection seam for the boundary tests.
+    // Without it, the two `Date.now()` calls (one in the test's `agoMs`
+    // helper, one here) drift apart by microseconds-to-milliseconds, which
+    // pushes "exactly 72h ago" above the strict `>` threshold and flips the
+    // status from warn to fail (CI-flaky, see PR #1138 ship). Production
+    // callers omit `nowMs` and get live wall-clock semantics.
+    const now = opts?.nowMs ?? Date.now();
     const issues: string[] = [];
     let hasWarnings = false;
     let hasFailures = false;
@@ -1159,6 +1633,69 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   } catch {
     // Best-effort; audit-log read failure shouldn't stop doctor.
+  }
+
+  // 3e. home_dir_in_worktree (v0.35.8.0). Walks up from `gbrainPath()`
+  // looking for a `.git` directory OR file. If found, warns: `~/.gbrain/`
+  // lives inside a git worktree, so an accidental `git add` from the
+  // worktree root could stage the brain. Pairs with the retroactive
+  // `~/.gbrain/.gitignore` (single-line `*`) laid down by saveConfig +
+  // post-upgrade. Honest scope: the .gitignore covers casual `git add`
+  // but NOT already-tracked files, screenshots, backups, or `git add -f`.
+  //
+  // Walk termination: stops at $HOME (don't keep walking into / on a user
+  // who set GBRAIN_HOME=/tmp/something). Handles `.git` as both a directory
+  // (main repo) and a file (linked worktree pointing at parent's worktrees/).
+  // Honors GBRAIN_HOME via gbrainPath().
+  try {
+    const gbrainHome = gbrainPath();
+    const home = process.env.HOME || '';
+    let worktreeRoot: string | null = null;
+    if (gbrainHome && home && gbrainHome.startsWith(home + '/')) {
+      // Walk up from gbrainHome's parent toward $HOME, stopping at $HOME.
+      // We don't check gbrainHome itself: a `.git` directly inside ~/.gbrain
+      // isn't a containing-worktree, it would be a brain repo cloned there.
+      let cur = dirname(gbrainHome);
+      while (cur && cur.length >= home.length) {
+        const gitPath = join(cur, '.git');
+        try {
+          const st = statSync(gitPath);
+          // Either a directory (main repo) or a file (linked worktree pointer).
+          if (st.isDirectory() || st.isFile()) {
+            worktreeRoot = cur;
+            break;
+          }
+        } catch {
+          // No .git at this level; continue.
+        }
+        if (cur === home) break;
+        const parent = dirname(cur);
+        if (parent === cur) break;
+        cur = parent;
+      }
+    }
+    if (worktreeRoot) {
+      const homeEnvHint = process.env.GBRAIN_HOME
+        ? `# Or move \`~/.gbrain\` outside the worktree by setting GBRAIN_HOME elsewhere.`
+        : `# Fix: \`export GBRAIN_HOME=/some/path/outside/the/worktree\` (gbrain appends \`.gbrain\`).`;
+      checks.push({
+        name: 'home_dir_in_worktree',
+        status: 'warn',
+        message:
+          `~/.gbrain lives inside git worktree at ${worktreeRoot}. ` +
+          `Config + brain DB could be committed by accident. ` +
+          `A retroactive ~/.gbrain/.gitignore blocks casual \`git add\`, but does NOT cover ` +
+          `already-tracked files, screenshots, backups, or \`git add -f\`. ${homeEnvHint}`,
+      });
+    } else {
+      checks.push({
+        name: 'home_dir_in_worktree',
+        status: 'ok',
+        message: 'gbrain home is outside any enclosing git worktree.',
+      });
+    }
+  } catch {
+    // Best-effort filesystem-hygiene check; never block doctor.
   }
 
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
@@ -1662,6 +2199,164 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   } catch { /* listRecipes / gateway not available — silent */ }
 
+  // 8c. Embedding column registry (v0.36 — D5 + D13 + D14).
+  //     Validates every column in the merged registry against the real DB
+  //     shape: (a) column exists, (b) declared type+dims match actual
+  //     format_type(atttypid, atttypmod), (c) HNSW index present on
+  //     Postgres, (d) the ACTIVE default column has >= 90% coverage.
+  //
+  //     Batch probes (D5) so the registry can grow without N+1 round-trips:
+  //     one format_type query, one pg_indexes query, one coverage-per-active
+  //     column query.
+  progress.heartbeat('embedding_column_registry');
+  try {
+    const { getEmbeddingColumnRegistry, resolveEmbeddingColumn, quoteIdentifier } =
+      await import('../core/search/embedding-column.ts');
+    const { loadConfig: _loadConfig } = await import('../core/config.ts');
+    const fileCfg = _loadConfig();
+    const mergedCfg = fileCfg ? await (await import('../core/config.ts')).loadConfigWithEngine(engine, fileCfg).catch(() => fileCfg) : null;
+    if (!mergedCfg) {
+      checks.push({
+        name: 'embedding_column_registry',
+        status: 'ok',
+        message: 'No brain config loaded — skipped',
+      });
+    } else {
+      const registry = getEmbeddingColumnRegistry(mergedCfg);
+      const declaredColumns = Object.keys(registry);
+      const activeCol = resolveEmbeddingColumn(undefined, mergedCfg).name;
+
+      // D13 — batch format_type probe via pg_attribute. udt_name only
+      // returns 'vector' vs 'halfvec'; format_type(atttypid, atttypmod)
+      // returns 'vector(1024)' / 'halfvec(2560)' so dim drift surfaces.
+      const formatRows = await engine.executeRaw<{ attname: string; formatted: string }>(
+        `SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS formatted
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public'
+            AND c.relname = 'content_chunks'
+            AND a.attname = ANY($1::text[])
+            AND NOT a.attisdropped`,
+        [declaredColumns],
+      );
+      const actualByName = new Map<string, string>();
+      for (const r of formatRows) actualByName.set(r.attname, r.formatted);
+
+      // D5 — batch index probe (Postgres only; PGLite indexing is implicit
+      // and the partial-index pattern doesn't surface in pg_indexes the
+      // same way). Reports informational, not blocking — search still
+      // works without an HNSW index, just slow.
+      const haveIndex = new Map<string, boolean>();
+      if (engine.kind === 'postgres') {
+        const indexRows = await engine.executeRaw<{ indexdef: string }>(
+          `SELECT indexdef FROM pg_indexes
+            WHERE tablename = 'content_chunks'
+              AND schemaname = 'public'`,
+        );
+        for (const col of declaredColumns) {
+          const found = indexRows.some(r => /USING\s+hnsw/i.test(r.indexdef) && r.indexdef.includes(`(${col} `));
+          haveIndex.set(col, found);
+        }
+      }
+
+      // Per-column health rollup.
+      const issues: string[] = [];
+      const okColumns: string[] = [];
+      for (const colName of declaredColumns) {
+        const entry = registry[colName];
+        const actual = actualByName.get(colName);
+        if (!actual) {
+          issues.push(`${colName}: declared but column does NOT exist in content_chunks`);
+          continue;
+        }
+        // Expected format: `vector(N)` or `halfvec(N)`.
+        const m = actual.match(/^(vector|halfvec)\((\d+)\)/i);
+        const actualType = m ? m[1].toLowerCase() : actual;
+        const actualDims = m ? parseInt(m[2], 10) : null;
+        if (actualType !== entry.type) {
+          issues.push(
+            `${colName}: declared type=${entry.type} but actual is ${actual}. ` +
+              `Fix: gbrain config set embedding_columns '<JSON>' OR ` +
+              `ALTER TABLE content_chunks ALTER COLUMN ${colName} TYPE ${entry.type}(${entry.dimensions});`,
+          );
+          continue;
+        }
+        if (actualDims !== null && actualDims !== entry.dimensions) {
+          issues.push(
+            `${colName}: declared dims=${entry.dimensions} but actual is ${actual}. ` +
+              `Fix one side: update config OR ` +
+              `ALTER TABLE content_chunks ALTER COLUMN ${colName} TYPE ${entry.type}(${entry.dimensions});`,
+          );
+          continue;
+        }
+        if (engine.kind === 'postgres' && haveIndex.get(colName) === false) {
+          issues.push(
+            `${colName}: no HNSW index. Search works but uses sequential scan. ` +
+              `Fix: CREATE INDEX IF NOT EXISTS idx_chunks_${colName} ON content_chunks USING hnsw (${quoteIdentifier(colName)} ${entry.type}_cosine_ops);`,
+          );
+          continue;
+        }
+        okColumns.push(colName);
+      }
+
+      // D14 — coverage gate on the ACTIVE default column. Catches the
+      // "user switched to a 5%-populated column" silent-degradation case.
+      let coverageWarn: string | null = null;
+      if (activeCol && actualByName.has(activeCol)) {
+        // Codex /ship #5: pull `total` alongside `pct` so a fresh brain
+        // (0 chunks → NULLIF makes pct NULL → coalesces to 0) doesn't
+        // false-warn "Active column 'embedding' is 0.0% populated".
+        const covRows = await engine.executeRaw<{ pct: number; total: number }>(
+          `SELECT (
+             COUNT(*) FILTER (WHERE ${quoteIdentifier(activeCol)} IS NOT NULL)::float
+             / NULLIF(COUNT(*), 0) * 100
+           )::float AS pct,
+           COUNT(*)::int AS total
+           FROM content_chunks`,
+        );
+        const pct = covRows[0]?.pct ?? 0;
+        const total = covRows[0]?.total ?? 0;
+        // Only warn when there's a real coverage gap. Empty brain (0 chunks)
+        // is a normal state for new installs — skip the gate entirely.
+        if (total > 0 && pct < 90) {
+          coverageWarn =
+            `Active column '${activeCol}' is ${pct.toFixed(1)}% populated. ` +
+            `Search quality silently degraded on un-embedded chunks. ` +
+            `Fix: gbrain embed --column ${activeCol} --stale (write-side support v2) ` +
+            `OR gbrain config set search_embedding_column embedding`;
+        }
+      }
+
+      if (issues.length === 0 && !coverageWarn) {
+        const indexNote = engine.kind === 'postgres' ? ' (all indexed)' : '';
+        checks.push({
+          name: 'embedding_column_registry',
+          status: 'ok',
+          message: `Registry healthy: ${okColumns.length} columns (${okColumns.join(', ')})${indexNote}; active='${activeCol}'`,
+        });
+      } else {
+        const allMessages = [
+          ...issues,
+          ...(coverageWarn ? [coverageWarn] : []),
+        ];
+        checks.push({
+          name: 'embedding_column_registry',
+          status: 'warn',
+          message: allMessages.join(' | '),
+        });
+      }
+    }
+  } catch (err) {
+    // Pre-config brains, registry-validation throws, etc. Surfaces the
+    // error message but doesn't fail the doctor run.
+    checks.push({
+      name: 'embedding_column_registry',
+      status: 'warn',
+      message: `Could not check embedding column registry: ${(err as Error).message}`,
+    });
+  }
+
   // 9. Graph health (link + timeline coverage on entity pages).
   // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
   //
@@ -1809,11 +2504,138 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   progress.heartbeat('takes_weight_grid');
   checks.push(await takesWeightGridCheck(engine));
 
+  // 10c. Child-table orphan detection (closes #1063).
+  // The autopilot `orphans` phase scans for orphan pages (no inbound links)
+  // but does NOT detect orphan rows in FK-child tables. After a bulk page
+  // delete, child rows can persist if cascade didn't fire (pre-FK rows,
+  // race during bulk cascade, code path that bypassed cascade). This
+  // surfaces them with paste-ready cleanup SQL.
+  progress.heartbeat('child_table_orphans');
+  checks.push(await childTableOrphansCheck(engine));
+
   // v0.33: whoknows_health — fixture presence + row count. The eval
   // gate itself runs via `gbrain eval whoknows`; this check is the
   // "did you do the assignment?" signal.
   progress.heartbeat('whoknows_health');
   checks.push(await whoknowsHealthCheck(engine));
+
+  // v0.36 cross-modal wave: modality column cleanup.
+  //
+  // Historical brains that imported image assets before v0.27.1's
+  // `modality='image'` default-set may have image chunks where
+  // embedding_image is populated but modality wasn't tagged. The cross-modal
+  // search routing in v0.36 depends on `modality` for keyword filtering;
+  // surface the gap so operators can run `gbrain backfill modality`.
+  progress.heartbeat('cross_modal_modality_backfill');
+  try {
+    const mismatchRows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*)::text AS count FROM content_chunks
+       WHERE embedding_image IS NOT NULL
+         AND chunk_source = 'image_asset'
+         AND (modality IS NULL OR modality != 'image')`,
+    );
+    const mismatch = parseInt(String(mismatchRows[0]?.count ?? '0'), 10);
+    if (mismatch === 0) {
+      checks.push({
+        name: 'cross_modal_modality_backfill',
+        status: 'ok',
+        message: 'All image-asset chunks have modality=image',
+      });
+    } else {
+      checks.push({
+        name: 'cross_modal_modality_backfill',
+        status: 'warn',
+        message:
+          `${mismatch} image-asset chunk(s) have embedding_image populated but modality != 'image'. ` +
+          `Fix: \`gbrain backfill modality\``,
+      });
+    }
+  } catch {
+    // Engine probably doesn't have the modality column (pre-v0.27.1 brain) —
+    // skip silently. Auto-migration will land it on next upgrade.
+    checks.push({
+      name: 'cross_modal_modality_backfill',
+      status: 'ok',
+      message: 'modality column not present (pre-v0.27.1 brain); skipped',
+    });
+  }
+
+  // v0.36 Phase 3 — unified_multimodal coverage (D21 source-aware).
+  //
+  // Only meaningful when search.unified_multimodal is on. Reports the
+  // percentage of content_chunks with embedding_multimodal populated.
+  // Source-aware: a global 95% can hide 0% coverage for a specific source.
+  progress.heartbeat('unified_multimodal_coverage');
+  try {
+    const unifiedFlag = await engine.getConfig('search.unified_multimodal').catch(() => null);
+    const unifiedOnlyFlag = await engine.getConfig('search.unified_multimodal_only').catch(() => null);
+    const unifiedOn = unifiedFlag === 'true' || unifiedFlag === '1';
+    const unifiedOnlyOn = unifiedOnlyFlag === 'true' || unifiedOnlyFlag === '1';
+
+    if (!unifiedOn) {
+      checks.push({
+        name: 'unified_multimodal_coverage',
+        status: 'ok',
+        message: 'search.unified_multimodal is off; coverage check N/A',
+      });
+    } else {
+      // D21 source-aware: report per-source coverage so multi-source brains
+      // can't hide 0% on one source behind a high global average.
+      const rows = await engine.executeRaw<{ source_id: string | null; total: string; covered: string }>(
+        `SELECT
+           COALESCE(p.source_id, 'default') AS source_id,
+           COUNT(*)::text AS total,
+           SUM(CASE WHEN cc.embedding_multimodal IS NOT NULL THEN 1 ELSE 0 END)::text AS covered
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         GROUP BY p.source_id`,
+      );
+      const perSource = rows.map(r => ({
+        source: r.source_id || 'default',
+        total: parseInt(String(r.total), 10),
+        covered: parseInt(String(r.covered), 10),
+      }));
+      const lowestCoverage = perSource.reduce(
+        (acc, r) => Math.min(acc, r.total > 0 ? r.covered / r.total : 1),
+        1,
+      );
+      const summary = perSource.map(r => {
+        const pct = r.total > 0 ? Math.round((r.covered / r.total) * 100) : 0;
+        return `${r.source}:${pct}%`;
+      }).join(', ');
+
+      if (unifiedOnlyOn && lowestCoverage < 0.99) {
+        checks.push({
+          name: 'unified_multimodal_coverage',
+          status: 'fail',
+          message:
+            `unified_multimodal_only is ON but lowest source coverage is ${(lowestCoverage * 100).toFixed(1)}% (${summary}). ` +
+            `Run \`gbrain reindex --multimodal\` to bring coverage to 99%+ or disable strict mode.`,
+        });
+      } else if (lowestCoverage < 0.95) {
+        checks.push({
+          name: 'unified_multimodal_coverage',
+          status: 'warn',
+          message:
+            `unified_multimodal is on but lowest source coverage is ${(lowestCoverage * 100).toFixed(1)}% (${summary}). ` +
+            `Run \`gbrain reindex --multimodal\` to fill the gap.`,
+        });
+      } else {
+        checks.push({
+          name: 'unified_multimodal_coverage',
+          status: 'ok',
+          message: `unified_multimodal coverage: ${summary}`,
+        });
+      }
+    }
+  } catch {
+    // Column probably not present (pre-v0.36 brain pre-migration); skip silently.
+    checks.push({
+      name: 'unified_multimodal_coverage',
+      status: 'ok',
+      message: 'embedding_multimodal column not present yet; skipped',
+    });
+  }
 
   // 11. Markdown body completeness (v0.12.3 reliability wave).
   // v0.12.0's splitBody ate everything after the first `---` horizontal rule,
@@ -2569,6 +3391,11 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
     progress.heartbeat('reranker_health');
     checks.push(await checkRerankerHealth(engine));
+    // v0.36.0.0 (A5): ZE embedding key health + schema/config width consistency.
+    progress.heartbeat('ze_embedding_health');
+    checks.push(await checkZeEmbeddingHealth(engine));
+    progress.heartbeat('embedding_width_consistency');
+    checks.push(await checkEmbeddingWidthConsistency(engine));
   }
 
   progress.finish();
@@ -2757,4 +3584,294 @@ async function runLocksCheck(engine: BrainEngine | null, jsonOutput: boolean): P
   console.log('These connections may block ALTER TABLE DDL during migration.');
   console.log('After terminating, retry: gbrain apply-migrations --yes');
   process.exit(1);
+}
+
+// ============================================================
+// v0.36+ brain-health-100 wave: --remediation-plan + --remediate
+//
+// Plan: ~/.claude/plans/system-instruction-you-are-working-fluttering-ocean.md
+// Decisions: D1 (per-job re-eval), D3 (sequential submit),
+// D5 (depends_on cascade on failure), D7 (scoped recheck),
+// D9 (content-hash idempotency), D13 (three-state classification),
+// D14 (stable remediation_id), +A (cost-budget gate).
+// ============================================================
+
+/**
+ * Emit ordered Remediation list to drive brain to --target-score.
+ *
+ * Read-only — never enqueues, never mutates. The agent contract:
+ * inspect the plan with --remediation-plan --json before committing
+ * to --remediate. The JSON shape is stable; consumers that parse it
+ * can rely on it across releases.
+ */
+export async function runRemediationPlan(
+  engine: BrainEngine,
+  args: string[],
+): Promise<void> {
+  const { computeRecommendations, classifyChecks, maxReachableScore } =
+    await import('../core/brain-score-recommendations.ts');
+
+  const targetScore = parseIntFlag(args, '--target-score') ?? 90;
+  const jsonOutput = args.includes('--json');
+
+  // Cheap path (D7) — don't run slow doctor checks for the plan surface.
+  // The recommendation generator works from BrainHealth + context alone.
+  const health = await engine.getHealth();
+  const ctx = await loadRecommendationContext(engine);
+  const recs = computeRecommendations(health, ctx);
+  // Synthetic check list for classification — we don't need full doctor
+  // output, just the check names the recommendations care about.
+  const syntheticChecks = [
+    { name: 'brain_score', status: 'ok' as const },
+    { name: 'sync_freshness', status: 'ok' as const },
+    { name: 'missing_embeddings', status: 'ok' as const },
+    { name: 'dead_links', status: 'ok' as const },
+    { name: 'orphan_pages', status: 'ok' as const },
+  ];
+  const classifications = classifyChecks(syntheticChecks, ctx);
+  const ceiling = maxReachableScore(health, classifications);
+
+  const filteredRecs = recs.filter((r) => r.status === 'remediable');
+  const estTotalSeconds = filteredRecs.reduce((sum, r) => sum + r.est_seconds, 0);
+  const estTotalUsd = filteredRecs.reduce((sum, r) => sum + (r.est_usd_cost ?? 0), 0);
+
+  const blocked = classifications
+    .filter((c) => c.status === 'blocked')
+    .map((c) => ({ check: c.check, reason: c.reason ?? 'prerequisite missing' }));
+
+  const plan = {
+    schema_version: 2,
+    brain_score_current: health.brain_score,
+    brain_score_target: targetScore,
+    max_reachable_score: ceiling,
+    target_unreachable: targetScore > ceiling,
+    plan: filteredRecs.map((r, i) => ({ step: i + 1, ...r })),
+    est_total_seconds: estTotalSeconds,
+    est_total_usd_cost: Number(estTotalUsd.toFixed(2)),
+    blocked,
+  };
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(plan, null, 2));
+    return;
+  }
+
+  // Human output
+  console.log(`Brain score: ${health.brain_score}/100 → target ${targetScore}`);
+  if (plan.target_unreachable) {
+    console.log(`Target unreachable: max with autonomous remediation is ${ceiling}/100.`);
+  }
+  if (plan.plan.length === 0) {
+    console.log('No remediations needed. Brain is at target.');
+  } else {
+    console.log(`Plan: ${plan.plan.length} step(s), est ${plan.est_total_seconds}s, est $${plan.est_total_usd_cost.toFixed(2)}`);
+    for (const step of plan.plan) {
+      const protectedMark = step.protected ? ' [PROTECTED]' : '';
+      const costMark = step.est_usd_cost ? ` ($${step.est_usd_cost.toFixed(2)})` : '';
+      console.log(`  ${step.step}. [${step.severity}] ${step.job}${protectedMark} — ${step.rationale}${costMark}`);
+    }
+  }
+  if (blocked.length > 0) {
+    console.log(`\nBlocked checks (prereq missing):`);
+    for (const b of blocked) {
+      console.log(`  - ${b.check}: ${b.reason}`);
+    }
+  }
+}
+
+/**
+ * Submit ordered Remediation jobs sequentially per D3, with D5 cascade
+ * on failure and D7 scoped recheck between steps.
+ *
+ * Default behavior: submit-and-wait per step. --dry-run skips submission.
+ * --max-usd N refuses if est_total_usd_cost > N. --max-jobs N caps the
+ * inner loop.
+ *
+ * PGLite path: synchronous in-process execution (no durable queue).
+ */
+export async function runRemediate(
+  engine: BrainEngine,
+  args: string[],
+): Promise<void> {
+  const targetScore = parseIntFlag(args, '--target-score') ?? 90;
+  const maxJobs = parseIntFlag(args, '--max-jobs') ?? Infinity;
+  const maxUsd = parseFloatFlag(args, '--max-usd');
+  const dryRun = args.includes('--dry-run');
+  const skipConfirm = args.includes('--yes');
+  const jsonOutput = args.includes('--json');
+
+  const { computeRecommendations, classifyChecks, maxReachableScore } =
+    await import('../core/brain-score-recommendations.ts');
+
+  const ctx = await loadRecommendationContext(engine);
+
+  // Pre-flight ceiling check (D13)
+  const initialHealth = await engine.getHealth();
+  const syntheticChecks = [
+    { name: 'brain_score', status: 'ok' as const },
+    { name: 'sync_freshness', status: 'ok' as const },
+    { name: 'missing_embeddings', status: 'ok' as const },
+    { name: 'dead_links', status: 'ok' as const },
+    { name: 'orphan_pages', status: 'ok' as const },
+  ];
+  const classifications = classifyChecks(syntheticChecks, ctx);
+  const ceiling = maxReachableScore(initialHealth, classifications);
+  if (targetScore > ceiling) {
+    console.error(
+      `[remediate] target ${targetScore} unreachable; max autonomous = ${ceiling}/100. ` +
+      `Configure missing prereqs (see --remediation-plan blocked output) or lower --target-score.`,
+    );
+    process.exit(2);
+  }
+
+  // Initial plan
+  let recs = computeRecommendations(initialHealth, ctx).filter((r) => r.status === 'remediable');
+  if (recs.length === 0) {
+    console.log(`Brain at score ${initialHealth.brain_score}/100, target ${targetScore}. Nothing to do.`);
+    return;
+  }
+
+  const estTotalUsd = recs.reduce((sum, r) => sum + (r.est_usd_cost ?? 0), 0);
+  if (maxUsd !== null && estTotalUsd > maxUsd) {
+    console.error(
+      `[remediate] est cost $${estTotalUsd.toFixed(2)} exceeds --max-usd $${maxUsd.toFixed(2)}. Aborting.`,
+    );
+    process.exit(2);
+  }
+
+  if (!skipConfirm && process.stdout.isTTY) {
+    console.log(`About to submit ${recs.length} job(s), est ${Math.round(recs.reduce((s, r) => s + r.est_seconds, 0))}s, est $${estTotalUsd.toFixed(2)}`);
+    console.log('Pass --yes to proceed (cron-friendly).');
+    process.exit(1);
+  }
+
+  if (dryRun) {
+    console.log(`[remediate --dry-run] Would submit ${recs.length} jobs:`);
+    for (const r of recs) console.log(`  - ${r.id} (${r.job})`);
+    return;
+  }
+
+  // Sequential submit per D3, with D5 cascade on failure and D7
+  // scoped recheck between steps.
+  const submitted: Array<{ step: number; id: string; job_id: number | null; status: string }> = [];
+  const abortedIds = new Set<string>();
+  const doctorRunId = crypto.randomUUID();
+
+  const isPGLite = engine.kind === 'pglite';
+  if (isPGLite) {
+    console.error('[remediate] PGLite engine: running inline (no durable queue).');
+  }
+
+  const { MinionQueue } = await import('../core/minions/queue.ts');
+  const { waitForCompletion } = await import('../core/minions/wait-for-completion.ts');
+  const queue = new MinionQueue(engine);
+
+  let stepCount = 0;
+  while (recs.length > 0 && stepCount < maxJobs) {
+    const step = recs[0];
+    if (!step) break;
+    stepCount++;
+
+    // D5: if depends_on intersects aborted, skip + cascade
+    if (step.depends_on && step.depends_on.some((d) => abortedIds.has(d))) {
+      submitted.push({ step: stepCount, id: step.id, job_id: null, status: 'skipped_dep_aborted' });
+      abortedIds.add(step.id);
+      recs.shift();
+      continue;
+    }
+
+    try {
+      const isProtected = !!step.protected;
+      const job = await queue.add(
+        step.job,
+        { ...step.params, doctor_run_id: doctorRunId },
+        {
+          queue: 'default',
+          idempotency_key: step.idempotency_key,
+          max_attempts: 2,
+          maxWaiting: 1,
+        },
+        isProtected ? { allowProtectedSubmit: true } : undefined,
+      );
+      submitted.push({ step: stepCount, id: step.id, job_id: job.id, status: 'submitted' });
+
+      // Wait for terminal state. PGLite is in-process — short poll.
+      const terminal = await waitForCompletion(queue, job.id, {
+        pollMs: isPGLite ? 250 : 1000,
+        timeoutMs: (step.est_seconds + 60) * 1000,
+      });
+      const lastSub = submitted[submitted.length - 1];
+      if (lastSub) lastSub.status = terminal.status;
+
+      if (terminal.status !== 'completed') {
+        abortedIds.add(step.id);
+      }
+    } catch (e) {
+      submitted.push({
+        step: stepCount, id: step.id, job_id: null,
+        status: `error: ${(e as Error).message.slice(0, 100)}`,
+      });
+      abortedIds.add(step.id);
+    }
+
+    recs.shift();
+    // D7: scoped recheck — re-compute plan from fresh health snapshot.
+    // The next plan may drop completed steps and re-introduce failed
+    // steps with bumped retry suffix (D1).
+    if (recs.length === 0 || stepCount >= maxJobs) break;
+    const freshHealth = await engine.getHealth();
+    recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
+  }
+
+  const finalHealth = await engine.getHealth();
+  const result = {
+    doctor_run_id: doctorRunId,
+    brain_score_initial: initialHealth.brain_score,
+    brain_score_final: finalHealth.brain_score,
+    brain_score_target: targetScore,
+    target_reached: finalHealth.brain_score >= targetScore,
+    submitted,
+    aborted_count: abortedIds.size,
+  };
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(`\nBrain score: ${initialHealth.brain_score} → ${finalHealth.brain_score} (target ${targetScore})`);
+    console.log(`Submitted: ${submitted.length} job(s), ${abortedIds.size} aborted/failed`);
+  }
+
+  const anyFailed = submitted.some((s) => s.status !== 'completed' && s.status !== 'submitted');
+  if (anyFailed) process.exit(1);
+}
+
+/**
+ * Build RecommendationContext from engine + config.
+ * Pure read; no side effects.
+ */
+async function loadRecommendationContext(engine: BrainEngine) {
+  const repoPath = await engine.getConfig('sync.repo_path');
+  const embeddingModel = await engine.getConfig('embedding_model');
+  const embeddingDimensions = await engine.getConfig('embedding_dimensions');
+  return {
+    repoPath: repoPath ?? undefined,
+    embeddingModel: embeddingModel ?? undefined,
+    embeddingDimensions: embeddingDimensions ? Number(embeddingDimensions) : undefined,
+    hasEmbeddingApiKey: !!(process.env.OPENAI_API_KEY || await engine.getConfig('openai_api_key')),
+    hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || await engine.getConfig('anthropic_api_key')),
+  };
+}
+
+function parseIntFlag(args: string[], flag: string): number | null {
+  const i = args.indexOf(flag);
+  if (i === -1 || i === args.length - 1) return null;
+  const v = parseInt(args[i + 1] ?? '', 10);
+  return isNaN(v) ? null : v;
+}
+
+function parseFloatFlag(args: string[], flag: string): number | null {
+  const i = args.indexOf(flag);
+  if (i === -1 || i === args.length - 1) return null;
+  const v = parseFloat(args[i + 1] ?? '');
+  return isNaN(v) ? null : v;
 }

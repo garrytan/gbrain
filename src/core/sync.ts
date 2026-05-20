@@ -74,6 +74,12 @@ const CODE_EXTENSIONS = new Set<string>([
   '.json',
   '.yaml', '.yml',
   '.toml',
+  // v0.36.x #878: Terraform / HCL. Closes the silent-data-loss bug where
+  // Terraform repos were invisible to `gbrain sync --strategy code`.
+  // detectCodeLanguage() returns null for these so they chunk via the
+  // recursive chunker (no tree-sitter grammar), which is the correct
+  // fallback — same path as toml / yaml without language-specific AST.
+  '.tf', '.tfvars', '.hcl',
 ]);
 
 /**

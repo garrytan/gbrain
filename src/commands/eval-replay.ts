@@ -177,6 +177,12 @@ interface CapturedRow {
   job_id?: number | null;
   subagent_id?: number | null;
   created_at?: string;
+  /**
+   * v0.36 (D16 / CDX-10): the embedding column that ran at capture time.
+   * Optional for back-compat — pre-v0.36 exports won't have it. NULL or
+   * missing means "use the current default."
+   */
+  embedding_column?: string | null;
 }
 
 /**
@@ -246,6 +252,10 @@ async function replayRow(engine: BrainEngine, row: CapturedRow, opts: ReplayOpts
         limit,
         detail: row.detail ?? undefined,
         expansion: row.expand_enabled ?? false,
+        // v0.36 (D16 / CDX-10): replay the SAME column that ran at capture
+        // time so config drift between capture and replay doesn't surface
+        // as "regression." NULL/undefined falls through to resolver default.
+        embeddingColumn: row.embedding_column ?? undefined,
       });
     }
   } catch (err) {

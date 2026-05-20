@@ -32,10 +32,13 @@ describe('gateway configuration', () => {
     expect(getExpansionModel()).toBe('anthropic:claude-haiku-4-5-20251001');
   });
 
-  test('defaults preserve v0.13 OpenAI behavior', () => {
+  test('defaults are ZE 1280d as of v0.36.0.0 (D3)', () => {
+    // The default flipped from openai:text-embedding-3-large 1536d to
+    // zeroentropyai:zembed-1 1280d in v0.36.0.0. The cost story is in
+    // CHANGELOG.md; the rationale lives in src/core/ai/gateway.ts:45-54.
     configureGateway({ env: {} });
-    expect(getEmbeddingModel()).toBe('openai:text-embedding-3-large');
-    expect(getEmbeddingDimensions()).toBe(1536);
+    expect(getEmbeddingModel()).toBe('zeroentropyai:zembed-1');
+    expect(getEmbeddingDimensions()).toBe(1280);
     expect(getExpansionModel()).toBe('anthropic:claude-haiku-4-5-20251001');
   });
 });
@@ -376,5 +379,76 @@ describe('Voyage flexible-dim runtime validation', () => {
     expect(caught?.fix).toContain('embedding_dimensions');
     expect(caught?.fix).toContain('256');
     expect(caught?.fix).toContain('2048');
+  });
+});
+
+describe('embedding response integrity', () => {
+  beforeEach(() => resetGateway());
+
+  test('rejects partial embedding responses instead of silently dropping rows', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      object: 'list',
+      data: [
+        {
+          object: 'embedding',
+          index: 0,
+          embedding: new Array(1536).fill(0.01),
+        },
+      ],
+      model: 'text-embedding-3-large',
+      usage: { prompt_tokens: 3, total_tokens: 3 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+
+    try {
+      configureGateway({
+        embedding_model: 'openai:text-embedding-3-large',
+        embedding_dimensions: 1536,
+        env: { OPENAI_API_KEY: 'openai-fake' },
+      });
+
+      await expect(embed(['first', 'second'])).rejects.toThrow('1 embedding(s) for 2 input(s)');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('checks every returned vector dimension, not just the first one', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      object: 'list',
+      data: [
+        {
+          object: 'embedding',
+          index: 0,
+          embedding: new Array(1536).fill(0.01),
+        },
+        {
+          object: 'embedding',
+          index: 1,
+          embedding: new Array(768).fill(0.01),
+        },
+      ],
+      model: 'text-embedding-3-large',
+      usage: { prompt_tokens: 3, total_tokens: 3 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+
+    try {
+      configureGateway({
+        embedding_model: 'openai:text-embedding-3-large',
+        embedding_dimensions: 1536,
+        env: { OPENAI_API_KEY: 'openai-fake' },
+      });
+
+      await expect(embed(['first', 'second'])).rejects.toThrow('returned 768 but schema expects 1536');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

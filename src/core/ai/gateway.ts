@@ -31,6 +31,8 @@ import { z } from 'zod';
 
 import type {
   AIGatewayConfig,
+  EmbedMultimodalOpts,
+  MultimodalBatchResult,
   MultimodalInput,
   Recipe,
   TouchpointKind,
@@ -42,8 +44,20 @@ import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 
 const MAX_CHARS = 8000;
-const DEFAULT_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
-const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
+// v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
+// new default for embedding. Real-corpus benchmark across 20 queries:
+//   - ZE wins 11/20 (OpenAI 6, Voyage 4)
+//   - 442ms avg vs OpenAI 973ms (2.2x faster)
+//   - $0.05/M tokens vs OpenAI $0.13/M (2.6x cheaper at regular pricing)
+// ZE valid Matryoshka steps are {2560, 1280, 640, 320, 160, 80, 40}; 1280 is
+// the closest analog to current OpenAI 1536d (smaller -> smaller HNSW index
+// -> faster queries) while staying in the high-recall zone of the Matryoshka
+// curve. 1024 (Voyage's step) is NOT a valid ZE dim — see
+// src/core/ai/dims.ts:ZEROENTROPY_VALID_DIMS.
+// New installs without ZEROENTROPY_API_KEY size for 1280d anyway — the
+// AIConfigError surfaces at first embed with a paste-ready setup hint.
+const DEFAULT_EMBEDDING_MODEL = 'zeroentropyai:zembed-1';
+const DEFAULT_EMBEDDING_DIMENSIONS = 1280;
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker default. Used only when search.reranker.enabled is set
@@ -398,18 +412,27 @@ function prefixWithProviderFrom(original: string, bare: string): string {
 const _warnedRecipes = new Set<string>();
 
 /**
- * Walk every registered recipe with an `embedding` touchpoint. Each one
- * missing `max_batch_tokens` gets exactly one stderr line per process for
- * its first appearance. Recipes WITH the field stay quiet. The
+ * Walk the configured embedding recipes. Each one missing `max_batch_tokens`
+ * gets exactly one stderr line per process for its first appearance. Recipes
+ * WITH the field stay quiet. The
  * recursive-halving safety net only fires when `max_batch_tokens` is set,
  * so a recipe that forgets it has no protection if the provider has a
  * batch cap. Loud-fail over silent-skip per CLAUDE.md; a future
  * Cohere/Mistral/Jina recipe that inherits the embedding-touchpoint
  * pattern but forgets the cap re-creates the v0.27 Voyage backfill loop.
- * The warning calls that out before production traffic hits it.
+ * The warning calls that out before production traffic hits it, while avoiding
+ * unrelated startup noise from recipes the current brain is not using.
  */
 function warnRecipesMissingBatchTokens(): void {
+  const configuredProviderIds = new Set<string>();
+  for (const model of [_config?.embedding_model, _config?.embedding_multimodal_model]) {
+    if (!model) continue;
+    const providerId = model.split(':')[0];
+    if (providerId) configuredProviderIds.add(providerId);
+  }
+
   for (const recipe of listRecipes()) {
+    if (!configuredProviderIds.has(recipe.id)) continue;
     const embedding = recipe.touchpoints?.embedding;
     if (!embedding || embedding.max_batch_tokens !== undefined) continue;
     // OpenAI is the canonical "no cap declared, fast path is intentional"
@@ -526,8 +549,15 @@ export function getRerankerModel(): string | undefined {
 /**
  * Check whether a touchpoint can be served given the current config.
  * Replaces scattered `!process.env.OPENAI_API_KEY` checks (Codex C3).
+ *
+ * v0.36 (D10): optional `modelOverride` to check a specific
+ * `provider:model` instead of the globally configured default for the
+ * touchpoint. Used by hybridSearch to ask "is the active column's
+ * provider reachable?" rather than "is the global default reachable?" —
+ * otherwise an unreachable global default disables vector search even
+ * when the active column's provider works fine.
  */
-export function isAvailable(touchpoint: TouchpointKind): boolean {
+export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string): boolean {
   // Test seam: when a transport stub is installed for this touchpoint, the
   // gateway is "available" for tests that exercise the whole pipeline without
   // configuring real providers. See __setChatTransportForTests /
@@ -537,7 +567,9 @@ export function isAvailable(touchpoint: TouchpointKind): boolean {
   if (!_config) return false;
   try {
     const modelStr =
-      touchpoint === 'embedding'
+      modelOverride
+        ? modelOverride
+        : touchpoint === 'embedding'
         ? getEmbeddingModel()
         : touchpoint === 'expansion'
         ? getExpansionModel()
@@ -1029,21 +1061,49 @@ export interface EmbedOpts {
    * resolver — the correct default for indexing paths).
    */
   inputType?: 'query' | 'document';
+  /**
+   * v0.36 (D10): explicit model override. When set, routes through this
+   * provider:model instead of the globally configured embedding_model.
+   * Used by the dynamic-embedding-column path so a single query can
+   * embed via the provider that matches the active column. NULL/absent
+   * preserves the existing global-default behavior.
+   *
+   * Format: 'provider:model' (e.g. 'voyage:voyage-3-large').
+   */
+  embeddingModel?: string;
+  /**
+   * v0.36 (D10): explicit dimensions override, paired with
+   * embeddingModel. When set, threads into `dimsProviderOptions` so the
+   * gateway sends the right `dimensions` / `output_dimension` to the
+   * provider. Must match the dim of the destination column or pgvector
+   * rejects the insert/search. NULL preserves the global-default.
+   */
+  dimensions?: number;
 }
 
 export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32Array[]> {
   if (!texts || texts.length === 0) return [];
 
   const cfg = requireConfig();
-  const { model, recipe, modelId } = await resolveEmbeddingProvider(getEmbeddingModel());
+  // v0.36 (D10): caller may override the model. Used by the dynamic-embedding-
+  // column path so hybridSearch can embed via the column's provider, not the
+  // global default. resolveEmbeddingProvider validates the override at the
+  // recipe layer — bad model strings throw AIConfigError with a clear hint.
+  const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
+  const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
   const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
+  // Dim override (D10) — when caller passes `dimensions`, use it. Otherwise
+  // fall back to the global cfg default. dimsProviderOptions throws a
+  // clear AIConfigError when a Voyage flexible-dim model gets an
+  // unsupported value (the existing v0.33.1.1 fail-loud path).
+  const effectiveDims = opts?.dimensions ?? cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
   const providerOpts = dimsProviderOptions(
     recipe.implementation,
     modelId,
-    cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS,
+    effectiveDims,
     opts?.inputType,
   );
-  const expected = cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
+  const expected = effectiveDims;
 
   const embedding = recipe.touchpoints?.embedding;
   const maxBatchTokens = embedding?.max_batch_tokens;
@@ -1190,12 +1250,20 @@ async function embedSubBatch(
       ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
     });
 
-    const first = result.embeddings?.[0];
-    if (first && Array.isArray(first) && first.length !== expectedDims) {
+    if (!Array.isArray(result.embeddings) || result.embeddings.length !== texts.length) {
       throw new AIConfigError(
-        `Embedding dim mismatch: model ${modelId} returned ${first.length} but schema expects ${expectedDims}.`,
-        `Run \`gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${first.length}\` or change models.`,
+        `Embedding provider returned ${result.embeddings?.length ?? 0} embedding(s) for ${texts.length} input(s).`,
+        `Retry the import after checking provider health; partial embedding responses are not safe to index.`,
       );
+    }
+
+    for (const embedding of result.embeddings) {
+      if (Array.isArray(embedding) && embedding.length !== expectedDims) {
+        throw new AIConfigError(
+          `Embedding dim mismatch: model ${modelId} returned ${embedding.length} but schema expects ${expectedDims}.`,
+          `Run \`gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${embedding.length}\` or change models.`,
+        );
+      }
     }
 
     recordSubBatchSuccess(recipe);
@@ -1236,8 +1304,15 @@ export async function embedOne(text: string): Promise<Float32Array> {
  *
  * Returns a single Float32Array (not a batch).
  */
-export async function embedQuery(text: string): Promise<Float32Array> {
-  const [v] = await embed([text], { inputType: 'query' });
+export async function embedQuery(
+  text: string,
+  opts?: { embeddingModel?: string; dimensions?: number },
+): Promise<Float32Array> {
+  const [v] = await embed([text], {
+    inputType: 'query',
+    embeddingModel: opts?.embeddingModel,
+    dimensions: opts?.dimensions,
+  });
   return v;
 }
 
@@ -1262,7 +1337,10 @@ const MULTIMODAL_MAX_IMAGE_BYTES = 20 * 1024 * 1024;
  *
  * Empty input → returns []. Preserves the `embed([])` contract.
  */
-export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float32Array[]> {
+export async function embedMultimodal(
+  inputs: MultimodalInput[],
+  opts: EmbedMultimodalOpts = {},
+): Promise<Float32Array[]> {
   if (!inputs || inputs.length === 0) return [];
 
   const cfg = requireConfig();
@@ -1299,7 +1377,7 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
   // recipe is `openai-compat` per tier but uses its own /multimodalembeddings
   // path, so we still branch on recipe.id for that one.
   if (recipe.id !== 'voyage' && recipe.implementation === 'openai-compatible') {
-    return embedMultimodalOpenAICompat(inputs, recipe, parsed.modelId, cfg);
+    return embedMultimodalOpenAICompat(inputs, recipe, parsed.modelId, cfg, opts);
   }
   if (recipe.id !== 'voyage') {
     throw new AIConfigError(
@@ -1332,6 +1410,10 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
   // landing in `embedding_image` the column itself is fixed at 1024.
   const targetDims = 1024;
 
+  // v0.36 (D22-2): thread Voyage's retrieval input_type discipline through.
+  // Default 'document' preserves pre-v0.36 ingest behavior.
+  const inputType = opts.inputType ?? 'document';
+
   // Batch in groups of 32 (Voyage's published max). Each batch is one HTTP
   // call; results concatenate in input order.
   const allEmbeddings: Float32Array[] = [];
@@ -1339,17 +1421,19 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
     const batch = inputs.slice(i, i + MULTIMODAL_BATCH_SIZE);
     const body = {
       inputs: batch.map(input => ({
-        // Voyage's documented shape for image inputs:
-        //   { content: [{ type: "image_base64", image_base64: "data:image/png;base64,..." }] }
+        // Voyage's documented content shape supports both image and text
+        // entries. v0.36 cross-modal: text variant for query embedding.
         content: [
-          {
-            type: 'image_base64',
-            image_base64: `data:${input.mime};base64,${input.data}`,
-          },
+          input.kind === 'text'
+            ? { type: 'text', text: input.text }
+            : {
+              type: 'image_base64',
+              image_base64: `data:${input.mime};base64,${input.data}`,
+            },
         ],
       })),
       model: parsed.modelId,
-      input_type: 'document',
+      input_type: inputType,
     };
 
     let res: Response;
@@ -1437,6 +1521,7 @@ async function embedMultimodalOpenAICompat(
   recipe: Recipe,
   modelId: string,
   cfg: AIGatewayConfig,
+  opts: EmbedMultimodalOpts = {},
 ): Promise<Float32Array[]> {
   // Auth resolution via the gateway's canonical helper so LiteLLM-style
   // optional-auth recipes (Authorization: Bearer LITELLM_API_KEY) and
@@ -1470,19 +1555,27 @@ async function embedMultimodalOpenAICompat(
   // multimodal content array varies per provider. Single-input requests
   // are the safe lowest common denominator; LiteLLM's proxy backend
   // batches internally if it can.
+  // v0.36 (D22-2): inputType opt threaded for symmetry with the Voyage path.
+  // Most openai-compatible proxies don't forward this field, but recording
+  // it in the body keeps LiteLLM-style providers that DO accept it correct.
+  const inputType = opts.inputType ?? 'document';
+
   const allEmbeddings: Float32Array[] = [];
   for (const input of inputs) {
-    const body = {
+    const body: Record<string, unknown> = {
       model: modelId,
       input: [
-        {
-          // OpenAI's documented multimodal content shape. The data-URL
-          // form embeds the image bytes inline so the proxy doesn't need
-          // network access to fetch the image.
-          type: 'image_url',
-          image_url: { url: `data:${input.mime};base64,${input.data}` },
-        },
+        input.kind === 'text'
+          ? { type: 'input_text', text: input.text }
+          : {
+            // OpenAI's documented multimodal content shape. The data-URL
+            // form embeds the image bytes inline so the proxy doesn't need
+            // network access to fetch the image.
+            type: 'image_url',
+            image_url: { url: `data:${input.mime};base64,${input.data}` },
+          },
       ],
+      input_type: inputType,
     };
 
     let res: Response;
@@ -1555,6 +1648,120 @@ async function embedMultimodalOpenAICompat(
   }
 
   return allEmbeddings;
+}
+
+// ---- v0.36 cross-modal wave: query-side multimodal embedding + safe variant ----
+
+/**
+ * Embed a TEXT query through the configured multimodal model.
+ *
+ * Routes through `embedding_multimodal_model` (defaults to Voyage multimodal-3)
+ * so the resulting vector lives in the multimodal embedding space — the same
+ * space the brain's `embedding_image` column was populated into. A text
+ * query embedded here can match image chunks (Phase 1 of the cross-modal
+ * wave) and, post Phase 3 reindex, text chunks in the unified column.
+ *
+ * Threads `inputType: 'query'` (D22-2) so Voyage routes to the retrieval
+ * half of its asymmetric embedding space.
+ *
+ * Sibling of v0.35.0.0's `embedQuery(text)`, which uses the TEXT embedding
+ * model (typically OpenAI text-embedding-3-large at 1536d or 2560d, NOT
+ * compatible with the 1024d multimodal column).
+ */
+export async function embedQueryMultimodal(text: string): Promise<Float32Array> {
+  const [vec] = await embedMultimodal([{ kind: 'text', text }], { inputType: 'query' });
+  if (!vec) {
+    throw new AITransientError('embedQueryMultimodal: gateway returned no vector for non-empty text input');
+  }
+  return vec;
+}
+
+/**
+ * Embed an IMAGE as a query through the configured multimodal model.
+ *
+ * Sibling of `embedQueryMultimodal(text)` for the Phase 2 image-as-query
+ * path. The image bytes must already be loaded and base64-encoded by the
+ * caller (see `src/core/search/image-loader.ts` for the SSRF-defended
+ * loader). Threads `inputType: 'query'` so Voyage routes to the
+ * retrieval half of its asymmetric space.
+ */
+export async function embedQueryMultimodalImage(
+  input: { data: string; mime: string },
+): Promise<Float32Array> {
+  const [vec] = await embedMultimodal(
+    [{ kind: 'image_base64', data: input.data, mime: input.mime }],
+    { inputType: 'query' },
+  );
+  if (!vec) {
+    throw new AITransientError('embedQueryMultimodalImage: gateway returned no vector');
+  }
+  return vec;
+}
+
+/**
+ * Partial-failure-aware variant of `embedMultimodal`.
+ *
+ * The default `embedMultimodal()` throws on first failure to preserve the
+ * pre-v0.36 contract (used by `importImageFile` which can't proceed on
+ * partial data). Phase 3 `reindex --multimodal` ingests many thousands
+ * of chunks and CAN make forward progress with partial results — it
+ * uses this variant so a 401 on chunk 87K doesn't discard the 31
+ * already-computed embeddings in that batch.
+ *
+ * Strategy:
+ *   1. Try the full input set via `embedMultimodal`. On success, return.
+ *   2. On AIConfigError (permanent), surface every input as failed —
+ *      the misconfig isn't going to fix itself by retrying smaller.
+ *   3. On AITransientError or other thrown error, split-and-retry
+ *      via binary search. Single-input attempts that fail are recorded
+ *      in `failedIndices` and skipped.
+ *
+ * Returns `MultimodalBatchResult` with parallel-indexed `embeddings`
+ * (undefined for failed slots) and a `failedIndices` array.
+ */
+export async function embedMultimodalSafe(
+  inputs: MultimodalInput[],
+  opts: EmbedMultimodalOpts = {},
+): Promise<MultimodalBatchResult> {
+  if (!inputs || inputs.length === 0) {
+    return { embeddings: [], failedIndices: [] };
+  }
+
+  const embeddings: Array<Float32Array | undefined> = new Array(inputs.length).fill(undefined);
+  const failedIndices: number[] = [];
+  let lastError: Error | undefined;
+
+  async function attempt(startIdx: number, items: MultimodalInput[]): Promise<void> {
+    if (items.length === 0) return;
+    try {
+      const vecs = await embedMultimodal(items, opts);
+      for (let i = 0; i < vecs.length; i++) {
+        embeddings[startIdx + i] = vecs[i];
+      }
+      return;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // AIConfigError = permanent misconfig. Retrying smaller won't help.
+      if (lastError instanceof AIConfigError) {
+        for (let i = 0; i < items.length; i++) failedIndices.push(startIdx + i);
+        return;
+      }
+      // Single input that failed — record and move on.
+      if (items.length === 1) {
+        failedIndices.push(startIdx);
+        return;
+      }
+      // Binary-search split. Each half gets its own retry.
+      const mid = Math.floor(items.length / 2);
+      await attempt(startIdx, items.slice(0, mid));
+      await attempt(startIdx + mid, items.slice(mid));
+    }
+  }
+
+  await attempt(0, inputs);
+  failedIndices.sort((a, b) => a - b);
+
+  return { embeddings, failedIndices, lastError };
 }
 
 // ---- Expansion ----

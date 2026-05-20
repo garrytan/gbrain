@@ -25,6 +25,9 @@ export interface ShellAuditEvent {
   cwd: string;
   cmd_display?: string;        // first 80 chars of cmd; may contain inline tokens
   argv_display?: string[];     // each arg truncated individually to preserve separation
+  /** Names of inheritable secrets requested via `inherit:` (v0.35.8.0).
+   *  Names only — values never appear here. */
+  inherit?: string[];
 }
 
 /** Compute `shell-jobs-YYYY-Www.jsonl` using ISO-8601 week numbering.

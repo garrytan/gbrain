@@ -31,6 +31,7 @@ import {
   QUERY_DESCRIPTION,
   SEARCH_DESCRIPTION,
   FIND_CONTRADICTIONS_DESCRIPTION,
+  FIND_TRAJECTORY_DESCRIPTION,
   CODE_CALLERS_DESCRIPTION,
   CODE_CALLEES_DESCRIPTION,
   CODE_DEF_DESCRIPTION,
@@ -1142,6 +1143,21 @@ const query: Operation = {
       description:
         "v0.34: scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile). Pass '__all__' to force cross-source search in multi-source brains.",
     },
+    cross_modal: {
+      type: 'string',
+      enum: ['text', 'image', 'both', 'auto'],
+      description:
+        "v0.36 cross-modal search routing.\n" +
+        "  'text' (default for non-image-intent queries) — text-only path, no behavior change vs v0.35.\n" +
+        "  'image' — route the query through Voyage multimodal-3 + the embedding_image column. Best for 'show me photos of...' phrasings.\n" +
+        "  'both' — run text AND image searches in parallel; merge via weighted RRF.\n" +
+        "  'auto' — same effect as omitting the field; intent classifier decides based on query phrasing.",
+    },
+    embedding_column: {
+      type: 'string',
+      description:
+        "v0.36: route vector search through a non-default embedding column. Defaults to 'embedding' (OpenAI 1536d) unless `search_embedding_column` config sets a different default. Per-call override for A/B benchmarking across providers (e.g. 'embedding_voyage', 'embedding_zeroentropy'). Column MUST be declared in the `embedding_columns` config registry — unknown names throw with a paste-ready hint listing valid columns.",
+    },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
@@ -1150,6 +1166,19 @@ const query: Operation = {
     const queryText = p.query as string | undefined;
     const imageData = p.image as string | undefined;
     const imageMime = (p.image_mime as string) || 'image/jpeg';
+    const embeddingColumnParam =
+      typeof p.embedding_column === 'string' && p.embedding_column.length > 0
+        ? (p.embedding_column as string)
+        : undefined;
+    // Explicit per-call source_id must win over ctx.sourceId. The special
+    // __all__ value opts out of source filtering for local cross-source search.
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const querySourceScope =
+      sourceIdParam !== undefined
+        ? sourceIdParam === '__all__'
+          ? {}
+          : { sourceId: sourceIdParam }
+        : sourceScopeOpts(ctx);
 
     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
     // text-only); embeds the image via embedMultimodal and runs a direct
@@ -1167,7 +1196,7 @@ const query: Operation = {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
-        ...sourceScopeOpts(ctx),
+        ...querySourceScope,
       });
       return results;
     }
@@ -1186,16 +1215,6 @@ const query: Operation = {
     // search). When the param is the literal '__all__', force-allow
     // cross-source mode (matches SearchOpts.sourceId contract).
     let capturedMeta: HybridSearchMeta | null = null;
-    // v0.34 (Codex finding #2): thread ctx.sourceId so multi-source brains
-    // get source-scoped retrieval. Explicit `source_id` param wins over
-    // ctx.sourceId; literal `__all__` opts out (cross-source).
-    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
-    const resolvedSourceId =
-      sourceIdParam !== undefined
-        ? sourceIdParam === '__all__'
-          ? undefined
-          : sourceIdParam
-        : ctx.sourceId;
     // v0.32.x search-lite: route the query op through hybridSearchCached so
     // semantic cache + token budget + intent weighting fire automatically.
     // Plain hybridSearch remains the bare API for callers that opt out.
@@ -1209,7 +1228,7 @@ const query: Operation = {
       symbolKind: (p.symbol_kind as string) || undefined,
       nearSymbol: (p.near_symbol as string) || undefined,
       walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
-      sourceId: resolvedSourceId,
+      ...querySourceScope,
       // v0.29.1 — agent-explicit recency + salience. Omitted = heuristic defaults.
       salience: p.salience as 'off' | 'on' | 'strong' | undefined,
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
@@ -1219,11 +1238,15 @@ const query: Operation = {
       tokenBudget: typeof p.token_budget === 'number' ? (p.token_budget as number) : undefined,
       useCache: typeof p.use_cache === 'boolean' ? (p.use_cache as boolean) : undefined,
       intentWeighting: typeof p.intent_weighting === 'boolean' ? (p.intent_weighting as boolean) : undefined,
+      // v0.36 cross-modal routing param.
+      crossModal: p.cross_modal as 'text' | 'image' | 'both' | 'auto' | undefined,
       onMeta: (m) => { capturedMeta = m; },
-      // v0.34.1 (#861 — P0 leak seal): thread caller's source scope. The
-      // hybridSearch internal searchOpts rebuild (hybrid.ts:223) was
-      // dropping these fields pre-fix even when callers passed them.
-      ...sourceScopeOpts(ctx),
+      // v0.36 (D15): per-call embedding column override. Resolver rejects
+      // unknown names at hybrid entry with EmbeddingColumnNotRegisteredError;
+      // the error surfaces back to the agent as the op error envelope.
+      // Source scope is already threaded via ...querySourceScope above
+      // (master's #1182 cleanup of the duplicate sourceScopeOpts spread).
+      embeddingColumn: embeddingColumnParam,
     });
     const latency_ms = Date.now() - startedAt;
 
@@ -2081,13 +2104,57 @@ const submit_job: Operation = {
     // Trusted flag fires ONLY for an explicit local CLI submission of a protected
     // name. Strict `=== false` so an untyped/cast context can't escalate.
     const trusted = ctx.remote === false && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
-    return queue.add(name, (p.data as Record<string, unknown>) || {}, {
+
+    const jobData = (p.data as Record<string, unknown>) || {};
+
+    // v0.35.8.0: pre-enqueue shell-job validation, parity with the CLI submit
+    // path. Closes the bug class where shell.ts handler-time validation ran
+    // AFTER queue.add() persisted the row (codex F-CDX-1). Note: this branch
+    // only fires for trusted local submitters (`ctx.remote === false` AND
+    // protected-name allowlist), so remote MCP callers never reach it — but
+    // it stays here as defense-in-depth in case a future code path widens
+    // the trust gate above.
+    if (name === 'shell' && trusted) {
+      const { validateShellJobParams } = await import('./minions/handlers/shell-validate.ts');
+      validateShellJobParams(jobData);
+    }
+
+    const job = await queue.add(name, jobData, {
       queue: (p.queue as string) || 'default',
       priority: (p.priority as number) || 0,
       max_attempts: (p.max_attempts as number) || 3,
       delay: (p.delay as number) || undefined,
       timeout_ms: (p.timeout_ms as number) || undefined,
     }, trusted);
+
+    // v0.35.8.0: submit_job audit-log parity with the CLI path (codex F-CDX-4).
+    // Pre-v0.35.8.0 the op handler bypassed the shell-audit JSONL writer
+    // entirely. Lift the call here so both submit surfaces produce one
+    // operational-trace line per shell submission. Best-effort; audit
+    // failures never block submission.
+    if (name === 'shell' && trusted) {
+      try {
+        const { logShellSubmission } = await import('./minions/handlers/shell-audit.ts');
+        const inheritNames = Array.isArray(jobData.inherit)
+          ? (jobData.inherit as unknown[]).filter((s): s is string => typeof s === 'string')
+          : undefined;
+        logShellSubmission({
+          caller: 'mcp',
+          // Gated on `trusted` (which requires ctx.remote === false), so
+          // we know this path is a local trusted submitter — log it that way.
+          remote: false,
+          job_id: job.id,
+          cwd: typeof jobData.cwd === 'string' ? jobData.cwd : '',
+          cmd_display: typeof jobData.cmd === 'string' ? (jobData.cmd as string).slice(0, 80) : undefined,
+          argv_display: Array.isArray(jobData.argv)
+            ? (jobData.argv as unknown[]).filter((a): a is string => typeof a === 'string').map((a) => a.slice(0, 80))
+            : undefined,
+          inherit: inheritNames && inheritNames.length > 0 ? inheritNames : undefined,
+        });
+      } catch { /* audit failures never block submission */ }
+    }
+
+    return job;
   },
 };
 
@@ -2269,6 +2336,32 @@ const find_orphans: Operation = {
   cliHints: { name: 'orphans', hidden: true },
 };
 
+// --- v0.36.1.0 (T7): calibration profile read op ---
+
+const get_calibration_profile: Operation = {
+  name: 'get_calibration_profile',
+  description:
+    'Read the active calibration profile for a holder. Returns the latest row from calibration_profiles ' +
+    '(per-source, per-holder) including Brier score, accuracy, pattern statements, and active bias tags. ' +
+    'Source-scoped via sourceScopeOpts — federated_read scopes see the union of allowed sources, ' +
+    'scalar source-bound clients see only their source. Returns null when no profile exists yet ' +
+    '(cold-brain branch: builds after 5+ resolved takes + a calibration_profile phase run).',
+  scope: 'read',
+  params: {
+    holder: {
+      type: 'string',
+      description:
+        "Holder slug, e.g. 'garry' or 'people/charlie-example'. Defaults to 'garry' when omitted.",
+    },
+  },
+  handler: async (ctx, p) => {
+    const { getCalibrationProfileOp } = await import('../commands/calibration.ts');
+    return getCalibrationProfileOp(ctx, {
+      ...(typeof p.holder === 'string' ? { holder: p.holder } : {}),
+    });
+  },
+};
+
 // --- v0.29: Salience + Anomaly Detection ---
 
 const get_recent_salience: Operation = {
@@ -2442,6 +2535,86 @@ const find_contradictions: Operation = {
     };
   },
   cliHints: { name: 'find-contradictions' },
+};
+
+const find_trajectory: Operation = {
+  name: 'find_trajectory',
+  description: FIND_TRAJECTORY_DESCRIPTION,
+  scope: 'read',
+  // localOnly intentionally NOT set — federated OAuth clients should be
+  // able to query trajectories for entities in their scope. Visibility
+  // filtering (D-CDX-1) inside the engine restricts remote callers to
+  // visibility='world' facts.
+  params: {
+    entity_slug: {
+      type: 'string',
+      description: 'Required. Entity slug to chart (e.g. "companies/acme-example", "people/alice-example").',
+    },
+    metric: {
+      type: 'string',
+      description: 'Optional. Filter to a single canonical metric (e.g. "mrr", "arr", "team_size"). When omitted, all metrics return.',
+    },
+    since: {
+      type: 'string',
+      description: 'Optional lower bound on valid_from (YYYY-MM-DD or ISO).',
+    },
+    until: {
+      type: 'string',
+      description: 'Optional upper bound on valid_from (YYYY-MM-DD or ISO).',
+    },
+    limit: {
+      type: 'number',
+      description: 'Max points returned. Default 100, max 500.',
+    },
+  },
+  handler: async (ctx, p) => {
+    if (typeof p.entity_slug !== 'string' || !p.entity_slug.trim()) {
+      throw new Error('find_trajectory requires entity_slug (string)');
+    }
+    const metric = typeof p.metric === 'string' ? p.metric : undefined;
+    const since  = typeof p.since  === 'string' ? p.since  : undefined;
+    const until  = typeof p.until  === 'string' ? p.until  : undefined;
+    const limit  = typeof p.limit  === 'number' ? p.limit  : undefined;
+    const scope = sourceScopeOpts(ctx);
+
+    // D-CDX-1: thread ctx.remote into the engine so visibility filtering
+    // happens at SQL level. Mirrors recall's posture for untrusted callers.
+    const points = await ctx.engine.findTrajectory({
+      entitySlug: p.entity_slug,
+      ...scope,
+      remote: ctx.remote === true,
+      metric,
+      since,
+      until,
+      limit,
+    });
+
+    const { computeTrajectoryStats, TRAJECTORY_SCHEMA_VERSION } = await import('./trajectory.ts');
+    const { regressions, drift_score } = computeTrajectoryStats(points);
+
+    // Engine result includes raw embeddings (Float32Array); strip those
+    // before sending over MCP — they're bulky binary noise that consumers
+    // never need at this layer.
+    const wirePoints = points.map(pt => ({
+      fact_id: pt.fact_id,
+      valid_from: pt.valid_from.toISOString().slice(0, 10),
+      metric: pt.metric,
+      value: pt.value,
+      unit: pt.unit,
+      period: pt.period,
+      text: pt.text,
+      source_session: pt.source_session,
+      source_markdown_slug: pt.source_markdown_slug,
+    }));
+
+    return {
+      points: wirePoints,
+      regressions,
+      drift_score,
+      schema_version: TRAJECTORY_SCHEMA_VERSION,
+    };
+  },
+  cliHints: { name: 'find-trajectory' },
 };
 
 const get_recent_transcripts: Operation = {
@@ -3124,6 +3297,149 @@ const code_traversal_cache_clear: Operation = {
   cliHints: { name: 'code_traversal_cache_clear', hidden: true },
 };
 
+// --- v0.36 Phase 2: search_by_image (image-as-query) ---
+
+const search_by_image: Operation = {
+  name: 'search_by_image',
+  description:
+    'v0.36 cross-modal Phase 2: image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL ' +
+    '(SSRF-defended). Returns visually-similar image chunks plus any OCR text they carry. Optional `query` text ' +
+    'refinement merges via weighted RRF (D13 hybrid intersect). True image→full-text-knowledge requires Phase 3 ' +
+    '(`gbrain reindex --multimodal` + `search.unified_multimodal: true`).',
+  params: {
+    image_path: { type: 'string', description: 'Absolute path to image (local CLI callers only — rejected for remote MCP per D18).' },
+    image_url: { type: 'string', description: 'http(s):// URL to image. SSRF-defended; max 3 redirect hops; 10MB cap.' },
+    image_data: { type: 'string', description: 'Base64-encoded image bytes (preferred for remote MCP callers). PNG/JPEG/WebP only.' },
+    image_mime: { type: 'string', description: 'Optional MIME hint when ambiguous. Magic-byte sniff is authoritative.' },
+    query: { type: 'string', description: 'Optional text refinement; runs hybrid intersect via D13 weighted RRF.' },
+    limit: { type: 'number', description: 'Max results (default 20)' },
+    offset: { type: 'number', description: 'Skip first N results (for pagination)' },
+    source_id: { type: 'string', description: "Scope to a single source. Defaults to ctx.sourceId. '__all__' opts out." },
+  },
+  scope: 'read',
+  // NOT localOnly: remote MCP callers can pass image_url or image_data
+  // (subject to D18 image_path ban + D12 size cap + D23-#6 spend cap).
+  handler: async (ctx, p) => {
+    const imagePath = p.image_path as string | undefined;
+    const imageUrl = p.image_url as string | undefined;
+    const imageData = p.image_data as string | undefined;
+    const imageMime = (p.image_mime as string) || undefined;
+    const queryRefinement = p.query as string | undefined;
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+
+    // D18 P0 — remote callers cannot pass image_path. Rejecting at handler
+    // entry, before any file I/O fires. validateParams catches it too at the
+    // dispatch layer; this is defense-in-depth.
+    if (ctx.remote === true && imagePath) {
+      throw new Error(
+        'permission_denied: image_path is not permitted for remote callers (D18). ' +
+        'Use image_url or image_data instead.',
+      );
+    }
+
+    if (!imagePath && !imageUrl && !imageData) {
+      throw new Error('search_by_image requires one of: image_path, image_url, image_data');
+    }
+    if ([imagePath, imageUrl, imageData].filter(Boolean).length > 1) {
+      throw new Error('search_by_image accepts only one of: image_path, image_url, image_data');
+    }
+
+    // D23-#6 — pre-flight daily-budget check for remote OAuth clients.
+    // Local CLI callers (ctx.remote=false) bypass the cap (clientId="").
+    const clientId = (ctx.remote === true ? (ctx.auth?.clientId ?? '') : '');
+    if (clientId) {
+      const budgetUsd = await getDailyImageBudgetUsd(ctx.engine);
+      const { checkBudget } = await import('./spend-log.ts');
+      await checkBudget(ctx.engine, clientId, Math.round(budgetUsd * 100));
+    }
+
+    // Resolve image bytes via the SSRF-defended loader. For remote callers,
+    // tighter byte cap.
+    const remoteCap = await getRemoteMaxBytes(ctx.engine);
+    const localCap = await getLocalMaxBytes(ctx.engine);
+    const cap = ctx.remote === true ? remoteCap : localCap;
+    const { loadImageInput } = await import('./search/image-loader.ts');
+    const loaded = await loadImageInput(
+      (imagePath ?? imageUrl ?? `data:${imageMime ?? 'image/png'};base64,${imageData}`)!,
+      { maxBytes: cap },
+    );
+
+    // Resolve source-scope (D5 canonical thread).
+    const resolvedSourceId =
+      sourceIdParam !== undefined
+        ? sourceIdParam === '__all__'
+          ? undefined
+          : sourceIdParam
+        : ctx.sourceId;
+
+    const { searchByImage } = await import('./search/by-image.ts');
+    const results = await searchByImage(
+      ctx.engine,
+      { base64: loaded.base64, mime: loaded.contentType },
+      {
+        limit: (p.limit as number) || 20,
+        offset: (p.offset as number) || 0,
+        query: queryRefinement,
+        sourceId: resolvedSourceId,
+        ...sourceScopeOpts(ctx),
+      },
+    );
+
+    // D23-#6 — record successful Voyage call. Best-effort; failures don't
+    // block the response.
+    if (clientId) {
+      const { recordSpend, VOYAGE_MULTIMODAL_3_PER_IMAGE_CENTS } = await import('./spend-log.ts');
+      // Approximate: 1 image embed + (query ? 1 text embed : 0). Both are
+      // billed at the same per-call rate by Voyage.
+      const calls = 1 + (queryRefinement ? 1 : 0);
+      void recordSpend(ctx.engine, {
+        clientId,
+        tokenName: ctx.auth?.clientName ?? null,
+        operation: 'search_by_image',
+        spendCents: VOYAGE_MULTIMODAL_3_PER_IMAGE_CENTS * calls,
+        provider: 'voyage',
+        model: 'voyage-multimodal-3',
+      });
+    }
+
+    return results;
+  },
+  cliHints: { name: 'search-by-image' },
+};
+
+async function getDailyImageBudgetUsd(engine: BrainEngine): Promise<number> {
+  try {
+    const v = await engine.getConfig('search.image_query.daily_budget_usd_per_client');
+    if (v == null) return 5; // default $5
+    const n = parseFloat(v);
+    return Number.isFinite(n) && n > 0 ? n : 5;
+  } catch {
+    return 5;
+  }
+}
+
+async function getLocalMaxBytes(engine: BrainEngine): Promise<number> {
+  try {
+    const v = await engine.getConfig('search.image_query.max_bytes');
+    if (v == null) return 10 * 1024 * 1024;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n > 0 ? n : 10 * 1024 * 1024;
+  } catch {
+    return 10 * 1024 * 1024;
+  }
+}
+
+async function getRemoteMaxBytes(engine: BrainEngine): Promise<number> {
+  try {
+    const v = await engine.getConfig('search.image_query.remote_max_bytes');
+    if (v == null) return 2 * 1024 * 1024;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n > 0 ? n : 2 * 1024 * 1024;
+  } catch {
+    return 2 * 1024 * 1024;
+  }
+}
+
 // --- Exports ---
 
 export const operations: Operation[] = [
@@ -3133,6 +3449,8 @@ export const operations: Operation[] = [
   restore_page, purge_deleted_pages,
   // Search
   search, query,
+  // v0.36 Phase 2: image-as-query
+  search_by_image,
   // Tags
   add_tag, remove_tag, get_tags,
   // Links
@@ -3158,6 +3476,8 @@ export const operations: Operation[] = [
   pause_job, resume_job, replay_job, send_job_message,
   // Orphans
   find_orphans,
+  // v0.36.1.0 (T7) — Hindsight calibration wave: read profile via MCP
+  get_calibration_profile,
   // v0.28: Takes + think
   takes_list, takes_search, think,
   // v0.30: calibration aggregates over takes
@@ -3172,6 +3492,8 @@ export const operations: Operation[] = [
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing
   find_experts,
+  // v0.35.4: temporal trajectory (typed claims over time + regression detection)
+  find_trajectory,
   // v0.33.3: Cathedral III code-intelligence (MCP-exposed; were CLI_ONLY pre-v0.33.3)
   code_callers, code_callees, code_def, code_refs,
   // v0.34 W3: recursive code_blast + code_flow

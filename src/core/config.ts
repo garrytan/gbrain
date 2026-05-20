@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
-import type { EngineConfig } from './types.ts';
+import type { EngineConfig, EmbeddingColumnConfig } from './types.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
@@ -85,6 +85,27 @@ export interface GBrainConfig {
   embedding_image_ocr_model?: string;
 
   /**
+   * v0.36 — embedding-column registry (D7). Maps a content_chunks column
+   * name to its provider + dimensions + pgvector type. Both keys live in
+   * the DB plane (`gbrain config set ...`) so users can flip without
+   * editing files. Resolver merges this with `BUILTIN_EMBEDDING_COLUMNS`
+   * (which derive their provider from `embedding_model` /
+   * `embedding_multimodal_model`).
+   *
+   * Validation lives in `src/core/search/embedding-column.ts` per D12 —
+   * keys must match `/^[a-z_][a-z0-9_]*$/`, type in {vector, halfvec},
+   * dimensions 1..8192, provider parseable as `provider:model`.
+   */
+  embedding_columns?: Record<string, EmbeddingColumnConfig>;
+  /**
+   * v0.36 — name of the column hybridSearch uses by default. Per-call
+   * `SearchOpts.embeddingColumn` overrides this; absent => 'embedding'.
+   * Validated against the merged `embedding_columns` registry at config-
+   * set time and on hybridSearch entry.
+   */
+  search_embedding_column?: string;
+
+  /**
    * Thin-client mode (multi-topology v1). When set, this install does NOT
    * have a local DB; it talks to a remote `gbrain serve --http` over MCP.
    * The CLI dispatch guard in `src/cli.ts` checks for this field BEFORE
@@ -122,11 +143,35 @@ export function isThinClient(config: GBrainConfig | null): boolean {
  * Load config with credential precedence: env vars > config file.
  * Plugin config is handled by the plugin runtime injecting env vars.
  */
+// v0.36.x #1086: translate legacy `provider` + `model` config shape (seen in
+// pre-v0.32 docs and some community templates) to the canonical
+// `embedding_model: "<provider>:<model>"`. Without this translation, sync
+// and embed silently fell through to the hardcoded OpenAI default, blocking
+// Voyage / Cohere / Mistral users from using their configured provider.
+function migrateLegacyEmbeddingConfig(raw: Record<string, unknown>): Record<string, unknown> {
+  if (raw.embedding_model !== undefined) return raw;
+  const provider = typeof raw.provider === 'string' ? raw.provider : undefined;
+  const model = typeof raw.model === 'string' ? raw.model : undefined;
+  if (!provider || !model) return raw;
+  // Strip the legacy keys to avoid downstream confusion. Emit a one-line
+  // stderr nudge so the operator updates their config to the canonical shape.
+  const rest = { ...raw };
+  delete rest.provider;
+  delete rest.model;
+  rest.embedding_model = `${provider}:${model}`;
+  console.warn(
+    `[config] legacy "provider" + "model" detected; using "${rest.embedding_model}".` +
+    ` Rewrite ~/.gbrain/config.json to: "embedding_model": "${rest.embedding_model}".`,
+  );
+  return rest;
+}
+
 export function loadConfig(): GBrainConfig | null {
   let fileConfig: GBrainConfig | null = null;
   try {
     const raw = readFileSync(getConfigPath(), 'utf-8');
-    fileConfig = JSON.parse(raw) as GBrainConfig;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    fileConfig = migrateLegacyEmbeddingConfig(parsed) as unknown as GBrainConfig;
   } catch { /* no config file */ }
 
   // Try env vars
@@ -195,8 +240,18 @@ export async function loadConfigWithEngine(
   engine: { getConfig(key: string): Promise<string | null | undefined> },
   base?: GBrainConfig | null,
 ): Promise<GBrainConfig | null> {
-  const fileConfig = base !== undefined ? base : loadConfig();
-  if (!fileConfig) return null;
+  // Codex /ship finding #3: when there's no file config AND no env DB URL,
+  // loadConfig() returns null and the DB merge would be skipped — env-only
+  // installs (engine wired via direct SDK pass) wouldn't see DB-plane
+  // overrides like `embedding_columns` / `search_embedding_column` set via
+  // `gbrain config set`. Since we have a live engine here, synthesize a
+  // minimal base config so the DB-plane merge still runs. The synthesized
+  // config has no auth or model fields; DB-plane keys overlay correctly
+  // and downstream callers either find them or fall through to defaults.
+  // Also applies when callers pass an explicit null for `base`.
+  const fileConfig: GBrainConfig =
+    (base !== undefined ? base : loadConfig()) ??
+    ({ engine: 'postgres' } as GBrainConfig);
 
   // DB-plane reads. Quiet failures — if the config table doesn't exist yet
   // (pre-v36 brain mid-migration), treat as null and let file/env defaults
@@ -224,6 +279,12 @@ export async function loadConfigWithEngine(
   const dbMultimodalModel = await dbStr('embedding_multimodal_model');
   const dbOcr = await dbBool('embedding_image_ocr');
   const dbOcrModel = await dbStr('embedding_image_ocr_model');
+  // v0.36 (D7) — embedding-column registry merge. Stored as JSON string in
+  // the config table. Parse + shape-check here; full registry validation
+  // (regex on keys, type/dim/provider field shapes) runs in the resolver at
+  // first use so a malformed DB row doesn't kill engine connect.
+  const dbEmbeddingColumns = await dbStr('embedding_columns');
+  const dbSearchEmbeddingColumn = await dbStr('search_embedding_column');
 
   // DB applies only when env did NOT win. Env presence is detected by the
   // sync loadConfig() already setting the field. For each flag, prefer the
@@ -241,6 +302,21 @@ export async function loadConfigWithEngine(
   if (merged.embedding_image_ocr_model === undefined && dbOcrModel !== undefined) {
     merged.embedding_image_ocr_model = dbOcrModel;
   }
+  if (merged.embedding_columns === undefined && dbEmbeddingColumns !== undefined) {
+    try {
+      const parsed = JSON.parse(dbEmbeddingColumns);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        merged.embedding_columns = parsed as Record<string, EmbeddingColumnConfig>;
+      } else {
+        console.warn('[gbrain] config: embedding_columns DB value is not a JSON object; ignoring');
+      }
+    } catch (err) {
+      console.warn(`[gbrain] config: embedding_columns DB value is not valid JSON; ignoring (${(err as Error).message})`);
+    }
+  }
+  if (merged.search_embedding_column === undefined && dbSearchEmbeddingColumn !== undefined) {
+    merged.search_embedding_column = dbSearchEmbeddingColumn;
+  }
   return merged;
 }
 
@@ -251,6 +327,60 @@ export function saveConfig(config: GBrainConfig): void {
     chmodSync(getConfigPath(), 0o600);
   } catch {
     // chmod may fail on some platforms
+  }
+  // v0.35.8.0: ensure the per-home `.gitignore` exists on every config-write
+  // path. Cheap, idempotent, doesn't clobber user edits. Catches the case
+  // where `~/.gbrain/` lives inside a git worktree (Conductor + gstack
+  // workspaces hit this) so `git add` doesn't accidentally stage the brain.
+  // The doctor check `home_dir_in_worktree` surfaces vectors this can't
+  // close (already-tracked files, screenshots, backups, `git add -f`).
+  ensureGitignore();
+}
+
+/**
+ * Idempotently lay down `~/.gbrain/.gitignore` containing the single line `*`.
+ * Honors GBRAIN_HOME via `configDir()`. Best-effort: errors are logged to
+ * stderr and never block the caller. Never clobbers a `.gitignore` whose
+ * content the user has customized.
+ *
+ * Called from:
+ *   - `saveConfig()` so any config-writing path lays it down.
+ *   - `gbrain post-upgrade` so existing users get it on next upgrade.
+ *
+ * What this DOES cover: a casual `git add ~/.gbrain` from inside an enclosing
+ * worktree — the directory-local `.gitignore` blocks everything below it.
+ *
+ * What this does NOT cover (the CHANGELOG names these honestly):
+ *   - Files already tracked before the .gitignore landed (no remediation here).
+ *   - Screenshots, sync folders (Dropbox/iCloud), Time Machine backups.
+ *   - `git add -f ~/.gbrain` (deliberate force-add bypasses .gitignore).
+ *   - Out-of-band copy operations (rsync, cp -r, scp).
+ *
+ * The doctor check `home_dir_in_worktree` surfaces these vectors at audit
+ * time so the user can act on them.
+ */
+export function ensureGitignore(): void {
+  try {
+    const dir = configDir();
+    const file = join(dir, '.gitignore');
+    mkdirSync(dir, { recursive: true });
+    if (existsSync(file)) {
+      // Don't clobber user customization. Only write when the file is missing
+      // OR when its content is empty (zero-byte placeholder).
+      try {
+        const existing = readFileSync(file, 'utf-8');
+        if (existing.trim().length > 0) return;
+      } catch {
+        // Read failed but file exists — leave it alone to be safe.
+        return;
+      }
+    }
+    writeFileSync(file, '*\n', { mode: 0o600 });
+    try { chmodSync(file, 0o600); } catch { /* platform-specific */ }
+  } catch (e) {
+    // Best-effort: log to stderr, never block the caller.
+    const msg = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`[gbrain] ensureGitignore failed (${msg}); continuing\n`);
   }
 }
 
@@ -270,10 +400,10 @@ export function configDir(): string {
   const override = process.env.GBRAIN_HOME;
   if (override && override.trim()) {
     const trimmed = override.trim();
-    if (!trimmed.startsWith('/')) {
+    if (!isAbsolute(trimmed)) {
       throw new Error(`GBRAIN_HOME must be an absolute path; got: ${trimmed}`);
     }
-    if (trimmed.split('/').includes('..')) {
+    if (trimmed.split(/[\\/]/).includes('..')) {
       throw new Error(`GBRAIN_HOME must not contain '..' segments; got: ${trimmed}`);
     }
     return join(trimmed, '.gbrain');

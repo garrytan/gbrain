@@ -176,6 +176,25 @@ describe('inferFrontmatter', () => {
     expect(result.source).toBe('calendar');
   });
 
+  test('docs/runbooks: infers guide instead of catch-all note', () => {
+    const result = inferFrontmatter(
+      'docs/runbooks/cron-management-runbook.md',
+      '# Cron Management Runbook\n\nUse this when changing schedules.',
+    );
+    expect(result.type).toBe('guide');
+    expect(result.tags).toContain('runbook');
+    expect(result.title).toBe('Cron Management Runbook');
+  });
+
+  test('docs/projects: infers project type', () => {
+    const result = inferFrontmatter(
+      'docs/projects/eva-brain.md',
+      '# Eva Brain\n\nProject notes.',
+    );
+    expect(result.type).toBe('project');
+    expect(result.tags).toContain('project');
+  });
+
   test('companies/ directory: type company', () => {
     const result = inferFrontmatter(
       'companies/stripe.md',
@@ -185,7 +204,7 @@ describe('inferFrontmatter', () => {
     expect(result.title).toBe('Stripe');
   });
 
-  test('unknown directory: defaults to note type with heading title', () => {
+  test('unknown directory: catch-all remains note when explicitly used by callers', () => {
     const result = inferFrontmatter(
       'random/some-file.md',
       '# My Random Notes\n\nStuff here',

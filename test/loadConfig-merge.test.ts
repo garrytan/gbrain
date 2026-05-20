@@ -20,9 +20,31 @@ function makeEngine(map: Record<string, string | null | undefined>): FakeEngine 
 }
 
 describe('loadConfigWithEngine (Phase 4 / F3)', () => {
-  test('returns null when base config is null', async () => {
+  test('synthesizes a minimal base when base config is null (v0.36 codex /ship #3)', async () => {
+    // Pre-v0.36 this returned null and skipped DB-plane merge entirely.
+    // That meant env-only Postgres installs (no file config) couldn't see
+    // DB-plane overrides set via `gbrain config set` — the documented
+    // smoke test for `search_embedding_column` would silently fail.
+    // The fix synthesizes a minimal `{ engine: 'postgres' }` base so DB
+    // merge still runs; downstream callers either find the DB key or
+    // fall through to defaults.
     const result = await loadConfigWithEngine(makeEngine({}), null);
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.engine).toBe('postgres');
+  });
+
+  test('DB-plane embedding_columns merge works even with null base (codex /ship #3 round-trip)', async () => {
+    // The whole point of the synthesized fallback: env-only installs
+    // calling `gbrain config set embedding_columns '...'` get those keys
+    // back when the resolver re-reads config. Verifies the merge path
+    // actually runs (not just that the function returns truthy).
+    const engine = makeEngine({
+      search_embedding_column: 'embedding_voyage',
+      embedding_columns: '{"embedding_voyage":{"provider":"voyage:voyage-3-large","dimensions":1024,"type":"vector"}}',
+    });
+    const merged = await loadConfigWithEngine(engine, null);
+    expect(merged?.search_embedding_column).toBe('embedding_voyage');
+    expect(merged?.embedding_columns?.embedding_voyage?.dimensions).toBe(1024);
   });
 
   test('DB flag fills in when file/env did not set it', async () => {

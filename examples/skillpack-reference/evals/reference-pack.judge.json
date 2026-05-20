@@ -1,0 +1,18 @@
+{
+  "task": "(edit me) Describe the task this LLM-judge eval scores reference-pack against.",
+  "output": "{{output-from-skill}}",
+  "cases": [
+    {
+      "name": "happy path",
+      "criteria": "output satisfies the task"
+    },
+    {
+      "name": "edge case",
+      "criteria": "output handles a corner input gracefully"
+    },
+    {
+      "name": "failure mode",
+      "criteria": "output refuses gracefully on ambiguous input"
+    }
+  ]
+}

@@ -58,9 +58,30 @@ export interface PendingHostWorkEntry {
 // Phase A — Schema
 // -----------------------------------------------------------------------
 
-function phaseASchema(opts: OrchestratorOpts): OrchestratorPhaseResult {
+async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseResult> {
   if (opts.dryRun) return { name: 'schema', status: 'skipped', detail: 'dry-run' };
   try {
+    // v0.36.x #1100: route PGLite through an in-process schema apply rather
+    // than `execSync('gbrain init --migrate-only')`. The subprocess inherits
+    // HOME and tries to acquire the same file lock the parent process is
+    // holding (or briefly released and the on-disk artifact has not finished
+    // settling), which deadlocks until the 30s lock timeout fires. The
+    // structural fix is to not spawn a subprocess for work the parent can
+    // do directly — Postgres tolerates concurrent connections, so the
+    // legacy execSync path stays for Postgres callers.
+    const { loadConfig, toEngineConfig } = await import('../../core/config.ts');
+    const cfg = loadConfig();
+    if (cfg?.engine === 'pglite') {
+      const { createEngine } = await import('../../core/engine-factory.ts');
+      const eng = await createEngine(toEngineConfig(cfg));
+      try {
+        await eng.connect(toEngineConfig(cfg));
+        await eng.initSchema();
+      } finally {
+        try { await eng.disconnect(); } catch { /* best-effort */ }
+      }
+      return { name: 'schema', status: 'complete' };
+    }
     execSync('gbrain init --migrate-only' + childGlobalFlags(), { stdio: 'inherit', timeout: 60_000, env: process.env });
     return { name: 'schema', status: 'complete' };
   } catch (e) {
@@ -413,7 +434,7 @@ function phaseFInstall(opts: OrchestratorOpts): OrchestratorPhaseResult {
 async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult> {
   const phases: OrchestratorPhaseResult[] = [];
 
-  const a = phaseASchema(opts);
+  const a = await phaseASchema(opts);
   phases.push(a);
   if (a.status === 'failed') {
     console.error(`Phase A (schema) failed: ${a.detail}. Aborting; re-run after fixing.`);

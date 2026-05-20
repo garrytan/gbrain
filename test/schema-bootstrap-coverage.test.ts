@@ -640,6 +640,14 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'pages.source_path',
   'content_chunks.edges_backfilled_at',
   'query_cache.knobs_hash',
+  // v0.35.6 (migration v67) — typed-claim columns + facts_typed_claim_idx
+  // partial index are co-defined in the same migration, so the schema-blob
+  // forward-reference path isn't tripped. Bootstrap is only required when an
+  // index in PGLITE_SCHEMA_SQL references a column added by a later migration.
+  'facts.claim_metric',
+  'facts.claim_value',
+  'facts.claim_unit',
+  'facts.claim_period',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {
