@@ -17,6 +17,9 @@ _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS tool_calls(run_id TEXT NOT NULL,step_idx INTEGER NOT NULL,"
     "call_idx INTEGER NOT NULL,name TEXT NOT NULL,input TEXT NOT NULL,output TEXT NOT NULL,"
     "latency_ms INTEGER,ts TEXT NOT NULL,PRIMARY KEY(run_id,step_idx,call_idx));"
+    "CREATE TABLE IF NOT EXISTS todos(run_id TEXT NOT NULL,idx INTEGER NOT NULL,"
+    "content TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',ts TEXT NOT NULL,"
+    "PRIMARY KEY(run_id,idx));"
 )
 
 
@@ -83,15 +86,41 @@ def log_tool_call(run_id: str, step_idx: int, name: str, inp: dict, output: str,
     if _verbose():
         keys = list(inp.keys())
         print(f"  → {name}({keys}) {latency_ms}ms  {output[:80].strip()!r}", file=sys.stderr)
+    # Atomic INSERT: call_idx = MAX(call_idx)+1 computed inside the DB to avoid
+    # the SELECT-then-INSERT race when parallel tool calls log concurrently.
     with _conn() as conn:
-        idx = conn.execute(
-            "SELECT COUNT(*) FROM tool_calls WHERE run_id=? AND step_idx=?",
-            (run_id, step_idx),
-        ).fetchone()[0]
         conn.execute(
-            "INSERT INTO tool_calls (run_id,step_idx,call_idx,name,input,output,latency_ms,ts) VALUES (?,?,?,?,?,?,?,?)",
-            (run_id, step_idx, idx, name, json.dumps(inp), output, latency_ms, _now()),
+            "INSERT INTO tool_calls (run_id,step_idx,call_idx,name,input,output,latency_ms,ts) "
+            "SELECT ?,?,COALESCE(MAX(call_idx)+1,0),?,?,?,?,? "
+            "FROM tool_calls WHERE run_id=? AND step_idx=?",
+            (run_id, step_idx, name, json.dumps(inp), output, latency_ms, _now(),
+             run_id, step_idx),
         )
+
+
+def set_todos(run_id: str, items: list[str]):
+    with _conn() as conn:
+        conn.execute("DELETE FROM todos WHERE run_id=?", (run_id,))
+        conn.executemany(
+            "INSERT INTO todos(run_id,idx,content,status,ts) VALUES(?,?,?,'pending',?)",
+            [(run_id, i, item, _now()) for i, item in enumerate(items)],
+        )
+
+
+def update_todo(run_id: str, idx: int, status: str):
+    allowed = {"pending", "in_progress", "done", "cancelled"}
+    if status not in allowed:
+        raise ValueError(f"status must be one of {allowed}")
+    with _conn() as conn:
+        conn.execute("UPDATE todos SET status=?,ts=? WHERE run_id=? AND idx=?",
+                     (status, _now(), run_id, idx))
+
+
+def get_todos(run_id: str) -> list[dict]:
+    with _conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT idx,content,status FROM todos WHERE run_id=? ORDER BY idx", (run_id,)
+        ).fetchall()]
 
 
 def replay_run(run_id: str) -> list:

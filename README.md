@@ -1,3 +1,21 @@
+# GBrain — Ryan's Fork
+
+> 靈機讀玉簡，遵律令，以煉丹之法鍛技。
+
+**LB-arcanum**（玉簡）是 LifeBuilder 生態系的知識庫核心 — GBrain fork，零修改上游程式碼。
+
+## LifeBuilder 生態系
+
+| 名號 | Repo | 說明 |
+|------|------|------|
+| **靈機 · Numen** | [LB-numen](https://github.com/RYN6666999/LB-numen) | Python LLM 執行層，讀玉簡、遵律令、行任務 |
+| **玉簡 · Arcanum** | [LB-arcanum](https://github.com/RYN6666999/LB-arcanum)（本 repo）| GBrain 知識庫，13 頁活文件常駐其中 |
+| **律令 · Nexus** | [LB-nexus](https://github.com/RYN6666999/LB-nexus) | 軍工級 contract 守門框架 |
+| **煉丹爐 · Athanor** | `skills/athanor.md` in LB-numen | 元技能：煉出 Azoth 標準技能 |
+| **大還丹 · Azoth** | `openspec/changes/azoth/` in LB-numen | 技能自循環標準 |
+
+---
+
 # GBrain
 
 Your AI agent is smart but forgetful. GBrain gives it a brain.
