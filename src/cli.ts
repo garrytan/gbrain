@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'search', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'calibration']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -76,6 +76,11 @@ async function main() {
 
   // Per-command --help
   if (hasHelpFlag(subArgs)) {
+    if (command === 'search' && isSearchCliOnlySubcommand(subArgs)) {
+      const { SEARCH_USAGE } = await import('./commands/search.ts');
+      console.log(SEARCH_USAGE);
+      return;
+    }
     const op = cliOps.get(command);
     if (op) {
       printOpHelp(op);
@@ -87,8 +92,11 @@ async function main() {
     }
   }
 
-  // CLI-only commands
-  if (CLI_ONLY.has(command)) {
+  // CLI-only commands. `search` is special: it is both a shared keyword-search
+  // operation (`gbrain search <query>`) and a CLI-only dashboard namespace
+  // (`gbrain search modes|stats|tune`). Route only the dashboard subcommands
+  // here so ordinary keyword search keeps using the operation layer.
+  if (CLI_ONLY.has(command) && (command !== 'search' || isSearchCliOnlySubcommand(subArgs))) {
     await handleCliOnly(command, subArgs);
     return;
   }
@@ -194,6 +202,10 @@ function printCliOnlyHelp(command: string) {
   console.log(`Usage: gbrain ${command}`);
   console.log('');
   console.log(`gbrain ${command} - run gbrain --help for the full command list.`);
+}
+
+function isSearchCliOnlySubcommand(args: string[]): boolean {
+  return args[0] === 'modes' || args[0] === 'stats' || args[0] === 'tune';
 }
 
 /**

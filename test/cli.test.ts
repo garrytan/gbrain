@@ -34,6 +34,14 @@ describe('CLI structure', () => {
     expect(cliSource).toContain("'export'");
     expect(cliSource).toContain("'embed'");
     expect(cliSource).toContain("'files'");
+    expect(cliSource).toContain("'calibration'");
+  });
+
+  test('search dashboard subcommands are routed without shadowing keyword search', () => {
+    expect(cliSource).toContain("'search'");
+    expect(cliSource).toContain("function isSearchCliOnlySubcommand");
+    expect(cliSource).toContain("args[0] === 'modes' || args[0] === 'stats' || args[0] === 'tune'");
+    expect(cliSource).toContain("command !== 'search' || isSearchCliOnlySubcommand(subArgs)");
   });
 
   test('has formatResult function for CLI output', () => {
@@ -179,6 +187,70 @@ describe('CLI dispatch integration', () => {
       const exitCode = await proc.exited;
       expect(stdout).toContain('Usage: gbrain init');
       expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('calibration --help is routed as CLI-only without requiring a brain', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'calibration', '--help'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      expect(stdout).toContain('Usage: gbrain calibration');
+      expect(stderr).not.toContain('Unknown command: calibration');
+      expect(stderr).not.toContain('No brain configured');
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('search dashboard help does not fall through to keyword-search op help', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'search', 'modes', '--help'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      expect(stdout).toContain('Usage: gbrain search <modes|stats|tune> [flags]');
+      expect(stdout).toContain('gbrain search modes --reset');
+      expect(stdout).not.toContain('Usage: gbrain search <query>');
+      expect(stderr).not.toContain('No brain configured');
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('search query help still routes to the shared keyword-search operation', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'search', 'needle', '--help'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      expect(stdout).toContain('Usage: gbrain search <query>');
+      expect(stdout).not.toContain('Usage: gbrain search <modes|stats|tune> [flags]');
+      expect(stderr).not.toContain('No brain configured');
       expect(exitCode).toBe(0);
     } finally {
       rmSync(home, { recursive: true, force: true });

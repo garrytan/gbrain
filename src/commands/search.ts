@@ -409,7 +409,7 @@ function buildRevertCommand(r: TuneRecommendation): string {
   return r.apply_command;
 }
 
-const USAGE = `Usage: gbrain search <modes|stats|tune> [flags]
+export const SEARCH_USAGE = `Usage: gbrain search <modes|stats|tune> [flags]
 
 Subcommands:
   modes [--json]              Show active mode, bundles, and per-knob source.
@@ -430,8 +430,8 @@ export async function runSearch(engine: BrainEngine, args: string[]): Promise<vo
   const sub = args[0];
   const rest = args.slice(1);
 
-  if (!sub || sub === '--help' || sub === '-h') {
-    console.log(USAGE);
+  if (!sub || sub === '--help' || sub === '-h' || rest.includes('--help') || rest.includes('-h')) {
+    console.log(SEARCH_USAGE);
     return;
   }
 
@@ -447,7 +447,7 @@ export async function runSearch(engine: BrainEngine, args: string[]): Promise<vo
       return;
     default:
       console.error(`Unknown subcommand: ${sub}`);
-      console.error(USAGE);
+      console.error(SEARCH_USAGE);
       process.exit(1);
   }
 }
