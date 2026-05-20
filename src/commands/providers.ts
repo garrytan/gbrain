@@ -242,6 +242,7 @@ async function runExplain(args: string[]): Promise<void> {
     DEEPSEEK_API_KEY: !!process.env.DEEPSEEK_API_KEY,
     GROQ_API_KEY: !!process.env.GROQ_API_KEY,
     TOGETHER_API_KEY: !!process.env.TOGETHER_API_KEY,
+    MOONSHOT_API_KEY: !!process.env.MOONSHOT_API_KEY,
   };
 
   // Parallel probes for local providers (1s timeout each)
