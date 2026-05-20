@@ -31,6 +31,8 @@ import { z } from 'zod';
 
 import type {
   AIGatewayConfig,
+  EmbedMultimodalOpts,
+  MultimodalBatchResult,
   MultimodalInput,
   Recipe,
   TouchpointKind,
@@ -1335,7 +1337,10 @@ const MULTIMODAL_MAX_IMAGE_BYTES = 20 * 1024 * 1024;
  *
  * Empty input → returns []. Preserves the `embed([])` contract.
  */
-export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float32Array[]> {
+export async function embedMultimodal(
+  inputs: MultimodalInput[],
+  opts: EmbedMultimodalOpts = {},
+): Promise<Float32Array[]> {
   if (!inputs || inputs.length === 0) return [];
 
   const cfg = requireConfig();
@@ -1372,7 +1377,7 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
   // recipe is `openai-compat` per tier but uses its own /multimodalembeddings
   // path, so we still branch on recipe.id for that one.
   if (recipe.id !== 'voyage' && recipe.implementation === 'openai-compatible') {
-    return embedMultimodalOpenAICompat(inputs, recipe, parsed.modelId, cfg);
+    return embedMultimodalOpenAICompat(inputs, recipe, parsed.modelId, cfg, opts);
   }
   if (recipe.id !== 'voyage') {
     throw new AIConfigError(
@@ -1405,6 +1410,10 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
   // landing in `embedding_image` the column itself is fixed at 1024.
   const targetDims = 1024;
 
+  // v0.36 (D22-2): thread Voyage's retrieval input_type discipline through.
+  // Default 'document' preserves pre-v0.36 ingest behavior.
+  const inputType = opts.inputType ?? 'document';
+
   // Batch in groups of 32 (Voyage's published max). Each batch is one HTTP
   // call; results concatenate in input order.
   const allEmbeddings: Float32Array[] = [];
@@ -1412,17 +1421,19 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
     const batch = inputs.slice(i, i + MULTIMODAL_BATCH_SIZE);
     const body = {
       inputs: batch.map(input => ({
-        // Voyage's documented shape for image inputs:
-        //   { content: [{ type: "image_base64", image_base64: "data:image/png;base64,..." }] }
+        // Voyage's documented content shape supports both image and text
+        // entries. v0.36 cross-modal: text variant for query embedding.
         content: [
-          {
-            type: 'image_base64',
-            image_base64: `data:${input.mime};base64,${input.data}`,
-          },
+          input.kind === 'text'
+            ? { type: 'text', text: input.text }
+            : {
+              type: 'image_base64',
+              image_base64: `data:${input.mime};base64,${input.data}`,
+            },
         ],
       })),
       model: parsed.modelId,
-      input_type: 'document',
+      input_type: inputType,
     };
 
     let res: Response;
@@ -1510,6 +1521,7 @@ async function embedMultimodalOpenAICompat(
   recipe: Recipe,
   modelId: string,
   cfg: AIGatewayConfig,
+  opts: EmbedMultimodalOpts = {},
 ): Promise<Float32Array[]> {
   // Auth resolution via the gateway's canonical helper so LiteLLM-style
   // optional-auth recipes (Authorization: Bearer LITELLM_API_KEY) and
@@ -1543,19 +1555,27 @@ async function embedMultimodalOpenAICompat(
   // multimodal content array varies per provider. Single-input requests
   // are the safe lowest common denominator; LiteLLM's proxy backend
   // batches internally if it can.
+  // v0.36 (D22-2): inputType opt threaded for symmetry with the Voyage path.
+  // Most openai-compatible proxies don't forward this field, but recording
+  // it in the body keeps LiteLLM-style providers that DO accept it correct.
+  const inputType = opts.inputType ?? 'document';
+
   const allEmbeddings: Float32Array[] = [];
   for (const input of inputs) {
-    const body = {
+    const body: Record<string, unknown> = {
       model: modelId,
       input: [
-        {
-          // OpenAI's documented multimodal content shape. The data-URL
-          // form embeds the image bytes inline so the proxy doesn't need
-          // network access to fetch the image.
-          type: 'image_url',
-          image_url: { url: `data:${input.mime};base64,${input.data}` },
-        },
+        input.kind === 'text'
+          ? { type: 'input_text', text: input.text }
+          : {
+            // OpenAI's documented multimodal content shape. The data-URL
+            // form embeds the image bytes inline so the proxy doesn't need
+            // network access to fetch the image.
+            type: 'image_url',
+            image_url: { url: `data:${input.mime};base64,${input.data}` },
+          },
       ],
+      input_type: inputType,
     };
 
     let res: Response;
@@ -1628,6 +1648,120 @@ async function embedMultimodalOpenAICompat(
   }
 
   return allEmbeddings;
+}
+
+// ---- v0.36 cross-modal wave: query-side multimodal embedding + safe variant ----
+
+/**
+ * Embed a TEXT query through the configured multimodal model.
+ *
+ * Routes through `embedding_multimodal_model` (defaults to Voyage multimodal-3)
+ * so the resulting vector lives in the multimodal embedding space — the same
+ * space the brain's `embedding_image` column was populated into. A text
+ * query embedded here can match image chunks (Phase 1 of the cross-modal
+ * wave) and, post Phase 3 reindex, text chunks in the unified column.
+ *
+ * Threads `inputType: 'query'` (D22-2) so Voyage routes to the retrieval
+ * half of its asymmetric embedding space.
+ *
+ * Sibling of v0.35.0.0's `embedQuery(text)`, which uses the TEXT embedding
+ * model (typically OpenAI text-embedding-3-large at 1536d or 2560d, NOT
+ * compatible with the 1024d multimodal column).
+ */
+export async function embedQueryMultimodal(text: string): Promise<Float32Array> {
+  const [vec] = await embedMultimodal([{ kind: 'text', text }], { inputType: 'query' });
+  if (!vec) {
+    throw new AITransientError('embedQueryMultimodal: gateway returned no vector for non-empty text input');
+  }
+  return vec;
+}
+
+/**
+ * Embed an IMAGE as a query through the configured multimodal model.
+ *
+ * Sibling of `embedQueryMultimodal(text)` for the Phase 2 image-as-query
+ * path. The image bytes must already be loaded and base64-encoded by the
+ * caller (see `src/core/search/image-loader.ts` for the SSRF-defended
+ * loader). Threads `inputType: 'query'` so Voyage routes to the
+ * retrieval half of its asymmetric space.
+ */
+export async function embedQueryMultimodalImage(
+  input: { data: string; mime: string },
+): Promise<Float32Array> {
+  const [vec] = await embedMultimodal(
+    [{ kind: 'image_base64', data: input.data, mime: input.mime }],
+    { inputType: 'query' },
+  );
+  if (!vec) {
+    throw new AITransientError('embedQueryMultimodalImage: gateway returned no vector');
+  }
+  return vec;
+}
+
+/**
+ * Partial-failure-aware variant of `embedMultimodal`.
+ *
+ * The default `embedMultimodal()` throws on first failure to preserve the
+ * pre-v0.36 contract (used by `importImageFile` which can't proceed on
+ * partial data). Phase 3 `reindex --multimodal` ingests many thousands
+ * of chunks and CAN make forward progress with partial results — it
+ * uses this variant so a 401 on chunk 87K doesn't discard the 31
+ * already-computed embeddings in that batch.
+ *
+ * Strategy:
+ *   1. Try the full input set via `embedMultimodal`. On success, return.
+ *   2. On AIConfigError (permanent), surface every input as failed —
+ *      the misconfig isn't going to fix itself by retrying smaller.
+ *   3. On AITransientError or other thrown error, split-and-retry
+ *      via binary search. Single-input attempts that fail are recorded
+ *      in `failedIndices` and skipped.
+ *
+ * Returns `MultimodalBatchResult` with parallel-indexed `embeddings`
+ * (undefined for failed slots) and a `failedIndices` array.
+ */
+export async function embedMultimodalSafe(
+  inputs: MultimodalInput[],
+  opts: EmbedMultimodalOpts = {},
+): Promise<MultimodalBatchResult> {
+  if (!inputs || inputs.length === 0) {
+    return { embeddings: [], failedIndices: [] };
+  }
+
+  const embeddings: Array<Float32Array | undefined> = new Array(inputs.length).fill(undefined);
+  const failedIndices: number[] = [];
+  let lastError: Error | undefined;
+
+  async function attempt(startIdx: number, items: MultimodalInput[]): Promise<void> {
+    if (items.length === 0) return;
+    try {
+      const vecs = await embedMultimodal(items, opts);
+      for (let i = 0; i < vecs.length; i++) {
+        embeddings[startIdx + i] = vecs[i];
+      }
+      return;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // AIConfigError = permanent misconfig. Retrying smaller won't help.
+      if (lastError instanceof AIConfigError) {
+        for (let i = 0; i < items.length; i++) failedIndices.push(startIdx + i);
+        return;
+      }
+      // Single input that failed — record and move on.
+      if (items.length === 1) {
+        failedIndices.push(startIdx);
+        return;
+      }
+      // Binary-search split. Each half gets its own retry.
+      const mid = Math.floor(items.length / 2);
+      await attempt(startIdx, items.slice(0, mid));
+      await attempt(startIdx + mid, items.slice(mid));
+    }
+  }
+
+  await attempt(0, inputs);
+  failedIndices.sort((a, b) => a - b);
+
+  return { embeddings, failedIndices, lastError };
 }
 
 // ---- Expansion ----

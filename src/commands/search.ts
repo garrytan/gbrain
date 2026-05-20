@@ -54,6 +54,14 @@ const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   reranker_top_n_out: 'Cap on reranked output (null = no truncate)',
   reranker_timeout_ms: 'HTTP timeout for the reranker call',
   floor_ratio: 'Floor-ratio gate for metadata boosts (0..1, undefined = off)',
+  // v0.36 cross-modal knobs (D3 registry)
+  cross_modal_both_text_weight: "D6 'both'-mode RRF weight for text branch (0.6 default)",
+  cross_modal_both_image_weight: "D6 'both'-mode RRF weight for image branch (0.4 default)",
+  image_query_text_refinement_weight: 'D13 searchByImage text-refinement RRF weight (0.4 default)',
+  image_query_image_refinement_weight: 'D13 searchByImage image branch RRF weight (0.6 default)',
+  unified_multimodal: 'Phase 3 — route all queries through embedding_multimodal column',
+  unified_multimodal_only: 'Phase 3 strict — bypass dual-column fallback when unified is on',
+  cross_modal_llm_intent: 'Commit 4 — Haiku tie-break for ambiguous modality classification',
 };
 
 interface SearchModesReport {

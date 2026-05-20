@@ -129,6 +129,11 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   { kind: 'column', table: 'sources', column: 'archived' },
   { kind: 'column', table: 'sources', column: 'archived_at' },
   { kind: 'column', table: 'sources', column: 'archive_expires_at' },
+  // v0.37.0 (v79) — forward-referenced by `CREATE INDEX
+  // pages_last_retrieved_at_idx ON pages (last_retrieved_at)`. Pre-v79 brains
+  // have pages without this column; bootstrap adds it before SCHEMA_SQL
+  // replay creates the index.
+  { kind: 'column', table: 'pages', column: 'last_retrieved_at' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {

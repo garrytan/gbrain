@@ -2,6 +2,287 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.37.1.0] - 2026-05-19
+
+**Your brain can now collide its own ideas.**
+
+You type `gbrain brainstorm "why are AI coding tools converging on the same UX?"` and get back five ideas. Each one cites two pages from your own notes: one that's close to the question, and one from a part of your brain that has no business being there. You see the slugs, you see how far the collision actually traveled (a 0-1 distance score next to each idea), and you can click through to read the source pages. Five minutes ago you didn't know your brain had those connections. The judge filters out anything trivial. Cost about 10 cents.
+
+Then you try `gbrain lsd` on the same question. Lateral Synaptic Drift. The dial is turned to 11: twelve pages from twelve different parts of your brain, the judge is inverted (rejects ideas that score too high on coherence — "too obvious, you'd have thought of this without LSD"), and the system explicitly prefers pages you haven't looked at in 90 days. Most of what comes back is noise. One of them is the thing your brain noticed in its sleep.
+
+This is bisociation, the Arthur Koestler thing. The Open Collider project demonstrated 4-13x distance shift over default prompting. Their version invents distant domains from training data. Ours uses what you already wrote down. That difference matters: every idea cites a real slug in your brain. You can audit it. You can trust it.
+
+**How to turn it on**
+
+```bash
+gbrain upgrade                                    # applies migration v79
+gbrain brainstorm "your question here"            # ~$0.10 per run
+gbrain lsd "your question here"                   # ~$0.30 per run
+gbrain doctor                                     # see brainstorm_health check
+```
+
+By default `brainstorm` saves to `wiki/ideas/<date>-brainstorm-<slug>.md` and `lsd` does not save (its output is ephemeral by design — pass `--save` if an idea lands). The dream cycle skips `mode: lsd` pages automatically so noise does not pollute the calibration profile.
+
+**The numbers that matter**
+
+| Mode | Close set | Far set | Ideas per cross | Judge threshold | Vibe |
+|---|---|---|---|---|---|
+| brainstorm | 4 | 6 | 3 | weighted 4.0/5 | Analyst riffing with their own notes. Defensible. |
+| lsd | 2 | 12 | 4 | inverted: rejects resistance >4.5 | Your brain at 3am noticing what it forgot. |
+
+**Things to watch**
+
+- The "far set" comes from prefix-stratified sampling. One page per top-level prefix (`wiki/vc`, `wiki/biology`, `concepts/`, etc), tiebroken by inbound link count. If your brain has only one or two top-level prefixes you will see a stderr warning that the bank was narrower than usual. Add more cross-domain content via `gbrain import` and the next run gets sharper.
+- LSD's stale-page bias works off a new column `pages.last_retrieved_at` bumped when `search`/`query`/`get_page` returns results. Default-on. If you do not want per-search writes, `gbrain config set search.track_retrieval false` opts out (LSD then runs without the stale-preference signal but still works). Internal callers (sync, migrations, dream cycle) never bump the column — the signal stays clean.
+- Calibration cold-start: if your `calibration_profiles` row has no `active_bias_tags`, the judge runs without anti-bias context and stderr-warns. Both commands still work; the judge just is not penalizing your known biases.
+
+### Itemized changes
+
+**New commands** — `gbrain brainstorm <question>` and `gbrain lsd <question>`, both CLI-only. `gbrain eval brainstorm <fixture.jsonl>` is the three-axis evaluation gate (distance + usefulness + grounding, all three must clear).
+
+**New module** — `src/core/brainstorm/{domain-bank,orchestrator,judges}.ts`. One `judges.ts` exports a shared `runJudge(config, ideas)` plus `BRAINSTORM_JUDGE_CONFIG` + `LSD_JUDGE_CONFIG`, so the two modes share judge plumbing.
+
+**New engine surface** — `BrainEngine.listPrefixSampledPages(opts)` + `BrainEngine.listCorpusSample(opts)`, parity on both Postgres and PGLite. Both accept `sourceId?` and `sourceIds?` for federated-read scoping.
+
+**Schema migration v79** — `pages.last_retrieved_at TIMESTAMPTZ NULL` + full B-tree index on `pages (last_retrieved_at)`. Forward-reference bootstrap added on both engines so pre-v79 brains upgrade cleanly.
+
+**Op-layer write-back** — `src/core/last-retrieved.ts` exports `bumpLastRetrievedAt(engine, pageIds)`. Called fire-and-forget from the `search`/`query`/`get_page` op handlers after results return. 5-minute throttle via the SQL `WHERE last_retrieved_at IS NULL OR last_retrieved_at < NOW() - INTERVAL '5 minutes'` clause skips ~90% of writes on heavily-searched brains.
+
+**Dream-cycle skip** — `src/core/cycle/transcript-discovery.ts` extends `isDreamOutput(content)` to also skip pages with `mode: lsd` frontmatter (noise-by-design). New exports `isLsdOutput()` and `isBrainstormOutput()` for downstream callers.
+
+**Doctor check** — `brainstorm_health` surfaces three signals: migration v79 applied, `search.track_retrieval` setting, calibration cold-start status. Paste-ready fix hints per signal.
+
+**Tests** — 38 new unit tests across `test/brainstorm/{distance,lsd-mode-skip,eval-brainstorm}.test.ts`. Pin distance normalization (same-vector → 0, orthogonal → 0.5, opposite → 1, dimension mismatch throws), LSD frontmatter detection, eval verdict logic, fixture parsing.
+
+## To take advantage of v0.37.1.0
+
+`gbrain upgrade` should do this automatically. If it did not:
+## [0.37.0.0] - 2026-05-19
+
+**Skillpacks become a real ecosystem. You can ship one, someone else can install it, and gbrain has an opinion about quality.**
+
+Pre-v0.37, skillpacks were one bundle — gbrain shipped its own pack at `openclaw.plugin.json` and that was it. v0.37 opens the door: anyone with a GitHub repo (or a tarball) can publish a skillpack, anyone else can scaffold it into their agent workspace, and `gbrain skillpack doctor` scores any candidate pack against a 10-dimension quality rubric with paste-ready fixes for every failure. The model is **scaffolding, not amber** — v0.36 already retired the install/uninstall semantics; v0.37 extends `scaffold` to third-party sources without re-introducing the managed-block trap.
+
+### What you can now do
+
+**Run `gbrain skillpack scaffold garrytan/skillpack-hackathon-evaluation`** and the pack lands in your workspace — files copied additively, refuses to overwrite anything you've edited, source URL + pinned commit + tarball SHA recorded in `~/.gbrain/skillpack-state.json`. First-time scaffold of a new source surfaces a TOFU confirm prompt showing name + author + source + pinned commit + tier; subsequent scaffolds of the same (name, author, pin) triple skip the prompt. Local-path sources skip the prompt entirely (you already own the directory).
+
+**Run `gbrain skillpack search yc`** and see every registered pack with a `yc` tag. Endorsed tier sorts first, community next, experimental last. `gbrain skillpack info <name>` shows full metadata: author, pinned commit, tarball SHA, validated_at timestamp, skill list, gbrain version requirement.
+
+**Run `gbrain skillpack init my-pack`** in an empty directory and you get a complete 10/10 pack tree out of the box: `skillpack.json` + `skills/<name>/SKILL.md` + `routing-eval.jsonl` (5 example intents) + `runbooks/bootstrap.md` + `CHANGELOG.md` + `README` + `LICENSE` + `.gitignore` + `test/` + `e2e/` + `evals/`. Edit the stubs, run `gbrain skillpack doctor . --quick`, run `gbrain skillpack pack`, get a deterministic `<name>-<version>.tgz` ready to publish.
+
+**Run `gbrain skillpack doctor <pack-dir>`** against any candidate pack and see a 0-10 score with per-dimension pass/fail and paste-ready fix commands. The rubric splits into 5 required core dimensions (manifest valid, skills have SKILL.md, routing-evals present, unique triggers, CHANGELOG current) + 5 quality badges (unit tests, e2e tests, LLM-judge evals, bootstrap runbook, license). Tier eligibility: all 10 = endorsed-eligible, >=3 badges = community, core-only = experimental, any core fails = blocked. `--fix --yes` auto-scaffolds the dimensions flagged `auto_fixable: true`.
+
+**Read `examples/skillpack-reference/`** to see the canonical 10/10 pack. It ships inside the gbrain repo, scores 10/10 forever (regression-pinned), and doubles as both a publisher example and an integration-test fixture. `docs/skillpack-anatomy.md` documents the contract one page, auto-generated from the declarative rubric at `src/core/skillpack/rubric.ts`.
+
+### Itemized changes
+
+#### Third-party scaffold path
+
+- `src/core/skillpack/manifest-v1.ts` — runtime validator for third-party `skillpack.json`. Schema is `gbrain-skillpack-v1`; forward-compat `runbook_schema_version` + `eval_schema_version` knobs. Adapter `bundleManifestFromSkillpack` projects onto the v0.36 `BundleManifest` shape so existing `enumerateScaffoldEntries` + `loadSkillSources` paths consume third-party packs without changes.
+- `src/core/skillpack/remote-source.ts` — `classifySpec` + `resolveSource`. Handles owner/repo → github URL expansion, https git clones (via SSRF-hardened `git-remote.ts`), local tarball extraction, and local directories. Cache layout: `~/.gbrain/skillpack-cache/git/<host>/<owner>/<repo>/<sha>/` and `~/.gbrain/skillpack-cache/tarball/<sha256>/`. Stage-then-rename pattern prevents partial-clone cache poisoning.
+- `src/core/skillpack/tarball.ts` — deterministic pack + allowlist-gated extract. GNU tar flags (`--sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner` + `GZIP=-n` + `TZ=UTC`) so same source dir → same SHA. Extract rejects symlinks / hardlinks / devices / FIFOs; caps at 5000 files, 1MB/file, 100MB total, 255-char paths, 100:1 compression ratio.
+- `src/core/skillpack/state.ts` — machine-owned trust store at `~/.gbrain/skillpack-state.json`. Codex outside-voice G1 fix: pinned commits + tarball SHAs + rename maps live here, NOT in editable markdown comments. Atomic `.tmp + rename` write. `isAlreadyTrusted` encodes the codex G4 author-mismatch defense.
+- `src/core/skillpack/trust-prompt.ts` — TOFU first-install confirm with full identity block. Local-path sources skip the gate; tarball + git sources prompt. Non-TTY without `--trust` refuses with an actionable message.
+- `src/core/skillpack/bootstrap-display.ts` — codex T1 fix: post-scaffold runbook is DISPLAYED, never executed. Frame header makes clear: "gbrain deliberately does NOT auto-execute these steps." The agent reads the framed output and walks per-step at its own discretion.
+- `src/core/skillpack/scaffold-third-party.ts` — orchestrator. Composes manifest validation + gbrain version gate + trust prompt + `enumerateScaffoldEntries` + `copyArtifacts` + state.json upsert + bootstrap display.
+- `src/commands/skillpack.ts` extended — `cmdScaffold` disambiguates: contains `/` / `://` / `.tgz` → third-party; bare kebab → bundled-first, registry-fallback. New flags: `--trust`, `--no-cache`.
+
+#### Registry catalog (read side)
+
+- `src/core/skillpack/registry-schema.ts` — validators for `registry.json` (catalog) and `endorsements.json` (Garry-only tier overlay). Codex G3 separation: contributors PR catalog entries with `default_tier: community/experimental/dead`; only Garry edits the overlay file.
+- `src/core/skillpack/registry-client.ts` — fetch + 1h soft-TTL cache + stale-fallback. On fetch failure: serves the last-good cache with a stderr warning; escalates to "cache is stale, run --refresh" past 7 days. Hard-fails only on first-run-with-no-network.
+- `gbrain skillpack search [<query>] [--tier T]` / `info <name>` / `registry [--url URL] [--refresh]` — read-side CLI surface.
+
+#### Quality bar — rubric + doctor + audit
+
+- `src/core/skillpack/rubric.ts` — declarative `SKILLPACK_RUBRIC_V1` array. Single source of truth for doctor + (auto-generated) anatomy doc + tests. Each dimension exports `{id, name, category, description, auto_fixable, check}` and the check function returns `{passed, detail, fix_hint}` so the doctor surfaces paste-ready remediation for every failure.
+- `src/core/skillpack/doctor.ts` — `runDoctor({mode: 'quick' | 'full', fix, yes})`. `--quick` is the structural sweep (~5s, no sandbox / no LLM / no DB) for tight iteration loops. `--fix` walks `auto_fixable` dimensions and scaffolds missing routing-evals / CHANGELOG / test stubs / LLM-judge stubs / bootstrap runbook / LICENSE.
+- `src/core/skillpack/audit.ts` — `~/.gbrain/audit/skillpack-YYYY-Www.jsonl`. ISO-week rotated; mirrors the slug-fallback + rerank-audit patterns. Best-effort writes (never throws); `gbrain doctor` reads recent events for the future activity surface.
+- `gbrain skillpack doctor <pack-dir> [--quick|--full] [--fix] [--yes] [--json]` — exit codes 0 if score=10, 1 if 6-9, 2 if blocked/<5.
+
+#### Publisher side
+
+- `src/core/skillpack/init-scaffold.ts` — `gbrain skillpack init <name>` cathedral default. Scaffolds the complete 10/10 pack tree; freshly-init'd pack scores 10/10 on `doctor --quick` immediately. `--minimal` flag drops test/e2e/evals for power users opting out.
+- `src/core/skillpack/pack-publish.ts` — `gbrain skillpack pack [<pack-dir>] [--out PATH] [--dry-run] [--skip-doctor]` runs `runDoctor(--quick)`, refuses if blocked, packs deterministic tarball. SHA-256 reported on success; publish-gate skill consumes `--skip-doctor` (gate runs server-side).
+- `src/core/skillpack/endorse.ts` — `gbrain skillpack endorse <name> [--tier T] [--repo PATH] [--push] [--dry-run]` is the Garry-only operator workflow. Validates pack is in the catalog, writes `endorsements.json` with stable key ordering, commits with a one-line message `endorse: <name> -> <tier>`.
+
+#### Reference + anatomy doc
+
+- `examples/skillpack-reference/` — real 10/10 pack tree shipped inside the gbrain repo. SKILL.md body teaches the third-party contract; serves as both a publisher example and an integration-test fixture. Regression-pinned by `test/skillpack-reference-pack-is-ten.test.ts` — any change that drops the reference below 10/10 fails the build.
+- `docs/skillpack-anatomy.md` — auto-generated one-page reference. Tree map + rubric tables + tier eligibility + CLI reference. Generator: `scripts/build-skillpack-anatomy.ts` (`--check` mode for CI freshness gating).
+- `docs/designs/SKILLPACK_REGISTRY_V1_SPEC.md` — full strategic spec preserved as the design record. 27 locked decisions across CEO + Eng + DX (two rounds) + Codex outside-voice.
+
+#### v0.36.1.0 drift fixes (tangential cleanup)
+
+The v0.36.1.0 hindsight calibration wave shipped three new cycle phases (`propose_takes`, `grade_takes`, `calibration_profile`) but two E2E tests had stale assertions:
+
+- `test/e2e/cycle.test.ts` phase count 13 → 16.
+- `test/e2e/dream-cycle-phase-order-pglite.test.ts` `EXPECTED_PHASES` updated + `mock.module` block for `embedding.ts` now declares `embedMultimodal` + `embedQuery` (v0.36.1.0 additions).
+
+These were unrelated to skillpack work; surfaced during the cathedral's E2E sweep and fixed as clean-up commits.
+
+### To take advantage of v0.37.0.0
+
+`gbrain upgrade` runs `gbrain apply-migrations` which is a no-op for this release (no schema migrations). To start publishing skillpacks:
+
+1. **Initialize a new pack**: `gbrain skillpack init my-pack`
+2. **Edit + iterate**: `cd my-pack`, edit `skills/my-pack/SKILL.md` + add real routing intents to `routing-eval.jsonl`
+3. **Verify**: `gbrain skillpack doctor . --quick`
+4. **Pack**: `gbrain skillpack pack` → emits `my-pack-0.1.0.tgz` with deterministic SHA
+5. **Publish**: push the pack repo to GitHub; share `owner/repo` for `gbrain skillpack scaffold owner/repo`
+
+To consume a third-party pack:
+
+1. **Search**: `gbrain skillpack search <query>` (when the registry repo at `garrytan/gbrain-skillpack-registry` ships; until then, scaffold by URL)
+2. **Scaffold**: `gbrain skillpack scaffold owner/repo` or `gbrain skillpack scaffold ./path/to/pack.tgz`
+3. **Inspect**: the agent reads the displayed `bootstrap.md` and walks the steps at its own discretion
+
+If `gbrain skillpack doctor` or `gbrain skillpack scaffold` errors out, please file an issue at https://github.com/garrytan/gbrain/issues with the command you ran, the pack source URL or local path, and output of `gbrain doctor`. This feedback loop is how the gbrain maintainers find rough edges in v1 of the third-party skillpack flow.
+
+### Deferred to follow-up waves
+
+- W4.5 retrofit of bundled gbrain skills to 10/10 (content work; multi-day; `doctor --fix --yes` auto-scaffolds most of it).
+- Subprocess sandbox (bwrap / sandbox-exec) for publish-gate trial install (the publish-gate skill itself remains a follow-up; today the publisher runs `doctor --quick` locally and the validation log is the trust artifact).
+- `garrytan/gbrain-skillpack-registry` GitHub repo setup with the CI workflow split (codex G3).
+- Cross-listing in `mvanhorn/printing-press-library` (external repo PR).
+- Generated `gbrain-cli` via Printing Press for non-gbrain agents to hit a remote gbrain.
+## [0.36.6.0] - 2026-05-19
+
+**Your photos finally show up when you ask. The brain just got eyes.**
+**11K image embeddings stopped sitting unused; cross-modal search is live.**
+
+For the past few releases gbrain had image embeddings sitting in a 1024d Voyage multimodal column with a valid 83 MB HNSW index, and no user-facing query path could touch them. Text queries always embedded through the text model. Dimensions didn't match. The image space was dead storage.
+
+This release wires the routing. `gbrain search "show me hackathon photos"` returns image chunks. `gbrain search --image ./screenshot.png` accepts an image as a query. `gbrain reindex --multimodal` flattens both modalities into a single embedding space if you want to commit to unified retrieval. And `search_by_image` over MCP gets a daily Voyage spend cap so an authenticated OAuth client can't burn the operator's account.
+
+Default behavior unchanged for normal text queries. Cross-modal routing fires only on detected image-intent phrasings, with an opt-in Haiku tie-break for genuinely ambiguous wording.
+
+### What lands across five atomic commits
+
+| Commit | What it ships | What it unlocks |
+|---|---|---|
+| 0 | Multimodal embed batching + partial-failure surfacing + query-side wrappers; new SSRF-validate helper with DNS rebinding defense | Foundation for Phase 3 reindex; every URL-fetching feature gets DNS-resolution + per-record A/AAAA inspection |
+| 1 | Text → image search: cross-modal intent regex + hybrid routing + weighted RRF for `'both'` mode + 7 new search knobs in `SEARCH_MODE_CONFIG_KEYS` and `knobsHash` (bumped 2→3) + `gbrain backfill modality` cleanup + doctor check | "show me hackathon photos" now finds image chunks; cache contamination across modality knobs closed |
+| 2 | Image → text/OCR search: `loadImageInput` with SSRF redirect re-validation + 10 MB cap + magic-byte sniff; `search_by_image` MCP op with remote `image_path` ban + daily Voyage spend cap per OAuth client | `gbrain search --image ./photo.jpg "who is this person"` runs; remote MCP clients can submit URLs / base64 but cannot read arbitrary server files |
+| 3 | Phase 3 unified column: schema migration v75 adds `content_chunks.embedding_multimodal vector(1024)`; `gbrain reindex --multimodal` walks NULL rows with checkpoint resume + cost prompt + writer lock; hybrid routing through unified column when `search.unified_multimodal=true` with fail-open + source-aware coverage check | Operators opt into true image→full-text-knowledge retrieval (Phase 2 then auto-upgrades to richer results) |
+| 4 | Opt-in LLM tie-break: when `search.cross_modal.llm_intent=true` AND regex returns 'text' AND query is genuinely ambiguous, a Haiku call refines the routing | Catches "any pictures from last week's offsite?" — the narrow band the regex misses (<1% of queries when on; ~$0.0001 per escalation; fail-open on every error) |
+
+### The numbers that matter
+
+51 new test cases across 8 test files. 6860 unit tests pass after the wave (0 regressions). 620+ E2E tests pass against real Postgres. Schema migrations applied cleanly through v75.
+
+| Surface | Before | After | What changed |
+|---|---|---|---|
+| Image-column query path | dead storage | live retrieval | crossModal flag + multimodal query embedding |
+| `search_by_image` op | did not exist | scope:read MCP op | D18 path ban + size cap + spend cap |
+| Voyage spend per OAuth client | unbounded | $5/day cap (configurable) | mcp_spend_log table + checkBudget gate |
+| SSRF defense on URL fetch | static IP block | static + DNS resolve all records | new `core/ssrf-validate.ts` helper, reusable |
+| Search cache contamination | possible across cross-modal flags | structurally impossible | knobsHash v3 includes 7 new cross-modal knobs |
+| Modality on historical chunks | "image" tag missing on pre-v0.27.1 image-asset rows | doctor surfaces + `gbrain backfill modality` flips them | new registry entry; idempotent |
+
+### What this means for you
+
+You don't need to opt in to anything for the basic improvement: queries that name visual content ("show me", "find images of", "what does X look like") now route through Voyage multimodal-3 and return image chunks that were sitting in the brain. Try `gbrain search "show me hackathon photos"`. If it returns nothing, your image chunks may pre-date the modality tag — run `gbrain doctor` for the paste-ready `gbrain backfill modality` fix.
+
+For the image-as-query workflow, use `gbrain search --image ./photo.jpg`. Pair with `--query "founder mode"` to RRF-merge a text refinement axis.
+
+For the full image→text-knowledge experience (find Alice's bio from a photo, not just visually-similar photos), opt into Phase 3:
+
+```
+gbrain reindex --multimodal --dry-run    # see the cost estimate
+gbrain reindex --multimodal              # ~2-3h on a 100K-chunk brain
+gbrain config set search.unified_multimodal true
+```
+
+Auto-flip prompt fires at coverage=100% so the last step is suggested inline.
+
+### To take advantage of v0.36.6.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about anything:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify migration v79 landed:**
+   ```bash
+   gbrain doctor --json | grep '"schema_version"'
+   ```
+   Should show: `"Version 79 (latest: 79)"`
+3. **Try it:**
+   ```bash
+   gbrain brainstorm "your question here"
+   gbrain lsd "your question here" --save
+   ```
+4. **Check brainstorm_health:**
+   ```bash
+   gbrain doctor --json | grep brainstorm_health
+   ```
+   Should show: `"Migration v79 applied; tracking enabled..."`
+5. **If anything fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if present.
+2. **Verify the new surface:**
+   ```bash
+   gbrain doctor | grep -E 'modal|cross'
+   gbrain search modes        # cross-modal knobs should be listed
+   gbrain --tools-json | jq '.[] | select(.name=="search_by_image")'
+   ```
+3. **Backfill historical image chunks** (if doctor surfaces the warn):
+   ```bash
+   gbrain backfill modality
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue: https://github.com/garrytan/gbrain/issues with `gbrain doctor` output and `~/.gbrain/upgrade-errors.jsonl` if present.
+
+### Itemized changes
+
+#### Phase 1 — text → image routing
+- `src/core/search/query-intent.ts`: new `suggestedModality: 'text' | 'image' | 'both'` axis on `QuerySuggestions`; module-scope `CROSS_MODAL_PATTERNS` regex array; `isAmbiguousModalityQuery` heuristic gate for Phase 4 LLM escalation.
+- `src/core/types.ts`: `SearchOpts.crossModal: 'text' | 'image' | 'both' | 'auto'` + `SearchResult.modality: 'text' | 'image'`.
+- `src/core/search/mode.ts`: 7 new ModeBundle knobs; KNOBS_HASH_VERSION bumped 2→3; SEARCH_MODE_CONFIG_KEYS registry extended.
+- `src/core/search/hybrid.ts`: routing branch resolves effective modality from (per-call opts → suggestions → 'text'); image route embeds via `embedQueryMultimodal`, searches `embedding_image`, skips expansion + keyword; 'both' route runs parallel text + image vector searches with weighted RRF; 'auto' literal normalized to undefined; fail-open on misconfig.
+- `src/core/operations.ts`: `cross_modal` param threaded through `query` op.
+- `src/core/backfill-registry.ts`: new `modality` backfill kind with `chunk_source='image_asset'` defensive guard.
+- `src/commands/doctor.ts`: `cross_modal_modality_backfill` check.
+
+#### Phase 2 — image-as-query
+- `src/core/ssrf-validate.ts`: new core helper. `validateAndResolveUrl` does DNS lookup with all records, rejects ANY internal-resolving record. `fetchWithSSRFGuard` re-validates every redirect hop and limits chain depth (default 3). Reusable for any URL-fetching feature.
+- `src/core/search/image-loader.ts`: `loadImageInput` accepts local path, data: URI, or http(s):// URL. Magic-byte sniff for PNG/JPEG/WebP. 10 MB cap (configurable). 5s fetch timeout. Pre-flight Content-Length + post-fetch size guard for lying servers.
+- `src/core/search/by-image.ts`: `searchByImage` always runs image branch; D13 hybrid intersect runs parallel text branch when `query` is provided.
+- `src/core/operations.ts`: new `search_by_image` op (scope: read, NOT localOnly). Remote callers with `image_path` set rejected with permission_denied. Source-id threaded via sourceScopeOpts. Per-param length cap. Pre-flight budget gate + post-call spend record.
+- `src/core/spend-log.ts`: BudgetExceededError + checkBudget + recordSpend + getTodaySpendCents. UTC day-aligned. Local CLI bypasses gate; pre-v0.36 brains fail open.
+- `src/core/migrate.ts` v74: new `mcp_spend_log` table + BTREE indexes.
+
+#### Phase 3 — unified multimodal column
+- `src/core/migrate.ts` v75: `ALTER TABLE content_chunks ADD COLUMN embedding_multimodal vector(1024)`. Column-only — HNSW partial index deferred to post-reindex build per pgvector best practice.
+- `src/schema.sql` + `src/core/pglite-schema.ts`: column added inline so fresh installs land at head.
+- `src/core/types.ts`: `SearchOpts.embeddingColumn` type widened to include `'embedding_multimodal'`.
+- `src/core/postgres-engine.ts` + `src/core/pglite-engine.ts` `searchVector`: route to unified column when opts set. NO modality filter (column carries both text + image).
+- `src/core/search/hybrid.ts`: when `search.unified_multimodal: true`, bypass dual-column branching and run unified routing. Fail-open: zero rows + not strict → fall through to dual-column. Strict mode (`unified_multimodal_only`) blocks fallback.
+- `src/commands/reindex-multimodal.ts`: new `gbrain reindex --multimodal [--limit N] [--dry-run] [--cost-estimate] [--no-embed] [--yes] [--json]`. Writer lock acquisition (6h TTL). Cost prompt + 10s Ctrl-C grace in TTY. `GBRAIN_NO_REEMBED=1` bypass. Checkpoint resume. Auto-flip prompt at coverage=100% completion.
+- `src/cli.ts`: dispatch.
+- `src/commands/doctor.ts`: `unified_multimodal_coverage` check reports per-source coverage when flag on.
+
+#### Commit 4 — LLM intent escalation (opt-in)
+- `src/core/search/llm-intent.ts`: `classifyModalityWithLLM(query, fallback)` via `gateway.chat()` with fixed system prompt. 1s timeout. Fail-open on every error.
+- `src/core/search/hybrid.ts`: escalation branch gated by (no explicit per-call opt) AND (regex returned 'text') AND (config flag on) AND (isAmbiguousModalityQuery true).
+
+#### Tests
+- `test/embed-multimodal-batching.test.ts` (13 cases)
+- `test/ssrf-validate.test.ts` (20 cases)
+- `test/cross-modal-phase1.test.ts` (45 cases)
+- `test/cross-modal-hybrid-integration.test.ts` (7 cases)
+- `test/cross-modal-phase2.test.ts` (15 cases)
+- `test/search-by-image-op.test.ts` (7 cases)
+- `test/unified-multimodal.test.ts` (8 cases)
+- `test/llm-intent-escalation.test.ts` (14 cases)
+- `test/llm-intent-hybrid-integration.test.ts` (6 cases)
+
+#### For contributors
+- D10 reindex-core extraction filed as a follow-up: markdown and multimodal reindex commands diverge enough in their core loop that extracting shared infrastructure (cost prompt, lock, checkpoint) is larger than this PR can absorb cleanly. Both commands stand alone with the same patterns.
+- The `voyage-multimodal-3` real-API E2E test fails against Voyage's current API because the test fixture is AVIF and Voyage now rejects that format. Fix is a separate one-line fixture swap; failure is pre-existing on master.
+
+Closes #1127 (spec doc preserved at `docs/issues/cross-modal-search.md`).
+
 ## [0.36.5.0] - 2026-05-18
 
 **Your agent picks which secrets to pass to a shell job by name. The worker resolves the values; names land in the row, values don't.**
@@ -112,6 +393,7 @@ Design note on the closed-vs-free-form arc: an early draft of v0.36.5.0 used a c
 4. **If any step fails**, file an issue: https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and the contents of `~/.gbrain/upgrade-errors.jsonl` if it exists. This feedback loop is how the wedge incidents get caught.
 
 Credit: this wave exists because @garrytan-agents filed PR #1137 documenting the env-stripping gap. The doc made the underlying problem visible enough to fix in code. Thank you.
+
 ## [0.36.4.0] - 2026-05-18
 
 **Your agent can now drive your brain to 90/100 by itself, on a cron, without you watching.**
@@ -305,6 +587,7 @@ gate, doctor_run_id GIN index, op_checkpoints GC).
   doing so requires async-propagating the 4 sync call sites in
   `src/commands/import.ts` and re-writing 18 tests. Deferred — both
   checkpoint systems coexist for now without conflict.
+
 ## [0.36.3.0] - 2026-05-18
 
 **Search now routes through any embedding column you've populated, not just OpenAI 1536. Voyage and ZeroEntropy columns become first-class search targets in one config flip.**

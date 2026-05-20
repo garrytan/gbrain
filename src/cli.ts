@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -39,6 +39,7 @@ const CLI_ONLY_SELF_HELP = new Set([
   'frontmatter', 'check-resolvable',
   'models',
   'cache',
+  'brainstorm', 'lsd',
 ]);
 
 async function main() {
@@ -1152,7 +1153,28 @@ async function handleCliOnly(command: string, args: string[]) {
         break;
       }
       // v0.32.7 CJK wave — post-upgrade markdown re-chunk sweep.
+      // v0.36 Phase 3 wave — `gbrain reindex --multimodal` re-embeds content_chunks
+      // into the unified Voyage multimodal-3 column.
       case 'reindex': {
+        if (args.includes('--multimodal')) {
+          const { runReindexMultimodal } = await import('./commands/reindex-multimodal.ts');
+          const limitIdx = args.indexOf('--limit');
+          const limitVal = limitIdx >= 0 && limitIdx + 1 < args.length ? parseInt(args[limitIdx + 1], 10) : undefined;
+          const result = await runReindexMultimodal(engine, {
+            limit: Number.isFinite(limitVal as number) ? (limitVal as number) : undefined,
+            dryRun: args.includes('--dry-run'),
+            costEstimate: args.includes('--cost-estimate'),
+            noEmbed: args.includes('--no-embed'),
+            json: args.includes('--json'),
+            yes: args.includes('--yes'),
+          });
+          if (args.includes('--json')) {
+            console.log(JSON.stringify(result, null, 2));
+          } else {
+            console.log(`reindex --multimodal: ${result.reembedded} re-embedded, ${result.failed} failed, ${result.pending_after} pending. est. cost: $${result.cost_usd_estimate.toFixed(2)}`);
+          }
+          break;
+        }
         const { runReindex } = await import('./commands/reindex.ts');
         await runReindex(engine, args);
         break;
@@ -1183,6 +1205,23 @@ async function handleCliOnly(command: string, args: string[]) {
         // happens inside runWhoknows via isThinClient(cfg) (v0.31.1 pattern).
         const { runWhoknows } = await import('./commands/whoknows.ts');
         await runWhoknows(engine, args);
+        break;
+      }
+      case 'brainstorm': {
+        // v0.37.0 (Open Collider wave): bisociation idea generator grounded
+        // in the user's own brain. Prefix-stratified domain-bank (D14) +
+        // shared judges + citation transparency (D6). LSD MCP exposure
+        // deferred to D7; this is CLI-only.
+        const { runBrainstormCommand } = await import('./commands/brainstorm.ts');
+        await runBrainstormCommand(engine, args);
+        break;
+      }
+      case 'lsd': {
+        // v0.37.0 — Lateral Synaptic Drift. Inverted-judge / stale-bias
+        // variant of brainstorm. Shares the orchestrator + judges via
+        // LSD_PROFILE config. Local-only by design (cost + weirdness gate).
+        const { runLsdCommand } = await import('./commands/lsd.ts');
+        await runLsdCommand(engine, args);
         break;
       }
       case 'calibration': {

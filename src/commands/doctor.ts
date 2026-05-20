@@ -573,6 +573,13 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // things when reranker is on vs off.
   checks.push(await checkRerankerHealth(engine));
 
+  // 9b. v0.37.0 brainstorm_health: surfaces three brainstorm/lsd readiness
+  // signals: (a) migration v79 applied (last_retrieved_at column exists),
+  // (b) calibration cold-start status (active_bias_tags empty), (c)
+  // search.track_retrieval enabled/disabled. Each surfaces a paste-ready
+  // fix hint.
+  checks.push(await checkBrainstormHealth(engine));
+
   // 10. v0.36.1.0 Hindsight calibration wave (T12) — four new checks:
   //   - abandoned_threads: high-conviction takes never revisited
   //   - calibration_freshness: profile is older than 7 days
@@ -833,6 +840,112 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       name: 'reranker_health',
       status: 'warn',
       message: `Could not check reranker audit: ${msg}`,
+    };
+  }
+}
+
+/**
+ * v0.37.0 brainstorm_health doctor check.
+ *
+ * Surfaces three readiness signals for `gbrain brainstorm` / `gbrain lsd`:
+ *
+ *   1. Migration v79 applied — the `pages.last_retrieved_at` column exists.
+ *      If missing, LSD's stale-page signal degrades silently (corpus-sampling
+ *      fallback only). Fix: `gbrain apply-migrations --yes`.
+ *
+ *   2. search.track_retrieval — when explicitly off, LSD never accumulates
+ *      stale signal (every page stays at NULL last_retrieved_at). Default-on
+ *      is fine; explicit-off is a warning so the user notices the setting.
+ *      Fix: `gbrain config set search.track_retrieval true`.
+ *
+ *   3. Calibration cold-start — the latest calibration profile has empty
+ *      `active_bias_tags`. brainstorm + LSD judge fall back to no-anti-bias
+ *      mode with a stderr warning at run time; this surfaces it earlier.
+ *      Fix: `gbrain calibration --regenerate` once enough takes are resolved.
+ *
+ * Returns the FIRST non-ok signal as the status — column-missing dominates,
+ * then disabled-tracking, then cold-start. All three are non-blocking warnings;
+ * brainstorm + LSD still work, just with degraded signal.
+ */
+export async function checkBrainstormHealth(engine: BrainEngine): Promise<Check> {
+  // (1) Column probe — fast, single-query.
+  try {
+    const probeRows = await engine.executeRaw<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'pages' AND column_name = 'last_retrieved_at'
+       ) AS exists`,
+      []
+    );
+    const columnPresent = probeRows[0]?.exists === true;
+    if (!columnPresent) {
+      return {
+        name: 'brainstorm_health',
+        status: 'warn',
+        message: `pages.last_retrieved_at column missing. LSD stale-bias degraded to corpus-sampling. Fix: \`gbrain apply-migrations --yes\``,
+      };
+    }
+  } catch (e) {
+    // Information schema may not be queryable on every engine variant.
+    // Don't fail the doctor over this — degrade to skip.
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'brainstorm_health',
+      status: 'warn',
+      message: `Could not probe pages.last_retrieved_at (${msg}); brainstorm/lsd may run with degraded signal.`,
+    };
+  }
+
+  // (2) search.track_retrieval — explicit-off surfaces as a warning.
+  try {
+    const trackCfg = await engine.getConfig('search.track_retrieval');
+    if (trackCfg === 'false' || trackCfg === '0' || trackCfg === 'off' || trackCfg === 'no') {
+      return {
+        name: 'brainstorm_health',
+        status: 'warn',
+        message: `search.track_retrieval is explicitly off — LSD's stale-page signal never accumulates. Fix: \`gbrain config set search.track_retrieval true\` (or accept and use brainstorm only).`,
+      };
+    }
+  } catch {
+    // Config read miss is benign; default-on applies.
+  }
+
+  // (3) Calibration cold-start — empty active_bias_tags.
+  try {
+    const calibRows = await engine.executeRaw<{ active_bias_tags: string[] | null }>(
+      `SELECT active_bias_tags
+         FROM calibration_profiles
+         ORDER BY generated_at DESC
+         LIMIT 1`,
+      []
+    );
+    if (calibRows.length === 0) {
+      return {
+        name: 'brainstorm_health',
+        status: 'ok',
+        message: `Migration v79 applied; tracking enabled. Calibration profile not yet generated — brainstorm/lsd will run unbiased until enough takes are resolved.`,
+      };
+    }
+    const tags = calibRows[0].active_bias_tags;
+    if (!Array.isArray(tags) || tags.length === 0) {
+      return {
+        name: 'brainstorm_health',
+        status: 'ok',
+        message: `Migration v79 applied; tracking enabled. Calibration cold-start (no active_bias_tags) — judge runs unbiased. Fix when ready: \`gbrain calibration --regenerate\`.`,
+      };
+    }
+    return {
+      name: 'brainstorm_health',
+      status: 'ok',
+      message: `Migration v79 applied; tracking enabled; calibration profile with ${tags.length} bias tag(s) loaded.`,
+    };
+  } catch {
+    // Pre-v0.36.1 brain (no calibration_profiles table). Brainstorm/lsd still
+    // work without anti-bias context — orchestrator stderr-warns at run time.
+    return {
+      name: 'brainstorm_health',
+      status: 'ok',
+      message: `Migration v79 applied; tracking enabled. calibration_profiles table missing (pre-v0.36.1 brain) — judge runs unbiased.`,
     };
   }
 }
@@ -2519,6 +2632,124 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   progress.heartbeat('whoknows_health');
   checks.push(await whoknowsHealthCheck(engine));
 
+  // v0.36 cross-modal wave: modality column cleanup.
+  //
+  // Historical brains that imported image assets before v0.27.1's
+  // `modality='image'` default-set may have image chunks where
+  // embedding_image is populated but modality wasn't tagged. The cross-modal
+  // search routing in v0.36 depends on `modality` for keyword filtering;
+  // surface the gap so operators can run `gbrain backfill modality`.
+  progress.heartbeat('cross_modal_modality_backfill');
+  try {
+    const mismatchRows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*)::text AS count FROM content_chunks
+       WHERE embedding_image IS NOT NULL
+         AND chunk_source = 'image_asset'
+         AND (modality IS NULL OR modality != 'image')`,
+    );
+    const mismatch = parseInt(String(mismatchRows[0]?.count ?? '0'), 10);
+    if (mismatch === 0) {
+      checks.push({
+        name: 'cross_modal_modality_backfill',
+        status: 'ok',
+        message: 'All image-asset chunks have modality=image',
+      });
+    } else {
+      checks.push({
+        name: 'cross_modal_modality_backfill',
+        status: 'warn',
+        message:
+          `${mismatch} image-asset chunk(s) have embedding_image populated but modality != 'image'. ` +
+          `Fix: \`gbrain backfill modality\``,
+      });
+    }
+  } catch {
+    // Engine probably doesn't have the modality column (pre-v0.27.1 brain) —
+    // skip silently. Auto-migration will land it on next upgrade.
+    checks.push({
+      name: 'cross_modal_modality_backfill',
+      status: 'ok',
+      message: 'modality column not present (pre-v0.27.1 brain); skipped',
+    });
+  }
+
+  // v0.36 Phase 3 — unified_multimodal coverage (D21 source-aware).
+  //
+  // Only meaningful when search.unified_multimodal is on. Reports the
+  // percentage of content_chunks with embedding_multimodal populated.
+  // Source-aware: a global 95% can hide 0% coverage for a specific source.
+  progress.heartbeat('unified_multimodal_coverage');
+  try {
+    const unifiedFlag = await engine.getConfig('search.unified_multimodal').catch(() => null);
+    const unifiedOnlyFlag = await engine.getConfig('search.unified_multimodal_only').catch(() => null);
+    const unifiedOn = unifiedFlag === 'true' || unifiedFlag === '1';
+    const unifiedOnlyOn = unifiedOnlyFlag === 'true' || unifiedOnlyFlag === '1';
+
+    if (!unifiedOn) {
+      checks.push({
+        name: 'unified_multimodal_coverage',
+        status: 'ok',
+        message: 'search.unified_multimodal is off; coverage check N/A',
+      });
+    } else {
+      // D21 source-aware: report per-source coverage so multi-source brains
+      // can't hide 0% on one source behind a high global average.
+      const rows = await engine.executeRaw<{ source_id: string | null; total: string; covered: string }>(
+        `SELECT
+           COALESCE(p.source_id, 'default') AS source_id,
+           COUNT(*)::text AS total,
+           SUM(CASE WHEN cc.embedding_multimodal IS NOT NULL THEN 1 ELSE 0 END)::text AS covered
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         GROUP BY p.source_id`,
+      );
+      const perSource = rows.map(r => ({
+        source: r.source_id || 'default',
+        total: parseInt(String(r.total), 10),
+        covered: parseInt(String(r.covered), 10),
+      }));
+      const lowestCoverage = perSource.reduce(
+        (acc, r) => Math.min(acc, r.total > 0 ? r.covered / r.total : 1),
+        1,
+      );
+      const summary = perSource.map(r => {
+        const pct = r.total > 0 ? Math.round((r.covered / r.total) * 100) : 0;
+        return `${r.source}:${pct}%`;
+      }).join(', ');
+
+      if (unifiedOnlyOn && lowestCoverage < 0.99) {
+        checks.push({
+          name: 'unified_multimodal_coverage',
+          status: 'fail',
+          message:
+            `unified_multimodal_only is ON but lowest source coverage is ${(lowestCoverage * 100).toFixed(1)}% (${summary}). ` +
+            `Run \`gbrain reindex --multimodal\` to bring coverage to 99%+ or disable strict mode.`,
+        });
+      } else if (lowestCoverage < 0.95) {
+        checks.push({
+          name: 'unified_multimodal_coverage',
+          status: 'warn',
+          message:
+            `unified_multimodal is on but lowest source coverage is ${(lowestCoverage * 100).toFixed(1)}% (${summary}). ` +
+            `Run \`gbrain reindex --multimodal\` to fill the gap.`,
+        });
+      } else {
+        checks.push({
+          name: 'unified_multimodal_coverage',
+          status: 'ok',
+          message: `unified_multimodal coverage: ${summary}`,
+        });
+      }
+    }
+  } catch {
+    // Column probably not present (pre-v0.36 brain pre-migration); skip silently.
+    checks.push({
+      name: 'unified_multimodal_coverage',
+      status: 'ok',
+      message: 'embedding_multimodal column not present yet; skipped',
+    });
+  }
+
   // 11. Markdown body completeness (v0.12.3 reliability wave).
   // v0.12.0's splitBody ate everything after the first `---` horizontal rule,
   // truncating wiki-style pages. Heuristic: pages whose body is <30% of the
@@ -3273,6 +3504,9 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
     progress.heartbeat('reranker_health');
     checks.push(await checkRerankerHealth(engine));
+    // v0.37.0 brainstorm_health — migration v79, track_retrieval, calibration cold-start.
+    progress.heartbeat('brainstorm_health');
+    checks.push(await checkBrainstormHealth(engine));
     // v0.36.0.0 (A5): ZE embedding key health + schema/config width consistency.
     progress.heartbeat('ze_embedding_health');
     checks.push(await checkZeEmbeddingHealth(engine));

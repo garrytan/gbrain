@@ -14,6 +14,7 @@ import type {
   EvalCaptureFailure, EvalCaptureFailureReason,
   SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
+  DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
 } from './types.ts';
 
 /**
@@ -574,6 +575,36 @@ export interface BrainEngine {
    * `forEachPage` from src/core/engine-iter.ts instead.
    */
   listAllPageRefs(): Promise<Array<{ slug: string; source_id: string }>>;
+
+  /**
+   * v0.37.0 — prefix-stratified page sampling for `gbrain brainstorm` / `gbrain lsd`
+   * domain-bank module. Takes a caller-supplied prefix list (cached at the domain-bank
+   * layer per D3), returns one page per prefix tiebroken by `connection_count`
+   * (LEFT JOIN to page_links, count of inbound links).
+   *
+   * Stale-bias (D5 / LSD): when `opts.staleBias === true`, ROW_NUMBER() ORDER BY
+   * prefers pages with `last_retrieved_at IS NULL` (never retrieved) > pages older
+   * than `staleThresholdDays` (default 90) > recently-retrieved.
+   *
+   * Source scoping (D5, codex r2 #2 fix): `sourceId` (scalar) and `sourceIds`
+   * (array, wins over scalar) per the [source-id-canonical-thread] pattern.
+   * Both threaded from day 1 even though v0.37.0 callers are CLI-local — D7
+   * MCP exposure ships zero-refactor.
+   *
+   * Soft-deleted pages (deleted_at IS NOT NULL) excluded automatically.
+   */
+  listPrefixSampledPages(opts: DomainBankSampleOpts): Promise<DomainBankRow[]>;
+
+  /**
+   * v0.37.0 — corpus-sampling fallback for `gbrain brainstorm` when prefix-stratified
+   * can't fill M (small brain, single-prefix corpus). Random sample of N pages with
+   * the same exclusion + source-scope semantics as `listPrefixSampledPages`.
+   * Deterministic with `opts.seed` set; falls back to RANDOM() otherwise.
+   *
+   * Returns the same `DomainBankRow` shape so the orchestrator can union both
+   * sources of pages and dedup by slug+source_id.
+   */
+  listCorpusSample(opts: CorpusSampleOpts): Promise<DomainBankRow[]>;
 
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;

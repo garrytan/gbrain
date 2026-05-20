@@ -527,6 +527,17 @@ export function normalizeEngineColumn(
     };
   }
 
+  // v0.36 Phase 3 unified multimodal column — populated by
+  // `gbrain reindex --multimodal`. Voyage multimodal-3, vector(1024).
+  if (embeddingColumn === 'embedding_multimodal') {
+    return {
+      name: 'embedding_multimodal',
+      type: 'vector',
+      dimensions: 1024,
+      embeddingModel: 'voyage:voyage-multimodal-3',
+    };
+  }
+
   // Any other raw string at this layer is a programming error — the
   // resolver should have run at the hybrid/op boundary and produced a
   // descriptor. We throw with a paste-ready hint rather than guess.
