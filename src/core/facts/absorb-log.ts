@@ -17,6 +17,8 @@
  *   - 'queue_overflow'  — getFactsQueue() cap hit; oldest entry dropped.
  *   - 'queue_shutdown'  — queue rejected the enqueue because shutdown is in progress.
  *   - 'embed_failure'   — gateway down on embedOne; row inserts with NULL embedding.
+ *   - 'gateway_unavailable' — no configured chat gateway, so extractor cannot run.
+ *   - 'no_candidates'    — extractor ran successfully but returned/retained no facts.
  *   - 'pipeline_error'  — anything else absorbed inside runFactsBackstop's catch.
  *   - eligibility_skip is intentionally NOT logged (high cardinality, low signal).
  *
@@ -33,6 +35,8 @@ export const FACTS_ABSORB_REASONS = [
   'queue_overflow',
   'queue_shutdown',
   'embed_failure',
+  'gateway_unavailable',
+  'no_candidates',
   'pipeline_error',
 ] as const;
 

@@ -53,7 +53,12 @@ describe('resolveEntitySlug', () => {
     expect(result).toBe('people/alice-example');
   });
 
-  test('non-matching but slug-shaped → falls through to slugify', async () => {
+  test('prefixed slug-shaped input is preserved even before a page exists', async () => {
+    const result = await resolveEntitySlug(engine, 'default', 'projects/gbrain');
+    expect(result).toBe('projects/gbrain');
+  });
+
+  test('non-matching bare slug-shaped input still falls through to slugify', async () => {
     // Doesn't match a row but is slug-shaped: still goes through fuzzy
     // pipeline; without a match, slugify normalizes.
     const result = await resolveEntitySlug(engine, 'default', 'unknown-thing-xyz');

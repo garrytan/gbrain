@@ -97,7 +97,7 @@ describe('runFactsPipeline (extract_facts MCP op path) — response shape stabil
     }
   });
 
-  test('empty extraction → zero counts (no NaN, no undefined)', async () => {
+  test('empty extraction → zero counts plus observable no_candidates log', async () => {
     chatStub([]);
     const r = await runFactsPipeline('nothing claim-worthy here', {
       engine,
@@ -109,6 +109,15 @@ describe('runFactsPipeline (extract_facts MCP op path) — response shape stabil
     expect(r.duplicate).toBe(0);
     expect(r.superseded).toBe(0);
     expect(r.fact_ids).toEqual([]);
+
+    const logs = await engine.getIngestLog({ limit: 100 });
+    const matching = logs.filter(row =>
+      row.source_type === 'facts:absorb'
+      && row.source_id === 'default'
+      && row.source_ref === 'empty-test'
+      && row.summary.startsWith('no_candidates:'),
+    );
+    expect(matching.length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -252,8 +261,15 @@ describe('queue-mode → drains successfully on happy path', () => {
       expect(r.duplicate).toBe(0);
     }
 
-    // Note for future work: writeFactsAbsorbLog from extract.ts itself
-    // would close this visibility gap — surface gateway errors via
-    // ingest_log without changing extract's "best-effort" return contract.
+    // extract.ts now logs absorbed gateway errors so zero-count envelopes
+    // are observable in doctor/admin surfaces instead of going silent.
+    const logs = await engine.getIngestLog({ limit: 100 });
+    const matching = logs.filter(row =>
+      row.source_type === 'facts:absorb'
+      && row.source_id === 'silent-source'
+      && row.source_ref === 'silent-session'
+      && row.summary.startsWith('gateway_error:'),
+    );
+    expect(matching.length).toBeGreaterThanOrEqual(1);
   });
 });

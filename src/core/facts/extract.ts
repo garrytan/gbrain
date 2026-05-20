@@ -27,6 +27,7 @@ import { INJECTION_PATTERNS } from '../think/sanitize.ts';
 import { resolveModel } from '../model-config.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
 import { normalizeMetricLabel } from './extract-from-fence.ts';
+import { classifyFactsAbsorbError, writeFactsAbsorbLog } from './absorb-log.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -77,6 +78,8 @@ export interface ExtractInput {
   entityHints?: string[];
   /** Source identifier for provenance — e.g. 'mcp:put_page' or 'mcp:extract_facts'. */
   source: string;
+  /** Brain source_id for observability rows. Defaults to 'default'. */
+  sourceId?: string;
   /**
    * Set by the caller when this turn is a dream-generated page body.
    * If true, extraction is skipped to break the consume-own-output loop.
@@ -154,14 +157,19 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
   cleaned = cleaned.trim();
   if (!cleaned) return [];
 
-  if (!isAvailable('chat')) {
-    // No chat gateway → no extraction. Caller still inserts facts via direct
-    // `gbrain take add` paths.
-    return [];
-  }
-
   const cap = Math.max(1, Math.min(input.maxFactsPerTurn ?? 10, 25));
   const defaultModel = await getFactsExtractionModel(input.engine);
+
+  if (!isAvailable('chat', input.model ?? defaultModel)) {
+    // No chat gateway for the facts extraction model → no extraction. Caller
+    // still inserts facts via direct `gbrain take add` paths.
+    await logExtractionAbsorb(
+      input,
+      'gateway_unavailable',
+      `chat gateway unavailable for ${input.model ?? defaultModel}`,
+    );
+    return [];
+  }
   let result: ChatResult;
   try {
     result = await chat({
@@ -184,13 +192,17 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
     // Re-throw aborts; absorb other errors as "no extraction" — caller's
     // `put_page` backstop will still record the page itself.
     if (isAbort(err)) throw err;
+    await logExtractionAbsorb(input, classifyFactsAbsorbError(err), err instanceof Error ? err.message : String(err));
     return [];
   }
 
   if (result.stopReason === 'refusal' || result.stopReason === 'content_filter') return [];
 
   const parsedRaw = parseExtractorJson(result.text);
-  if (!parsedRaw) return [];
+  if (!parsedRaw) {
+    await logExtractionAbsorb(input, 'parse_failure', `unparseable extractor response from ${result.model ?? 'unknown-model'}`);
+    return [];
+  }
 
   const facts: ExtractedFact[] = [];
   for (const candidate of parsedRaw.slice(0, cap)) {
@@ -220,6 +232,7 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
       if (isAbort(err)) throw err;
       // Gateway-down → NULL embedding; classifier still runs without
       // fast-path. (eE8 distinction.)
+      await logExtractionAbsorb(input, 'embed_failure', err instanceof Error ? err.message : String(err));
       embedding = null;
     }
 
@@ -248,7 +261,25 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
     });
   }
 
+  if (facts.length === 0) {
+    await logExtractionAbsorb(
+      input,
+      'no_candidates',
+      `extractor candidates=${parsedRaw.length}; retained=0`,
+    );
+  }
+
   return facts;
+}
+
+async function logExtractionAbsorb(
+  input: ExtractInput,
+  reason: Parameters<typeof writeFactsAbsorbLog>[2],
+  detail: string,
+): Promise<void> {
+  if (!input.engine) return;
+  const ref = input.sessionId ?? input.source ?? 'facts-extract';
+  await writeFactsAbsorbLog(input.engine, ref, reason, detail, input.sourceId ?? 'default');
 }
 
 interface RawExtracted {

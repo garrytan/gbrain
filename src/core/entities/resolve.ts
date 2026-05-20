@@ -47,11 +47,14 @@ export async function resolveEntitySlug(
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
-  // 1. Exact match on slug. If raw already looks like a slug (or matches
-  //    a row exactly), use it.
+  // 1. Exact match on slug. If raw already carries a directory prefix
+  //    (`people/alice`, `projects/gbrain`), preserve it even before a page
+  //    row exists so fact extraction can fence-write to the intended page
+  //    instead of collapsing `/` to `-` via slugify fallback.
   if (looksLikeSlug(trimmed)) {
     const exact = await tryExactSlug(engine, source_id, trimmed);
     if (exact) return exact;
+    if (trimmed.includes('/')) return trimmed;
   }
 
   // 2. Fuzzy match against existing pages within the source. Match either
