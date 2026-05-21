@@ -11,6 +11,7 @@
  */
 
 import { PGLiteEngine } from '../../core/pglite-engine.ts';
+import type { AIGatewayConfig } from '../../core/ai/types.ts';
 
 interface PgTablesRow {
   tablename: string;
@@ -32,8 +33,15 @@ const PRESERVE_TABLES: ReadonlySet<string> = new Set([
   'subagent_rate_leases',
 ]);
 
-export async function createBenchmarkBrain(): Promise<PGLiteEngine> {
+export async function createBenchmarkBrain(gatewayConfig?: AIGatewayConfig): Promise<PGLiteEngine> {
   const engine = new PGLiteEngine();
+  // Configure gateway BEFORE connect+initSchema — initSchema reads embedding dims
+  // from the gateway to size the pgvector column. If we initSchema first with
+  // the default 1536d and then switch to a 1024d provider, every embed call fails.
+  if (gatewayConfig) {
+    const { configureGateway } = await import('../../core/ai/gateway.ts');
+    configureGateway(gatewayConfig);
+  }
   await engine.connect({}); // in-memory; no database_path, no file lock acquired
   await engine.initSchema();
   return engine;
@@ -54,8 +62,9 @@ export async function resetTables(engine: PGLiteEngine): Promise<void> {
 
 export async function withBenchmarkBrain<T>(
   fn: (engine: PGLiteEngine) => Promise<T>,
+  gatewayConfig?: AIGatewayConfig,
 ): Promise<T> {
-  const engine = await createBenchmarkBrain();
+  const engine = await createBenchmarkBrain(gatewayConfig);
   try {
     return await fn(engine);
   } finally {
