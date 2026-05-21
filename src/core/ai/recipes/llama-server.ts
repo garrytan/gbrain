@@ -34,9 +34,12 @@ export const llamaServer: Recipe = {
       default_dims: 0, // forces explicit --embedding-dimensions
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-05-10',
-      // llama-server's batch capacity is set by `--ctx-size` at launch
-      // time; no static cap to declare. v0.32 (#779).
-      no_batch_cap: true,
+      // llama-server enforces a hard request-COUNT cap equal to its launch
+      // batch size (`--batch-size`, default 32): it rejects requests with
+      // more inputs with `batch size N > maximum allowed batch size 32`.
+      // The token-budget split can't bound item count, so cap it here. A
+      // server launched with a larger `-b` can raise this. v0.32 (#779).
+      max_batch_items: 32,
     },
   },
   /**

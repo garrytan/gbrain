@@ -476,6 +476,8 @@ function warnRecipesMissingBatchTokens(): void {
     // LiteLLM proxy, llama-server) — they ship without a static cap because
     // the cap depends on a user-launched server. Warning is noise for them.
     if (embedding.no_batch_cap === true) continue;
+    // A declared item-count cap is a real batch cap — no warning needed.
+    if (embedding.max_batch_items !== undefined) continue;
     if (_warnedRecipes.has(recipe.id)) continue;
     _warnedRecipes.add(recipe.id);
     // eslint-disable-next-line no-console
@@ -1144,9 +1146,16 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
 
   // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
   // ride the fast path: one embedMany call, no recursion safety net.
-  const batches = maxBatchTokens
+  const tokenBatches = maxBatchTokens
     ? splitByTokenBudget(truncated, Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
     : [truncated];
+
+  // Hard COUNT cap (e.g. llama-server's "maximum allowed batch size 32").
+  // Token budget can't bound item count, so re-split any oversized batch.
+  const maxBatchItems = embedding?.max_batch_items;
+  const batches = maxBatchItems
+    ? tokenBatches.flatMap(b => capBatchItems(b, maxBatchItems))
+    : tokenBatches;
 
   const allEmbeddings: Float32Array[] = [];
 
@@ -1193,6 +1202,23 @@ export function splitByTokenBudget(
   }
   if (current.length > 0) batches.push(current);
 
+  return batches;
+}
+
+/**
+ * Split a batch into sub-batches of at most `maxItems` inputs. Enforces a
+ * hard COUNT cap that the token-budget split can't (many tiny inputs fit
+ * under any token budget). Used for endpoints like llama.cpp's llama-server
+ * that reject requests exceeding their launch batch size.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function capBatchItems(texts: string[], maxItems: number): string[][] {
+  if (maxItems <= 0 || texts.length <= maxItems) return [texts];
+  const batches: string[][] = [];
+  for (let i = 0; i < texts.length; i += maxItems) {
+    batches.push(texts.slice(i, i + maxItems));
+  }
   return batches;
 }
 
