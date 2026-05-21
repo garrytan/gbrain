@@ -117,6 +117,11 @@ export function loadPluginsFromEnv(opts: LoadOpts = {}): PluginLoadResult {
         }
         subagentByName.set(sa.name, { pluginName: loaded.manifest.name, pathLeft: p });
         accepted.push(sa);
+        // Register into the runtime registry so the subagent handler can
+        // resolve data.subagent_def → def at job-dispatch time. Left-wins
+        // collision policy (above) means the first plugin to declare a name
+        // wins, matching the warning text.
+        _subagentRegistry.set(sa.name, sa);
       }
 
       result.plugins.push({ manifest: loaded.manifest, rootDir: p, subagents: accepted });
@@ -127,6 +132,29 @@ export function loadPluginsFromEnv(opts: LoadOpts = {}): PluginLoadResult {
   }
 
   return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Runtime subagent-def registry
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Populated by loadPluginsFromEnv at worker startup. Read by the subagent
+// handler (handlers/subagent.ts) when a job specifies data.subagent_def.
+// Lookup-only public API; mutation happens only via loadPluginsFromEnv.
+//
+// Lifetime: lives for the worker process lifetime. Re-running
+// loadPluginsFromEnv (e.g., on plugin path changes) does NOT clear stale
+// entries — collisions are resolved left-wins per the existing policy, but
+// removed plugins linger until process restart. Acceptable for v1; plugin
+// hot-reload is out of scope.
+
+const _subagentRegistry = new Map<string, SubagentDefinition>();
+
+/** Look up a registered subagent def by name. Returns undefined if not
+ *  found in the registry — caller decides fallback behavior (the subagent
+ *  handler logs a warning and falls through to DEFAULT_SYSTEM). */
+export function getSubagentDef(name: string): SubagentDefinition | undefined {
+  return _subagentRegistry.get(name);
 }
 
 function rejectIfNotAbsolute(p: string): string | null {
@@ -232,4 +260,15 @@ export function loadSinglePlugin(
 export const __testing = {
   rejectIfNotAbsolute,
   SUPPORTED_PLUGIN_VERSION,
+  /** Seed a def into the registry. Used by subagent handler tests that
+   *  need to verify the runtime lookup path without going through
+   *  filesystem plugin discovery. */
+  _seedSubagentDef(def: SubagentDefinition): void {
+    _subagentRegistry.set(def.name, def);
+  },
+  /** Clear the registry. Tests should call this in afterEach/beforeEach
+   *  to keep state isolated. */
+  _clearSubagentRegistry(): void {
+    _subagentRegistry.clear();
+  },
 };

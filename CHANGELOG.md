@@ -2,6 +2,37 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Subagent handler honors `data.subagent_def` at runtime. When set AND the
+  named def exists in the plugin registry (populated at worker startup by
+  `loadPluginsFromEnv`):
+  - `def.body` is used as the default system prompt — overridable by
+    explicit `data.system`
+  - `def.allowed_tools` is used as the default allowed tool set — overridable
+    by explicit `data.allowed_tools` (data wins fully when set; def is the
+    convenience default)
+  
+  Closes the doctrine-vs-implementation gap where the plugin-loader validated
+  defs at startup (catching typos in `allowed_tools` etc.) but the handler
+  ignored the loaded def at job-dispatch time. Callers previously had to
+  embed the full system body and tool list in every job submission for the
+  named def to take effect.
+  
+  Backward compatible: when `data.subagent_def` is absent, behavior is
+  unchanged. When `data.subagent_def` names a def NOT in the loaded
+  registry (worker has a stale plugin path), the handler logs a warning
+  and falls through to current behavior (fail open, not closed). Empty or
+  whitespace-only `def.body` is treated as no-body and falls through to
+  `DEFAULT_SYSTEM`.
+  
+  Required to establish the registry: `loadPluginsFromEnv` in
+  `plugin-loader.ts` now populates a module-level `_subagentRegistry` Map
+  alongside its existing log-only behavior; lookup-only public access via
+  exported `getSubagentDef(name)`.
+
 ## [0.37.9.0] - 2026-05-20
 
 **Tags get written the same way everywhere now.**
