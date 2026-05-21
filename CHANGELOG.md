@@ -2,6 +2,62 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.37.6.0] - 2026-05-21
+
+**Your brain stops corrupting its own page types.**
+
+If you've been running gbrain for a while you may have noticed `gbrain stats` showing weird page types like `'''deal'''` or worse. That's not a display bug. It's real data corruption — every time the brain re-wrote a page, the YAML serializer wrapped the `type` field in another layer of quotes. After a few hundred round-trips one user's brain had 10,200 pages with type values like `'''…31×…deal…31×…'''`. `gbrain doctor` was completely blind to it.
+
+This release stops the bleed at three layers:
+
+- **The serializer.** `matter.stringify` no longer wraps already-clean scalar values in quotes on reverse-write. A `type: deal` page that's reverse-written 5 times stays `type: deal` for all 5 cycles.
+- **The write boundary.** A new `TYPE_ENUM` validator runs on every `put_page` / `import` / `sync` path. If something tries to write a malformed type, it fails loud and prints the exact command to fix it.
+- **The database.** Migration v81 installs a CHECK constraint (`type ~ '^[a-z][a-z0-9_-]*$'`) so even if every upstream guard fails, the DB itself refuses garbage. The migration has a pre-check guard: it refuses to install while corrupted rows still exist, forcing you to triage instead of silently dropping them.
+
+**How to use it**
+
+```bash
+gbrain upgrade
+gbrain repair-type-field --dry-run    # see what would change
+gbrain repair-type-field --apply      # normalize ~10K clean rows + quarantine the ambiguous ones
+gbrain doctor                          # confirms pages_malformed_type: ok
+```
+
+**What you'd see in a concrete example**
+
+| Before | After |
+|---|---|
+| `pages_by_type`: `deal: 738`, `'''deal'''`: 10074, `'''''''deal'''''''`: 11, +60 more variants | `pages_by_type`: `deal: 10812`, zero quoted variants |
+| `gbrain doctor` health_score 85, no warning about type corruption | health_score 95+, `pages_malformed_type: ok` with paste-ready fix on regression |
+
+Rows that don't cleanly normalize to a known page type (e.g. quote-stripping leaves an unknown string) go to a new `pages_quarantine_malformed_type` table for manual review — never silently relabeled.
+
+**What's safe to know about**
+
+- `gbrain repair-type-field --apply` is idempotent. Second run finds zero matches.
+- The repair only touches `pages.type`; slugs/chunks/links/takes are untouched (slug-keyed FKs unaffected).
+- Migration v81 is blocked until repair completes. The error message includes the exact unblock command.
+- If you roll back v81 with rows in quarantine, you lose the review queue. Archive first if it matters.
+
+### For contributors
+
+Three new test files (`markdown-serializer-roundtrip`, `type-enum-validator`, `repair-type-field`, `migration-v81-type-check`) — 28 cases — pin the round-trip safety, validator boundary, and pre-check guard behavior. `src/core/types-enum.ts` is the new single source of truth for the page-type whitelist.
+
+### Itemized changes
+
+#### Added
+- `src/core/types-enum.ts` — `TYPE_ENUM` whitelist + `assertValidPageType(type, context)` helper exported for reuse.
+- `src/commands/repair-type-field.ts` — new CLI command. `--dry-run` (default) emits CSV preview; `--apply` normalizes clean rows + quarantines ambiguous ones via `INSERT … ON CONFLICT DO NOTHING`. Mirrors the `repair-jsonb.ts` shape.
+- `src/commands/doctor.ts` — new `pages_malformed_type` check. On non-zero count, status fails with `actions: ['gbrain repair-type-field --apply']`.
+- Migration v81 (`pages_type_check_and_quarantine`) — pre-check guard, CHECK constraint, quarantine table with composite `(slug, source_id)` index. Mirrored across `migrate.ts`, `schema.sql`, `pglite-schema.ts`, and regenerated `schema-embedded.ts`.
+- Tests: `test/markdown-serializer-roundtrip.test.ts` (3 cases), `test/type-enum-validator.test.ts` (14 cases), `test/repair-type-field.test.ts` (13 cases including 1×/3×/7×/15×/31× quote-nesting collapse), `test/migration-v81-type-check.test.ts` (8 cases).
+
+#### Changed
+- `src/core/markdown.ts` — `sanitizeFrontmatterScalars` + `stripAccretedQuotes` helpers pre-sanitize string scalars before `matter.stringify`. Reverse-writes no longer accrete `'''` / `"""` wrappers; already-corrupt values heal on first write.
+- `src/core/operations.ts` (put_page handler) — fast regex peek on first 2KB of content; throws `OperationError('invalid_params', …)` with paste-ready repair hint before reaching `importFromContent`.
+- `src/core/import-file.ts` (`importFromContent` + `importFromFile`) — `assertValidPageType` boundary checks with file/slug context in the error envelope.
+- `src/schema.sql` + `src/core/pglite-schema.ts` — `pages.type` gains `CHECK (type IS NULL OR type ~ '^[a-z][a-z0-9_-]*$')`; quarantine table + index appended; RLS enable block extended.
+
 ## [0.37.5.0] - 2026-05-20
 
 **`gbrain doctor` stops flagging your tags as broken when they're not.**
