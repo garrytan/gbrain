@@ -44,6 +44,19 @@ export async function startMcpServer(engine: BrainEngine) {
       // Code see the brain's relevant hot memory automatically alongside
       // every tool-call response. Best-effort; absorbs errors.
       metaHook: getBrainHotMemoryMeta,
+      // Thread synthetic auth context so whoami (and any scope-aware ops) works
+      // without raising unknown_transport error on stdio pipe. clientId omits
+      // the 'gbrain_cl_' prefix so whoami reports transport:'legacy' (not
+      // 'oauth' — there is no real OAuth flow on stdio). Scopes reflect the
+      // actual stdio security surface: read + write; admin ops are gated by
+      // ctx.remote / takesHoldersAllowList, not by this scopes array.
+      auth: {
+        token: 'stdio',
+        clientId: 'stdio',
+        clientName: 'gbrain-stdio-pipe',
+        scopes: ['read', 'write'],
+        sourceId: process.env.GBRAIN_SOURCE || 'default',
+      },
     });
   });
 

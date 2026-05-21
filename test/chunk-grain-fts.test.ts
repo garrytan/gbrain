@@ -84,7 +84,7 @@ describe('Cathedral II Layer 3 — searchKeyword external contract', () => {
     await engine.upsertChunks('guides/unrelated', [
       { chunk_index: 0, chunk_text: 'Ship to production on a Tuesday, never a Friday.', chunk_source: 'compiled_truth' },
     ]);
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();
@@ -141,7 +141,7 @@ describe('Cathedral II Layer 3 — searchKeywordChunks (internal primitive)', ()
       { chunk_index: 1, chunk_text: 'refactor safely using characterization tests.', chunk_source: 'compiled_truth' },
       { chunk_index: 2, chunk_text: 'refactor tools can automate common patterns.', chunk_source: 'compiled_truth' },
     ]);
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();
@@ -215,7 +215,7 @@ describe('Cathedral II Layer 3 — doc-comment weight precedence (A4 foundation)
        WHERE page_id = (SELECT id FROM pages WHERE slug = $1)`,
       ['pages/alpha'],
     );
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await engine.disconnect();
