@@ -48,6 +48,7 @@ import {
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
 import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import { getSubagentDef } from '../plugin-loader.ts';
 
 // ── Defaults ────────────────────────────────────────────────
 
@@ -166,7 +167,34 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         fallback: TIER_DEFAULTS.subagent,
       });
     const maxTurns = data.max_turns ?? DEFAULT_MAX_TURNS;
-    const systemPrompt = data.system ?? DEFAULT_SYSTEM;
+
+    // Resolve subagent_def → registered plugin def, if any. Used as a
+    // fallback source for systemPrompt and allowed_tools when data.system
+    // / data.allowed_tools are not explicitly set. Closes the doctrine-
+    // vs-implementation gap where plugin-loader validated defs at startup
+    // but the handler ignored them at job-dispatch.
+    //
+    // Resolution order:
+    //   systemPrompt: data.system → def.body (when non-empty) → DEFAULT_SYSTEM
+    //   allowed_tools: data.allowed_tools → def.allowed_tools → full registry
+    //
+    // Override semantics: data fields ALWAYS win when explicitly provided.
+    // Callers retain full control; def is a convenience default.
+    //
+    // Failure mode: data.subagent_def set but def not in registry (caller's
+    // worker has a stale plugin path) → warn + fall through to current
+    // behavior. Fail open, not closed.
+    const def = data.subagent_def
+      ? getSubagentDef(data.subagent_def)
+      : undefined;
+    if (data.subagent_def && !def) {
+      console.warn(
+        `[subagent] subagent_def '${data.subagent_def}' not found in plugin registry; ` +
+        `falling back to data fields (data.system or DEFAULT_SYSTEM; data.allowed_tools or full registry)`,
+      );
+    }
+    const defBody = def?.body && def.body.trim().length > 0 ? def.body : undefined;
+    const systemPrompt = data.system ?? defBody ?? DEFAULT_SYSTEM;
 
     // Build the tool registry bound to THIS job as the owning subagent.
     // brain_id (per-call brain override; children inherit parent's unless
@@ -181,9 +209,11 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       brainId: data.brain_id,
       allowedSlugPrefixes: data.allowed_slug_prefixes,
     });
-    const toolDefs = data.allowed_tools && data.allowed_tools.length > 0
+    const toolDefs = (data.allowed_tools && data.allowed_tools.length > 0)
       ? filterAllowedTools(registry, data.allowed_tools)
-      : registry;
+      : (def?.allowed_tools && def.allowed_tools.length > 0)
+        ? filterAllowedTools(registry, def.allowed_tools)
+        : registry;
 
     logSubagentSubmission({
       caller: 'worker',
