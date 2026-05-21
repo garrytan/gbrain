@@ -41,6 +41,7 @@ export interface BrainIngestionSourcePlan {
   sourceKey: typeof BRAIN_QUANT_PILOT_SOURCE_KEYS[number];
   sourceType: BrainSourceType;
   storagePrefix: string;
+  storagePrefixes: string[];
 }
 
 export interface BrainIngestionPlan {
@@ -90,6 +91,14 @@ export interface BrainIngestionResult {
     written: number;
     duplicates: number;
   };
+  samples: Array<{
+    sourceKey: string;
+    storagePath: string;
+    title: string | null;
+    authorHandle: string | null;
+    bodyPreview: string;
+    qualityStatus: 'new';
+  }>;
   qualityGates: {
     parseSuccess: BrainQualityGateResult;
     idempotency: BrainQualityGateResult;
@@ -97,6 +106,12 @@ export interface BrainIngestionResult {
   };
   failures: Array<{ storagePath: string; error: string }>;
 }
+
+const REAL_ARCHIVE_LAYOUT_PREFIXES: Record<typeof BRAIN_QUANT_PILOT_SOURCE_KEYS[number], string[]> = {
+  'quant_x:afirebrand': ['13f'],
+  'quant_x:MoneyPrinter0x': ['poi/all-in-podcast'],
+  'quant_x:TaikiMadea': ['poi/dylan-patel', 'poi/jensen-huang', 'poi/moonshots-podcast'],
+};
 
 export function normalizeBrainPilotSource(input: string): typeof BRAIN_QUANT_PILOT_SOURCE_KEYS[number] {
   const direct = PILOT_SOURCE_ALIASES[input] ?? PILOT_SOURCE_ALIASES[input.trim()];
@@ -122,11 +137,17 @@ export function buildBrainIngestionPlan(opts: BrainIngestionOptions): BrainInges
     mode: opts.mode,
     dryRun: opts.dryRun,
     limit: opts.limit ?? 500,
-    sources: uniqueSources.map(sourceKey => ({
-      sourceKey,
-      sourceType: 'quant_x',
-      storagePrefix: `${prefixRoot}/quant_x/${sourceKey.slice('quant_x:'.length)}`,
-    })),
+    sources: uniqueSources.map(sourceKey => {
+      const storagePrefix = `${prefixRoot}/quant_x/${sourceKey.slice('quant_x:'.length)}`;
+      return {
+        sourceKey,
+        sourceType: 'quant_x',
+        storagePrefix,
+        storagePrefixes: prefixRoot === 'pilot'
+          ? [storagePrefix, ...REAL_ARCHIVE_LAYOUT_PREFIXES[sourceKey]]
+          : [storagePrefix],
+      };
+    }),
   };
 }
 
@@ -179,6 +200,20 @@ export function parseBrainArchiveObject(
   };
 }
 
+export function parseBrainArchiveBytes(
+  sourceKey: string,
+  storagePath: string,
+  buf: Buffer,
+  bucket = BRAIN_ARCHIVE_BUCKET,
+): ParsedBrainSourceItem {
+  const text = buf.toString('utf8');
+  const trimmed = text.trimStart();
+  if (storagePath.endsWith('.json') || trimmed.startsWith('{')) {
+    return parseBrainArchiveObject(sourceKey, storagePath, JSON.parse(text), bucket);
+  }
+  return parseBrainArchiveObject(sourceKey, storagePath, parseTextArchivePayload(storagePath, text), bucket);
+}
+
 export async function runBrainIngestion(
   engine: BrainEngine,
   storage: StorageBackend,
@@ -196,15 +231,26 @@ export async function runBrainIngestion(
   let skipped = 0;
   let written = 0;
   let duplicates = 0;
+  const samples: BrainIngestionResult['samples'] = [];
 
   for (const source of plan.sources) {
-    const paths = (await storage.list(source.storagePrefix)).slice(0, plan.limit);
+    const paths = await listSourcePaths(storage, source, plan.limit);
     listed += paths.length;
     for (const storagePath of paths) {
       try {
         const buf = await storage.download(storagePath);
-        const item = parseBrainArchiveObject(source.sourceKey, storagePath, JSON.parse(buf.toString('utf8')), plan.bucket);
+        const item = parseBrainArchiveBytes(source.sourceKey, storagePath, buf, plan.bucket);
         parsed++;
+        if (samples.length < 5) {
+          samples.push({
+            sourceKey: item.sourceKey,
+            storagePath: item.storagePath,
+            title: item.title,
+            authorHandle: item.authorHandle,
+            bodyPreview: item.bodyText.slice(0, 160),
+            qualityStatus: 'new',
+          });
+        }
         if (seenKeys.has(item.idempotencyKey)) {
           duplicates++;
           skipped++;
@@ -229,6 +275,7 @@ export async function runBrainIngestion(
     mode: plan.mode,
     sources: plan.sources.map(s => s.sourceKey),
     counters: { listed, parsed, skipped, failed, written, duplicates },
+    samples,
     qualityGates: {
       parseSuccess: {
         passed: parseRate >= 0.95,
@@ -323,6 +370,39 @@ async function writeBrainSourceItem(
       [runId],
     );
   }
+}
+
+async function listSourcePaths(storage: StorageBackend, source: BrainIngestionSourcePlan, limit: number): Promise<string[]> {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  for (const prefix of source.storagePrefixes ?? [source.storagePrefix]) {
+    for (const path of await storage.list(prefix)) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      paths.push(path);
+      if (paths.length >= limit) return paths;
+    }
+  }
+  return paths;
+}
+
+function parseTextArchivePayload(storagePath: string, text: string): Record<string, unknown> {
+  const title = storagePath.endsWith('.md')
+    ? text.match(/^#\s+(.+)$/m)?.[1]
+    : storagePath.split('/').pop()?.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
+  return {
+    id: storagePath,
+    title,
+    text: storagePath.endsWith('.xml') ? xmlToText(text) : text,
+    raw_format: storagePath.endsWith('.xml') ? 'xml' : 'markdown',
+  };
+}
+
+function xmlToText(text: string): string {
+  return text
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function stringValue(value: unknown): string | null {

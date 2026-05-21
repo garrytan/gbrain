@@ -107,6 +107,12 @@ function formatBrainIngestionResult(result: Awaited<ReturnType<typeof runBrainIn
   for (const [name, gate] of Object.entries(result.qualityGates)) {
     lines.push(`- ${name}: ${gate.passed ? 'PASS' : 'FAIL'} (${gate.detail})`);
   }
+  if (result.samples.length) {
+    lines.push('', 'Samples:');
+    for (const sample of result.samples) {
+      lines.push(`- ${sample.sourceKey} ${sample.storagePath}: ${sample.title ?? sample.bodyPreview} [quality_status=${sample.qualityStatus}]`);
+    }
+  }
   if (result.failures.length) {
     lines.push('', 'Failures:');
     for (const failure of result.failures.slice(0, 10)) {

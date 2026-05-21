@@ -12,7 +12,10 @@ import {
 function makeStorage(objects: Record<string, unknown>): StorageBackend {
   return {
     upload: async () => {},
-    download: async (path: string) => Buffer.from(JSON.stringify(objects[path])),
+    download: async (path: string) => {
+      const object = objects[path];
+      return Buffer.from(typeof object === 'string' ? object : JSON.stringify(object));
+    },
     delete: async () => {},
     exists: async (path: string) => Object.prototype.hasOwnProperty.call(objects, path),
     list: async (prefix: string) => Object.keys(objects).filter(path => path.startsWith(prefix)),
@@ -24,6 +27,11 @@ function makeEngine(): { engine: BrainEngine; calls: Array<{ sql: string; params
   const calls: Array<{ sql: string; params?: unknown[] }> = [];
   const engine = {
     kind: 'postgres' as const,
+    connect: async () => {},
+    disconnect: async () => {},
+    initSchema: async () => {},
+    transaction: async <T>(fn: (engine: BrainEngine) => Promise<T>) => fn(engine),
+    withReservedConnection: async <T>(fn: (conn: never) => Promise<T>) => fn({} as never),
     executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
       calls.push({ sql, params });
       if (sql.includes('FROM brain_sources')) {
@@ -116,6 +124,41 @@ describe('brain ingestion idempotency and dry-run safety', () => {
     expect(result.counters.written).toBe(0);
     expect(result.qualityGates.parseSuccess.passed).toBe(true);
     expect(result.qualityGates.idempotency.passed).toBe(true);
+    expect(calls.length).toBe(0);
+  });
+
+  test('dry-run routes approved Quant pilot objects from the existing archive layout', async () => {
+    const { engine, calls } = makeEngine();
+    const storage = makeStorage({
+      '13f/SALP_13F_2026Q1_period-2026-03-31.xml': '<informationTable><infoTable><nameOfIssuer>NVIDIA CORP</nameOfIssuer><cusip>67066G104</cusip><value>1234</value><sshPrnamt>100</sshPrnamt></infoTable></informationTable>',
+      'poi/all-in-podcast/All-In_2026-01-23_Coinbase-CEO-s-Top-3-Crypto-Trends-for.md': '# Coinbase CEO\n\nBrian Armstrong discussed stablecoins, Bitcoin, and crypto market structure.',
+    });
+
+    const result = await runBrainIngestion(engine, storage, {
+      bucket: 'brain-archive',
+      mode: 'pilot',
+      sources: ['afirebrand', 'MoneyPrinter0x'],
+      dryRun: true,
+    });
+
+    expect(result.counters.listed).toBe(2);
+    expect(result.counters.parsed).toBe(2);
+    expect(result.counters.written).toBe(0);
+    expect(result.samples).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceKey: 'quant_x:afirebrand',
+        storagePath: '13f/SALP_13F_2026Q1_period-2026-03-31.xml',
+        qualityStatus: 'new',
+      }),
+      expect.objectContaining({
+        sourceKey: 'quant_x:MoneyPrinter0x',
+        storagePath: 'poi/all-in-podcast/All-In_2026-01-23_Coinbase-CEO-s-Top-3-Crypto-Trends-for.md',
+        title: 'Coinbase CEO',
+        qualityStatus: 'new',
+      }),
+    ]));
+    expect(result.qualityGates.parseSuccess.passed).toBe(true);
+    expect(result.qualityGates.storageDatabaseConsistency.detail).toBe('dry-run: database consistency check deferred');
     expect(calls.length).toBe(0);
   });
 
