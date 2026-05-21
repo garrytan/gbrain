@@ -295,6 +295,8 @@ export interface CycleReport {
 }
 
 export interface CycleOpts {
+  /** PC2: bypass cycle advisory lock (autopilot may be holding it). DANGEROUS — manual use only. */
+  bypassLock?: boolean;
   /** If true, no writes to filesystem or DB. All phases honor this. */
   dryRun?: boolean;
   /** Defaults to ALL_PHASES. Pass a subset for --phase lint etc. */
@@ -1133,7 +1135,12 @@ export async function runCycle(
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
   // Decide if we need the cycle lock: any state-mutating phase in the selection.
-  const needsLock = phases.some(p => NEEDS_LOCK_PHASES.has(p));
+  // PC2 add: --unsafe-bypass-lock skips this gate so manual backfill can proceed while
+  // autopilot daemon holds the lock continuously.
+  const needsLock = phases.some(p => NEEDS_LOCK_PHASES.has(p)) && !opts.bypassLock;
+  if (opts.bypassLock) {
+    process.stderr.write('[dream] WARNING: --unsafe-bypass-lock set; advisory lock skipped. Concurrent writes possible.\n');
+  }
 
   let lock: LockHandle | null = null;
   if (needsLock) {

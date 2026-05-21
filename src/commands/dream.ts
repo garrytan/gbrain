@@ -53,6 +53,11 @@ interface DreamArgs {
    * Never auto-applied for --input (codex finding #3).
    */
   bypassDreamGuard: boolean;
+  /**
+   * PC2 (2026-05-21): bypass the cycle advisory lock for manual backfill /
+   * dry-run probes when autopilot holds it continuously. NEVER use in cron.
+   */
+  bypassLock: boolean;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -121,6 +126,7 @@ function parseArgs(args: string[]): DreamArgs {
     from,
     to,
     bypassDreamGuard: args.includes('--unsafe-bypass-dream-guard'),
+    bypassLock: args.includes('--unsafe-bypass-lock'),
   };
 }
 
@@ -285,6 +291,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthFrom: opts.from ?? undefined,
     synthTo: opts.to ?? undefined,
     synthBypassDreamGuard: opts.bypassDreamGuard,
+    bypassLock: opts.bypassLock,
   });
 
   if (opts.json) {
