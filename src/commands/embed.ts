@@ -418,7 +418,7 @@ async function embedAllStale(
 ) {
   // D7: thread sourceId so source-scoped runs only count + visit
   // that source's NULL embeddings.
-  const sourceOpt = sourceId ? { sourceId } : undefined;
+  const sourceOpt = chunkWriteOpts(sourceId, embeddingColumn);
 
   // Pre-flight: 0 stale chunks → nothing to do, no further DB reads.
   const staleCount = await engine.countStaleChunks(sourceOpt);
@@ -479,6 +479,7 @@ async function embedAllStale(
         afterPageId,
         afterChunkIndex,
         ...(sourceId && { sourceId }),
+        ...(embeddingColumn && { embeddingColumn }),
       });
       if (batch.length === 0) break;
       totalChunksLoaded += batch.length;

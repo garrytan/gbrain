@@ -160,6 +160,19 @@ if (!dbUrl) {
       expect(rows[0].has_default).toBe(false);
       expect(rows[0].has_ze).toBe(true);
     }, 30_000);
+
+    test('stale scan uses the same alternate column as write-side embedding', async () => {
+      const descriptor: ResolvedColumn = {
+        name: 'embedding_ze',
+        type: 'halfvec',
+        dimensions: 2560,
+        embeddingModel: 'zeroentropyai:zembed-1',
+      };
+
+      expect(await engine.countStaleChunks()).toBeGreaterThan(0);
+      expect(await engine.countStaleChunks({ embeddingColumn: descriptor })).toBe(0);
+      expect(await engine.listStaleChunks({ embeddingColumn: descriptor, batchSize: 100 })).toHaveLength(0);
+    }, 30_000);
   });
 
   describe('Postgres: HNSW index visible to planner', () => {

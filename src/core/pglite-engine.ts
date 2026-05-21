@@ -1661,13 +1661,17 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r));
   }
 
-  async countStaleChunks(opts?: { sourceId?: string }): Promise<number> {
+  async countStaleChunks(opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn }): Promise<number> {
+    const targetFragment = opts?.embeddingColumn
+      ? buildVectorCastFragment(opts.embeddingColumn)
+      : undefined;
+    const targetCol = targetFragment?.col ?? 'embedding';
     // D7: source-scoped count for `gbrain embed --stale --source X`.
     if (opts?.sourceId === undefined) {
       const { rows } = await this.db.query(
         `SELECT count(*)::int AS count
            FROM content_chunks
-          WHERE embedding IS NULL`,
+          WHERE ${targetCol} IS NULL`,
       );
       const count = (rows[0] as { count: number } | undefined)?.count ?? 0;
       return Number(count);
@@ -1676,7 +1680,7 @@ export class PGLiteEngine implements BrainEngine {
       `SELECT count(*)::int AS count
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
-        WHERE cc.embedding IS NULL
+        WHERE cc.${targetCol} IS NULL
           AND p.source_id = $1`,
       [opts.sourceId],
     );
@@ -1689,10 +1693,15 @@ export class PGLiteEngine implements BrainEngine {
     afterPageId?: number;
     afterChunkIndex?: number;
     sourceId?: string;
+    embeddingColumn?: ResolvedColumn;
   }): Promise<StaleChunkRow[]> {
     const limit = opts?.batchSize ?? 2000;
     const afterPid = opts?.afterPageId ?? 0;
     const afterIdx = opts?.afterChunkIndex ?? -1;
+    const targetFragment = opts?.embeddingColumn
+      ? buildVectorCastFragment(opts.embeddingColumn)
+      : undefined;
+    const targetCol = targetFragment?.col ?? 'embedding';
     // D7: optional source-scoped cursor scan. PGLite mirrors postgres-engine
     // so the engine-parity E2E catches drift.
     if (opts?.sourceId === undefined) {
@@ -1701,7 +1710,7 @@ export class PGLiteEngine implements BrainEngine {
                 cc.model, cc.token_count, p.source_id, cc.page_id
            FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
+          WHERE cc.${targetCol} IS NULL
             AND (cc.page_id, cc.chunk_index) > ($1, $2)
           ORDER BY cc.page_id, cc.chunk_index
           LIMIT $3`,
@@ -1714,7 +1723,7 @@ export class PGLiteEngine implements BrainEngine {
               cc.model, cc.token_count, p.source_id, cc.page_id
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
-        WHERE cc.embedding IS NULL
+        WHERE cc.${targetCol} IS NULL
           AND p.source_id = $1
           AND (cc.page_id, cc.chunk_index) > ($2, $3)
         ORDER BY cc.page_id, cc.chunk_index

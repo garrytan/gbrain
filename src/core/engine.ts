@@ -706,7 +706,7 @@ export interface BrainEngine {
    */
   getChunks(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]>;
   /**
-   * Count chunks across the brain where embedding IS NULL.
+   * Count chunks across the brain where the active embedding column IS NULL.
    * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
    * does no further work after a single SELECT count(*) (~50 bytes wire).
    *
@@ -714,12 +714,17 @@ export interface BrainEngine {
    * counts across every source in the brain. Operators running
    * `gbrain embed --stale --source media-corpus` expect only that
    * source's NULLs touched; the caller threads `sourceId` here.
+   *
+   * v0.37.6: `opts.embeddingColumn` switches the staleness predicate from
+   * legacy `embedding` to the resolved write-side column, so multi-column
+   * brains do not repeatedly re-embed rows whose alternate column is already
+   * populated.
    */
-  countStaleChunks(opts?: { sourceId?: string }): Promise<number>;
+  countStaleChunks(opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn }): Promise<number>;
   /**
-   * Return every chunk where embedding IS NULL, with the metadata needed
+   * Return every chunk where the active embedding column IS NULL, with the metadata needed
    * to call embedBatch + upsertChunks. The `embedding` column is omitted
-   * by design — stale rows have NULL embeddings, so shipping them wastes
+   * by design — stale rows have NULL embeddings in the active column, so shipping them wastes
    * wire bytes for no gain. Caller groups by slug, embeds, and re-upserts.
    *
    * v0.33.3: cursor-paginated — yields up to `batchSize` rows per call
@@ -731,12 +736,16 @@ export interface BrainEngine {
    * `opts.sourceId` scopes the scan to a single source (matches the
    * countStaleChunks contract). Paired with embedAllStale's --source
    * support.
+   *
+   * v0.37.6: `opts.embeddingColumn` must match countStaleChunks and the
+   * eventual upsertChunks target.
    */
   listStaleChunks(opts?: {
     batchSize?: number;
     afterPageId?: number;
     afterChunkIndex?: number;
     sourceId?: string;
+    embeddingColumn?: ResolvedColumn;
   }): Promise<StaleChunkRow[]>;
   /**
    * Delete every chunk for a page. Internal page-id lookup is sourceId-scoped
