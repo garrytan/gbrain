@@ -215,6 +215,25 @@ describe('PGLiteEngine: Search', () => {
     const results = await engine.searchVector(fakeEmbedding);
     expect(results.length).toBe(0);
   });
+
+  test('REGRESSION: search stale flag ignores old extracted timeline rows', async () => {
+    await truncateAll();
+    await engine.putPage('companies/current-account', {
+      type: 'company',
+      title: 'Current Account',
+      compiled_truth: 'Current Account has a current commercial read about managed services.',
+    });
+    await engine.upsertChunks('companies/current-account', [
+      { chunk_index: 0, chunk_text: 'Current Account managed services commercial read', chunk_source: 'compiled_truth' },
+    ]);
+    await engine.addTimelineEntry('companies/current-account', { date: '2020-01-01', summary: 'Old imported event' });
+
+    const results = await engine.searchKeyword('managed services');
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].slug).toBe('companies/current-account');
+    expect(results[0].stale).toBe(false);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────

@@ -172,6 +172,20 @@ describe('sources list', () => {
     const select = calls.find(c => c.sql.includes('ORDER BY (id = \'default\') DESC'));
     expect(select).toBeDefined();
   });
+
+  test('REGRESSION: page counts exclude soft-deleted pages', async () => {
+    const { engine, calls } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [
+        { id: 'default', name: 'default', local_path: null, last_commit: null, last_sync_at: null, config: '{"federated":true}', created_at: new Date() },
+      ],
+      'COUNT(*)::int AS n FROM pages': [{ n: 1 }],
+    });
+
+    await runSources(engine, ['list']);
+
+    const count = calls.find(c => c.sql.includes('COUNT(*)::int AS n FROM pages'));
+    expect(count?.sql).toContain('deleted_at IS NULL');
+  });
 });
 
 // ── remove ──────────────────────────────────────────────────

@@ -43,7 +43,8 @@ export type LinkResolutionType = 'qualified' | 'unqualified';
  *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
  *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
  */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|deals|civic|project|projects|source|sources|media|yc|tech|finance|personal|openclaw|entities|archive|hiring|household|ideas|inbox|org|originals|programs|prompts|reports|templates|tools|writing)';
+const ROOT_SLUG_PATTERN = '(?:index|log|resolver|schema)';
 
 /**
  * Match `[Name](path)` markdown links pointing to entity directories.
@@ -56,7 +57,7 @@ const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|pr
  * `.md` suffix so the same function works for both filesystem and DB content.
  */
 const ENTITY_REF_RE = new RegExp(
-  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${DIR_PATTERN}\\/[^)\\s]+?)(?:\\.md)?\\)`,
+  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*((?:${DIR_PATTERN}\\/[^)\\s]+?)|${ROOT_SLUG_PATTERN})(?:\\.md)?\\)`,
   'g',
 );
 
@@ -69,7 +70,7 @@ const ENTITY_REF_RE = new RegExp(
  * exclusively so missing it leaves the graph empty.
  */
 const WIKILINK_RE = new RegExp(
-  `\\[\\[(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+  `\\[\\[((?:${DIR_PATTERN}\\/[^|\\]#]+?)|${ROOT_SLUG_PATTERN})(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
 
@@ -86,7 +87,7 @@ const WIKILINK_RE = new RegExp(
  * anyway, but the two-pass approach keeps intent crystal-clear).
  */
 const QUALIFIED_WIKILINK_RE = new RegExp(
-  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):((?:${DIR_PATTERN}\\/[^|\\]#]+?)|${ROOT_SLUG_PATTERN})(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
 

@@ -109,6 +109,16 @@ describe('extractEntityRefs', () => {
     expect(refs.length).toBe(1);
     expect(refs[0].dir).toBe('meetings');
   });
+
+  test('REGRESSION: extracts retained source/report/deal resolver refs', () => {
+    const refs = extractEntityRefs('See [[sources/readme|Sources]], [[reports/readme|Reports]], and [[deals/readme|Deals]].');
+    expect(refs.map(r => r.slug)).toEqual(['sources/readme', 'reports/readme', 'deals/readme']);
+  });
+
+  test('REGRESSION: extracts root resolver slugs without forcing fake directories', () => {
+    const refs = extractEntityRefs('Top-level docs: [[resolver|Resolver]], [[schema|Schema]], [[log|Log]], [[index|Index]].');
+    expect(refs.map(r => r.slug)).toEqual(['resolver', 'schema', 'log', 'index']);
+  });
 });
 
 // ─── extractPageLinks ──────────────────────────────────────────

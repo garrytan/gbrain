@@ -4,8 +4,7 @@
  * Assertions:
  *   1. getHealth() returns the new *_score breakdown fields.
  *   2. Breakdown fields sum to brain_score by construction.
- *   3. orphan_pages counts pages with zero INBOUND links, regardless of
- *      whether they have outbound links (was: required both).
+ *   3. orphan_pages counts islanded pages: no inbound AND no outbound live links.
  *   4. BrainHealth type now carries dead_links.
  */
 
@@ -65,7 +64,7 @@ describe('Bug 11 — brain_score breakdown sums to total', () => {
   });
 });
 
-describe('Bug 11 — orphan_pages is "no inbound links"', () => {
+describe('Bug 11 — orphan_pages is "islanded pages"', () => {
   test('a page with outbound-only links is NOT an orphan', async () => {
     // Hub page: links out to three others, but nothing links back to it.
     // Previous (buggy) behavior: hub counted as orphan because it had no
@@ -109,8 +108,66 @@ describe('Bug 11 — orphan_pages is "no inbound links"', () => {
 
     const h = await engine.getHealth();
     // sink has 1 inbound (from source) → not orphan.
-    // source has no inbound (but has outbound) → not orphan under new definition.
+    // source has no inbound (but has outbound) → not orphan under islanded definition.
     expect(h.orphan_pages).toBe(0);
+  });
+
+  test('REGRESSION: soft-deleted page with no live links does not count as a health orphan', async () => {
+    await engine.putPage('deleted-loner', { type: 'note', title: 'Deleted', compiled_truth: 'gone', frontmatter: {} });
+    await (engine as any).db.query(`UPDATE pages SET deleted_at = now() WHERE slug = 'deleted-loner'`);
+
+    const h = await engine.getHealth();
+
+    expect(h.page_count).toBe(0);
+    expect(h.orphan_pages).toBe(0);
+  });
+
+  test('REGRESSION: links from soft-deleted pages do not count as live health connectivity', async () => {
+    await engine.putPage('deleted-source', { type: 'note', title: 'Deleted source', compiled_truth: 'gone', frontmatter: {} });
+    await engine.putPage('live-target', { type: 'note', title: 'Live target', compiled_truth: 'still here', frontmatter: {} });
+    const sourceId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='deleted-source'`)).rows[0].id;
+    const targetId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='live-target'`)).rows[0].id;
+    await (engine as any).db.query(
+      `INSERT INTO links (from_page_id, to_page_id, link_type) VALUES ($1, $2, 'mentions')`,
+      [sourceId, targetId],
+    );
+    await (engine as any).db.query(`UPDATE pages SET deleted_at = now() WHERE slug = 'deleted-source'`);
+
+    const h = await engine.getHealth();
+
+    expect(h.page_count).toBe(1);
+    expect(h.orphan_pages).toBe(1);
+  });
+});
+
+
+describe('health stale_pages uses event dates, not extraction timestamps', () => {
+  test('REGRESSION: extracted old timeline row created after page update does not mark page stale', async () => {
+    await engine.putPage('account/current', {
+      type: 'company',
+      title: 'Current account',
+      compiled_truth: 'Compiled truth already reflects the old event.',
+      frontmatter: {},
+    });
+    await engine.addTimelineEntry('account/current', { date: '2020-01-01', summary: 'Old imported event' });
+
+    const h = await engine.getHealth();
+
+    expect(h.stale_pages).toBe(0);
+  });
+
+  test('REGRESSION: future scheduled timeline event does not mark page stale before event date', async () => {
+    await engine.putPage('account/scheduled', {
+      type: 'company',
+      title: 'Scheduled account',
+      compiled_truth: 'Current account read with a future meeting scheduled.',
+      frontmatter: {},
+    });
+    await engine.addTimelineEntry('account/scheduled', { date: '2999-01-01', summary: 'Future meeting scheduled' });
+
+    const h = await engine.getHealth();
+
+    expect(h.stale_pages).toBe(0);
   });
 });
 

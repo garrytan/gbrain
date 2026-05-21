@@ -104,7 +104,7 @@ async function fetchSource(engine: BrainEngine, id: string): Promise<SourceRow |
 
 async function countPages(engine: BrainEngine, sourceId: string): Promise<number> {
   const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
+    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
     [sourceId],
   );
   return rows[0]?.n ?? 0;
