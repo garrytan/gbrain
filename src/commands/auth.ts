@@ -390,7 +390,11 @@ export async function runAuth(args: string[]): Promise<void> {
       const takesHolders = takesIdx >= 0 && rest[takesIdx + 1]
         ? rest[takesIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
         : undefined;
-      const positional = rest.find(a => !a.startsWith('--') && a !== rest[takesIdx + 1]);
+      // When `--takes-holders` is absent, `takesIdx` is -1 and
+      // `rest[takesIdx + 1]` is `rest[0]` — the positional we're trying to
+      // extract — so the unguarded inequality used to filter it out and
+      // `positional` became undefined. Guard with `takesIdx < 0`.
+      const positional = rest.find(a => !a.startsWith('--') && (takesIdx < 0 || a !== rest[takesIdx + 1]));
       await create(positional || '', { takesHolders });
       return;
     }
