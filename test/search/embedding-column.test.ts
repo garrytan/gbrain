@@ -13,9 +13,10 @@
  *     throw on unknown string.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { afterEach, describe, test, expect } from 'bun:test';
 import {
   resolveEmbeddingColumn,
+  resolveWriteColumn,
   getEmbeddingColumnRegistry,
   buildVectorCastFragment,
   quoteIdentifier,
@@ -32,12 +33,20 @@ import {
   isCacheSafe,
   isBuiltinColumn,
 } from '../../src/core/search/embedding-column.ts';
+import {
+  configureGateway,
+  resetGateway,
+} from '../../src/core/ai/gateway.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
 import type { ResolvedColumn } from '../../src/core/types.ts';
 
 function cfg(overrides: Partial<GBrainConfig> = {}): GBrainConfig {
   return { engine: 'pglite', ...overrides };
 }
+
+afterEach(() => {
+  resetGateway();
+});
 
 describe('resolveEmbeddingColumn — resolution chain', () => {
   test('default fallback returns "embedding"', () => {
@@ -105,6 +114,81 @@ describe('resolveEmbeddingColumn — resolution chain', () => {
     };
     const r = resolveEmbeddingColumn({ embeddingColumn: descriptor }, cfg());
     expect(r).toEqual(descriptor);
+  });
+});
+
+describe('resolveWriteColumn — write-side boundary resolution', () => {
+  test('no registry returns undefined for legacy single-column brain', () => {
+    expect(resolveWriteColumn(cfg())).toBeUndefined();
+    expect(resolveWriteColumn(cfg({ embedding_columns: {} }))).toBeUndefined();
+  });
+
+  test('provider match returns descriptor from merged registry', () => {
+    configureGateway({
+      embedding_model: 'voyage:voyage-3-large',
+      embedding_dimensions: 1024,
+      env: { VOYAGE_API_KEY: 'voyage-test' },
+    });
+    const r = resolveWriteColumn(cfg({
+      embedding_model: 'voyage:voyage-3-large',
+      embedding_dimensions: 1024,
+      embedding_columns: {
+        embedding_voyage: {
+          provider: 'voyage:voyage-3-large',
+          dimensions: 1024,
+          type: 'vector',
+        },
+      },
+    }));
+    expect(r).toEqual({
+      name: 'embedding_voyage',
+      type: 'vector',
+      dimensions: 1024,
+      embeddingModel: 'voyage:voyage-3-large',
+    });
+  });
+
+  test('no provider match returns undefined instead of guessing', () => {
+    configureGateway({
+      embedding_model: 'zeroentropyai:zembed-1',
+      embedding_dimensions: 2560,
+      env: { ZEROENTROPY_API_KEY: 'ze-test' },
+    });
+    const r = resolveWriteColumn(cfg({
+      embedding_columns: {
+        embedding_voyage: {
+          provider: 'voyage:voyage-3-large',
+          dimensions: 1024,
+          type: 'vector',
+        },
+      },
+    }));
+    expect(r).toBeUndefined();
+  });
+
+  test('halfvec provider match preserves halfvec descriptor type', () => {
+    configureGateway({
+      embedding_model: 'zeroentropyai:zembed-1',
+      embedding_dimensions: 2560,
+      env: { ZEROENTROPY_API_KEY: 'ze-test' },
+    });
+    const r = resolveWriteColumn(cfg({
+      embedding_model: 'zeroentropyai:zembed-1',
+      embedding_dimensions: 2560,
+      embedding_columns: {
+        embedding_ze: {
+          provider: 'zeroentropyai:zembed-1',
+          dimensions: 2560,
+          type: 'halfvec',
+        },
+      },
+    }));
+    expect(r).toEqual({
+      name: 'embedding_ze',
+      type: 'halfvec',
+      dimensions: 2560,
+      embeddingModel: 'zeroentropyai:zembed-1',
+    });
   });
 });
 

@@ -1,9 +1,11 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { embedBatch } from '../core/embedding.ts';
-import type { ChunkInput } from '../core/types.ts';
+import type { ChunkInput, ResolvedColumn } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { loadConfigWithEngine } from '../core/config.ts';
+import { resolveWriteColumn } from '../core/search/embedding-column.ts';
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -58,6 +60,22 @@ export interface EmbedResult {
   dryRun: boolean;
 }
 
+async function resolveChunkWriteColumn(engine: BrainEngine): Promise<ResolvedColumn | undefined> {
+  const mergedCfg = await loadConfigWithEngine(engine);
+  return mergedCfg ? resolveWriteColumn(mergedCfg) : undefined;
+}
+
+function chunkWriteOpts(
+  sourceId: string | undefined,
+  embeddingColumn: ResolvedColumn | undefined,
+): { sourceId?: string; embeddingColumn?: ResolvedColumn } | undefined {
+  if (!sourceId && !embeddingColumn) return undefined;
+  return {
+    ...(sourceId ? { sourceId } : {}),
+    ...(embeddingColumn ? { embeddingColumn } : {}),
+  };
+}
+
 /**
  * Library-level embed. Throws on validation errors; per-page embed failures
  * are logged to stderr but do not throw (matches the existing CLI semantics
@@ -77,9 +95,10 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   };
 
   if (opts.slugs && opts.slugs.length > 0) {
+    const embeddingColumn = await resolveChunkWriteColumn(engine);
     for (const s of opts.slugs) {
       try {
-        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId);
+        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId, embeddingColumn);
       } catch (e: unknown) {
         console.error(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
       }
@@ -87,11 +106,13 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     return result;
   }
   if (opts.all || opts.stale) {
-    await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId);
+    const embeddingColumn = await resolveChunkWriteColumn(engine);
+    await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId, embeddingColumn);
     return result;
   }
   if (opts.slug) {
-    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId);
+    const embeddingColumn = await resolveChunkWriteColumn(engine);
+    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId, embeddingColumn);
     return result;
   }
   throw new Error('No embed target specified. Pass { slug }, { slugs }, { all }, or { stale }.');
@@ -175,9 +196,11 @@ async function embedPage(
   dryRun: boolean,
   result: EmbedResult,
   sourceId?: string,
+  embeddingColumn?: ResolvedColumn,
 ) {
-  const opts = sourceId ? { sourceId } : undefined;
-  const page = await engine.getPage(slug, opts);
+  const pageOpts = sourceId ? { sourceId } : undefined;
+  const chunkOpts = chunkWriteOpts(sourceId, embeddingColumn);
+  const page = await engine.getPage(slug, pageOpts);
   if (!page) {
     throw new Error(`Page not found: ${slug}`);
   }
@@ -185,7 +208,7 @@ async function embedPage(
   // Get existing chunks or create new ones.
   // In dryRun, we still chunk the text locally to count what WOULD be
   // embedded — but we never write chunks or call the embedding model.
-  let chunks = await engine.getChunks(slug, opts);
+  let chunks = await engine.getChunks(slug, pageOpts);
   if (chunks.length === 0) {
     const inputs: ChunkInput[] = [];
     if (page.compiled_truth.trim()) {
@@ -208,8 +231,8 @@ async function embedPage(
     }
 
     if (inputs.length > 0) {
-      await engine.upsertChunks(slug, inputs, opts);
-      chunks = await engine.getChunks(slug, opts);
+      await engine.upsertChunks(slug, inputs, chunkOpts);
+      chunks = await engine.getChunks(slug, pageOpts);
     }
   }
 
@@ -243,7 +266,7 @@ async function embedPage(
     token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
   }));
 
-  await engine.upsertChunks(slug, updated, opts);
+  await engine.upsertChunks(slug, updated, chunkOpts);
   result.embedded += toEmbed.length;
   result.pages_processed++;
   console.log(`${slug}: embedded ${toEmbed.length} chunks`);
@@ -256,6 +279,7 @@ async function embedAll(
   result: EmbedResult,
   onProgress?: (done: number, total: number, embedded: number) => void,
   sourceId?: string,
+  embeddingColumn?: ResolvedColumn,
 ) {
   // ─────────────────────────────────────────────────────────────
   // Stale-only fast path: avoid the listPages + per-page getChunks
@@ -272,7 +296,7 @@ async function embedAll(
   // ─────────────────────────────────────────────────────────────
   if (staleOnly) {
     // D7: thread sourceId so `gbrain embed --stale --source X` actually scopes.
-    return await embedAllStale(engine, sourceId, dryRun, result, onProgress);
+    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, embeddingColumn);
   }
 
   // v0.31.12: when sourceId is set, scope listPages to that source.
@@ -294,6 +318,7 @@ async function embedAll(
     // target the correct (source_id, slug) row, not the 'default' source.
     const pageSourceId = page.source_id;
     const pageOpts = pageSourceId ? { sourceId: pageSourceId } : undefined;
+    const chunkOpts = chunkWriteOpts(pageSourceId, embeddingColumn);
     const chunks = await engine.getChunks(page.slug, pageOpts);
     const toEmbed = chunks; // staleOnly path handled above via embedAllStale
 
@@ -330,7 +355,7 @@ async function embedAll(
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
-      await engine.upsertChunks(page.slug, updated, pageOpts);
+      await engine.upsertChunks(page.slug, updated, chunkOpts);
       result.embedded += toEmbed.length;
     } catch (e: unknown) {
       console.error(`\n  Error embedding ${page.slug}: ${e instanceof Error ? e.message : e}`);
@@ -389,10 +414,11 @@ async function embedAllStale(
   dryRun: boolean,
   result: EmbedResult,
   onProgress?: (done: number, total: number, embedded: number) => void,
+  embeddingColumn?: ResolvedColumn,
 ) {
   // D7: thread sourceId so source-scoped runs only count + visit
   // that source's NULL embeddings.
-  const sourceOpt = sourceId ? { sourceId } : undefined;
+  const sourceOpt = chunkWriteOpts(sourceId, embeddingColumn);
 
   // Pre-flight: 0 stale chunks → nothing to do, no further DB reads.
   const staleCount = await engine.countStaleChunks(sourceOpt);
@@ -453,6 +479,7 @@ async function embedAllStale(
         afterPageId,
         afterChunkIndex,
         ...(sourceId && { sourceId }),
+        ...(embeddingColumn && { embeddingColumn }),
       });
       if (batch.length === 0) break;
       totalChunksLoaded += batch.length;
@@ -494,7 +521,7 @@ async function embedAllStale(
             embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
             token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
           }));
-          await engine.upsertChunks(slug, merged, { sourceId: keySourceId });
+          await engine.upsertChunks(slug, merged, chunkWriteOpts(keySourceId, embeddingColumn));
           result.embedded += stale.length;
         } catch (e: unknown) {
           // Budget-fired aborts are expected on the way out; don't spam

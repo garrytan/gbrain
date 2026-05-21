@@ -39,6 +39,7 @@ import type {
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
   EngineConfig,
+  ResolvedColumn,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
   SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
@@ -1574,9 +1575,18 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Chunks
-  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
+  async upsertChunks(
+    slug: string,
+    chunks: ChunkInput[],
+    opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn },
+  ): Promise<void> {
     const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
+    const targetFragment = opts?.embeddingColumn
+      ? buildVectorCastFragment(opts.embeddingColumn)
+      : undefined;
+    const targetCol = targetFragment?.col ?? 'embedding';
+    const embeddingCast = targetFragment?.castSql.replace('$1::', '') ?? 'vector';
 
     // Source-scope the page-id lookup. Without this filter, multi-source
     // brains where the slug exists in 2+ sources return >1 row and the
@@ -1603,7 +1613,7 @@ export class PostgresEngine implements BrainEngine {
     // scope metadata through upserts.
     // v0.27.1 (Phase 8): added `modality` + `embedding_image` to the column
     // list. Image chunks pass embedding=null + embedding_image=Float32Array.
-    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)';
+    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${targetCol}, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
     const rows: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
@@ -1620,7 +1630,7 @@ export class PostgresEngine implements BrainEngine {
         : null;
       const modality = chunk.modality ?? 'text';
 
-      const embeddingPh = embeddingStr ? `$${paramIdx++}::vector` : 'NULL';
+      const embeddingPh = embeddingStr ? `$${paramIdx++}::${embeddingCast}` : 'NULL';
       const embeddedAtPh = embeddingStr ? 'now()' : 'NULL';
       const embeddingImagePh = embeddingImageStr ? `$${paramIdx++}::vector` : 'NULL';
 
@@ -1657,11 +1667,11 @@ export class PostgresEngine implements BrainEngine {
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
          chunk_text = EXCLUDED.chunk_text,
          chunk_source = EXCLUDED.chunk_source,
-         embedding = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding ELSE COALESCE(EXCLUDED.embedding, content_chunks.embedding) END,
+         ${targetCol} = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.${targetCol} ELSE COALESCE(EXCLUDED.${targetCol}, content_chunks.${targetCol}) END,
          model = COALESCE(EXCLUDED.model, content_chunks.model),
          token_count = EXCLUDED.token_count,
          embedded_at = CASE
-           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.embedding IS NULL THEN NULL
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.${targetCol} IS NULL THEN NULL
            ELSE COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)
          END,
          language = EXCLUDED.language,
@@ -1690,27 +1700,31 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r) => rowToChunk(r as Record<string, unknown>));
   }
 
-  async countStaleChunks(opts?: { sourceId?: string }): Promise<number> {
+  async countStaleChunks(opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn }): Promise<number> {
     const sql = this.sql;
+    const targetFragment = opts?.embeddingColumn
+      ? buildVectorCastFragment(opts.embeddingColumn)
+      : undefined;
+    const targetCol = targetFragment?.col ?? 'embedding';
     // Fast path: no source filter → bare count query, no join.
     // Slow path: source-scoped count → join pages.
     // D7: closes the bug where `gbrain embed --stale --source X` silently
     // dropped X and counted across every source.
     if (opts?.sourceId === undefined) {
-      const [row] = await sql`
+      const [row] = await sql.unsafe(`
         SELECT count(*)::int AS count
         FROM content_chunks
-        WHERE embedding IS NULL
-      `;
+        WHERE ${targetCol} IS NULL
+      `);
       return Number((row as { count?: number } | undefined)?.count ?? 0);
     }
-    const [row] = await sql`
+    const [row] = await sql.unsafe(`
       SELECT count(*)::int AS count
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NULL
-        AND p.source_id = ${opts.sourceId}
-    `;
+      WHERE cc.${targetCol} IS NULL
+        AND p.source_id = $1
+    `, [opts.sourceId] as Parameters<typeof sql.unsafe>[1]);
     return Number((row as { count?: number } | undefined)?.count ?? 0);
   }
 
@@ -1719,11 +1733,16 @@ export class PostgresEngine implements BrainEngine {
     afterPageId?: number;
     afterChunkIndex?: number;
     sourceId?: string;
+    embeddingColumn?: ResolvedColumn;
   }): Promise<StaleChunkRow[]> {
     const sql = this.sql;
     const limit = opts?.batchSize ?? 2000;
     const afterPid = opts?.afterPageId ?? 0;
     const afterIdx = opts?.afterChunkIndex ?? -1;
+    const targetFragment = opts?.embeddingColumn
+      ? buildVectorCastFragment(opts.embeddingColumn)
+      : undefined;
+    const targetCol = targetFragment?.col ?? 'embedding';
     // Cursor-paginated: keyset pagination on (page_id, chunk_index).
     // The partial index idx_chunks_embedding_null makes the WHERE fast;
     // LIMIT keeps each round-trip well within statement_timeout.
@@ -1732,29 +1751,29 @@ export class PostgresEngine implements BrainEngine {
     // (pre-existing behavior); a value scopes to that source so
     // `gbrain embed --stale --source X` actually does what it says.
     if (opts?.sourceId === undefined) {
-      const rows = await sql`
+      const rows = await sql.unsafe(`
         SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
                cc.model, cc.token_count, p.source_id, cc.page_id
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
-        WHERE cc.embedding IS NULL
-          AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
+        WHERE cc.${targetCol} IS NULL
+          AND (cc.page_id, cc.chunk_index) > ($1, $2)
         ORDER BY cc.page_id, cc.chunk_index
-        LIMIT ${limit}
-      `;
+        LIMIT $3
+      `, [afterPid, afterIdx, limit] as Parameters<typeof sql.unsafe>[1]);
       return rows as unknown as StaleChunkRow[];
     }
-    const rows = await sql`
+    const rows = await sql.unsafe(`
       SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
              cc.model, cc.token_count, p.source_id, cc.page_id
       FROM content_chunks cc
       JOIN pages p ON p.id = cc.page_id
-      WHERE cc.embedding IS NULL
-        AND p.source_id = ${opts.sourceId}
-        AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
+      WHERE cc.${targetCol} IS NULL
+        AND p.source_id = $1
+        AND (cc.page_id, cc.chunk_index) > ($2, $3)
       ORDER BY cc.page_id, cc.chunk_index
-      LIMIT ${limit}
-    `;
+      LIMIT $4
+    `, [opts.sourceId, afterPid, afterIdx, limit] as Parameters<typeof sql.unsafe>[1]);
     return rows as unknown as StaleChunkRow[];
   }
 
