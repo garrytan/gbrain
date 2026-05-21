@@ -112,21 +112,80 @@ export async function runInit(args: string[]) {
 }
 
 /**
- * Resolve AI provider options from CLI flags. Verbose form (--embedding-model
- * openai:text-embedding-3-large) overrides shorthand (--model openai which
- * expands to the recipe's first embedding model).
+ * Resolve AI provider options from CLI flags AND the persisted config file.
+ *
+ * Resolution chain (each step overrides the previous on a per-field basis):
+ *
+ *   1. `~/.gbrain/config.json` via `loadConfig()` — NEW in v0.35.0.1+
+ *      (closes upstream issue #203). Re-init no longer requires re-passing
+ *      flags the user already wrote down in config.json.
+ *   2. `--model SHORTHAND` (recipe lookup; sets both model + dims).
+ *   3. `--embedding-model VERBOSE` (overrides shorthand).
+ *   4. `--embedding-dimensions N` (overrides recipe-derived dims).
+ *   5. `--expansion-model` / `--chat-model` (additive).
+ *
+ * Gateway defaults still apply downstream for fields nothing in the chain
+ * populates — cold-start behavior unchanged.
+ *
+ * KNOWN LIMITATION (separate bug class, tracked at #1058): if a user sets
+ * `GBRAIN_EMBEDDING_MODEL` + `GBRAIN_EMBEDDING_DIMENSIONS` env vars but has
+ * NO existing config.json AND no `DATABASE_URL`, `loadConfig()` returns null
+ * at `config.ts:135` (the `if (!fileConfig && !dbUrl) return null;` early-
+ * return). The env-var merge below that early-return never runs, so the
+ * seeding step here sees `existing === null` and skips. Env-only callers
+ * still hit OpenAI/1536 gateway defaults on cold-start. Pinned by case 5
+ * in `test/init-config-first.test.ts`. Out of scope for this PR (would
+ * require either reworking loadConfig's `inferredEngine` fallback, or
+ * threading env-var reads through a sibling `loadAIConfig()` helper).
+ *
+ * @internal Exported for `test/init-config-first.test.ts`.
  */
-async function resolveAIOptions(
+type ResolvedAIOptions = {
+  embedding_model?: string;
+  embedding_dimensions?: number;
+  expansion_model?: string;
+  chat_model?: string;
+  provider_base_urls?: Record<string, string>;
+};
+
+export async function resolveAIOptions(
   verbose: string | null,
   shorthand: string | null,
   dimsArg: number | null,
   expansion: string | null,
   chat: string | null,
-): Promise<{ embedding_model?: string; embedding_dimensions?: number; expansion_model?: string; chat_model?: string }> {
-  const out: { embedding_model?: string; embedding_dimensions?: number; expansion_model?: string; chat_model?: string } = {};
+): Promise<ResolvedAIOptions> {
+  const out: ResolvedAIOptions = {};
+
+  // Step 1: seed from persisted config (closes #203). Falsy guards skip
+  // null / undefined / 0 / empty-string so a partial / corrupt config file
+  // degrades to the legacy flag-only path. Env-var overrides (GBRAIN_EMBEDDING_*)
+  // are already merged into the return of `loadConfig()`, so this respects them too.
+  //
+  // `provider_base_urls` rides alongside the AI model fields — without it,
+  // re-init silently strips the user's custom endpoint override (e.g.
+  // `provider_base_urls.dashscope`) and the gateway falls back to the
+  // recipe default endpoint on the next call.
+  const existing = loadConfig();
+  const seededModel = existing?.embedding_model;
+  if (existing?.embedding_model) out.embedding_model = existing.embedding_model;
+  if (existing?.embedding_dimensions) out.embedding_dimensions = existing.embedding_dimensions;
+  if (existing?.expansion_model) out.expansion_model = existing.expansion_model;
+  if (existing?.chat_model) out.chat_model = existing.chat_model;
+  if (existing?.provider_base_urls && Object.keys(existing.provider_base_urls).length > 0) {
+    out.provider_base_urls = existing.provider_base_urls;
+  }
 
   if (verbose) {
     out.embedding_model = verbose;
+    // If --embedding-model is changing the seeded model, drop the seeded dim
+    // so the recipe-default derivation below re-fires for the new provider.
+    // Without this, a config with 768-dim/lmstudio plus `--embedding-model
+    // openai:text-embedding-3-large` would save OpenAI + 768 (mismatch); now
+    // it saves OpenAI + recipe-default (1536). Same caveat for shorthand.
+    if (seededModel && seededModel !== verbose) {
+      out.embedding_dimensions = undefined;
+    }
   } else if (shorthand) {
     const { getRecipe } = await import('../core/ai/recipes/index.ts');
     const recipe = getRecipe(shorthand);
@@ -377,7 +436,7 @@ async function initPGLite(opts: {
   jsonOutput: boolean;
   apiKey: string | null;
   customPath: string | null;
-  aiOpts?: { embedding_model?: string; embedding_dimensions?: number; expansion_model?: string; chat_model?: string };
+  aiOpts?: ResolvedAIOptions;
 }) {
   const dbPath = opts.customPath || gbrainPath('brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
@@ -436,6 +495,7 @@ async function initPGLite(opts: {
       ...(opts.aiOpts?.embedding_dimensions ? { embedding_dimensions: opts.aiOpts.embedding_dimensions } : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      ...(opts.aiOpts?.provider_base_urls ? { provider_base_urls: opts.aiOpts.provider_base_urls } : {}),
     };
     saveConfig(config);
 
@@ -477,7 +537,7 @@ async function initPostgres(opts: {
   databaseUrl: string;
   jsonOutput: boolean;
   apiKey: string | null;
-  aiOpts?: { embedding_model?: string; embedding_dimensions?: number; expansion_model?: string; chat_model?: string };
+  aiOpts?: ResolvedAIOptions;
 }) {
   const { databaseUrl } = opts;
 
@@ -576,6 +636,7 @@ async function initPostgres(opts: {
       ...(opts.aiOpts?.embedding_dimensions ? { embedding_dimensions: opts.aiOpts.embedding_dimensions } : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      ...(opts.aiOpts?.provider_base_urls ? { provider_base_urls: opts.aiOpts.provider_base_urls } : {}),
     };
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
