@@ -55,6 +55,14 @@ export interface AuditReport {
 }
 
 const SAMPLE_PER_SOURCE = 20;
+const SKIP_SCAN_DIRS = new Set([
+  'node_modules',
+  'ops',
+  'dist',
+  'build',
+  'out',
+  'coverage',
+]);
 
 // ---------------------------------------------------------------------------
 // Frontmatter backups
@@ -501,6 +509,7 @@ function walkDir(root: string, visit: (absPath: string) => boolean | void): void
       }
       if (st.isSymbolicLink()) continue; // matches sync's no-symlink policy
       if (st.isDirectory()) {
+        if (name.startsWith('.') || SKIP_SCAN_DIRS.has(name)) continue;
         const real = resolve(full);
         if (visited.has(real)) continue;
         visited.add(real);
