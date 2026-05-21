@@ -38,6 +38,27 @@ import { isUndefinedColumnError } from './utils.ts';
 
 let _trackRetrievalCache: { ts: number; enabled: boolean } | null = null;
 const TRACK_RETRIEVAL_CACHE_TTL_MS = 30_000;
+const pendingLastRetrievedWrites = new Set<Promise<unknown>>();
+
+/**
+ * CLI/test drain for fire-and-forget last_retrieved_at writes.
+ *
+ * `bumpLastRetrievedAt` intentionally does not add response latency to MCP or
+ * long-lived callers. Short-lived CLI processes are different: if they close
+ * the embedded PGLite engine while the background config read / UPDATE is in
+ * flight, Bun can keep the process alive after stdout has already printed.
+ * Draining here lets the CLI preserve fast visible output while still giving
+ * the background side-effect a clean chance to settle before disconnect().
+ */
+export async function awaitPendingLastRetrievedWrites(): Promise<void> {
+  if (pendingLastRetrievedWrites.size === 0) return;
+  await Promise.allSettled(Array.from(pendingLastRetrievedWrites));
+}
+
+function trackLastRetrievedWrite(promise: Promise<unknown>): void {
+  pendingLastRetrievedWrites.add(promise);
+  promise.finally(() => pendingLastRetrievedWrites.delete(promise)).catch(() => { /* swallow */ });
+}
 
 /**
  * Resolve `search.track_retrieval` config with a 30s in-process cache so
@@ -78,7 +99,7 @@ export function _resetTrackRetrievalCacheForTests(): void {
 export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): void {
   if (pageIds.length === 0) return;
   // Fire-and-forget on purpose. We deliberately do NOT return the promise.
-  void (async () => {
+  const promise = (async () => {
     try {
       const enabled = await isTrackingEnabled(engine);
       if (!enabled) return;
@@ -102,4 +123,5 @@ export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): voi
       console.warn(`[last-retrieved] write-back failed (best-effort): ${msg}`);
     }
   })();
+  trackLastRetrievedWrite(promise);
 }

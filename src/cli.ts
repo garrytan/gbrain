@@ -10,6 +10,7 @@ import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
+import { awaitPendingLastRetrievedWrites } from './core/last-retrieved.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import type { CliOptions } from './core/cli-options.ts';
@@ -174,6 +175,11 @@ async function main() {
       const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
       await awaitPendingSearchCacheWrites();
     }
+    // v0.37.5 (#1247): read ops may start a best-effort last_retrieved_at
+    // write-back after returning results. Drain it before disconnecting the
+    // short-lived CLI engine so PGLite does not keep the process alive after
+    // stdout has already been written.
+    await awaitPendingLastRetrievedWrites();
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       console.error(`Error [${e.code}]: ${e.message}`);

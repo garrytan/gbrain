@@ -36,6 +36,21 @@ describe('v0.36.1.x #1125 — query drain cache writes before CLI exit', () => {
   });
 });
 
+describe('v0.37.5 #1247 — drain last-retrieved writes before CLI disconnect', () => {
+  test('cli.ts awaits awaitPendingLastRetrievedWrites after op output', () => {
+    const src = readFileSync('src/cli.ts', 'utf8');
+    expect(src).toMatch(/awaitPendingLastRetrievedWrites/);
+    expect(src).toMatch(/process\.stdout\.write\(output\)[\s\S]{0,500}await\s+awaitPendingLastRetrievedWrites\(\)/);
+  });
+
+  test('last-retrieved.ts tracks fire-and-forget promises and exports a drain', () => {
+    const src = readFileSync('src/core/last-retrieved.ts', 'utf8');
+    expect(src).toMatch(/export async function awaitPendingLastRetrievedWrites/);
+    expect(src).toMatch(/pendingLastRetrievedWrites\.add\(promise\)/);
+    expect(src).toMatch(/Promise\.allSettled\(Array\.from\(pendingLastRetrievedWrites\)\)/);
+  });
+});
+
 describe('v0.36.1.x #1090 — admin embed two-tier resolution', () => {
   test('serve-http.ts uses ADMIN_ASSETS manifest when admin/dist is not next to cwd', () => {
     const src = readFileSync('src/commands/serve-http.ts', 'utf8');
