@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.38.0.0] - 2026-05-21
+## [0.38.1.0] - 2026-05-21
 
 **One command to capture anything into your brain. Local OR hosted, doesn't matter.**
 
@@ -136,7 +136,7 @@ These were in the v0.38 plan but did not land in this release:
 
 These do not block the v0.38 release: the substrate is shipped and queryable; sources can be built against the contract today using the IngestionTestHarness; the cathedral commits add polish around the publisher experience.
 
-## To take advantage of v0.38.0.0
+## To take advantage of v0.38.1.0
 
 `gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor`
 warns about a partial migration:
