@@ -44,11 +44,14 @@ export interface RunImportResult {
 export async function runImport(
   engine: BrainEngine,
   args: string[],
-  opts: { commit?: string; strategy?: SyncStrategy; sourceId?: string } = {},
+  opts: { commit?: string; strategy?: SyncStrategy; sourceId?: string; respectGitignore?: boolean } = {},
 ): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
+  // #1073: opt-in. Honored either programmatically (opts.respectGitignore,
+  // threaded from `gbrain sync`) or directly on the `gbrain import` CLI.
+  const respectGitignore = opts.respectGitignore === true || args.includes('--respect-gitignore');
   // v0.30.x follow-up to PR #707: programmatic sourceId support so internal
   // callers (performFullSync, future Step 6 paths) can route to a named
   // source. The CLI `gbrain import` deliberately has no --source flag per
@@ -73,7 +76,7 @@ export async function runImport(
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json] [--respect-gitignore]');
     process.exit(1);
   }
   const dir: string = dirArg;  // narrowed; survives closure capture
@@ -85,7 +88,7 @@ export async function runImport(
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const _walkT0 = Date.now();
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
-  const allFiles = collectSyncableFiles(dir, { strategy });
+  const allFiles = collectSyncableFiles(dir, { strategy, respectGitignore });
   console.error(
     `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
@@ -358,6 +361,16 @@ function resolveMaxWalkDepth(): number {
 
 interface CollectOpts {
   strategy?: SyncStrategy;
+  /**
+   * Opt-in (#1073): when true and the walk root is inside a git work tree,
+   * only files git would track or that are untracked-but-not-ignored are
+   * admitted — i.e. anything matched by `.gitignore` / `.git/info/exclude`
+   * / global excludes is pruned. Default `false` preserves legacy behavior
+   * (gitignored content stays indexable; required by dotfile/secret brains
+   * that deliberately keep notes out of git but want them brain-searchable).
+   * No effect for non-git roots (falls back to the legacy walker).
+   */
+  respectGitignore?: boolean;
 }
 
 /**
@@ -387,6 +400,39 @@ function isCollectibleForWalker(
 }
 
 /**
+ * #1073: build the set of absolute paths git would ignore at `root`.
+ *
+ * `git ls-files -o -i --exclude-standard --directory` lists untracked files
+ * matched by `.gitignore` / `.git/info/exclude` / global excludes, and (via
+ * `--directory`) collapses a fully-ignored directory to a single entry. We
+ * key on those entries so the walker can prune at *descent* time — avoiding
+ * the IO of recursing into a gitignored `dist/` / `out/` / `coverage/` tree
+ * that may hold tens of thousands of files (the stall #1073 reports), not
+ * just filter them out at emit time.
+ *
+ * Returns an empty set (→ legacy behavior) when `root` is not inside a git
+ * work tree or git is unavailable. Membership is exact-path; both the
+ * collapsed directory entry and any explicitly-listed ignored file match.
+ */
+function gitIgnoredAbsPaths(root: string): Set<string> {
+  try {
+    const out = execFileSync(
+      'git',
+      ['-C', root, 'ls-files', '-o', '-i', '--exclude-standard', '--directory'],
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const set = new Set<string>();
+    for (const line of out.split('\n')) {
+      const trimmed = line.trim().replace(/\/+$/, '');
+      if (trimmed) set.add(join(root, trimmed));
+    }
+    return set;
+  } catch {
+    return new Set<string>();
+  }
+}
+
+/**
  * v0.31.2 (codex C4 + C5 + C8): unified walker with five hardenings:
  *
  * 1. `lstatSync` + explicit `isSymbolicLink()` skip — never follow symlinks.
@@ -402,12 +448,19 @@ function isCollectibleForWalker(
  * 5. `.sort()` output — `runImport`'s checkpoint-resume at line 68–74 is
  *    index-based against a sorted list. Unstable order skips the wrong
  *    files on resume.
+ *
+ * #1073: when `opts.respectGitignore` is set, paths git ignores at `dir`
+ * are pruned (default off — preserves legacy behavior for dotfile/secret
+ * brains that deliberately keep content out of git but want it indexed).
  */
 export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): string[] {
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const multimodalOn = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
   const maxDepth = resolveMaxWalkDepth();
   const visitedInodes = new Map<string, true>();
+  const ignoredAbsPaths = opts.respectGitignore === true
+    ? gitIgnoredAbsPaths(dir)
+    : new Set<string>();
   const files: string[] = [];
 
   function walk(d: string, depth: number): void {
@@ -429,6 +482,9 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       if (entry === 'node_modules' || entry === 'ops') continue;
 
       const full = join(d, entry);
+      // #1073 (opt-in): prune git-ignored entries before lstat/recurse.
+      // Empty set when respectGitignore is off → zero overhead, legacy path.
+      if (ignoredAbsPaths.has(full)) continue;
       let stat;
       try {
         stat = lstatSync(full);

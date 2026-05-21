@@ -1637,6 +1637,7 @@ CODE INDEXING (v0.19.0 / v0.20.0 Cathedral II)
   reconcile-links [--dry-run]        Batch-recompute doc↔impl edges (v0.20.0)
   reindex-code [--source id] [--yes] Explicit code-page reindex (v0.20.0)
   sync --strategy code               Sync code files into the brain
+  sync --respect-gitignore           Prune git-ignored paths from the walker (#1073, opt-in)
 
 JOBS (Minions)
   jobs submit <name> [--params JSON]  Submit background job [--follow] [--dry-run]

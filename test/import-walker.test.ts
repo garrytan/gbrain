@@ -1,8 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, writeFileSync, symlinkSync, rmSync, mkdtempSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { collectMarkdownFiles } from '../src/commands/import.ts';
+import { collectMarkdownFiles, collectSyncableFiles } from '../src/commands/import.ts';
 
 // These tests exercise the filesystem walker that feeds `gbrain import`.
 // They target L002 (report/findings.md): a malicious symlink inside a shared
@@ -85,5 +86,68 @@ describe('collectMarkdownFiles — symlink containment', () => {
     const files = collectMarkdownFiles(root);
     expect(files).toContain(join(root, 'legit.md'));
     expect(files).not.toContain(join(root, 'dangling.md'));
+  });
+});
+
+// #1073: opt-in gitignore-aware walker. Default off must preserve legacy
+// behavior (gitignored content stays indexable — required by dotfile/secret
+// brains); opt-in must prune anything git ignores at the root.
+describe('collectSyncableFiles — respectGitignore (#1073)', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'gbrain-gitignore-'));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function gitInit(dir: string): void {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+    execFileSync('git', ['-C', dir, 'init', '-q'], { stdio: 'ignore', env });
+  }
+
+  test('default (off) still admits gitignored build output', () => {
+    gitInit(root);
+    writeFileSync(join(root, '.gitignore'), 'dist/\n');
+    mkdirSync(join(root, 'src'));
+    writeFileSync(join(root, 'src', 'app.ts'), 'export const a = 1;\n');
+    mkdirSync(join(root, 'dist'));
+    writeFileSync(join(root, 'dist', 'bundle.js'), 'var x=1;\n');
+
+    const files = collectSyncableFiles(root, { strategy: 'code' });
+    expect(files).toContain(join(root, 'src', 'app.ts'));
+    // Legacy behavior preserved: gitignored file is NOT pruned when off.
+    expect(files).toContain(join(root, 'dist', 'bundle.js'));
+  });
+
+  test('opt-in prunes gitignored paths but keeps tracked source', () => {
+    gitInit(root);
+    writeFileSync(join(root, '.gitignore'), 'dist/\ncoverage/\n');
+    mkdirSync(join(root, 'src'));
+    writeFileSync(join(root, 'src', 'app.ts'), 'export const a = 1;\n');
+    mkdirSync(join(root, 'dist'));
+    writeFileSync(join(root, 'dist', 'bundle.js'), 'var x=1;\n');
+    mkdirSync(join(root, 'coverage'));
+    writeFileSync(join(root, 'coverage', 'lcov.info'), 'TN:\n');
+
+    const files = collectSyncableFiles(root, { strategy: 'code', respectGitignore: true });
+    expect(files).toContain(join(root, 'src', 'app.ts'));
+    expect(files).not.toContain(join(root, 'dist', 'bundle.js'));
+    expect(files).not.toContain(join(root, 'coverage', 'lcov.info'));
+  });
+
+  test('opt-in on a non-git directory falls back gracefully (no prune, no throw)', () => {
+    // No git init — gitIgnoredAbsPaths returns an empty set, walker behaves
+    // as legacy. Must not crash and must still collect code files.
+    mkdirSync(join(root, 'src'));
+    writeFileSync(join(root, 'src', 'app.ts'), 'export const a = 1;\n');
+    mkdirSync(join(root, 'dist'));
+    writeFileSync(join(root, 'dist', 'bundle.js'), 'var x=1;\n');
+
+    const files = collectSyncableFiles(root, { strategy: 'code', respectGitignore: true });
+    expect(files).toContain(join(root, 'src', 'app.ts'));
+    expect(files).toContain(join(root, 'dist', 'bundle.js'));
   });
 });
