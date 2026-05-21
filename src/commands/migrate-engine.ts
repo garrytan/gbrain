@@ -74,6 +74,32 @@ function clearManifest(): void {
   if (existsSync(path)) unlinkSync(path);
 }
 
+/**
+ * Build the post-migration file-plane config. Preserves every non-engine
+ * field from the source config (embedding_model, embedding_dimensions,
+ * expansion_model, chat_model, API keys, storage, eval, etc.) and swaps in
+ * the target engine + its connection field. Stale connection fields from the
+ * source engine are stripped so a migrated config never carries both
+ * database_url and database_path.
+ *
+ * Exported for unit testing; called from runMigrateEngine() right before
+ * saveConfig().
+ */
+export function buildMigratedConfig(
+  source: GBrainConfig,
+  targetEngine: 'postgres' | 'pglite',
+  targetConfig: EngineConfig,
+): GBrainConfig {
+  const { database_url: _u, database_path: _p, engine: _e, ...preserved } = source;
+  return {
+    ...preserved,
+    engine: targetEngine,
+    ...(targetEngine === 'postgres'
+      ? { database_url: targetConfig.database_url }
+      : { database_path: targetConfig.database_path }),
+  };
+}
+
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
   const opts = parseArgs(args);
   const config = loadConfig();
@@ -251,13 +277,10 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     if (val) await targetEngine.setConfig(key, val);
   }
 
-  // Update local config
-  const newConfig: GBrainConfig = {
-    engine: opts.targetEngine,
-    ...(opts.targetEngine === 'postgres'
-      ? { database_url: targetConfig.database_url }
-      : { database_path: targetConfig.database_path }),
-  };
+  // Update local config. buildMigratedConfig() preserves every non-engine
+  // field (embedding_model, embedding_dimensions, API keys, etc.) so the
+  // migrate command doesn't silently drop user-configured settings.
+  const newConfig = buildMigratedConfig(config, opts.targetEngine, targetConfig);
   saveConfig(newConfig);
 
   // Clean up
