@@ -1840,8 +1840,13 @@ describe('parseMaxWaitingFlag (v0.19.1 H5): CLI flag wiring', () => {
 
 describe('backpressure-audit (v0.19.1 Q1): JSONL on coalesce', () => {
   test('logBackpressureCoalesce writes one JSONL line per coalesce', async () => {
-    const { logBackpressureCoalesce, resolveAuditDir, computeAuditFilename } =
+    // 2026-05-16 refactor: backpressure-audit's resolveAuditDir + ISO-week
+    // filename moved to the shared core/audit-jsonl.ts. The local filename
+    // function was renamed to computeBackpressureAuditFilename to fix the
+    // name collision with shell-audit's computeAuditFilename.
+    const { logBackpressureCoalesce, computeBackpressureAuditFilename: computeAuditFilename } =
       await import('../src/core/minions/backpressure-audit.ts');
+    const { resolveAuditDir } = await import('../src/core/audit-jsonl.ts');
     const fs = await import('node:fs');
     const path = await import('node:path');
     const os = await import('node:os');
