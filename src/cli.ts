@@ -1651,6 +1651,14 @@ JOBS (Minions)
   jobs stats                          Job health dashboard
   jobs work [--queue Q]               Start worker daemon (Postgres only)
 
+EVAL
+  eval cross-modal                    Multi-model quality gate (3 frontier providers)
+  eval takes-quality                  Takes-vs-facts classifier eval (3-model panel)
+  eval longmemeval <dataset.jsonl>    Longitudinal memory eval (LongMemEval adapter)
+  eval whoknows                       Expertise-routing eval (findExperts hit-rate)
+  eval trajectory <entity-slug>       Typed-claim trajectory + drift score
+  eval run-all                        Run all eval suites (mode x suite sweep)
+
 ADMIN
   stats                              Brain statistics
   health                             Brain health dashboard
