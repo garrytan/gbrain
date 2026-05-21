@@ -105,3 +105,90 @@ export function readSupervisorEvents(opts: { sinceMs?: number } = {}): Superviso
   }
   return events;
 }
+
+/**
+ * Denylist of clean-exit `likely_cause` values. Anything not in this set —
+ * including future unrecognized values — counts as a crash. Matches the
+ * domain asymmetry: clean exits are explicit (the worker exited because we
+ * asked it to); crashes are an open catch-all. If a future maintainer adds a
+ * new `likely_cause` upstream in `child-worker-supervisor.ts` (e.g.
+ * `lock_lost`, `panic`), the doctor surfaces it by default instead of
+ * silently underreporting — denylist semantics close the bug class this
+ * helper was added to fix.
+ */
+const CLEAN_EXIT_CAUSES = new Set(['clean_exit', 'graceful_shutdown']);
+
+/**
+ * Per-cause crash bucket shape returned by `summarizeCrashes()`. Bucket names
+ * mirror the upstream `likely_cause` values: `runtime_error` (code=1),
+ * `oom_or_external_kill` (SIGKILL), `unknown` (other signals/codes). The
+ * `legacy` bucket catches pre-v0.34 entries lacking `likely_cause` that fall
+ * through to the `code !== 0` fallback.
+ */
+export interface CrashSummary {
+  total: number;
+  by_cause: {
+    runtime_error: number;
+    oom_or_external_kill: number;
+    unknown: number;
+    legacy: number;
+  };
+  clean_exits: number;
+}
+
+/**
+ * Classify a single audit event. Returns true when the event represents a
+ * worker crash (not a clean shutdown, watchdog drain, or non-exit lifecycle
+ * event). Pre-v0.34 audit lines lacking `likely_cause` fall back to
+ * `code !== 0`.
+ */
+export function isCrashExit(event: SupervisorEmission): boolean {
+  if (event.event !== 'worker_exited') return false;
+  const cause = event.likely_cause as string | undefined;
+  if (cause === undefined) {
+    // Legacy fallback for pre-v0.34 entries lacking `likely_cause`. Treat
+    // any non-zero exit code as a crash; missing/null `code` also counts
+    // (truly malformed line — fail-loud, the user can investigate the audit
+    // file directly).
+    const code = event.code as number | null | undefined;
+    return code !== 0;
+  }
+  return !CLEAN_EXIT_CAUSES.has(cause);
+}
+
+/**
+ * Summarize crash counts across a window of supervisor audit events. Both
+ * `gbrain doctor` and `gbrain jobs supervisor status` consume this — single
+ * regression point, single test target.
+ *
+ * Bucketing rule: `worker_exited` events classified as crashes by
+ * `isCrashExit()` are dispatched to `by_cause` based on `likely_cause`. The
+ * `legacy` bucket catches BOTH (a) pre-v0.34 entries lacking `likely_cause`
+ * that fell through to the `code !== 0` fallback, AND (b) future
+ * unrecognized `likely_cause` values not in the explicit allowlist
+ * (`runtime_error` / `oom_or_external_kill` / `unknown`). Operators
+ * watching `legacy=N` rise know the upstream classifier added a value the
+ * doctor doesn't yet name — that's the intended signal for "extend my
+ * bucket vocabulary."
+ */
+export function summarizeCrashes(events: SupervisorEmission[]): CrashSummary {
+  const summary: CrashSummary = {
+    total: 0,
+    by_cause: { runtime_error: 0, oom_or_external_kill: 0, unknown: 0, legacy: 0 },
+    clean_exits: 0,
+  };
+  for (const e of events) {
+    if (e.event !== 'worker_exited') continue;
+    if (!isCrashExit(e)) {
+      summary.clean_exits++;
+      continue;
+    }
+    summary.total++;
+    const cause = e.likely_cause as string | undefined;
+    if (cause === 'runtime_error') summary.by_cause.runtime_error++;
+    else if (cause === 'oom_or_external_kill') summary.by_cause.oom_or_external_kill++;
+    else if (cause === 'unknown') summary.by_cause.unknown++;
+    else summary.by_cause.legacy++;  // pre-v0.34 fallback OR future unrecognized cause
+  }
+  return summary;
+}

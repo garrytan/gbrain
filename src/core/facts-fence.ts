@@ -98,6 +98,25 @@ export interface ParsedFact {
    */
   supersededBy?: number;
   forgotten?: boolean;
+  /**
+   * v0.35.4 typed-claim fields (D-CDX-5). Optional. When present, drives
+   * `gbrain eval trajectory` + the `find_trajectory` MCP op chronological
+   * regression detection. The fence layout widens from 10 to 14 columns
+   * when any row in the table has a non-undefined typed field; otherwise
+   * stays 10-cell for backward compat with existing fences.
+   *
+   *   - `claimMetric`: lowercase snake_case after normalization
+   *     (`mrr`, `arr`, `team_size`, …). Free-text labels accepted; the
+   *     parser does not enforce the seed-map allow-list.
+   *   - `claimValue`: numeric, finite. Empty cell → undefined.
+   *   - `claimUnit`: free-form unit string (`USD`, `people`, `pct`, …).
+   *   - `claimPeriod`: free-form period string (`monthly`, `annual`, …)
+   *     or undefined for non-periodic metrics.
+   */
+  claimMetric?: string;
+  claimValue?: number;
+  claimUnit?: string;
+  claimPeriod?: string;
 }
 
 export interface FactsFenceParseResult {
@@ -109,6 +128,20 @@ function parseConfidenceCell(raw: string): number | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
   const n = parseFloat(trimmed);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * v0.35.4 — parse a free-form numeric cell for typed-claim values.
+ * Empty / non-numeric → undefined (caller decides whether to drop or warn).
+ * Tolerates plain numbers and standard scientific notation. Locale-dependent
+ * thousand separators (`,`) are stripped so `50,000` parses to `50000`.
+ */
+function parseNumericCell(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const stripped = trimmed.replace(/,/g, '');
+  const n = parseFloat(stripped);
   return Number.isFinite(n) ? n : undefined;
 }
 
@@ -175,8 +208,10 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
     // Separator row (just dashes/colons) — skip.
     if (isSeparatorRow(cells)) continue;
 
-    // Expect 10 cells: row_num, claim, kind, confidence, visibility,
-    // notability, valid_from, valid_until, source, context.
+    // Expect 10 cells (legacy 10-cell fence) OR 14 cells (v0.35.4
+    // typed-claim wide fence): row_num, claim, kind, confidence,
+    // visibility, notability, valid_from, valid_until, source, context,
+    // [claim_metric, claim_value, claim_unit, claim_period].
     // Tolerate 9 (missing trailing context cell) — markdown editors often
     // drop empty trailing cells.
     if (cells.length < 9) {
@@ -190,6 +225,10 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
       validFromRaw, validUntilRaw,
       sourceRaw,
       contextRaw = '',
+      claimMetricRaw = '',
+      claimValueRaw = '',
+      claimUnitRaw = '',
+      claimPeriodRaw = '',
     ] = cells;
 
     const rowNum = parseInt(rowNumStr, 10);
@@ -246,6 +285,11 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
       active: !struck,
       supersededBy,
       forgotten: struck ? forgotten : false,
+      // v0.35.4 — typed-claim fields, all optional.
+      claimMetric: parseStringCell(claimMetricRaw),
+      claimValue:  parseNumericCell(claimValueRaw),
+      claimUnit:   parseStringCell(claimUnitRaw),
+      claimPeriod: parseStringCell(claimPeriodRaw),
     });
   }
 
@@ -273,11 +317,28 @@ function formatConfidence(c: number): string {
  * fence state survives unrelated edits to other rows.
  */
 export function renderFactsTable(facts: ParsedFact[]): string {
-  const header    = `| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |`;
-  const separator = `|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|`;
+  // v0.35.4 (D-CDX-5): widen to 14 cells when ANY row has a non-undefined
+  // typed-claim field. Otherwise stay at the 10-cell legacy shape so
+  // existing fences don't get widened on unrelated rewrites (no churn diff
+  // noise).
+  const anyTyped = facts.some(f =>
+    f.claimMetric !== undefined ||
+    f.claimValue  !== undefined ||
+    f.claimUnit   !== undefined ||
+    f.claimPeriod !== undefined,
+  );
+  const header = anyTyped
+    ? `| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period |`
+    : `| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |`;
+  const separator = anyTyped
+    ? `|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|--------------|-------------|------------|--------------|`
+    : `|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|`;
   const rows = facts.map(f => {
     const claimCell = f.active ? f.claim : `~~${f.claim}~~`;
-    return `| ${f.rowNum} | ${escapeFenceCell(claimCell)} | ${f.kind} | ${formatConfidence(f.confidence)} | ${f.visibility} | ${f.notability} | ${escapeFenceCell(f.validFrom ?? '')} | ${escapeFenceCell(f.validUntil ?? '')} | ${escapeFenceCell(f.source ?? '')} | ${escapeFenceCell(f.context ?? '')} |`;
+    const base = `| ${f.rowNum} | ${escapeFenceCell(claimCell)} | ${f.kind} | ${formatConfidence(f.confidence)} | ${f.visibility} | ${f.notability} | ${escapeFenceCell(f.validFrom ?? '')} | ${escapeFenceCell(f.validUntil ?? '')} | ${escapeFenceCell(f.source ?? '')} | ${escapeFenceCell(f.context ?? '')} |`;
+    if (!anyTyped) return base;
+    const valueCell = f.claimValue === undefined ? '' : String(f.claimValue);
+    return `${base} ${escapeFenceCell(f.claimMetric ?? '')} | ${escapeFenceCell(valueCell)} | ${escapeFenceCell(f.claimUnit ?? '')} | ${escapeFenceCell(f.claimPeriod ?? '')} |`;
   });
   const inner = ['', header, separator, ...rows, ''].join('\n');
   return `${FACTS_FENCE_BEGIN}${inner}${FACTS_FENCE_END}`;
@@ -317,6 +378,13 @@ export function upsertFactRow(
       source: newRow.source,
       context: newRow.context,
       active: newRow.active ?? true,
+      // v0.35.4 — typed-claim pass-through. When undefined the renderer
+      // stays at the 10-cell shape so unrelated edits don't widen the
+      // fence.
+      claimMetric: newRow.claimMetric,
+      claimValue:  newRow.claimValue,
+      claimUnit:   newRow.claimUnit,
+      claimPeriod: newRow.claimPeriod,
     },
   ];
 

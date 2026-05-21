@@ -249,6 +249,57 @@ describe('adapter haystackToPages', () => {
     expect(pages[0].content).toContain('session_id: sess-x');
     expect(pages[0].content).not.toContain('date:');
   });
+
+  // v0.35.1.1 regression: the public LongMemEval _s split uses arrays of
+  // turn-arrays for haystack_sessions plus a parallel haystack_session_ids
+  // string array. The pre-v0.35.1.1 adapter crashed with `session.turns is
+  // undefined` on this shape. Pre-v0.35.1.1 the slug validator also
+  // rejected the underscored, mixed-case session_ids the dataset uses.
+  test('v0.35.1.1: _s split shape (turn-array + parallel ids) normalizes correctly', () => {
+    const q: LongMemEvalQuestion = {
+      question_id: 'q-s-1',
+      question_type: 'single-session-user',
+      question: 'q?',
+      answer: 'a',
+      haystack_dates: ['2025-01-01', '2025-01-02'],
+      answer_session_ids: ['sharegpt_AbC_0'],
+      haystack_session_ids: ['sharegpt_AbC_0', 'sess_DEF_1'],
+      // No {session_id, turns} — turns directly per the _s shape.
+      haystack_sessions: [
+        [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }],
+        [{ role: 'user', content: 'bye' }],
+      ],
+    };
+    const pages = haystackToPages(q);
+    expect(pages.length).toBe(2);
+    // Slugs got lowercased + underscores became hyphens (validator-safe).
+    expect(pages[0].slug).toBe('chat/sharegpt-abc-0');
+    expect(pages[1].slug).toBe('chat/sess-def-1');
+    // Frontmatter keeps the ORIGINAL session_id (no sanitization). The
+    // _s ids preserve through the round-trip; only the slug got rewritten.
+    expect(pages[0].content).toContain('session_id: sharegpt_AbC_0');
+    expect(pages[0].content).toContain('date: 2025-01-01');
+    expect(pages[0].content).toContain('**user:** hi');
+    expect(pages[1].content).toContain('**user:** bye');
+  });
+
+  test('v0.35.1.1: missing haystack_session_ids on _s shape synthesizes ids per question', () => {
+    const q: LongMemEvalQuestion = {
+      question_id: 'q-s-2',
+      question_type: 'single-session-user',
+      question: 'q?',
+      answer: 'a',
+      answer_session_ids: [],
+      // _s shape but the parallel ids array is absent. Adapter falls back
+      // to a synthesized `lme_<question_id>_<i>` slug.
+      haystack_sessions: [
+        [{ role: 'user', content: 'turn 1' }],
+      ],
+    };
+    const pages = haystackToPages(q);
+    expect(pages.length).toBe(1);
+    expect(pages[0].slug).toBe('chat/lme-q-s-2-0');
+  });
 });
 
 // ---------------------------------------------------------------------------

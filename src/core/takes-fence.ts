@@ -38,7 +38,7 @@
 
 export type TakeKind = 'fact' | 'take' | 'bet' | 'hunch';
 
-export type TakeQuality = 'correct' | 'incorrect' | 'partial';
+export type TakeQuality = 'correct' | 'incorrect' | 'partial' | 'unresolvable';
 
 export interface ParsedTake {
   rowNum: number;
@@ -144,7 +144,7 @@ export function isValidHolder(holder: string): boolean {
 }
 
 const KIND_VALUES: ReadonlySet<string> = new Set(['fact', 'take', 'bet', 'hunch']);
-const QUALITY_VALUES: ReadonlySet<string> = new Set(['correct', 'incorrect', 'partial']);
+const QUALITY_VALUES: ReadonlySet<string> = new Set(['correct', 'incorrect', 'partial', 'unresolvable']);
 
 // v0.30.0: header tokens that mark a v0.30-shape fence. Presence of `quality`
 // (or any other resolution column) widens the parser to read 7+ extra cells

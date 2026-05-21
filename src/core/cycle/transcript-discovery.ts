@@ -12,6 +12,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { createHash } from 'node:crypto';
+import { pruneDir } from '../sync.ts';
 
 export interface DiscoveredTranscript {
   /** Absolute path to the transcript file. */
@@ -71,7 +72,49 @@ const DREAM_MARKER_REGEX_SRC =
   '^\\uFEFF?-{3}\\r?\\n[\\s\\S]{0,2000}?dream_generated\\s*:\\s*true\\b';
 export const DREAM_OUTPUT_MARKER_RE = new RegExp(DREAM_MARKER_REGEX_SRC, 'i');
 
+/**
+ * v0.37.0 (D9 / D4): brainstorm + LSD frontmatter markers. `mode: lsd`
+ * pages are noise-by-design and must NEVER be re-ingested by the synthesize
+ * phase (they're inverted-judge experiments, not user-validated knowledge).
+ * `mode: brainstorm` pages stamp the saved-page provenance; they're not
+ * auto-skipped at this layer because the corpus walker doesn't currently
+ * read wiki/ideas/ — full loop closure (synthesize mines `mode: brainstorm`
+ * pages for patterns) is filed as a v0.37.1 follow-up.
+ */
+const LSD_MODE_MARKER_REGEX_SRC =
+  '^\\uFEFF?-{3}\\r?\\n[\\s\\S]{0,2000}?mode\\s*:\\s*(?:"|\\\'|)lsd(?:"|\\\'|)\\s*(?:\\r?\\n|$)';
+export const LSD_OUTPUT_MARKER_RE = new RegExp(LSD_MODE_MARKER_REGEX_SRC, 'i');
+
+const BRAINSTORM_MODE_MARKER_REGEX_SRC =
+  '^\\uFEFF?-{3}\\r?\\n[\\s\\S]{0,2000}?mode\\s*:\\s*(?:"|\\\'|)brainstorm(?:"|\\\'|)\\s*(?:\\r?\\n|$)';
+export const BRAINSTORM_OUTPUT_MARKER_RE = new RegExp(BRAINSTORM_MODE_MARKER_REGEX_SRC, 'i');
+
+/** True iff this content carries the LSD frontmatter marker (D4 noise-by-design skip). */
+export function isLsdOutput(content: string): boolean {
+  return LSD_OUTPUT_MARKER_RE.test(content);
+}
+
+/** True iff this content carries the brainstorm frontmatter marker (saved by `gbrain brainstorm --save`). */
+export function isBrainstormOutput(content: string): boolean {
+  return BRAINSTORM_OUTPUT_MARKER_RE.test(content);
+}
+
+/**
+ * Self-consumption guard: identity-marker check against the synthesize phase's
+ * dream output, EXTENDED in v0.37.0 to also skip `mode: lsd` pages per D4.
+ * The synthesize corpus walker now sees three categories:
+ *   - dream output (its own writes): always skipped
+ *   - LSD output: skipped (noise-by-design)
+ *   - everything else (transcripts, manual notes, brainstorm output): processed
+ *
+ * `bypass` is the explicit `--unsafe-bypass-dream-guard` escape hatch; it bypasses
+ * the dream-output check but NOT the LSD skip — there's no operator scenario
+ * where re-ingesting LSD output is desired (LSD is ephemeral by definition).
+ */
 export function isDreamOutput(content: string, bypass = false): boolean {
+  // LSD output ALWAYS skipped — bypass flag is for self-consumption only,
+  // not for re-ingesting LSD experiments into the pattern extractor.
+  if (isLsdOutput(content)) return true;
   if (bypass) return false;
   return DREAM_OUTPUT_MARKER_RE.test(content);
 }
@@ -119,22 +162,38 @@ function matchesAnyExclude(text: string, patterns: RegExp[]): boolean {
 }
 
 function listTextFiles(dir: string): string[] {
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return [];
-  }
+  // Recursive walk with descent-time pruning (closes codex C12/C13 spec gap).
+  // Accepts BOTH .txt and .md per transcript-discovery's domain rules — does
+  // NOT use isSyncable({strategy:'markdown'}) because that predicate rejects
+  // .txt and applies markdown-only README/ops exclusions transcripts don't share.
+  //
+  // pruneDir at descent time skips node_modules / .git / .obsidian / .raw /
+  // .cache / ops / etc. before recursion — saves the IO cost of walking
+  // vendor subtrees.
   const out: string[] = [];
-  for (const name of entries) {
-    if (!name.endsWith('.txt') && !name.endsWith('.md')) continue;
-    const full = join(dir, name);
+  function walk(d: string) {
+    let entries: string[];
     try {
-      if (statSync(full).isFile()) out.push(full);
+      entries = readdirSync(d);
     } catch {
-      // skip unreadable entries
+      return;
+    }
+    for (const name of entries) {
+      const full = join(d, name);
+      try {
+        const st = statSync(full);
+        if (st.isDirectory()) {
+          if (!pruneDir(name)) continue;
+          walk(full);
+        } else if (st.isFile() && (name.endsWith('.txt') || name.endsWith('.md'))) {
+          out.push(full);
+        }
+      } catch {
+        // skip unreadable entries
+      }
     }
   }
+  walk(dir);
   return out.sort();
 }
 

@@ -38,6 +38,17 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
   // The cell-by-cell assertion. The methodology doc cites these.
   // v0.35.0.0+ extended with 5 reranker fields. tokenmax flips reranker on;
   // conservative + balanced keep it off until eval data backs a change.
+  // v0.36 cross-modal wave: shared defaults across all modes (opt-in).
+  const CROSS_MODAL_DEFAULTS = {
+    cross_modal_both_text_weight: 0.6,
+    cross_modal_both_image_weight: 0.4,
+    image_query_text_refinement_weight: 0.4,
+    image_query_image_refinement_weight: 0.6,
+    unified_multimodal: false,
+    unified_multimodal_only: false,
+    cross_modal_llm_intent: false,
+  };
+
   test('conservative bundle values are canonical', () => {
     expect(MODE_BUNDLES.conservative).toEqual({
       cache_enabled: true,
@@ -52,10 +63,14 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       reranker_top_n_in: 30,
       reranker_top_n_out: null,
       reranker_timeout_ms: 5000,
+      floor_ratio: undefined,
+      ...CROSS_MODAL_DEFAULTS,
     });
   });
 
   test('balanced bundle values are canonical', () => {
+    // v0.36.0.0 (D6): reranker_enabled flipped from false → true. The 60%
+    // top-1 reshuffle reaches the 80% of installs that stay on `balanced`.
     expect(MODE_BUNDLES.balanced).toEqual({
       cache_enabled: true,
       cache_similarity_threshold: 0.92,
@@ -64,11 +79,13 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       tokenBudget: 12000,
       expansion: false,
       searchLimit: 25,
-      reranker_enabled: false,
+      reranker_enabled: true,
       reranker_model: 'zeroentropyai:zerank-2',
       reranker_top_n_in: 30,
       reranker_top_n_out: null,
       reranker_timeout_ms: 5000,
+      floor_ratio: undefined,
+      ...CROSS_MODAL_DEFAULTS,
     });
   });
 
@@ -86,6 +103,8 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       reranker_top_n_in: 30,
       reranker_top_n_out: null,
       reranker_timeout_ms: 5000,
+      floor_ratio: undefined,
+      ...CROSS_MODAL_DEFAULTS,
     });
   });
 
@@ -265,9 +284,38 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
 
   test('KNOBS_HASH_VERSION constant exposed for migrations to bump on schema change', () => {
     // v0.35.0.0+ bumped 1→2 to fold reranker fields into the cache key.
-    // CDX2-F14: a timeout change from 5s to 100ms changes search behavior
-    // (more fail-opens) so stale cache rows must invalidate.
-    expect(KNOBS_HASH_VERSION).toBe(2);
+    // v0.35.6.0 bumped 2→3 to fold floor_ratio (codex outside-voice T1 —
+    // preventing cross-floor cache contamination).
+    // v0.36 piggybacks on v=3 with 7 additional cross-modal knobs (D2) PLUS
+    // embedding column + provider context (D8/CDX-2 cross-column isolation),
+    // all appended per CDX2-F13 append-only convention so a text-mode cache
+    // hit can never silently serve to an image-mode caller, and a query
+    // against `embedding_voyage` never shares a cache row with `embedding`.
+    expect(KNOBS_HASH_VERSION).toBe(3);
+  });
+
+  test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
+    // Without this, a no-floor write would be served to a floor-enabled read
+    // — direct ranking-correctness leak. Same bug class CDX-4 closed in v0.32.3
+    // for the other search-lite knobs.
+    const noFloor = knobsHash(resolveSearchMode({ mode: 'balanced' }));
+    const withFloor = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { floor_ratio: 0.85 } }));
+    expect(noFloor).not.toBe(withFloor);
+  });
+
+  test('T1 (codex): different floor_ratio values produce different hashes', () => {
+    // 0.85 and 0.90 are distinct cache rows. 4-decimal precision in the hash
+    // input means 0.85 and 0.851 also differ (consumers tuning by hundredths
+    // get a clean cache split).
+    const a = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { floor_ratio: 0.85 } }));
+    const b = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { floor_ratio: 0.90 } }));
+    expect(a).not.toBe(b);
+  });
+
+  test('same floor_ratio produces same hash (idempotent cache key)', () => {
+    const a = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { floor_ratio: 0.85 } }));
+    const b = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { floor_ratio: 0.85 } }));
+    expect(a).toBe(b);
   });
 });
 
@@ -309,6 +357,20 @@ describe('loadOverridesFromConfig flat-map parser', () => {
     expect(loadOverridesFromConfig({ 'search.cache.similarity_threshold': '1.5' }).cache_similarity_threshold).toBeUndefined();
     expect(loadOverridesFromConfig({ 'search.cache.similarity_threshold': '0' }).cache_similarity_threshold).toBeUndefined();
     expect(loadOverridesFromConfig({ 'search.cache.similarity_threshold': '-0.1' }).cache_similarity_threshold).toBeUndefined();
+  });
+
+  test('v0.35.6.0: floor_ratio parses valid 0..1 values', () => {
+    expect(loadOverridesFromConfig({ 'search.floor_ratio': '0.85' }).floor_ratio).toBe(0.85);
+    expect(loadOverridesFromConfig({ 'search.floor_ratio': '0' }).floor_ratio).toBe(0);
+    expect(loadOverridesFromConfig({ 'search.floor_ratio': '1' }).floor_ratio).toBe(1);
+    expect(loadOverridesFromConfig({ 'search.floor_ratio': '0.5' }).floor_ratio).toBe(0.5);
+  });
+
+  test('v0.35.6.0: floor_ratio rejects out-of-range values silently', () => {
+    expect(loadOverridesFromConfig({ 'search.floor_ratio': '-0.1' }).floor_ratio).toBeUndefined();
+    expect(loadOverridesFromConfig({ 'search.floor_ratio': '1.5' }).floor_ratio).toBeUndefined();
+    expect(loadOverridesFromConfig({ 'search.floor_ratio': 'NaN' }).floor_ratio).toBeUndefined();
+    expect(loadOverridesFromConfig({ 'search.floor_ratio': 'cheese' }).floor_ratio).toBeUndefined();
   });
 });
 

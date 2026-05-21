@@ -133,12 +133,31 @@ ALLOW_LIST=(
   # (Wintermute, Hermes, etc) inside its BANNED_NAMES + ALLOWLIST arrays.
   # Same meta-rule-enforcement exception as scripts/check-privacy.sh itself.
   'scripts/check-test-real-names.sh'
+  # v0.34 / Lane CI: scripts/check-proposal-pii.sh and its test list the
+  # banned literal as part of the structural denylist they enforce against
+  # docs/proposals/*.md. Same meta-rule-enforcement exception as the two
+  # entries above — describing what the rule forbids requires naming it.
+  'scripts/check-proposal-pii.sh'
+  'test/scripts/check-proposal-pii.test.ts'
   # v0.32.3.0: the functional-area-resolver skill's behavior-contract
   # section describes the privacy guarantees the skill preserves and
   # references the banned literals while doing so (line 306). Same
   # meta-rule-enforcement exception as scripts/check-privacy.sh and
   # CHANGELOG.md — describing what the rule forbids requires naming it.
   'skills/functional-area-resolver/SKILL.md'
+  # v0.36.0.0: the gbrain skillpack harvest privacy linter's whole job
+  # is to catch the banned literal leaking into gbrain. The regex
+  # pattern in harvest-lint.ts is `\bWintermute\b` by necessity; the
+  # tests verify that pattern fires by feeding it the banned string;
+  # the harvest skill markdown describes the substitution policy
+  # ("Wintermute → your OpenClaw") as part of the genericization
+  # checklist. Same meta-rule-enforcement exception as the privacy
+  # checks themselves.
+  'src/core/skillpack/harvest-lint.ts'
+  'test/skillpack-harvest-lint.test.ts'
+  'test/skillpack-harvest.test.ts'
+  'test/e2e/skillpack-flow.test.ts'
+  'skills/skillpack-harvest/SKILL.md'
 )
 
 is_allowed() {

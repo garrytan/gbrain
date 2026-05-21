@@ -238,3 +238,66 @@ describe('runFactsBackstop — dedup fast-path', () => {
     }
   });
 });
+
+describe('runFactsBackstop — stub guard routing (v0.34.5)', () => {
+  test('bare-name entity routes to legacy DB-only path (no phantom page)', async () => {
+    // Set up: configure default source with a real local_path so the
+    // backstop reaches Phase 5 (fence write) instead of Phase 4 (legacy).
+    // This is the scenario where the stub guard actually fires.
+    const { mkdtempSync, rmSync, existsSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const brainDir = mkdtempSync(join(tmpdir(), 'backstop-stub-guard-'));
+    try {
+      // Point the default source at the tempdir so localPath is non-null.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(
+        `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+        [brainDir],
+      );
+
+      // Stub the chat to return a fact with a bare-name entity. The
+      // resolver will:
+      //   1. exact slug match → miss (no 'noresolvable' row)
+      //   2. fuzzy match → miss (no title contains noresolvable)
+      //   3. prefix expansion → miss (no people/noresolvable-* rows)
+      //   4. slugify fallback → 'noresolvable' (bare)
+      // The bare slug then trips the stub guard in writeFactsToFence,
+      // which returns stubGuardBlocked: true, and backstop routes the
+      // fact to engine.insertFact (DB-only).
+      chatStub([
+        { fact: 'said hello at the meeting', kind: 'event', notability: 'high', entity: 'noresolvable' },
+      ]);
+
+      const r = await runFactsBackstop(meetingPage(), makeCtx({ mode: 'inline' }));
+
+      expect(r.mode).toBe('inline');
+      if (r.mode === 'inline') {
+        // The fact MUST be persisted via the DB-only fallback, not dropped.
+        expect(r.inserted).toBe(1);
+        expect(r.fact_ids.length).toBe(1);
+
+        // No phantom file at the brain root (this is the whole point of the guard).
+        expect(existsSync(join(brainDir, 'noresolvable.md'))).toBe(false);
+
+        // The fact is in the DB with the bare entity_slug. Query directly to
+        // confirm — the routing is the contract under test.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rows = await (engine as any).db.query(
+          `SELECT entity_slug, fact, source_markdown_slug FROM facts WHERE id = $1`,
+          [r.fact_ids[0]],
+        );
+        expect(rows.rows[0].entity_slug).toBe('noresolvable');
+        expect(rows.rows[0].fact).toBe('said hello at the meeting');
+        // source_markdown_slug is the fence-tracking column; under DB-only
+        // fallback it stays null (no .md file backs the row).
+        expect(rows.rows[0].source_markdown_slug).toBeNull();
+      }
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      rmSync(brainDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -16,8 +16,22 @@ import {
 // v0.27.1: re-export multimodal embedding so callers can pull both text and
 // image embedding APIs from `src/core/embedding`. import-image-file consumes
 // embedMultimodal directly.
-export { embedMultimodal } from './ai/gateway.ts';
-export type { MultimodalInput } from './ai/types.ts';
+//
+// v0.36 cross-modal wave: query-side multimodal embedding (text and image
+// variants) for hybridSearch routing image-intent queries to the multimodal
+// column. embedMultimodalSafe is the partial-failure variant Phase 3 reindex
+// uses to make forward progress on transient batch failures.
+export {
+  embedMultimodal,
+  embedMultimodalSafe,
+  embedQueryMultimodal,
+  embedQueryMultimodalImage,
+} from './ai/gateway.ts';
+export type {
+  MultimodalInput,
+  EmbedMultimodalOpts,
+  MultimodalBatchResult,
+} from './ai/types.ts';
 
 /** Embed one text (document-side for asymmetric providers). */
 export async function embed(text: string): Promise<Float32Array> {
@@ -30,9 +44,17 @@ export async function embed(text: string): Promise<Float32Array> {
  * embed seam so the provider returns query-side vectors. For symmetric
  * providers (OpenAI text-3, DashScope, Zhipu) the field is dropped — no
  * behavior change. Used by hybrid.ts on the search hot path.
+ *
+ * v0.36 (D10): optional `embeddingModel` + `dimensions` overrides so the
+ * dynamic-embedding-column path can embed via the column's provider rather
+ * than the globally-configured default. Bare `embedQuery(text)` preserves
+ * pre-v0.36 behavior.
  */
-export async function embedQuery(text: string): Promise<Float32Array> {
-  return gatewayEmbedQuery(text);
+export async function embedQuery(
+  text: string,
+  opts?: { embeddingModel?: string; dimensions?: number },
+): Promise<Float32Array> {
+  return gatewayEmbedQuery(text, opts);
 }
 
 export interface EmbedBatchOptions {

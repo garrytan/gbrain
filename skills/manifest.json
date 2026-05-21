@@ -150,6 +150,11 @@
       "description": "Agent-readable gbrain health report. Wraps doctor + apply-migrations --list into one JSON blob with exit codes. Cron-friendly for morning-briefing pipelines."
     },
     {
+      "name": "skillpack-harvest",
+      "path": "skillpack-harvest/SKILL.md",
+      "description": "Editorial workflow for lifting a proven skill from a host repo back into gbrain. Pairs with `gbrain skillpack harvest` CLI. Drives the genericization checklist that scrubs fork-specific names + real entities before files land in gbrain core."
+    },
+    {
       "name": "smoke-test",
       "path": "smoke-test/SKILL.md",
       "description": "Post-restart smoke tests + auto-fix for gbrain and OpenClaw environments"

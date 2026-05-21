@@ -26,6 +26,7 @@ import type { ChatResult } from '../ai/gateway.ts';
 import { INJECTION_PATTERNS } from '../think/sanitize.ts';
 import { resolveModel } from '../model-config.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
+import { normalizeMetricLabel } from './extract-from-fence.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -101,7 +102,9 @@ const EXTRACTOR_SYSTEM = [
   'Output strictly one JSON object on a single line:',
   '{"facts":[{"fact":"<terse claim>","kind":"event|preference|commitment|belief|fact",',
   '"entity":"<canonical slug or display name or null>","confidence":<0..1>,',
-  '"notability":"high|medium|low"}]}.',
+  '"notability":"high|medium|low",',
+  '"metric":"<lowercase snake_case or null>","value":<number or null>,',
+  '"unit":"<USD|people|pct|... or null>","period":"<monthly|annual|quarterly|null>"}]}.',
   'No prose, no code fences. Empty facts array is valid when nothing claim-worthy was said.',
   '',
   'Rules:',
@@ -124,6 +127,19 @@ const EXTRACTOR_SYSTEM = [
   '    Can wait for batch processing.',
   '  * "low": Logistical noise, restaurant orders, routine scheduling, "we\'re at X place".',
   '    Skip entirely — not worth storing.',
+  '',
+  '- Typed-claim fields (metric/value/unit/period) — emit ONLY when the claim',
+  '  carries a quantitative metric assertion. Examples:',
+  '  * "MRR: $50K (Jan 2026)" → metric=mrr, value=50000, unit=USD, period=monthly',
+  '  * "ARR: $2M" → metric=arr, value=2000000, unit=USD, period=annual',
+  '  * "Team size: 12" → metric=team_size, value=12, unit=people, period=null',
+  '  * "Closed Series A: $15M" → metric=fundraise, value=15000000, unit=USD, period=null',
+  '  * "User churn: 5%" → metric=churn_rate, value=0.05, unit=pct, period=null',
+  '  Use lowercase snake_case for metric. Common labels: mrr, arr, revenue,',
+  '  runway, burn_rate, cash, gross_margin, team_size, headcount, users, mau,',
+  '  dau, cac, ltv, churn_rate, fundraise. For non-metric claims (preferences,',
+  '  events, beliefs), set all four to null. Numeric values: emit the raw',
+  '  number after currency/scale normalization (50000 not "$50K"; 0.05 not "5%").',
 ].join('\n');
 
 const MAX_TURN_TEXT_CHARS = 8000;
@@ -207,6 +223,15 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
       embedding = null;
     }
 
+    // v0.35.4 (D-CDX-2) — typed-claim threading. Normalize the metric label
+    // here so all storage paths see canonical lowercase snake_case names.
+    // Value is already a finite number from parseExtractorJson; unit and
+    // period are stored verbatim.
+    const claimMetric = normalizeMetricLabel(candidate.metric ?? undefined) ?? null;
+    const claimValue  = candidate.value ?? null;
+    const claimUnit   = candidate.unit ?? null;
+    const claimPeriod = candidate.period ?? null;
+
     facts.push({
       fact: factText,
       kind,
@@ -216,6 +241,10 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
       confidence,
       notability,
       embedding,
+      claim_metric: claimMetric,
+      claim_value:  claimValue,
+      claim_unit:   claimUnit,
+      claim_period: claimPeriod,
     });
   }
 
@@ -228,6 +257,12 @@ interface RawExtracted {
   entity?: string | null;
   confidence?: number;
   notability?: string;
+  // v0.35.4 (D-CDX-2) — typed-claim fields. All optional; emit only for
+  // metric-shaped claims. See EXTRACTOR_SYSTEM rules above.
+  metric?: string | null;
+  value?: number | null;
+  unit?: string | null;
+  period?: string | null;
 }
 
 /**
@@ -266,6 +301,14 @@ function tryArrayShape(s: string): RawExtracted[] | null {
         entity: typeof o.entity === 'string' ? o.entity : null,
         confidence: typeof o.confidence === 'number' ? o.confidence : 1.0,
         notability: typeof o.notability === 'string' ? o.notability : undefined,
+        // v0.35.4 (D-CDX-2) — typed-claim fields. Strict shape: metric/unit/period
+        // must be string-or-null; value must be a finite number-or-null. Anything
+        // else falls through to undefined so the downstream pipeline treats it
+        // as "no metric set" rather than corrupted data.
+        metric: typeof o.metric === 'string' ? o.metric : null,
+        value:  (typeof o.value === 'number' && Number.isFinite(o.value)) ? o.value : null,
+        unit:   typeof o.unit === 'string' ? o.unit : null,
+        period: typeof o.period === 'string' ? o.period : null,
       });
     }
     return out;

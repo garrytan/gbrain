@@ -55,8 +55,19 @@ ALLOWLIST=(
   "test/writer.test.ts:garry@ycombinator.com"          # user's own email — CLAUDE.md rule does not apply
   "test/integrations.test.ts:Wintermute"               # regex pattern in personal-info filter test (structural)
   "test/recency-decay.test.ts:Wintermute"              # regression-prevention test asserting wintermute is absent (structural)
+  "test/scripts/check-proposal-pii.test.ts:Wintermute" # privacy-guard test asserting docs/proposals/ rejects wintermute (structural; same meta-rule exception as check-privacy.sh)
+  "test/scripts/check-proposal-pii.test.ts:WINTERMUTE" # case-insensitive sentinel literal for the same privacy-guard test
   "test/serve-stdio-lifecycle.test.ts:Hermes"          # comment naming a downstream-agent scenario — pre-existing, low signal
   "test/extract.test.ts:Hermes"                        # markdown-link extraction test fixture — pre-existing, ambiguous (Greek god vs fork)
+  "test/readme-hero-anchors.test.ts:Hermes"            # v0.36.0.0 D9 anchor test — asserts README mentions Hermes as a credit
+  "test/readme-hero-anchors.test.ts:OpenClaw"          # v0.36.0.0 D9 anchor test — asserts README mentions OpenClaw as a credit
+  # v0.36.0.0: skillpack-harvest privacy linter tests structurally
+  # require the literal "Wintermute" to verify the linter catches it.
+  # Same meta-rule exception as integrations.test.ts and the proposal-pii
+  # privacy guard test above.
+  "test/skillpack-harvest.test.ts:Wintermute"
+  "test/skillpack-harvest-lint.test.ts:Wintermute"
+  "test/e2e/skillpack-flow.test.ts:Wintermute"
 )
 
 # Build the combined regex. Names matched as whole words (\b), emails matched

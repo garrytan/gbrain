@@ -14,6 +14,7 @@ import type {
   EvalCaptureFailure, EvalCaptureFailureReason,
   SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
+  DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
 } from './types.ts';
 
 /**
@@ -21,6 +22,32 @@ import type {
  * shape on both engines (Postgres has had it since v0.18; PGLite gets it
  * via migration v36).
  */
+/**
+ * Options for `traverseGraph`.
+ *
+ * `frontierCap`: when set, the BFS recursive term applies a parenthesized
+ * `LIMIT N ORDER BY slug,id` so each iteration emits at most N rows. This
+ * is the "approximately per-layer" cap discussed in the T8 plan — Postgres'
+ * recursive CTE caps per ITERATION, not strictly per BFS LAYER (BFS layer
+ * boundaries map to recursive iterations only when fan-out is bounded).
+ * For hub-fanout graphs the cap fires early and bounds the work. Default:
+ * unset = no cap (back-compat; existing callers see no change).
+ *
+ * NOTE: a truncation-detection signal (`onTruncation` callback) was
+ * designed but the v1 algorithm had both false-positive (organic count ==
+ * cap) and false-negative (LIMIT-before-DISTINCT in diamond graphs) cases
+ * caught by adversarial review. The signal is deferred until a
+ * dedupe-then-cap SQL rewrite + real Postgres parity coverage lands. See
+ * TODOS.md → "T8 truncation signal" entry. Callers that need to detect
+ * truncation can compare `result.length` against expected fanout bounds
+ * as a coarse-but-honest signal in the interim.
+ */
+export interface TraverseGraphOpts {
+  sourceId?: string;
+  sourceIds?: string[];
+  frontierCap?: number;
+}
+
 export interface FileRow {
   id: number;
   source_id: string;
@@ -168,13 +195,16 @@ export interface Take {
   resolved_at: string | null;
   resolved_outcome: boolean | null;
   /**
-   * v0.30.0: 3-state outcome label. Sits alongside `resolved_outcome` for
-   * back-compat. New writes populate both; legacy v0.28-resolved rows have
-   * `resolved_quality` backfilled by migration v40 from the boolean.
-   * Null on unresolved rows. Schema CHECK enforces (quality, outcome) consistency:
-   * `correct` ↔ `outcome=true`, `incorrect` ↔ `outcome=false`, `partial` ↔ `outcome=NULL`.
+   * v0.30.0: 3-state outcome label. v0.36.1.1 added 'unresolvable' as a 4th
+   * state for verdicts where evidence was insufficient to grade. Sits
+   * alongside `resolved_outcome` for back-compat. New writes populate both;
+   * legacy v0.28-resolved rows have `resolved_quality` backfilled by
+   * migration v40 from the boolean. Null on unresolved rows. Schema CHECK
+   * (widened in v74) enforces (quality, outcome) consistency:
+   * `correct` ↔ `outcome=true`, `incorrect` ↔ `outcome=false`,
+   * `partial` ↔ `outcome=NULL`, `unresolvable` ↔ `outcome=NULL`.
    */
-  resolved_quality: 'correct' | 'incorrect' | 'partial' | null;
+  resolved_quality: 'correct' | 'incorrect' | 'partial' | 'unresolvable' | null;
   resolved_value: number | null;
   resolved_unit: string | null;
   resolved_source: string | null;
@@ -221,11 +251,14 @@ export interface StaleTakeRow {
 /** Resolution metadata for resolveTake. */
 export interface TakeResolution {
   /**
-   * v0.30.0: primary 3-state input. When set, takes precedence over `outcome`
-   * and the engine writes both columns (quality directly; outcome derived:
-   * `correct→true`, `incorrect→false`, `partial→null`).
+   * v0.30.0: primary 3-state input; v0.36.1.1 widened to 4-state with
+   * 'unresolvable'. When set, takes precedence over `outcome` and the engine
+   * writes both columns (quality directly; outcome derived:
+   * `correct→true`, `incorrect→false`, `partial→null`, `unresolvable→null`).
+   * `unresolvable` marks rows where the judge ran but evidence was
+   * insufficient to grade; surfaces in `TakesScorecard.unresolvable_count`.
    */
-  quality?: 'correct' | 'incorrect' | 'partial';
+  quality?: 'correct' | 'incorrect' | 'partial' | 'unresolvable';
   /**
    * v0.28 back-compat input. Keep submitting for v0.28 callers; the engine
    * derives quality (`true→correct`, `false→incorrect`). When `quality` is
@@ -243,6 +276,12 @@ export interface TakeResolution {
 /** v0.30.0: scorecard aggregate. */
 export interface TakesScorecard {
   total_bets: number;
+  /**
+   * Count of resolved rows where `resolved_quality IN
+   * ('correct','incorrect','partial')`. v0.36.1.1 deliberately keeps this
+   * 3-state semantic to preserve historical comparisons. Unresolvable rows
+   * land in the sibling `unresolvable_count` field instead.
+   */
   resolved: number;
   correct: number;
   incorrect: number;
@@ -253,12 +292,30 @@ export interface TakesScorecard {
    * Brier score over rows where `resolved_quality IN ('correct','incorrect')`.
    * Maps `correct→1`, `incorrect→0`, computes `mean((weight − outcome)²)`.
    * Lower is better; 0 = perfect; 0.25 = always-50% baseline.
-   * Excludes partial — that label hides hedging behavior; `partial_rate`
-   * surfaces it as a separate signal. NULL when no correct+incorrect rows.
+   * Excludes partial AND unresolvable — both hide signal; the dedicated
+   * `partial_rate` and `unresolvable_rate` fields surface them separately.
+   * NULL when no correct+incorrect rows.
    */
   brier: number | null;
   /** partial / resolved. NULL when n=0. */
   partial_rate: number | null;
+  /**
+   * v0.36.1.1: count of rows where `resolved_quality = 'unresolvable'`.
+   * Sibling field to `resolved` so historical comparisons against pre-v80
+   * scorecards stay valid; `resolved` retains its 3-state meaning, and
+   * unresolvable rows count here separately. Optional for SDK back-compat —
+   * downstream consumers constructing TakesScorecard fixtures shouldn't have
+   * to update on a hotfix. `finalizeScorecard` always populates it.
+   */
+  unresolvable_count?: number;
+  /**
+   * v0.37.2.0: `unresolvable_count / (resolved + unresolvable_count)`. NULL
+   * when both are 0. Surfaces the spec's headline calibration signal:
+   * "what fraction of grade-attempted takes couldn't be graded?" — high
+   * values signal weak evidence retrieval rather than wrong predictions.
+   * Optional for SDK back-compat; see `unresolvable_count` note above.
+   */
+  unresolvable_rate?: number | null;
 }
 
 export interface TakesScorecardOpts {
@@ -369,6 +426,17 @@ export interface NewFact {
   confidence?: number;                  // [0,1], default 1.0
   notability?: 'high' | 'medium' | 'low'; // salience filter for extraction gate
   embedding?: Float32Array | null;     // pre-computed; if null, insertFact computes via gateway
+  /**
+   * v0.35.4 (D-CDX-5) — typed-claim fields. Optional. When populated,
+   * `gbrain eval trajectory` + `find_trajectory` MCP op consume them for
+   * chronological regression detection and drift_score. `claim_metric` is
+   * normalized to lowercase snake_case by the extraction layer before
+   * this method sees it; the engine stores verbatim.
+   */
+  claim_metric?: string | null;
+  claim_value?: number | null;
+  claim_unit?: string | null;
+  claim_period?: string | null;
 }
 
 /** Options shared by list-facts methods. */
@@ -400,6 +468,58 @@ export interface FactsHealth {
   classifier_fail_counter?: number;
   p50_latency_ms?: number;
   p99_latency_ms?: number;
+}
+
+/**
+ * v0.35.4 (D-CDX-6) — Options for `BrainEngine.findTrajectory`.
+ *
+ * `sourceId` (scalar fast path) and `sourceIds` (federated array) follow
+ * the v0.34.1.0 search* pattern: when `sourceIds` is set the engine
+ * applies `WHERE source_id = ANY($N::text[])`; otherwise scalar predicate
+ * with `sourceId ?? 'default'`.
+ *
+ * `remote` (D-CDX-1) gates the visibility filter: when true the engine
+ * adds `AND visibility = 'world'`, mirroring `recall`'s posture for
+ * untrusted callers. Local CLI keeps `remote: false` and sees both
+ * private + world facts.
+ */
+export interface TrajectoryOpts {
+  entitySlug: string;
+  /** Single-source scope; default 'default' when both this and sourceIds are unset. */
+  sourceId?: string;
+  /** Federated array scope (mutually exclusive with sourceId; the array wins when set). */
+  sourceIds?: string[];
+  /** When true, filters to visibility='world' only. Set by MCP layer from ctx.remote. */
+  remote?: boolean;
+  /** Metric filter. When set, only facts with this canonical metric label participate. */
+  metric?: string;
+  /** Lower bound on valid_from (inclusive). YYYY-MM-DD or full ISO. */
+  since?: string | Date;
+  /** Upper bound on valid_from (inclusive). YYYY-MM-DD or full ISO. */
+  until?: string | Date;
+  /** Cap on points returned. Default 100, max 500. */
+  limit?: number;
+}
+
+/**
+ * A single point in an entity's claim trajectory. Carries the typed-claim
+ * fields when populated (drives regression detection), the underlying
+ * fact text (for display), provenance (source_session, source_markdown_slug),
+ * and the raw embedding so the caller can compute drift_score without a
+ * second SQL round-trip.
+ */
+export interface TrajectoryPoint {
+  fact_id: number;
+  valid_from: Date;
+  metric: string | null;
+  value: number | null;
+  unit: string | null;
+  period: string | null;
+  text: string;
+  source_session: string | null;
+  source_markdown_slug: string | null;
+  /** Raw embedding for drift computation; null when the fact was inserted without one. */
+  embedding: Float32Array | null;
 }
 
 /** Maximum results returned by search operations. Internal bulk operations (listPages) are not clamped. */
@@ -512,10 +632,53 @@ export interface BrainEngine {
    */
   listAllPageRefs(): Promise<Array<{ slug: string; source_id: string }>>;
 
+  /**
+   * v0.37.0 — prefix-stratified page sampling for `gbrain brainstorm` / `gbrain lsd`
+   * domain-bank module. Takes a caller-supplied prefix list (cached at the domain-bank
+   * layer per D3), returns one page per prefix tiebroken by `connection_count`
+   * (LEFT JOIN to page_links, count of inbound links).
+   *
+   * Stale-bias (D5 / LSD): when `opts.staleBias === true`, ROW_NUMBER() ORDER BY
+   * prefers pages with `last_retrieved_at IS NULL` (never retrieved) > pages older
+   * than `staleThresholdDays` (default 90) > recently-retrieved.
+   *
+   * Source scoping (D5, codex r2 #2 fix): `sourceId` (scalar) and `sourceIds`
+   * (array, wins over scalar) per the [source-id-canonical-thread] pattern.
+   * Both threaded from day 1 even though v0.37.0 callers are CLI-local — D7
+   * MCP exposure ships zero-refactor.
+   *
+   * Soft-deleted pages (deleted_at IS NOT NULL) excluded automatically.
+   */
+  listPrefixSampledPages(opts: DomainBankSampleOpts): Promise<DomainBankRow[]>;
+
+  /**
+   * v0.37.0 — corpus-sampling fallback for `gbrain brainstorm` when prefix-stratified
+   * can't fill M (small brain, single-prefix corpus). Random sample of N pages with
+   * the same exclusion + source-scope semantics as `listPrefixSampledPages`.
+   * Deterministic with `opts.seed` set; falls back to RANDOM() otherwise.
+   *
+   * Returns the same `DomainBankRow` shape so the orchestrator can union both
+   * sources of pages and dedup by slug+source_id.
+   */
+  listCorpusSample(opts: CorpusSampleOpts): Promise<DomainBankRow[]>;
+
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
   searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]>;
-  getEmbeddingsByChunkIds(ids: number[]): Promise<Map<number, Float32Array>>;
+  /**
+   * Hydrate embeddings for chunks already known by id. v0.36 (D9):
+   * optional `column` parameter selects which content_chunks column to
+   * fetch from (default 'embedding'). The dynamic-embedding-column
+   * search path hands its resolved column name here so cosineReScore
+   * rehydrates in the right embedding space — otherwise vector search
+   * against `embedding_voyage` would HNSW-rank against Voyage but
+   * rescore against OpenAI vectors (NaN / wrong rankings).
+   *
+   * The column name MUST be regex-validated by the caller (resolveEmbed-
+   * dingColumn rejects bad names). Engines identifier-quote on
+   * interpolation as defense in depth (D12).
+   */
+  getEmbeddingsByChunkIds(ids: number[], column?: string): Promise<Map<number, Float32Array>>;
 
   // Chunks
   /**
@@ -658,7 +821,7 @@ export interface BrainEngine {
   traverseGraph(
     slug: string,
     depth?: number,
-    opts?: { sourceId?: string; sourceIds?: string[] },
+    opts?: TraverseGraphOpts,
   ): Promise<GraphNode[]>;
   /**
    * Edge-based graph traversal with optional type and direction filters.
@@ -1134,6 +1297,21 @@ export interface BrainEngine {
    */
   consolidateFact(id: number, takeId: number): Promise<void>;
 
+  /**
+   * v0.35.4 (D-CDX-1 + D-CDX-6) — chronological fact trajectory for an
+   * entity. Returns points ordered by (valid_from ASC, id ASC) so the
+   * caller can compute regressions and drift_score deterministically.
+   *
+   * - Source-scoped via `sourceId` (scalar) OR `sourceIds` (federated array).
+   * - Visibility-filtered: when `opts.remote=true`, only `visibility='world'`
+   *   facts are returned. Trusted local callers see both private + world.
+   * - Optional metric filter restricts to a single normalized metric label.
+   * - Active-only by default (expired_at IS NULL); soft-deleted entities
+   *   on the pages side are NOT filtered here — trajectory is a facts-table
+   *   query and doesn't JOIN pages.
+   */
+  findTrajectory(opts: TrajectoryOpts): Promise<TrajectoryPoint[]>;
+
   /** Per-source operational metrics for `gbrain doctor` facts_health check. */
   getFactsHealth(source_id: string): Promise<FactsHealth>;
 
@@ -1174,6 +1352,50 @@ export interface BrainEngine {
    */
   updateSlug(oldSlug: string, newSlug: string, opts?: { sourceId?: string }): Promise<void>;
   rewriteLinks(oldSlug: string, newSlug: string): Promise<void>;
+
+  /**
+   * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
+   * `pages.content_hash` for a single slug+source. NO chunking, NO embedding,
+   * NO link reconcile, NO `updated_at` advance beyond the trivial bump.
+   *
+   * Used by the phantom-redirect pass in `extract_facts` after appending
+   * migrated fact rows to a canonical page's disk fence: we just rewrote the
+   * `.md` on disk, so the DB body must match before the next reconcile reads
+   * stale state. content_hash is included so the next `gbrain sync` sees the
+   * canonical as unchanged and skips re-import (round-14 + codex #7 — the
+   * "second cycle is a no-op" premise depends on all three columns moving
+   * together).
+   *
+   * Skips soft-deleted rows (deleted_at filter). Idempotent — second call
+   * with the same args produces the same row state.
+   */
+  refreshPageBody(
+    slug: string,
+    sourceId: string,
+    compiledTruth: string,
+    timeline: string,
+    contentHash: string,
+  ): Promise<void>;
+
+  /**
+   * v0.35.5 — lossless DB-side migration of fact rows from one slug to
+   * another within a single source. UPDATEs `entity_slug` and
+   * `source_markdown_slug` on every active fact row whose
+   * `source_markdown_slug` matches the phantom slug. Every other column
+   * (embedding, valid_from, valid_until, kind, notability, confidence,
+   * source_session, status, etc.) is preserved verbatim — codex #3 fix
+   * for the writeFactsToFence lossy-migration trap.
+   *
+   * Idempotent: re-run after success finds no rows to update and returns
+   * `{migrated: 0}`. Hard-deletes are out of scope; the caller wipes the
+   * phantom's `.md` file separately. Scoped to one source by design —
+   * cross-source migration is a separate concern.
+   */
+  migrateFactsToCanonical(
+    phantomSlug: string,
+    canonicalSlug: string,
+    sourceId: string,
+  ): Promise<{ migrated: number }>;
 
   // Config
   getConfig(key: string): Promise<string | null>;

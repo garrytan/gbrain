@@ -5,6 +5,7 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { GBrainOAuthProvider, coerceTimestamp } from '../src/core/oauth-provider.ts';
 import { hashToken, generateToken } from '../src/core/utils.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
+import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 
 // ---------------------------------------------------------------------------
 // Test setup: in-memory PGLite with OAuth tables
@@ -215,6 +216,35 @@ describe('verifyAccessToken', () => {
 
   test('unknown token is rejected', async () => {
     await expect(provider.verifyAccessToken('nonexistent-token')).rejects.toThrow('Invalid token');
+  });
+
+  // v0.36.1.x #935: the SDK's requireBearerAuth middleware only returns 401
+  // on InvalidTokenError; bare Error falls through to 500. Lock in the class.
+  test('verifyAccessToken throws InvalidTokenError (not bare Error) on expired token', async () => {
+    const expiredToken = generateToken('gbrain_at_');
+    const hash = hashToken(expiredToken);
+    const firstClient = (await sql`SELECT client_id FROM oauth_clients LIMIT 1`)[0];
+    await sql`
+      INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at)
+      VALUES (${hash}, ${'access'}, ${firstClient.client_id as string}, ${'{read}'}, ${Math.floor(Date.now() / 1000) - 100})
+    `;
+    let caught: unknown;
+    try {
+      await provider.verifyAccessToken(expiredToken);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(InvalidTokenError);
+  });
+
+  test('verifyAccessToken throws InvalidTokenError (not bare Error) on unknown token', async () => {
+    let caught: unknown;
+    try {
+      await provider.verifyAccessToken('nonexistent-token');
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(InvalidTokenError);
   });
 
   test('NULL expires_at is treated as expired (fail-closed)', async () => {

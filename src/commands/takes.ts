@@ -308,7 +308,7 @@ async function cmdResolve(engine: BrainEngine, args: string[]): Promise<void> {
   const qualityStr = flagValue(args, '--quality');
   const outcomeStr = flagValue(args, '--outcome');
   if (!slug || !rowNumStr || (!qualityStr && !outcomeStr)) {
-    console.error('Usage: gbrain takes resolve <slug> --row N --quality correct|incorrect|partial [--evidence "..."] [--value N --unit usd|pct|count] [--by <slug>]');
+    console.error('Usage: gbrain takes resolve <slug> --row N --quality correct|incorrect|partial|unresolvable [--evidence "..."] [--value N --unit usd|pct|count] [--by <slug>]');
     console.error('       (back-compat) gbrain takes resolve <slug> --row N --outcome true|false [...]');
     process.exit(1);
   }
@@ -319,12 +319,13 @@ async function cmdResolve(engine: BrainEngine, args: string[]): Promise<void> {
   const rowNum = parseInt(rowNumStr, 10);
 
   // v0.30.0: --quality is the new primary input. --outcome stays as a back-compat
-  // alias auto-mapping true→correct / false→incorrect; cannot express partial.
-  let quality: 'correct' | 'incorrect' | 'partial' | undefined;
+  // alias auto-mapping true→correct / false→incorrect; cannot express partial
+  // or unresolvable (v0.36.1.1).
+  let quality: 'correct' | 'incorrect' | 'partial' | 'unresolvable' | undefined;
   let outcome: boolean | undefined;
   if (qualityStr) {
-    if (qualityStr !== 'correct' && qualityStr !== 'incorrect' && qualityStr !== 'partial') {
-      console.error(`Invalid --quality "${qualityStr}". Expected: correct, incorrect, partial.`);
+    if (qualityStr !== 'correct' && qualityStr !== 'incorrect' && qualityStr !== 'partial' && qualityStr !== 'unresolvable') {
+      console.error(`Invalid --quality "${qualityStr}". Expected: correct, incorrect, partial, unresolvable.`);
       process.exit(1);
     }
     quality = qualityStr;
@@ -432,29 +433,46 @@ async function cmdScorecard(engine: BrainEngine, args: string[]): Promise<void> 
     return;
   }
 
-  if (card.resolved === 0) {
+  // v0.37.2.0: don't hide the unresolvable signal. A brain with only unresolvable
+  // verdicts still has a story to tell — "your judge tried but couldn't decide" —
+  // and the spec's whole headline ("50% of your tech calls land unresolvable")
+  // depends on this output rendering when resolved=0 but unresolvable_count>0.
+  const unresolvableCount = card.unresolvable_count ?? 0;
+  if (card.resolved === 0 && unresolvableCount === 0) {
     console.log(`No resolved bets yet${holder ? ` for ${holder}` : ''}.`);
     return;
   }
-  const fmt = (n: number | null, digits = 3) => n === null ? '—' : n.toFixed(digits);
+  const fmt = (n: number | null | undefined, digits = 3) =>
+    n === null || n === undefined ? '—' : n.toFixed(digits);
   console.log(`# Scorecard${holder ? ` — ${holder}` : ''}`);
   if (domainPrefix) console.log(`Scope: domain=${domainPrefix}`);
   if (since || until) console.log(`Window: ${since ?? 'all'} → ${until ?? 'now'}`);
   console.log('');
-  console.log(`  total bets:    ${card.total_bets}`);
-  console.log(`  resolved:      ${card.resolved}`);
-  console.log(`  correct:       ${card.correct}`);
-  console.log(`  incorrect:     ${card.incorrect}`);
-  console.log(`  partial:       ${card.partial}`);
-  console.log(`  accuracy:      ${fmt(card.accuracy)}`);
-  console.log(`  Brier:         ${fmt(card.brier, 4)}   (correct ∨ incorrect only; lower is better; 0.25 = always-50% baseline)`);
-  console.log(`  partial_rate:  ${fmt(card.partial_rate)}`);
+  console.log(`  total bets:        ${card.total_bets}`);
+  console.log(`  resolved:          ${card.resolved}`);
+  console.log(`  correct:           ${card.correct}`);
+  console.log(`  incorrect:         ${card.incorrect}`);
+  console.log(`  partial:           ${card.partial}`);
+  if (unresolvableCount > 0 || card.unresolvable_rate !== undefined) {
+    console.log(`  unresolvable:      ${unresolvableCount}`);
+  }
+  console.log(`  accuracy:          ${fmt(card.accuracy)}`);
+  console.log(`  Brier:             ${fmt(card.brier, 4)}   (correct ∨ incorrect only; lower is better; 0.25 = always-50% baseline)`);
+  console.log(`  partial_rate:      ${fmt(card.partial_rate)}`);
+  if (unresolvableCount > 0 || card.unresolvable_rate !== undefined && card.unresolvable_rate !== null) {
+    console.log(`  unresolvable_rate: ${fmt(card.unresolvable_rate)}   (unresolvable / (resolved + unresolvable); high = weak evidence retrieval)`);
+  }
   if (card.partial_rate !== null && card.partial_rate > PARTIAL_RATE_WARNING_THRESHOLD) {
     console.log('');
     console.log(`  [!] partial_rate is high (>${(PARTIAL_RATE_WARNING_THRESHOLD * 100).toFixed(0)}%) — calibration may be optimistic.`);
     console.log(`      Hedged bets escape the Brier denominator. Resolve them more decisively if the data supports it.`);
   }
-  if (card.resolved < 100) {
+  if (card.unresolvable_rate !== null && card.unresolvable_rate !== undefined && card.unresolvable_rate > 0.30) {
+    console.log('');
+    console.log(`  [!] unresolvable_rate is high (>${(0.30 * 100).toFixed(0)}%) — most grade attempts are running into evidence gaps.`);
+    console.log(`      The judge is working; retrieval isn't producing enough context to decide. Look at evidence-retrieval coverage, not prediction accuracy.`);
+  }
+  if (card.resolved < 100 && card.resolved > 0) {
     console.log('');
     console.log(`  Note: n=${card.resolved} is small. Brier is noisy below ~100 resolved bets.`);
   }
@@ -552,8 +570,55 @@ Common flags:
     case 'resolve':     return cmdResolve(engine, rest);
     case 'scorecard':   return cmdScorecard(engine, rest);
     case 'calibration': return cmdCalibration(engine, rest);
+    case 'revisit':     return cmdRevisit(engine, rest);
     default:
       // No subcommand keyword → treat first arg as <slug> for the list path.
       return cmdList(engine, args);
   }
+}
+
+/**
+ * v0.36.1.0 (TD4 / D30) — `gbrain takes revisit <slug>` opens $EDITOR on
+ * the source page so the user can write a follow-up immediately. The
+ * action the admin SPA's "revisit now" link triggers (via a small
+ * route handler that dispatches into this CLI command).
+ *
+ * Inserts a `<!-- gbrain:revisit -->` cursor marker at the bottom of the
+ * page body so the editor opens with intent visible.
+ */
+async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
+  const slug = rest[0];
+  if (!slug) {
+    process.stderr.write('Usage: gbrain takes revisit <slug>\n');
+    process.exit(1);
+  }
+  const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { execFileSync, spawnSync } = await import('node:child_process');
+  const { loadConfig } = await import('../core/config.ts');
+  const cfg = loadConfig();
+  const repoPath = (cfg as { sync?: { repo_path?: string } } | null)?.sync?.repo_path;
+  if (!repoPath) {
+    process.stderr.write('No brain repo configured. Run `gbrain config set sync.repo_path /path/to/brain`.\n');
+    process.exit(1);
+  }
+  const filePath = join(repoPath, `${slug}.md`);
+  if (!existsSync(filePath)) {
+    process.stderr.write(`Page not found: ${filePath}\n`);
+    process.exit(1);
+  }
+  // Append a cursor marker if not already present.
+  const existing = readFileSync(filePath, 'utf8');
+  const marker = '\n<!-- gbrain:revisit -->\n';
+  if (!existing.includes('<!-- gbrain:revisit -->')) {
+    writeFileSync(filePath, existing + marker);
+  }
+  const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
+  process.stderr.write(`Opening ${filePath} in ${editor}...\n`);
+  // Use spawnSync with stdio:'inherit' so the editor takes the terminal.
+  const result = spawnSync(editor, [filePath], { stdio: 'inherit' });
+  if (result.status !== 0) {
+    process.stderr.write(`Editor exited with status ${result.status ?? 'unknown'}\n`);
+  }
+  void execFileSync;
 }

@@ -228,6 +228,60 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
  * See `src/core/cycle/emotional-weight.ts` for the score formula and
  * `engine.getRecentSalience` for the SQL.
  */
+/**
+ * v0.37.0 — domain-bank sampling for `gbrain brainstorm` / `gbrain lsd`.
+ * Pulls one page per prefix from a caller-supplied prefix list.
+ * Tiebreaker via JOIN to page_links (inbound link count = "structural centrality").
+ * Stale-bias optional (LSD mode prefers forgotten pages via `last_retrieved_at`).
+ * sourceId/sourceIds threaded from day 1 per [source-id-canonical-thread].
+ */
+export interface DomainBankSampleOpts {
+  /** Top-level slug prefixes to sample from (e.g. ['wiki/vc', 'wiki/biology']). */
+  prefixes: string[];
+  /** Slugs to exclude (typically the close-set from hybridSearch). */
+  excludeSlugs?: string[];
+  /** When true, prefer pages with NULL last_retrieved_at or > staleThresholdDays old. */
+  staleBias?: boolean;
+  /** Days threshold for "stale" classification. Default 90. */
+  staleThresholdDays?: number;
+  /** Single-source scope (canonical scalar form). */
+  sourceId?: string;
+  /** Federated read scope (array form, wins over scalar). */
+  sourceIds?: string[];
+}
+
+/** v0.37.0 — corpus-sampling fallback for `gbrain brainstorm` when prefix-stratified can't fill M. */
+export interface CorpusSampleOpts {
+  /** Number of pages to sample. */
+  n: number;
+  /** Slugs to exclude (close-set + already-picked-by-prefix-stratified). */
+  excludeSlugs?: string[];
+  /** Stable seed for deterministic sampling in tests. Falls back to random when omitted. */
+  seed?: number;
+  /** Single-source scope. */
+  sourceId?: string;
+  /** Federated read scope. */
+  sourceIds?: string[];
+}
+
+/** v0.37.0 — one row per page returned by domain-bank's prefix/corpus sampling. */
+export interface DomainBankRow {
+  slug: string;
+  source_id: string;
+  /** Top-level prefix (`^[^/]+/[^/]+`) or null for short slugs. */
+  prefix: string | null;
+  page_id: number;
+  title: string | null;
+  /** Page body — what gets injected into the brainstorm prompt as "the user wrote..." */
+  compiled_truth: string;
+  /** COUNT(page_links.id WHERE to_page_id = this) — inbound link count, the "structural centrality" tiebreaker (D10). */
+  connection_count: number;
+  /** When this page was last surfaced by a user-facing search/query. Powers LSD stale-bias. */
+  last_retrieved_at: Date | null;
+  /** Lowest chunk_index with non-null embedding on the default embedding_column. Null if no embedded chunks. */
+  representative_chunk_id: number | null;
+}
+
 export interface SalienceOpts {
   /** Window in days. Default 14. */
   days?: number;
@@ -405,11 +459,75 @@ export interface SearchResult {
   score: number;
   stale: boolean;
   /**
+   * v0.36 (cross-modal wave): the chunk's modality discriminator from
+   * content_chunks.modality. 'text' for the existing text-embedding rows,
+   * 'image' for rows populated by importImageFile. Surfaced so callers /
+   * renderers can distinguish text matches from image matches in `'both'`
+   * mode results. Optional for back-compat with engines that don't project
+   * the column (defaults to 'text' in renderers when absent).
+   */
+  modality?: 'text' | 'image';
+  /**
    * v0.18.0: the sources.id the page belongs to. Dedup composite-keys
    * on (source_id, slug) — see src/core/search/dedup.ts. Defaults to
    * 'default' for pre-v0.17 rows that lacked the column.
    */
   source_id?: string;
+  /**
+   * v0.34 — page-level effective_date (and its source) carried through from
+   * the pages join. Format: YYYY-MM-DD (ISO date-only). Consumers (currently
+   * the contradiction probe's date-aware judge prompt + date pre-filter)
+   * treat null and undefined the same: "no temporal anchor for this chunk."
+   * Pre-v0.34 engines that don't project these columns leave both undefined.
+   */
+  effective_date?: string | null;
+  effective_date_source?: string | null;
+}
+
+/**
+ * v0.36 (D12) — declared shape of one entry in the `embedding_columns`
+ * config registry. Users declare entries via `gbrain config set
+ * embedding_columns '...JSON...'` (DB plane); resolver merges with
+ * built-ins. Field validation lives in src/core/search/embedding-column.ts
+ * and runs at load time:
+ *
+ *   provider:   parseable 'provider:model' (e.g. 'voyage:voyage-3-large')
+ *   dimensions: positive integer 1..8192
+ *   type:       'vector' | 'halfvec'
+ *
+ * The registry KEY itself (the column name) is also regex-validated
+ * (/^[a-z_][a-z0-9_]*$/) so a malicious config write can't smuggle a
+ * SQL fragment in via the key.
+ */
+export interface EmbeddingColumnConfig {
+  /** 'provider:model' identifier, e.g. 'voyage:voyage-3-large'. */
+  provider: string;
+  /** Dimensions of the stored vector. Must match actual DB column. */
+  dimensions: number;
+  /** pgvector type — drives the SQL cast at search time. */
+  type: 'vector' | 'halfvec';
+}
+
+/**
+ * v0.36 (D11) — fully resolved descriptor for an embedding column. The
+ * resolver (src/core/search/embedding-column.ts) produces these at the
+ * hybrid/op boundary; engines consume them. The engine NEVER reads config
+ * or calls the resolver itself — it sees only this validated descriptor.
+ *
+ * `name` is identifier-quoted at SQL-build time by buildVectorCastFragment
+ * (D12 defense in depth), but the resolver also enforces a strict regex
+ * at load time so this string is already known-safe by the time the engine
+ * sees it.
+ */
+export interface ResolvedColumn {
+  /** Column name in content_chunks (already validated against the registry). */
+  name: string;
+  /** pgvector type — `$N::vector` or `$N::halfvec(N)`. */
+  type: 'vector' | 'halfvec';
+  /** Embedding dimensions — must match actual DB column dim. */
+  dimensions: number;
+  /** 'provider:model' identifier, e.g. 'voyage:voyage-3-large'. */
+  embeddingModel: string;
 }
 
 export interface SearchOpts {
@@ -481,14 +599,29 @@ export interface SearchOpts {
    */
   sourceIds?: string[];
   /**
-   * v0.27.1: target column for vector search. 'embedding' (default) hits
-   * the brain's primary text-embedding column. 'embedding_image' targets
-   * the multimodal column populated by importImageFile. The two columns
-   * may live in different dim spaces (e.g. OpenAI 1536 + Voyage 1024)
-   * which is why the dual-column schema landed in v0.27.1. searchKeyword
-   * is unaffected — modality filtering on the keyword path is independent.
+   * v0.27.1 / v0.36 (D11): target column for vector search. Two shapes:
+   *
+   * 1. String name (legacy + user-facing). Engine and hybridSearch convert
+   *    to ResolvedColumn at the boundary via `resolveEmbeddingColumn()`.
+   *    Built-in names: 'embedding' (default, text), 'embedding_image'
+   *    (multimodal). v0.36 cross-modal wave adds 'embedding_multimodal'
+   *    (unified column populated by `gbrain reindex --multimodal`). Custom
+   *    user-declared names also accepted when registered in
+   *    `embedding_columns` config.
+   *
+   * 2. ResolvedColumn descriptor (internal). The engine ONLY accepts
+   *    this shape — hybridSearch resolves once at entry and passes the
+   *    descriptor in so the engine stays config-independent (D11 — engine
+   *    is a pure SQL composer).
+   *
+   * The two-shape union is the transition seam. External callers
+   * (operations.ts image branch, tests, gbrain-evals) pass strings;
+   * hybridSearch resolves; engine sees descriptor.
+   *
+   * searchKeyword is unaffected — modality filtering on the keyword path
+   * is independent.
    */
-  embeddingColumn?: 'embedding' | 'embedding_image';
+  embeddingColumn?: 'embedding' | 'embedding_image' | 'embedding_multimodal' | string | ResolvedColumn;
   /**
    * @deprecated v0.29.1: use `since` instead. Removed in v0.30.
    * v0.27.0: filter results to pages updated/created after this date. ISO-8601 string.
@@ -567,6 +700,35 @@ export interface SearchOpts {
     // Test seam — never set in production code.
     rerankerFn?: (input: { query: string; documents: string[]; topN?: number; model?: string; signal?: AbortSignal; timeoutMs?: number }) => Promise<{ index: number; relevanceScore: number }[]>;
   };
+  /**
+   * v0.35.6.0 — floor-ratio gate for metadata-axis boost stages.
+   * Number in [0, 1] or undefined (default = no gate). When set, each gated
+   * stage skips results whose pre-boost score is below `floorRatio * topScore`.
+   * Same threshold gates all three metadata stages; exact-match boost runs
+   * independently. Out-of-range values silently disable the gate.
+   * Sensible operator overrides for dense-embedder corpora: 0.85-0.95.
+   */
+  floorRatio?: number;
+  /**
+   * v0.36 cross-modal wave: route this search through the multimodal
+   * embedding space (Voyage multimodal-3 by default).
+   *
+   * - 'text' (default for queries that don't match image-intent regex):
+   *   existing text-embedding path. No behavior change vs pre-v0.36.
+   * - 'image': force routing through the multimodal model + embedding_image
+   *   column. Skip LLM expansion (image embeddings handle synonyms in-space)
+   *   and skip keyword search (no FTS index on image content).
+   * - 'both': run text and image vector searches in parallel; merge via
+   *   modality-weighted RRF.
+   * - 'auto' (literal): same effect as undefined — let intent classifier
+   *   decide. Accepted on the wire so MCP callers can be explicit.
+   *
+   * Cross-modal override matrix (D9): when effective modality is 'image',
+   * cross-modal path overrides expansion (false) and reranker (false)
+   * regardless of mode bundle. zerank-2 can't rerank image embeddings;
+   * sending them produces garbage scores.
+   */
+  crossModal?: 'text' | 'image' | 'both' | 'auto';
 }
 
 /**
@@ -835,6 +997,19 @@ export interface EvalCandidateInput {
   remote: boolean;
   job_id: number | null;
   subagent_id: number | null;
+  /**
+   * v0.36 (D16 / CDX-10): the embedding column resolved at capture time.
+   * Optional for back-compat with pre-v0.36 callers + test fixtures.
+   * Engines coalesce undefined to NULL at insert time so the column is
+   * always either a known column name or DB NULL — never JS undefined.
+   *
+   * Replay (`gbrain eval replay`) re-runs the captured query against the
+   * brain. Without this field, a replay after the user flipped
+   * `search_embedding_column` produces "regressions" that are just
+   * column changes. Replay reads this and uses it as a per-row override
+   * so capture and replay run in the same embedding space.
+   */
+  embedding_column?: string | null;
 }
 
 export interface EvalCandidate extends EvalCandidateInput {
@@ -908,6 +1083,14 @@ export interface HybridSearchMeta {
    * the operator's `config.search.mode` setting if per-call overrides win).
    */
   mode?: 'conservative' | 'balanced' | 'tokenmax';
+  /**
+   * v0.36 (D16 / CDX-10): the embedding column that actually ran this
+   * search. Threaded through to eval_candidates capture so replay can
+   * use the same column even after `search_embedding_column` is
+   * flipped. Always set on hybridSearch paths; omitted on
+   * non-hybridSearch capture paths (keyword-only `search` op).
+   */
+  embedding_column?: string;
 }
 
 // Config

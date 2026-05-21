@@ -107,8 +107,14 @@ export async function runServe(
     const bindIdx = args.indexOf('--bind');
     const bind = bindIdx >= 0 ? args[bindIdx + 1] : undefined;
 
+    // v0.36.x #1024: suppress the printed admin bootstrap token. Pair with
+    // GBRAIN_ADMIN_BOOTSTRAP_TOKEN for production deployments that don't
+    // want the value leaking into log aggregators on every supervisor
+    // restart.
+    const suppressBootstrapToken = args.includes('--suppress-bootstrap-token');
+
     const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams, bind });
+    await runServeHttp(engine, { port, tokenTtl, enableDcr, publicUrl, logFullParams, bind, suppressBootstrapToken });
     return;
   }
 

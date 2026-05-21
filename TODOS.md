@@ -1,6 +1,92 @@
 # TODOS
 
 
+## v0.37.4.0 pgGraph CI scaffolding follow-ups (v0.37.x+)
+
+- [ ] **T8 truncation signal — defer until dedupe-then-cap SQL + Postgres parity E2E.** v0.37.4.0 ships `frontierCap` as the actually-useful protection but strips the `onTruncation` callback after /review adversarial pass (Claude + Codex both flagged). Two bugs in the v1 algorithm: (a) FALSE POSITIVE — `count == cap` at a depth fires the callback even when the graph organically has exactly cap unique nodes at that depth with no truncation; (b) FALSE NEGATIVE — recursive `LIMIT N` runs BEFORE outer `SELECT DISTINCT`, so diamond graphs (one parent fans out to N+5 candidates with duplicates) can have the LIMIT eat its slots on dupes, then DISTINCT collapses to <cap unique nodes, missing real truncation. Fix shape: rewrite both engine impls to dedupe candidates (by `(slug, id)` or page id, source-scoped) BEFORE applying the LIMIT — i.e., `(SELECT DISTINCT ON ... ORDER BY slug, id LIMIT N)` inside the recursive term instead of post-CTE DISTINCT. Then write the missing `test/e2e/engine-parity-frontier-cap.test.ts` (Postgres against PGLite, identical chosen slugs when cap fires + stable ordering). Restore `TruncationInfo` + `opts.onTruncation` to `TraverseGraphOpts` with the cap-after-dedupe shape. Callers that need truncation visibility in the interim can compare `result.length` against expected fanout bounds. /review found it; not a blocker for v0.37.4.0 because the cap itself works correctly and is back-compat (default unset = no behavior change).
+
+- [ ] **pg_upgrade_matrix.sh: add layer-isolation mode.** The current script tests whole-system walk-forward (the bug class CHANGELOG advertises). Adversarial /review caught that multi-layer healing (bootstrap → SCHEMA_SQL → migrations → verifySchema) means stubbing out `applyForwardReferenceBootstrap` entirely still produces clean walk-forwards on both fixtures. So the matrix doesn't actually gate on bootstrap correctness — only on whole-system wedges. Add an `ISOLATE_BOOTSTRAP=1` mode that monkey-patches the downstream layers (or runs a smaller engine surface that only invokes bootstrap) so single-probe regressions can be isolated. Complements the existing `test/schema-bootstrap-coverage.test.ts` static guard.
+
+- [ ] **scripts/check-fuzz-purity.sh: derive TARGET_FILES from `test/fuzz/pure-validators.test.ts` imports.** Today the targets are hand-maintained in two places (`TARGET_FILES` array + the test file's imports). Adding a new pure fuzz target requires updating both; forgetting the script means the new target ships ungated. Parse the test file's imports at script start (regex over `import { ... } from '../../src/.../*.ts'`) instead.
+## skill_brain_first wave follow-ups (v0.36.4+)
+
+- [ ] **v0.37+: Runtime brain-first gate at MCP dispatch.** The v0.36.x
+  `skill_brain_first` doctor check is purely static — it scans SKILL.md
+  authorship for canonical Convention callouts, `brain_first: exempt`
+  frontmatter, or position-relative brain references. The motivating
+  incident (2026-05-19 tweet-shield) was a RUNTIME failure: an agent
+  called Perplexity / cross-modal eval to assess Garry's Palantir tweet
+  without ever checking the brain, which already had "designed the
+  entire Finance product UI" and "150+ PSDs from April-December 2006."
+  A runtime gate would hook MCP tool dispatch: when a subagent invokes
+  `web_search` / `perplexity` / `exa` / etc., require that a `search`,
+  `query`, or `get_page` call landed earlier in the same agent turn.
+  Subagent-isolation aware (the gate scope is per-turn, per-agent).
+  Touches: `src/mcp/dispatch.ts` (tool-call entry seam, would gate before
+  routing to external-tool handlers), `src/core/minions/handlers/subagent.ts`
+  (per-turn tracking), `src/core/operations.ts` (cross-reference the
+  brain-tool ops). Full wave on its own (~3-5 days human / ~1-2h CC).
+  Out of scope for the static-check wave because the surface area is
+  fundamentally different. Closes the tweet-shield root cause at the
+  enforcement layer instead of just the authorship layer.
+
+- [ ] **v0.36.x: Audit trend doctor check `skill_brain_first_trend`.** The
+  v0.36.x snapshot+diff audit JSONL at
+  `~/.gbrain/audit/skill-brain-first-YYYY-Www.jsonl` records detected /
+  resolved / fixed events as transitions. The data is reachable via
+  `readRecentBrainFirstEvents(7)` in `src/core/audit-skill-brain-first.ts`
+  but no doctor surface consumes it yet. Add a `skill_brain_first_trend`
+  check (~30 LOC) that reads recent events, aggregates added vs resolved
+  counts per week, warns when violations are rising (e.g. >3 added, 0
+  resolved over 4 weeks). Cheap to land once audit logs accumulate
+  multiple weeks of data (no point shipping it with zero baseline data).
+  Mirrors the doctor check pattern in `src/commands/doctor.ts`. Filed
+  during /plan-eng-review as TODO-2.
+
+- [ ] **v0.36.x: Tighten the external-lookup regex to reduce false-positive
+  rate from name mentions.** v0.36.x ships with word-boundary regex on
+  `perplexity`, `exa`, `web_search`, etc. This matches "perplexity"
+  inside `perplexity-research` (a sub-skill name in dispatcher prose, not
+  an API call). Two skills in this repo's own `skills/` (functional-area-
+  resolver, strategic-reading) hit this false-positive and ship with
+  `brain_first: exempt`. Possible mitigation: tighten the pattern to
+  require an API-call shape like `perplexity\.|perplexity[\s._-]?(?:api|search|query)`.
+  Whack-a-mole risk — the negation-prose false-positive class can't be
+  reliably caught with regex either. Tracking as a follow-up; the
+  declarative `brain_first: exempt` opt-out is the canonical answer for
+  the false-positive cases. Decide based on real-world hit rate after
+  the v0.36.x wave is in production for a few weeks.
+
+
+## v0.35.6.0 floor-ratio gate follow-ups (v0.36.x+)
+
+- [ ] **v0.36.x: Run gbrain-side floor-ratio ablation before flipping any mode-bundle default.** v0.35.6.0 ships the gate default-off (`MODE_BUNDLES[*].floor_ratio = undefined`) because the SkyTwin labeled-retrieval ablation that surfaced the regression isn't reproducible on gbrain's own eval surfaces from outside. Before any mode-bundle default flip, run the gate at `floor_ratio: undefined`, 0.85, 0.90, 0.95 across `gbrain eval longmemeval`, `gbrain eval whoknows`, `gbrain eval suspected-contradictions`, and the BrainBench-Real replay (sibling gbrain-evals repo). Quantify per-mode P@k / R@k / nDCG@k / top-1 stability deltas. Look for: regression on queries that genuinely need the long-tail boost (specific entity lookups, low-frequency topics) vs improvement on queries where weak-overlap pages were leapfrogging. The corpus-level finding determines whether tokenmax (most exposure to the failure mode) should flip first, or whether the gate stays a per-call opt-in indefinitely. Filed during v0.35.6.0 codex outside-voice review.
+
+- [ ] **v0.36.x: `MODE_BUNDLES.floor_ratio` integration shape — populate after ablation evidence.** v0.35.6.0 leaves `floor_ratio: undefined` in all three bundles deliberately. After the ablation TODO above, set per-mode defaults: probably `tokenmax: 0.85` first (high-context tier, broad searchLimit=50, expansion=on — most exposure to leapfrog), `balanced` second if signal holds, `conservative` only if the ablation shows the gate doesn't hurt on small candidate pools. Update the canonical-bundle tests in `test/search-mode.test.ts` (3 fixtures) when flipping. The KNOBS_HASH_VERSION does NOT need to bump for a default change — the per-bundle default is part of the hash input already.
+
+- [ ] **v0.36.x: Per-source floor-ratio (federated read).** v0.35.6.0 uses a single global threshold across all sources. Federated-read users (v0.34.1.0+) sharing a query across multiple sources get one floor across the merged result set, which means a high-scoring source can suppress metadata boosts for pages in another source. Codex outside-voice flagged this during v0.35.6.0 review; user explicitly chose the simpler primitive (D9=A). If a federated-read user later reports legitimate per-source winners being suppressed, the fix is a per-source threshold map computed at `runPostFusionStages` entry (one threshold per unique `source_id` in the result set). Plan reference: D9 in `~/.claude/plans/swift-sniffing-nygaard.md`.
+
+- [ ] **v0.36.x: Reranker top-N expansion when floor-ratio narrows the candidate pool.** Floor-ratio can suppress a legitimate candidate that would have made it to the reranker's top-N. Sanity check after the v0.36 ablation: if tokenmax with `floor_ratio: 0.85` and `reranker_top_n_in: 30` shows the reranker seeing a meaningfully different set than without the gate, consider expanding `reranker_top_n_in` when floor is set (e.g. 30 → 40) so the reranker still has 30 floor-eligible candidates to reorder. Cheap mitigation if the data supports it. Not a blocker.
+
+
+## dreamy-thompson wave follow-ups (v0.36.x)
+
+- [ ] **v0.36.x: runThink full rewrite — drop ThinkLLMClient indirection.** v0.36's fix(think) wave landed a gateway-backed adapter at `src/core/think/index.ts:225-251` so `gbrain config set anthropic_api_key` works over MCP stdio (closed #952). The adapter routes through `gateway.chat()` but `runThink` still carries the `ThinkLLMClient` interface as the test seam — it's the last LLM-using path that doesn't use the canonical `__setChatTransportForTests` seam v0.31.12 established for chat/embed. Cleanup: drop `ThinkLLMClient`, drop the `opts.client` injection point, migrate the 12+ existing tests (`test/think-pipeline.serial.test.ts:144,181,222`, `test/think-gateway-adapter.test.ts`, plus 9+ others that stub the interface) to `__setChatTransportForTests`. Pros: codebase consistency, one fewer test-stub pattern, easier to add provider switching for think once it routes through gateway natively. Cons: 12+ test files need migration. Blocked by: v0.36 wave landing on master (so the adapter exists to lean on while migrating tests). Plan reference: D5 + D7 in `~/.claude/plans/ok-i-spun-up-dreamy-thompson.md`.
+
+- [ ] **v0.36.x: Supabase parity test fixture for `applyForwardReferenceBootstrap`.** v0.36 fixed the underlying bug (bootstrap now uses the DDL connection from `initSchema` so probes run inside the advisory-lock scope) per codex P1 from /ship adversarial review. What remains is the TEST FIXTURE that proves it: the new pre-v18/pre-v34/pre-v60 E2E tests run against local Docker Postgres but not against Supabase-shape pooler topology (transaction pooler + statement_timeout). Real Supabase upgrades have failed multiple times on this exact connection-topology divergence (#699, #820 lineage). Fix: a test fixture that exercises the probe path against deriveDirectUrl + transaction pooler + statement_timeout. Cons: requires Supabase fixture infra OR careful mocking of the connection-selection logic in `db.ts`'s `getDDLConnection` path.
+
+
+## kinshasa-v3 follow-ups (v0.35.4.0)
+
+- [ ] **v0.36.x: Fix `supervisor-audit.ts:77` `readSupervisorEvents` to use the dual-week-aware pattern from `stub-guard-audit.ts:readRecentStubGuardEvents`.** The supervisor reader only reads the current ISO-week file, so a 24h sliding window across Monday 00:00 UTC silently loses Sunday's events (they're in last week's file). The new stub-guard reader in v0.35.4.0 fixes this for its own audit log by reading BOTH current and previous week files before timestamp-filtering — the supervisor reader should adopt the same shape. Pin with a unit test that uses a fake-clock fixture set to "Monday 00:01 UTC" with a Sunday 23:55 event in the prior file. Filed during v0.35.4.0 kinshasa-v3 codex outside-voice review.
+
+- [ ] **v0.36.x: Decommission the stub-guard at `fence-write.ts:190` once the sunset criterion holds.** The guard's purpose is defense-in-depth behind the resolver's prefix-expansion fix. Sunset rule: when `stub_guard_24h` reads <5 hits/week for 3 consecutive weeks across production brains, the prefix-expansion is doing its job and the guard can be removed. The JSDoc names v0.36 as the target — re-check this against actual operator-brain data when planning v0.36.
+
+- [ ] **v0.36.x: `PREFIX_EXPANSION_DIRS` is hardcoded to `['people', 'companies']` in `src/core/entities/resolve.ts:97`.** New entity directories (funds, advisors, deals, etc.) require a code change to opt in. Consider a config-driven list (`entities.prefix_expansion_dirs: [...]` in `gbrain.yml`) so operators can extend without forking. Filed during v0.35.4.0 plan-eng-review.
+
+- [ ] **v0.36.x: Sweep the banned private-agent-name references out of `CHANGELOG.md`.** Three pre-existing lines in `CHANGELOG.md` (around lines 2537, 2606, 3304) reference the name that `scripts/check-privacy.sh` enforces against. Pre-existing on master, not introduced by v0.35.4.0; `CHANGELOG.md` is on the script's allow-list so master CI is green, but they still violate the spirit of CLAUDE.md's privacy rule (the allow-list is a meta-documentation exception, not a license to add new references). Replace with `your OpenClaw` or `Garry's OpenClaw` per the script's own suggestion text. Trivial cleanup PR. Filed during v0.35.4.0 privacy audit.
+
+
 ## embed --stale follow-ups (v0.34.4.0)
 
 - [ ] **v0.35.x: Concurrent NULL→non-NULL upsert race in `embed.ts:429-443` + `postgres-engine.ts:1231`'s `COALESCE(EXCLUDED.embedding, content_chunks.embedding)`.** Two `embed --stale` workers (or `embed --stale` racing with a sync that re-embeds the same chunk) can have the slower writer overwrite the faster one's fresher embedding. Window is small (20 workers, all from the same `listStaleChunks` snapshot) but exists. Tractable fix: a `WHERE content_chunks.embedded_at < EXCLUDED.embedded_at OR content_chunks.embedding IS NULL` predicate on the upsert. Out of scope for v0.34.4.0 because the upsert is not in the diff; pre-existing bug. Filed during v0.34.4.0 codex outside-voice review.

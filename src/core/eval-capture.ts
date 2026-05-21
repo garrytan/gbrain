@@ -116,6 +116,10 @@ export function buildEvalCandidateInput(
     remote: ctx.remote,
     job_id: ctx.job_id,
     subagent_id: ctx.subagent_id,
+    // v0.36 (D16 / CDX-10): persist the column that ran. Null for
+    // keyword-only `search` (meta.embedding_column omitted), preserving
+    // back-compat with rows captured before the column tracking landed.
+    embedding_column: ctx.meta.embedding_column ?? null,
   };
 }
 

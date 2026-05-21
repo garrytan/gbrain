@@ -784,6 +784,108 @@ describe('migrate runner v66 — partial index materialized on PGLite', () => {
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────
+// v0.35.4 — migration v67 (facts_typed_claim_columns)
+// Adds four optional typed-claim columns to `facts` + a partial index
+// keyed on (entity_slug, claim_metric, valid_from) WHERE claim_metric IS NOT NULL.
+// All fields nullable; the migration is metadata-only on both engines
+// because no DEFAULT is set and the partial index covers zero rows until
+// extraction emits typed fields.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('migrate v67 — facts_typed_claim_columns', () => {
+  const v67 = MIGRATIONS.find(m => m.version === 67);
+
+  test('v67 exists and uses an inline sql field (no handler needed)', () => {
+    expect(v67).toBeDefined();
+    expect(v67!.name).toBe('facts_typed_claim_columns');
+    expect(v67!.idempotent).toBe(true);
+    expect(typeof v67!.sql).toBe('string');
+    expect((v67!.sql as string).length).toBeGreaterThan(0);
+  });
+
+  test('v67 sql adds all four typed-claim columns', () => {
+    const sql = v67!.sql as string;
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS claim_metric');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS claim_value');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS claim_unit');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS claim_period');
+    // DOUBLE PRECISION is the numeric type for claim_value (per plan D-CDX).
+    expect(sql).toContain('DOUBLE PRECISION');
+  });
+
+  test('v67 creates partial index on (entity_slug, claim_metric, valid_from)', () => {
+    const sql = v67!.sql as string;
+    expect(sql).toContain('CREATE INDEX IF NOT EXISTS facts_typed_claim_idx');
+    expect(sql).toContain('ON facts (entity_slug, claim_metric, valid_from)');
+    expect(sql).toContain('WHERE claim_metric IS NOT NULL');
+  });
+});
+
+describe('migrate runner v67 — typed-claim columns materialized on PGLite', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  test('v67 added claim_metric, claim_value, claim_unit, claim_period columns to facts', async () => {
+    const rows = await (engine as any).db.query(
+      `SELECT column_name, data_type FROM information_schema.columns
+       WHERE table_name = 'facts'
+         AND column_name IN ('claim_metric', 'claim_value', 'claim_unit', 'claim_period')
+       ORDER BY column_name`,
+    );
+    const names = rows.rows.map((r: any) => r.column_name).sort();
+    expect(names).toEqual(['claim_metric', 'claim_period', 'claim_unit', 'claim_value']);
+    const byName: Record<string, string> = Object.fromEntries(
+      rows.rows.map((r: any) => [r.column_name, r.data_type]),
+    );
+    // claim_value is DOUBLE PRECISION; the others are TEXT.
+    expect(byName['claim_value']).toBe('double precision');
+    expect(byName['claim_metric']).toBe('text');
+    expect(byName['claim_unit']).toBe('text');
+    expect(byName['claim_period']).toBe('text');
+  });
+
+  test('v67 created facts_typed_claim_idx partial index on PGLite', async () => {
+    const rows = await (engine as any).db.query(
+      `SELECT indexname, indexdef FROM pg_indexes WHERE indexname = 'facts_typed_claim_idx'`,
+    );
+    expect(rows.rows.length).toBe(1);
+    // The partial-predicate appears in the materialized index definition.
+    expect(rows.rows[0].indexdef).toContain('claim_metric');
+  });
+
+  test('v67 columns are nullable — existing facts persist with NULL typed fields (backward compat)', async () => {
+    // Insert a fact via raw SQL with no typed-claim values; assert the
+    // four columns remain NULL. The cycle path (extract_facts) hits this
+    // backward-compat surface every time it processes a fence without
+    // metric assertions.
+    const db = (engine as any).db;
+    await db.exec(`INSERT INTO sources (id, name) VALUES ('v67-test', 'v67-test') ON CONFLICT DO NOTHING`);
+    await db.exec(
+      `INSERT INTO facts (source_id, entity_slug, fact, source, valid_from)
+       VALUES ('v67-test', 'v67/example', 'plain non-typed claim', 'test', now())`,
+    );
+    const row = await db.query(
+      `SELECT claim_metric, claim_value, claim_unit, claim_period
+       FROM facts WHERE source_id = 'v67-test' AND entity_slug = 'v67/example'`,
+    );
+    expect(row.rows.length).toBe(1);
+    expect(row.rows[0].claim_metric).toBeNull();
+    expect(row.rows[0].claim_value).toBeNull();
+    expect(row.rows[0].claim_unit).toBeNull();
+    expect(row.rows[0].claim_period).toBeNull();
+  });
+});
+
 describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate rows', () => {
   let engine: PGLiteEngine;
 
@@ -1506,5 +1608,191 @@ describe('resolveSessionTimeouts — env var overrides', () => {
     process.env.GBRAIN_IDLE_TX_TIMEOUT = 'off';
     const t = resolveSessionTimeouts();
     expect(Object.keys(t)).toHaveLength(0);
+  });
+});
+
+// ─── v0.37.2.0 — v80 takes_unresolvable_quality_v0_37_2_0 ──────────────────
+//
+// Hotfix that unblocks the production grading script. Widens BOTH:
+//   (a) the table-level takes_resolution_consistency CHECK to accept
+//       quality='unresolvable' AND outcome=NULL
+//   (b) the column-level CHECK on resolved_quality to allow 'unresolvable'
+// Structural assertions only — round-trip behavior is covered by E2E.
+// Renumbered v74→v79→v80 during successive master merges (autonomous-
+// remediation wave claimed v68-v78, then v0.37.1.0 claimed v79).
+
+describe('migrate v80 — takes_unresolvable_quality_v0_37_2_0', () => {
+  const v80 = MIGRATIONS.find(m => m.version === 80);
+
+  test('v80 entry exists with the documented name', () => {
+    expect(v80).toBeDefined();
+    expect(v80!.name).toBe('takes_unresolvable_quality_v0_37_2_0');
+  });
+
+  test('v80 is marked idempotent so re-runs are safe', () => {
+    expect(v80!.idempotent).toBe(true);
+  });
+
+  test("v80 widens the column-level CHECK to include 'unresolvable'", () => {
+    const sql = (v80!.sql ?? '').toLowerCase();
+    // Drops both possible names (auto-generated + explicitly-named) so
+    // pre-v80 brains converge regardless of which CHECK shape they had.
+    expect(sql).toContain('drop constraint if exists takes_resolved_quality_check');
+    expect(sql).toContain('drop constraint if exists takes_resolved_quality_values');
+    // The new CHECK enumerates all four valid quality states.
+    expect(sql).toContain('takes_resolved_quality_values');
+    expect(sql).toMatch(/'correct'/);
+    expect(sql).toMatch(/'incorrect'/);
+    expect(sql).toMatch(/'partial'/);
+    expect(sql).toMatch(/'unresolvable'/);
+  });
+
+  test('v80 widens the table-level takes_resolution_consistency CHECK', () => {
+    const sql = v80!.sql ?? '';
+    expect(sql).toContain('DROP CONSTRAINT IF EXISTS takes_resolution_consistency');
+    expect(sql).toContain('ADD CONSTRAINT takes_resolution_consistency CHECK');
+    // The new (quality, outcome) row for unresolvable joins partial as
+    // null-outcome. Pin the literal pair so regressions surface.
+    expect(sql).toMatch(/resolved_quality\s*=\s*'unresolvable'\s+AND\s+resolved_outcome\s+IS\s+NULL/i);
+  });
+
+  test('v80 keeps the existing four (quality, outcome) pairs intact', () => {
+    const sql = v80!.sql ?? '';
+    // Regression: shouldn't accidentally drop pre-existing legal states.
+    expect(sql).toMatch(/resolved_quality\s+IS\s+NULL\s+AND\s+resolved_outcome\s+IS\s+NULL/i);
+    expect(sql).toMatch(/resolved_quality\s*=\s*'correct'\s+AND\s+resolved_outcome\s*=\s*true/i);
+    expect(sql).toMatch(/resolved_quality\s*=\s*'incorrect'\s+AND\s+resolved_outcome\s*=\s*false/i);
+    expect(sql).toMatch(/resolved_quality\s*=\s*'partial'\s+AND\s+resolved_outcome\s+IS\s+NULL/i);
+  });
+});
+
+// E2E round-trip — runs against PGLite (no DATABASE_URL needed). Spins up a
+// fresh in-memory brain, applies all migrations through v80, then exercises
+// the regression checklist: R1 unresolvable persists, R2 pre-v80 (NULL,NULL)
+// rows survive, R3+R4 contradictory pairs still rejected, R5 the four legal
+// shapes all round-trip.
+describe('migrate v80 — CHECK widening end-to-end on PGLite', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  async function insertTake(rowNum: number): Promise<number> {
+    // Need a page row to satisfy the FK before we can write a take.
+    const slug = `wiki/people/v80-test-${rowNum}-${Math.random().toString(36).slice(2, 8)}`;
+    const page = await engine.putPage(slug, {
+      type: 'person',
+      title: `v80 test row ${rowNum}`,
+      compiled_truth: '',
+      timeline: '',
+      frontmatter: {},
+      content_hash: `v80-${rowNum}-${Math.random()}`,
+    });
+    await engine.executeRaw(
+      `INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [page.id, rowNum, `claim ${rowNum}`, 'bet', 'garry', 0.5, true],
+    );
+    return page.id;
+  }
+
+  async function tryResolve(
+    pageId: number,
+    rowNum: number,
+    quality: string,
+    outcome: boolean | null,
+  ): Promise<{ ok: true } | { ok: false; err: string }> {
+    try {
+      await engine.executeRaw(
+        `UPDATE takes
+            SET resolved_at = now(),
+                resolved_quality = $1::text,
+                resolved_outcome = $2,
+                resolved_by = $3
+          WHERE page_id = $4 AND row_num = $5`,
+        [quality, outcome, 'gbrain:test', pageId, rowNum],
+      );
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, err: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  test('R1: writing quality=unresolvable + outcome=NULL succeeds post-v80', async () => {
+    const pageId = await insertTake(101);
+    const result = await tryResolve(pageId, 101, 'unresolvable', null);
+    expect(result.ok).toBe(true);
+
+    const row = (await engine.executeRaw<{ resolved_quality: string; resolved_outcome: boolean | null }>(
+      `SELECT resolved_quality, resolved_outcome FROM takes WHERE page_id = $1 AND row_num = $2`,
+      [pageId, 101],
+    ))[0];
+    expect(row.resolved_quality).toBe('unresolvable');
+    expect(row.resolved_outcome).toBeNull();
+  });
+
+  test('R2: pre-v80 row with quality=NULL AND outcome=NULL survives widened CHECK', async () => {
+    // After v80 ran on initSchema, inserting an unresolved take must still
+    // succeed — the (NULL, NULL) case is still legal.
+    const pageId = await insertTake(102);
+    const row = (await engine.executeRaw<{ resolved_quality: string | null; resolved_outcome: boolean | null }>(
+      `SELECT resolved_quality, resolved_outcome FROM takes WHERE page_id = $1 AND row_num = $2`,
+      [pageId, 102],
+    ))[0];
+    expect(row.resolved_quality).toBeNull();
+    expect(row.resolved_outcome).toBeNull();
+  });
+
+  test('R3 negative: quality=partial AND outcome=true STILL rejected', async () => {
+    const pageId = await insertTake(103);
+    const result = await tryResolve(pageId, 103, 'partial', true);
+    expect(result.ok).toBe(false);
+    expect((result as { ok: false; err: string }).err.toLowerCase()).toContain('check');
+  });
+
+  test('R4 negative: quality=unresolvable AND outcome=true STILL rejected', async () => {
+    // The widened CHECK admits unresolvable only with NULL outcome — same
+    // shape as partial. A truthy outcome remains illegal.
+    const pageId = await insertTake(104);
+    const result = await tryResolve(pageId, 104, 'unresolvable', true);
+    expect(result.ok).toBe(false);
+    expect((result as { ok: false; err: string }).err.toLowerCase()).toContain('check');
+  });
+
+  test('R4 negative: quality=unresolvable AND outcome=false STILL rejected', async () => {
+    const pageId = await insertTake(105);
+    const result = await tryResolve(pageId, 105, 'unresolvable', false);
+    expect(result.ok).toBe(false);
+    expect((result as { ok: false; err: string }).err.toLowerCase()).toContain('check');
+  });
+
+  test('R5: getScorecard surfaces unresolvable_count + unresolvable_rate as siblings', async () => {
+    // Seed three rows: one correct, one partial, one unresolvable. All under
+    // the same holder so the scorecard groups them. unresolvable_rate must
+    // come out as 1 / (2 + 1) since `resolved` stays 3-state (correct+partial).
+    const pid1 = await insertTake(201);
+    const pid2 = await insertTake(202);
+    const pid3 = await insertTake(203);
+    expect((await tryResolve(pid1, 201, 'correct', true)).ok).toBe(true);
+    expect((await tryResolve(pid2, 202, 'partial', null)).ok).toBe(true);
+    expect((await tryResolve(pid3, 203, 'unresolvable', null)).ok).toBe(true);
+
+    const scorecard = await engine.getScorecard({ holder: 'garry' }, undefined);
+    // Three rows total, 2 in the 3-state subset, 1 unresolvable.
+    expect(scorecard.resolved).toBeGreaterThanOrEqual(2);
+    expect(scorecard.unresolvable_count).toBeGreaterThanOrEqual(1);
+    // unresolvable_rate is computed against the 4-state denominator.
+    expect(scorecard.unresolvable_rate).not.toBeNull();
+    expect(scorecard.unresolvable_rate!).toBeGreaterThan(0);
+    // The legacy fields keep their pre-v80 meaning.
+    expect(typeof scorecard.accuracy).not.toBe('undefined');
+    expect(typeof scorecard.partial_rate).not.toBe('undefined');
   });
 });
