@@ -2,6 +2,28 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- `gbrain jobs work --poll-interval <ms>` flag — tunes the worker's queue-empty
+  sleep duration. Default `5000` (matches the existing `MinionWorker`
+  constructor default). Validation bounded `[100, 300000]`:
+  - `100ms` minimum prevents accidental tight-loop CPU burn
+  - `5min` maximum is "effectively no polling" — longer intervals likely want
+    a different scheduling pattern entirely
+  
+  Motivation: `MinionWorker.pollInterval` has existed as a constructor option
+  since the initial worker landed, but had no CLI surface. For low-throughput
+  setups (e.g., a single-user agent fleet with sparse job traffic), the 5s
+  default is the dominant pickup-latency contributor for small jobs — empirical
+  measurement on a 3-host fleet shows mean ~3.6s worker pickup, worst-case ~5s
+  (full poll cycle) per `jobs submit` → terminal observation. This flag closes
+  the gap without forking the CLI entrypoint.
+  
+  Purely additive — existing service units without the flag continue working
+  unchanged.
+
 ## [0.37.9.0] - 2026-05-20
 
 **Tags get written the same way everywhere now.**

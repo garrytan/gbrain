@@ -60,6 +60,28 @@ export function parseMaxRssFlag(args: string[]): number | undefined {
   return parsed;
 }
 
+/** Parse `--poll-interval MS` (worker queue-empty sleep duration).
+ *  Returns:
+ *   - undefined if the flag is absent (caller falls back to 5000ms default)
+ *   - the value if 100 ≤ N ≤ 300000
+ *  Errors and exits the process if the flag is non-numeric, < 100, or > 300000.
+ *  Bounds rationale:
+ *   - 100ms minimum prevents accidental tight-loop CPU burn
+ *   - 5min maximum is "effectively no polling"; longer intervals likely want
+ *     a different scheduling pattern entirely */
+export function parsePollIntervalFlag(args: string[]): number | undefined {
+  const raw = parseFlag(args, '--poll-interval');
+  if (raw === undefined) return undefined;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 100 || parsed > 300_000) {
+    console.error(
+      `Error: --poll-interval must be an integer between 100 and 300000 (ms), got "${raw}".`,
+    );
+    process.exit(1);
+  }
+  return parsed;
+}
+
 export function resolveWorkerConcurrency(args: string[], env: NodeJS.ProcessEnv = process.env): number {
   const raw = parseFlag(args, '--concurrency') ?? env.GBRAIN_WORKER_CONCURRENCY ?? '1';
   const parsed = parseInt(raw, 10);
@@ -137,7 +159,7 @@ USAGE
   gbrain jobs stats
   gbrain jobs smoke
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
-                   [--health-interval MS]
+                   [--health-interval MS] [--poll-interval MS]
   gbrain jobs supervisor [start] [--detach] [--json]
                          [--concurrency N] [--queue Q] [--pid-file PATH]
                          [--max-crashes N] [--health-interval N]
@@ -742,11 +764,18 @@ HANDLER TYPES (built in)
         healthCheckInterval = parsed;
       }
 
+      // --poll-interval defaults to 5000ms (matches MinionWorker constructor
+      // default — backward compatible). Useful for reducing job-pickup latency
+      // in low-throughput setups where the 5s default is the dominant latency
+      // contributor for small jobs. Validation in parsePollIntervalFlag.
+      const pollIntervalExplicit = parsePollIntervalFlag(args);
+      const pollInterval = pollIntervalExplicit ?? 5000;
+
       try { await queue.ensureSchema(); }
       catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
       const worker = new MinionWorker(engine, {
-        queue: queueName, concurrency, maxRssMb, healthCheckInterval,
+        queue: queueName, concurrency, maxRssMb, healthCheckInterval, pollInterval,
       });
       await registerBuiltinHandlers(worker, engine);
 
