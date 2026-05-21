@@ -123,6 +123,45 @@ if (!dbUrl) {
     });
   });
 
+  describe('Postgres: upsertChunks with write-side descriptor', () => {
+    test('halfvec descriptor writes text embedding to alternate column', async () => {
+      await engine.putPage('docs/write-alt-postgres', {
+        type: 'concept',
+        title: 'Write alt column Postgres',
+        compiled_truth: 'Postgres write-side alternate embedding column test.',
+      });
+
+      const descriptor: ResolvedColumn = {
+        name: 'embedding_ze',
+        type: 'halfvec',
+        dimensions: 2560,
+        embeddingModel: 'zeroentropyai:zembed-1',
+      };
+      await engine.upsertChunks('docs/write-alt-postgres', [
+        {
+          chunk_index: 0,
+          chunk_text: 'Postgres write-side alternate embedding column test.',
+          chunk_source: 'compiled_truth',
+          embedding: new Float32Array(2560).fill(0.25),
+        },
+      ], { embeddingColumn: descriptor });
+
+      const rows = await engine.executeRaw<{
+        has_default: boolean;
+        has_ze: boolean;
+      }>(
+        `SELECT embedding IS NOT NULL AS has_default,
+                embedding_ze IS NOT NULL AS has_ze
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug = 'docs/write-alt-postgres'`,
+      );
+      expect(rows.length).toBe(1);
+      expect(rows[0].has_default).toBe(false);
+      expect(rows[0].has_ze).toBe(true);
+    }, 30_000);
+  });
+
   describe('Postgres: HNSW index visible to planner', () => {
     test('pg_indexes shows the hnsw index on embedding_voyage', async () => {
       const rows = await engine.executeRaw<{ indexname: string; indexdef: string }>(

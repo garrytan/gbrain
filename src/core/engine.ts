@@ -9,6 +9,7 @@ import type {
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
   EngineConfig,
+  ResolvedColumn,
   CodeEdgeInput, CodeEdgeResult,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
@@ -686,8 +687,17 @@ export interface BrainEngine {
    * scoped when `opts.sourceId` is given; without it, the schema DEFAULT
    * matches and bare-slug lookup blows up if the same slug exists in
    * multiple sources (Postgres 21000).
+   *
+   * v0.37.6: optional `embeddingColumn` selects the content_chunks column
+   * to receive text embeddings. The caller resolves this descriptor at the
+   * import/embed boundary via `resolveWriteColumn()`; engines never read
+   * config or choose columns themselves.
    */
-  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void>;
+  upsertChunks(
+    slug: string,
+    chunks: ChunkInput[],
+    opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn },
+  ): Promise<void>;
   /**
    * Read every chunk for a page. `opts.sourceId` source-scopes the page
    * lookup; without it, multi-source brains return chunks from every

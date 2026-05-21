@@ -39,6 +39,7 @@ import type {
   BrainStats, BrainHealth,
   IngestLogEntry, IngestLogInput,
   EngineConfig,
+  ResolvedColumn,
   EvalCandidate, EvalCandidateInput,
   EvalCaptureFailure, EvalCaptureFailureReason,
   SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
@@ -1574,9 +1575,18 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Chunks
-  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
+  async upsertChunks(
+    slug: string,
+    chunks: ChunkInput[],
+    opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn },
+  ): Promise<void> {
     const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
+    const targetFragment = opts?.embeddingColumn
+      ? buildVectorCastFragment(opts.embeddingColumn)
+      : undefined;
+    const targetCol = targetFragment?.col ?? 'embedding';
+    const embeddingCast = targetFragment?.castSql.replace('$1::', '') ?? 'vector';
 
     // Source-scope the page-id lookup. Without this filter, multi-source
     // brains where the slug exists in 2+ sources return >1 row and the
@@ -1603,7 +1613,7 @@ export class PostgresEngine implements BrainEngine {
     // scope metadata through upserts.
     // v0.27.1 (Phase 8): added `modality` + `embedding_image` to the column
     // list. Image chunks pass embedding=null + embedding_image=Float32Array.
-    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)';
+    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${targetCol}, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
     const rows: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
@@ -1620,7 +1630,7 @@ export class PostgresEngine implements BrainEngine {
         : null;
       const modality = chunk.modality ?? 'text';
 
-      const embeddingPh = embeddingStr ? `$${paramIdx++}::vector` : 'NULL';
+      const embeddingPh = embeddingStr ? `$${paramIdx++}::${embeddingCast}` : 'NULL';
       const embeddedAtPh = embeddingStr ? 'now()' : 'NULL';
       const embeddingImagePh = embeddingImageStr ? `$${paramIdx++}::vector` : 'NULL';
 
@@ -1657,11 +1667,11 @@ export class PostgresEngine implements BrainEngine {
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
          chunk_text = EXCLUDED.chunk_text,
          chunk_source = EXCLUDED.chunk_source,
-         embedding = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding ELSE COALESCE(EXCLUDED.embedding, content_chunks.embedding) END,
+         ${targetCol} = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.${targetCol} ELSE COALESCE(EXCLUDED.${targetCol}, content_chunks.${targetCol}) END,
          model = COALESCE(EXCLUDED.model, content_chunks.model),
          token_count = EXCLUDED.token_count,
          embedded_at = CASE
-           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.embedding IS NULL THEN NULL
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.${targetCol} IS NULL THEN NULL
            ELSE COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)
          END,
          language = EXCLUDED.language,

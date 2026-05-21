@@ -10,10 +10,12 @@ import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedBatch, embedMultimodal } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
-import type { ChunkInput, PageInput, PageType } from './types.ts';
+import type { ChunkInput, PageInput, PageType, ResolvedColumn } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
+import { loadConfigWithEngine } from './config.ts';
+import { resolveWriteColumn } from './search/embedding-column.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -172,6 +174,22 @@ export interface ImportResult {
 
 const MAX_FILE_SIZE = 5_000_000; // 5MB
 
+async function resolveChunkWriteColumn(engine: BrainEngine): Promise<ResolvedColumn | undefined> {
+  const mergedCfg = await loadConfigWithEngine(engine);
+  return mergedCfg ? resolveWriteColumn(mergedCfg) : undefined;
+}
+
+function chunkWriteOpts(
+  sourceId: string | undefined,
+  embeddingColumn: ResolvedColumn | undefined,
+): { sourceId?: string; embeddingColumn?: ResolvedColumn } | undefined {
+  if (!sourceId && !embeddingColumn) return undefined;
+  return {
+    ...(sourceId ? { sourceId } : {}),
+    ...(embeddingColumn ? { embeddingColumn } : {}),
+  };
+}
+
 /**
  * Import content from a string. Core pipeline:
  * parse -> hash -> embed (external) -> transaction(version + putPage + tags + chunks)
@@ -222,6 +240,7 @@ export async function importFromContent(
   // silently fabricated a duplicate at (default, slug) — causing later
   // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
   const sourceId = opts.sourceId;
+  const embeddingColumn = await resolveChunkWriteColumn(engine);
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
@@ -299,6 +318,7 @@ export async function importFromContent(
   // schema DEFAULT — required for multi-source brains; harmless ('default')
   // for single-source callers.
   const txOpts = sourceId ? { sourceId } : undefined;
+  const chunkOpts = chunkWriteOpts(sourceId, embeddingColumn);
   await engine.transaction(async (tx) => {
     if (existing) await tx.createVersion(slug, txOpts);
 
@@ -348,7 +368,7 @@ export async function importFromContent(
     }
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks, txOpts);
+      await tx.upsertChunks(slug, chunks, chunkOpts);
     } else {
       // Content is empty — delete stale chunks so they don't ghost in search results
       await tx.deleteChunks(slug, txOpts);
@@ -544,6 +564,8 @@ export async function importCodeFile(
   const title = `${relativePath} (${lang})`;
   const sourceId = opts.sourceId;
   const txOpts = sourceId ? { sourceId } : undefined;
+  const embeddingColumn = await resolveChunkWriteColumn(engine);
+  const chunkOpts = chunkWriteOpts(sourceId, embeddingColumn);
 
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_FILE_SIZE) {
@@ -647,7 +669,7 @@ export async function importCodeFile(
     await tx.addTag(slug, lang, txOpts);
 
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks, txOpts);
+      await tx.upsertChunks(slug, chunks, chunkOpts);
     } else {
       await tx.deleteChunks(slug, txOpts);
     }
@@ -765,6 +787,8 @@ export async function withImportTransaction(
   engine: BrainEngine,
   spec: ImportTransactionSpec,
 ): Promise<void> {
+  const embeddingColumn = await resolveChunkWriteColumn(engine);
+  const chunkOpts = chunkWriteOpts(undefined, embeddingColumn);
   await engine.transaction(async (tx) => {
     if (spec.hadExisting) await tx.createVersion(spec.slug);
     await tx.putPage(spec.slug, spec.page);
@@ -779,7 +803,7 @@ export async function withImportTransaction(
     }
     if (spec.chunks !== undefined) {
       if (spec.chunks.length > 0) {
-        await tx.upsertChunks(spec.slug, spec.chunks);
+        await tx.upsertChunks(spec.slug, spec.chunks, chunkOpts);
       } else {
         await tx.deleteChunks(spec.slug);
       }

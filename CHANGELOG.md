@@ -2,6 +2,37 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.37.6.0] - 2026-05-21
+
+**Embedding writes now use the same dynamic column contract as embedding reads.**
+
+PR #1164 taught search to resolve a configured embedding column once at the
+boundary and pass a validated descriptor into the engine. The write path still
+hardcoded `content_chunks.embedding`, so brains that switched to a registered
+non-default provider column could search the right space but write new vectors
+to the legacy column. This release adds the symmetric write-side resolver and
+threads it through import/embed upserts. Fixes #1262.
+
+### Itemized changes
+
+#### Fixed
+
+- `upsertChunks` in both Postgres and PGLite accepts a resolved embedding
+  column descriptor and writes text embeddings to that column instead of always
+  using `embedding`.
+- The SQL cast follows the target column type: `vector` stays `::vector`, while
+  `halfvec` columns use `::halfvec(N)`.
+- `import` and `embed` resolve the write column once from merged config and the
+  currently configured embedding model, then pass it into engine calls.
+
+#### Added
+
+- `resolveWriteColumn(cfg)` beside the read-side embedding column resolver.
+  No registry, empty registry, or no provider match returns `undefined` so
+  legacy single-column brains keep their existing default path.
+- Unit coverage for write-column resolution and PGLite/Postgres e2e coverage
+  for writing text embeddings into an alternate halfvec column.
+
 ## [0.37.5.0] - 2026-05-20
 
 **`gbrain doctor` stops flagging your tags as broken when they're not.**

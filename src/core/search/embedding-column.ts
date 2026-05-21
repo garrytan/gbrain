@@ -68,6 +68,7 @@ import type {
   SearchOpts,
 } from '../types.ts';
 import type { GBrainConfig } from '../config.ts';
+import { getEmbeddingModel } from '../ai/gateway.ts';
 
 // ---- Constants ---------------------------------------------------------
 
@@ -416,6 +417,59 @@ export function resolveEmbeddingColumn(
     dimensions: entry.dimensions,
     embeddingModel: entry.provider,
   };
+}
+
+/**
+ * Resolves the write-side embedding column for the currently configured
+ * embedding model.
+ *
+ * Unlike read-side search, writes do not accept a per-call column override.
+ * The boundary resolves once from merged config + gateway state and passes
+ * the descriptor into the engine. Engines stay config-free.
+ *
+ * Behavior:
+ *   - no user registry => undefined (legacy single-column brain)
+ *   - provider match in merged registry => descriptor
+ *   - no provider match => undefined (fall back to legacy `embedding`)
+ *
+ * The no-match fallback is intentional: changing models before backfilling
+ * a matching column must not silently write vectors into an arbitrary column.
+ */
+export function resolveWriteColumn(cfg: GBrainConfig): ResolvedColumn | undefined {
+  const userColumns = cfg.embedding_columns;
+  if (
+    !userColumns ||
+    typeof userColumns !== 'object' ||
+    Array.isArray(userColumns) ||
+    Object.keys(userColumns).length === 0
+  ) {
+    return undefined;
+  }
+
+  const currentModel = getEmbeddingModel();
+  const registry = getEmbeddingColumnRegistry(cfg);
+  // User-declared entries are tried before cfg-derived builtins. Otherwise
+  // changing `embedding_model` would make the builtin `embedding` descriptor
+  // match first and keep writes on the legacy column even when the user has
+  // registered a provider-specific replacement column.
+  const orderedNames = [
+    ...Object.keys(userColumns),
+    ...Object.keys(registry).filter(name => !Object.hasOwn(userColumns, name)),
+  ];
+  for (const name of orderedNames) {
+    const entry = registry[name];
+    if (!entry) continue;
+    validateColumnKey(name);
+    validateColumnConfig(name, entry);
+    if (entry.provider !== currentModel) continue;
+    return {
+      name,
+      type: entry.type,
+      dimensions: entry.dimensions,
+      embeddingModel: entry.provider,
+    };
+  }
+  return undefined;
 }
 
 /**
