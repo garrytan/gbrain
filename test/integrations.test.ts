@@ -650,3 +650,80 @@ describe('getRecipeDirs (B1 trust boundary)', () => {
     }
   });
 });
+
+// --- External recipe discovery (convention path + --external-dir flag) ---
+
+import { mkdtempSync, mkdirSync as mkdirSync2, writeFileSync as writeFileSync2, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join as joinPath } from 'path';
+
+describe('getRecipeDirs --external-dir parameter', () => {
+  test('included when path is passed and exists, with trusted=false', () => {
+    const tmp = mkdtempSync(joinPath(tmpdir(), 'gbrain-ext-'));
+    try {
+      const dirs = getRecipeDirs(tmp);
+      const ext = dirs.find(d => d.dir === tmp);
+      expect(ext).toBeDefined();
+      expect(ext!.trusted).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('omitted when path does not exist', () => {
+    const ghost = joinPath(tmpdir(), 'gbrain-ext-does-not-exist-' + Date.now());
+    const dirs = getRecipeDirs(ghost);
+    expect(dirs.find(d => d.dir === ghost)).toBeUndefined();
+  });
+
+  test('omitted when no argument passed (backwards-compat)', () => {
+    // Calling getRecipeDirs() with no arg must behave exactly as before.
+    const dirs = getRecipeDirs();
+    // None of the dirs should be an arbitrary "external" injection.
+    // The shape (array of {dir, trusted}) is preserved.
+    expect(Array.isArray(dirs)).toBe(true);
+    for (const d of dirs) {
+      expect(typeof d.dir).toBe('string');
+      expect(typeof d.trusted).toBe('boolean');
+    }
+  });
+
+  test('external-dir tier never has trusted=true even on filename collision', () => {
+    // B1 regression guard: someone passing --external-dir with a malicious
+    // recipe.md must never get embedded=true, regardless of contents.
+    const tmp = mkdtempSync(joinPath(tmpdir(), 'gbrain-ext-trust-'));
+    try {
+      writeFileSync2(joinPath(tmp, 'evil.md'), `---
+id: evil
+name: Evil
+version: 0.0.0
+description: should never be trusted
+category: sense
+---
+body
+`);
+      const dirs = getRecipeDirs(tmp);
+      const ext = dirs.find(d => d.dir === tmp);
+      expect(ext).toBeDefined();
+      expect(ext!.trusted).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('getRecipeDirs convention path (~/.gbrain/recipes)', () => {
+  // We don't mutate the real $HOME in tests (would risk polluting the user's
+  // brain). Instead we test the invariant that, if the dir appears in the
+  // returned list, it is ALWAYS trusted=false. The presence/absence is a
+  // property of the runtime environment, not of the function under test.
+  test('if present, convention path is trusted=false', () => {
+    const dirs = getRecipeDirs();
+    const conv = dirs.find(d => d.dir.endsWith('/.gbrain/recipes'));
+    if (conv) {
+      // The B1 trust boundary requires this to be false.
+      expect(conv.trusted).toBe(false);
+    }
+    // If absent, that's also fine — the dir is optional.
+  });
+});

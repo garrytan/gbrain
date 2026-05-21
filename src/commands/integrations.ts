@@ -320,16 +320,20 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
 
 // --- Embedded Recipes ---
 
-// Recipes are loaded from multiple tiers with an explicit trust boundary:
+// Recipes are loaded from multiple tiers with an explicit trust boundary
+// (first-occurrence-wins on filename collision, so TRUSTED always shadows UNTRUSTED):
 //   TRUSTED (embedded=true):  package-bundled recipes shipped with gbrain
-//     - source install: ../../recipes relative to this file
-//     - global install: ~/.bun/install/global/node_modules/gbrain/recipes
+//     1. source install: ../../recipes relative to this file
+//     2. global install: ~/.bun/install/global/node_modules/gbrain/recipes
 //   UNTRUSTED (embedded=false): user-provided recipes discovered at runtime
-//     - $GBRAIN_RECIPES_DIR
-//     - ./recipes in process cwd
-// The trust flag gates command/http health_checks and deprecated string health_checks.
-// An attacker who drops a malicious recipe in ./recipes/ MUST NOT get embedded=true.
-export function getRecipeDirs(): Array<{ dir: string; trusted: boolean }> {
+//     3. $GBRAIN_RECIPES_DIR (env-var override)
+//     4. --external-dir <path> (CLI flag, one-shot)
+//     5. ~/.gbrain/recipes (convention path)
+//     6. ./recipes in process cwd
+// The trust flag gates command/http health_checks and deprecated string health_checks
+// via executeHealthCheck(). An attacker who drops a malicious recipe in any UNTRUSTED
+// tier MUST NOT get embedded=true.
+export function getRecipeDirs(externalDir?: string): Array<{ dir: string; trusted: boolean }> {
   const dirs: Array<{ dir: string; trusted: boolean }> = [];
   const sourceDir = join(import.meta.dir, '../../recipes');
   if (existsSync(sourceDir)) dirs.push({ dir: sourceDir, trusted: true });
@@ -338,13 +342,49 @@ export function getRecipeDirs(): Array<{ dir: string; trusted: boolean }> {
   if (process.env.GBRAIN_RECIPES_DIR && existsSync(process.env.GBRAIN_RECIPES_DIR)) {
     dirs.push({ dir: process.env.GBRAIN_RECIPES_DIR, trusted: false });
   }
+  if (externalDir && existsSync(externalDir)) {
+    dirs.push({ dir: externalDir, trusted: false });
+  }
+  const conventionDir = join(homedir(), '.gbrain', 'recipes');
+  if (existsSync(conventionDir)) dirs.push({ dir: conventionDir, trusted: false });
   const cwdDir = join(process.cwd(), 'recipes');
   if (existsSync(cwdDir)) dirs.push({ dir: cwdDir, trusted: false });
   return dirs;
 }
 
-function loadAllRecipes(): ParsedRecipe[] {
-  const dirs = getRecipeDirs();
+// Pluck `--external-dir <path>` (or `--external-dir=<path>`) out of argv.
+// Returns [externalDir, restArgs]. Exits 1 if the flag is given without a path.
+function parseExternalDir(args: string[]): [string | undefined, string[]] {
+  const rest: string[] = [];
+  let externalDir: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--external-dir') {
+      const val = args[i + 1];
+      if (!val || val.startsWith('--')) {
+        console.error('Error: --external-dir requires a path argument');
+        process.exit(1);
+      }
+      externalDir = val;
+      i++; // skip path
+      continue;
+    }
+    if (a.startsWith('--external-dir=')) {
+      const val = a.slice('--external-dir='.length);
+      if (!val) {
+        console.error('Error: --external-dir requires a path argument');
+        process.exit(1);
+      }
+      externalDir = val;
+      continue;
+    }
+    rest.push(a);
+  }
+  return [externalDir, rest];
+}
+
+function loadAllRecipes(externalDir?: string): ParsedRecipe[] {
+  const dirs = getRecipeDirs(externalDir);
   const recipes: ParsedRecipe[] = [];
   const seen = new Set<string>();
 
@@ -371,8 +411,8 @@ function loadAllRecipes(): ParsedRecipe[] {
   return recipes;
 }
 
-function findRecipe(id: string): ParsedRecipe | null {
-  const recipes = loadAllRecipes();
+function findRecipe(id: string, externalDir?: string): ParsedRecipe | null {
+  const recipes = loadAllRecipes(externalDir);
   const exact = recipes.find(r => r.frontmatter.id === id);
   if (exact) return exact;
 
@@ -510,8 +550,9 @@ function checkDependencies(recipe: ParsedRecipe, allRecipes: ParsedRecipe[]): st
 // --- Subcommands ---
 
 function cmdList(args: string[]): void {
-  const jsonMode = args.includes('--json');
-  const recipes = loadAllRecipes();
+  const [externalDir, rest] = parseExternalDir(args);
+  const jsonMode = rest.includes('--json');
+  const recipes = loadAllRecipes(externalDir);
 
   if (recipes.length === 0) {
     if (jsonMode) {
@@ -577,13 +618,14 @@ function cmdList(args: string[]): void {
 }
 
 function cmdShow(args: string[]): void {
-  const id = args.find(a => !a.startsWith('-'));
+  const [externalDir, rest] = parseExternalDir(args);
+  const id = rest.find(a => !a.startsWith('-'));
   if (!id) {
     console.error('Usage: gbrain integrations show <recipe-id>');
     return;
   }
 
-  const recipe = findRecipe(id);
+  const recipe = findRecipe(id, externalDir);
   if (!recipe) return;
 
   const f = recipe.frontmatter;
@@ -611,14 +653,15 @@ function cmdShow(args: string[]): void {
 }
 
 function cmdStatus(args: string[]): void {
-  const jsonMode = args.includes('--json');
-  const id = args.find(a => !a.startsWith('-'));
+  const [externalDir, rest] = parseExternalDir(args);
+  const jsonMode = rest.includes('--json');
+  const id = rest.find(a => !a.startsWith('-'));
   if (!id) {
     console.error('Usage: gbrain integrations status <recipe-id>');
     return;
   }
 
-  const recipe = findRecipe(id);
+  const recipe = findRecipe(id, externalDir);
   if (!recipe) return;
 
   const { set, missing } = checkSecrets(recipe.frontmatter.secrets);
@@ -673,8 +716,9 @@ function cmdStatus(args: string[]): void {
 }
 
 async function cmdDoctor(args: string[]): Promise<void> {
-  const jsonMode = args.includes('--json');
-  const recipes = loadAllRecipes();
+  const [externalDir, rest] = parseExternalDir(args);
+  const jsonMode = rest.includes('--json');
+  const recipes = loadAllRecipes(externalDir);
   const configured = recipes.filter(r => getStatus(r) !== 'available');
 
   if (configured.length === 0) {
@@ -719,8 +763,9 @@ async function cmdDoctor(args: string[]): Promise<void> {
 }
 
 function cmdStats(args: string[]): void {
-  const jsonMode = args.includes('--json');
-  const recipes = loadAllRecipes();
+  const [externalDir, rest] = parseExternalDir(args);
+  const jsonMode = rest.includes('--json');
+  const recipes = loadAllRecipes(externalDir);
 
   const allEntries: (HeartbeatEntry & { integration: string })[] = [];
   for (const r of recipes) {
@@ -846,6 +891,20 @@ USAGE
   gbrain integrations doctor [--json]  Run health checks
   gbrain integrations stats [--json]   Show signal statistics
   gbrain integrations test <file>      Validate a recipe file
+
+RECIPE DISCOVERY
+  Recipes are loaded from (first-occurrence wins on filename collision):
+    1. <package>/recipes               (trusted, bundled)
+    2. ~/.bun/.../gbrain/recipes       (trusted, global install)
+    3. $GBRAIN_RECIPES_DIR             (untrusted)
+    4. --external-dir <path>           (untrusted, one-shot CLI override)
+    5. ~/.gbrain/recipes               (untrusted, convention path)
+    6. ./recipes                       (untrusted, cwd fallback)
+  Untrusted recipes can be listed and shown, but command/http health_checks
+  are blocked at runtime by the executeHealthCheck() trust gate.
+
+FLAGS (apply to list, show, status, doctor, stats)
+  --external-dir <path>   Add an extra recipe directory for this invocation
 `);
 }
 
