@@ -40,6 +40,12 @@ export interface EmbeddingTouchpoint {
    */
   max_batch_tokens?: number;
   /**
+   * Maximum number of input items per embedding request. Some
+   * OpenAI-compatible providers enforce an item count separately from the
+   * token budget.
+   */
+  max_batch_items?: number;
+  /**
    * Expected character density for this provider's tokenizer (chars per
    * token). OpenAI tiktoken averages ~4 on English text; Voyage averages
    * ~1 on mixed content (code/JSON/CJK). Defaults to 4 if omitted.

@@ -785,6 +785,31 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
 }) as unknown as typeof fetch;
 
 /**
+ * DashScope compatibility shim. Alibaba's OpenAI-compatible embeddings
+ * endpoint supports only `encoding_format: 'float'`. The AI SDK currently
+ * sends float for generic OpenAI-compatible embeddings, but pinning it here
+ * keeps DashScope insulated from SDK default changes and mirrors the
+ * provider-specific shim pattern used for Voyage and ZeroEntropy.
+ */
+const dashscopeCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      const parsed = JSON.parse(init.body);
+      if (parsed && typeof parsed === 'object' && parsed.encoding_format !== 'float') {
+        parsed.encoding_format = 'float';
+        const headers = new Headers(init.headers ?? {});
+        headers.delete('content-length');
+        init = { ...init, body: JSON.stringify(parsed), headers };
+      }
+    } catch {
+      // Body wasn't JSON — pass through untouched.
+    }
+  }
+
+  return fetch(input, init);
+}) as unknown as typeof fetch;
+
+/**
  * ZeroEntropy compatibility shim. ZE's `/v1/models/embed` endpoint is NOT
  * OpenAI-compatible at the wire level:
  *  - Path: AI SDK adapter calls `${base_url}/embeddings`; ZE wants
@@ -1002,6 +1027,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         compat.fetch ??
         (recipe.id === 'voyage'
           ? voyageCompatFetch
+          : recipe.id === 'dashscope'
+          ? dashscopeCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
           : undefined);
@@ -1142,11 +1169,10 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const maxBatchTokens = embedding?.max_batch_tokens;
   const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
 
-  // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
-  // ride the fast path: one embedMany call, no recursion safety net.
-  const batches = maxBatchTokens
+  const tokenBatches = maxBatchTokens
     ? splitByTokenBudget(truncated, Math.floor(maxBatchTokens * effectiveSafetyFactor(recipe)), charsPerToken)
     : [truncated];
+  const batches = splitByItemCap(tokenBatches, embedding?.max_batch_items);
 
   const allEmbeddings: Float32Array[] = [];
 
@@ -1194,6 +1220,17 @@ export function splitByTokenBudget(
   if (current.length > 0) batches.push(current);
 
   return batches;
+}
+
+function splitByItemCap(batches: string[][], maxItems?: number): string[][] {
+  if (!maxItems || maxItems <= 0) return batches;
+  const capped: string[][] = [];
+  for (const batch of batches) {
+    for (let i = 0; i < batch.length; i += maxItems) {
+      capped.push(batch.slice(i, i + maxItems));
+    }
+  }
+  return capped;
 }
 
 /**

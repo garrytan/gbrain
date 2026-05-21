@@ -76,6 +76,15 @@ function configureOpenAI(): void {
   });
 }
 
+function configureDashScope(): void {
+  configureGateway({
+    embedding_model: 'dashscope:text-embedding-v4',
+    embedding_dimensions: 1536,
+    env: { DASHSCOPE_API_KEY: 'sk-fake' },
+    base_urls: { dashscope: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  });
+}
+
 function configureGoogle(): void {
   configureGateway({
     embedding_model: 'google:gemini-embedding-001',
@@ -235,6 +244,26 @@ describe('embed() recursion via stubbed transport', () => {
     // Stub fires once for the single-element batch; cannot halve further so
     // the recursion gives up at MIN_SUB_BATCH=1 and rethrows.
     expect(stub).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('embed() provider item caps', () => {
+  beforeEach(() => resetGateway());
+  afterEach(() => __setEmbedTransportForTests(null));
+
+  test('DashScope batches no more than 10 input strings per request', async () => {
+    configureDashScope();
+
+    const stub = mock(async ({ values }: { values: string[] }) => fakeEmbeddings(values, 1536));
+    __setEmbedTransportForTests(stub as any);
+
+    const texts = Array.from({ length: 23 }, (_, i) => `text-${i}`);
+    const result = await embed(texts);
+
+    expect(result).toHaveLength(23);
+    expect(stub).toHaveBeenCalledTimes(3);
+    const callLengths = stub.mock.calls.map(([arg]) => (arg as { values: string[] }).values.length);
+    expect(callLengths).toEqual([10, 10, 3]);
   });
 });
 
