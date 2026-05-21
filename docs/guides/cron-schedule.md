@@ -16,30 +16,31 @@ fixed. You wake up and the brain is smarter than when you went to sleep.
 
 ## The Schedule
 
+**Cron-triggered jobs:**
+
 | Frequency | Job | Brain Interaction | Recipe |
 |-----------|-----|-------------------|--------|
-| Every 30 min | Email monitoring | Search sender, update people pages | [email-to-brain](../../recipes/email-to-brain.md) |
 | Every 30 min | X/Twitter collection | Create/update media pages, entity extraction | [x-to-brain](../../recipes/x-to-brain.md) |
 | 3x/day (weekdays) | Meeting sync | Full ingestion + attendee propagation | [meeting-sync](../../recipes/meeting-sync.md) |
-| Weekly | Calendar sync | Daily files + attendee enrichment | [calendar-to-brain](../../recipes/calendar-to-brain.md) |
 | Daily AM | Morning briefing | Search calendar attendees, deal status, active threads | [briefing skill](../../skills/briefing/SKILL.md) |
 | Weekly | Brain maintenance | `gbrain doctor`, embed stale, orphan detection | [maintain skill](../../skills/maintain/SKILL.md) |
 | Nightly | Dream cycle | Entity sweep, enrich thin spots, fix citations | See below |
 
+**On-demand via MCP (no cron needed):**
+
+| Trigger | Job | Brain Interaction | Recipe |
+|---------|-----|-------------------|--------|
+| On demand | Email access | Search sender, update people pages | [google-tools-mcp](../../recipes/google-tools-mcp.md) |
+| On demand | Calendar access | Attendee enrichment, event management | [google-tools-mcp](../../recipes/google-tools-mcp.md) |
+
 ## Implementation: Setting Up Cron Jobs
 
 ```bash
-# Email collector — every 30 minutes
-*/30 * * * * cd /path/to/email-collector && node email-collector.mjs collect && node email-collector.mjs digest
-
 # X/Twitter collector — every 30 minutes
 */30 * * * * cd /path/to/x-collector && node x-collector.mjs collect >> /tmp/x-collector.log 2>&1
 
 # Meeting sync — 10 AM, 4 PM, 9 PM on weekdays
 0 10,16,21 * * 1-5 cd /path/to/meeting-sync && node meeting-sync.mjs >> /tmp/meeting-sync.log 2>&1
-
-# Calendar sync — Sundays at 10 AM
-0 10 * * 0 cd /path/to/calendar-sync && node calendar-sync.mjs --start $(date -v-7d +%Y-%m-%d) --end $(date +%Y-%m-%d)
 
 # Brain health — weekly Mondays at 6 AM
 0 6 * * 1 gbrain doctor --json >> /tmp/gbrain-health.log 2>&1 && gbrain embed --stale
@@ -47,6 +48,9 @@ fixed. You wake up and the brain is smarter than when you went to sleep.
 # Dream cycle — nightly at 2 AM
 0 2 * * * /path/to/dream-cycle.sh
 ```
+
+> **Note:** Email and Calendar no longer need cron jobs. Use `google-tools-mcp` MCP tools
+> (`list_messages`, `get_events`, etc.) on demand from any agent session.
 
 ### Quiet Hours Gate (MANDATORY)
 

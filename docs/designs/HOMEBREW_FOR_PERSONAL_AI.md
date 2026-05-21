@@ -76,12 +76,14 @@ setup. If voice-to-brain requires credential-gateway, the agent sets up
 credential-gateway first.
 
 ```
-credential-gateway
-  ├── voice-to-brain (requires credentials for Twilio)
-  ├── email-to-brain (requires credentials for Gmail)
-  └── calendar-to-brain (requires credentials for Google Calendar)
+google-tools-mcp (Gmail, Calendar, Drive, Docs, Sheets, Forms, Slides)
+  │
+  └── (no dependencies — single OAuth, self-contained)
 
-x-to-brain (standalone, uses X API directly)
+# Legacy (deprecated):
+# credential-gateway
+#   ├── email-to-brain
+#   └── calendar-to-brain
 ```
 
 ### Health Dashboard

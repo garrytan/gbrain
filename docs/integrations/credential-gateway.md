@@ -1,3 +1,6 @@
+> **DEPRECATED:** See [google-tools-mcp](../../recipes/google-tools-mcp.md) for
+> the recommended Google Workspace setup.
+
 # Credential Gateway (ClawVisor / Hermes)
 
 
