@@ -285,3 +285,99 @@ describe('SOURCE_ID_RE', () => {
     }
   });
 });
+
+// ── Dotfile trust check ────────────────────────────────────
+//
+// The dotfile walk-up reads `.gbrain-source` from any ancestor of the
+// CWD. Without an ownership check, an attacker who can write into a
+// shared ancestor (e.g. `/tmp/poc/`) can hijack the resolved source
+// for any user whose CWD lives below it. The check rejects three
+// classes of untrusted dotfiles: symlinks, files owned by another
+// user, and world-writable files.
+
+describe('dotfile trust check (owner / symlink / world-writable)', () => {
+  let tmpdirPath: string;
+
+  beforeEach(() => {
+    tmpdirPath = mkdtempSync(join(tmpdir(), 'gbrain-resolver-trust-'));
+  });
+  afterEach(() => {
+    rmSync(tmpdirPath, { recursive: true, force: true });
+  });
+
+  test('accepts a normal user-owned, non-symlink, non-world-writable dotfile', async () => {
+    writeFileSync(join(tmpdirPath, '.gbrain-source'), 'wiki\n', { mode: 0o644 });
+    const engine = makeStub(['default', 'wiki'], [], null);
+    const id = await resolveSourceId(engine, null, tmpdirPath);
+    expect(id).toBe('wiki');
+  });
+
+  test('rejects a symlinked dotfile', async () => {
+    if (typeof process.getuid !== 'function') return; // POSIX only
+    const real = join(tmpdirPath, '.gbrain-real');
+    writeFileSync(real, 'hijacked\n');
+    const link = join(tmpdirPath, '.gbrain-source');
+    // Use require() to access symlinkSync without restructuring imports.
+    const { symlinkSync } = await import('fs');
+    symlinkSync(real, link);
+    const engine = makeStub(['default', 'hijacked'], [], null);
+    const id = await resolveSourceId(engine, null, tmpdirPath);
+    // Symlink rejected → walk continues → reaches FS root → returns 'default'.
+    expect(id).toBe('default');
+  });
+
+  test('rejects a world-writable dotfile', async () => {
+    if (typeof process.getuid !== 'function') return;
+    const path = join(tmpdirPath, '.gbrain-source');
+    writeFileSync(path, 'hijacked\n');
+    // umask masks the 0o002 bit on writeFileSync's mode arg, so set it
+    // explicitly after creation.
+    const { chmodSync } = await import('fs');
+    chmodSync(path, 0o666);
+    const engine = makeStub(['default', 'hijacked'], [], null);
+    const id = await resolveSourceId(engine, null, tmpdirPath);
+    expect(id).toBe('default');
+  });
+
+  test('isTrustedDotfile rejects symlink stats', () => {
+    const fakeSymlink = {
+      isSymbolicLink: () => true,
+      uid: typeof process.getuid === 'function' ? process.getuid() : 0,
+      mode: 0o644,
+    } as ReturnType<typeof __testing.isTrustedDotfile> extends boolean
+      ? Parameters<typeof __testing.isTrustedDotfile>[0]
+      : never;
+    expect(__testing.isTrustedDotfile(fakeSymlink as Parameters<typeof __testing.isTrustedDotfile>[0])).toBe(false);
+  });
+
+  test('isTrustedDotfile rejects foreign-owned files', () => {
+    if (typeof process.getuid !== 'function') return;
+    const myUid = process.getuid();
+    const foreign = {
+      isSymbolicLink: () => false,
+      uid: myUid + 1, // some other uid that is not us and not 0
+      mode: 0o644,
+    } as Parameters<typeof __testing.isTrustedDotfile>[0];
+    expect(__testing.isTrustedDotfile(foreign)).toBe(false);
+  });
+
+  test('isTrustedDotfile rejects world-writable files (mode bit 0o002)', () => {
+    if (typeof process.getuid !== 'function') return;
+    const ww = {
+      isSymbolicLink: () => false,
+      uid: process.getuid()!,
+      mode: 0o666,
+    } as Parameters<typeof __testing.isTrustedDotfile>[0];
+    expect(__testing.isTrustedDotfile(ww)).toBe(false);
+  });
+
+  test('isTrustedDotfile accepts owner-only file (mode 0o600)', () => {
+    if (typeof process.getuid !== 'function') return;
+    const ok = {
+      isSymbolicLink: () => false,
+      uid: process.getuid()!,
+      mode: 0o600,
+    } as Parameters<typeof __testing.isTrustedDotfile>[0];
+    expect(__testing.isTrustedDotfile(ok)).toBe(true);
+  });
+});
