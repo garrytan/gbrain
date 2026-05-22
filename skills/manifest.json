@@ -60,6 +60,11 @@
       "description": "Brain-first lookup, read-enrich-write loop, source attribution, ambient enrichment. The core read/write cycle."
     },
     {
+      "name": "capture",
+      "path": "capture/SKILL.md",
+      "description": "Single human-facing entrypoint for ingestion. Routes through put_page (local) or MCP (thin-client); replaces put-page-vs-commit-vs-autopilot confusion with one verb."
+    },
+    {
       "name": "idea-ingest",
       "path": "idea-ingest/SKILL.md",
       "description": "Ingest links, articles, tweets, and ideas into the brain with analysis and entity cross-linking."

@@ -1,5 +1,6 @@
 import matter from 'gray-matter';
-import type { PageType } from './types.ts';
+import { safeLoad as yamlSafeLoad } from 'js-yaml';
+import type { Page, PageType } from './types.ts';
 import { slugifyPath } from './sync.ts';
 
 export type ParseValidationCode =
@@ -217,8 +218,14 @@ function collectValidationErrors(
   }
 
   // 5. NESTED_QUOTES — common breakage pattern: `title: "Name "Nick" Last"`.
-  //    Detect any frontmatter `key: ...` line whose value contains 3 or more
-  //    unescaped double-quote characters. A clean quoted value has 2.
+  //    The heuristic: a frontmatter `key: value` line with 3+ unescaped
+  //    double-quote characters is suspicious. But raw quote-counting is
+  //    too dumb: a YAML flow sequence like `tags: ["yc", "w2025"]` has
+  //    4 unescaped `"` by design (valid), and a single-quoted scalar
+  //    like `title: 'a: "b" "c"'` has literal inner `"` (also valid).
+  //    Disambiguate by running js-yaml on just the value; only flag
+  //    lines that genuinely fail to parse. The full-frontmatter YAML
+  //    parse error is caught separately by check 6 (YAML_PARSE) below.
   for (let i = firstNonEmpty + 1; i < closeLine; i++) {
     const line = lines[i];
     const m = line.match(/^\s*[A-Za-z_][\w-]*\s*:\s*(.*)$/);
@@ -228,7 +235,20 @@ function collectValidationErrors(
     for (let j = 0; j < value.length; j++) {
       if (value[j] === '"' && (j === 0 || value[j - 1] !== '\\')) count++;
     }
-    if (count >= 3) {
+    if (count < 3) continue;
+
+    // 3+ unescaped quotes — could be valid YAML (flow seq, single-quoted
+    // scalar with inner quotes, bare scalar with embedded quotes) or
+    // genuinely broken. Parse the value to disambiguate.
+    let isValidYaml = false;
+    try {
+      yamlSafeLoad(value);
+      isValidYaml = true;
+    } catch {
+      // YAML parse failed — line is genuinely broken
+    }
+
+    if (!isValidYaml) {
       errors.push({
         code: 'NESTED_QUOTES',
         message: 'Nested double quotes in YAML value (use single quotes for the outer)',
@@ -394,4 +414,84 @@ function extractTags(frontmatter: Record<string, unknown>): string[] {
   if (Array.isArray(tags)) return tags.map(String);
   if (typeof tags === 'string') return tags.split(',').map(t => t.trim()).filter(Boolean);
   return [];
+}
+
+// ---------------------------------------------------------------------------
+// Page -> markdown serialization helpers (v0.38 DRY extract per eng review)
+//
+// Pre-v0.38 the dream cycle's reverse-render at src/core/cycle/synthesize.ts
+// and the planned v0.38 put_page write-through path were going to have
+// near-identical 15-line bodies that differed only in their frontmatter
+// stamps. This extract is the single source of truth.
+// ---------------------------------------------------------------------------
+
+import { join } from 'node:path';
+
+/** Options for serializePageToMarkdown. */
+export interface SerializePageOpts {
+  /** Frontmatter fields merged on top of page.frontmatter at render time.
+   *  Use this to stamp provenance (`ingested_via: 'webhook'`), identity
+   *  markers (`dream_generated: true`), or any caller-specific extra
+   *  fields. Original page.frontmatter keys win unless explicitly
+   *  overridden. */
+  frontmatterOverrides?: Record<string, unknown>;
+}
+
+/**
+ * Render a Page row to its canonical on-disk markdown form. Sibling to
+ * `serializeMarkdown` (which takes the underlying primitives); this version
+ * pulls everything from a `Page` object so callers don't have to destructure
+ * compiled_truth / timeline / tags / frontmatter at every site.
+ *
+ * - Frontmatter: starts from `page.frontmatter`, merged with optional
+ *   `opts.frontmatterOverrides`. Useful for stamping `dream_generated`,
+ *   `ingested_via`, etc.
+ * - Type / title: pulled from the Page columns; falls back to 'note' /
+ *   empty string when absent.
+ * - Tags: passed separately so callers don't need to query engine.getTags
+ *   if they already have them in hand.
+ */
+export function serializePageToMarkdown(
+  page: Page,
+  tags: string[],
+  opts: SerializePageOpts = {},
+): string {
+  const frontmatter: Record<string, unknown> = {
+    ...((page.frontmatter ?? {}) as Record<string, unknown>),
+    ...(opts.frontmatterOverrides ?? {}),
+  };
+  return serializeMarkdown(
+    frontmatter,
+    page.compiled_truth ?? '',
+    page.timeline ?? '',
+    {
+      type: (page.type as PageType) ?? 'note',
+      title: page.title ?? '',
+      tags,
+    },
+  );
+}
+
+/**
+ * Compute the on-disk path for a (brainDir, slug, source_id) tuple per
+ * the v0.32.8 multi-source filing layout:
+ *   - Default source: `<brainDir>/<slug>.md`
+ *   - Non-default source: `<brainDir>/.sources/<source_id>/<slug>.md`
+ *
+ * Shared by the dream-cycle reverse-render (`reverseWriteRefs` in
+ * synthesize.ts) and the v0.38 put_page write-through path so both
+ * sites compute the same path for the same row.
+ *
+ * NOTE: caller is responsible for validating `source_id` against path-
+ * traversal attacks via `validateSourceId` (src/core/utils.ts) BEFORE
+ * passing it here. This helper does the filename math only.
+ */
+export function resolvePageFilePath(
+  brainDir: string,
+  slug: string,
+  sourceId: string,
+): string {
+  return sourceId === 'default'
+    ? join(brainDir, `${slug}.md`)
+    : join(brainDir, '.sources', sourceId, `${slug}.md`);
 }

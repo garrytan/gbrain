@@ -12,6 +12,11 @@
  */
 
 import { CJK_SLUG_CHARS } from './cjk.ts';
+// v0.37.7.0 #1169 submodule-detection helpers. Bottom-of-file already
+// aliases existsSync as `_existsSync` for other purposes; the top-of-file
+// import keeps the pruneDir helper's deps near its callsite.
+import { existsSync, statSync } from 'fs';
+import { join as pathJoin } from 'path';
 
 export interface SyncManifest {
   added: string[];
@@ -243,8 +248,14 @@ const PRUNE_DIR_NAMES = new Set<string>([
  *
  * `name` is a single path segment (basename of the directory entry), NOT a
  * full path. Walkers consult this on each subdirectory entry during recursion.
+ *
+ * v0.37.7.0 #1169: when callers pass `parentDir`, ALSO skip git submodule
+ * directories (detected by the presence of `.git` as a FILE — not a
+ * directory — inside the candidate dir). The `parentDir` arg is optional so
+ * existing callers stay back-compat; new callers (sync walker, extract
+ * walker) thread it through.
  */
-export function pruneDir(name: string): boolean {
+export function pruneDir(name: string, parentDir?: string): boolean {
   if (!name) return true;
   if (name.startsWith('.')) return false;
   if (PRUNE_DIR_NAMES.has(name)) return false;
@@ -252,6 +263,20 @@ export function pruneDir(name: string): boolean {
   // convention (e.g. `people/pedro.raw/` holds raw source for pedro.md).
   // Both forms should be skipped at descent time.
   if (name.endsWith('.raw')) return false;
+  // Submodule detection: a git submodule directory contains `.git` as
+  // a FILE (a "gitfile" pointing into the parent's .git/modules/...),
+  // not a directory. Best-effort: if we can't stat (e.g. cross-platform
+  // permission edge), fall through and treat as a normal dir.
+  if (parentDir) {
+    try {
+      const gitPath = pathJoin(parentDir, name, '.git');
+      if (existsSync(gitPath) && statSync(gitPath).isFile()) {
+        return false;
+      }
+    } catch {
+      // Stat failed — descend normally rather than silently exclude.
+    }
+  }
   return true;
 }
 

@@ -43,6 +43,10 @@ import {
   SourceOpError,
   type SourceRow as OpsSourceRow,
 } from '../core/sources-ops.ts';
+import {
+  resolveSourceWithTier,
+  SOURCE_TIER_NAMES,
+} from '../core/source-resolver.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -481,6 +485,51 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   console.log(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
 }
 
+// ── `sources current` (v0.37.7.0) ──────────────────────────
+//
+// Verify which source the CLI would target before running a
+// destructive op. Walks the same 6-tier chain as `resolveSourceId()`
+// and reports both the winning source id AND the tier label
+// ("flag" / "env" / "dotfile" / "local_path" / "brain_default" /
+// "seed_default"). Optional `--source <id>` shows what an explicit
+// flag WOULD resolve to without actually running anything.
+
+async function runCurrent(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = args.includes('--json');
+  let explicit: string | null = null;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--source' && i + 1 < args.length) {
+      explicit = args[++i] || null;
+    }
+  }
+
+  let result: Awaited<ReturnType<typeof resolveSourceWithTier>>;
+  try {
+    result = await resolveSourceWithTier(engine, explicit, process.cwd());
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (json) {
+      console.log(JSON.stringify({ error: msg }, null, 2));
+    } else {
+      console.error(`Error resolving source: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  if (json) {
+    console.log(JSON.stringify({
+      source_id: result.source_id,
+      tier: result.tier,
+      detail: result.detail ?? null,
+      resolver_chain: SOURCE_TIER_NAMES,
+    }, null, 2));
+    return;
+  }
+
+  console.log(`source: ${result.source_id}`);
+  console.log(`  tier: ${result.tier}${result.detail ? ` (${result.detail})` : ''}`);
+}
+
 // ── Dispatcher ──────────────────────────────────────────────
 
 export async function runSources(engine: BrainEngine, args: string[]): Promise<void> {
@@ -501,6 +550,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'restore':    return runRestore(engine, rest);
     case 'purge':      return runPurge(engine, rest);
     case 'archived':   return runListArchived(engine, rest);
+    case 'current':    return runCurrent(engine, rest);
     case undefined:
     case '--help':
     case '-h':
@@ -535,6 +585,11 @@ Subcommands:
   default <id>                      Set the brain-level default source.
   attach <id>                       Write .gbrain-source in CWD (like kubectl context).
   detach                            Remove .gbrain-source from CWD.
+  current [--source <id>] [--json]  Echo the resolved source id + which tier
+                                    won (flag/env/dotfile/local_path/
+                                    brain_default/seed_default). Run this
+                                    before destructive ops to verify you're
+                                    targeting the brain you think you are.
   federate <id>                     Make source appear in cross-source default search.
   unfederate <id>                   Isolate source from default search.
 

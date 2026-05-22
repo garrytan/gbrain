@@ -22,8 +22,44 @@ import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
-import { loadConfig } from '../core/config.ts';
+import { loadConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
+
+/**
+ * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
+ *
+ * `recoverable` (network blip, Supabase 503, pool saturated, connection
+ * refused on a port that may be coming up): retry with backoff up to
+ * `GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS` (default 30).
+ *
+ * `unrecoverable` (`database_url` unset/empty/malformed, auth failure,
+ * config file unreadable): exit immediately so launchd's 60s
+ * `ThrottleInterval` backs off the relaunch instead of thrashing.
+ *
+ * Exported (string-based signature) so tests drive it without needing
+ * a real reconnect error.
+ */
+export function classifyReconnectError(err: unknown): 'recoverable' | 'unrecoverable' {
+  const msg = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase();
+  if (msg.includes('database_url') && (msg.includes('undefined') || msg.includes('missing') || msg.includes('empty') || msg.includes('not set'))) {
+    return 'unrecoverable';
+  }
+  if (msg.includes('invalid url') || msg.includes('malformed') || msg.includes('parse url')) {
+    return 'unrecoverable';
+  }
+  // Auth failures: postgres prints `role "name" does not exist` (with the
+  // role name in quotes between role and does), so use a skeleton match.
+  if (msg.includes('password authentication failed') || msg.includes('authentication failed')) {
+    return 'unrecoverable';
+  }
+  if (msg.includes('role') && msg.includes('does not exist')) {
+    return 'unrecoverable';
+  }
+  if (msg.includes('no brain configured') || msg.includes('config not found')) {
+    return 'unrecoverable';
+  }
+  return 'recoverable';
+}
 
 function parseArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -118,10 +154,15 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
-  // Lock file to prevent concurrent instances (#14)
-  const lockPath = join(process.env.HOME || '', '.gbrain', 'autopilot.lock');
+  // Lock file to prevent concurrent instances (#14).
+  // v0.37.7.0 #1226: route through gbrainPath() so the lockfile lives
+  // under GBRAIN_HOME when set, not the hardcoded ~/.gbrain. Pre-fix,
+  // two brains sharing GBRAIN_HOME=different-paths still wrote to the
+  // same global lockfile and one would silently respawn the other
+  // forever.
+  const lockPath = gbrainHomePath('autopilot.lock');
   try {
-    mkdirSync(join(process.env.HOME || '', '.gbrain'), { recursive: true });
+    mkdirSync(gbrainHomePath(), { recursive: true });
     if (existsSync(lockPath)) {
       const stat = require('fs').statSync(lockPath);
       const ageMinutes = (Date.now() - stat.mtimeMs) / 60000;
@@ -238,6 +279,14 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   process.on('SIGINT',  () => { void shutdown('SIGINT'); });
 
   let consecutiveErrors = 0;
+  // v0.37.7.0 #1162 — counter for consecutive reconnect failures.
+  // Reset on every successful health probe or reconnect. Threshold
+  // controlled by GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS env (default 30).
+  let autopilotReconnectFails = 0;
+  const AUTOPILOT_MAX_RECONNECT_FAILS = Math.max(
+    1,
+    Number(process.env.GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS) || 30,
+  );
   // Peer-worker liveness for --no-worker mode. The probe is a proxy, not
   // ground truth: SELECT count(*) of active jobs with a recent lock_until
   // refresh. A queue with only waiting jobs and a healthy idle worker
@@ -264,14 +313,52 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // declare the instance stale after 10 minutes (Codex C).
     try { utimesSync(lockPath, new Date(), new Date()); } catch { /* best-effort */ }
 
-    // DB health check (reconnect if needed)
+    // DB health check (reconnect if needed).
+    //
+    // v0.37.7.0 #1162: classify reconnect failures. Pre-fix, the
+    // catch logged the error and looped forever — when `database_url`
+    // was unset/malformed the loop spammed `config.database_url
+    // undefined` until launchd was killed manually. Now:
+    //   - Recoverable transient (network blip, pool saturated, 503) →
+    //     log + retry next tick. Up to GBRAIN_AUTOPILOT_MAX_RECONNECT_FAILS
+    //     consecutive failures before exit (default 30 = ~5min at
+    //     10s ticks).
+    //   - Unrecoverable (database_url unset, malformed URL, auth
+    //     failure) → exit immediately with a clear stderr line.
+    //     ThrottleInterval=60 in the launchd plist (v0.37.7.0) ensures
+    //     launchd's KeepAlive backoff actually backs off instead of
+    //     thrashing.
     try {
       await engine.getConfig('version');
-    } catch {
+      autopilotReconnectFails = 0; // reset on success
+    } catch (probeErr) {
       try {
         await engine.disconnect();
         await (engine as any).connect?.();
-      } catch (e) { logError('reconnect', e); }
+        autopilotReconnectFails = 0;
+      } catch (e) {
+        logError('reconnect', e);
+        autopilotReconnectFails++;
+        const klass = classifyReconnectError(e);
+        if (klass === 'unrecoverable') {
+          console.error(
+            `[autopilot] FATAL: unrecoverable DB error (${(e as Error).message ?? 'unknown'}). ` +
+            `Exiting so launchd ThrottleInterval can apply backoff.`,
+          );
+          stopping = true;
+          process.exitCode = 1;
+          break;
+        }
+        if (autopilotReconnectFails >= AUTOPILOT_MAX_RECONNECT_FAILS) {
+          console.error(
+            `[autopilot] FATAL: ${autopilotReconnectFails} consecutive reconnect failures. ` +
+            `Last error: ${(e as Error).message ?? 'unknown'}. Exiting.`,
+          );
+          stopping = true;
+          process.exitCode = 1;
+          break;
+        }
+      }
     }
 
     // --no-worker peer-liveness probe (v0.19.1). Runs every cycle, cheap
@@ -611,8 +698,10 @@ async function installDaemon(engine: BrainEngine, args: string[]) {
   }
 }
 
-function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+// v0.37.7.0 #1162 — pure function for plist generation so tests can
+// assert ThrottleInterval/KeepAlive shape without an installed daemon.
+export function generateLaunchdPlist(wrapperPath: string, home: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -622,10 +711,24 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <!--
+    v0.37.7.0 #1162: ThrottleInterval=60 forces launchd to wait at
+    least 60s between relaunches. Combined with the in-process
+    classifier (recoverable vs unrecoverable in the supervisor loop),
+    this prevents the spinning respawn pattern where an unrecoverable
+    error (missing database_url, malformed config) immediately
+    relaunched and re-hit the same error. ThrottleInterval is a hard
+    floor; launchd would have applied a default of 10s if unset.
+  -->
+  <key>ThrottleInterval</key><integer>60</integer>
   <key>StandardOutPath</key><string>${escapeXml(home)}/.gbrain/autopilot.log</string>
   <key>StandardErrorPath</key><string>${escapeXml(home)}/.gbrain/autopilot.err</string>
 </dict>
 </plist>`;
+}
+
+function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
+  const plist = generateLaunchdPlist(wrapperPath, home);
 
   try {
     const agentsDir = join(home, 'Library', 'LaunchAgents');

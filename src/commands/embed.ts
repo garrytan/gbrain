@@ -4,6 +4,8 @@ import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
+import { loadConfig } from '../core/config.ts';
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -66,7 +68,75 @@ export interface EmbedResult {
  * Returns EmbedResult with accurate counts so callers (runCycle, sync
  * auto-embed step) can report embeddings in their own structured output.
  */
+/**
+ * Tagged error class thrown when the schema column dim disagrees with
+ * the gateway's resolved dim. Caught by `runEmbed` (the CLI wrapper) to
+ * emit a paste-ready recipe instead of raw Postgres errors page by page.
+ *
+ * v0.37 fix wave (Lane D.2 + CDX2-9). Pre-fix the worker pool ran the
+ * whole queue past the first dim mismatch because per-page errors were
+ * silently logged + skipped. Now `runEmbedCore` pre-flights at entry +
+ * the worker pool catches per-page mismatches and surfaces them.
+ */
+export class EmbeddingDimMismatchError extends Error {
+  readonly kind = 'embedding_dim_mismatch' as const;
+  constructor(public readonly recipeMessage: string) {
+    super(recipeMessage);
+    this.name = 'EmbeddingDimMismatchError';
+  }
+}
+
+/**
+ * Pre-flight check: read the actual schema column dim and compare to the
+ * gateway's resolved dim. Throws `EmbeddingDimMismatchError` on mismatch
+ * so the entry-point catch surfaces the recipe. Catches the headline
+ * fresh-install bug class at the very first invocation instead of letting
+ * the worker pool hammer N pages with raw 22000 errors.
+ */
+async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promise<void> {
+  if (dryRun) return; // dry-run never embeds, no risk
+  const { readContentChunksEmbeddingDim, embeddingMismatchMessage } = await import('../core/embedding-dim-check.ts');
+  const { getEmbeddingDimensions, getEmbeddingModel } = await import('../core/ai/gateway.ts');
+  let existing;
+  try {
+    existing = await readContentChunksEmbeddingDim(engine);
+  } catch {
+    return; // probe failure shouldn't block embed; the worker pool will surface real errors
+  }
+  if (!existing.exists || existing.dims === null) return;
+  let resolvedDims: number;
+  let resolvedModel: string;
+  try {
+    resolvedDims = getEmbeddingDimensions();
+    resolvedModel = getEmbeddingModel();
+  } catch {
+    return; // gateway unconfigured — worker pool will error informatively
+  }
+  if (existing.dims === resolvedDims) return;
+  const databasePath = (engine as { _savedConfig?: { database_path?: string } })._savedConfig?.database_path;
+  const recipe = embeddingMismatchMessage({
+    currentDims: existing.dims,
+    requestedDims: resolvedDims,
+    requestedModel: resolvedModel,
+    source: 'embed',
+    engineKind: engine.kind,
+    databasePath,
+  });
+  throw new EmbeddingDimMismatchError(recipe);
+}
+
 export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promise<EmbedResult> {
+  // v0.37.10.0 T7 (D9): refuse cleanly when init persisted the deferred-setup
+  // sentinel. Skipped in dryRun mode so plan-mode introspection still works.
+  if (!opts.dryRun) {
+    assertEmbeddingEnabled(loadConfig());
+  }
+
+  // v0.37.11.0 (Lane D.2): pre-flight dim-mismatch check. Catches the headline
+  // fresh-install bug class before the worker pool spends 20 parallel calls
+  // hitting raw Postgres dimension errors.
+  await preflightDimMismatch(engine, !!opts.dryRun);
+
   const result: EmbedResult = {
     embedded: 0,
     skipped: 0,
@@ -164,7 +234,13 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
     return result;
   } catch (e) {
     if (progressStarted) progress.finish();
-    console.error(e instanceof Error ? e.message : String(e));
+    // D.2: surface dim-mismatch failures with the paste-ready recipe
+    // instead of the raw Postgres error message.
+    if (e instanceof EmbeddingDimMismatchError) {
+      console.error('\n' + e.recipeMessage + '\n');
+    } else {
+      console.error(e instanceof Error ? e.message : String(e));
+    }
     process.exit(1);
   }
 }

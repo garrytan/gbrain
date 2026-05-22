@@ -1,6 +1,96 @@
 # TODOS
 
 
+## v0.37 PGLite fresh-install fix wave — deferred follow-ups (v0.37.x+ / v0.38.x)
+
+- [ ] **`gbrain embed --try-fallback` for provider quota/auth failures.** The v0.37 wave deliberately rejected auto-fallback because silently switching providers writes mixed-space vectors into one `content_chunks.embedding` column, corrupting retrieval. The right design: explicit `--try-fallback` flag that (a) detects the primary failure type (429 / 401 / 5xx), (b) confirms the fallback provider's `embedding_dimensions` matches the schema, (c) prompts the user via TTY before switching mid-corpus, (d) writes a marker chunk attribute so doctor can flag mixed-provider corpora later. Doctor currently surfaces "Detected 1 alternative embedding provider ready to use" but the embed command never acts. Owner: open. Sources: user bug report item #5; v0.37 wave plan deferred list.
+
+- [ ] **Full plane unification for non-schema-sizing fields.** v0.37 (Lane C.2) refuses `gbrain config set` for `embedding_model` / `embedding_dimensions` because those size the schema and must stay file-plane only. But `chat_model`, `expansion_model`, `reranker_model`, `chat_fallback_chain`, `provider_base_urls` don't size the schema — they could be live-mutable via the DB plane through `loadConfigWithEngine()`. Audit each: which are read by the gateway at boot only vs at every call? Live-mutable ones should accept `gbrain config set` without the v0.37 rejection. Filed during v0.37 codex round 2 (CDX-7 audit produced this as a follow-up).
+
+- [ ] **Per-page worker-pool abort in `embedAll()` for mid-run dim drift.** v0.37 Lane D.2 added a pre-flight dim-mismatch check at the top of `runEmbedCore` (catches the headline fresh-install class). The plan's stricter D.2 (CDX2-9) called for a shared `AbortController` in `embedAll()` so a mid-run mismatch on one worker propagates to the rest of the pool. The pre-flight catches >99% of cases (mismatches surface at the column-level, not per-row, so all workers would hit the same error). Deferred as defense-in-depth: implement when a real mid-run dim-drift case is reported. File `src/commands/embed.ts:335` (worker pool entry point).
+
+- [ ] **Hardcoded `text-embedding-3-large` defaults remaining in `src/core/embedding.ts`.** Two legacy back-compat constants (`EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`) and a fallback in `getEmbeddingModelName()`. Dead-ish at this point — only some tests import them. v0.38 cleanup: remove the back-compat exports, port the few test consumers to gateway accessors, delete the strip-provider-prefix helper. Mechanical; deferred from v0.37 to keep the wave scoped.
+
+## v0.37.8.0 pre-existing master test regression (noticed during ship)
+
+- [x] **P0: `test/doctor-report-remote.test.ts:65` — `full report on healthy brain` fails with `health_score: 50` (expects `>=70`).** **Completed:** v0.37.10.0 (2026-05-21). Resolved structurally by the empty-brain-100/100 fix in `src/core/pglite-engine.ts` + `src/core/postgres-engine.ts` (commit 9aa571f3): pages-empty brains now get vacuous-truth full marks on every breakdown component (35/25/15/15/10), so the freshly-initialized test brain's composite stays >=70 even when `skill_brain_first` returns non-ok. Test file renamed to `test/doctor-report-remote.serial.test.ts` and made hermetic (isolates `GBRAIN_HOME` to a tempdir via beforeAll/afterAll per `scripts/check-test-isolation.sh` R1 — env mutation requires serial quarantine).
+
+## v0.37.7.0 federated-brains + autopilot safety follow-ups (v0.37.x+)
+
+- [ ] **.sql file indexing (#1173) — dropped from v0.37.7.0 because tree-sitter-sql.wasm is not in `src/assets/wasm/grammars/`.** The grammars directory ships 35 languages but SQL is not among them. Plan deliberately verify-first-gated this (codex CF11). Re-file as a dedicated wave that: (a) ships tree-sitter-sql.wasm (vendor from upstream), (b) extends the sync walker's `.md|.markdown|.txt` extension filter to include `.sql`, (c) routes `.sql` through `importCodeFile()` with `page_kind='code'`, (d) addresses the slug-shape collision codex flagged with #1172's punted "flatten extensions" work — `slugifyCodePath('docs/auth.sql')` produces a slug shape that may collide with `docs/auth.md` if #1172 ever ships. Verify-first the slug round-trip before merging.
+
+- [ ] **#1204 deeper investigation — `gbrain extract all` reports 0 links on federated brains with cross-source duplicate slugs.** v0.37.7.0 added `--source-id <id>` to scope extraction explicitly, which gives users a workaround. But the underlying "silent 0 links" bug on unscoped federated extracts has additional facets: the resolver path in `extractLinksFromDB` builds `slugToSources` from `listAllPageRefs`, then iterates `allRefs` and resolves wikilinks. For a slug that exists in 2+ sources, the resolver may pick the wrong target. Run `/investigate` against a fixture with 2 sources × overlapping slugs × cross-source wikilinks, characterize the failure mode, file a precise fix.
+
+- [ ] **Tier 5N doctor check — `subagent_terminal_dead_letters`.** v0.37.7.0 shipped T9 (the subagent dead-letter fix) but deferred the doctor sweep that surfaces historical dead-lettered jobs whose final message is a text-only assistant turn (the #1151 fingerprint). The fix prevents new occurrences; the doctor check would help users discover existing dead-letters from before the upgrade so they can `gbrain jobs prune --status dead --queue default` cleanly. Add the check in v0.37.8+ once a clean conflict-resolved doctor.ts is available.
+
+## v0.37.6.0 OpenRouter recipe follow-ups (v0.37.x+ / v0.38.x)
+
+- [ ] **v0.37.x: Verify `tool_use_id` stability through OpenRouter with a live test, then decide whether to relax `isAnthropicProvider()`'s subagent-only gate.** v0.37.6.0 ships `supports_subagent_loop: false` on the OR recipe as informational only — the real gate is `isAnthropicProvider()` in `src/core/model-config.ts`, which hard-rejects every non-Anthropic provider at subagent submit time. OR proxies Anthropic-direct models that DO support stable `tool_use_id` by contract, but OR's response normalization may strip or re-encode them. A short live test: spin up a real OR account, run a subagent loop via `openrouter:anthropic/claude-haiku-4.5`, deliberately abort mid-loop, retry. Assert tool_use_id blocks are byte-identical across attempts. If they are, the `isAnthropicProvider()` check could relax to allow Anthropic models proxied through OR, giving users OR's price/availability story for subagent work. This is a deeper structural change than a recipe-flag flip; needs its own /plan-eng-review pass. Filed during v0.37.6.0 codex review.
+
+- [ ] **v0.37.x: Quarterly OR catalog refresh.** v0.37.6.0 ships 8 curated chat slugs (gpt-5.2, gpt-5.2-chat, gpt-5.5, claude-haiku-4.5, claude-sonnet-4.6, claude-opus-4.7, gemini-3-flash-preview, deepseek-chat) with `price_last_verified: '2026-05-20'`. OR's catalog churns weekly; specific slugs get deprecated, renamed, or merged. Refresh cadence: every 90 days, walk https://openrouter.ai/models, prune deprecated slugs, add new frontier IDs that match the recipe's curation logic (frontier-tier + cheap-routing entry points). Bump `price_last_verified`. The shape-test regression in `test/ai/recipe-openrouter.test.ts` (`MODEL_SHAPE` regex) means typos surface immediately; the catalog refresh is about discovery, not validation.
+
+- [ ] **v0.37.x: Adopt `resolveDefaultHeaders` for Together / Groq / other attribution-bearing recipes.** v0.37.6.0's `default_headers` / `resolveDefaultHeaders` seam is generic — any recipe whose provider benefits from app-attribution headers can opt in. Together and Groq both have rankings/analytics tied to per-app headers. Add their respective attribution headers to each recipe, similar to OR's `HTTP-Referer` + `X-OpenRouter-Title`. No type-system or gateway changes needed; just `default_headers` blocks on the existing recipes plus `<PROVIDER>_REFERER` / `<PROVIDER>_TITLE` env vars in their `auth_env.optional`. Filed during v0.37.6.0 eng review as a D4 generalization opportunity.
+
+- [ ] **v0.37.x: Guard cli.ts `main()` so importing `buildGatewayConfig` doesn't print help.** v0.37.6.0 exported `buildGatewayConfig` from `src/cli.ts` for test access. Importing it triggers the file's top-level `main()` which prints help to stdout during tests — functionally harmless (tests pass) but noisy. Fix: wrap `main()` in `if (import.meta.main)` so it only runs when cli.ts is the entry point, not when imported. Touches one line; trivial. Filed during v0.37.6.0 implementation.
+
+
+## v0.37.4.0 pgGraph CI scaffolding follow-ups (v0.37.x+)
+
+- [ ] **T8 truncation signal — defer until dedupe-then-cap SQL + Postgres parity E2E.** v0.37.4.0 ships `frontierCap` as the actually-useful protection but strips the `onTruncation` callback after /review adversarial pass (Claude + Codex both flagged). Two bugs in the v1 algorithm: (a) FALSE POSITIVE — `count == cap` at a depth fires the callback even when the graph organically has exactly cap unique nodes at that depth with no truncation; (b) FALSE NEGATIVE — recursive `LIMIT N` runs BEFORE outer `SELECT DISTINCT`, so diamond graphs (one parent fans out to N+5 candidates with duplicates) can have the LIMIT eat its slots on dupes, then DISTINCT collapses to <cap unique nodes, missing real truncation. Fix shape: rewrite both engine impls to dedupe candidates (by `(slug, id)` or page id, source-scoped) BEFORE applying the LIMIT — i.e., `(SELECT DISTINCT ON ... ORDER BY slug, id LIMIT N)` inside the recursive term instead of post-CTE DISTINCT. Then write the missing `test/e2e/engine-parity-frontier-cap.test.ts` (Postgres against PGLite, identical chosen slugs when cap fires + stable ordering). Restore `TruncationInfo` + `opts.onTruncation` to `TraverseGraphOpts` with the cap-after-dedupe shape. Callers that need truncation visibility in the interim can compare `result.length` against expected fanout bounds. /review found it; not a blocker for v0.37.4.0 because the cap itself works correctly and is back-compat (default unset = no behavior change).
+
+- [ ] **pg_upgrade_matrix.sh: add layer-isolation mode.** The current script tests whole-system walk-forward (the bug class CHANGELOG advertises). Adversarial /review caught that multi-layer healing (bootstrap → SCHEMA_SQL → migrations → verifySchema) means stubbing out `applyForwardReferenceBootstrap` entirely still produces clean walk-forwards on both fixtures. So the matrix doesn't actually gate on bootstrap correctness — only on whole-system wedges. Add an `ISOLATE_BOOTSTRAP=1` mode that monkey-patches the downstream layers (or runs a smaller engine surface that only invokes bootstrap) so single-probe regressions can be isolated. Complements the existing `test/schema-bootstrap-coverage.test.ts` static guard.
+
+- [ ] **scripts/check-fuzz-purity.sh: derive TARGET_FILES from `test/fuzz/pure-validators.test.ts` imports.** Today the targets are hand-maintained in two places (`TARGET_FILES` array + the test file's imports). Adding a new pure fuzz target requires updating both; forgetting the script means the new target ships ungated. Parse the test file's imports at script start (regex over `import { ... } from '../../src/.../*.ts'`) instead.
+## skill_brain_first wave follow-ups (v0.36.4+)
+
+- [ ] **v0.37+: Runtime brain-first gate at MCP dispatch.** The v0.36.x
+  `skill_brain_first` doctor check is purely static — it scans SKILL.md
+  authorship for canonical Convention callouts, `brain_first: exempt`
+  frontmatter, or position-relative brain references. The motivating
+  incident (2026-05-19 tweet-shield) was a RUNTIME failure: an agent
+  called Perplexity / cross-modal eval to assess Garry's Palantir tweet
+  without ever checking the brain, which already had "designed the
+  entire Finance product UI" and "150+ PSDs from April-December 2006."
+  A runtime gate would hook MCP tool dispatch: when a subagent invokes
+  `web_search` / `perplexity` / `exa` / etc., require that a `search`,
+  `query`, or `get_page` call landed earlier in the same agent turn.
+  Subagent-isolation aware (the gate scope is per-turn, per-agent).
+  Touches: `src/mcp/dispatch.ts` (tool-call entry seam, would gate before
+  routing to external-tool handlers), `src/core/minions/handlers/subagent.ts`
+  (per-turn tracking), `src/core/operations.ts` (cross-reference the
+  brain-tool ops). Full wave on its own (~3-5 days human / ~1-2h CC).
+  Out of scope for the static-check wave because the surface area is
+  fundamentally different. Closes the tweet-shield root cause at the
+  enforcement layer instead of just the authorship layer.
+
+- [ ] **v0.36.x: Audit trend doctor check `skill_brain_first_trend`.** The
+  v0.36.x snapshot+diff audit JSONL at
+  `~/.gbrain/audit/skill-brain-first-YYYY-Www.jsonl` records detected /
+  resolved / fixed events as transitions. The data is reachable via
+  `readRecentBrainFirstEvents(7)` in `src/core/audit-skill-brain-first.ts`
+  but no doctor surface consumes it yet. Add a `skill_brain_first_trend`
+  check (~30 LOC) that reads recent events, aggregates added vs resolved
+  counts per week, warns when violations are rising (e.g. >3 added, 0
+  resolved over 4 weeks). Cheap to land once audit logs accumulate
+  multiple weeks of data (no point shipping it with zero baseline data).
+  Mirrors the doctor check pattern in `src/commands/doctor.ts`. Filed
+  during /plan-eng-review as TODO-2.
+
+- [ ] **v0.36.x: Tighten the external-lookup regex to reduce false-positive
+  rate from name mentions.** v0.36.x ships with word-boundary regex on
+  `perplexity`, `exa`, `web_search`, etc. This matches "perplexity"
+  inside `perplexity-research` (a sub-skill name in dispatcher prose, not
+  an API call). Two skills in this repo's own `skills/` (functional-area-
+  resolver, strategic-reading) hit this false-positive and ship with
+  `brain_first: exempt`. Possible mitigation: tighten the pattern to
+  require an API-call shape like `perplexity\.|perplexity[\s._-]?(?:api|search|query)`.
+  Whack-a-mole risk — the negation-prose false-positive class can't be
+  reliably caught with regex either. Tracking as a follow-up; the
+  declarative `brain_first: exempt` opt-out is the canonical answer for
+  the false-positive cases. Decide based on real-world hit rate after
+  the v0.36.x wave is in production for a few weeks.
+
+
 ## v0.35.6.0 floor-ratio gate follow-ups (v0.36.x+)
 
 - [ ] **v0.36.x: Run gbrain-side floor-ratio ablation before flipping any mode-bundle default.** v0.35.6.0 ships the gate default-off (`MODE_BUNDLES[*].floor_ratio = undefined`) because the SkyTwin labeled-retrieval ablation that surfaced the regression isn't reproducible on gbrain's own eval surfaces from outside. Before any mode-bundle default flip, run the gate at `floor_ratio: undefined`, 0.85, 0.90, 0.95 across `gbrain eval longmemeval`, `gbrain eval whoknows`, `gbrain eval suspected-contradictions`, and the BrainBench-Real replay (sibling gbrain-evals repo). Quantify per-mode P@k / R@k / nDCG@k / top-1 stability deltas. Look for: regression on queries that genuinely need the long-tail boost (specific entity lookups, low-frequency topics) vs improvement on queries where weak-overlap pages were leapfrogging. The corpus-level finding determines whether tokenmax (most exposure to the failure mode) should flip first, or whether the gate stays a per-call opt-in indefinitely. Filed during v0.35.6.0 codex outside-voice review.
@@ -155,17 +245,58 @@
   update PR. Or a release-cadence audit checklist item. Today: when the
   estimate looks off, hand-edit the constants.
 
-- [ ] **v0.32.x: interactive provider chooser in `gbrain init`.** The full
-  wizard piece of the v0.32 discoverability lane was deferred. Today
-  `gbrain init` (no flags, TTY) silently uses OpenAI default. Plan: hook
-  into `init.ts:resolveAIOptions`, when no `--model` AND TTY AND not
-  `--non-interactive`, call `runExplain([])` (non-JSON path) from
-  `providers.ts:233-350` to print the provider matrix, then prompt with
-  readline (mirror `supabaseWizard()` at `init.ts:108`). Suggest
-  recommended based on env detection. Refuse `user_provided_models`
-  shorthand (already done in v0.32.0). Tests:
-  `test/init-provider-wizard.test.ts` (TTY → prompt fires; non-TTY →
-  falls through; invalid choice → re-prompts).
+- [x] ~~**v0.32.x: interactive provider chooser in `gbrain init`.**~~
+  **SUPERSEDED by v0.37 — closed by the env-detection + hybrid picker wave.**
+  `src/commands/init-provider-picker.ts` mirrors this design: filters to
+  env-ready recipes, prompts via readline through `readLineSafe`, surfaces
+  the subagent-Anthropic caveat on non-Anthropic chat picks. Env detection
+  in `resolveAIOptions` auto-picks when env is unambiguous (one provider's
+  keys set), fires the picker when multiple providers are ready, and exits 1
+  with a paste-ready setup hint in non-TTY zero-key contexts (D3). See
+  `~/.claude/plans/system-instruction-you-are-working-enumerated-mccarthy.md`
+  for the full decision trail.
+
+## Embedding-provider follow-ups (v0.37+)
+
+- [ ] **v0.37+: dedicated migration script for v0.36 broken installs.** v0.37
+  ships D5 + step 11 of the env-detection wave, which surfaces v0.36 silent-
+  default brains in `gbrain doctor` with a paste-ready repair command. What's
+  not yet built: a one-shot orchestrator under `src/commands/migrations/v0_37_x.ts`
+  that detects the broken state (vector(1536) schema + empty
+  `config.embedding_model` + 0 embedded chunks) on `gbrain upgrade` and runs
+  the repair automatically. Same shape as `src/commands/migrations/v0_12_2.ts`.
+  Telemetry-gated: only worth writing if issues show widespread breakage.
+
+- [ ] **v0.37+: namespaced extension fields for `gbrain config set`.** v0.37
+  D6 ships strict unknown-key rejection with a `--force` escape hatch +
+  Levenshtein "did you mean" suggestion. Codex finding #8 from the eng review
+  argued for a `gbrain.ext.<key>` namespace pattern instead of `--force`
+  accepting arbitrary top-level keys; deferred for follow-up. Revisit if
+  `--force` shows misuse in practice (e.g. tooling writing dozens of unknown
+  keys, polluting `gbrain config show`).
+
+- [ ] **v0.37+: runtime config-key inventory audit.** Codex finding #12 from
+  the eng review: the `KNOWN_CONFIG_KEYS` allow-list in `src/core/config.ts`
+  is hand-maintained. A future runtime audit could walk every `cfg.X` access
+  site at startup and cross-check against the allow-list, catching drift
+  when new code paths read a key the maintainer forgot to declare. Pre-merge
+  manual grep (`grep -rE "config\.\w+" src/`) is sufficient today.
+
+- [ ] **v0.38+: env-key typo detection at `gbrain config set` time too.**
+  v0.37 D13 ships Levenshtein typo detection at init for env vars
+  (`OPENAPI_API_KEY` → `OPENAI_API_KEY`). The same logic isn't applied at
+  `gbrain config set` for value-level provider strings (e.g.
+  `gbrain config set embedding_model openai:text-embedign-3-large` —
+  notice the typo'd model name). Cheap to add: parse the value as
+  `provider:model`, suggest the nearest from the recipe's `models[]` list.
+
+- [ ] **v0.38+: extend init env-detection to multimodal explicitly via picker.**
+  v0.37 T11 hooks `resolveSchemaMultimodalDim` preflight into
+  `gbrain reindex --multimodal`. The picker doesn't yet have a 'multimodal'
+  touchpoint mode — multimodal model selection happens via
+  `gbrain config set embedding_multimodal_model` or env detection of
+  multimodal-capable providers. Future polish: extend the picker with a
+  fourth touchpoint case so first-time users discover the option at init.
 
 - [ ] **v0.32.x: real-credentials per-recipe smoke-test CI matrix.** Codex
   finding #6 noted that unit tests via `__setEmbedTransportForTests` prove

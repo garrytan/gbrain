@@ -228,6 +228,60 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
  * See `src/core/cycle/emotional-weight.ts` for the score formula and
  * `engine.getRecentSalience` for the SQL.
  */
+/**
+ * v0.37.0 — domain-bank sampling for `gbrain brainstorm` / `gbrain lsd`.
+ * Pulls one page per prefix from a caller-supplied prefix list.
+ * Tiebreaker via JOIN to page_links (inbound link count = "structural centrality").
+ * Stale-bias optional (LSD mode prefers forgotten pages via `last_retrieved_at`).
+ * sourceId/sourceIds threaded from day 1 per [source-id-canonical-thread].
+ */
+export interface DomainBankSampleOpts {
+  /** Top-level slug prefixes to sample from (e.g. ['wiki/vc', 'wiki/biology']). */
+  prefixes: string[];
+  /** Slugs to exclude (typically the close-set from hybridSearch). */
+  excludeSlugs?: string[];
+  /** When true, prefer pages with NULL last_retrieved_at or > staleThresholdDays old. */
+  staleBias?: boolean;
+  /** Days threshold for "stale" classification. Default 90. */
+  staleThresholdDays?: number;
+  /** Single-source scope (canonical scalar form). */
+  sourceId?: string;
+  /** Federated read scope (array form, wins over scalar). */
+  sourceIds?: string[];
+}
+
+/** v0.37.0 — corpus-sampling fallback for `gbrain brainstorm` when prefix-stratified can't fill M. */
+export interface CorpusSampleOpts {
+  /** Number of pages to sample. */
+  n: number;
+  /** Slugs to exclude (close-set + already-picked-by-prefix-stratified). */
+  excludeSlugs?: string[];
+  /** Stable seed for deterministic sampling in tests. Falls back to random when omitted. */
+  seed?: number;
+  /** Single-source scope. */
+  sourceId?: string;
+  /** Federated read scope. */
+  sourceIds?: string[];
+}
+
+/** v0.37.0 — one row per page returned by domain-bank's prefix/corpus sampling. */
+export interface DomainBankRow {
+  slug: string;
+  source_id: string;
+  /** Top-level prefix (`^[^/]+/[^/]+`) or null for short slugs. */
+  prefix: string | null;
+  page_id: number;
+  title: string | null;
+  /** Page body — what gets injected into the brainstorm prompt as "the user wrote..." */
+  compiled_truth: string;
+  /** COUNT(page_links.id WHERE to_page_id = this) — inbound link count, the "structural centrality" tiebreaker (D10). */
+  connection_count: number;
+  /** When this page was last surfaced by a user-facing search/query. Powers LSD stale-bias. */
+  last_retrieved_at: Date | null;
+  /** Lowest chunk_index with non-null embedding on the default embedding_column. Null if no embedded chunks. */
+  representative_chunk_id: number | null;
+}
+
 export interface SalienceOpts {
   /** Window in days. Default 14. */
   days?: number;

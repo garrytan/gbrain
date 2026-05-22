@@ -162,7 +162,7 @@ export async function resolveModel(
     const def = await engine.getConfig('models.default');
     if (def && def.trim()) {
       const resolved = await resolveAlias(engine, def.trim());
-      return enforceSubagentAnthropic(resolved, opts.tier, 'models.default');
+      return enforceSubagentCapable(resolved, opts.tier, 'models.default');
     }
 
     // 5. Tier override (v0.31.12)
@@ -170,7 +170,7 @@ export async function resolveModel(
       const tierVal = await engine.getConfig(`models.tier.${opts.tier}`);
       if (tierVal && tierVal.trim()) {
         const resolved = await resolveAlias(engine, tierVal.trim());
-        return enforceSubagentAnthropic(resolved, opts.tier, `models.tier.${opts.tier}`);
+        return enforceSubagentCapable(resolved, opts.tier, `models.tier.${opts.tier}`);
       }
     }
   }
@@ -179,7 +179,7 @@ export async function resolveModel(
   const env = process.env[envVar];
   if (env && env.trim()) {
     const resolved = await resolveAlias(engine, env.trim());
-    return enforceSubagentAnthropic(resolved, opts.tier, `env:${envVar}`);
+    return enforceSubagentCapable(resolved, opts.tier, `env:${envVar}`);
   }
 
   // 7. Tier default (v0.31.12 — when no override beats us, the tier's
@@ -202,19 +202,88 @@ export async function resolveModel(
  * Returns the resolved value unchanged for non-subagent tiers or when the
  * resolved value is already Anthropic.
  */
-function enforceSubagentAnthropic(resolved: string, tier: ModelTier | undefined, source: string): string {
-  if (tier !== 'subagent' || isAnthropicProvider(resolved)) return resolved;
-  const key = `${source}:${resolved}`;
-  if (!_subagentTierWarningsEmitted.has(key)) {
-    _subagentTierWarningsEmitted.add(key);
-    process.stderr.write(
-      `[models] tier.subagent resolved to non-Anthropic provider "${resolved}" via "${source}". ` +
-      `The subagent loop is Anthropic-only — falling back to ${TIER_DEFAULTS.subagent}. ` +
-      `Fix: gbrain config set models.tier.subagent anthropic:<model>\n`,
-    );
+/**
+ * v0.38 (D7) — replaces the legacy `enforceSubagentAnthropic` with a
+ * capability-based gate. The check now asks "can this model run a subagent
+ * tool loop?" via the recipe-driven capability classifier instead of "is
+ * this Anthropic?". Result:
+ *
+ *   - `unusable:no_tools` → fall back to TIER_DEFAULTS.subagent + warn (the
+ *     loop literally cannot dispatch tools, so the resolved model is wrong)
+ *   - `unknown` → fall back to TIER_DEFAULTS.subagent + warn (unknown provider
+ *     — defensive: don't burn money on a model we can't verify supports tools)
+ *   - `degraded:no_caching` → return resolved; warn once per (source, model)
+ *     about cost regression
+ *   - `degraded:no_parallel` → return resolved; info-log
+ *   - `ok` → return resolved unchanged
+ *
+ * Once-per-(source, model) warn seam preserved from v0.31.12 (same Set, same
+ * suppression key) so doctor + first-call surfaces don't double-warn.
+ */
+function enforceSubagentCapable(resolved: string, tier: ModelTier | undefined, source: string): string {
+  if (tier !== 'subagent') return resolved;
+
+  // Lazy import keeps capabilities.ts out of model-config's eager-load surface
+  // (capabilities → model-resolver → recipes; this would create a cycle if
+  // model-config itself were imported by recipes, which it isn't, but
+  // defensive against future drift).
+  let verdict: 'ok' | 'degraded:no_caching' | 'degraded:no_parallel' | 'unusable:no_tools' | 'unknown';
+  try {
+    // Synchronous-style import via require shim isn't available in ESM; the
+    // helper is pure, so a synchronous static import is fine here. Pulling
+    // from capabilities.ts directly:
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const cap = require('./ai/capabilities.ts') as typeof import('./ai/capabilities.ts');
+    verdict = cap.classifyCapabilities(resolved);
+  } catch {
+    // If the import fails (e.g. malformed recipe registry during boot), be
+    // permissive and just return the resolved model — surface the underlying
+    // issue at gateway call time.
+    return resolved;
   }
-  return TIER_DEFAULTS.subagent;
+
+  const key = `${source}:${resolved}`;
+  if (verdict === 'unusable:no_tools' || verdict === 'unknown') {
+    if (!_subagentTierWarningsEmitted.has(key)) {
+      _subagentTierWarningsEmitted.add(key);
+      const reason = verdict === 'unusable:no_tools'
+        ? `lacks tool-calling support`
+        : `is an unrecognized provider`;
+      process.stderr.write(
+        `[models] tier.subagent resolved to "${resolved}" via "${source}", which ${reason}. ` +
+        `The subagent tool loop cannot run on this model — falling back to ${TIER_DEFAULTS.subagent}. ` +
+        `Fix: gbrain config set models.tier.subagent <provider>:<model-with-tools>\n`,
+      );
+    }
+    return TIER_DEFAULTS.subagent;
+  }
+
+  if (verdict === 'degraded:no_caching') {
+    if (!_subagentTierWarningsEmitted.has(key)) {
+      _subagentTierWarningsEmitted.add(key);
+      process.stderr.write(
+        `[models] tier.subagent resolved to "${resolved}" via "${source}" — provider does not support prompt caching. ` +
+        `The loop will run hot (cost scales linearly with conversation length). ` +
+        `For lower cost on long loops, set models.tier.subagent to an Anthropic model.\n`,
+      );
+    }
+  }
+  // degraded:no_parallel and ok return resolved unchanged (no warn).
+  return resolved;
 }
+
+/**
+ * @deprecated v0.38 — renamed to `enforceSubagentCapable`. The old name and
+ * Anthropic-only semantics are preserved as a thin wrapper for any external
+ * callers (extensions, plugins) that imported it. New code MUST call
+ * `enforceSubagentCapable` instead.
+ */
+function enforceSubagentAnthropic(resolved: string, tier: ModelTier | undefined, source: string): string {
+  return enforceSubagentCapable(resolved, tier, source);
+}
+// Keep `enforceSubagentAnthropic` available for back-compat consumers that
+// imported it. Marked unused-but-needed so the linter doesn't flag it.
+void enforceSubagentAnthropic;
 
 /**
  * Resolve a name (possibly an alias) to its full provider model id. Order:

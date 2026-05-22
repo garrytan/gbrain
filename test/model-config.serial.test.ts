@@ -175,26 +175,31 @@ describe('resolveModel — v0.31.12 tier system', () => {
     expect(m).toBe(TIER_DEFAULTS.reasoning);
   });
 
-  test('tier.subagent falls back to TIER_DEFAULTS.subagent when models.default is non-Anthropic', async () => {
-    stub.set('models.default', 'openai:gpt-5.5');
+  test('v0.38 D7: tier.subagent accepts non-Anthropic models that support tools (with cost warn)', async () => {
+    // Pre-v0.38 the resolver hard-fell-back to TIER_DEFAULTS.subagent for any
+    // non-Anthropic model. v0.38 (D6/D7) replaces that with a capability check:
+    // OpenAI/Gemini/etc. support tools → resolved unchanged + warn about
+    // missing prompt caching (cost regression on long loops, not a refusal).
+    stub.set('models.default', 'openai:gpt-5.2');
+    const m = await resolveModel(stub as never, {
+      tier: 'subagent',
+      fallback: 'sonnet',
+    });
+    expect(m).toBe('openai:gpt-5.2');
+    expect(stderrCapture).toContain('caching');
+  });
+
+  test('v0.38 D7: tier.subagent rejects unknown providers (falls back to default)', async () => {
+    // Unknown providers fail the capability check (verdict='unknown'); the
+    // resolver falls back to TIER_DEFAULTS.subagent rather than burn money on
+    // an unverified model.
+    stub.set('models.tier.subagent', 'madeup-provider:weird-model');
     const m = await resolveModel(stub as never, {
       tier: 'subagent',
       fallback: 'sonnet',
     });
     expect(m).toBe(TIER_DEFAULTS.subagent);
     expect(stderrCapture).toContain('tier.subagent');
-    expect(stderrCapture).toContain('non-Anthropic');
-    expect(stderrCapture).toContain('models.default');
-  });
-
-  test('tier.subagent falls back when explicitly set to non-Anthropic', async () => {
-    stub.set('models.tier.subagent', 'openai:gpt-5.5');
-    const m = await resolveModel(stub as never, {
-      tier: 'subagent',
-      fallback: 'sonnet',
-    });
-    expect(m).toBe(TIER_DEFAULTS.subagent);
-    expect(stderrCapture).toContain('models.tier.subagent');
   });
 
   test('tier.subagent accepts explicit Anthropic override', async () => {

@@ -603,21 +603,23 @@ describe('operation scope annotations', () => {
     for (const op of operations) {
       expect(op.scope, `${op.name} missing scope`).toBeDefined();
       // v0.28 added sources_admin and users_admin to the union.
+      // v0.38 added 'agent' for submit_agent (D13).
       expect([
-        'read', 'write', 'admin', 'sources_admin', 'users_admin',
+        'read', 'write', 'admin', 'sources_admin', 'users_admin', 'agent',
       ]).toContain(op.scope);
     }
   });
 
-  test('mutating operations are write/admin/sources_admin/users_admin scoped', () => {
+  test('mutating operations are write/admin/sources_admin/users_admin/agent scoped', () => {
     const { operations } = require('../src/core/operations.ts');
     for (const op of operations) {
       if (op.mutating) {
         // v0.28: sources_admin permits sources_add / sources_remove (mutating
         // sources, not pages); read scope is the only thing too narrow for
-        // any mutating op.
+        // any mutating op. v0.38: 'agent' is a mutating-axis scope for
+        // submit_agent (creates jobs, spends money, but contained by bindings).
         expect(
-          ['write', 'admin', 'sources_admin', 'users_admin'],
+          ['write', 'admin', 'sources_admin', 'users_admin', 'agent'],
           `${op.name} is mutating but not a write-axis scope`,
         ).toContain(op.scope);
       }
