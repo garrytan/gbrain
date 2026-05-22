@@ -35,6 +35,13 @@ import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
+import { MinionQueue } from '../core/minions/queue.ts';
+import {
+  computeContentHash,
+  validateIngestionEvent,
+  type IngestionContentType,
+  type IngestionEvent,
+} from '../core/ingestion/types.ts';
 
 /**
  * /health endpoint timeout. 3s rather than 5s: Fly.io's default
@@ -225,6 +232,79 @@ interface ServeHttpOptions {
   suppressBootstrapToken?: boolean;
 }
 
+/**
+ * v0.38 Slice 4 — per-OAuth-client agent spend snapshot. Exported so the
+ * admin endpoint and `test/admin-agents-spend.test.ts` share the same SQL
+ * (single source of truth for the spend query shape).
+ *
+ * Returns one row per OAuth client that EITHER has the `agent` scope OR
+ * has at least one `bound_*` column set (the legacy admin client could
+ * also have bindings without scope='agent' on a partially-migrated brain;
+ * we want it visible in the viewer).
+ *
+ * Fields:
+ *   - client_id, client_name
+ *   - cap_usd_per_day: number | null  (daily budget cap; NULL = no cap)
+ *   - spent_cents_today: number  (sum from mcp_spend_log, UTC-day-aligned)
+ *   - pending_cents: number  (sum of in-flight reservations, non-expired)
+ *   - inflight_count: number  (active subagent jobs owned by this client)
+ *
+ * Falls back to `[]` on any SQL error (pre-v0.38 brains where the v82-v84
+ * tables/columns don't yet exist).
+ */
+export interface AgentClientSpend {
+  client_id: string;
+  client_name: string;
+  cap_usd_per_day: number | null;
+  spent_cents_today: number;
+  pending_cents: number;
+  inflight_count: number;
+}
+
+export async function queryAgentClientSpend(engine: BrainEngine): Promise<AgentClientSpend[]> {
+  const sql = sqlQueryForEngine(engine);
+  const rows = await sql`
+    SELECT
+      c.client_id,
+      c.client_name,
+      COALESCE(c.budget_usd_per_day, NULL) AS cap_usd_per_day,
+      COALESCE((
+        SELECT SUM(spend_cents)::text
+          FROM mcp_spend_log
+         WHERE client_id = c.client_id
+           AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
+      ), '0') AS spent_cents_today,
+      COALESCE((
+        SELECT SUM(estimated_cents)::text
+          FROM mcp_spend_reservations
+         WHERE client_id = c.client_id
+           AND status = 'pending'
+           AND expires_at > now()
+      ), '0') AS pending_cents,
+      COALESCE((
+        SELECT COUNT(*)::int
+          FROM minion_jobs
+         WHERE name = 'subagent'
+           AND status IN ('waiting', 'active', 'waiting-children')
+           AND data->>'__owner_client_id' = c.client_id
+      ), 0) AS inflight_count
+    FROM oauth_clients c
+    WHERE c.deleted_at IS NULL
+      AND ('agent' = ANY (string_to_array(c.scope, ' ')) OR c.bound_tools IS NOT NULL)
+    ORDER BY c.client_name ASC
+  `;
+  return rows.map(r => ({
+    client_id: String(r.client_id),
+    client_name: String(r.client_name ?? r.client_id),
+    cap_usd_per_day: r.cap_usd_per_day !== null && r.cap_usd_per_day !== undefined
+      ? parseFloat(String(r.cap_usd_per_day))
+      : null,
+    spent_cents_today: parseFloat(String(r.spent_cents_today ?? '0')),
+    pending_cents: parseFloat(String(r.pending_cents ?? '0')),
+    inflight_count: Number(r.inflight_count ?? 0),
+  }));
+}
+
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
@@ -349,7 +429,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   app.post('/token', ccRateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
     if (req.body?.grant_type !== 'client_credentials') {
-      return next(); // Fall through to SDK's token handler
+      return next(); // Fall through to confidential-client handler or SDK
     }
 
     try {
@@ -364,6 +444,80 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Unknown error';
       res.status(400).json({ error: 'invalid_grant', error_description: msg });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // v0.37.7.0 #1166: Custom authorization_code + refresh_token handler for
+  // CONFIDENTIAL clients. The MCP SDK's clientAuth middleware does plaintext
+  // `client.client_secret !== presented_secret` compare; we store
+  // SHA-256 hashes, so the SDK's compare always fails for confidential
+  // clients. This middleware verifies the secret hash ourselves before
+  // calling the provider's exchange methods directly.
+  //
+  // Public clients (token_endpoint_auth_method='none') fall through to
+  // the SDK's handler — the v0.34.1.0 PKCE path stays canonical.
+  // ---------------------------------------------------------------------------
+  app.post('/token', ccRateLimiter, async (req, res, next) => {
+    const grantType = req.body?.grant_type;
+    if (grantType !== 'authorization_code' && grantType !== 'refresh_token') {
+      return next();
+    }
+
+    // Detect confidential auth: either client_secret in body
+    // (client_secret_post) OR Authorization: Basic header
+    // (client_secret_basic). Public PKCE clients omit both.
+    const bodySecret: string | undefined = req.body?.client_secret;
+    let clientId: string | undefined = req.body?.client_id;
+    let presentedSecret: string | undefined = bodySecret;
+    const authHeader = (req.headers.authorization ?? '').toString();
+    if (!presentedSecret && authHeader.startsWith('Basic ')) {
+      try {
+        const decoded = Buffer.from(authHeader.slice('Basic '.length), 'base64').toString('utf8');
+        const idx = decoded.indexOf(':');
+        if (idx > -1) {
+          clientId ||= decodeURIComponent(decoded.slice(0, idx));
+          presentedSecret = decodeURIComponent(decoded.slice(idx + 1));
+        }
+      } catch {
+        // Malformed Basic header → falls through; SDK will reject
+      }
+    }
+    if (!clientId || !presentedSecret) {
+      return next(); // Public client path; SDK handles.
+    }
+
+    try {
+      const client = await oauthProvider.verifyConfidentialClientSecret(clientId, presentedSecret);
+      let tokens;
+      if (grantType === 'authorization_code') {
+        const code = req.body.code;
+        const redirectUri = req.body.redirect_uri;
+        const codeVerifier = req.body.code_verifier;
+        if (!code) {
+          res.status(400).json({ error: 'invalid_request', error_description: 'code required' });
+          return;
+        }
+        tokens = await oauthProvider.exchangeAuthorizationCode(client, code, codeVerifier, redirectUri);
+      } else {
+        const refreshToken = req.body.refresh_token;
+        const scopeParam = typeof req.body.scope === 'string' ? req.body.scope.split(/\s+/) : undefined;
+        if (!refreshToken) {
+          res.status(400).json({ error: 'invalid_request', error_description: 'refresh_token required' });
+          return;
+        }
+        tokens = await oauthProvider.exchangeRefreshToken(client, refreshToken, scopeParam);
+      }
+      res.json(tokens);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      // RFC 6749: invalid_client for auth failures, invalid_grant for
+      // code/token problems. "Invalid client" → 401; everything else 400.
+      if (msg === 'Invalid client' || msg === 'Client has been revoked') {
+        res.status(401).json({ error: 'invalid_client', error_description: msg });
+      } else {
+        res.status(400).json({ error: 'invalid_grant', error_description: msg });
+      }
     }
   });
 
@@ -635,6 +789,22 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.json([...oauthClients, ...legacyKeys]);
     } catch (e) {
       res.status(503).json({ error: 'service_unavailable' });
+    }
+  });
+
+  // v0.38 Slice 4 — per-OAuth-client agent spend viewer. Pre-computes today's
+  // spend (committed + pending reservations) per client so the Agents tab
+  // can render a "$X / $Y today" cell. Read-side endpoint only — no mutation.
+  // Falls back to an empty array on pre-v0.38 brains where mcp_spend_log
+  // exists but agent dispatch hasn't recorded anything.
+  app.get('/admin/api/agents/spend', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const rows = await queryAgentClientSpend(engine);
+      res.json(rows);
+    } catch (e) {
+      // Pre-v0.38 brains: tables may not exist yet. Return empty so the UI
+      // renders gracefully instead of erroring.
+      res.json([]);
     }
   });
 
@@ -1349,6 +1519,210 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       }
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // v0.38 ingestion substrate — POST /ingest (webhook source)
+  //
+  // The webhook ingestion source lives INSIDE serve --http (NOT in the
+  // ingestion daemon) per the /plan-eng-review E1 decision. This avoids
+  // cross-process IPC: the daemon supervises only daemon-side sources
+  // (file-watcher, inbox-folder, cron-scheduler) while serve --http hosts
+  // the network surface and submits Minion jobs directly.
+  //
+  // Auth: existing OAuth `write` scope. Rate limit: 100 events / 10s per
+  // IP (reuses the IP-keyed pattern from ccRateLimiter; a future tweak
+  // could key on authInfo.clientId for fairer per-agent fairness).
+  // Payload cap: 1 MB default. Content-type allowlist: markdown, plain,
+  // HTML, JSON. Binary content is REJECTED with HTTP 415 in v1 — the
+  // binary-upload flow ships as a separate route in a later wave when
+  // content-type processors land.
+  //
+  // Events always carry untrusted_payload: true because the input came
+  // over the network from an OAuth-authenticated but otherwise untrusted
+  // source (Zapier / IFTTT / Apple Shortcuts). The downstream
+  // ingest_capture handler logs the flag; a future v2 wave wires it
+  // through the put_page op to skip auto-link.
+  // ---------------------------------------------------------------------------
+  const ingestRateLimiter = rateLimit({
+    windowMs: 10_000, // 10 seconds
+    limit: 100, // 100 events per IP per window
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'rate_limit_exceeded', message: 'too many /ingest events; backoff and retry' },
+  });
+
+  // Maximum payload bytes for POST /ingest. Configurable via env. Default 1 MB.
+  const ingestMaxBytes = (() => {
+    const fromEnv = process.env.GBRAIN_INGEST_MAX_BYTES;
+    if (!fromEnv) return 1_048_576;
+    const n = parseInt(fromEnv, 10);
+    return Number.isFinite(n) && n > 0 ? n : 1_048_576;
+  })();
+
+  // Content-type allowlist: text-shaped types only in v1. The handler
+  // routes binary content_types with HTTP 415; a future wave + skillpack
+  // processors will accept image/audio/video/pdf via a separate flow.
+  const INGEST_ALLOWED_CONTENT_TYPES: ReadonlySet<IngestionContentType> = new Set([
+    'text/markdown',
+    'text/plain',
+    'text/html',
+    'application/json',
+  ]);
+
+  // Single MinionQueue instance shared across POST /ingest invocations
+  // (the queue is stateless beyond the engine handle; reusing avoids
+  // per-request construction).
+  const ingestQueue = new MinionQueue(engine);
+
+  app.post(
+    '/ingest',
+    ingestRateLimiter,
+    requireBearerAuth({ verifier: oauthProvider, requiredScopes: ['write'] }),
+    express.raw({ type: '*/*', limit: ingestMaxBytes }),
+    async (req: Request, res: Response) => {
+      const startTime = Date.now();
+      const authInfo = (req as Request & { auth?: AuthInfo }).auth as AuthInfo;
+      const agentName = authInfo.clientName ?? authInfo.clientId;
+
+      // Express raw() returns a Buffer. Decode as UTF-8; reject non-UTF-8
+      // bytes loudly so callers know their payload was garbled.
+      let body: Buffer;
+      if (Buffer.isBuffer(req.body)) {
+        body = req.body;
+      } else if (typeof req.body === 'string') {
+        body = Buffer.from(req.body, 'utf8');
+      } else {
+        // express.json or urlencoded fired earlier in the chain and parsed
+        // for us. Re-serialize so we can hash and forward.
+        body = Buffer.from(JSON.stringify(req.body), 'utf8');
+      }
+
+      if (body.length === 0) {
+        res.status(400).json({ error: 'empty_body', message: 'POST /ingest requires a non-empty body' });
+        return;
+      }
+
+      // Detect content_type. Caller can override via the X-Gbrain-Content-Type
+      // header for the JSON case (since the request's Content-Type would say
+      // application/json but the user might intend the body to be markdown).
+      const declared = (req.header('x-gbrain-content-type') || req.header('content-type') || '').toLowerCase();
+      let contentType: IngestionContentType;
+      if (declared.startsWith('text/markdown')) {
+        contentType = 'text/markdown';
+      } else if (declared.startsWith('text/html')) {
+        contentType = 'text/html';
+      } else if (declared.startsWith('text/plain')) {
+        contentType = 'text/plain';
+      } else if (declared.startsWith('application/json')) {
+        contentType = 'application/json';
+      } else if (declared.startsWith('text/')) {
+        // Unknown text/* sub-types pass through as text/plain.
+        contentType = 'text/plain';
+      } else {
+        // Binary or unknown — rejected in v1.
+        res.status(415).json({
+          error: 'unsupported_content_type',
+          message: `content_type '${declared}' not supported. Use one of: ${[...INGEST_ALLOWED_CONTENT_TYPES].join(', ')}. ` +
+            'Binary content (image/audio/video/pdf) is not yet supported via POST /ingest — install a content-type processor skillpack.',
+        });
+        return;
+      }
+
+      if (!INGEST_ALLOWED_CONTENT_TYPES.has(contentType)) {
+        res.status(415).json({
+          error: 'unsupported_content_type',
+          message: `content_type '${contentType}' is in the taxonomy but not currently accepted by POST /ingest`,
+        });
+        return;
+      }
+
+      const content = body.toString('utf8');
+      const contentHash = computeContentHash(content);
+      const sourceUri = (req.header('x-gbrain-source-uri') || `mcp-webhook:${authInfo.clientId}:${Date.now()}`).slice(0, 1024);
+      const sourceId = (req.header('x-gbrain-source-id') || `webhook-${authInfo.clientId}`).slice(0, 256);
+      const callerSlug = req.header('x-gbrain-slug');
+
+      const event: IngestionEvent = {
+        source_id: sourceId,
+        source_kind: 'webhook',
+        source_uri: sourceUri,
+        received_at: new Date().toISOString(),
+        content_type: contentType,
+        content,
+        content_hash: contentHash,
+        untrusted_payload: true, // ALWAYS true for network input
+        metadata: {
+          ip: req.ip,
+          user_agent: req.header('user-agent') ?? '',
+          client_id: authInfo.clientId,
+          ...(callerSlug ? { slug: callerSlug } : {}),
+        },
+      };
+
+      const validationErr = validateIngestionEvent(event);
+      if (validationErr) {
+        res.status(400).json({
+          error: 'invalid_event',
+          message: validationErr.message,
+          field: validationErr.field,
+        });
+        return;
+      }
+
+      try {
+        const job = await ingestQueue.add(
+          'ingest_capture',
+          {
+            event,
+            ...(callerSlug ? { slug: callerSlug } : {}),
+          },
+          {
+            // Idempotency: same content from the same client within the
+            // queue's lifetime is a single job. Different content gets
+            // different jobs. Daemon-side dedup catches the 24h window;
+            // the queue-level idempotency catches simultaneous retries.
+            idempotency_key: `ingest:webhook:${authInfo.clientId}:${contentHash}`,
+            // Cap waiting jobs from a single client so a runaway integration
+            // can't fill the queue.
+            maxWaiting: 50,
+          },
+        );
+
+        const latency = Date.now() - startTime;
+        try {
+          await executeRawJsonb(
+            engine,
+            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+            [authInfo.clientId, agentName, 'webhook_ingest', latency, 'success'],
+            [{ content_type: contentType, content_hash: contentHash, bytes: body.length, job_id: job.id }],
+          );
+        } catch { /* best effort */ }
+        broadcastEvent({
+          agent: agentName,
+          operation: 'webhook_ingest',
+          scopes: authInfo.scopes.join(','),
+          latency_ms: latency,
+          status: 'success',
+          timestamp: new Date().toISOString(),
+        });
+
+        res.status(202).json({
+          job_id: job.id,
+          content_hash: contentHash,
+          source_id: sourceId,
+          message: 'Accepted. Event queued for ingestion.',
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('POST /ingest queue submission error:', msg);
+        res.status(500).json({
+          error: 'queue_submission_failed',
+          message: msg,
+        });
+      }
+    },
+  );
 
   // ---------------------------------------------------------------------------
   // Start server

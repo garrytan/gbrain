@@ -1202,6 +1202,17 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
   process.stderr.write('[minion worker] subagent handlers enabled\n');
 
   // ============================================================
+  // v0.38 ingestion substrate — ingest_capture handler. Receives
+  // IngestionEvent payloads from the daemon's dispatcher (file-watcher,
+  // inbox-folder, cron-scheduler sources) and from serve --http's
+  // POST /ingest route (webhook source). Routes through importFromContent
+  // to land as a brain page under inbox/YYYY-MM-DD-<hash6> (or the
+  // caller-provided slug).
+  // ============================================================
+  const { makeIngestCaptureHandler } = await import('../core/minions/handlers/ingest-capture.ts');
+  worker.register('ingest_capture', makeIngestCaptureHandler(engine));
+
+  // ============================================================
   // v0.36+ brain-health-100 wave: 11 new handlers for autonomous
   // remediation via `gbrain doctor --remediate` and autopilot.
   //

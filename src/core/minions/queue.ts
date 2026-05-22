@@ -84,25 +84,34 @@ export class MinionQueue {
         `(pass {allowProtectedSubmit: true} as the 4th arg to MinionQueue.add)`,
       );
     }
-    // v0.31.12 subagent runtime enforcement (Layer 1 of 3 — Codex F1+F2 in
-    // plan review). The subagent loop in handlers/subagent.ts uses Anthropic's
-    // Messages API with prompt caching on system + tools. Routing it elsewhere
-    // silently breaks. Reject non-Anthropic data.model at the queue boundary
-    // so the job never enters waiting state.
+    // v0.38 (S1.7 + D6) — capability-based gate replaces the v0.31.12 Anthropic
+    // pin. The subagent loop now routes through `gateway.toolLoop()` so any
+    // provider with native tool calling works. Only refuse-at-submit when
+    // the requested model literally cannot run a tool loop. The handler
+    // (`subagent.ts`) does a defense-in-depth check at dispatch time too.
     if (jobName === 'subagent' && data && typeof data === 'object') {
       const submittedModel = (data as { model?: unknown }).model;
       if (typeof submittedModel === 'string' && submittedModel.length > 0) {
-        // Lazy import to avoid pulling model-config (which imports engine types)
-        // into the queue module's eager-load surface.
-        const { isAnthropicProvider } = await import('../model-config.ts');
-        if (!isAnthropicProvider(submittedModel)) {
+        const { classifyCapabilities } = await import('../ai/capabilities.ts');
+        const verdict = classifyCapabilities(submittedModel);
+        if (verdict === 'unusable:no_tools') {
           throw new Error(
-            `subagent job rejected: data.model "${submittedModel}" is non-Anthropic. ` +
-            `The subagent loop is Anthropic-only (Messages API + prompt caching). ` +
-            `Pass an Anthropic model id (e.g. claude-sonnet-4-6) or omit data.model ` +
-            `to use the configured default.`,
+            `subagent job rejected: data.model "${submittedModel}" lacks native tool calling. ` +
+            `The subagent loop dispatches brain ops via tool calls — without tool support the loop has no way to run. ` +
+            `Pick a provider that supports tools (anthropic, openai, google, openrouter, litellm-proxy, deepseek, groq, together, azure-openai).`,
           );
         }
+        if (verdict === 'unknown') {
+          throw new Error(
+            `subagent job rejected: data.model "${submittedModel}" references an unknown provider. ` +
+            `Use format provider:model where provider matches a recipe in src/core/ai/recipes/. ` +
+            `Known providers: anthropic, openai, google, openrouter, litellm-proxy, ollama, llama-server, ` +
+            `together, azure-openai, deepseek, groq, dashscope, minimax, zhipu, voyage, zeroentropyai.`,
+          );
+        }
+        // 'degraded:no_caching' and 'degraded:no_parallel' pass through — the
+        // gateway prints a once-per-(source, model) cost warning at first
+        // dispatch. 'ok' passes through silently.
       }
     }
     await this.ensureSchema();

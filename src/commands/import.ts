@@ -49,11 +49,37 @@ export async function runImport(
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
+
+  // T7 (D9): refuse cleanly when init persisted the deferred-setup sentinel,
+  // unless the user is explicitly skipping embedding via `--no-embed` (in
+  // which case the chunks land without vectors and the user can backfill
+  // later with `gbrain embed --stale` after configuring a provider).
+  if (!noEmbed) {
+    const { assertEmbeddingEnabled } = await import('../core/embedding-dim-check.ts');
+    const { loadConfig } = await import('../core/config.ts');
+    try {
+      assertEmbeddingEnabled(loadConfig());
+    } catch (e) {
+      console.error(`\n${e instanceof Error ? e.message : e}`);
+      console.error('Tip: run `gbrain import <dir> --no-embed` to import without embedding now.');
+      process.exit(1);
+    }
+  }
   // v0.30.x follow-up to PR #707: programmatic sourceId support so internal
   // callers (performFullSync, future Step 6 paths) can route to a named
-  // source. The CLI `gbrain import` deliberately has no --source flag per
-  // PR #707's design intent — only programmatic callers thread sourceId.
-  const sourceId = opts.sourceId;
+  // source.
+  //
+  // v0.37.7.0 #1167+#1222: the CLI surface now also accepts a
+  // `--source-id <id>` flag (named to avoid colliding with `--source`
+  // which other commands use for different axes). Pre-fix, users
+  // passing `gbrain import --source dept-x ...` silently fell back to
+  // default because the parser ignored the flag. Now an explicit
+  // `--source-id <id>` opt-in routes the import to that source.
+  // Programmatic callers continue passing `opts.sourceId` directly;
+  // CLI callers' flag wins over opts when both are set.
+  const sourceIdIdx = args.indexOf('--source-id');
+  const flagSourceId = sourceIdIdx !== -1 ? args[sourceIdIdx + 1] : null;
+  const sourceId = flagSourceId ?? opts.sourceId;
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
@@ -70,10 +96,11 @@ export async function runImport(
   // Find dir: first non-flag arg that isn't a value for --workers
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
+  if (sourceIdIdx !== -1) flagValues.add(sourceIdIdx + 1);
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--json]');
     process.exit(1);
   }
   const dir: string = dirArg;  // narrowed; survives closure capture

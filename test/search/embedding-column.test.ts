@@ -110,10 +110,16 @@ describe('resolveEmbeddingColumn — resolution chain', () => {
 
 describe('getEmbeddingColumnRegistry — builtins + merge', () => {
   test('builtin embedding always present even with empty user config', () => {
+    // v0.37 fix wave (Lane A.5 + CDX2-3): the registry's resolution
+    // chain is `cfg > gateway > DEFAULT_EMBEDDING_*`. Under the legacy
+    // preload (bunfig.toml), the gateway is set to OpenAI/1536, so an
+    // empty cfg picks up those values via the gateway tier. New tests
+    // that want the pure-DEFAULT behavior call `resetGateway()` first.
     const reg = getEmbeddingColumnRegistry(cfg());
     expect(reg.embedding).toBeDefined();
     expect(reg.embedding!.type).toBe('vector');
     expect(reg.embedding!.dimensions).toBe(1536);
+    expect(reg.embedding!.provider).toBe('openai:text-embedding-3-large');
   });
 
   test('builtin embedding_image always present with 1024d vector', () => {
@@ -447,6 +453,10 @@ describe('codex /ship #2 — descriptor passthrough validates', () => {
 
 describe('codex /ship #4 — isCacheSafe (embedding-space-based skip)', () => {
   test('default name + matching dim + matching model → safe', () => {
+    // v0.37 fix wave (Lane A.6 + CDX2-3): isCacheSafe baselines against
+    // `cfg > gateway > DEFAULT`. Under the legacy preload (bunfig.toml),
+    // the gateway is set to OpenAI/1536, so a matching resolved column
+    // is cache-safe even with empty cfg.
     const r: ResolvedColumn = {
       name: 'embedding',
       type: 'vector',
@@ -500,6 +510,9 @@ describe('codex /ship #4 — isCacheSafe (embedding-space-based skip)', () => {
   });
 
   test('zero-config brain (cfg has no embedding_dimensions/model) → defaults match → safe', () => {
+    // v0.37 fix wave: with empty cfg, registry + isCacheSafe fall
+    // through to gateway state. Preload sets OpenAI/1536; matching
+    // column is safe.
     const r: ResolvedColumn = {
       name: 'embedding',
       type: 'vector',

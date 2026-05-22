@@ -22,7 +22,7 @@
  * vs user-account-mgmt — neither implies the other).
  */
 
-export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin';
+export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent';
 
 export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'read',
@@ -30,6 +30,7 @@ export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'admin',
   'sources_admin',
   'users_admin',
+  'agent',
 ]);
 
 /**
@@ -38,6 +39,7 @@ export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
  */
 export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = Object.freeze([
   'admin',
+  'agent',
   'read',
   'sources_admin',
   'users_admin',
@@ -48,6 +50,11 @@ export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = Object.freeze([
  * Hierarchy table: which required scopes are implied by which granted scope.
  * `admin` implies all (escape hatch for legacy + super-admin tokens).
  * `write` implies `read`. The two `*_admin` siblings only imply themselves.
+ *
+ * v0.38 (D13): `agent` is a SIBLING, not implied by admin. A super-admin
+ * token still needs to be re-registered with explicit bindings to submit
+ * subagent jobs. This prevents existing admin clients from silently gaining
+ * agent-dispatch capability on upgrade.
  */
 const IMPLIES: Record<Scope, ReadonlySet<Scope>> = {
   admin: new Set(['admin', 'sources_admin', 'users_admin', 'write', 'read']),
@@ -55,6 +62,7 @@ const IMPLIES: Record<Scope, ReadonlySet<Scope>> = {
   sources_admin: new Set(['sources_admin']),
   users_admin: new Set(['users_admin']),
   read: new Set(['read']),
+  agent: new Set(['agent']),
 };
 
 /**

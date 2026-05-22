@@ -4,6 +4,19 @@ import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
 import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
+import { loadOrDeriveManifest } from '../core/skill-manifest.ts';
+import { parseSkillFrontmatter } from '../core/skill-frontmatter.ts';
+import {
+  analyzeSkillBrainFirst,
+  buildBrainFirstSummaryLine,
+  type BrainFirstAnalysis,
+} from '../core/skill-brain-first.ts';
+import {
+  loadSnapshot,
+  writeSnapshotAtomically,
+  diffAgainstSnapshot,
+  appendAuditEventsForTransitions,
+} from '../core/audit-skill-brain-first.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
@@ -554,7 +567,7 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // so the user sees it at the next `gbrain doctor` run instead of at the
   // next subagent job submission. (Layers 1+2 also enforce — this is the
   // surfacing layer.)
-  checks.push(await checkSubagentProvider(engine));
+  checks.push(await checkSubagentCapability(engine));
 
   // 6. Sync freshness check
   checks.push(await checkSyncFreshness(engine));
@@ -572,6 +585,13 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // search.reranker.enabled FIRST so absence-of-failures means different
   // things when reranker is on vs off.
   checks.push(await checkRerankerHealth(engine));
+
+  // 9b. v0.37.0 brainstorm_health: surfaces three brainstorm/lsd readiness
+  // signals: (a) migration v79 applied (last_retrieved_at column exists),
+  // (b) calibration cold-start status (active_bias_tags empty), (c)
+  // search.track_retrieval enabled/disabled. Each surfaces a paste-ready
+  // fix hint.
+  checks.push(await checkBrainstormHealth(engine));
 
   // 10. v0.36.1.0 Hindsight calibration wave (T12) — four new checks:
   //   - abandoned_threads: high-conviction takes never revisited
@@ -838,6 +858,112 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
 }
 
 /**
+ * v0.37.0 brainstorm_health doctor check.
+ *
+ * Surfaces three readiness signals for `gbrain brainstorm` / `gbrain lsd`:
+ *
+ *   1. Migration v79 applied — the `pages.last_retrieved_at` column exists.
+ *      If missing, LSD's stale-page signal degrades silently (corpus-sampling
+ *      fallback only). Fix: `gbrain apply-migrations --yes`.
+ *
+ *   2. search.track_retrieval — when explicitly off, LSD never accumulates
+ *      stale signal (every page stays at NULL last_retrieved_at). Default-on
+ *      is fine; explicit-off is a warning so the user notices the setting.
+ *      Fix: `gbrain config set search.track_retrieval true`.
+ *
+ *   3. Calibration cold-start — the latest calibration profile has empty
+ *      `active_bias_tags`. brainstorm + LSD judge fall back to no-anti-bias
+ *      mode with a stderr warning at run time; this surfaces it earlier.
+ *      Fix: `gbrain calibration --regenerate` once enough takes are resolved.
+ *
+ * Returns the FIRST non-ok signal as the status — column-missing dominates,
+ * then disabled-tracking, then cold-start. All three are non-blocking warnings;
+ * brainstorm + LSD still work, just with degraded signal.
+ */
+export async function checkBrainstormHealth(engine: BrainEngine): Promise<Check> {
+  // (1) Column probe — fast, single-query.
+  try {
+    const probeRows = await engine.executeRaw<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'pages' AND column_name = 'last_retrieved_at'
+       ) AS exists`,
+      []
+    );
+    const columnPresent = probeRows[0]?.exists === true;
+    if (!columnPresent) {
+      return {
+        name: 'brainstorm_health',
+        status: 'warn',
+        message: `pages.last_retrieved_at column missing. LSD stale-bias degraded to corpus-sampling. Fix: \`gbrain apply-migrations --yes\``,
+      };
+    }
+  } catch (e) {
+    // Information schema may not be queryable on every engine variant.
+    // Don't fail the doctor over this — degrade to skip.
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'brainstorm_health',
+      status: 'warn',
+      message: `Could not probe pages.last_retrieved_at (${msg}); brainstorm/lsd may run with degraded signal.`,
+    };
+  }
+
+  // (2) search.track_retrieval — explicit-off surfaces as a warning.
+  try {
+    const trackCfg = await engine.getConfig('search.track_retrieval');
+    if (trackCfg === 'false' || trackCfg === '0' || trackCfg === 'off' || trackCfg === 'no') {
+      return {
+        name: 'brainstorm_health',
+        status: 'warn',
+        message: `search.track_retrieval is explicitly off — LSD's stale-page signal never accumulates. Fix: \`gbrain config set search.track_retrieval true\` (or accept and use brainstorm only).`,
+      };
+    }
+  } catch {
+    // Config read miss is benign; default-on applies.
+  }
+
+  // (3) Calibration cold-start — empty active_bias_tags.
+  try {
+    const calibRows = await engine.executeRaw<{ active_bias_tags: string[] | null }>(
+      `SELECT active_bias_tags
+         FROM calibration_profiles
+         ORDER BY generated_at DESC
+         LIMIT 1`,
+      []
+    );
+    if (calibRows.length === 0) {
+      return {
+        name: 'brainstorm_health',
+        status: 'ok',
+        message: `Migration v79 applied; tracking enabled. Calibration profile not yet generated — brainstorm/lsd will run unbiased until enough takes are resolved.`,
+      };
+    }
+    const tags = calibRows[0].active_bias_tags;
+    if (!Array.isArray(tags) || tags.length === 0) {
+      return {
+        name: 'brainstorm_health',
+        status: 'ok',
+        message: `Migration v79 applied; tracking enabled. Calibration cold-start (no active_bias_tags) — judge runs unbiased. Fix when ready: \`gbrain calibration --regenerate\`.`,
+      };
+    }
+    return {
+      name: 'brainstorm_health',
+      status: 'ok',
+      message: `Migration v79 applied; tracking enabled; calibration profile with ${tags.length} bias tag(s) loaded.`,
+    };
+  } catch {
+    // Pre-v0.36.1 brain (no calibration_profiles table). Brainstorm/lsd still
+    // work without anti-bias context — orchestrator stderr-warns at run time.
+    return {
+      name: 'brainstorm_health',
+      status: 'ok',
+      message: `Migration v79 applied; tracking enabled. calibration_profiles table missing (pre-v0.36.1 brain) — judge runs unbiased.`,
+    };
+  }
+}
+
+/**
  * v0.36.0.0 (A5): ze_embedding_health doctor check.
  *
  * When the configured embedding_model starts with `zeroentropyai:`, verify
@@ -848,7 +974,14 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
  */
 export async function checkZeEmbeddingHealth(engine: BrainEngine): Promise<Check> {
   try {
-    const model = await engine.getConfig('embedding_model') ?? '';
+    // v0.37 fix wave (Lane E.3 + CDX2-10): read from gateway, not DB.
+    // The file plane is canonical post-v0.37; the DB config table is
+    // schema-applied metadata. Reading DB here would skip the warning
+    // when the user has a fresh install with no DB config row yet.
+    const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
+    const { loadConfigFileOnly } = await import('../core/config.ts');
+    let model = '';
+    try { model = getEmbeddingModel(); } catch { /* gateway unconfigured */ }
     if (!model.startsWith('zeroentropyai:')) {
       return {
         name: 'ze_embedding_health',
@@ -857,15 +990,17 @@ export async function checkZeEmbeddingHealth(engine: BrainEngine): Promise<Check
       };
     }
     const envKey = process.env.ZEROENTROPY_API_KEY;
-    const configKey = await engine.getConfig('zeroentropy_api_key');
-    if (!envKey && !configKey) {
+    // File plane: zeroentropy_api_key on GBrainConfig (added by C.3).
+    const fileKey = loadConfigFileOnly()?.zeroentropy_api_key;
+    if (!envKey && !fileKey) {
       return {
         name: 'ze_embedding_health',
         status: 'warn',
         message:
           `embedding_model="${model}" but ZEROENTROPY_API_KEY is not set. ` +
-          `Fix: get a key at https://dashboard.zeroentropy.dev and run ` +
-          `\`gbrain config set zeroentropy_api_key <YOUR_KEY>\` (or export ZEROENTROPY_API_KEY).`,
+          `Fix: get a key at https://dashboard.zeroentropy.dev and either ` +
+          `\`export ZEROENTROPY_API_KEY=...\` or edit ~/.gbrain/config.json ` +
+          `to add "zeroentropy_api_key": "...". (gbrain config set writes the DB plane, which the embed pipeline ignores.)`,
       };
     }
     return {
@@ -894,68 +1029,75 @@ export async function checkZeEmbeddingHealth(engine: BrainEngine): Promise<Check
  */
 export async function checkEmbeddingWidthConsistency(engine: BrainEngine): Promise<Check> {
   try {
-    const configDimStr = await engine.getConfig('embedding_dimensions');
-    if (!configDimStr) {
-      // Pre-v0.27 brain or never configured. Not our problem.
+    // v0.37 fix wave (Lane E.1 + CDX-8): read from gateway, not DB. The
+    // file plane is canonical post-v0.37; the DB config table is
+    // schema-applied metadata. Reading DB here silently skipped the
+    // check on fresh installs whose DB config row hadn't been written
+    // yet.
+    const { getEmbeddingDimensions, getEmbeddingModel } = await import('../core/ai/gateway.ts');
+    let configDim: number;
+    let resolvedModel: string;
+    try {
+      configDim = getEmbeddingDimensions();
+      resolvedModel = getEmbeddingModel();
+    } catch {
       return {
         name: 'embedding_width_consistency',
         status: 'ok',
-        message: 'embedding_dimensions not configured — using defaults.',
+        message: 'gateway not configured — skipping width check.',
       };
     }
-    const configDim = parseInt(configDimStr, 10);
     if (!Number.isFinite(configDim) || configDim <= 0) {
       return {
         name: 'embedding_width_consistency',
         status: 'warn',
-        message: `embedding_dimensions config value "${configDimStr}" is not a positive integer. Fix: \`gbrain config set embedding_dimensions <N>\`.`,
+        message: `gateway returned non-positive embedding dimension "${configDim}".`,
       };
     }
 
-    // Read the actual column width from pg_attribute / information_schema.
-    // Postgres + PGLite both expose vector typmod via atttypmod (vectors
-    // store dim as typmod). atttypmod==-1 means no constraint; >=0 is the
-    // dim+VARHDRSZ — we use format_type for portability.
-    const rows = await engine.executeRaw<{ format_type: string }>(
-      `SELECT format_type(atttypid, atttypmod) AS format_type
-         FROM pg_attribute
-        WHERE attrelid = 'content_chunks'::regclass
-          AND attname = 'embedding'
-          AND NOT attisdropped`,
-    );
-    if (rows.length === 0) {
+    // Read the actual column width via the existing helper (shared with
+    // init.ts and embed.ts dim-mismatch pre-flight). One source of truth.
+    const { readContentChunksEmbeddingDim, embeddingMismatchMessage } = await import('../core/embedding-dim-check.ts');
+    const existing = await readContentChunksEmbeddingDim(engine);
+    if (!existing.exists) {
       return {
         name: 'embedding_width_consistency',
         status: 'warn',
         message: 'content_chunks.embedding column not found. Fix: run `gbrain init --migrate-only` or check schema.',
       };
     }
-    const formatType = rows[0].format_type;
-    // Parse 'vector(N)' shape.
-    const m = formatType.match(/vector\((\d+)\)/i);
-    if (!m) {
+    if (existing.dims === null) {
       return {
         name: 'embedding_width_consistency',
         status: 'warn',
-        message: `Unexpected column type for content_chunks.embedding: "${formatType}".`,
+        message: 'content_chunks.embedding is not a vector type. Schema may be corrupt.',
       };
     }
-    const schemaDim = parseInt(m[1], 10);
-    if (schemaDim !== configDim) {
+    if (existing.dims !== configDim) {
+      // E.2: use the engine-kind-branched recipe instead of pointing at
+      // the no-op `gbrain config set` path. The recipe is paste-ready
+      // for the brain's actual engine.
+      const databasePath = (engine as { _savedConfig?: { database_path?: string } })._savedConfig?.database_path;
+      const recipe = embeddingMismatchMessage({
+        currentDims: existing.dims,
+        requestedDims: configDim,
+        requestedModel: resolvedModel,
+        source: 'doctor',
+        engineKind: engine.kind,
+        databasePath,
+      });
       return {
         name: 'embedding_width_consistency',
         status: 'warn',
         message:
-          `Schema width mismatch: content_chunks.embedding is vector(${schemaDim}) but ` +
-          `embedding_dimensions config = ${configDim}. ` +
-          `Fix: \`gbrain ze-switch --resume\` if you were mid-switch, or ` +
-          `\`gbrain config set embedding_dimensions ${schemaDim}\` to match the schema.`,
+          `Schema width mismatch: content_chunks.embedding is vector(${existing.dims}) but ` +
+          `gateway resolved embedding_dimensions = ${configDim}.\n\n${recipe}`,
       };
     }
     return {
       name: 'embedding_width_consistency',
       status: 'ok',
-      message: `Schema width (${schemaDim}d) matches embedding_dimensions config`,
+      message: `Schema width (${existing.dims}d) matches gateway embedding_dimensions`,
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -975,6 +1117,151 @@ export async function checkEmbeddingWidthConsistency(engine: BrainEngine): Promi
  * the mode (e.g. mode=conservative but cache.enabled=false), say so in
  * the message and paste a `gbrain search modes --reset` fix command.
  */
+
+/**
+ * v0.37.7.0 — Tier 5K source_routing_health (D5 lock: 200-page total cap).
+ *
+ * On a multi-source brain, sample up to 200 recent pages across all
+ * non-default sources (per-source cap = min(50, ceil(200/N))). Warn
+ * when:
+ *  - A non-default source has zero pages (silent-collapse-to-default
+ *    fingerprint from #1167 + #1222).
+ *  - The brain repo has a `.gitignore` file but
+ *    `sync.respect_gitignore` is unset/false (info-line nudge for
+ *    Tier 4I's opt-in flag).
+ *
+ * Cost-bounded: total cap of 200 means a 20-source CEO brain pays
+ * 20*10 = 200 selects rather than 20*50 = 1000.
+ */
+export async function checkSourceRoutingHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const sources = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE id <> 'default'`,
+    );
+    if (sources.length === 0) {
+      return { name: 'source_routing_health', status: 'ok', message: 'Single-source brain (no federation to check)' };
+    }
+    const perSourceCap = Math.min(50, Math.ceil(200 / Math.max(1, sources.length)));
+    const emptySources: string[] = [];
+    for (const s of sources) {
+      const rows = await engine.executeRaw<{ n: string }>(
+        `SELECT COUNT(*)::text AS n FROM pages WHERE source_id = $1 LIMIT $2`,
+        [s.id, perSourceCap],
+      );
+      if (Number(rows[0]?.n ?? 0) === 0) {
+        emptySources.push(s.id);
+      }
+    }
+    if (emptySources.length > 0) {
+      return {
+        name: 'source_routing_health',
+        status: 'warn',
+        message:
+          `${emptySources.length} non-default source(s) have zero pages: ${emptySources.join(', ')}. ` +
+          `If you've recently run \`gbrain import --source-id <id>\` against these, the writes may have ` +
+          `silently fallen to the default source pre-v0.37.7.0. Re-run with --source-id; verify via ` +
+          `\`gbrain sources current --json\`.`,
+      };
+    }
+    return {
+      name: 'source_routing_health',
+      status: 'ok',
+      message: `Multi-source brain (${sources.length} non-default source(s)); all populated`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name: 'source_routing_health', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
+/**
+ * v0.37.7.0 — Tier 5L oauth_confidential_client_health.
+ *
+ * Confidential OAuth clients (token_endpoint_auth_method != 'none')
+ * MUST have a non-NULL client_secret_hash. v0.34.1.0's #909 fix
+ * intentionally NULLs the column for public PKCE clients; if any
+ * row claims confidential auth but has NULL hash, that's the
+ * regression fingerprint from #1166.
+ */
+export async function checkOauthConfidentialHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ client_id: string; method: string | null; hash: string | null }>(
+      `SELECT client_id,
+              token_endpoint_auth_method AS method,
+              client_secret_hash AS hash
+         FROM oauth_clients`,
+    );
+    if (rows.length === 0) {
+      return { name: 'oauth_confidential_client_health', status: 'ok', message: 'No OAuth clients registered' };
+    }
+    const broken = rows.filter(r => {
+      const isPublic = r.method === 'none';
+      return !isPublic && (r.hash == null || r.hash === '');
+    });
+    if (broken.length > 0) {
+      return {
+        name: 'oauth_confidential_client_health',
+        status: 'fail',
+        message:
+          `${broken.length} confidential OAuth client(s) have NULL/empty secret hash: ${broken.map(b => b.client_id).slice(0, 5).join(', ')}` +
+          (broken.length > 5 ? ` (+${broken.length - 5} more)` : '') +
+          `. Fix: \`gbrain auth revoke-client <id> && gbrain auth register-client …\` for each, OR \`gbrain upgrade\` if pre-v0.37.7.0.`,
+      };
+    }
+    return {
+      name: 'oauth_confidential_client_health',
+      status: 'ok',
+      message: `${rows.length} OAuth client(s) registered; all auth shapes consistent`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Pre-OAuth schema (oauth_clients table missing) → ok.
+    if (msg.toLowerCase().includes('relation') && msg.toLowerCase().includes('does not exist')) {
+      return { name: 'oauth_confidential_client_health', status: 'ok', message: 'OAuth not configured (skipping)' };
+    }
+    return { name: 'oauth_confidential_client_health', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
+/**
+ * v0.37.7.0 — Tier 5M autopilot_lock_scope (PID-safe hint per codex CF11).
+ *
+ * Detects stale autopilot lockfiles. When `GBRAIN_HOME` is set, the
+ * canonical lock path lives under `gbrainPath('autopilot.lock')`.
+ * If a hardcoded `~/.gbrain/autopilot.lock` ALSO exists outside the
+ * current `GBRAIN_HOME`, that's a pre-v0.37.7.0 leftover or a
+ * different brain's lock. Hint includes PID + a `ps -p` check so
+ * the user verifies before deleting.
+ */
+export function checkAutopilotLockScope(): Check {
+  try {
+    const canonical = gbrainPath('autopilot.lock');
+    const home = process.env.HOME || '';
+    const legacy = home ? `${home}/.gbrain/autopilot.lock` : '';
+    // Same path → nothing to surface.
+    if (canonical === legacy || !legacy || !existsSync(legacy)) {
+      return { name: 'autopilot_lock_scope', status: 'ok', message: `Lock path: ${canonical}` };
+    }
+    // legacy lock exists outside GBRAIN_HOME. Read its PID for a safe hint.
+    let owningPid: string = 'unknown';
+    try {
+      const raw = readFileSync(legacy, 'utf8').trim();
+      if (/^\d+$/.test(raw)) owningPid = raw;
+    } catch { /* unreadable → leave 'unknown' */ }
+    return {
+      name: 'autopilot_lock_scope',
+      status: 'warn',
+      message:
+        `Stale lockfile outside GBRAIN_HOME: ${legacy} (owning PID: ${owningPid}). ` +
+        `Verify with \`ps -p ${owningPid}\` — if the process is dead, \`rm ${legacy}\`. ` +
+        `If alive, identify it (\`ps -fp ${owningPid}\`) and stop before deleting.`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name: 'autopilot_lock_scope', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
 export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
   try {
     const mode = await engine.getConfig('search.mode');
@@ -1060,43 +1347,101 @@ export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
  * the loop at runtime. This check makes the configuration drift visible
  * before a job is submitted.
  */
-async function checkSubagentProvider(engine: BrainEngine): Promise<Check> {
+async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
   try {
-    const { isAnthropicProvider } = await import('../core/model-config.ts');
+    const { classifyCapabilities } = await import('../core/ai/capabilities.ts');
     const tierSubagent = await engine.getConfig('models.tier.subagent');
     const modelsDefault = await engine.getConfig('models.default');
 
-    // Tier-explicit override loses fail-loud since the user clearly meant it.
-    if (tierSubagent && !isAnthropicProvider(tierSubagent)) {
-      return {
-        name: 'subagent_provider',
-        status: 'warn',
-        message:
-          `models.tier.subagent is "${tierSubagent}" but the subagent loop is Anthropic-only. ` +
-          `Runtime will fall back to claude-sonnet-4-6. Fix: ` +
-          `\`gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6\`.`,
-      };
+    // Helper: explain a verdict in user-facing terms.
+    const explain = (resolved: string, source: string): Check | null => {
+      const verdict = classifyCapabilities(resolved);
+      if (verdict === 'unusable:no_tools') {
+        return {
+          name: 'subagent_capability',
+          status: 'warn',
+          message:
+            `${source} is "${resolved}" but that provider/model lacks native tool calling. ` +
+            `The subagent loop cannot run on this model — runtime will fall back to claude-sonnet-4-6. ` +
+            `Fix: \`gbrain config set ${source} <provider>:<model-with-tools>\` (e.g. anthropic:claude-sonnet-4-6 or openai:gpt-5.2).`,
+        };
+      }
+      if (verdict === 'unknown') {
+        return {
+          name: 'subagent_capability',
+          status: 'warn',
+          message:
+            `${source} is "${resolved}" which references an unknown provider. ` +
+            `Use a recipe-declared provider. ` +
+            `Fix: \`gbrain config set ${source} anthropic:claude-sonnet-4-6\` or pick another known provider.`,
+        };
+      }
+      if (verdict === 'degraded:no_caching') {
+        return {
+          name: 'subagent_capability',
+          status: 'warn',
+          message:
+            `${source} is "${resolved}" — provider does not support prompt caching. ` +
+            `The subagent loop runs hot (cost scales linearly with conversation length). ` +
+            `For lower cost on long loops, use an Anthropic model: ` +
+            `\`gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6\`.`,
+        };
+      }
+      return null;
+    };
+
+    if (tierSubagent) {
+      const issue = explain(tierSubagent, 'models.tier.subagent');
+      if (issue) return issue;
+    } else if (modelsDefault) {
+      const issue = explain(modelsDefault, 'models.default');
+      if (issue) return issue;
     }
-    // models.default sneaking subagent into a non-Anthropic provider.
-    if (!tierSubagent && modelsDefault && !isAnthropicProvider(modelsDefault)) {
-      return {
-        name: 'subagent_provider',
-        status: 'warn',
-        message:
-          `models.default is "${modelsDefault}" which would route subagent jobs to a non-Anthropic provider. ` +
-          `Runtime falls back to claude-sonnet-4-6 for subagent only. ` +
-          `Fix: \`gbrain config set models.tier.subagent anthropic:claude-sonnet-4-6\` to lock it in.`,
-      };
-    }
-    return { name: 'subagent_provider', status: 'ok', message: 'Subagent tier resolves to Anthropic' };
+    // v0.37 (T10 / D7) + v0.38 (D7 capability rename): warn when the configured
+    // chat_model is non-Anthropic AND ANTHROPIC_API_KEY isn't set. With
+    // agent.use_gateway_loop=false (the v0.38 default), subagent jobs still
+    // require Anthropic at runtime; without the key, gbrain dream / gbrain
+    // agent run / gbrain autopilot will all fail at job submission. Catches
+    // the post-init drift case the init-time caveat would have shown if init
+    // had been re-run.
+    try {
+      const { loadConfig } = await import('../core/config.ts');
+      const cfg = loadConfig();
+      const chatModel = cfg?.chat_model;
+      const { isAnthropicProvider } = await import('../core/model-config.ts');
+      if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY) {
+        return {
+          name: 'subagent_capability',
+          status: 'warn',
+          message:
+            `chat_model is "${chatModel}" (non-Anthropic) and ANTHROPIC_API_KEY is not set. ` +
+            `Subagent features (gbrain dream, gbrain agent run, gbrain autopilot) will fail at job submission ` +
+            `unless agent.use_gateway_loop=true. Chat alone (gbrain think) still works. ` +
+            `Either set ANTHROPIC_API_KEY or enable: \`gbrain config set agent.use_gateway_loop true\`.`,
+        };
+      }
+    } catch { /* loadConfig may throw; fall through */ }
+
+    return {
+      name: 'subagent_capability',
+      status: 'ok',
+      message: tierSubagent
+        ? `Subagent tier resolves to "${tierSubagent}" with full tool-loop capability`
+        : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
+    };
   } catch (e) {
     return {
-      name: 'subagent_provider',
+      name: 'subagent_capability',
       status: 'warn',
-      message: `Could not check subagent provider: ${e instanceof Error ? e.message : String(e)}`,
+      message: `Could not check subagent capability: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
 }
+
+// v0.38 — `checkSubagentProvider` was renamed to `checkSubagentCapability` (D7).
+// Back-compat alias preserved for any external doctor extensions importing it.
+const checkSubagentProvider = checkSubagentCapability;
+void checkSubagentProvider;
 
 // Module-scoped flag so the NaN-fallback warning fires once per process.
 let _syncFreshnessEnvWarned = false;
@@ -1351,6 +1696,21 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   if (skillsDir) {
     const conformanceResult = checkSkillConformance(skillsDir);
     checks.push(conformanceResult);
+  }
+
+  // 2b. Skill brain-first compliance (v0.36.x, supersedes PR #1206).
+  // Scans every SKILL.md for external-lookup tools (web_search, exa,
+  // perplexity, etc.) and warns when the skill doesn't declare
+  // `brain_first: exempt` AND doesn't carry a canonical Convention
+  // callout / Phase 1 brain heading / position-relative brain-first
+  // reference. Motivated by the 2026-05-19 tweet-shield incident.
+  //
+  // Audit trail: snapshot+diff at ~/.gbrain/audit/skill-brain-first-
+  // snapshot.json. Writes one detected/resolved JSONL line per state
+  // transition + one fixed line per applied --fix. Stable brain → zero
+  // audit writes per doctor run.
+  if (skillsDir) {
+    checks.push(skillBrainFirstCheck(skillsDir));
   }
 
   // 3. Half-migrated Minions detection (filesystem-only).
@@ -2107,7 +2467,63 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     const configuredDims = getEmbeddingDimensions();
     const available = isAvailable('embedding');
 
-    if (!available) {
+    // v0.37 (T9, codex #7 nuance): catch the v0.36 silent-default case where
+    // config has no embedding_model but the schema column exists at a dim
+    // that doesn't match the gateway's resolved default. Empty-brain vs
+    // non-empty-brain branching determines the repair hint:
+    //   - empty brain (no embedded chunks) → `gbrain init --force --embedding-model …`
+    //   - non-empty brain → `gbrain retrieval-upgrade --to … --reindex`
+    // The bug-reporter's `rm -rf ~/.gbrain` recovery is never the right answer.
+    let surfacedUnconfiguredDrift = false;
+    try {
+      const { loadConfig } = await import('../core/config.ts');
+      const cfg = loadConfig();
+      const fileEmbeddingSet = !!cfg?.embedding_model;
+      const deferredSetup = cfg?.embedding_disabled === true;
+      if (!fileEmbeddingSet && !deferredSetup) {
+        // Read column dim + chunk count
+        const { readContentChunksEmbeddingDim } = await import('../core/embedding-dim-check.ts');
+        const colDim = await readContentChunksEmbeddingDim(engine);
+        if (colDim.exists && colDim.dims !== null && colDim.dims !== configuredDims) {
+          // Determine if the brain has any content — drift is only a real
+          // user-facing problem once the user has imported anything. A
+          // pristine brain (0 total chunks) is still in fresh-install state;
+          // first import will hit the loud preflight before any column
+          // write, so doctor doesn't need to pre-warn.
+          let totalChunks = 0;
+          let embeddedCount = 0;
+          try {
+            const rows = await engine.executeRaw<{ total: number | string; embedded: number | string }>(
+              `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE embedding IS NOT NULL)::int AS embedded FROM content_chunks`,
+            );
+            totalChunks = Number(rows?.[0]?.total ?? 0);
+            embeddedCount = Number(rows?.[0]?.embedded ?? 0);
+          } catch { /* table may be missing or fresh; treat as empty */ }
+
+          if (totalChunks > 0) {
+            const fix = embeddedCount === 0
+              ? `No embeddings yet — drop the empty schema and re-init at the right dim:\n        gbrain init --force --pglite --embedding-model ${configuredModel} --embedding-dimensions ${configuredDims}`
+              : `Non-empty brain (${embeddedCount} embedded chunks). Migrate cleanly:\n        gbrain retrieval-upgrade --to ${configuredModel} --reindex`;
+
+            checks.push({
+              name: 'embedding_provider',
+              status: 'warn',
+              message:
+                `Schema column is vector(${colDim.dims}) but gateway default resolves to ${configuredModel} (${configuredDims}d). ` +
+                `Persist your provider choice with \`gbrain config set embedding_model ${configuredModel}\` AND fix the schema:\n      ${fix}`,
+            });
+            surfacedUnconfiguredDrift = true;
+          }
+        }
+      }
+    } catch {
+      // loadConfig may throw on a malformed config; let the existing
+      // available/probe branch surface the issue.
+    }
+
+    if (surfacedUnconfiguredDrift) {
+      // Bail out — the warn above is more actionable than the live probe.
+    } else if (!available) {
       // Per v0.28.5 plan P1: silently skipped when no API key is configured.
       // Doctor must stay green on CI / local-only / offline environments where
       // a full provider probe isn't possible. The skipped status is still
@@ -2678,18 +3094,65 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     mbcHb();
   }
 
-  // 11a. Frontmatter integrity (v0.22.4).
+  // 11a. Frontmatter integrity (v0.22.4, hardened in v0.38.2.0).
   // scanBrainSources walks every registered source's local_path on disk
   // (not from the DB), invoking parseMarkdown(..., {validate:true}) per
   // file. Reports per-source counts grouped by error code. The fix path is
   // `gbrain frontmatter validate <source-path> --fix`, which writes .bak
   // backups so it works for both git and non-git brain repos.
+  //
+  // v0.38.2.0 wave (this PR supersedes PR #1287):
+  //  - `pruneDir` now applies at descent inside brain-writer.ts:walkDir so
+  //    the scan no longer recurses into node_modules / .git / .obsidian /
+  //    *.raw / ops. That alone takes the 216K-page user from "hangs
+  //    forever" to "completes in seconds" on the typical brain.
+  //  - `deadline` (per-file Date.now() check inside the sync loop) is the
+  //    load-bearing wall-clock bound. AbortSignal.timeout (kept for
+  //    between-source aborts) cannot interrupt sync readdirSync /
+  //    readFileSync — codex outside-voice C1 caught the original plan's
+  //    assumption that it could.
+  //  - Partial-result surfacing: per-source status ('scanned' | 'partial' |
+  //    'skipped'), files_scanned numerator, and an honest "scanned ~N files
+  //    (source has ~M pages in DB)" message when the deadline fires. The
+  //    `partial` and `aborted_at_source` fields on AuditReport feed the
+  //    JSON consumer.
+  //  - Configurable via GBRAIN_DOCTOR_FM_TIMEOUT_MS (default 30000ms).
   progress.heartbeat('frontmatter_integrity');
   const fmHb = startHeartbeat(progress, 'scanning frontmatter…');
+  const fmTimeoutMs = (() => {
+    const raw = process.env.GBRAIN_DOCTOR_FM_TIMEOUT_MS;
+    const n = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : 30000;
+  })();
   try {
     const { scanBrainSources } = await import('../core/brain-writer.ts');
-    const report = await scanBrainSources(engine);
-    if (report.total === 0) {
+    const fmDeadline = Date.now() + fmTimeoutMs;
+    const fmAbort = AbortSignal.timeout(fmTimeoutMs);
+    // Per-source DB denominator. Coarse — DB pages and on-disk syncable
+    // files are overlapping but not identical (unsynced disk files,
+    // soft-deleted DB rows, auto-generated pages). Wording in the partial
+    // message makes the mismatch honest. Failure of the COUNT degrades to
+    // null and the message falls back to bare numerator.
+    const dbPageCountForSource = async (sourceId: string): Promise<number | null> => {
+      try {
+        const rows = await engine.executeRaw<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
+          [sourceId],
+        );
+        if (rows.length === 0) return null;
+        const parsed = parseInt(rows[0].n, 10);
+        return Number.isFinite(parsed) ? parsed : null;
+      } catch {
+        return null;
+      }
+    };
+    const report = await scanBrainSources(engine, {
+      signal: fmAbort,
+      deadline: fmDeadline,
+      dbPageCountForSource,
+    });
+
+    if (report.total === 0 && !report.partial) {
       const sources = report.per_source.length;
       checks.push({
         name: 'frontmatter_integrity',
@@ -2699,23 +3162,55 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
           : `${sources} source(s) clean — no frontmatter issues`,
       });
     } else {
+      // Build per-source breakdown that distinguishes scanned / partial /
+      // skipped so the user can tell which sources weren't checked.
       const sourceMessages: string[] = [];
       for (const src of report.per_source) {
-        if (src.total === 0) continue;
+        if (src.status === 'skipped') {
+          // Codex adversarial #1: `gbrain frontmatter validate` takes a
+          // filesystem PATH, not a source id. Pre-fix the hint pointed users
+          // at a command that would fail with "no such directory" — breaking
+          // the very remediation path this PR ships to give them.
+          sourceMessages.push(
+            `${src.source_id}: NOT SCANNED (timeout — run \`gbrain frontmatter validate ${src.source_path}\`)`,
+          );
+          continue;
+        }
+        if (src.status === 'partial') {
+          const denom = src.db_page_count != null ? ` (source has ~${src.db_page_count} pages in DB)` : '';
+          const codes = src.total > 0
+            ? `, ${Object.entries(src.errors_by_code).map(([k, v]) => `${k}=${v}`).join(', ')}`
+            : '';
+          sourceMessages.push(
+            `${src.source_id}: PARTIAL — scanned ~${src.files_scanned} files${denom}, ${src.total} issue(s) so far${codes}`,
+          );
+          continue;
+        }
+        // status === 'scanned'
+        if (src.total === 0) continue; // clean source — don't clutter the message
         const codes = Object.entries(src.errors_by_code)
           .map(([k, v]) => `${k}=${v}`)
           .join(', ');
         sourceMessages.push(`${src.source_id}: ${src.total} (${codes})`);
       }
+      const fixHint = report.partial
+        ? `Raise GBRAIN_DOCTOR_FM_TIMEOUT_MS or run \`gbrain frontmatter validate <source>\` directly. Fix issues: \`gbrain frontmatter validate <source> --fix\``
+        : `Fix: gbrain frontmatter validate <source-path> --fix`;
       checks.push({
         name: 'frontmatter_integrity',
         status: 'warn',
         message:
-          `${report.total} frontmatter issue(s) across ${sourceMessages.length} source(s). ` +
-          `${sourceMessages.join('; ')}. Fix: gbrain frontmatter validate <source-path> --fix`,
+          `${report.total} frontmatter issue(s)` +
+          (report.partial ? ` (PARTIAL SCAN — timeout after ${fmTimeoutMs / 1000}s)` : '') +
+          `. ${sourceMessages.join('; ')}. ${fixHint}`,
       });
     }
   } catch (e) {
+    // Codex outside-voice D4: the abort path returns cleanly via partial
+    // state — this catch is purely for unexpected errors (FS permission,
+    // OOM, disk full, etc.). Pre-v0.38.2.0 (PR #1287) had an unreachable
+    // abort-classifier branch here; removed because timer-based aborts
+    // in a sync walker can't surface as a thrown error anyway.
     checks.push({
       name: 'frontmatter_integrity',
       status: 'warn',
@@ -3214,13 +3709,13 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   }
 
-  // 11.4 subagent_provider (v0.31.12 — Codex F13 layer 3 of 3). Surfaces a
+  // 11.4 subagent_capability (v0.38 — D7; was subagent_provider in v0.31.12). Surfaces a
   // warn when models.tier.subagent or models.default points at a non-Anthropic
   // provider. Layers 1 (queue.ts submit-time) and 2 (handler runtime) also
   // enforce; this is the surfacing layer so users see the config drift before
   // a job is submitted.
-  progress.heartbeat('subagent_provider');
-  checks.push(await checkSubagentProvider(engine));
+  progress.heartbeat('subagent_capability');
+  checks.push(await checkSubagentCapability(engine));
 
   // 11.5 facts_health (v0.31 hot memory). Surfaces per-source counters so
   // operators can see the extraction pipeline's pulse without raw SQL.
@@ -3391,11 +3886,26 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
     progress.heartbeat('reranker_health');
     checks.push(await checkRerankerHealth(engine));
+    // v0.37.0 brainstorm_health — migration v79, track_retrieval, calibration cold-start.
+    progress.heartbeat('brainstorm_health');
+    checks.push(await checkBrainstormHealth(engine));
     // v0.36.0.0 (A5): ZE embedding key health + schema/config width consistency.
     progress.heartbeat('ze_embedding_health');
     checks.push(await checkZeEmbeddingHealth(engine));
     progress.heartbeat('embedding_width_consistency');
     checks.push(await checkEmbeddingWidthConsistency(engine));
+
+    // v0.37.7.0 doctor checks (#1167, #1166, #1226) — fast-mode skipped
+    // since these touch DB queries with cost on large brains.
+    // 5K — source_routing_health (D5 lock: 200-page total cap)
+    progress.heartbeat('source_routing_health');
+    checks.push(await checkSourceRoutingHealth(engine));
+    // 5L — oauth_confidential_client_health (success-path probe per codex CF8)
+    progress.heartbeat('oauth_confidential_client_health');
+    checks.push(await checkOauthConfidentialHealth(engine));
+    // 5M — autopilot_lock_scope (PID-safe hint per codex CF11)
+    progress.heartbeat('autopilot_lock_scope');
+    checks.push(checkAutopilotLockScope());
   }
 
   progress.finish();
@@ -3488,6 +3998,149 @@ function checkSkillConformance(skillsDir: string): Check {
   } catch {
     return { name: 'skill_conformance', status: 'warn', message: 'Could not parse manifest.json' };
   }
+}
+
+/**
+ * v0.36.x skill_brain_first doctor check (supersedes PR #1206).
+ *
+ * Walks the skills manifest, runs the pure `analyzeSkillBrainFirst()`
+ * helper on each, surfaces violators with structured issues[]. Snapshot-
+ * diff against the previous run drives audit JSONL writes (transition-
+ * only) — stable brains produce zero audit churn per doctor invocation.
+ *
+ * Exit shape:
+ *   - 0 violators → status: 'ok', message: '<n> skills compliant or exempt'
+ *   - any violator → status: 'warn', message + per-skill summary lines +
+ *     formerly-EXEMPT_SKILLS hint when applicable (CMT1 replaces the
+ *     dropped upgrade migration with a guided opt-in)
+ *
+ * Test seam: pure function, no `process.exit`. Direct call from tests
+ * with a synthetic skills dir under tempdir.
+ */
+export function skillBrainFirstCheck(skillsDir: string): Check {
+  let manifest: ReturnType<typeof loadOrDeriveManifest>;
+  try {
+    manifest = loadOrDeriveManifest(skillsDir);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      name: 'skill_brain_first',
+      status: 'warn',
+      message: `Could not load skills manifest from ${skillsDir} (${msg})`,
+    };
+  }
+  if (manifest.skills.length === 0) {
+    return {
+      name: 'skill_brain_first',
+      status: 'ok',
+      message: 'No skills found — skill_brain_first not applicable',
+    };
+  }
+
+  const violators: BrainFirstAnalysis[] = [];
+  const typoSkills: BrainFirstAnalysis[] = [];
+
+  for (const entry of manifest.skills) {
+    const skillPath = join(skillsDir, entry.path);
+    if (!existsSync(skillPath)) continue; // resolver_health already reports
+    let content: string;
+    try {
+      content = readFileSync(skillPath, 'utf-8');
+    } catch {
+      continue; // best-effort; permissions etc.
+    }
+    const fm = parseSkillFrontmatter(content);
+    const result = analyzeSkillBrainFirst(content, entry.name, fm);
+    if (result.typo_hint) typoSkills.push(result);
+    if (result.status === 'warn') violators.push(result);
+  }
+
+  // --- Snapshot + diff audit (A2 contract) ---------------------------------
+  // Best-effort: snapshot/audit failures don't poison the check result.
+  const violatorSlugs = new Set(violators.map(v => v.skill));
+  const patternsBySlug = new Map<string, string[]>();
+  for (const v of violators) {
+    patternsBySlug.set(v.skill, v.external_patterns_matched);
+  }
+  let priorSnapshotPresent = true;
+  try {
+    const snapshot = loadSnapshot();
+    priorSnapshotPresent = snapshot.present;
+    const diff = diffAgainstSnapshot(violatorSlugs, snapshot.violators);
+    const doctorRunId = `${process.pid}-${Date.now()}`;
+    if (snapshot.present) {
+      // Steady-state path: write events only for transitions.
+      appendAuditEventsForTransitions(diff, patternsBySlug, doctorRunId);
+    } else {
+      // First run / corrupt snapshot: bootstrap by writing one
+      // `detected` line per current violator. This is the only path
+      // that writes more than `diff.added.length` lines in a single
+      // doctor invocation.
+      const bootstrapDiff = { added: Array.from(violatorSlugs).sort(), removed: [], unchanged: [] };
+      appendAuditEventsForTransitions(bootstrapDiff, patternsBySlug, doctorRunId);
+    }
+    writeSnapshotAtomically(violatorSlugs);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[gbrain] skill_brain_first audit step failed (${msg}); check continues\n`);
+  }
+
+  // --- Build the check result ---------------------------------------------
+  if (violators.length === 0) {
+    const typoNote = typoSkills.length > 0
+      ? ` (note: ${typoSkills.length} skill(s) have brain_first typo hints: ${typoSkills.map(t => t.skill).join(', ')})`
+      : '';
+    return {
+      name: 'skill_brain_first',
+      status: 'ok',
+      message: `${manifest.skills.length} skill(s) compliant or exempt${typoNote}`,
+    };
+  }
+
+  // Sort for deterministic message + issues order.
+  violators.sort((a, b) => a.skill.localeCompare(b.skill));
+
+  const formerlyExempt = violators.filter(v => v.formerly_hardcoded_exempt);
+  const summary: string[] = [];
+  summary.push(
+    `${violators.length} skill(s) do external lookups without a brain-first compliance signal. ` +
+    `Fix via 'gbrain doctor --fix' (adds canonical Convention callout) ` +
+    `or set 'brain_first: exempt' in skill frontmatter for genuine infra skills.`,
+  );
+  if (formerlyExempt.length > 0) {
+    summary.push(
+      `Of these, ${formerlyExempt.length} were hardcoded-exempt in PR #1206 (${formerlyExempt.map(v => v.skill).slice(0, 6).join(', ')}${formerlyExempt.length > 6 ? ', ...' : ''}). ` +
+      `These need explicit opt-out now: run 'gbrain doctor --fix' to add the canonical callout, ` +
+      `or add 'brain_first: exempt' to frontmatter for skills that genuinely shouldn't consult the brain.`,
+    );
+  }
+  if (typoSkills.length > 0) {
+    summary.push(
+      `${typoSkills.length} skill(s) have brain_first typo hints: ` +
+      typoSkills.slice(0, 6).map(t => `${t.skill} — ${t.typo_hint}`).join('; ') +
+      (typoSkills.length > 6 ? '; ...' : ''),
+    );
+  }
+
+  return {
+    name: 'skill_brain_first',
+    status: 'warn',
+    message: summary.join(' '),
+    issues: violators.map(v => ({
+      type: 'skill_missing_brain_first',
+      skill: v.skill,
+      action: v.formerly_hardcoded_exempt
+        ? `Add canonical Convention callout OR set 'brain_first: exempt' (was hardcoded-exempt in PR #1206)`
+        : `Add canonical Convention callout OR set 'brain_first: exempt'`,
+      fix: {
+        kind: 'add-convention-callout',
+        external_patterns: v.external_patterns_matched,
+        typo_hint: v.typo_hint,
+        formerly_hardcoded_exempt: v.formerly_hardcoded_exempt,
+        summary_line: buildBrainFirstSummaryLine(v),
+      },
+    })),
+  };
 }
 
 function outputResults(checks: Check[], json: boolean): boolean {
@@ -3850,15 +4503,56 @@ export async function runRemediate(
  * Pure read; no side effects.
  */
 async function loadRecommendationContext(engine: BrainEngine) {
+  // v0.37 fix wave (Lane E.4 + CDX2-11): read schema-sizing fields from
+  // gateway, not DB. The DB plane is schema-applied metadata; the file
+  // plane is the gateway runtime source. Pre-fix this context produced
+  // stale recommendations on fresh installs whose DB rows hadn't been
+  // populated.
+  //
+  // Also extended the API-key check to recognize the ZE key alongside
+  // OpenAI (was OpenAI-only). After Lane C.3, zeroentropy_api_key lives
+  // in GBrainConfig + propagates to the gateway env dict.
   const repoPath = await engine.getConfig('sync.repo_path');
-  const embeddingModel = await engine.getConfig('embedding_model');
-  const embeddingDimensions = await engine.getConfig('embedding_dimensions');
+  let embeddingModel: string | undefined;
+  let embeddingDimensions: number | undefined;
+  try {
+    const gw = await import('../core/ai/gateway.ts');
+    embeddingModel = gw.getEmbeddingModel();
+    embeddingDimensions = gw.getEmbeddingDimensions();
+  } catch {
+    // Gateway unconfigured — fall back to DB plane as a best-effort hint
+    // (preserves doctor running before any engine.connect()).
+    const dbModel = await engine.getConfig('embedding_model');
+    const dbDims = await engine.getConfig('embedding_dimensions');
+    embeddingModel = dbModel ?? undefined;
+    embeddingDimensions = dbDims ? Number(dbDims) : undefined;
+  }
+  // Provider-aware key check. The active embedding provider determines
+  // which key matters. Pre-fix this was OpenAI-only, so a ZE brain with
+  // OPENAI_API_KEY set looked "healthy" even though no key reached ZE.
+  const { loadConfigFileOnly } = await import('../core/config.ts');
+  const fileCfg = loadConfigFileOnly();
+  let hasEmbeddingApiKey = false;
+  if (embeddingModel?.startsWith('openai:')) {
+    hasEmbeddingApiKey = !!(process.env.OPENAI_API_KEY || fileCfg?.openai_api_key);
+  } else if (embeddingModel?.startsWith('zeroentropyai:')) {
+    hasEmbeddingApiKey = !!(process.env.ZEROENTROPY_API_KEY || fileCfg?.zeroentropy_api_key);
+  } else {
+    // Voyage / generic openai-compatible / unknown provider — fall back
+    // to "any key present" as the legacy hint.
+    hasEmbeddingApiKey = !!(
+      process.env.OPENAI_API_KEY ||
+      process.env.ZEROENTROPY_API_KEY ||
+      fileCfg?.openai_api_key ||
+      fileCfg?.zeroentropy_api_key
+    );
+  }
   return {
     repoPath: repoPath ?? undefined,
-    embeddingModel: embeddingModel ?? undefined,
-    embeddingDimensions: embeddingDimensions ? Number(embeddingDimensions) : undefined,
-    hasEmbeddingApiKey: !!(process.env.OPENAI_API_KEY || await engine.getConfig('openai_api_key')),
-    hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || await engine.getConfig('anthropic_api_key')),
+    embeddingModel,
+    embeddingDimensions,
+    hasEmbeddingApiKey,
+    hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || fileCfg?.anthropic_api_key),
   };
 }
 

@@ -29,7 +29,7 @@ import {
   type AuditReport,
   type AuditFix,
 } from '../core/brain-writer.ts';
-import { isSyncable, slugifyPath } from '../core/sync.ts';
+import { isSyncable, pruneDir, slugifyPath } from '../core/sync.ts';
 
 export async function runFrontmatter(args: string[]): Promise<void> {
   const sub = args[0];
@@ -245,13 +245,35 @@ async function runValidate(rest: string[]): Promise<void> {
   process.exitCode = totalErrors > 0 && !flags.fix ? 1 : 0;
 }
 
-function collectFiles(target: string): string[] {
+/**
+ * Recursively collect every syncable `.md` file under `target`.
+ *
+ * Uses the canonical `pruneDir(name, parentDir)` gate (sync.ts:258) to
+ * skip vendor / hidden / generated subtrees at descent time. Pre-v0.38.2.0
+ * this walker descended into every subtree and let `isSyncable` filter at
+ * the leaf — paying the IO cost of stat'ing every entry under node_modules,
+ * .git, .obsidian, etc. That was the second instance of the v0.38.2.0 hang
+ * class (the first being brain-writer.ts:walkDir). Codex outside-voice
+ * caught it during plan-eng-review — fixing only walkDir would have left
+ * `gbrain frontmatter validate` (doctor's own remediation hint) hanging
+ * users in the same way.
+ *
+ * Optional `visitDir(dir)` is the test-observability hook: fired once per
+ * directory the walker descends into (post-pruneDir). Production callers
+ * don't pass it; the regression suite uses it to assert descent-time
+ * pruning directly.
+ */
+export function collectFiles(
+  target: string,
+  visitDir?: (dirPath: string) => void,
+): string[] {
   const st = lstatSync(target);
   if (st.isFile()) {
     return [target];
   }
   const out: string[] = [];
   const stack = [target];
+  if (visitDir) visitDir(target);
   while (stack.length > 0) {
     const dir = stack.pop()!;
     let entries: string[];
@@ -270,6 +292,10 @@ function collectFiles(target: string): string[] {
       }
       if (entryStat.isSymbolicLink()) continue;
       if (entryStat.isDirectory()) {
+        // Descent-time prune — the actual fix for the second walker bug
+        // class (codex outside-voice C5).
+        if (!pruneDir(name, dir)) continue;
+        if (visitDir) visitDir(full);
         stack.push(full);
       } else if (entryStat.isFile()) {
         const rel = relative(target, full);

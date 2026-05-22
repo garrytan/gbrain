@@ -1,5 +1,21 @@
-# kos-jarvis — Outstanding Work (post v0.37.0.0 sync, 2026-05-19)
+# kos-jarvis — Outstanding Work (post v0.38.2.0 sync, 2026-05-22)
 
+> **Updated 2026-05-22**: v0.38.2.0 upstream sync landed (14 commits,
+> 14 versions, v0.37.0.0 → v0.38.2.0, 234 files). Story in
+> `docs/JARVIS-ARCHITECTURE.md` §6.30. **Only 2 merge conflicts**
+> (CLAUDE.md / llms-full.txt, both mechanical). Schema **v78 → v85**
+> (7 migrations via `init --migrate-only`, zero manual ALTER). v0.37.3.0
+> added a `check:skill-brain-first` gate — flagged `enrich-sweep`
+> (SKILL.md mentions "Crustdata"); fixed with a brain-first Convention
+> callout (commit b39a50b4). `docs/CLAUDE-UPSTREAM.md` mirror refreshed
+> to v0.38.2.0 (closes the §6.29 deferral). fork-protected paths
+> zero-touch. 3140 pages preserved, OAuth 4-client health ok, production
+> kos.chenge.ink on 0.38.2.0. Full unit suite 6399 pass / 20 fail
+> (2 wedged shards + 4 new-PGLite-test env failures — non-gating, see
+> §6.30). 2 new follow-ups added below (P2 PGLite test / P3 reranker).
+>
+> ---
+>
 > **Updated 2026-05-19**: v0.37.0.0 upstream sync landed (12 commits,
 > 11 versions, v0.35.6.0 → v0.37.0.0, 333 files, +52455 / -3317 LoC).
 > Story in `docs/JARVIS-ARCHITECTURE.md` §6.29. **Only 4 merge conflicts**
@@ -158,6 +174,42 @@ prepend (但 diff 这么小,PR 路径应赢)。
 COLUMN IF NOT EXISTS …` 过了,生产 schema v34, 不依赖此 PR merge。
 
 ### [x] 服务 smoke check — DONE 2026-05-04 (详见 Done section)
+
+## P2/P3 — Post-v0.38.2.0 sync follow-ups (added 2026-05-22)
+
+> v0.38.2.0 sync (§6.30). fork-protected paths zero-touch; only 2
+> mechanical conflicts. Two minor follow-ups surfaced during smoke.
+
+### [ ] (P2) `hybrid-reranker-integration.serial.test.ts` — 4 fail under fork PGLite pin
+
+New upstream test (added v0.37.11.0 `d0d0e2a6`, absent on fork master
+pre-merge). 4 of its 6 cases fail: `hybridSearch(engine, 'alpha keyword',
+...)` multi-word keyword query returns an empty candidate pool under
+PGLite (the fork pins `@electric-sql/pglite` via package.json override).
+**Production (Postgres) is unaffected** — multi-word query smoke
+(`knowledge management` → 0.9108) confirmed. Not a regression; the file
+never ran on the fork before.
+
+**Options**: (a) bump the fork PGLite override toward upstream's
+expectation, (b) file an upstream PR making the test hermetic across
+PGLite versions, (c) leave it — the §6.29 gate (typecheck + check:all +
+`test/ai/`) is the fork's real gate; full-suite has documented
+env-coupling (see "bun test full-suite hang" entry below). **Scope**:
+1-2 h investigation.
+
+### [ ] (P3) `reranker_health` ZeroEntropy auth WARN + query `[expand] Not Found`
+
+Post-sync `gbrain doctor` shows `reranker_health: 1 reranker auth
+failure — verify ZEROENTROPY_API_KEY`; production `gbrain query` prints
+`[ai.gateway] expansion disabled: [expand] Not Found`. Both are optional
+enhancement layers (reranker / multi-query expansion); core retrieval is
+unaffected (query smoke hits 0.88-0.99). The fork declined ZeroEntropy
+(§6.29). Likely v0.37.x/v0.38.x enabled these layers and they probe an
+endpoint/key the fork doesn't hold.
+
+**Action**: 15 min — decide to explicitly disable the reranker /
+expansion for this brain, or wire creds. Low priority — no retrieval
+impact.
 
 ## P1 — Post-v0.37.0.0 sync follow-ups (added 2026-05-19)
 

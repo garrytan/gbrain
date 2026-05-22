@@ -22,6 +22,7 @@
  */
 
 import { applyChunkEmbeddingIndexPolicy } from './vector-index.ts';
+import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 
 const PGLITE_SCHEMA_SQL_TEMPLATE = `
 -- GBrain PGLite schema (local embedded Postgres)
@@ -81,6 +82,9 @@ CREATE TABLE IF NOT EXISTS pages (
   effective_date_source TEXT,
   import_filename       TEXT,
   salience_touched_at   TIMESTAMPTZ,
+  -- v0.37.0 (migration v79): real stale-page signal for gbrain lsd
+  -- (mirrors src/schema.sql). NULL = never retrieved.
+  last_retrieved_at     TIMESTAMPTZ,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
@@ -94,6 +98,10 @@ CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
 -- v0.29.1: expression index for since/until date-range filters.
 CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
   ON pages ((COALESCE(effective_date, updated_at)));
+-- v0.37.0: full B-tree index on last_retrieved_at supports LSD's stale-page
+-- query (mirrors src/schema.sql). Postgres handles NULL in B-tree indexes.
+CREATE INDEX IF NOT EXISTS pages_last_retrieved_at_idx
+  ON pages (last_retrieved_at);
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -402,20 +410,27 @@ CREATE INDEX IF NOT EXISTS idx_subagent_messages_job ON subagent_messages (job_i
 CREATE INDEX IF NOT EXISTS idx_subagent_messages_provider ON subagent_messages (job_id, provider_id);
 
 CREATE TABLE IF NOT EXISTS subagent_tool_executions (
-  id              BIGSERIAL PRIMARY KEY,
-  job_id          BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
-  message_idx     INTEGER     NOT NULL,
-  tool_use_id     TEXT        NOT NULL,
-  tool_name       TEXT        NOT NULL,
-  input           JSONB       NOT NULL,
-  status          TEXT        NOT NULL,
-  output          JSONB,
-  error           TEXT,
-  schema_version  INTEGER     NOT NULL DEFAULT 1,
-  provider_id     TEXT,
-  started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  ended_at        TIMESTAMPTZ,
+  id                  BIGSERIAL PRIMARY KEY,
+  job_id              BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  message_idx         INTEGER     NOT NULL,
+  tool_use_id         TEXT        NOT NULL,
+  tool_name           TEXT        NOT NULL,
+  input               JSONB       NOT NULL,
+  status              TEXT        NOT NULL,
+  output              JSONB,
+  error               TEXT,
+  schema_version      INTEGER     NOT NULL DEFAULT 1,
+  provider_id         TEXT,
+  -- v0.38 D11: gbrain-owned stable IDs (ordinal assigned at first observation;
+  -- gbrain_tool_use_id is uuid v7). Reconciliation on crash-replay uses
+  -- (job_id, message_idx, ordinal) as the unique key. Legacy rows (pre-v82)
+  -- have ordinal=NULL and resolve via the read-time D5 shim.
+  ordinal             INTEGER,
+  gbrain_tool_use_id  UUID,
+  started_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ended_at            TIMESTAMPTZ,
   CONSTRAINT uniq_subagent_tools_use_id UNIQUE (job_id, tool_use_id),
+  CONSTRAINT subagent_tool_executions_stable_id UNIQUE (job_id, message_idx, ordinal),
   CONSTRAINT chk_subagent_tools_status CHECK (status IN ('pending','complete','failed'))
 );
 CREATE INDEX IF NOT EXISTS idx_subagent_tools_job ON subagent_tool_executions (job_id, status);
@@ -726,6 +741,14 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   deleted_at              TIMESTAMPTZ,
   source_id               TEXT REFERENCES sources(id) ON DELETE RESTRICT,
   federated_read          TEXT[] NOT NULL DEFAULT '{}',
+  -- v0.38 Slice 2 + 3: per-OAuth-client budget cap (v84) + agent binding (v85).
+  -- bound_* columns are NULL on legacy clients (no agent scope by default).
+  budget_usd_per_day      NUMERIC(10, 2) NULL,
+  bound_tools             TEXT[] NULL,
+  bound_source_id         TEXT NULL,
+  bound_brain_id          TEXT NULL,
+  bound_slug_prefixes     TEXT[] NULL,
+  bound_max_concurrent    INTEGER NOT NULL DEFAULT 1,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- v0.34.1 (#861, D13 + #876): source_id is the OAuth client's write-source
@@ -821,9 +844,16 @@ DROP FUNCTION IF EXISTS update_page_search_vector_from_timeline();
 
 /**
  * Return the PGLite schema SQL with embedding vector dim + model name substituted.
- * Defaults preserve v0.13 behavior (1536d + text-embedding-3-large).
+ * Defaults come from the AI gateway (v0.36+: zeroentropyai:zembed-1 / 1280d).
+ *
+ * v0.37.x fix wave: defaults track gateway constants instead of stale v0.13
+ * OpenAI literals so the pre-computed `PGLITE_SCHEMA_SQL` constant doesn't
+ * size the column to 1536 while the runtime default model emits 1280.
  */
-export function getPGLiteSchema(dims: number = 1536, model: string = 'text-embedding-3-large'): string {
+export function getPGLiteSchema(
+  dims: number = DEFAULT_EMBEDDING_DIMENSIONS,
+  model: string = DEFAULT_EMBEDDING_MODEL,
+): string {
   const parsedDims = Number(dims);
   if (!Number.isInteger(parsedDims) || parsedDims <= 0) {
     throw new Error(`Invalid embedding dimensions: ${dims}`);

@@ -261,6 +261,29 @@ export interface Recipe {
     token: string;
   };
   /**
+   * v0.37.6.0: static request headers applied to every openai-compatible
+   * touchpoint (embedding, expansion, chat, reranker). Use for static-per-recipe
+   * attribution headers (OpenRouter's HTTP-Referer + X-OpenRouter-Title).
+   * Merged into the SDK call site after `applyResolveAuth` resolves auth.
+   *
+   * Mutually exclusive with `resolveDefaultHeaders` — declaring both throws
+   * `AIConfigError` at gateway-configure time. Keys conflicting with the
+   * resolved auth header (Authorization, the resolver's custom header) are
+   * rejected at `applyResolveAuth` call time so defaults cannot accidentally
+   * shadow auth.
+   */
+  default_headers?: Record<string, string>;
+  /**
+   * v0.37.6.0: env-templated equivalent of `default_headers`. Same merge
+   * semantics and same key-conflict guards. Used by recipes whose attribution
+   * headers vary by deployment (forks override referer/title via env). When
+   * declared, `default_headers` MUST be omitted.
+   *
+   * Runs at gateway-configure time on the `cfg.env` snapshot, never
+   * `process.env`.
+   */
+  resolveDefaultHeaders?(env: Record<string, string | undefined>): Record<string, string>;
+  /**
    * v0.32: templated openai-compatible config for recipes whose URL shape
    * doesn't fit a static `base_url_default`. Returns the resolved baseURL
    * and an optional fetch wrapper for cases like Azure OpenAI that need a

@@ -70,6 +70,33 @@ export async function runReindexMultimodal(
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('reindex_multimodal', 0);
 
+  // T11 (D12): preflight the multimodal model+dim before any DB work.
+  // Mirrors T6's text-side preflight contract: if the configured multimodal
+  // model can't produce a dim that matches the schema column, fail loud
+  // here with a paste-ready hint rather than mid-reindex with a vector(N)
+  // INSERT error.
+  try {
+    const { loadConfig } = await import('../core/config.ts');
+    const cfg = loadConfig();
+    const multimodalModel = cfg?.embedding_multimodal_model;
+    if (multimodalModel) {
+      const { resolveSchemaMultimodalDim } = await import('../core/embedding-dim-check.ts');
+      const pre = resolveSchemaMultimodalDim({
+        embedding_multimodal_model: multimodalModel,
+      });
+      if (!pre.ok) {
+        progress.finish();
+        throw new Error(
+          `Refusing to reindex: ${pre.error}\n` +
+          `Fix with \`gbrain config set embedding_multimodal_model <provider>:<model>\`.`,
+        );
+      }
+    }
+  } catch (e) {
+    // Re-throw if it's the preflight refusal; suppress only when loadConfig fails.
+    if (e instanceof Error && /Refusing to reindex/.test(e.message)) throw e;
+  }
+
   const sql = sqlQueryForEngine(engine);
 
   // Count pending chunks.

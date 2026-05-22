@@ -44,10 +44,40 @@ function configureFromEnv(): void {
   });
 }
 
-function envReady(recipe: Recipe): boolean {
+export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): boolean {
   const required = recipe.auth_env?.required ?? [];
   if (required.length === 0) return true; // e.g. local Ollama
-  return required.every(k => !!process.env[k]);
+  return required.every(k => !!env[k]);
+}
+
+/**
+ * Pure formatter for the recipe matrix shown by `gbrain providers list` and
+ * the new `init-provider-picker` (D1+D2 — picker reuses this so its display
+ * stays in sync with `providers list` and can't drift).
+ *
+ * Returns the multi-line string (joined with `\n`). Callers handle stdout vs.
+ * stderr routing themselves.
+ */
+export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = process.env): string {
+  const rows: string[] = [];
+  rows.push('PROVIDER'.padEnd(14) + 'TIER'.padEnd(18) + 'EMBED'.padEnd(8) + 'EXPAND'.padEnd(8) + 'CHAT'.padEnd(8) + 'STATUS');
+  rows.push('-'.repeat(78));
+  for (const r of recipes) {
+    const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
+    const hasExpand = !!r.touchpoints.expansion;
+    const hasChat = !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
+    const ready = envReady(r, env);
+    const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
+    rows.push(
+      r.id.padEnd(14) +
+      r.tier.padEnd(18) +
+      (hasEmbed ? 'yes' : '—').padEnd(8) +
+      (hasExpand ? 'yes' : '—').padEnd(8) +
+      (hasChat ? 'yes' : '—').padEnd(8) +
+      status,
+    );
+  }
+  return rows.join('\n');
 }
 
 export async function runProviders(subcommand: string | undefined, args: string[]): Promise<void> {
@@ -98,26 +128,7 @@ EXAMPLES
 }
 
 function runList(_args: string[]): void {
-  const recipes = listRecipes();
-  const rows: string[] = [];
-  rows.push('PROVIDER'.padEnd(14) + 'TIER'.padEnd(18) + 'EMBED'.padEnd(8) + 'EXPAND'.padEnd(8) + 'CHAT'.padEnd(8) + 'STATUS');
-  rows.push('-'.repeat(78));
-  for (const r of recipes) {
-    const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
-    const hasExpand = !!r.touchpoints.expansion;
-    const hasChat = !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
-    const ready = envReady(r);
-    const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
-    rows.push(
-      r.id.padEnd(14) +
-      r.tier.padEnd(18) +
-      (hasEmbed ? 'yes' : '—').padEnd(8) +
-      (hasExpand ? 'yes' : '—').padEnd(8) +
-      (hasChat ? 'yes' : '—').padEnd(8) +
-      status,
-    );
-  }
-  console.log(rows.join('\n'));
+  console.log(formatRecipeTable(listRecipes()));
 }
 
 async function runTest(args: string[]): Promise<void> {
@@ -137,6 +148,30 @@ async function runTest(args: string[]): Promise<void> {
     const [providerId, ...modelParts] = modelArg.split(':');
     const modelId = modelParts.join(':');
     const recipe = getRecipe(providerId);
+
+    // codex finding #10: when `--model` is passed, the user is probing a
+    // model in isolation. They may be misled into thinking the test result
+    // validates their brain's actual configured path. Loud stderr line names
+    // the divergence at the top of the test so the recovery experience
+    // doesn't repeat the bug-reporter's "providers test ✓ but import still
+    // broken" trap.
+    try {
+      const cfg = loadConfig();
+      const configuredModel = tpArg === 'embedding' ? cfg?.embedding_model : cfg?.chat_model;
+      if (!configuredModel) {
+        console.error(
+          `Note: tested ${modelArg} in isolation; this brain has no configured ${tpArg}_model yet. ` +
+          `\`providers test\` does NOT verify your brain's active path. ` +
+          `Set the active provider with \`gbrain config set ${tpArg}_model <id>\` after running init.`,
+        );
+      } else if (configuredModel !== modelArg) {
+        console.error(
+          `Note: tested ${modelArg} in isolation; gbrain's configured ${tpArg} is ${configuredModel}. ` +
+          `\`providers test\` does NOT verify your brain's active path.`,
+        );
+      }
+    } catch { /* loadConfig throws when no brain configured — first-time install path; the no-config branch above handles it. */ }
+
     if (tpArg === 'embedding') {
       const dims = recipe?.touchpoints.embedding?.default_dims ?? 1536;
       configureGateway({
@@ -150,6 +185,7 @@ async function runTest(args: string[]): Promise<void> {
         env: { ...process.env },
       });
     }
+    void modelId; // intentionally unused but preserved for readability
   }
 
   if (!gwIsAvailable(tpArg)) {

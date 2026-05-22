@@ -3837,6 +3837,164 @@ Lucien 手动跑 gbrain 命令时的保护。
 
 ---
 
+## 6.30 Upstream v0.38.2.0 sync (2026-05-22)
+
+§6.29 之后仅 3 天的快速跟进 sync —— 上游 master 高频迭代,14 个 commit
+跨 14 版本(v0.37.1.0 → v0.38.2.0),merge commit 234 文件 / +33917 /
+−996 LoC。**仅 2 个 conflict**(`CLAUDE.md` + `llms-full.txt`,均机械)。
+fork-protected 区域(`skills/kos-jarvis/`、`server/`、`workers/`、
+`scripts/launchd/`)**零侵入** —— merge commit `git diff` 在这 4 个路径
+上为空。Schema 自动 v78 → **v85**(7 migration)。生产 kos.chenge.ink
+部署完成,3140 pages 保持。
+
+### 上游 14 版本与 fork 关系
+
+| 版本 | 主题 | 对 fork 影响 |
+|---|---|---|
+| v0.37.1.0 | brainstorm + lsd — bisociation idea generator | 新上游 skill,fork 不受影响 |
+| v0.37.2.0 | `takes_resolution_consistency` CHECK 接受 `unresolvable` | dream-cycle 写 takes;CHECK 放宽,向后兼容 |
+| v0.37.3.0 | **`skill_brain_first` doctor check + `check:all` 第 15 脚本** | flag 了 fork `enrich-sweep`(SKILL.md 提及 "Crustdata")—— 本次加 brain-first callout 修复 |
+| v0.37.4.0 | pgGraph-inspired CI scaffolding + `check:fuzz-purity` | fork 无 CI;新 fuzz 测试拖慢全量 suite(见下) |
+| v0.37.5.0 | YAML-aware `NESTED_QUOTES` validator | brain 页 YAML frontmatter 误报减少 |
+| v0.37.6.0 | OpenRouter recipe + generic `default_headers` seam | `gateway.ts` 干净自动合并;与 fork `google.ts` max_batch_tokens patch 共存 |
+| v0.37.7.0 | fix wave:federated brains + autopilot safety + **OAuth confidential clients** | fork 4 个 OAuth client 均 confidential;部署后 doctor `oauth_confidential_client_health` 报 4 client 一致 ✓ |
+| v0.37.8.0 | voyage-code-3 + reindex-code cost-preview | brain 0 code page,无影响 |
+| v0.37.9.0 | frontmatter canonical-style tag-array 归一化 | brain 页 tag 数组下次 sync 归一 |
+| v0.37.10.0 | `init` env-detection + interactive picker + preflight | 生产 postgres 不 re-init,无影响 |
+| v0.37.11.0 | fresh-install PGLite embedding setup fix wave | 生产 postgres 非 PGLite;带入新 `test/search/hybrid-reranker-integration.serial.test.ts`(见全量测试段) |
+| v0.38.0.0 | **ingestion cathedral** — capture + write-through + IngestionSource 契约 | 新增 `src/core/ingestion/` 子系统 + 上游 `skills/capture/`;additive,零 fork 路径触碰,`put_page`/`gbrain sync` 未变 |
+| v0.38.1.0 | provider-agnostic subagent loop + remote MCP dispatch + budget meter | fork 不跑 gbrain agent daemon;`mcp_spend_*` 表 additive |
+| v0.38.2.0 | fix(doctor):bounded frontmatter scan + partial-state surfacing | kos-patrol 跑 doctor,beneficial |
+
+### Conflict resolution(2 个)
+
+| File | Decision | Rationale |
+|---|---|---|
+| `CLAUDE.md` | take fork(`--ours`) | fork CLAUDE.md 是 fork-only;上游内容由 `docs/CLAUDE-UPSTREAM.md` 镜像 |
+| `llms-full.txt` | 取 upstream 清 marker → `bun run build:llms` 重生成 | 219K regenerated,干净 |
+
+**Auto-merged 干净**:`VERSION`(→ 0.38.2.0)、`package.json`(保 fork
+`@electric-sql/pglite` override + 加 `chokidar`/`js-yaml`/`fast-check`)、
+`bun.lock`、`CHANGELOG.md`、`README.md`、`skills/RESOLVER.md`、
+`skills/manifest.json`、`gateway.ts`/`google.ts`(fork max_batch_tokens
+patch 存活,test/ai 274 pass 佐证)、`src/core/pglite-engine.ts`
+(WAL fork patch `pg_switch_wal()` 存活,从 L207 漂移到 L209)。
+
+### `check:all` 新增门 — `skill_brain_first`(v0.37.3.0)
+
+v0.37.3.0 给 `bun run check:all` 加了第 15 个脚本
+`check-skill-brain-first.sh`(跑 `gbrain doctor --fast --json`,
+filesystem-only)。它 flag 引用 external-lookup 工具却无 brain-first
+合规信号的 skill。fork `enrich-sweep` 的 SKILL.md 提到 "Crustdata"
+(一个 Tier 1 enrichment API,fork 无 key,仅用于说明 Tier 1 → Tier 2
+降级),被 `\bcrustdata\b` case-insensitive pattern 命中。
+
+`enrich-sweep` 实质 **是** brain-first 的(Phase A 全脑扫描、Phase D
+`gbrain query` 去重后才建 stub,Tavily 只是 Tier 2 补充),故修法是加
+canonical Convention callout(声明合规),**不是** `brain_first: exempt`
+(后者意为"从不查脑",失实)。commit `b39a50b4`。
+
+### check-privacy:`docs/CLAUDE-UPSTREAM.md` 镜像刷新
+
+`check-privacy.sh`(本身未被 merge 改动)发现 `docs/CLAUDE-UPSTREAM.md`
+含 banned name(9 处)且不在 allow-list —— **master 上已存在 9 处,
+pre-existing,非本次 sync 引入**(check 此前未在该 stale 文件上 surface
+是因为 §6.29 gate 只跑 `test/ai/` 不跑 `check:all` 之外的对账)。借此
+sync 把镜像从 stale(v0.34.4 era)刷新到上游 v0.38.2.0 CLAUDE.md
+(`git show upstream/master:CLAUDE.md`,banned name scrub 为
+`openclaw-reference`),关闭 §6.29 遗留的 "待 selective 增补" deferral。
+
+### Schema migrations(v78 → v85,7 步)
+
+`bin/gbrain init --migrate-only` 一句解决(`apply-migrations` 仅报告
+gap,实际迁移走 `init --migrate-only`):
+
+```
+[79] pages_last_retrieved_at
+[80] takes_unresolvable_quality_v0_37_2_0
+[81] pages_provenance_columns
+[82] subagent_tool_executions_stable_id
+[83] mcp_spend_reservations
+[84] oauth_clients_budget_usd_per_day
+[85] oauth_clients_agent_binding
+```
+
+NOTICE on `column ... already exists, skipping` —— Postgres 幂等
+`ADD COLUMN IF NOT EXISTS`,非 ERROR(同 §6.29 模式)。`~/.gbrain/config.json`
+未被 `--migrate-only` 触碰(已验证;备份 `~/.gbrain/config.json.before-sync-v0.38.2.0`)。
+
+### Health score before/after
+
+| 维度 | Pre-sync (§6.29 / v0.37.0.0) | Post-sync (v0.38.2.0) |
+|---|---|---|
+| health_score | 80 | **40**(见下) |
+| schema_version | 78 | **85** |
+| skill_brain_first | n/a(check 未引入) | **ok**(49 skill 全 compliant/exempt) |
+| oauth_confidential_client_health | n/a | **ok**(4 client,auth shape 一致) |
+| embeddings | 100% | 100%(0 missing) |
+| brain_score | 80/100 | 80/100 |
+| connection / pages | 3140 | 3140 |
+
+**health_score 80 → 40 解读**:唯一的 `[FAIL]` 是 `sync_freshness`
+(brain 内容已 4 天未 `gbrain sync`)。§6.29 时此项是 41h 的 WARN;纯因
+时间推移(无 sync cron —— TODO P1 既有问题)升级为 FAIL。**与本次代码
+同步无关** —— 所有与上游 sync 相关的 check 全绿(schema / oauth /
+skill_brain_first / embeddings / connection)。一次 `bin/gbrain sync
+--skip-failed --no-pull` 即可清,但属 brain 内容运维,留给 Lucien 决定
+(连同 TODO P1 sync-cron 决策)。
+
+### Smoke evidence
+
+- `bin/gbrain --version` → `0.38.2.0`(`bun run build` 重编译)
+- `bun run typecheck` clean;`bun run check:all` exit 0(15 脚本);
+  `bun test test/ai/` **274 pass / 0 fail / 922 expect()**
+- `curl http://127.0.0.1:7225/health` + `curl https://kos.chenge.ink/health`
+  → `{"status":"ok","version":"0.38.2.0","engine":"postgres"}`
+- query smoke:EN `Lucien` → `people/lucien` 0.8951;ZH compound-CJK
+  `知识管理` → `jarvis-dual-platform-architecture` 0.9880;multi-word EN
+  `knowledge management` → `concepts/knowledge-management` 0.9108
+- pages count **3140**(基线 ±0);schema v85;pre-deploy 备份
+  `/tmp/pg-pre-sync-v0.38.2.0-2026-05-22.dump.gz`(110 MB)
+- `gbrain-serve-http` daemon bootout/bootstrap(PID 86784 → 76514),~5s downtime
+
+### 全量测试(非 gate;§6.29 既定 gate = typecheck + check:all + test/ai/)
+
+`bun run test`(全量 unit suite,`run-unit-parallel.sh`):**6399 pass /
+20 fail / 15 skip**,elapsed 671s。20 fail 分解:
+
+- **2 个 shard WEDGED**(600s 分片超时)—— shard 1 撞上 `longmemeval`
+  基准(其自报 "20-60 分钟 / 5 题",本不该进 unit run),shard 2 卡在新
+  `test/fuzz/` property 测试。runner artifact,非真失败(同 TODO L1053
+  已 root-cause 的全量 suite env-coupling)。
+- **4 个 `hybrid-reranker-integration.serial.test.ts` 失败** —— 该文件
+  经 v0.37.11.0 `d0d0e2a6` **新增**(fork master 上不存在),用 PGLite +
+  stub。4 失败都是 `hybridSearch(engine, 'alpha keyword', ...)` 多词
+  keyword 查询在 PGLite(fork pin 的 `@electric-sql/pglite` 版本)下返回
+  空候选池。**生产跑 Postgres** —— 已验证多词查询正常(上方 smoke
+  `knowledge management` 0.9108)。非回归;属 fork PGLite-pin 与上游测试
+  预期的环境差异。
+
+### Branch ops + TODO follow-ups
+
+sync 分支 `sync-v0.38.2.0`:merge commit `9527b412` + `fix(skill)`
+`b39a50b4` + `chore(llms)` `fd217043` + docs commit;`--no-ff` 并入 master。
+
+**新增 TODO follow-ups(2026-05-22)**:
+- (P2) `hybrid-reranker-integration.serial.test.ts` 在 fork PGLite-pin
+  下 4 fail —— 评估 bump fork PGLite override 或给上游提 hermetic-test PR
+- (P3) doctor `reranker_health` 报 1 次 ZeroEntropy auth failure;query
+  时 `[ai.gateway] expansion disabled: [expand] Not Found` —— 两者均
+  optional enhancement layer,core 检索不受影响,查清配置来源
+- `sync_freshness` FAIL 已属 TODO P1(缺 daily sync cron)
+
+### Linked docs
+
+- [`skills/kos-jarvis/TODO.md`](../skills/kos-jarvis/TODO.md) — post-sync entries
+- [`docs/CLAUDE-UPSTREAM.md`](CLAUDE-UPSTREAM.md) — upstream CLAUDE.md mirror(本次刷新至 v0.38.2.0)
+- Sync plan: `~/.claude/plans/eager-imagining-quiche.md`
+
+---
+
 ## 8. Cost and performance snapshot
 
 | Metric | v1 | v2 |

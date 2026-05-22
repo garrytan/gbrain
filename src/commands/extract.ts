@@ -77,7 +77,9 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
       try {
         const st = lstatSync(full);
         if (st.isDirectory()) {
-          if (!pruneDir(entry)) continue;
+          // v0.37.7.0 #1169: pass parentDir so pruneDir can detect git
+          // submodule pointers (`.git` as a file inside the candidate).
+          if (!pruneDir(entry, d)) continue;
           walk(full);
         } else if (entry.endsWith('.md') && !entry.startsWith('_')) {
           const rel = relative(dir, full);
@@ -380,6 +382,11 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
   let brainDir = explicitDir ? args[dirIdx + 1] : '.';
   const sourceIdx = args.indexOf('--source');
   const source = (sourceIdx >= 0 && sourceIdx + 1 < args.length) ? args[sourceIdx + 1] : 'fs';
+  // v0.37.7.0 #1204: --source-id <id> scopes extraction to one brain
+  // source. Separate flag from --source (fs|db) which is the
+  // data-source axis. When unset, walks all sources together as today.
+  const sourceIdIdx = args.indexOf('--source-id');
+  const sourceIdFilter = (sourceIdIdx >= 0 && sourceIdIdx + 1 < args.length) ? args[sourceIdIdx + 1] : undefined;
   const typeIdx = args.indexOf('--type');
   const typeFilter = (typeIdx >= 0 && typeIdx + 1 < args.length) ? (args[typeIdx + 1] as PageType) : undefined;
   const sinceIdx = args.indexOf('--since');
@@ -404,7 +411,7 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
   }
 
   if (!subcommand || !['links', 'timeline', 'all'].includes(subcommand)) {
-    console.error('Usage: gbrain extract <links|timeline|all> [--source fs|db] [--dir <brain-dir>] [--dry-run] [--json] [--type T] [--since DATE]');
+    console.error('Usage: gbrain extract <links|timeline|all> [--source fs|db] [--source-id <id>] [--dir <brain-dir>] [--dry-run] [--json] [--type T] [--since DATE]');
     process.exit(1);
   }
 
@@ -445,12 +452,12 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
       // can opt in via mode + source.
       result = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
       if (subcommand === 'links' || subcommand === 'all') {
-        const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since, { includeFrontmatter });
+        const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since, { includeFrontmatter, sourceIdFilter });
         result.links_created = r.created;
         result.pages_processed = r.pages;
       }
       if (subcommand === 'timeline' || subcommand === 'all') {
-        const r = await extractTimelineFromDB(engine, dryRun, jsonMode, typeFilter, since);
+        const r = await extractTimelineFromDB(engine, dryRun, jsonMode, typeFilter, since, { sourceIdFilter });
         result.timeline_entries_created = r.created;
         result.pages_processed = Math.max(result.pages_processed, r.pages);
       }
@@ -775,9 +782,10 @@ async function extractLinksFromDB(
   jsonMode: boolean,
   typeFilter: PageType | undefined,
   since: string | undefined,
-  opts?: { includeFrontmatter?: boolean },
+  opts?: { includeFrontmatter?: boolean; sourceIdFilter?: string },
 ): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[] }> {
   const includeFrontmatter = opts?.includeFrontmatter ?? false;
+  const sourceIdFilter = opts?.sourceIdFilter;
   // Batch resolver: pg_trgm + exact only, NO search fallback. Dodges the
   // N-thousand API call trap on 46K-page brains. Resolver has a per-run
   // cache so duplicate names (same person appearing on many pages) resolve
@@ -791,12 +799,30 @@ async function extractLinksFromDB(
   // sourceId to getPage AND build a cross-source resolution map for link
   // disambiguation. Pre-fix used getAllSlugs() which collapsed
   // same-slug-different-source pages into one entry.
-  const allRefs = await engine.listAllPageRefs();
+  //
+  // v0.37.7.0 #1204: when --source-id <id> is passed, filter the walk
+  // to just that source so federated brain users can scope extraction
+  // explicitly. The resolution map still sees all sources so
+  // cross-source wikilinks (qualified like `[[other-src:slug]]`) can
+  // resolve — the filter is on WHICH pages we extract FROM, not what
+  // we can resolve TO.
+  const allRefs = sourceIdFilter
+    ? (await engine.listAllPageRefs()).filter(r => r.source_id === sourceIdFilter)
+    : await engine.listAllPageRefs();
+  const fullRefsForResolver = sourceIdFilter
+    ? await engine.listAllPageRefs()
+    : allRefs;
   // For backward-compat checks (`allSlugs.has(...)` calls below), we still
   // need a flat slug set. ALSO a per-slug → [sources] map for F10 resolution.
+  //
+  // v0.37.7.0: the resolver maps are built from `fullRefsForResolver`
+  // (not `allRefs`) so cross-source wikilinks resolve correctly even
+  // when --source-id scopes the extract walk. Without this, a scoped
+  // extract would fail to resolve qualified links to pages outside the
+  // scoped source.
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
-  for (const ref of allRefs) {
+  for (const ref of fullRefsForResolver) {
     allSlugs.add(ref.slug);
     const list = slugToSources.get(ref.slug) ?? [];
     list.push(ref.source_id);
@@ -944,11 +970,18 @@ async function extractTimelineFromDB(
   jsonMode: boolean,
   typeFilter: PageType | undefined,
   since: string | undefined,
+  opts?: { sourceIdFilter?: string },
 ): Promise<{ created: number; pages: number }> {
   // v0.32.8: listAllPageRefs enumerates (slug, source_id) pairs so we can
   // thread sourceId to getPage and addTimelineEntriesBatch. Pre-fix used
   // getAllSlugs() which collapsed same-slug-different-source pages.
-  const allRefs = await engine.listAllPageRefs();
+  //
+  // v0.37.7.0 #1204: when sourceIdFilter is set, scope the walk to one
+  // source so federated brain users can extract per-source.
+  const sourceIdFilter = opts?.sourceIdFilter;
+  const allRefs = sourceIdFilter
+    ? (await engine.listAllPageRefs()).filter(r => r.source_id === sourceIdFilter)
+    : await engine.listAllPageRefs();
   let processed = 0, created = 0;
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));

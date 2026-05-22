@@ -8,12 +8,24 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { doctorReportRemote, computeDoctorReport, type DoctorReport, type Check } from '../src/commands/doctor.ts';
 
 let engine: PGLiteEngine;
+let tmpHome: string;
+let priorHome: string | undefined;
 
 beforeAll(async () => {
+  // v0.37.10.0: doctorReportRemote reads from ~/.gbrain audit files
+  // (reranker_health, sync_failures, etc.). Without isolation, host state
+  // leaks into the test and makes the assertion non-deterministic. Pin
+  // GBRAIN_HOME to a tempdir so audit reads return empty.
+  tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-doctor-remote-'));
+  priorHome = process.env.GBRAIN_HOME;
+  process.env.GBRAIN_HOME = tmpHome;
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -21,6 +33,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  if (priorHome === undefined) delete process.env.GBRAIN_HOME;
+  else process.env.GBRAIN_HOME = priorHome;
+  rmSync(tmpHome, { recursive: true, force: true });
 });
 
 describe('doctorReportRemote', () => {

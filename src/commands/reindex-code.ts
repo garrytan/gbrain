@@ -26,7 +26,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { importCodeFile } from '../core/import-file.ts';
 import { estimateTokens } from '../core/chunkers/code.ts';
-import { EMBEDDING_MODEL, estimateEmbeddingCostUsd } from '../core/embedding.ts';
+import { getEmbeddingModelName, estimateEmbeddingCostUsd } from '../core/embedding.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import { createInterface } from 'readline';
 import { createProgress } from '../core/progress.ts';
@@ -53,6 +53,46 @@ export interface ReindexCodeResult {
   costUsd: number;
   model: string;
   failures?: Array<{ slug: string; error: string }>;
+}
+
+/**
+ * Voyage publishes voyage-code-3, a code-specialized embedding model that
+ * outperforms their general flagships on code retrieval. Per-worktree code
+ * brains (Topology 3) are pure source-code, so the recommendation is clean.
+ * The nudge surfaces this from `gbrain reindex --code` on dry-run AND
+ * execute paths so an agent sees it before spending Anthropic/OpenAI tokens.
+ *
+ * Allowlist matches against the BARE model name (what getEmbeddingModelName()
+ * returns — the gateway strips the provider prefix). Lives in runReindexCode
+ * (not the CLI wrapper) because the CLI wrapper's dry-run branch returns
+ * before the gate block.
+ */
+const CODE_TUNED_BARE_MODELS = new Set(['voyage-code-3']);
+
+export type NudgeDecision =
+  | { shouldNudge: false }
+  | { shouldNudge: true; currentModel: string; recommendedModel: 'voyage:voyage-code-3' };
+
+export function shouldNudgeCodeModel(bareModelName: string | undefined | null): NudgeDecision {
+  if (!bareModelName || typeof bareModelName !== 'string') return { shouldNudge: false };
+  const trimmed = bareModelName.trim();
+  if (!trimmed) return { shouldNudge: false };
+  if (CODE_TUNED_BARE_MODELS.has(trimmed.toLowerCase())) return { shouldNudge: false };
+  return {
+    shouldNudge: true,
+    currentModel: trimmed,
+    recommendedModel: 'voyage:voyage-code-3',
+  };
+}
+
+/** Render the nudge to stderr. Pure-stderr by construction so --json stdout stays clean. */
+function printCodeModelNudge(decision: Extract<NudgeDecision, { shouldNudge: true }>): void {
+  process.stderr.write(
+    `[reindex-code] Configured embedding model is \`${decision.currentModel}\`. For pure code retrieval, Voyage's code-tuned \`voyage-code-3\` typically outperforms general-purpose models. Switch:\n` +
+      `  gbrain config set embedding_model ${decision.recommendedModel}\n` +
+      `  gbrain config set embedding_dimensions 1024\n` +
+      `Suppress with GBRAIN_NO_CODE_MODEL_NUDGE=1.\n`,
+  );
 }
 
 interface CodePageRow {
@@ -138,6 +178,20 @@ export async function runReindexCode(
   const { totalTokens, totalPages } = await estimateReindexCost(engine, opts.sourceId, batchSize);
   const costUsd = estimateEmbeddingCostUsd(totalTokens);
 
+  // Code-model nudge: fire when there's actual work, the operator hasn't opted
+  // out, and JSON-mode isn't active. Lives here (not in runReindexCodeCli) so
+  // dry-run paths surface it too — the CLI wrapper's dry-run branch returns
+  // before its gate block, which is where any UI placed there would be missed.
+  if (
+    totalPages > 0 &&
+    !opts.json &&
+    !opts.noEmbed &&
+    process.env.GBRAIN_NO_CODE_MODEL_NUDGE !== '1'
+  ) {
+    const decision = shouldNudgeCodeModel(getEmbeddingModelName());
+    if (decision.shouldNudge) printCodeModelNudge(decision);
+  }
+
   if (opts.dryRun) {
     return {
       status: 'dry_run',
@@ -147,7 +201,7 @@ export async function runReindexCode(
       failed: 0,
       totalTokens,
       costUsd,
-      model: EMBEDDING_MODEL,
+      model: getEmbeddingModelName(),
     };
   }
 
@@ -160,7 +214,7 @@ export async function runReindexCode(
       failed: 0,
       totalTokens: 0,
       costUsd: 0,
-      model: EMBEDDING_MODEL,
+      model: getEmbeddingModelName(),
     };
   }
 
@@ -230,7 +284,7 @@ export async function runReindexCode(
     failed,
     totalTokens,
     costUsd,
-    model: EMBEDDING_MODEL,
+    model: getEmbeddingModelName(),
     failures: failures.length > 0 ? failures : undefined,
   };
 }
@@ -271,11 +325,11 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
     const previewMsg =
       `reindex-code: ${preview.totalPages} code page(s), ` +
       `~${preview.totalTokens.toLocaleString()} tokens, ` +
-      `est. $${costUsd.toFixed(2)} on ${EMBEDDING_MODEL}.`;
+      `est. $${costUsd.toFixed(2)} on ${getEmbeddingModelName()}.`;
 
     if (preview.totalPages === 0) {
       if (json) {
-        console.log(JSON.stringify({ status: 'ok', codePages: 0, reindexed: 0, skipped: 0, failed: 0, totalTokens: 0, costUsd: 0, model: EMBEDDING_MODEL }));
+        console.log(JSON.stringify({ status: 'ok', codePages: 0, reindexed: 0, skipped: 0, failed: 0, totalTokens: 0, costUsd: 0, model: getEmbeddingModelName() }));
       } else {
         console.log('No code pages to reindex.');
       }
@@ -291,7 +345,7 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
           message: previewMsg,
           hint: 'Pass --yes to proceed, or --dry-run to see the preview and exit 0.',
         }));
-        console.log(JSON.stringify({ error: envelope, preview, costUsd, model: EMBEDDING_MODEL }));
+        console.log(JSON.stringify({ error: envelope, preview, costUsd, model: getEmbeddingModelName() }));
         process.exit(2);
       }
       console.log(previewMsg);

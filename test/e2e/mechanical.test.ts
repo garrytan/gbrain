@@ -720,8 +720,15 @@ describeE2E('E2E: Setup Journey', () => {
   const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL! });
 
   test('gbrain init --non-interactive connects and initializes', () => {
+    // v0.37.10.0: pass --embedding-model explicitly. Tier-1 CI runs without
+    // any embedding-provider env var, and the v0.37 fail-loud-no-key gate
+    // (D3) would otherwise exit 1 here. The provider is offline-resolved
+    // (preflight validates dim against recipe; no HTTP call), so this works
+    // without a real API key. After this init writes config, subsequent
+    // inits in the file honor persisted config per D5 (no flag needed).
     const result = Bun.spawnSync({
-      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
+      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!,
+            '--embedding-model', 'openai:text-embedding-3-large'],
       cwd: cliCwd,
       env: cliEnv(),
       timeout: 15_000,
