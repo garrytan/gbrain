@@ -205,8 +205,7 @@ describe('migrate v40 — mcp_request_log audit taxonomy', () => {
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS client_transport TEXT');
     expect(sql).toContain('DROP COLUMN IF EXISTS params');
     expect(sql).toContain('DROP COLUMN IF EXISTS error_message');
-    expect(sql).toContain('ALTER TABLE IF EXISTS public.mcp_request_log_legacy DROP COLUMN IF EXISTS params');
-    expect(sql).toContain('ALTER TABLE IF EXISTS public.mcp_request_log_legacy DROP COLUMN IF EXISTS error_message');
+    expect(sql).not.toContain('mcp_request_log_legacy DROP COLUMN');
     expect(sql).toContain("WHEN status = 'auth_failed' THEN 'unauthorized'");
     expect(sql).toContain("WHEN status = 'insufficient_scope' THEN 'forbidden'");
     expect(sql).toContain("'validation_error'");

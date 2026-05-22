@@ -1681,16 +1681,14 @@ export const MIGRATIONS: Migration[] = [
     version: 40,
     name: 'mcp_request_log_audit_taxonomy_v0_27_3',
     sql: '',
-    // Phase 4D follow-up: keep request logging full-fidelity but metadata-only.
-    // Drop legacy payload/error columns so future audit rows cannot retain raw
-    // page content, prompts, paths, or private note snippets by accident.
+    // Phase 4D follow-up: keep active request logging metadata-only.
+    // Legacy payload/error columns remain only on mcp_request_log_legacy for the
+    // one-release rollback/audit window required by the Phase 4C PRD.
     sqlFor: {
       postgres: `
         ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS client_transport TEXT;
         ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS params;
         ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS error_message;
-        ALTER TABLE IF EXISTS public.mcp_request_log_legacy DROP COLUMN IF EXISTS params;
-        ALTER TABLE IF EXISTS public.mcp_request_log_legacy DROP COLUMN IF EXISTS error_message;
 
         UPDATE mcp_request_log
         SET status = CASE
