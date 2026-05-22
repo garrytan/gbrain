@@ -30,6 +30,14 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | Meeting transcript received | `skills/meeting-ingestion/SKILL.md` |
 | Generic "ingest this" (auto-routes to above) | `skills/ingest/SKILL.md` |
 
+## OCR & document processing
+
+| Trigger | Skill |
+|---------|-------|
+| "OCR 校對", "校對掃描文稿", "幫我校對這段 OCR" | `skills/ocr-proofread/SKILL.md` |
+| "掃描書籍校正", "OCR 結果有錯", "correct scanned text" | `skills/ocr-proofread/SKILL.md` |
+| Batch OCR of image/PDF directory (automated) | `scripts/ocr-batch.py` (see skill for usage) |
+
 ## Thinking skills (from GStack)
 
 | Trigger | Skill |
