@@ -1689,6 +1689,8 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS client_transport TEXT;
         ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS params;
         ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS error_message;
+        ALTER TABLE IF EXISTS public.mcp_request_log_legacy DROP COLUMN IF EXISTS params;
+        ALTER TABLE IF EXISTS public.mcp_request_log_legacy DROP COLUMN IF EXISTS error_message;
 
         UPDATE mcp_request_log
         SET status = CASE
