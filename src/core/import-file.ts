@@ -283,14 +283,45 @@ export async function importFromContent(
     chunks.push(...fenceChunks);
   }
 
+  // Body-keyed embedding reuse: if any existing chunk on this page has the
+  // same chunk_text as a new chunk, reuse its embedding. This protects
+  // embeddings from position shifts caused by chunker overlap or splitBody
+  // rerouting when content is reformatted but semantically unchanged.
+  if (existing) {
+    const existingChunks = await engine.getChunks(slug, sourceId ? { sourceId } : undefined);
+    const embeddingByText = new Map<string, Float32Array>();
+    for (const ec of existingChunks) {
+      if (ec.embedding) {
+        embeddingByText.set(ec.chunk_text, ec.embedding as Float32Array);
+      }
+    }
+    let reused = 0;
+    for (const c of chunks) {
+      const reusedEmbedding = embeddingByText.get(c.chunk_text);
+      if (reusedEmbedding) {
+        c.embedding = reusedEmbedding;
+        reused++;
+      }
+    }
+    if (reused > 0) {
+      console.log(`[import-file] Reused ${reused}/${chunks.length} embeddings for ${slug} (body-keyed match)`);
+    }
+  }
+
   // Embed BEFORE the transaction (external API call).
   // v0.14+ (Codex C2): embedding failure PROPAGATES. Silent drop accumulates
   // unembedded pages invisibly. Caller can pass opts.noEmbed=true to skip.
   if (!opts.noEmbed && chunks.length > 0) {
-    const embeddings = await embedBatch(chunks.map(c => c.chunk_text));
-    for (let i = 0; i < chunks.length; i++) {
-      chunks[i].embedding = embeddings[i];
-      chunks[i].token_count = Math.ceil(chunks[i].chunk_text.length / 4);
+    const needsEmbedIndexes = chunks.map((c, i) => c.embedding ? -1 : i).filter(i => i >= 0);
+    if (needsEmbedIndexes.length > 0) {
+      const textsToEmbed = needsEmbedIndexes.map(i => chunks[i].chunk_text);
+      const newEmbeddings = await embedBatch(textsToEmbed);
+      for (let j = 0; j < needsEmbedIndexes.length; j++) {
+        chunks[needsEmbedIndexes[j]].embedding = newEmbeddings[j];
+      }
+    }
+    for (const c of chunks) {
+      c.token_count = Math.ceil(c.chunk_text.length / 4);
     }
   }
 
