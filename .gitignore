@@ -29,7 +29,10 @@ eval/data/amara-life-v1/_cache/
 # claw-test E2E build cache (shim + scratch outputs)
 test/.cache/
 
-.claude/
+# .claude/ is machine-local (settings.local.json, worktrees) — ignored,
+# except .claude/commands/ which holds versioned fork slash commands.
+.claude/*
+!.claude/commands/
 export/
 
 # Conductor workspace-local agent artifacts: plans, todos, run-unit-parallel
