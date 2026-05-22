@@ -24,7 +24,7 @@ type SqlHandler = (query: string, values: unknown[]) => SqlResult | Promise<SqlR
 interface FakeEngine {
   kind: 'postgres';
   sql: ReturnType<typeof makeSqlTag>;
-  audit: { token_name: string | null; operation: string; status: string; latency_ms: number }[];
+  audit: { token_name: string | null; operation: string; client_transport: string | null; status: string; latency_ms: number }[];
 }
 
 function makeSqlTag(handler: SqlHandler) {
@@ -80,8 +80,9 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
       audit.push({
         token_name: values[0] as string | null,
         operation: values[1] as string,
-        latency_ms: values[2] as number,
-        status: values[3] as string,
+        client_transport: values[2] as string | null,
+        latency_ms: values[3] as number,
+        status: values[4] as string,
       });
       return [];
     }
@@ -528,12 +529,13 @@ describe('http-transport: mcp_request_log audit', () => {
       const row = srv.engine.audit[srv.engine.audit.length - 1];
       expect(row.token_name).toBe('audit-test');
       expect(row.operation).toBe('tools/list');
+      expect(row.client_transport).toBe('http');
       expect(row.status).toBe('success');
       expect(row.latency_ms).toBeGreaterThanOrEqual(0);
     } finally { srv.stop(); }
   });
 
-  test('22. failed auth → audit row with null token_name + auth_failed status', async () => {
+  test('22. failed auth → audit row with null token_name + unauthorized status', async () => {
     const srv = await startTest({});
     try {
       await fetch(`${srv.url}/mcp`, { method: 'POST', headers: { 'Authorization': 'Bearer wrong', 'Content-Type': 'application/json' }, body: rpc('tools/list') });
@@ -541,7 +543,8 @@ describe('http-transport: mcp_request_log audit', () => {
       expect(srv.engine.audit.length).toBeGreaterThanOrEqual(1);
       const row = srv.engine.audit[srv.engine.audit.length - 1];
       expect(row.token_name).toBeNull();
-      expect(row.status).toBe('auth_failed');
+      expect(row.client_transport).toBe('http');
+      expect(row.status).toBe('unauthorized');
     } finally { srv.stop(); }
   });
 
@@ -560,7 +563,8 @@ describe('http-transport: mcp_request_log audit', () => {
       expect(row.operation).toBe('get_page');
       expect(row.operation).not.toBe('mcp_request');
       expect(row.operation).not.toBe('tools/call:get_page');
-      expect(row.status).toBe('error');
+      expect(row.client_transport).toBe('http');
+      expect(row.status).toBe('validation_error');
     } finally { srv.stop(); }
   });
 });

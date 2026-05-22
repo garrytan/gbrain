@@ -192,9 +192,16 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
     }
   }
 
+  function normalizeLogStatus(status: string): 'success' | 'error' | 'unauthorized' | 'forbidden' | 'validation_error' | 'dry_run' {
+    if (status === 'success' || status === 'error' || status === 'unauthorized' || status === 'forbidden' || status === 'validation_error' || status === 'dry_run') return status;
+    if (status === 'auth_failed') return 'unauthorized';
+    if (status === 'insufficient_scope') return 'forbidden';
+    return 'validation_error';
+  }
+
   function logRequest(tokenName: string | null, operation: string, status: string, latencyMs: number) {
-    sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status)
-        VALUES (${tokenName}, ${operation}, ${latencyMs}, ${status})`
+    sql`INSERT INTO mcp_request_log (token_name, operation, client_transport, latency_ms, status)
+        VALUES (${tokenName}, ${operation}, ${'http'}, ${latencyMs}, ${normalizeLogStatus(status)})`
       .catch(() => { /* best-effort */ });
   }
 
@@ -343,8 +350,13 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           },
         });
         let status = result.isError ? 'error' : 'success';
-        if (result.isError && result.content[0]?.text.includes('insufficient_scope')) {
+        const resultText = result.content[0]?.text ?? '';
+        if (!result.isError && args?.dry_run === true) {
+          status = 'dry_run';
+        } else if (result.isError && resultText.includes('insufficient_scope')) {
           status = 'forbidden';
+        } else if (result.isError && resultText.includes('invalid_params')) {
+          status = 'validation_error';
         }
         logRequest(auth.tokenName!, operation, status, Date.now() - startedMs);
         return Response.json(

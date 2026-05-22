@@ -1676,6 +1676,42 @@ export const MIGRATIONS: Migration[] = [
     },
     handler: applyServiceRoleOnlyRlsPosture,
   },
+  {
+    version: 40,
+    name: 'mcp_request_log_audit_taxonomy_v0_27_3',
+    sql: '',
+    // Phase 4D follow-up: keep request logging full-fidelity but metadata-only.
+    // Preserve legacy params/error_message columns for older dashboard code, but
+    // the HTTP transport now writes operation/client/status/latency only.
+    sqlFor: {
+      postgres: `
+        ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS client_transport TEXT;
+
+        UPDATE mcp_request_log
+        SET status = CASE
+          WHEN status = 'auth_failed' THEN 'unauthorized'
+          WHEN status = 'insufficient_scope' THEN 'forbidden'
+          WHEN status IN ('success', 'error', 'unauthorized', 'forbidden', 'validation_error', 'dry_run') THEN status
+          ELSE 'error'
+        END
+        WHERE status NOT IN ('success', 'error', 'unauthorized', 'forbidden', 'validation_error', 'dry_run');
+
+        ALTER TABLE mcp_request_log DROP CONSTRAINT IF EXISTS mcp_request_log_status_check;
+        ALTER TABLE mcp_request_log ADD CONSTRAINT mcp_request_log_status_check
+          CHECK (status IN ('success', 'error', 'unauthorized', 'forbidden', 'validation_error', 'dry_run'));
+
+        CREATE INDEX IF NOT EXISTS idx_mcp_request_log_created_at_desc
+          ON mcp_request_log (created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mcp_request_log_operation_created_at_desc
+          ON mcp_request_log (operation, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mcp_request_log_token_name_created_at_desc
+          ON mcp_request_log (token_name, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mcp_request_log_status_created_at_desc
+          ON mcp_request_log (status, created_at DESC);
+      `,
+      pglite: '',
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

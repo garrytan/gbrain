@@ -385,20 +385,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_access_tokens_name_active_unique ON access
 -- mcp_request_log: usage logging for remote MCP requests
 -- ============================================================
 CREATE TABLE IF NOT EXISTS mcp_request_log (
-  id            SERIAL PRIMARY KEY,
-  token_name    TEXT,
-  agent_name    TEXT,
-  operation     TEXT NOT NULL,
-  latency_ms    INTEGER,
-  status        TEXT NOT NULL DEFAULT 'success',
-  params        JSONB,
-  error_message TEXT,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  id               SERIAL PRIMARY KEY,
+  token_name       TEXT,
+  agent_name       TEXT,
+  operation        TEXT NOT NULL,
+  client_transport TEXT,
+  latency_ms       INTEGER,
+  status           TEXT NOT NULL DEFAULT 'success'
+    CHECK (status IN ('success', 'error', 'unauthorized', 'forbidden', 'validation_error', 'dry_run')),
+  params           JSONB,
+  error_message    TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Existing brains may have the v4 request log shape; schema.sql runs before
 -- migrations, so add dashboard/logging columns before baseline indexes use them.
 ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS agent_name TEXT;
+ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS client_transport TEXT;
 ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS params JSONB;
 ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_message TEXT;
 
@@ -452,6 +455,10 @@ CREATE INDEX IF NOT EXISTS idx_mcp_log_token_created ON mcp_request_log (token_n
 CREATE INDEX IF NOT EXISTS idx_mcp_log_op_status ON mcp_request_log (operation, status) WHERE status <> 'success';
 CREATE INDEX IF NOT EXISTS idx_mcp_log_time_agent ON mcp_request_log(created_at, token_name);
 CREATE INDEX IF NOT EXISTS idx_mcp_log_agent_time ON mcp_request_log(agent_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_request_log_created_at_desc ON mcp_request_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_request_log_operation_created_at_desc ON mcp_request_log (operation, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_request_log_token_name_created_at_desc ON mcp_request_log (token_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_request_log_status_created_at_desc ON mcp_request_log (status, created_at DESC);
 
 -- ============================================================
 -- files: binary attachments stored in Supabase Storage

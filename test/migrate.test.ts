@@ -181,6 +181,33 @@ describe('migrate v38 — mcp_request_log indexes + pg_partman', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────
+// Phase 4D — v40 mcp_request_log audit taxonomy
+// ─────────────────────────────────────────────────────────────────
+describe('migrate v40 — mcp_request_log audit taxonomy', () => {
+  const v40 = MIGRATIONS.find(m => m.version === 40);
+
+  test('v40 adds client_transport and constrains request-log status taxonomy', () => {
+    expect(v40).toBeDefined();
+    const sql = v40!.sqlFor!.postgres!;
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS client_transport TEXT');
+    expect(sql).toContain("WHEN status = 'auth_failed' THEN 'unauthorized'");
+    expect(sql).toContain("WHEN status = 'insufficient_scope' THEN 'forbidden'");
+    expect(sql).toContain("'validation_error'");
+    expect(sql).toContain("'dry_run'");
+    expect(sql).toContain('mcp_request_log_status_check');
+  });
+
+  test('v40 adds audit lookup indexes and skips PGLite', () => {
+    const sql = v40!.sqlFor!.postgres!;
+    expect(sql).toContain('idx_mcp_request_log_created_at_desc');
+    expect(sql).toContain('idx_mcp_request_log_operation_created_at_desc');
+    expect(sql).toContain('idx_mcp_request_log_token_name_created_at_desc');
+    expect(sql).toContain('idx_mcp_request_log_status_created_at_desc');
+    expect(v40!.sqlFor!.pglite).toBe('');
+  });
+});
+
 // ============================================================
 // v0.27 — v35 subagent_provider_neutral_persistence_v0_27
 // ============================================================
