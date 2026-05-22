@@ -185,7 +185,16 @@ describe('brain ingestion idempotency and dry-run safety', () => {
     });
 
     expect(result.counters.written).toBe(1);
-    expect(calls.some(c => c.sql.includes('INSERT INTO brain_ingestion_runs'))).toBe(true);
+    const ingestionRunSql = calls
+      .filter(c => c.sql.includes('brain_ingestion_runs'))
+      .map(c => c.sql)
+      .join('\n');
+    expect(ingestionRunSql).toContain('items_inserted');
+    expect(ingestionRunSql).toContain('items_updated');
+    expect(ingestionRunSql).toContain('items_skipped');
+    expect(ingestionRunSql).toContain('error_count');
+    expect(ingestionRunSql).not.toContain('items_succeeded');
+    expect(ingestionRunSql).not.toContain('items_failed');
     expect(calls.some(c => c.sql.includes('ON CONFLICT'))).toBe(true);
   });
 });

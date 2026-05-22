@@ -313,8 +313,13 @@ async function writeBrainSourceItem(
   if (!sourceRow.enabled) throw new Error(`Brain source ${source.sourceKey} is disabled`);
 
   const runRows = await engine.executeRaw<{ id: string }>(
-    `INSERT INTO brain_ingestion_runs (source_id, run_type, status, idempotency_key, items_seen, items_succeeded, items_failed)
-     VALUES ($1, 'backfill', 'running', $2, 0, 0, 0)
+    `INSERT INTO brain_ingestion_runs (
+       source_id, run_type, status, idempotency_key,
+       started_at, items_seen, items_inserted, items_updated, items_skipped, error_count
+     ) VALUES (
+       $1, 'backfill', 'running', $2,
+       now(), 0, 0, 0, 0, 0
+     )
      ON CONFLICT (idempotency_key) DO UPDATE SET updated_at = now()
      RETURNING id`,
     [sourceRow.id, `pilot:${item.idempotencyKey}`],
@@ -324,7 +329,7 @@ async function writeBrainSourceItem(
   await engine.executeRaw(
     `INSERT INTO brain_source_items (
        source_id, ingestion_run_id, item_type, external_id, canonical_url, source_url,
-       title, body_text, summary, author_handle, author_display_name, published_at,
+       title, body_text, summary, author_handle, author_name, published_at,
        raw_payload, storage_bucket, storage_path, content_sha256, idempotency_key,
        quality_status, visibility
      ) VALUES (
@@ -365,7 +370,14 @@ async function writeBrainSourceItem(
   if (runId) {
     await engine.executeRaw(
       `UPDATE brain_ingestion_runs
-       SET status = 'succeeded', items_seen = 1, items_succeeded = 1, items_failed = 0, finished_at = now(), updated_at = now()
+       SET status = 'succeeded',
+           items_seen = 1,
+           items_inserted = 1,
+           items_updated = 0,
+           items_skipped = 0,
+           error_count = 0,
+           finished_at = now(),
+           updated_at = now()
        WHERE id = $1`,
       [runId],
     );
