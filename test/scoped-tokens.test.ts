@@ -65,13 +65,33 @@ describe('Phase 4B scoped token authorization', () => {
     ]);
   });
 
-  test('Phase 4B named token presets are provisioned with explicit scopes', () => {
-    expect(PHASE_4B_TOKEN_PRESETS['agent-cto-ryde']).toEqual(['pages:read', 'chunks:read', 'log:write']);
-    expect(PHASE_4B_TOKEN_PRESETS['agent-backend-ryde']).toEqual(['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write']);
-    expect(PHASE_4B_TOKEN_PRESETS['agent-frontend-ryde']).toEqual(['pages:read', 'chunks:read', 'log:write']);
-    expect(PHASE_4B_TOKEN_PRESETS['agent-ios-ryde']).toEqual(['pages:read', 'chunks:read', 'log:write']);
-    expect(PHASE_4B_TOKEN_PRESETS['agent-head-of-product-ryde']).toEqual(['pages:read', 'pages:write', 'chunks:read', 'log:write']);
-    expect(PHASE_4B_TOKEN_PRESETS['orchestrator-ryde']).toEqual(['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write', 'admin']);
+  test('Phase 4B named token presets are provisioned with explicit PRD scopes', () => {
+    expect(PHASE_4B_TOKEN_PRESETS['hermes-operator']).toEqual(['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write', 'admin']);
+    expect(PHASE_4B_TOKEN_PRESETS['claude-builder']).toEqual(['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write']);
+    expect(PHASE_4B_TOKEN_PRESETS['codex-builder']).toEqual(['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write']);
+    expect(PHASE_4B_TOKEN_PRESETS['researcher-readonly']).toEqual(['pages:read', 'chunks:read', 'log:write']);
+    expect(PHASE_4B_TOKEN_PRESETS['ingest-worker']).toEqual(['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write']);
+    expect(PHASE_4B_TOKEN_PRESETS['auditor-admin']).toEqual(['pages:read', 'chunks:read', 'log:write', 'admin']);
+  });
+
+  test('remote missing token is denied before handler execution, while local stdio remains trusted', async () => {
+    let healthCalls = 0;
+    const fakeEngine = {
+      getHealth: async () => {
+        healthCalls++;
+        return { status: 'ok' };
+      },
+    } as any;
+
+    const remoteMissingToken = await dispatchToolCall(fakeEngine, 'get_health', {}, { remote: true });
+    expect(remoteMissingToken.isError).toBe(true);
+    expect(remoteMissingToken.content[0].text).toContain('unauthorized');
+    expect(healthCalls).toBe(0);
+
+    const localStdio = await dispatchToolCall(fakeEngine, 'get_health', {}, { remote: false });
+    expect(localStdio.isError).toBeUndefined();
+    expect(JSON.parse(localStdio.content[0].text)).toEqual({ status: 'ok' });
+    expect(healthCalls).toBe(1);
   });
 
   test('MCP dispatch enforces scopes before executing write/admin handlers', async () => {

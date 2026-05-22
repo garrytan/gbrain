@@ -187,6 +187,19 @@ export async function dispatchToolCall(
     };
   }
 
+  if ((opts.remote ?? true) && !opts.auth) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: 'unauthorized',
+          message: `Remote operation ${name} requires a bearer token`,
+        }, null, 2),
+      }],
+      isError: true,
+    };
+  }
+
   if (opts.auth) {
     const grantedScopes = normalizeTokenScopes(opts.auth.scopes);
     const requiredScopes = op.requiredScopes || [];

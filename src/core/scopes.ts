@@ -18,13 +18,12 @@ const LEGACY_SCOPE_EXPANSIONS: Record<string, Scope[]> = {
 };
 
 export const PHASE_4B_TOKEN_PRESETS: Record<string, Scope[]> = {
-  'agent-cto-ryde': ['pages:read', 'chunks:read', 'log:write'],
-  'agent-backend-ryde': ['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write'],
-  'agent-frontend-ryde': ['pages:read', 'chunks:read', 'log:write'],
-  'agent-ios-ryde': ['pages:read', 'chunks:read', 'log:write'],
-  'agent-head-of-product-ryde': ['pages:read', 'pages:write', 'chunks:read', 'log:write'],
-  'orchestrator-ryde': ['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write', 'admin'],
-  'orchestrator': ['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write', 'admin'],
+  'hermes-operator': ['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write', 'admin'],
+  'claude-builder': ['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write'],
+  'codex-builder': ['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write'],
+  'researcher-readonly': ['pages:read', 'chunks:read', 'log:write'],
+  'ingest-worker': ['pages:read', 'pages:write', 'chunks:read', 'chunks:write', 'log:write'],
+  'auditor-admin': ['pages:read', 'chunks:read', 'log:write', 'admin'],
 };
 
 export const OPERATION_REQUIRED_SCOPES: Record<string, Scope[]> = {
