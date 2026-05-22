@@ -1,36 +1,82 @@
 /**
- * Multi-Query Expansion via Claude Haiku
- * Ported from production Ruby implementation (query_expansion_service.rb, 69 LOC)
+ * Multi-Query Expansion — v0.14+ delegates LLM call to the AI gateway.
  *
- * Skip queries < 3 words.
- * Generate 2 alternative phrasings via tool use.
- * Return original + alternatives (max 3 total).
+ * Sanitization layer (prompt-injection defense) stays HERE, not in the gateway:
+ * the gateway is provider-agnostic; sanitization is gbrain's responsibility.
+ *
+ * Security (Fix 3 / M1 / M2 / M3):
+ *   - sanitizeQueryForPrompt() strips injection patterns from user input
+ *   - sanitizeExpansionOutput() validates LLM output before it reaches search
+ *   - console.warn never logs the query text itself (privacy)
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import { expand as gatewayExpand, isAvailable as gatewayIsAvailable } from '../ai/gateway.ts';
 
 const MAX_QUERIES = 3;
 const MIN_WORDS = 3;
+const MAX_QUERY_CHARS = 500;
 
-let anthropicClient: Anthropic | null = null;
-
-function getClient(): Anthropic {
-  if (!anthropicClient) {
-    anthropicClient = new Anthropic();
+/**
+ * Defense-in-depth sanitization for user queries before they reach the LLM.
+ */
+export function sanitizeQueryForPrompt(query: string): string {
+  const original = query;
+  let q = query;
+  if (q.length > MAX_QUERY_CHARS) q = q.slice(0, MAX_QUERY_CHARS);
+  q = q.replace(/```[\s\S]*?```/g, ' ');
+  q = q.replace(/<\/?[a-zA-Z][^>]*>/g, ' ');
+  q = q.replace(/^(\s*(ignore|forget|disregard|override|system|assistant|human)[\s:]+)+/gi, '');
+  q = q.replace(/\s+/g, ' ').trim();
+  if (q !== original) {
+    console.warn('[gbrain] sanitizeQueryForPrompt: stripped content from user query before LLM expansion');
   }
-  return anthropicClient;
+  return q;
+}
+
+/**
+ * Validate LLM-produced alternative queries. LLM output is untrusted.
+ */
+export function sanitizeExpansionOutput(alternatives: unknown[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of alternatives) {
+    if (typeof raw !== 'string') continue;
+    let s = raw.replace(/[\x00-\x1f\x7f]/g, '').trim();
+    if (s.length === 0) continue;
+    if (s.length > MAX_QUERY_CHARS) s = s.slice(0, MAX_QUERY_CHARS);
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+    if (out.length >= 2) break;
+  }
+  return out;
 }
 
 export async function expandQuery(query: string): Promise<string[]> {
-  // CJK text is not space-delimited — count characters instead of whitespace-separated tokens
+  // CJK text is not space-delimited.
   const hasCJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(query);
   const wordCount = hasCJK ? query.replace(/\s/g, '').length : (query.match(/\S+/g) || []).length;
   if (wordCount < MIN_WORDS) return [query];
 
+  // Skip LLM call entirely if gateway has no expansion provider configured.
+  if (!gatewayIsAvailable('expansion')) return [query];
+
   try {
-    const alternatives = await callHaikuForExpansion(query);
-    const all = [query, ...alternatives];
-    // Deduplicate
+    const sanitized = sanitizeQueryForPrompt(query);
+    if (sanitized.length === 0) return [query];
+
+    // gateway.expand() returns [original + expansions]. We feed it the sanitized
+    // copy so the LLM channel is safe; the ORIGINAL query remains the first entry
+    // for downstream search (gateway.expand includes the query it was called with).
+    const gatewayResults = await gatewayExpand(sanitized);
+
+    // Validate LLM-produced alternatives (everything after the first entry).
+    const alternatives = gatewayResults.slice(1);
+    const sanitizedAlts = sanitizeExpansionOutput(alternatives);
+
+    // Original query + sanitized alternatives, deduped, capped at MAX_QUERIES.
+    const all = [query, ...sanitizedAlts];
     const unique = [...new Set(all.map(q => q.toLowerCase().trim()))];
     return unique.slice(0, MAX_QUERIES).map(q =>
       all.find(orig => orig.toLowerCase().trim() === q) || q,
@@ -38,50 +84,4 @@ export async function expandQuery(query: string): Promise<string[]> {
   } catch {
     return [query];
   }
-}
-
-async function callHaikuForExpansion(query: string): Promise<string[]> {
-  const response = await getClient().messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 300,
-    tools: [
-      {
-        name: 'expand_query',
-        description: 'Generate alternative phrasings of a search query to improve recall',
-        input_schema: {
-          type: 'object' as const,
-          properties: {
-            alternative_queries: {
-              type: 'array',
-              items: { type: 'string' },
-              description: '2 alternative phrasings of the original query, each approaching the topic from a different angle',
-            },
-          },
-          required: ['alternative_queries'],
-        },
-      },
-    ],
-    tool_choice: { type: 'tool', name: 'expand_query' },
-    messages: [
-      {
-        role: 'user',
-        content: `Generate 2 alternative search queries that would find relevant results for this question. Each alternative should approach the topic from a different angle or use different terminology.
-
-Original query: "${query}"`,
-      },
-    ],
-  });
-
-  // Extract tool use result
-  for (const block of response.content) {
-    if (block.type === 'tool_use' && block.name === 'expand_query') {
-      const input = block.input as { alternative_queries?: unknown };
-      const alts = input.alternative_queries;
-      if (Array.isArray(alts)) {
-        return alts.map(String).slice(0, 2);
-      }
-    }
-  }
-
-  return [];
 }

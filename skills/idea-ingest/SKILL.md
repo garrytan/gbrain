@@ -20,6 +20,11 @@ tools:
   - add_timeline_entry
   - file_upload
 mutating: true
+writes_pages: true
+writes_to:
+  - people/
+  - concepts/
+  - sources/
 ---
 
 # Idea Ingest Skill
@@ -36,7 +41,7 @@ This skill guarantees:
 - Every fact has an inline `[Source: ...]` citation
 - Filing follows primary subject rules (not format-based)
 
-## Iron Law: Back-Linking (MANDATORY)
+> **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 
 Every mention of a person or company with a brain page MUST create a back-link.
 Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`

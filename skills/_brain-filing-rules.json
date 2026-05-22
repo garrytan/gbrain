@@ -1,0 +1,147 @@
+{
+  "version": "1.0.0",
+  "companion": "_brain-filing-rules.md",
+  "description": "Canonical (machine-readable) brain filing rules. The .md companion is the human explainer; this JSON is what `gbrain check-resolvable` audits against. Keep both in sync.",
+  "rules": [
+    {
+      "kind": "person",
+      "directory": "people/",
+      "examples": ["founders", "investors", "attendees", "contacts"],
+      "description": "A page whose primary subject is one person."
+    },
+    {
+      "kind": "company",
+      "directory": "companies/",
+      "examples": ["portfolio companies", "acquirers", "vendors"],
+      "description": "A page whose primary subject is one company or organization."
+    },
+    {
+      "kind": "deal",
+      "directory": "deals/",
+      "examples": ["seed rounds", "acquisitions"],
+      "description": "A page whose primary subject is a financing or M&A transaction."
+    },
+    {
+      "kind": "meeting",
+      "directory": "meetings/",
+      "examples": ["1:1s", "pitches", "pods"],
+      "description": "A meeting transcript or minutes. Propagate entities to companies/ and people/ pages."
+    },
+    {
+      "kind": "concept",
+      "directory": "concepts/",
+      "examples": ["mental models", "theses", "frameworks"],
+      "description": "A reusable idea, framework, or mental model not tied to a specific person/company."
+    },
+    {
+      "kind": "project",
+      "directory": "projects/",
+      "examples": ["internal initiatives", "multi-session work"],
+      "description": "A multi-session piece of work with its own arc."
+    },
+    {
+      "kind": "analysis",
+      "directory": "analysis/",
+      "examples": ["deep dives", "comparative studies"],
+      "description": "A long-form analysis of a specific topic."
+    },
+    {
+      "kind": "civic",
+      "directory": "civic/",
+      "examples": ["policy analysis", "government topics"],
+      "description": "Public-sector, policy, or civic-issue content."
+    },
+    {
+      "kind": "writing",
+      "directory": "writing/",
+      "examples": ["essays", "drafts", "published pieces"],
+      "description": "A piece of prose authored by the user."
+    },
+    {
+      "kind": "guide",
+      "directory": "guides/",
+      "examples": ["runbooks", "how-to docs"],
+      "description": "A guide or runbook authored for future reference."
+    },
+    {
+      "kind": "tech",
+      "directory": "tech/",
+      "examples": ["APIs", "libraries", "language notes"],
+      "description": "Technical references and tooling notes not tied to a specific company."
+    },
+    {
+      "kind": "finance",
+      "directory": "finance/",
+      "examples": ["market data", "metrics"],
+      "description": "Financial reference data not tied to a single deal."
+    },
+    {
+      "kind": "personal",
+      "directory": "personal/",
+      "examples": ["logistics", "family"],
+      "description": "Personal-life content — kept separate from work."
+    },
+    {
+      "kind": "idea",
+      "directory": "ideas/",
+      "examples": ["product ideas", "essay seeds", "back-of-envelope concepts"],
+      "description": "Generative ideas the user might build, write, or expand later. Stub-shaped pages that mature over time. voice-note-ingest, archive-crawler, and similar capture-flavored skills file here when content is something to potentially act on."
+    },
+    {
+      "kind": "research",
+      "directory": "research/",
+      "examples": ["web-research deltas", "freshness checks", "citation-verified claims"],
+      "description": "Web-research output: what is NEW vs already-known about a topic, citation-checked claims, freshness deltas. perplexity-research and academic-verify file here."
+    },
+    {
+      "kind": "original",
+      "directory": "originals/",
+      "examples": ["the user's own theses", "frameworks the user generated", "novel observations the user expressed"],
+      "description": "Pages where the user is the primary author of the idea — original thinking, not summarizations of someone else's work. voice-note-ingest, archive-crawler, signal-detector route content here when the user is the originator."
+    },
+    {
+      "kind": "voice-note",
+      "directory": "voice-notes/",
+      "examples": ["raw transcripts", "audio capture pages"],
+      "description": "Voice-note transcript holders, especially when the content is a random thought that doesn't cleanly fit originals/, concepts/, or another subject directory. voice-note-ingest is the primary writer."
+    },
+    {
+      "kind": "openclaw",
+      "directory": "openclaw/",
+      "examples": ["agent-state notes"],
+      "description": "Notes about the host OpenClaw agent itself, not the underlying entities."
+    },
+    {
+      "kind": "synthesis-output",
+      "directory": "media/books/",
+      "examples": ["personalized book mirrors", "two-column chapter analyses"],
+      "description": "Sanctioned exception to 'file by primary subject' for sui generis synthesized output that is one-of-one to a single book and a specific reader. Format-prefixed under media/<format>/ is allowed for synthesis output only, never for raw ingest. See _brain-filing-rules.md."
+    },
+    {
+      "kind": "synthesis-output",
+      "directory": "media/articles/",
+      "examples": ["personalized article reads", "long-form content tailored to reader"],
+      "description": "Same sanctioned exception as media/books/. One-of-one synthesis output of an article personalized for the reader. Distinct from raw article ingest, which goes to the article's primary-subject directory."
+    }
+  ],
+  "sources_dir": {
+    "directory": "sources/",
+    "purpose": "ONLY for raw data: bulk imports, API dumps, periodic captures. A page with a clear primary subject (person, company, concept) does NOT belong here.",
+    "not_for": ["articles about a person", "analyses of a company", "reusable frameworks"]
+  },
+  "notes": [
+    "The PRIMARY SUBJECT of the content determines the directory, not the format or source skill.",
+    "When in doubt: what would you search for to find this page again?",
+    "Cross-link from related directories via back-links — do not duplicate content."
+  ],
+  "dream_synthesize_paths": {
+    "description": "Single source of truth for the v0.23 dream-cycle synthesize/patterns trusted-workspace allow-list. The cycle's synthesize phase reads this list and threads it as `allowed_slug_prefixes` to every subagent it dispatches; put_page enforces it server-side. Editing this list is the ONLY way to add a new directory the synthesis subagent may write to.",
+    "globs": [
+      "wiki/personal/reflections/*",
+      "wiki/originals/*",
+      "wiki/personal/patterns/*",
+      "wiki/people/*",
+      "dream-cycle-summaries/*"
+    ]
+  }
+}

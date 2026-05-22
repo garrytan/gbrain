@@ -1,0 +1,10 @@
+{
+  "kind": "fresh-install",
+  "description": "Canonical 5-minute first-day flow: init → import → query → extract → verify",
+  "expected_phases": [
+    "import.files",
+    "extract.links_fs",
+    "doctor.db_checks"
+  ],
+  "brain": "brain"
+}

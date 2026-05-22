@@ -23,6 +23,24 @@ not the source, not the skill that's running.
 | Reusable framework/thesis -> `sources/` | -> `concepts/` | It's a mental model |
 | Tweet thread about policy -> `media/` | -> `civic/` or `concepts/` | media/ is for content ops |
 
+## Sanctioned exception: synthesis output is sui generis
+
+The "file by primary subject" rule is for raw ingest. Synthesized output that
+is one-of-one to a single source AND a specific reader (a personalized book
+mirror, a strategic-reading playbook tied to one problem) does not fit any
+subject directory cleanly: filing by topic loses the "this is the book"
+dimension; filing by author muddles authorship pages with synthesis pages.
+
+Format-prefixed paths under `media/<format>/<slug>` are the sanctioned
+exception:
+
+- `media/books/<slug>-personalized.md` (book-mirror output)
+- `media/articles/<slug>-personalized.md` (long-form article personalization)
+
+If you find yourself wanting `media/<format>/` for raw ingest, that is still
+the anti-pattern in the table above. The exception is narrow: synthesized,
+one-of-one, sui generis to a single source.
+
 ## What `sources/` Is Actually For
 
 `sources/` is ONLY for:
@@ -112,3 +130,24 @@ gbrain files restore <dir>                # Download back to local
 
 This ensures any derived brain page can be traced back to its original source,
 and large files don't bloat the git repo.
+
+## Dream-cycle synthesize / patterns directories (v0.23)
+
+The `synthesize` and `patterns` phases of `gbrain dream` write to a
+**fixed allow-list** of paths sourced from `_brain-filing-rules.json`'s
+`dream_synthesize_paths.globs` array. Editing that JSON is the ONLY way
+to add a new directory the synthesis subagent may write to:
+
+| Output type | Slug pattern | What goes here |
+|-------------|--------------|----------------|
+| Reflection | `wiki/personal/reflections/YYYY-MM-DD-<topic>-<hash[:6]>` | Self-knowledge, emotional processing, pattern recognition. Verbatim quotes from the user, with analysis. |
+| Original idea | `wiki/originals/ideas/YYYY-MM-DD-<idea>-<hash[:6]>` | New frames, theses, mental models, "conceptive ideologist" outputs. Capture the user's exact phrasing — that's the artifact. |
+| People enrichment | `wiki/people/<existing-slug>` | Timeline entries appended to existing people pages from session mentions. Stub pages for new substantive people. |
+| Pattern | `wiki/personal/patterns/<theme>` | Cross-session theme detected across ≥3 reflections. Highest-leverage output: a pattern can span 25 years if reflections reference dated content. |
+| Cycle summary | `dream-cycle-summaries/YYYY-MM-DD` | Index of every page produced by one dream cycle. Auto-written deterministically by the orchestrator. |
+
+**Iron Law for synthesize output:**
+1. Quote the user verbatim. Do not paraphrase memorable phrasings.
+2. Cross-reference compulsively: every new page MUST link to existing brain content.
+3. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated. NO underscores, NO file extensions.
+4. Edited transcripts produce NEW slugs (content-hash suffix changes) — never silently overwrite a prior reflection.

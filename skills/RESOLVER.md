@@ -13,12 +13,15 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 
 | Trigger | Skill |
 |---------|-------|
-| "What do we know about", "tell me about", "search for" | `skills/query/SKILL.md` |
+| "What do we know about", "tell me about", "search for", "who is", "background on", "notes on" | `skills/query/SKILL.md` |
+| "Who knows who", "relationship between", "connections", "graph query" | `skills/query/SKILL.md` (use graph-query) |
 | Creating/enriching a person or company page | `skills/enrich/SKILL.md` |
 | Where does a new file go? Filing rules | `skills/repo-architecture/SKILL.md` |
 | Fix broken citations in brain pages | `skills/citation-fixer/SKILL.md` |
+| "citation audit", "check citations", "fix citations" | `skills/citation-fixer/SKILL.md` (focused fix). For broader brain health, chain into `skills/maintain/SKILL.md` |
 | "Research", "track", "extract from email", "investor updates", "donations" | `skills/data-research/SKILL.md` |
 | Share a brain page as a link | `skills/publish/SKILL.md` |
+| "validate frontmatter", "check frontmatter", "fix frontmatter", "frontmatter audit", "brain lint" | `skills/frontmatter-guard/SKILL.md` |
 
 ## Content & media ingestion
 
@@ -51,9 +54,13 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | Cron scheduling, quiet hours, job staggering | `skills/cron-scheduler/SKILL.md` |
 | Save or load reports | `skills/reports/SKILL.md` |
 | "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
+| "Skillify this", "is this a skill?", "make this proper" | `skills/skillify/SKILL.md` |
+| "Is gbrain healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
+| Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
 | "Validate skills", skill health check | `skills/testing/SKILL.md` |
 | Webhook setup, external event processing | `skills/webhook-transforms/SKILL.md` |
+| "Spawn agent", "background task", "parallel tasks", "steer agent", "pause/resume agent", "gbrain jobs submit", "submit a gbrain job", "submit a shell job", "shell job" | `skills/minion-orchestrator/SKILL.md` |
 
 ## Setup & migration
 
@@ -62,7 +69,13 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Set up GBrain", first boot | `skills/setup/SKILL.md` |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
+| "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
+| "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run" | `skills/maintain/SKILL.md` (dream cycle section) |
+| "Brain health", "what features am I missing", "brain score" | Run `gbrain features --json` |
+| "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain autopilot --install --repo ~/brain` |
 | Agent identity, "who am I", customize agent | `skills/soul-audit/SKILL.md` |
+| "Populate links", "extract links", "backfill graph" | `skills/maintain/SKILL.md` (graph population phase) |
+| "Populate timeline", "extract timeline entries" | `skills/maintain/SKILL.md` (graph population phase) |
 
 ## Identity & access (always-on)
 
@@ -87,5 +100,29 @@ When multiple skills could match:
 These apply to ALL brain-writing skills:
 - `skills/conventions/quality.md` — citations, back-links, notability gate
 - `skills/conventions/brain-first.md` — check brain before external APIs
+- `skills/conventions/brain-routing.md` — which brain (DB) and which source (repo) to target; cross-brain federation is latent-space only
+- `skills/conventions/subagent-routing.md` — when to use Minions vs inline work
 - `skills/_brain-filing-rules.md` — where files go
 - `skills/_output-rules.md` — output quality standards
+
+## Uncategorized
+
+| Trigger | Skill |
+|---------|-------|
+| "personalized version of this book" | `skills/book-mirror/SKILL.md` |
+
+| "enrich this article" | `skills/article-enrichment/SKILL.md` |
+
+| "strategic reading" | `skills/strategic-reading/SKILL.md` |
+
+| "concept synthesis" | `skills/concept-synthesis/SKILL.md` |
+
+| "perplexity research" | `skills/perplexity-research/SKILL.md` |
+
+| "crawl my archive" | `skills/archive-crawler/SKILL.md` |
+
+| "verify this academic claim" | `skills/academic-verify/SKILL.md` |
+
+| "make pdf from brain" | `skills/brain-pdf/SKILL.md` |
+
+| "voice note" | `skills/voice-note-ingest/SKILL.md` |

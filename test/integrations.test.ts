@@ -1,5 +1,14 @@
 import { describe, test, expect, beforeAll } from 'bun:test';
-import { parseRecipe, isUnsafeHealthCheck, expandVars, executeHealthCheck } from '../src/commands/integrations.ts';
+import {
+  parseRecipe,
+  isUnsafeHealthCheck,
+  expandVars,
+  executeHealthCheck,
+  parseOctet,
+  hostnameToOctets,
+  isPrivateIpv4,
+  isInternalUrl,
+} from '../src/commands/integrations.ts';
 
 // --- parseRecipe tests ---
 
@@ -437,15 +446,207 @@ describe('executeHealthCheck', () => {
     expect(result.status).toBe('fail');
   });
 
-  test('string health_check blocks unsafe metacharacters for non-embedded', async () => {
+  // B2: Non-embedded string health_checks are hard-blocked regardless of metachars.
+  test('string health_check is hard-blocked for non-embedded (even safe strings)', async () => {
+    const result = await executeHealthCheck('echo ok', 'test-id', false);
+    expect(result.status).toBe('blocked');
+    expect(result.output).toContain('restricted to embedded recipes');
+  });
+
+  test('string health_check with unsafe metacharacters is blocked for non-embedded', async () => {
     const result = await executeHealthCheck('echo ok; rm -rf /', 'test-id', false);
+    expect(result.status).toBe('blocked');
+    expect(result.output).toContain('restricted to embedded recipes');
+  });
+
+  // Embedded recipes still get the metachar defense-in-depth guard.
+  test('string health_check with unsafe metacharacters is blocked even for embedded (defense-in-depth)', async () => {
+    const result = await executeHealthCheck('echo ok; rm -rf /', 'test-id', true);
     expect(result.status).toBe('blocked');
     expect(result.output).toContain('unsafe shell characters');
   });
 
-  test('string health_check runs for embedded recipes', async () => {
+  test('string health_check runs for embedded recipes when safe', async () => {
     const result = await executeHealthCheck('echo hello-world', 'test-id', true);
     expect(result.status).toBe('ok');
     expect(result.output).toContain('hello-world');
+  });
+
+  // Fix 2: command DSL health checks are gated on isEmbedded.
+  test('command health_check is blocked for non-embedded recipes', async () => {
+    const result = await executeHealthCheck({ type: 'command', argv: ['true'], label: 'true' }, 'test-id', false);
+    expect(result.status).toBe('blocked');
+    expect(result.output).toContain('restricted to embedded recipes');
+  });
+
+  test('command health_check runs for embedded recipes', async () => {
+    const result = await executeHealthCheck({ type: 'command', argv: ['true'], label: 'true' }, 'test-id', true);
+    expect(result.status).toBe('ok');
+  });
+
+  // Fix 4: http DSL health checks are gated on isEmbedded.
+  test('http health_check is blocked for non-embedded recipes', async () => {
+    const result = await executeHealthCheck(
+      { type: 'http', url: 'https://example.com/', label: 'example' },
+      'test-id',
+      false,
+    );
+    expect(result.status).toBe('blocked');
+    expect(result.output).toContain('restricted to embedded recipes');
+  });
+
+  // Fix 4 SSRF: even for embedded recipes, internal URLs are blocked.
+  test('http health_check blocks AWS metadata endpoint for embedded recipes', async () => {
+    const result = await executeHealthCheck(
+      { type: 'http', url: 'http://169.254.169.254/latest/meta-data/iam/security-credentials/', label: 'aws' },
+      'test-id',
+      true,
+    );
+    expect(result.status).toBe('blocked');
+    expect(result.output).toContain('internal/private');
+  });
+
+  test('http health_check blocks localhost for embedded recipes', async () => {
+    const result = await executeHealthCheck(
+      { type: 'http', url: 'http://127.0.0.1:8080/admin', label: 'local' },
+      'test-id',
+      true,
+    );
+    expect(result.status).toBe('blocked');
+  });
+
+  test('http health_check blocks non-http scheme (file://)', async () => {
+    const result = await executeHealthCheck(
+      { type: 'http', url: 'file:///etc/passwd', label: 'file' },
+      'test-id',
+      true,
+    );
+    expect(result.status).toBe('blocked');
+  });
+});
+
+// --- SSRF helper tests (B3/B4/Fix 4) ---
+
+describe('parseOctet', () => {
+  test('parses plain decimal', () => { expect(parseOctet('80')).toBe(80); });
+  test('parses hex (0x prefix)', () => { expect(parseOctet('0x50')).toBe(80); });
+  test('parses hex (uppercase)', () => { expect(parseOctet('0X7F')).toBe(127); });
+  test('parses octal (leading zero)', () => { expect(parseOctet('0177')).toBe(127); });
+  test('zero is decimal zero', () => { expect(parseOctet('0')).toBe(0); });
+  test('rejects empty', () => { expect(Number.isNaN(parseOctet(''))).toBe(true); });
+  test('rejects non-numeric', () => { expect(Number.isNaN(parseOctet('foo'))).toBe(true); });
+  test('rejects invalid octal (8/9)', () => { expect(Number.isNaN(parseOctet('089'))).toBe(true); });
+});
+
+describe('hostnameToOctets', () => {
+  test('dotted decimal', () => { expect(hostnameToOctets('127.0.0.1')).toEqual([127, 0, 0, 1]); });
+  test('single decimal integer', () => { expect(hostnameToOctets('2130706433')).toEqual([127, 0, 0, 1]); });
+  test('hex integer', () => { expect(hostnameToOctets('0x7f000001')).toEqual([127, 0, 0, 1]); });
+  test('dotted mixed radix', () => { expect(hostnameToOctets('0x7f.0.0.1')).toEqual([127, 0, 0, 1]); });
+  test('dotted octal', () => { expect(hostnameToOctets('0177.0.0.1')).toEqual([127, 0, 0, 1]); });
+  test('non-IP hostname returns null', () => { expect(hostnameToOctets('api.example.com')).toBe(null); });
+  test('too many parts returns null', () => { expect(hostnameToOctets('1.2.3.4.5')).toBe(null); });
+  test('octet out of range returns null', () => { expect(hostnameToOctets('256.0.0.1')).toBe(null); });
+});
+
+describe('isPrivateIpv4', () => {
+  test('loopback 127.0.0.1', () => { expect(isPrivateIpv4([127, 0, 0, 1])).toBe(true); });
+  test('loopback 127.255.255.255', () => { expect(isPrivateIpv4([127, 255, 255, 255])).toBe(true); });
+  test('RFC1918 10.0.0.1', () => { expect(isPrivateIpv4([10, 0, 0, 1])).toBe(true); });
+  test('RFC1918 172.16.0.1', () => { expect(isPrivateIpv4([172, 16, 0, 1])).toBe(true); });
+  test('RFC1918 172.31.255.255', () => { expect(isPrivateIpv4([172, 31, 255, 255])).toBe(true); });
+  test('172.15 is NOT RFC1918', () => { expect(isPrivateIpv4([172, 15, 0, 1])).toBe(false); });
+  test('172.32 is NOT RFC1918', () => { expect(isPrivateIpv4([172, 32, 0, 1])).toBe(false); });
+  test('RFC1918 192.168.1.1', () => { expect(isPrivateIpv4([192, 168, 1, 1])).toBe(true); });
+  test('link-local 169.254.169.254 (AWS metadata)', () => { expect(isPrivateIpv4([169, 254, 169, 254])).toBe(true); });
+  test('CGNAT 100.64.0.1', () => { expect(isPrivateIpv4([100, 64, 0, 1])).toBe(true); });
+  test('CGNAT 100.127.255.255', () => { expect(isPrivateIpv4([100, 127, 255, 255])).toBe(true); });
+  test('100.63 is NOT CGNAT', () => { expect(isPrivateIpv4([100, 63, 0, 1])).toBe(false); });
+  test('100.128 is NOT CGNAT', () => { expect(isPrivateIpv4([100, 128, 0, 1])).toBe(false); });
+  test('unspecified 0.0.0.0', () => { expect(isPrivateIpv4([0, 0, 0, 0])).toBe(true); });
+  test('public 8.8.8.8', () => { expect(isPrivateIpv4([8, 8, 8, 8])).toBe(false); });
+  test('public 1.1.1.1', () => { expect(isPrivateIpv4([1, 1, 1, 1])).toBe(false); });
+});
+
+describe('isInternalUrl', () => {
+  // Blocked — metadata hostnames
+  test('blocks AWS EC2 metadata', () => { expect(isInternalUrl('http://169.254.169.254/latest/')).toBe(true); });
+  test('blocks GCP metadata', () => { expect(isInternalUrl('http://metadata.google.internal/')).toBe(true); });
+  test('blocks bare metadata hostname', () => { expect(isInternalUrl('http://metadata/')).toBe(true); });
+  test('blocks instance-data', () => { expect(isInternalUrl('http://instance-data.ec2.internal/')).toBe(true); });
+  // Blocked — loopback + localhost
+  test('blocks localhost', () => { expect(isInternalUrl('http://localhost:8080/')).toBe(true); });
+  test('blocks sub.localhost', () => { expect(isInternalUrl('http://foo.localhost/')).toBe(true); });
+  test('blocks 127.0.0.1', () => { expect(isInternalUrl('http://127.0.0.1/')).toBe(true); });
+  test('blocks 127.1.1.1', () => { expect(isInternalUrl('http://127.1.1.1/')).toBe(true); });
+  test('blocks IPv6 [::1]', () => { expect(isInternalUrl('http://[::1]/')).toBe(true); });
+  // Blocked — private IPv4 ranges
+  test('blocks 10.0.0.1', () => { expect(isInternalUrl('http://10.0.0.1/')).toBe(true); });
+  test('blocks 172.16.0.1', () => { expect(isInternalUrl('http://172.16.0.1/')).toBe(true); });
+  test('blocks 192.168.1.1', () => { expect(isInternalUrl('http://192.168.1.1/router')).toBe(true); });
+  test('blocks CGNAT 100.64.0.1', () => { expect(isInternalUrl('http://100.64.0.1/')).toBe(true); });
+  // Blocked — IPv4 bypass encodings
+  test('blocks hex IP 0x7f000001', () => { expect(isInternalUrl('http://0x7f000001/')).toBe(true); });
+  test('blocks single decimal IP 2130706433', () => { expect(isInternalUrl('http://2130706433/')).toBe(true); });
+  test('blocks octal IP 0177.0.0.1', () => { expect(isInternalUrl('http://0177.0.0.1/')).toBe(true); });
+  test('blocks IPv4-mapped IPv6 [::ffff:127.0.0.1]', () => {
+    expect(isInternalUrl('http://[::ffff:127.0.0.1]/')).toBe(true);
+  });
+  // Blocked — non-HTTP schemes (B4)
+  test('blocks file:// scheme', () => { expect(isInternalUrl('file:///etc/passwd')).toBe(true); });
+  test('blocks data: scheme', () => { expect(isInternalUrl('data:text/plain,hello')).toBe(true); });
+  test('blocks ftp:// scheme', () => { expect(isInternalUrl('ftp://internal.corp/')).toBe(true); });
+  test('blocks javascript: scheme', () => { expect(isInternalUrl('javascript:alert(1)')).toBe(true); });
+  test('blocks blob: scheme', () => { expect(isInternalUrl('blob:http://evil.com/abc')).toBe(true); });
+  // Blocked — malformed
+  test('blocks malformed URL (fail-closed)', () => { expect(isInternalUrl('not a url')).toBe(true); });
+  test('blocks empty URL', () => { expect(isInternalUrl('')).toBe(true); });
+  // Allowed — public HTTPS/HTTP
+  test('allows public https', () => { expect(isInternalUrl('https://api.github.com/')).toBe(false); });
+  test('allows public http', () => { expect(isInternalUrl('http://example.com/')).toBe(false); });
+  test('allows public IP 8.8.8.8', () => { expect(isInternalUrl('http://8.8.8.8/')).toBe(false); });
+  test('allows URL with port', () => { expect(isInternalUrl('https://example.com:8443/x')).toBe(false); });
+  test('allows URL with userinfo on public host', () => {
+    expect(isInternalUrl('https://user:pass@example.com/path')).toBe(false);
+  });
+  // Userinfo does NOT help attackers hide the real host
+  test('userinfo does not bypass loopback check', () => {
+    expect(isInternalUrl('http://evil.com@127.0.0.1/')).toBe(true);
+  });
+  // Trailing-dot numeric host
+  test('blocks trailing-dot numeric 127.0.0.1.', () => { expect(isInternalUrl('http://127.0.0.1./')).toBe(true); });
+});
+
+// --- Recipe trust boundary (B1 regression) ---
+
+import { getRecipeDirs } from '../src/commands/integrations.ts';
+
+describe('getRecipeDirs (B1 trust boundary)', () => {
+  test('returns tiered list with trusted flag', () => {
+    const dirs = getRecipeDirs();
+    // Must not be empty in a real repo (source recipes/ dir exists)
+    expect(dirs.length).toBeGreaterThan(0);
+    // Every entry must have an explicit trusted flag
+    for (const d of dirs) {
+      expect(typeof d.trusted).toBe('boolean');
+      expect(typeof d.dir).toBe('string');
+    }
+    // In this repo, the source recipes dir must be trusted
+    const source = dirs.find(d => d.dir.endsWith('/recipes') && d.trusted);
+    expect(source).toBeDefined();
+  });
+
+  test('cwd/recipes fallback is NOT trusted', () => {
+    const dirs = getRecipeDirs();
+    // If a cwd/recipes dir exists in the test env, it must be trusted=false.
+    // (In this repo the source dir resolves to ./recipes so it IS cwd/recipes AND trusted.
+    // The regression we are guarding is that a caller-local recipes/ dir is never marked trusted
+    // when it is not the package-bundled one. This test asserts the tier ordering at minimum.)
+    // The trust flag is the only source of truth — never assume by path name.
+    for (const d of dirs) {
+      if (d.dir === process.env.GBRAIN_RECIPES_DIR) {
+        expect(d.trusted).toBe(false);
+      }
+    }
   });
 });

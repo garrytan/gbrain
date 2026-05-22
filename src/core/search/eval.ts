@@ -161,17 +161,27 @@ export function ndcgAtK(hits: string[], grades: Map<string, number>, k: number):
  * Run a full evaluation of one search configuration against all qrels.
  * Returns an EvalReport with per-query and mean metrics.
  */
+export interface RunEvalOptions {
+  /**
+   * Optional per-query progress callback. Called after each qrel finishes.
+   * CLI wrappers pass a reporter.tick()-backed implementation; no-op otherwise.
+   */
+  onProgress?: (done: number, total: number, query: string) => void;
+}
+
 export async function runEval(
   engine: BrainEngine,
   qrels: EvalQrel[],
   config: EvalConfig,
   k = 5,
+  options: RunEvalOptions = {},
 ): Promise<EvalReport> {
   const strategy = config.strategy ?? 'hybrid';
   const limit = config.limit ?? Math.max(k * 2, 10);
 
   const queryResults: QueryResult[] = [];
 
+  let done = 0;
   for (const qrel of qrels) {
     const hits = await runQuery(engine, qrel.query, strategy, config, limit);
 
@@ -186,6 +196,8 @@ export async function runEval(
       mrr: mrr(hits, relevantSet),
       ndcg_at_k: ndcgAtK(hits, gradesMap, k),
     });
+    done++;
+    options.onProgress?.(done, qrels.length, qrel.query);
   }
 
   return {

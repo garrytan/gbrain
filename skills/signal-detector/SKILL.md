@@ -15,6 +15,11 @@ tools:
   - add_link
   - add_timeline_entry
 mutating: true
+writes_pages: true
+writes_to:
+  - people/
+  - companies/
+  - concepts/
 ---
 
 # Signal Detector — Ambient Brain Capture
@@ -39,7 +44,7 @@ This skill guarantees:
 - Back-links all entity mentions (Iron Law)
 - Citations on every fact written
 
-## Iron Law: Back-Linking (MANDATORY)
+> **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 
 Every time this skill creates or updates a brain page that mentions a person or company:
 1. Check if that person/company has a brain page
@@ -69,7 +74,12 @@ meetings, and concepts. An original without cross-links is a dead original.
    - If NO page → check notability. If notable, create page with enrichment.
    - If page exists but THIN → trigger enrich
    - If page exists and RICH → no action
-3. For new FACTS about existing entities → add timeline entry
+3. For new FACTS with specific dates → call `gbrain timeline-add <slug> <date> "<summary>"`
+
+**Auto-link (v0.10.1):** When you write/update an originals or ideas page that
+references a person or company, the auto-link post-hook on `put_page`
+automatically creates the link from the new page to that entity. You don't
+need to call `gbrain link` manually. Timeline entries still need explicit calls.
 
 ### Phase 3: Signal Logging
 

@@ -24,12 +24,14 @@ import { importFromContent } from '../../src/core/import-file.ts';
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
 
-function makeCtx(): OperationContext {
+function makeCtx(opts: { remote?: boolean } = {}): OperationContext {
   return {
     engine: getEngine(),
     config: { engine: 'postgres', database_url: process.env.DATABASE_URL! },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
+    // Default: trusted local invocation (matches `gbrain call` semantics).
+    remote: opts.remote ?? false,
   };
 }
 
@@ -284,6 +286,136 @@ describeE2E('E2E: Timeline', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
+// Batch methods (addLinksBatch / addTimelineEntriesBatch)
+// ─────────────────────────────────────────────────────────────────
+//
+// Postgres-engine batch methods use postgres-js's sql(rows, 'col1', ...) helper,
+// which is structurally different from PGLite's manual $N placeholder construction
+// (covered in test/pglite-engine.test.ts). These tests verify the postgres-js code
+// path against a real Postgres against the same invariants.
+
+describeE2E('E2E: addLinksBatch (postgres-engine)', () => {
+  beforeAll(async () => {
+    await setupDB();
+    await importFixtures();
+  });
+  afterAll(teardownDB);
+
+  test('empty batch returns 0 with no DB call', async () => {
+    const engine = getEngine();
+    expect(await engine.addLinksBatch([])).toBe(0);
+  });
+
+  test('within-batch duplicates dedup via ON CONFLICT (no 21000 cardinality error)', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    // Deterministic cleanup so re-runs aren't perturbed by prior fixture state.
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-dup'`;
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'people/sarah-chen', to_slug: 'companies/novamind', link_type: 'e2e-batch-dup' },
+      { from_slug: 'people/sarah-chen', to_slug: 'companies/novamind', link_type: 'e2e-batch-dup' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-dup'`;
+  });
+
+  test('rows with missing slug silently dropped by JOIN', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-missing'`;
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'people/does-not-exist', to_slug: 'companies/novamind', link_type: 'e2e-batch-missing' },
+      { from_slug: 'people/sarah-chen', to_slug: 'companies/novamind', link_type: 'e2e-batch-missing' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-missing'`;
+  });
+
+  test('half-existing batch returns count of new only', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-half'`;
+    await engine.addLink('people/sarah-chen', 'companies/novamind', 'pre-existing', 'e2e-batch-half');
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'people/sarah-chen', to_slug: 'companies/novamind', link_type: 'e2e-batch-half' },
+      { from_slug: 'people/sarah-chen', to_slug: 'people/marcus-reid', link_type: 'e2e-batch-half' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM links WHERE link_type = 'e2e-batch-half'`;
+  });
+
+  test('missing optional fields normalize to empty strings (NOT NULL safety)', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM links WHERE link_type = ''`;
+    // No link_type, no context — must default to '' to satisfy NOT NULL.
+    const inserted = await engine.addLinksBatch([
+      { from_slug: 'people/sarah-chen', to_slug: 'companies/novamind' },
+    ]);
+    expect(inserted).toBe(1);
+    const rows = await conn`
+      SELECT link_type, context FROM links
+      WHERE from_page_id = (SELECT id FROM pages WHERE slug = 'people/sarah-chen')
+        AND to_page_id = (SELECT id FROM pages WHERE slug = 'companies/novamind')
+        AND link_type = ''
+    `;
+    expect(rows.length).toBe(1);
+    expect(rows[0].context).toBe('');
+    await conn`DELETE FROM links WHERE link_type = ''`;
+  });
+});
+
+describeE2E('E2E: addTimelineEntriesBatch (postgres-engine)', () => {
+  beforeAll(async () => {
+    await setupDB();
+    await importFixtures();
+  });
+  afterAll(teardownDB);
+
+  test('empty batch returns 0', async () => {
+    const engine = getEngine();
+    expect(await engine.addTimelineEntriesBatch([])).toBe(0);
+  });
+
+  test('within-batch duplicates dedup via ON CONFLICT', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM timeline_entries WHERE summary = 'e2e-batch-tl-dup'`;
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'people/sarah-chen', date: '2025-05-01', summary: 'e2e-batch-tl-dup' },
+      { slug: 'people/sarah-chen', date: '2025-05-01', summary: 'e2e-batch-tl-dup' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM timeline_entries WHERE summary = 'e2e-batch-tl-dup'`;
+  });
+
+  test('rows with missing slug silently dropped by JOIN', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM timeline_entries WHERE summary = 'e2e-batch-tl-missing'`;
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'people/no-such-page', date: '2025-05-02', summary: 'e2e-batch-tl-missing' },
+      { slug: 'people/sarah-chen', date: '2025-05-02', summary: 'e2e-batch-tl-missing' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM timeline_entries WHERE summary = 'e2e-batch-tl-missing'`;
+  });
+
+  test('mix of new + existing returns count of new only', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn`DELETE FROM timeline_entries WHERE summary IN ('e2e-batch-tl-half-1', 'e2e-batch-tl-half-2')`;
+    await engine.addTimelineEntry('people/sarah-chen', { date: '2025-05-03', summary: 'e2e-batch-tl-half-1' });
+    const inserted = await engine.addTimelineEntriesBatch([
+      { slug: 'people/sarah-chen', date: '2025-05-03', summary: 'e2e-batch-tl-half-1' },
+      { slug: 'people/sarah-chen', date: '2025-05-04', summary: 'e2e-batch-tl-half-2' },
+    ]);
+    expect(inserted).toBe(1);
+    await conn`DELETE FROM timeline_entries WHERE summary IN ('e2e-batch-tl-half-1', 'e2e-batch-tl-half-2')`;
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
 // Versions
 // ─────────────────────────────────────────────────────────────────
 
@@ -456,6 +588,31 @@ describeE2E('E2E: Files', () => {
       rmSync(tmpDir, { recursive: true });
     }
   });
+
+  // Security-wave-3 regression: MCP/remote callers MUST be confined to cwd
+  // (Issue #139). Local CLI callers are unrestricted — different trust model.
+  test('file_upload rejects outside-cwd paths for remote (MCP) callers', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-e2e-ssrf-'));
+    const tmpFile = join(tmpDir, 'stealable.txt');
+    writeFileSync(tmpFile, 'sensitive');
+
+    try {
+      const op = operationsByName['file_upload'];
+      let threw = false;
+      try {
+        await op.handler(makeCtx({ remote: true }), {
+          path: tmpFile,
+          page_slug: 'people/sarah-chen',
+        });
+      } catch (e: any) {
+        threw = true;
+        expect(String(e.message || e)).toMatch(/within the working directory/i);
+      }
+      expect(threw).toBe(true);
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -476,7 +633,7 @@ describeE2E('E2E: file_list LIMIT enforcement', () => {
     await sql`
       INSERT INTO pages (slug, title, type, compiled_truth, frontmatter)
       VALUES (${testSlug}, ${'Test Limit Page'}, ${'note'}, ${'body'}, ${'{}'}::jsonb)
-      ON CONFLICT (slug) DO NOTHING
+      ON CONFLICT (source_id, slug) DO NOTHING
     `;
 
     // Insert 150 file rows for the same slug
@@ -781,30 +938,198 @@ describeE2E('E2E: RLS Verification', () => {
   });
   afterAll(teardownDB);
 
-  test('RLS is enabled on all gbrain tables', async () => {
+  const cliCwd = join(import.meta.dir, '../..');
+  const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, GBRAIN_DATABASE_URL: process.env.DATABASE_URL! });
+
+  const suffix = `${process.pid}_${Date.now()}`;
+
+  test('GBrain-owned public tables are service-role-only: RLS disabled and documented', async () => {
     const conn = getConn();
-    const tables = await conn.unsafe(`
-      SELECT tablename, rowsecurity FROM pg_tables
-      WHERE schemaname = 'public'
-        AND tablename IN ('pages','content_chunks','links','tags','raw_data',
-                           'page_versions','timeline_entries','ingest_log','config','files')
+    Bun.spawnSync({
+      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
+      cwd: cliCwd, env: cliEnv(), timeout: 15_000,
+    });
+
+    const rows = await conn.unsafe(`
+      SELECT
+        c.relname AS table_name,
+        c.relrowsecurity AS rowsecurity,
+        COALESCE(obj_description(c.oid, 'pg_class'), '') AS comment
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relkind = 'r'
+        AND c.relname IN ('pages', 'content_chunks', 'links', 'tags', 'raw_data', 'timeline_entries', 'page_versions', 'ingest_log', 'config', 'files', 'access_tokens', 'mcp_request_log')
+      ORDER BY c.relname
     `);
-    const noRls = tables.filter((t: any) => !t.rowsecurity);
-    // Some test DBs may not have BYPASSRLS privilege, so RLS might be skipped.
-    // If RLS was enabled, all tables should have it.
-    if (tables.some((t: any) => t.rowsecurity)) {
-      expect(noRls.length).toBe(0);
+    expect(rows.length).toBeGreaterThanOrEqual(10);
+    for (const row of rows as any[]) {
+      expect(row.rowsecurity).toBe(false);
+      expect(row.comment).toContain('GBRAIN:RLS_POSTURE service-role-only');
     }
   });
 
-  test('current user role has BYPASSRLS', async () => {
+  test('current user role has BYPASSRLS for service-role maintenance', async () => {
     const conn = getConn();
     const rows = await conn.unsafe(`SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user`);
-    // Docker test DB uses postgres role which has BYPASSRLS
     if (rows.length > 0) {
       expect(rows[0].rolbypassrls).toBe(true);
     }
   });
+
+  test('gbrain doctor fails when a public table is RLS-enabled with zero policies', async () => {
+    const conn = getConn();
+    const tbl = `gbrain_rls_zero_policy_${suffix}`;
+    try {
+      Bun.spawnSync({
+        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
+        cwd: cliCwd, env: cliEnv(), timeout: 15_000,
+      });
+
+      await conn.unsafe(`CREATE TABLE public.${tbl} (id int)`);
+      await conn.unsafe(`ALTER TABLE public.${tbl} ENABLE ROW LEVEL SECURITY`);
+
+      const result = Bun.spawnSync({
+        cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
+        cwd: cliCwd, env: cliEnv(), timeout: 20_000,
+      });
+      const stdout = new TextDecoder().decode(result.stdout);
+      const parsed = JSON.parse(stdout);
+      const rls = parsed.checks.find((c: any) => c.name === 'rls');
+      expect(rls).toBeDefined();
+      expect(rls.status).toBe('fail');
+      expect(rls.message).toContain(tbl);
+      expect(rls.message).toContain('RLS enabled with ZERO policies');
+      expect(rls.message).toContain('DISABLE ROW LEVEL SECURITY');
+      expect(result.exitCode).toBe(1);
+    } finally {
+      await conn.unsafe(`DROP TABLE IF EXISTS public.${tbl}`);
+    }
+  }, 60_000);
+
+  test('GBRAIN:RLS_POSTURE comment documents an intentionally disabled service-role table', async () => {
+    const conn = getConn();
+    const tbl = `gbrain_rls_documented_${suffix}`;
+    try {
+      await conn.unsafe(`CREATE TABLE public.${tbl} (id int)`);
+      await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
+      await conn.unsafe(`COMMENT ON TABLE public.${tbl} IS 'GBRAIN:RLS_POSTURE service-role-only; RLS disabled; MCP/app bearer-token authorization is the security boundary.'`);
+
+      const result = Bun.spawnSync({
+        cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
+        cwd: cliCwd, env: cliEnv(), timeout: 20_000,
+      });
+      const stdout = new TextDecoder().decode(result.stdout);
+      const parsed = JSON.parse(stdout);
+      const rls = parsed.checks.find((c: any) => c.name === 'rls');
+      expect(rls.status).not.toBe('fail');
+      expect(rls.message).toContain('No zero-policy RLS trapdoors');
+    } finally {
+      await conn.unsafe(`DROP TABLE IF EXISTS public.${tbl}`);
+    }
+  }, 60_000);
+
+  test('undocumented disabled public table warns instead of failing as a trapdoor', async () => {
+    const conn = getConn();
+    const tbl = `gbrain_rls_undocumented_${suffix}`;
+    try {
+      await conn.unsafe(`CREATE TABLE public.${tbl} (id int)`);
+      await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
+
+      const result = Bun.spawnSync({
+        cmd: ['bun', 'run', 'src/cli.ts', 'doctor', '--json'],
+        cwd: cliCwd, env: cliEnv(), timeout: 20_000,
+      });
+      const stdout = new TextDecoder().decode(result.stdout);
+      const parsed = JSON.parse(stdout);
+      const rls = parsed.checks.find((c: any) => c.name === 'rls');
+      expect(rls.status).toBe('warn');
+      expect(rls.message).toContain('lack GBRAIN:RLS_POSTURE comments');
+      expect(result.exitCode).toBe(0);
+    } finally {
+      await conn.unsafe(`DROP TABLE IF EXISTS public.${tbl}`);
+    }
+  }, 60_000);
+
+  // Regression test for the v24 self-healing guard. If an operator manually
+  // drops budget_ledger and/or budget_reservations (they are migration-only
+  // per v12, not in schema.sql, and the data is regenerable from resolver
+  // logs — so dropping them is a reasonable cleanup), v24 must NOT fail
+  // with 42P01. The information_schema.tables IF EXISTS guards around those
+  // two ALTERs let the migration skip them and continue.
+  test('v24 self-heals when budget_ledger + budget_reservations are missing', async () => {
+    const conn = getConn();
+    let priorVersion: string | null = null;
+    try {
+      const verRows = await conn.unsafe(`SELECT value FROM config WHERE key = 'version'`);
+      priorVersion = (verRows[0] as any)?.value ?? null;
+
+      await conn.unsafe(`DROP TABLE IF EXISTS public.budget_ledger CASCADE`);
+      await conn.unsafe(`DROP TABLE IF EXISTS public.budget_reservations CASCADE`);
+
+      await conn.unsafe(`
+        INSERT INTO config (key, value) VALUES ('version', '23')
+        ON CONFLICT (key) DO UPDATE SET value = '23'
+      `);
+
+      const result = Bun.spawnSync({
+        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
+        cwd: cliCwd, env: cliEnv(), timeout: 30_000,
+      });
+      const stdout = new TextDecoder().decode(result.stdout);
+      const stderr = new TextDecoder().decode(result.stderr);
+
+      expect(result.exitCode).toBe(0);
+      expect(stderr + stdout).not.toMatch(/42P01|does not exist.*budget/i);
+
+      const afterRows = await conn.unsafe(`SELECT value FROM config WHERE key = 'version'`);
+      const finalVersion = parseInt((afterRows[0] as any).value, 10);
+      expect(finalVersion).toBeGreaterThanOrEqual(24);
+
+      const tblRows = await conn.unsafe(`
+        SELECT tablename FROM pg_tables
+        WHERE schemaname = 'public'
+          AND tablename IN ('budget_ledger', 'budget_reservations')
+      `);
+      expect(tblRows.length).toBe(0);
+    } finally {
+      await conn.unsafe(`
+        CREATE TABLE IF NOT EXISTS budget_ledger (
+          scope          TEXT        NOT NULL,
+          resolver_id    TEXT        NOT NULL,
+          local_date     DATE        NOT NULL,
+          reserved_usd   NUMERIC(12,4) NOT NULL DEFAULT 0,
+          committed_usd  NUMERIC(12,4) NOT NULL DEFAULT 0,
+          cap_usd        NUMERIC(12,4),
+          created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (scope, resolver_id, local_date)
+        )
+      `);
+      await conn.unsafe(`
+        CREATE TABLE IF NOT EXISTS budget_reservations (
+          reservation_id TEXT        PRIMARY KEY,
+          scope          TEXT        NOT NULL,
+          resolver_id    TEXT        NOT NULL,
+          local_date     DATE        NOT NULL,
+          estimate_usd   NUMERIC(12,4) NOT NULL,
+          reserved_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+          expires_at     TIMESTAMPTZ NOT NULL,
+          status         TEXT        NOT NULL DEFAULT 'held'
+        )
+      `);
+      await conn.unsafe(`ALTER TABLE budget_ledger DISABLE ROW LEVEL SECURITY`);
+      await conn.unsafe(`ALTER TABLE budget_reservations DISABLE ROW LEVEL SECURITY`);
+      await conn.unsafe(`COMMENT ON TABLE budget_ledger IS 'GBRAIN:RLS_POSTURE service-role-only; RLS disabled; MCP/app bearer-token authorization is the security boundary.'`);
+      await conn.unsafe(`COMMENT ON TABLE budget_reservations IS 'GBRAIN:RLS_POSTURE service-role-only; RLS disabled; MCP/app bearer-token authorization is the security boundary.'`);
+      if (priorVersion !== null) {
+        await conn.unsafe(
+          `UPDATE config SET value = $1 WHERE key = 'version'`,
+          [priorVersion],
+        );
+      }
+    }
+  }, 60_000);
 });
 
 // ─────────────────────────────────────────────────────────────────

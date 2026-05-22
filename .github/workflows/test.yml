@@ -21,11 +21,22 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test:
+    # ubuntu-latest is free 2-core/7GB. Larger runners (16-cores, etc.) require
+    # a provisioned runner pool in repo settings. Falling back to default keeps
+    # the matrix shard speedup (~5-6x via parallelism) at zero cost.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: latest
       - run: bun install
-      - run: bun test
+      - name: Pre-test gates (shard 1 only — they're not test files)
+        if: matrix.shard == 1
+        run: bun run verify
+      - name: Run test shard ${{ matrix.shard }}/4
+        run: scripts/test-shard.sh ${{ matrix.shard }} 4

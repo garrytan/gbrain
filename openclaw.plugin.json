@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.4.1",
+  "version": "0.25.1",
   "description": "Personal knowledge brain with Postgres + pgvector hybrid search",
   "family": "bundle-plugin",
   "configSchema": {
@@ -24,13 +24,51 @@
     }
   },
   "skills": [
-    "skills/ingest",
-    "skills/query",
-    "skills/maintain",
-    "skills/enrich",
+    "skills/academic-verify",
+    "skills/archive-crawler",
+    "skills/article-enrichment",
+    "skills/book-mirror",
+    "skills/brain-ops",
+    "skills/brain-pdf",
     "skills/briefing",
+    "skills/citation-fixer",
+    "skills/concept-synthesis",
+    "skills/cross-modal-review",
+    "skills/cron-scheduler",
+    "skills/daily-task-manager",
+    "skills/daily-task-prep",
+    "skills/data-research",
+    "skills/enrich",
+    "skills/idea-ingest",
+    "skills/ingest",
+    "skills/maintain",
+    "skills/media-ingest",
+    "skills/meeting-ingestion",
+    "skills/minion-orchestrator",
+    "skills/perplexity-research",
+    "skills/query",
+    "skills/reports",
+    "skills/repo-architecture",
+    "skills/signal-detector",
+    "skills/skill-creator",
+    "skills/skillify",
+    "skills/skillpack-check",
+    "skills/soul-audit",
+    "skills/strategic-reading",
+    "skills/testing",
+    "skills/voice-note-ingest",
+    "skills/webhook-transforms"
+  ],
+  "shared_deps": [
+    "skills/conventions",
+    "skills/_brain-filing-rules.md",
+    "skills/_brain-filing-rules.json",
+    "skills/_output-rules.md"
+  ],
+  "excluded_from_install": [
+    "skills/setup",
     "skills/migrate",
-    "skills/setup"
+    "skills/publish"
   ],
   "openclaw": {
     "compat": {

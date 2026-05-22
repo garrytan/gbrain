@@ -50,10 +50,17 @@ Universal migration from any wiki, note tool, or brain system into GBrain.
 ## Obsidian Migration
 
 1. Import the vault directory into gbrain (Obsidian vaults are markdown directories)
-2. Convert `[[wikilinks]]` to gbrain links:
-   - Read each page from gbrain
-   - For each `[[Name]]` found, resolve to a slug and create a link in gbrain
-   - `[[Name|alias]]` uses the alias for context
+2. Wire the graph with native wikilink support (v0.12.1+):
+
+   ```bash
+   gbrain extract links --source db --dry-run | head -20    # preview
+   gbrain extract links --source db                         # commit
+   ```
+
+   `extract links` natively parses `[[relative/path]]` and `[[relative/path|Display Text]]`
+   alongside standard `[text](page.md)` markdown syntax. Ancestor-search resolution handles
+   wiki KBs where authors omit one or more leading `../` prefixes. The `.md` suffix is
+   inferred automatically for wikilinks.
 
 Obsidian-specific:
 - Tags (`#tag`) become gbrain tags

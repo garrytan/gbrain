@@ -22,6 +22,12 @@ tools:
   - add_timeline_entry
   - file_upload
 mutating: true
+writes_pages: true
+writes_to:
+  - concepts/
+  - people/
+  - companies/
+  - sources/
 ---
 
 # Media Ingest Skill
@@ -39,7 +45,7 @@ This skill guarantees:
 - Raw source files preserved via `gbrain files upload-raw`
 - Filing by primary subject, not by media format
 
-## Iron Law: Back-Linking (MANDATORY)
+> **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 
 Every mention of a person or company with a brain page MUST create a back-link.
 
@@ -107,6 +113,6 @@ Brain page created with summary, highlights, and entity cross-links. Report to u
 
 - Dumping raw transcripts without analysis
 - Skipping entity extraction ("I'll do that separately")
-- Filing by format (all videos in `media/videos/`) instead of by subject
+- Filing **raw ingest** by format (all videos in `media/videos/`) instead of by subject. Note: format-prefixed paths under `media/<format>/<slug>` ARE sanctioned for **synthesized one-of-one output** like book-mirror's `media/books/<slug>-personalized.md`. The anti-pattern is for raw ingest, not for sui generis synthesis. See `skills/_brain-filing-rules.md` "Sanctioned exception: synthesis output is sui generis."
 - Not preserving raw source files
 - Creating stub pages without meaningful content

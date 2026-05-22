@@ -39,7 +39,7 @@ This skill guarantees:
    - Override: user-awake flag (if user is active, quiet hours suspended)
    - During quiet hours: save output to held queue
    - Morning contact releases the backlog
-4. **Register with host scheduler.** OpenClaw cron, Railway cron, crontab, or process manager.
+4. **Register with host scheduler.** OpenClaw cron, Railway cron, crontab, or process manager. **Each registered entry should execute via Minions, not `agentTurn`.** See `skills/conventions/cron-via-minions.md` for the rewrite pattern (PGLite uses `--follow`, Postgres uses fire-and-forget + `--idempotency-key` on the cycle slot). GBrain's v0.11.0 migration auto-rewrites entries for built-in handlers; host-specific handlers need a code-level registration per `docs/guides/plugin-handlers.md`.
 5. **Write thin prompt.** Job prompt is one line: "Read skills/{name}/SKILL.md and run it."
 
 ## Idempotency Requirement

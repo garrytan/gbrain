@@ -17,6 +17,13 @@ tools:
   - get_backlinks
   - sync_brain
 mutating: true
+writes_pages: true
+writes_to:
+  - people/
+  - companies/
+  - deals/
+  - concepts/
+  - meetings/
 ---
 
 # Brain Operations — The Ambient Context Layer
@@ -70,6 +77,22 @@ Every message, meeting, email, or conversation that references a person or compa
 **User's direct statements are the highest-value data source.** Write them to brain
 pages immediately with attribution `[Source: User, YYYY-MM-DD]`.
 
+### Phase 2.5: Structured Graph Updates (automatic)
+
+Every `put_page` call automatically extracts entity references and writes them
+to the graph (`links` table) with inferred relationship types. Stale links
+(refs no longer in the page text) are removed in the same call. This is
+"auto-link" reconciliation.
+
+- No manual `add_link` calls needed for ordinary page writes.
+- Inferred link types: `attended` (meeting -> person), `works_at`, `invested_in`,
+  `founded`, `advises`, `source` (frontmatter), `mentions` (default).
+- The `put_page` MCP response includes `auto_links: { created, removed, errors }`
+  so the agent can verify outcomes.
+- To disable: `gbrain config set auto_link false`. Default is on.
+- Timeline entries with specific dates still need explicit `gbrain timeline-add`
+  (or batch via `gbrain extract timeline --source db`).
+
 ### Phase 3: On Every Outbound Response (READ → PULL → RESPOND)
 
 Before answering any question about a person, company, or topic:
@@ -99,6 +122,25 @@ ingest event.
 
 No separate output. Brain-ops is an always-on behavior layer, not a report generator.
 The output is updated brain pages and enriched responses.
+
+## Cross-source citation format (v0.18.0+)
+
+When a brain has multiple sources (wiki, gstack, yc-media, etc.), every
+citation MUST include the source id: `[source-id:slug]`. Example:
+
+> You told me about the retry budget approach — see
+> [wiki:topics/resilience] and [gstack:plans/retry-policy] for where
+> this came from.
+
+Rules:
+- The key is `sources.id` (immutable), never `sources.name` (mutable display).
+- Single-source brains still write `[default:slug]` OR may omit the prefix
+  for backward compat.
+- Every page payload returned by `search`, `query`, `get_page`, `list_pages`
+  carries `source_id` — always use it when citing, never guess.
+
+If a search result has `source_id: "gstack"` and `slug: "plans/foo"`,
+the citation is `[gstack:plans/foo]`. That's the whole rule.
 
 ## Anti-Patterns
 

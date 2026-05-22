@@ -1,0 +1,9 @@
+[test]
+# PGLite WASM cold start + initSchema() runs ~5–20s on loaded machines.
+# Default 5s is too short for those tests' beforeAll hooks. 60s is the
+# empirical ceiling we observed for the slowest cold-init paths.
+#
+# v0.26.4: scripts/run-unit-parallel.sh and scripts/run-unit-shard.sh
+# also pass `--timeout=60000` explicitly so the ceiling is consistent
+# whether tests are invoked through the wrapper or directly via bun test.
+timeout = 60_000

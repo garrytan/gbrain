@@ -1,7 +1,14 @@
 import type { BrainEngine } from '../core/engine.ts';
 import * as db from '../core/db.ts';
-import { LATEST_VERSION } from '../core/migrate.ts';
+import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
+import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
+import { findRepoRoot } from '../core/repo-root.ts';
+import { loadCompletedMigrations } from '../core/preferences.ts';
+import { compareVersions } from './migrations/index.ts';
+import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import type { DbUrlSource } from '../core/config.ts';
 import { join } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 
@@ -16,11 +23,38 @@ export interface Check {
  * Run doctor with filesystem-first, DB-second architecture.
  * Filesystem checks (resolver, conformance) run without engine.
  * DB checks run only if engine is provided.
+ *
+ * `dbSource` is passed only from the `--fast` and DB-unavailable paths in
+ * cli.ts so we can emit a precise "why no DB check" message. When null, the
+ * user has no DB configured anywhere; otherwise the caller chose --fast or
+ * we failed to connect despite a configured URL.
  */
-export async function runDoctor(engine: BrainEngine | null, args: string[]) {
+export async function runDoctor(engine: BrainEngine | null, args: string[], dbSource?: DbUrlSource) {
   const jsonOutput = args.includes('--json');
   const fastMode = args.includes('--fast');
+  const doFix = args.includes('--fix');
+  const dryRun = args.includes('--dry-run');
+  const locksMode = args.includes('--locks');
+
+  // --locks is a focused diagnostic: it runs the same pg_stat_activity
+  // query that `runMigrations` pre-flight uses, prints any idle-in-tx
+  // backends, and exits. Used by a user (or the migrate.ts error 57014
+  // message) who just hit a statement_timeout and needs to find the
+  // blocker. Referenced from migrate.ts's 57014 diagnostic — that
+  // message promised this flag exists.
+  if (locksMode) {
+    await runLocksCheck(engine, jsonOutput);
+    return;
+  }
+
   const checks: Check[] = [];
+  let autoFixReport: AutoFixReport | null = null;
+
+  // Progress reporter. `--json` is doctor's own JSON output (list of checks);
+  // progress events stay on stderr regardless, gated by the global --quiet /
+  // --progress-json flags. On a 52K-page brain the DB checks can take minutes,
+  // and without a heartbeat agents can't tell doctor from a hang.
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
   // --- Filesystem checks (always run, no DB needed) ---
 
@@ -28,22 +62,30 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
   const repoRoot = findRepoRoot();
   if (repoRoot) {
     const skillsDir = join(repoRoot, 'skills');
+
+    // --fix: run auto-repair BEFORE checkResolvable so the post-fix scan
+    // reflects the new state. Auto-fix only targets DRY violations today;
+    // other resolver issues are left to human repair.
+    if (doFix) {
+      autoFixReport = autoFixDryViolations(skillsDir, { dryRun });
+      printAutoFixReport(autoFixReport, dryRun, jsonOutput);
+    }
+
     const report = checkResolvable(skillsDir);
-    if (report.ok && report.issues.length === 0) {
+    if (report.errors.length === 0 && report.warnings.length === 0) {
       checks.push({
         name: 'resolver_health',
         status: 'ok',
         message: `${report.summary.total_skills} skills, all reachable`,
       });
     } else {
-      const errors = report.issues.filter(i => i.severity === 'error');
-      const warnings = report.issues.filter(i => i.severity === 'warning');
-      const status = errors.length > 0 ? 'fail' as const : 'warn' as const;
+      const status = report.errors.length > 0 ? 'fail' as const : 'warn' as const;
+      const total = report.errors.length + report.warnings.length;
       const check: Check = {
         name: 'resolver_health',
         status,
-        message: `${report.issues.length} issue(s): ${errors.length} error(s), ${warnings.length} warning(s)`,
-        issues: report.issues.map(i => ({
+        message: `${total} issue(s): ${report.errors.length} error(s), ${report.warnings.length} warning(s)`,
+        issues: [...report.errors, ...report.warnings].map(i => ({
           type: i.type,
           skill: i.skill,
           action: i.action,
@@ -63,28 +105,223 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
     checks.push(conformanceResult);
   }
 
+  // 3. Half-migrated Minions detection (filesystem-only).
+  // If completed.jsonl has any status:"partial" entry with no later
+  // status:"complete" for the same version, the install is mid-migration.
+  // Typical cause: v0.11.0 stopgap wrote a partial record but nobody ran
+  // `gbrain apply-migrations --yes` afterward. This check fires on every
+  // `gbrain doctor` invocation so your OpenClaw's health skill catches it.
+  //
+  // Forward-progress override: a partial entry for vX.Y.Z is treated as
+  // stale (not stuck) if there is a `complete` entry for any vA.B.C >= vX.Y.Z
+  // anywhere in the file. The reasoning: if a newer migration successfully
+  // landed, the install moved past the older partial — the old record is
+  // historical noise from a stopgap that never finished cleanly, but the
+  // schema clearly advanced. Without this, every install that went through
+  // a v0.11.0 stopgap and then upgraded carries the "MINIONS HALF-INSTALLED"
+  // flag forever, even on installs that have been at v0.22+ for months.
+  try {
+    const completed = loadCompletedMigrations();
+    const byVersion = new Map<string, { complete: boolean; partial: boolean }>();
+    for (const entry of completed) {
+      const seen = byVersion.get(entry.version) ?? { complete: false, partial: false };
+      if (entry.status === 'complete') seen.complete = true;
+      if (entry.status === 'partial') seen.partial = true;
+      byVersion.set(entry.version, seen);
+    }
+    const completedVersions = Array.from(byVersion.entries())
+      .filter(([, s]) => s.complete)
+      .map(([v]) => v);
+    const stuck = Array.from(byVersion.entries())
+      .filter(([v, s]) => {
+        if (!s.partial || s.complete) return false;
+        // Forward-progress override: if any version >= v has completed, the
+        // partial is stale. compareVersions returns 1 when first arg is newer.
+        const supersededBy = completedVersions.find(cv => compareVersions(cv, v) >= 0);
+        return supersededBy === undefined;
+      })
+      .map(([v]) => v);
+    if (stuck.length > 0) {
+      checks.push({
+        name: 'minions_migration',
+        status: 'fail',
+        message: `MINIONS HALF-INSTALLED (partial migration: ${stuck.join(', ')}). Run: gbrain apply-migrations --yes`,
+      });
+    }
+    // Note: the "no preferences.json but schema is v7+" case is detected
+    // in the DB section below (needs schema version).
+  } catch (e) {
+    // completed.jsonl read/parse failure is non-fatal — probably a fresh
+    // install with no record yet. Don't warn here; the DB check below
+    // handles the "schema v7+ but no prefs" case.
+  }
+
+  // 3b. Upgrade-error trail (v0.13+). `gbrain upgrade` silently swallows
+  // best-effort failures in `gbrain post-upgrade`; the failure record is
+  // appended to ~/.gbrain/upgrade-errors.jsonl so we can surface it here
+  // with a paste-ready recovery hint. Without this, users end up with
+  // half-upgraded brains and no signal.
+  try {
+    const home = process.env.HOME || '';
+    const errPath = join(home, '.gbrain', 'upgrade-errors.jsonl');
+    if (existsSync(errPath)) {
+      const lines = readFileSync(errPath, 'utf-8').split('\n').filter(l => l.trim());
+      if (lines.length > 0) {
+        const latest = JSON.parse(lines[lines.length - 1]) as {
+          ts: string; phase: string; from_version: string; to_version: string; hint: string;
+        };
+        const date = latest.ts.slice(0, 10);
+        checks.push({
+          name: 'upgrade_errors',
+          status: 'warn',
+          message: `Post-upgrade failure on ${date} (${latest.from_version} → ${latest.to_version}, phase: ${latest.phase}). Recovery: ${latest.hint}`,
+        });
+      }
+    }
+  } catch {
+    // Read/parse failure is itself best-effort; skip silently.
+  }
+
+  // 3b-bis. Supervisor health (filesystem-only: PID liveness + audit log).
+  // Reads the default PID file (`~/.gbrain/supervisor.pid` unless the user
+  // overrode with GBRAIN_SUPERVISOR_PID_FILE) and the latest audit file
+  // written by src/core/minions/handlers/supervisor-audit.ts. Surfaces
+  // supervisor_running / last_start / crashes_24h / max_crashes_exceeded.
+  // Does NOT run the supervisor itself — this is a read-only health check.
+  try {
+    const { DEFAULT_PID_FILE } = await import('../core/minions/supervisor.ts');
+    const { readSupervisorEvents } = await import('../core/minions/handlers/supervisor-audit.ts');
+
+    let supervisorPid: number | null = null;
+    let running = false;
+    if (existsSync(DEFAULT_PID_FILE)) {
+      try {
+        const line = readFileSync(DEFAULT_PID_FILE, 'utf8').trim().split('\n')[0];
+        const parsed = parseInt(line, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          supervisorPid = parsed;
+          try { process.kill(parsed, 0); running = true; } catch { running = false; }
+        }
+      } catch { /* unreadable */ }
+    }
+
+    const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
+    const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
+    const crashes24h = events.filter(e => e.event === 'worker_exited').length;
+    const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
+
+    // Only surface a Check if the supervisor was ever observed (stops the
+    // "never used the supervisor" install from getting a warn about it).
+    if (supervisorPid !== null || events.length > 0) {
+      if (maxCrashesEvent) {
+        checks.push({
+          name: 'supervisor',
+          status: 'fail',
+          message: `Supervisor gave up at ${maxCrashesEvent.ts} (max_crashes_exceeded). Restart with: gbrain jobs supervisor start --detach`,
+        });
+      } else if (!running && events.length > 0) {
+        checks.push({
+          name: 'supervisor',
+          status: 'warn',
+          message: `Supervisor not running (last_start=${lastStart ?? 'unknown'}). Restart with: gbrain jobs supervisor start --detach`,
+        });
+      } else if (crashes24h > 3) {
+        checks.push({
+          name: 'supervisor',
+          status: 'warn',
+          message: `Supervisor running but worker crashed ${crashes24h}x in last 24h. Check ~/.gbrain/audit/supervisor-*.jsonl for causes.`,
+        });
+      } else {
+        checks.push({
+          name: 'supervisor',
+          status: 'ok',
+          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h}`,
+        });
+      }
+    }
+  } catch {
+    // Audit read / import failure is best-effort; skip silently.
+  }
+
+  // 3c. Sync failure trail (Bug 9). sync.ts gates the `sync.last_commit`
+  // bookmark when per-file parse errors happen, and appends each failure
+  // to ~/.gbrain/sync-failures.jsonl with the commit hash + exact error.
+  // Without this doctor check, users see "sync blocked" and have no
+  // surface showing which files to fix.
+  try {
+    const { unacknowledgedSyncFailures, loadSyncFailures, summarizeFailuresByCode } = await import('../core/sync.ts');
+    const unacked = unacknowledgedSyncFailures();
+    const all = loadSyncFailures();
+    if (unacked.length > 0) {
+      const codeSummary = summarizeFailuresByCode(unacked);
+      const codeBreakdown = codeSummary.map(s => `${s.code}=${s.count}`).join(', ');
+      const preview = unacked.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
+      checks.push({
+        name: 'sync_failures',
+        status: 'warn',
+        message:
+          `${unacked.length} unacknowledged sync failure(s) [${codeBreakdown}]. ${preview}` +
+          `${unacked.length > 3 ? `, and ${unacked.length - 3} more` : ''}. ` +
+          `Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge.`,
+      });
+    } else if (all.length > 0) {
+      // Acknowledged-only: show code breakdown for visibility.
+      const ackedSummary = summarizeFailuresByCode(all);
+      const ackedBreakdown = ackedSummary.map(s => `${s.code}=${s.count}`).join(', ');
+      checks.push({
+        name: 'sync_failures',
+        status: 'ok',
+        message: `${all.length} historical sync failure(s), all acknowledged [${ackedBreakdown}].`,
+      });
+    }
+  } catch {
+    // Best-effort. A broken JSONL should not stop doctor.
+  }
+
   // --- DB checks (skip if --fast or no engine) ---
 
   if (fastMode || !engine) {
     if (!engine) {
-      checks.push({ name: 'connection', status: 'warn', message: 'No database configured (filesystem checks only)' });
+      // Pick the precise message. When dbSource is provided, we know
+      // whether a URL exists (env or config-file) — the caller simply
+      // skipped the connection. When null, there really is no config
+      // anywhere.
+      let msg: string;
+      if (fastMode && dbSource) {
+        msg = `Skipping DB checks (--fast mode, URL present from ${dbSource})`;
+      } else if (!fastMode && dbSource) {
+        msg = `Could not connect to configured DB (URL from ${dbSource}); filesystem checks only`;
+      } else {
+        msg = 'No database configured (filesystem checks only). Set GBRAIN_DATABASE_URL or run `gbrain init`.';
+      }
+      checks.push({ name: 'connection', status: 'warn', message: msg });
     }
-    outputResults(checks, jsonOutput);
+    const earlyFail1 = outputResults(checks, jsonOutput);
+    process.exit(earlyFail1 ? 1 : 0);
     return;
   }
 
+  // DB checks phase — start a single reporter phase so agents see which
+  // check is running (several take seconds on 50K-page brains; without a
+  // heartbeat the binary looks hung when stdout is piped).
+  progress.start('doctor.db_checks');
+
   // 3. Connection
+  progress.heartbeat('connection');
   try {
     const stats = await engine.getStats();
     checks.push({ name: 'connection', status: 'ok', message: `Connected, ${stats.page_count} pages` });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     checks.push({ name: 'connection', status: 'fail', message: msg });
-    outputResults(checks, jsonOutput);
+    progress.finish();
+    const earlyFail2 = outputResults(checks, jsonOutput);
+    process.exit(earlyFail2 ? 1 : 0);
     return;
   }
 
   // 4. pgvector extension
+  progress.heartbeat('pgvector');
   try {
     const sql = db.getConnection();
     const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
@@ -97,84 +334,701 @@ export async function runDoctor(engine: BrainEngine | null, args: string[]) {
     checks.push({ name: 'pgvector', status: 'warn', message: 'Could not check pgvector extension' });
   }
 
-  // 5. RLS
+  // 4b. PgBouncer / prepared-statement compatibility.
+  // URL-only inspection — no DB roundtrip — so this is cheap and works
+  // regardless of whether the caller is the module singleton or a
+  // worker-instance engine.
+  progress.heartbeat('pgbouncer_prepare');
   try {
-    const sql = db.getConnection();
-    const tables = await sql`
-      SELECT tablename, rowsecurity FROM pg_tables
-      WHERE schemaname = 'public'
-        AND tablename IN ('pages','content_chunks','links','tags','raw_data',
-                           'page_versions','timeline_entries','ingest_log','config','files')
-    `;
-    const noRls = tables.filter((t: any) => !t.rowsecurity);
-    if (noRls.length === 0) {
-      checks.push({ name: 'rls', status: 'ok', message: 'RLS enabled on all tables' });
+    const { resolvePrepare } = await import('../core/db.ts');
+    const { loadConfig } = await import('../core/config.ts');
+    const config = loadConfig();
+    const url = config?.database_url || '';
+    const prepare = resolvePrepare(url);
+    if (prepare === false) {
+      checks.push({
+        name: 'pgbouncer_prepare',
+        status: 'ok',
+        message: 'Prepared statements disabled (PgBouncer-safe)',
+      });
     } else {
-      const names = noRls.map((t: any) => t.tablename).join(', ');
-      checks.push({ name: 'rls', status: 'warn', message: `RLS not enabled on: ${names}` });
+      try {
+        const parsed = new URL(url.replace(/^postgres(ql)?:\/\//, 'http://'));
+        if (parsed.port === '6543') {
+          checks.push({
+            name: 'pgbouncer_prepare',
+            status: 'warn',
+            message:
+              'Port 6543 (PgBouncer transaction mode) detected but prepared statements are enabled. ' +
+              'This causes "prepared statement does not exist" errors under concurrent load. ' +
+              'Fix: unset GBRAIN_PREPARE (or set =false), or add ?prepare=false to the connection URL.',
+          });
+        }
+      } catch {
+        // URL parse failure — skip, nothing actionable
+      }
     }
   } catch {
-    checks.push({ name: 'rls', status: 'warn', message: 'Could not check RLS status' });
+    // best-effort; never fail doctor on this check
   }
 
-  // 6. Schema version
+  // 5. RLS posture — service-role-only unless policy-backed.
+  // GBrain does not use database RLS as its authorization layer today. The
+  // secure posture is explicit, not magical:
+  //   - GBrain-owned service-role-only tables: RLS disabled, documented by
+  //     GBRAIN:RLS_POSTURE comments from schema.sql / migration v39.
+  //   - Future anon/non-service tables: RLS enabled WITH real policies.
+  //   - Bad trapdoor: RLS enabled with zero policies. That looks safe, but the
+  //     service role bypasses it while non-bypass maintenance roles get denied.
+  progress.heartbeat('rls');
+  if (engine.kind === 'pglite') {
+    checks.push({
+      name: 'rls',
+      status: 'ok',
+      message: 'Skipped (PGLite — embedded single-user engine, RLS not applicable)',
+    });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const tables = await sql`
+        SELECT
+          c.relname AS tablename,
+          c.relrowsecurity AS rowsecurity,
+          c.relforcerowsecurity AS force_rowsecurity,
+          COALESCE(p.policy_count, 0)::int AS policy_count,
+          COALESCE(obj_description(c.oid, 'pg_class'), '') AS comment
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN (
+          SELECT polrelid, count(*) AS policy_count
+          FROM pg_policy
+          GROUP BY polrelid
+        ) p ON p.polrelid = c.oid
+        WHERE n.nspname = 'public'
+          AND c.relkind = 'r'
+        ORDER BY c.relname
+      `;
+
+      const trapdoors = (tables as Array<any>).filter(t => t.rowsecurity && Number(t.policy_count) === 0);
+      const policyBacked = (tables as Array<any>).filter(t => t.rowsecurity && Number(t.policy_count) > 0);
+      const disabled = (tables as Array<any>).filter(t => !t.rowsecurity);
+      const documentedDisabled = disabled.filter(t => String(t.comment || '').startsWith('GBRAIN:RLS_POSTURE'));
+
+      if (trapdoors.length === 0) {
+        const policySuffix = policyBacked.length > 0
+          ? `; ${policyBacked.length} policy-backed table(s): ${policyBacked.map(t => t.tablename).join(', ')}`
+          : '';
+        const undocumented = disabled.length - documentedDisabled.length;
+        const docSuffix = undocumented > 0
+          ? `; ${undocumented} disabled table(s) lack GBRAIN:RLS_POSTURE comments`
+          : '';
+        checks.push({
+          name: 'rls',
+          status: undocumented > 0 ? 'warn' : 'ok',
+          message:
+            `No zero-policy RLS trapdoors. ${disabled.length}/${tables.length} public table(s) RLS-disabled for service-role-only access` +
+            `${policySuffix}${docSuffix}`,
+        });
+      } else {
+        const names = trapdoors.map(t => t.tablename).join(', ');
+        const fixes = trapdoors
+          .map(t => {
+            const name = String(t.tablename).replace(/"/g, '""');
+            return `ALTER TABLE "public"."${name}" DISABLE ROW LEVEL SECURITY; -- service-role-only, or CREATE POLICY before keeping RLS enabled`;
+          })
+          .join(' ');
+        checks.push({
+          name: 'rls',
+          status: 'fail',
+          message:
+            `${trapdoors.length} table(s) have RLS enabled with ZERO policies: ${names}. ` +
+            `Fix: ${fixes} See docs/guides/rls-and-you.md.`,
+        });
+      }
+    } catch {
+      checks.push({ name: 'rls', status: 'warn', message: 'Could not check RLS posture' });
+    }
+  }
+
+  // 6. Schema version — also surfaces the #218 "postinstall silently failed"
+  // state: if schema_version is 0/missing but the DB connected, migrations
+  // never ran. That's the same class as a half-migrated install, just from a
+  // different root cause (Bun blocked our top-level postinstall on global
+  // install). Message is actionable either way.
+  progress.heartbeat('schema_version');
+  let schemaVersion = 0;
   try {
     const version = await engine.getConfig('version');
-    const v = parseInt(version || '0', 10);
-    if (v >= LATEST_VERSION) {
-      checks.push({ name: 'schema_version', status: 'ok', message: `Version ${v} (latest: ${LATEST_VERSION})` });
+    schemaVersion = parseInt(version || '0', 10);
+    if (schemaVersion >= LATEST_VERSION) {
+      checks.push({ name: 'schema_version', status: 'ok', message: `Version ${schemaVersion} (latest: ${LATEST_VERSION})` });
+    } else if (schemaVersion === 0) {
+      checks.push({
+        name: 'schema_version',
+        status: 'fail',
+        message: `No schema version recorded. Migrations never ran. Fix: gbrain apply-migrations --yes. ` +
+                 `If you installed via 'bun install -g github:...', see https://github.com/garrytan/gbrain/issues/218.`,
+      });
     } else {
-      checks.push({ name: 'schema_version', status: 'warn', message: `Version ${v}, latest is ${LATEST_VERSION}. Run gbrain init to migrate.` });
+      checks.push({
+        name: 'schema_version',
+        status: 'warn',
+        message: `Version ${schemaVersion}, latest is ${LATEST_VERSION}. Fix: gbrain apply-migrations --yes`,
+      });
     }
   } catch {
     checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
   }
 
-  // 7. Embedding health
+  // Note: we intentionally DO NOT fail on "schema v7+ but no preferences.json".
+  // That's a valid fresh-install state after `gbrain init` — the migration
+  // orchestrator writes preferences, but `init` alone doesn't run it. The
+  // partial-completed.jsonl check in the filesystem section (step 3) is
+  // the canonical half-migration signal and fires when the stopgap ran
+  // but `apply-migrations` didn't follow up.
+
+  // 7. Legacy auto-RLS event trigger.
+  // Phase 4D expects this trigger to be gone. It enabled RLS with no policies
+  // on every public table, which created exactly the trapdoor the RLS check now
+  // rejects. Migration v39 drops it; doctor fails if it comes back.
+  progress.heartbeat('rls_event_trigger');
+  if (engine.kind === 'pglite') {
+    checks.push({
+      name: 'rls_event_trigger',
+      status: 'ok',
+      message: 'Skipped (PGLite — no event trigger support)',
+    });
+  } else {
+    try {
+      const sql = db.getConnection();
+      const rows = await sql`
+        SELECT evtname, evtenabled FROM pg_event_trigger
+        WHERE evtname = 'auto_rls_on_create_table'
+      `;
+      if (rows.length === 0) {
+        checks.push({
+          name: 'rls_event_trigger',
+          status: 'ok',
+          message: 'Legacy auto-RLS event trigger absent (expected service-role-only posture)',
+        });
+      } else {
+        checks.push({
+          name: 'rls_event_trigger',
+          status: 'fail',
+          message:
+            `Legacy auto-RLS event trigger still present (evtenabled=${rows[0].evtenabled}). ` +
+            `Fix: gbrain apply-migrations --force-retry 39 or run DROP EVENT TRIGGER auto_rls_on_create_table;`,
+        });
+      }
+    } catch {
+      checks.push({
+        name: 'rls_event_trigger',
+        status: 'warn',
+        message: 'Could not check legacy RLS event trigger',
+      });
+    }
+  }
+
+  // 8. Embedding health
+  progress.heartbeat('embeddings');
   try {
     const health = await engine.getHealth();
     const pct = (health.embed_coverage * 100).toFixed(0);
     if (health.embed_coverage >= 0.9) {
       checks.push({ name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${health.missing_embeddings} missing` });
     } else if (health.embed_coverage > 0) {
-      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${health.missing_embeddings} missing. Run: gbrain embed refresh` });
+      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${health.missing_embeddings} missing. Run: gbrain embed --stale` });
     } else {
-      checks.push({ name: 'embeddings', status: 'warn', message: 'No embeddings yet. Run: gbrain embed refresh' });
+      checks.push({ name: 'embeddings', status: 'warn', message: 'No embeddings yet. Run: gbrain embed --stale' });
     }
   } catch {
     checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });
   }
 
-  // 8. Link integrity
+  // 9. Graph health (link + timeline coverage on entity pages).
+  // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
+  progress.heartbeat('graph_coverage');
   try {
     const health = await engine.getHealth();
-    if (health.dead_links === 0) {
-      checks.push({ name: 'link_integrity', status: 'ok', message: 'No dead links' });
+    const linkPct = ((health.link_coverage ?? 0) * 100).toFixed(0);
+    const timelinePct = ((health.timeline_coverage ?? 0) * 100).toFixed(0);
+    if ((health.link_coverage ?? 0) >= 0.5 && (health.timeline_coverage ?? 0) >= 0.5) {
+      checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%` });
     } else {
-      checks.push({ name: 'link_integrity', status: 'warn', message: `${health.dead_links} dead link(s). Run: gbrain check-backlinks --fix` });
+      checks.push({
+        name: 'graph_coverage',
+        status: 'warn',
+        message: `Entity link coverage ${linkPct}%, timeline ${timelinePct}%. Run: gbrain link-extract && gbrain timeline-extract`,
+      });
+    }
+
+    // Bug 11 — brain_score breakdown. When the total is < 100, show which
+    // components contributed the deficit so users know what to fix.
+    // Uses distinct *_score field names (not overloading link_coverage /
+    // timeline_coverage, which are entity-scoped).
+    if (health.brain_score < 100) {
+      const parts = [
+        `embed ${health.embed_coverage_score}/35`,
+        `links ${health.link_density_score}/25`,
+        `timeline ${health.timeline_coverage_score}/15`,
+        `orphans ${health.no_orphans_score}/15`,
+        `dead-links ${health.no_dead_links_score}/10`,
+      ];
+      checks.push({
+        name: 'brain_score',
+        status: health.brain_score >= 70 ? 'ok' : 'warn',
+        message: `Brain score ${health.brain_score}/100 (${parts.join(', ')})`,
+      });
+    } else {
+      checks.push({ name: 'brain_score', status: 'ok', message: `Brain score 100/100` });
     }
   } catch {
-    checks.push({ name: 'link_integrity', status: 'warn', message: 'Could not check link integrity' });
+    checks.push({ name: 'graph_coverage', status: 'warn', message: 'Could not check graph coverage' });
   }
 
-  outputResults(checks, jsonOutput);
+  // 10. Integrity sample scan (v0.13 knowledge runtime).
+  // Read-only — no network, no writes, no resolver calls. Samples the first
+  // 500 pages by slug order and surfaces bare-tweet + dead-link counts as a
+  // warning. Full-brain scan: `gbrain integrity check`.
+  progress.heartbeat('integrity_sample');
+  const integrityHb = startHeartbeat(progress, 'scanning 500-page integrity sample…');
+  try {
+    const { scanIntegrity } = await import('./integrity.ts');
+    const res = await scanIntegrity(engine, { limit: 500 });
+    const total = res.bareHits.length + res.externalHits.length;
+    if (total === 0) {
+      checks.push({
+        name: 'integrity',
+        status: 'ok',
+        message: `Sampled ${res.pagesScanned} pages; no bare-tweet phrases or external links.`,
+      });
+    } else if (res.bareHits.length > 0) {
+      checks.push({
+        name: 'integrity',
+        status: 'warn',
+        message: `Sampled ${res.pagesScanned} pages; ${res.bareHits.length} bare-tweet phrase(s), ${res.externalHits.length} external link(s). Run: gbrain integrity check (or integrity auto to repair).`,
+      });
+    } else {
+      checks.push({
+        name: 'integrity',
+        status: 'ok',
+        message: `Sampled ${res.pagesScanned} pages; ${res.externalHits.length} external link(s) (no bare tweets).`,
+      });
+    }
+  } catch (e) {
+    checks.push({ name: 'integrity', status: 'warn', message: `integrity scan skipped: ${e instanceof Error ? e.message : String(e)}` });
+  } finally {
+    integrityHb();
+  }
+
+  // 10. JSONB integrity (v0.12.3 reliability wave).
+  // v0.12.0's JSON.stringify()::jsonb pattern stored JSONB string literals
+  // instead of objects on real Postgres. PGLite masked this; Supabase did not.
+  // Scan 5 known write sites for rows whose top-level jsonb_typeof is
+  // 'string'. `page_versions.frontmatter` added in v0.15.2 so doctor's
+  // surface matches `repair-jsonb` (the previous 4-target scan missed a
+  // repair target, per #254/Codex review).
+  progress.heartbeat('jsonb_integrity');
+  try {
+    const sql = db.getConnection();
+    const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
+      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
+      { table: 'raw_data',      col: 'data',           expected: 'object' },
+      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
+      { table: 'files',         col: 'metadata',       expected: 'object' },
+      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
+    ];
+    let totalBad = 0;
+    const breakdown: string[] = [];
+    for (const { table, col } of targets) {
+      progress.heartbeat(`jsonb_integrity.${table}.${col}`);
+      const rows = await sql.unsafe(
+        `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
+      );
+      const n = Number((rows as any)[0]?.n ?? 0);
+      if (n > 0) { totalBad += n; breakdown.push(`${table}.${col}=${n}`); }
+    }
+    if (totalBad === 0) {
+      checks.push({ name: 'jsonb_integrity', status: 'ok', message: 'All JSONB columns store objects/arrays' });
+    } else {
+      checks.push({
+        name: 'jsonb_integrity',
+        status: 'warn',
+        message: `${totalBad} row(s) double-encoded (${breakdown.join(', ')}). Fix: gbrain repair-jsonb`,
+      });
+    }
+  } catch {
+    checks.push({ name: 'jsonb_integrity', status: 'warn', message: 'Could not check JSONB integrity' });
+  }
+
+  // 11. Markdown body completeness (v0.12.3 reliability wave).
+  // v0.12.0's splitBody ate everything after the first `---` horizontal rule,
+  // truncating wiki-style pages. Heuristic: pages whose body is <30% of the
+  // raw source content length when raw has multiple H2/H3 boundaries.
+  //
+  // No total on this check: the regex scan over rd.data -> 'content' is a
+  // sequential scan that LIMIT 100 bounds only the output, not the scan
+  // work. We heartbeat every second so agents see life, no fake totals.
+  progress.heartbeat('markdown_body_completeness');
+  const mbcHb = startHeartbeat(progress, 'scanning pages for truncation…');
+  try {
+    const sql = db.getConnection();
+    const rows = await sql`
+      SELECT p.slug,
+             length(p.compiled_truth) AS body_len,
+             length(rd.data ->> 'content') AS raw_len
+      FROM pages p
+      JOIN raw_data rd ON rd.page_id = p.id
+      WHERE rd.data ? 'content'
+        AND length(rd.data ->> 'content') > 1000
+        AND length(p.compiled_truth) < length(rd.data ->> 'content') * 0.3
+        AND (rd.data ->> 'content') ~ '(^|\n)##+ '
+      LIMIT 100
+    `;
+    if (rows.length === 0) {
+      checks.push({ name: 'markdown_body_completeness', status: 'ok', message: 'No truncated bodies detected' });
+    } else {
+      const sample = rows.slice(0, 3).map((r: any) => r.slug).join(', ');
+      checks.push({
+        name: 'markdown_body_completeness',
+        status: 'warn',
+        message: `${rows.length} page(s) appear truncated (sample: ${sample}). Re-import with: gbrain sync --force`,
+      });
+    }
+  } catch {
+    // pages_raw.raw_data may not exist on older schemas; best-effort.
+    checks.push({ name: 'markdown_body_completeness', status: 'ok', message: 'Skipped (raw_data unavailable)' });
+  } finally {
+    mbcHb();
+  }
+
+  // 11a. Frontmatter integrity (v0.22.4).
+  // scanBrainSources walks every registered source's local_path on disk
+  // (not from the DB), invoking parseMarkdown(..., {validate:true}) per
+  // file. Reports per-source counts grouped by error code. The fix path is
+  // `gbrain frontmatter validate <source-path> --fix`, which writes .bak
+  // backups so it works for both git and non-git brain repos.
+  progress.heartbeat('frontmatter_integrity');
+  const fmHb = startHeartbeat(progress, 'scanning frontmatter…');
+  try {
+    const { scanBrainSources } = await import('../core/brain-writer.ts');
+    const report = await scanBrainSources(engine);
+    if (report.total === 0) {
+      const sources = report.per_source.length;
+      checks.push({
+        name: 'frontmatter_integrity',
+        status: 'ok',
+        message: sources === 0
+          ? 'No registered sources to scan'
+          : `${sources} source(s) clean — no frontmatter issues`,
+      });
+    } else {
+      const sourceMessages: string[] = [];
+      for (const src of report.per_source) {
+        if (src.total === 0) continue;
+        const codes = Object.entries(src.errors_by_code)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(', ');
+        sourceMessages.push(`${src.source_id}: ${src.total} (${codes})`);
+      }
+      checks.push({
+        name: 'frontmatter_integrity',
+        status: 'warn',
+        message:
+          `${report.total} frontmatter issue(s) across ${sourceMessages.length} source(s). ` +
+          `${sourceMessages.join('; ')}. Fix: gbrain frontmatter validate <source-path> --fix`,
+      });
+    }
+  } catch (e) {
+    checks.push({
+      name: 'frontmatter_integrity',
+      status: 'warn',
+      message: `Could not scan frontmatter: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  } finally {
+    fmHb();
+  }
+
+  // 11a-bis. Eval-capture health (v0.25.0). Capture is a fire-and-forget
+  // side-effect that logs failures to a persistent table so this check
+  // can see drops cross-process (the MCP server captures; `gbrain doctor`
+  // runs in a separate process). Counts failures in the last 24h and
+  // warns when non-zero. Pre-v31 brains: the table doesn't exist yet;
+  // swallow the error and report skipped.
+  progress.heartbeat('eval_capture');
+  try {
+    const since = new Date(Date.now() - 24 * 3600 * 1000);
+    const failures = await engine.listEvalCaptureFailures({ since });
+    if (failures.length === 0) {
+      checks.push({ name: 'eval_capture', status: 'ok', message: 'No capture failures in the last 24h' });
+    } else {
+      const byReason = new Map<string, number>();
+      for (const f of failures) {
+        byReason.set(f.reason, (byReason.get(f.reason) ?? 0) + 1);
+      }
+      const breakdown = [...byReason.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([r, n]) => `${n} ${r}`)
+        .join(', ');
+      checks.push({
+        name: 'eval_capture',
+        status: 'warn',
+        message: `${failures.length} capture failure(s) in the last 24h (${breakdown}). ` +
+          `If you care about replay fidelity, investigate. If not, set eval.capture: false ` +
+          `in ~/.gbrain/config.json to silence.`,
+      });
+    }
+  } catch (err) {
+    // Distinguish "table doesn't exist yet" (pre-v31, ok skip) from real
+    // problems like RLS denying SELECT — the latter masks the very condition
+    // this check is supposed to surface (capture INSERTs almost certainly
+    // also fail).
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42P01') {
+      checks.push({ name: 'eval_capture', status: 'ok', message: 'Skipped (eval_capture_failures table unavailable — apply migrations or upgrade)' });
+    } else if (code === '42501') {
+      checks.push({
+        name: 'eval_capture',
+        status: 'warn',
+        message: 'RLS denies SELECT on eval_capture_failures. Capture INSERTs are almost certainly failing too. Run as a role with BYPASSRLS or grant SELECT on this table.',
+      });
+    } else {
+      checks.push({
+        name: 'eval_capture',
+        status: 'warn',
+        message: `Could not read eval_capture_failures: ${(err as Error)?.message ?? String(err)}`,
+      });
+    }
+  }
+
+  // 11b. Queue health (v0.19.1 queue-resilience wave).
+  // Postgres-only because PGLite has no multi-process worker surface. Two
+  // subchecks, both cheap (single SELECT each, status-index-covered):
+  //
+  //   1. stalled-forever: any active job whose started_at is > 1h old. The
+  //      incident that motivated this release ran 90+ min before surfacing.
+  //      Surface the ID so the operator can `gbrain jobs get <id>` to inspect
+  //      or `gbrain jobs cancel <id>` to force-kill.
+  //
+  //   2. backpressure-missed: per-name waiting depth exceeds the threshold
+  //      (default 10, override via GBRAIN_QUEUE_WAITING_THRESHOLD env). Signal
+  //      that a submitter probably needs maxWaiting set. Bounded by per-name
+  //      aggregation so a single name's pile shows up clearly instead of
+  //      getting lost in the total.
+  //
+  // Not included in v0.19.1 (tracked as B7 follow-up): worker-heartbeat
+  // staleness. It needs a minion_workers table; the lock_until-on-active-jobs
+  // proxy can't distinguish "no worker" from "worker idle," and a check that
+  // cries wolf erodes trust in every other doctor check.
+  progress.heartbeat('queue_health');
+  if (engine.kind === 'pglite') {
+    checks.push({
+      name: 'queue_health',
+      status: 'ok',
+      message: 'Skipped (PGLite — no multi-process worker surface)',
+    });
+  } else {
+    const queueHealthHb = startHeartbeat(progress, 'scanning queue health…');
+    try {
+      const sql = db.getConnection();
+      // Subcheck 1: stalled-forever active jobs (>1h wall-clock).
+      const stalledRows: Array<{ id: number; name: string; started_at: string }> = await sql`
+        SELECT id, name, started_at::text AS started_at
+          FROM minion_jobs
+         WHERE status = 'active'
+           AND started_at IS NOT NULL
+           AND started_at < now() - interval '1 hour'
+         ORDER BY started_at ASC
+         LIMIT 5
+      `;
+      // Subcheck 2: per-name waiting depth exceeds threshold.
+      const rawThreshold = process.env.GBRAIN_QUEUE_WAITING_THRESHOLD;
+      const parsedThreshold = rawThreshold ? parseInt(rawThreshold, 10) : 10;
+      const threshold = Number.isFinite(parsedThreshold) && parsedThreshold >= 1
+        ? parsedThreshold
+        : 10;
+      const depthRows: Array<{ name: string; queue: string; depth: number }> = await sql`
+        SELECT name, queue, count(*)::int AS depth
+          FROM minion_jobs
+         WHERE status = 'waiting'
+         GROUP BY name, queue
+        HAVING count(*) > ${threshold}
+         ORDER BY depth DESC
+         LIMIT 5
+      `;
+      // Subcheck 3 (v0.22.14): RSS-watchdog kills in the last 24h. Bare workers
+      // newly default to --max-rss 2048 (was 0); operators who run large embed
+      // or import jobs may see kills that didn't happen pre-v0.22.14. We surface
+      // a hint when this signature appears so the upgrade path is obvious.
+      // Signature: when the watchdog trips, gracefulShutdown('watchdog') aborts
+      // in-flight jobs with `new Error('watchdog')`. The worker's failJob path
+      // (worker.ts:660-664) writes `error_text = 'aborted: watchdog'` for any
+      // job in-flight at the moment of the kill.
+      //
+      // We deliberately DO NOT do a loose `ILIKE '%watchdog%'`:
+      //   1. Parent jobs that inherit `on_child_fail='fail_parent'` get
+      //      `"child job N failed: aborted: watchdog"` — counting that
+      //      double-counts (child + parent) for one watchdog event.
+      //   2. Any user error_text containing the word "watchdog" matches.
+      // Match the exact prefix `'aborted: watchdog'` to scope this purely to
+      // the worker's own kill signature.
+      const rssKillRows: Array<{ cnt: number }> = await sql`
+        SELECT count(*)::int AS cnt
+          FROM minion_jobs
+         WHERE status IN ('dead', 'failed')
+           AND finished_at > now() - interval '24 hours'
+           AND error_text = 'aborted: watchdog'
+      `;
+      const rssKillCount = rssKillRows[0]?.cnt ?? 0;
+
+      const problems: string[] = [];
+      if (stalledRows.length > 0) {
+        const sample = stalledRows
+          .map(r => `#${r.id}(${r.name})`)
+          .join(', ');
+        problems.push(
+          `${stalledRows.length} stalled-forever job(s): ${sample}. ` +
+          `Fix: gbrain jobs get <id> to inspect; gbrain jobs cancel <id> to force-kill.`
+        );
+      }
+      if (depthRows.length > 0) {
+        const sample = depthRows
+          .map(r => `${r.name}@${r.queue}=${r.depth}`)
+          .join(', ');
+        problems.push(
+          `waiting-queue depth exceeds ${threshold} for: ${sample}. ` +
+          `Fix: set maxWaiting on the submitter (or raise GBRAIN_QUEUE_WAITING_THRESHOLD).`
+        );
+      }
+      if (rssKillCount > 0) {
+        problems.push(
+          `${rssKillCount} job(s) dead-lettered for RSS-watchdog memory-limit kills in last 24h. ` +
+          `v0.22.14 changed the bare-worker --max-rss default from 0 (off) to 2048 MB. ` +
+          `Fix: raise the limit (e.g. \`gbrain jobs work --max-rss 4096\`) or opt out (\`--max-rss 0\`). ` +
+          `See skills/migrations/v0.22.14.md.`
+        );
+      }
+
+      if (problems.length === 0) {
+        checks.push({
+          name: 'queue_health',
+          status: 'ok',
+          message: `No stalled-forever jobs; no queue over depth ${threshold}.`,
+        });
+      } else {
+        checks.push({
+          name: 'queue_health',
+          status: 'warn',
+          message: problems.join(' '),
+        });
+      }
+    } catch (e) {
+      checks.push({
+        name: 'queue_health',
+        status: 'warn',
+        message: `queue_health scan skipped: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    } finally {
+      queueHealthHb();
+    }
+  }
+
+  // 12. Index audit (opt-in via --index-audit). v0.13.1 follow-up to #170.
+  // Reports indexes with zero recorded scans on Postgres. Informational only;
+  // we DO NOT auto-drop. On #170's brain, idx_pages_frontmatter and
+  // idx_pages_trgm showed 0 scans — the suggestion there is "consider
+  // investigating on YOUR brain," not "drop these globally." Zero scans on a
+  // fresh install is also normal (nothing has queried yet); the real signal
+  // is zero scans on a long-running active brain.
+  if (args.includes('--index-audit')) {
+    progress.heartbeat('index_audit');
+    if (engine.kind === 'pglite') {
+      checks.push({
+        name: 'index_audit',
+        status: 'ok',
+        message: 'Skipped (PGLite — pg_stat_user_indexes is a Postgres extension)',
+      });
+    } else {
+      try {
+        const sql = db.getConnection();
+        const rows = await sql`
+          SELECT schemaname, relname AS table, indexrelname AS index,
+                 idx_scan, pg_size_pretty(pg_relation_size(indexrelid)) AS size
+            FROM pg_stat_user_indexes
+           WHERE schemaname = 'public'
+             AND idx_scan = 0
+           ORDER BY pg_relation_size(indexrelid) DESC
+           LIMIT 20
+        `;
+        if (rows.length === 0) {
+          checks.push({ name: 'index_audit', status: 'ok', message: 'All public indexes have recorded scans' });
+        } else {
+          const list = rows.map((r: any) => `${r.index}(${r.size})`).join(', ');
+          checks.push({
+            name: 'index_audit',
+            status: 'warn',
+            message: `${rows.length} zero-scan index(es): ${list}. ` +
+                     `Consider investigating whether they're used on YOUR workload (fresh brains naturally show zero scans until queries accumulate). ` +
+                     `Do not drop without confirming.`,
+          });
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        checks.push({ name: 'index_audit', status: 'warn', message: `Index audit failed: ${msg}` });
+      }
+    }
+  }
+
+  progress.finish();
+
+  const hasFail = outputResults(checks, jsonOutput);
+
+  // Features teaser (non-JSON, non-failing only)
+  if (!jsonOutput && !hasFail && engine) {
+    try {
+      const { featuresTeaserForDoctor } = await import('./features.ts');
+      const teaser = await featuresTeaserForDoctor(engine);
+      if (teaser) console.log(`\n${teaser}`);
+    } catch { /* best-effort */ }
+  }
+
+  process.exit(hasFail ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Find the GBrain repo root by walking up from cwd looking for skills/RESOLVER.md */
-function findRepoRoot(): string | null {
-  let dir = process.cwd();
-  for (let i = 0; i < 10; i++) {
-    if (existsSync(join(dir, 'skills', 'RESOLVER.md'))) return dir;
-    const parent = join(dir, '..');
-    if (parent === dir) break;
-    dir = parent;
+/** Print the auto-fix report in human-readable form. JSON output goes through
+ *  outputResults alongside the check list; this is the pretty-print path. */
+function printAutoFixReport(report: AutoFixReport, dryRun: boolean, jsonOutput: boolean): void {
+  if (jsonOutput) return; // JSON consumers read autoFixReport via the check issues / caller
+  const verb = dryRun ? 'PROPOSED' : 'APPLIED';
+  for (const outcome of report.fixed) {
+    console.log(`[${verb}] ${outcome.skillPath} (${outcome.patternLabel})`);
+    if (outcome.before) {
+      console.log('--- before');
+      console.log(outcome.before);
+      console.log('--- after');
+      console.log(outcome.after ?? '');
+      console.log('');
+    }
   }
-  return null;
+  const n = report.fixed.length;
+  const s = report.skipped.length;
+  if (n === 0 && s === 0) {
+    console.log('Doctor --fix: no DRY violations to repair.');
+    return;
+  }
+  const label = dryRun ? 'fixes proposed' : 'fixes applied';
+  console.log(`${n} ${label}${s > 0 ? `, ${s} skipped:` : '.'}`);
+  for (const sk of report.skipped) {
+    const hint = sk.reason === 'working_tree_dirty' ? ' (run `git stash` first)' : '';
+    console.log(`  - ${sk.skillPath}: ${sk.reason}${hint}`);
+  }
+  if (dryRun && n > 0) console.log('\nRun without --dry-run to apply.');
 }
+
 
 /** Quick skill conformance check — frontmatter + required sections */
 function checkSkillConformance(skillsDir: string): Check {
@@ -217,23 +1071,22 @@ function checkSkillConformance(skillsDir: string): Check {
   }
 }
 
-function outputResults(checks: Check[], json: boolean) {
+function outputResults(checks: Check[], json: boolean): boolean {
+  const hasFail = checks.some(c => c.status === 'fail');
+  const hasWarn = checks.some(c => c.status === 'warn');
+
+  // Compute composite health score (0-100)
+  let score = 100;
+  for (const c of checks) {
+    if (c.status === 'fail') score -= 20;
+    else if (c.status === 'warn') score -= 5;
+  }
+  score = Math.max(0, score);
+
   if (json) {
-    const hasFail = checks.some(c => c.status === 'fail');
-    const hasWarn = checks.some(c => c.status === 'warn');
     const status = hasFail ? 'unhealthy' : hasWarn ? 'warnings' : 'healthy';
-
-    // Compute composite health score (0-100)
-    let score = 100;
-    for (const c of checks) {
-      if (c.status === 'fail') score -= 20;
-      else if (c.status === 'warn') score -= 5;
-    }
-    score = Math.max(0, score);
-
     console.log(JSON.stringify({ schema_version: 2, status, health_score: score, checks }));
-    process.exit(hasFail ? 1 : 0);
-    return;
+    return hasFail;
   }
 
   console.log('\nGBrain Health Check');
@@ -241,7 +1094,6 @@ function outputResults(checks: Check[], json: boolean) {
   for (const c of checks) {
     const icon = c.status === 'ok' ? 'OK' : c.status === 'warn' ? 'WARN' : 'FAIL';
     console.log(`  [${icon}] ${c.name}: ${c.message}`);
-    // Print resolver issues with actions
     if (c.issues) {
       for (const issue of c.issues) {
         console.log(`    → ${issue.type.toUpperCase()}: ${issue.skill}`);
@@ -250,16 +1102,6 @@ function outputResults(checks: Check[], json: boolean) {
     }
   }
 
-  // Composite health score
-  let score = 100;
-  for (const c of checks) {
-    if (c.status === 'fail') score -= 20;
-    else if (c.status === 'warn') score -= 5;
-  }
-  score = Math.max(0, score);
-
-  const hasFail = checks.some(c => c.status === 'fail');
-  const hasWarn = checks.some(c => c.status === 'warn');
   if (hasFail) {
     console.log(`\nHealth score: ${score}/100. Failed checks found.`);
   } else if (hasWarn) {
@@ -267,5 +1109,60 @@ function outputResults(checks: Check[], json: boolean) {
   } else {
     console.log(`\nHealth score: ${score}/100. All checks passed.`);
   }
-  process.exit(hasFail ? 1 : 0);
+  return hasFail;
+}
+
+/**
+ * `gbrain doctor --locks` — list idle-in-transaction backends older
+ * than 5 minutes that could block DDL. Exits 0 on clean, 1 on blockers.
+ *
+ * Agents hitting a statement_timeout (SQLSTATE 57014) during migration
+ * need a one-command path to find and kill the blocker. migrate.ts's
+ * 57014 diagnostic references this flag by name; keep the two in sync.
+ *
+ * Postgres-only. PGLite has no pool, no idle-in-tx concept, so the
+ * check prints a one-liner and exits 0.
+ */
+async function runLocksCheck(engine: BrainEngine | null, jsonOutput: boolean): Promise<void> {
+  if (!engine) {
+    if (jsonOutput) {
+      console.log(JSON.stringify({ status: 'unavailable', reason: 'no_engine' }));
+    } else {
+      console.log('gbrain doctor --locks requires a database connection. Configure a URL and retry.');
+    }
+    process.exit(1);
+  }
+
+  if (engine.kind !== 'postgres') {
+    if (jsonOutput) {
+      console.log(JSON.stringify({ status: 'not_applicable', engine: engine.kind }));
+    } else {
+      console.log(`gbrain doctor --locks is Postgres-only. Current engine: ${engine.kind}. No blockers possible (no connection pool).`);
+    }
+    return;
+  }
+
+  const blockers = await getIdleBlockers(engine);
+
+  if (jsonOutput) {
+    console.log(JSON.stringify({ status: blockers.length === 0 ? 'ok' : 'blockers_found', blockers }, null, 2));
+    if (blockers.length > 0) process.exit(1);
+    return;
+  }
+
+  if (blockers.length === 0) {
+    console.log('✓ No idle-in-transaction backends older than 5 minutes.');
+    return;
+  }
+
+  console.log(`Found ${blockers.length} idle-in-transaction backend(s) older than 5 minutes:\n`);
+  for (const b of blockers) {
+    console.log(`  PID ${b.pid}  (idle since ${b.query_start})`);
+    console.log(`    Query: ${b.query}`);
+    console.log(`    Kill:  SELECT pg_terminate_backend(${b.pid});`);
+    console.log('');
+  }
+  console.log('These connections may block ALTER TABLE DDL during migration.');
+  console.log('After terminating, retry: gbrain apply-migrations --yes');
+  process.exit(1);
 }

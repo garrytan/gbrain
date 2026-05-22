@@ -1,0 +1,8 @@
+// Routing eval fixtures for skills/voice-note-ingest. Each intent
+// includes at least one trigger string as substring (structural
+// matcher requirement) while still paraphrasing real user phrasing.
+{"intent":"Please ingest this voice memo I just sent and file it into my brain","expected_skill":"voice-note-ingest"}
+{"intent":"Transcribe and file this audio message into the right directory","expected_skill":"voice-note-ingest"}
+{"intent":"Save this audio note as a brain page with the original audio attached","expected_skill":"voice-note-ingest"}
+{"intent":"Run voice note ingest on what I just sent — preserve my words verbatim","expected_skill":"voice-note-ingest"}
+{"intent":"This voice note has a thought I want preserved word-for-word","expected_skill":"voice-note-ingest"}

@@ -154,6 +154,66 @@ describe('fail-improve', () => {
     expect(failures[0].input.length).toBe(1000);
   });
 
+  // ---- AbortSignal threading (PR 2.5+ guarantees) ----
+
+  test('aborts before deterministic call when signal already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let detCalled = false;
+    let llmCalled = false;
+    await expect(loop.execute(
+      'abort_early',
+      'x',
+      () => { detCalled = true; return 'det'; },
+      async () => { llmCalled = true; return 'llm'; },
+      { signal: controller.signal },
+    )).rejects.toMatchObject({ name: 'AbortError' });
+    expect(detCalled).toBe(false);
+    expect(llmCalled).toBe(false);
+  });
+
+  test('aborts between deterministic miss and LLM fallback', async () => {
+    const controller = new AbortController();
+    let llmCalled = false;
+    await expect(loop.execute(
+      'abort_between',
+      'x',
+      () => { controller.abort(); return null; },
+      async () => { llmCalled = true; return 'llm'; },
+      { signal: controller.signal },
+    )).rejects.toMatchObject({ name: 'AbortError' });
+    expect(llmCalled).toBe(false);
+  });
+
+  test('forwards signal into deterministic + LLM callbacks', async () => {
+    const controller = new AbortController();
+    let seenDet: AbortSignal | undefined;
+    let seenLlm: AbortSignal | undefined;
+    await loop.execute(
+      'fwd',
+      'x',
+      (_i, s) => { seenDet = s; return null; },
+      async (_i, s) => { seenLlm = s; return 'ok'; },
+      { signal: controller.signal },
+    );
+    expect(seenDet).toBe(controller.signal);
+    expect(seenLlm).toBe(controller.signal);
+  });
+
+  test('LLM AbortError propagates without logging a failure entry', async () => {
+    await expect(loop.execute(
+      'abort_llm',
+      'x',
+      () => null,
+      async () => {
+        const err = new Error('user aborted');
+        err.name = 'AbortError';
+        throw err;
+      },
+    )).rejects.toMatchObject({ name: 'AbortError' });
+    expect(loop.getFailures('abort_llm')).toEqual([]);
+  });
+
   test('log rotation keeps last 1000 entries', () => {
     // Write 1010 entries
     for (let i = 0; i < 1010; i++) {

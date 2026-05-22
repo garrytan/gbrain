@@ -1,10 +1,12 @@
 import { readdirSync, lstatSync, existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, relative } from 'path';
-import { cpus, totalmem, homedir } from 'os';
+import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile } from '../core/import-file.ts';
-import { loadConfig } from '../core/config.ts';
+import { loadConfig, gbrainPath } from '../core/config.ts';
+import { createProgress } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 function defaultWorkers(): number {
   const cpuCount = cpus().length;
@@ -17,29 +19,49 @@ function defaultWorkers(): number {
   return Math.min(byPool, byCpu, byMem);
 }
 
-export async function runImport(engine: BrainEngine, args: string[]) {
+/** Bug 9 — surface per-file failures so callers (performFullSync) can gate state advances. */
+export interface RunImportResult {
+  imported: number;
+  skipped: number;
+  errors: number;
+  chunksCreated: number;
+  failures: Array<{ path: string; error: string }>;
+}
+
+export async function runImport(engine: BrainEngine, args: string[], opts: { commit?: string } = {}): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
-  const workerCount = workersArg ? parseInt(workersArg, 10) : 1;
+  // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
+  // (--workers 0, -3, "foo") with a loud error instead of silently falling
+  // through to 1. Mirrors sync.ts's flag handling.
+  const { parseWorkers } = await import('../core/sync-concurrency.ts');
+  let workerCount: number;
+  try {
+    workerCount = parseWorkers(workersArg ?? undefined) ?? 1;
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
   // Find dir: first non-flag arg that isn't a value for --workers
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
-  const dir = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
+  const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
-  if (!dir) {
+  if (!dirArg) {
     console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json]');
     process.exit(1);
   }
+  const dir: string = dirArg;  // narrowed; survives closure capture
 
   // Collect all .md files
   const allFiles = collectMarkdownFiles(dir);
   console.log(`Found ${allFiles.length} markdown files`);
 
   // Resume from checkpoint if available
-  const checkpointPath = join(homedir(), '.gbrain', 'import-checkpoint.json');
+  const checkpointPath = gbrainPath('import-checkpoint.json');
   let files = allFiles;
   let resumeIndex = 0;
 
@@ -69,14 +91,15 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   let chunksCreated = 0;
   const importedSlugs: string[] = [];
   const errorCounts: Record<string, number> = {};
+  const failures: Array<{ path: string; error: string }> = []; // Bug 9
   const startTime = Date.now();
 
-  function logProgress() {
-    const elapsed = (Date.now() - startTime) / 1000;
-    const rate = elapsed > 0 ? Math.round(processed / elapsed) : 0;
-    const remaining = rate > 0 ? Math.round((files.length - processed) / rate) : 0;
-    const pct = Math.round((processed / files.length) * 100);
-    console.log(`[gbrain import] ${processed}/${files.length} (${pct}%) | ${rate} files/sec | imported: ${imported} | skipped: ${skipped} | errors: ${errors} | ETA: ${remaining}s`);
+  // Progress on stderr so stdout stays clean for the final summary / --json payload.
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('import.files', files.length);
+
+  function tickProgress() {
+    progress.tick(1, `imported=${imported} skipped=${skipped} errors=${errors}`);
   }
 
   async function processFile(eng: BrainEngine, filePath: string) {
@@ -91,6 +114,8 @@ export async function runImport(engine: BrainEngine, args: string[]) {
         skipped++;
         if (result.error && result.error !== 'unchanged') {
           console.error(`  Skipped ${relativePath}: ${result.error}`);
+          // Bug 9 — non-"unchanged" skips carry a real error reason.
+          failures.push({ path: relativePath, error: result.error });
         }
       }
     } catch (e: unknown) {
@@ -104,14 +129,15 @@ export async function runImport(engine: BrainEngine, args: string[]) {
       }
       errors++;
       skipped++;
+      failures.push({ path: relativePath, error: msg });
     }
     processed++;
+    tickProgress();
     if (processed % 100 === 0 || processed === files.length) {
-      logProgress();
       // Save checkpoint every 100 files — track completed file set, not just a counter
       if (processed % 100 === 0) {
         try {
-          const cpDir = join(homedir(), '.gbrain');
+          const cpDir = gbrainPath();
           if (!existsSync(cpDir)) { const { mkdirSync } = await import('fs'); mkdirSync(cpDir, { recursive: true }); }
           writeFileSync(checkpointPath, JSON.stringify({
             dir, totalFiles: allFiles.length,
@@ -125,35 +151,57 @@ export async function runImport(engine: BrainEngine, args: string[]) {
   }
 
   if (actualWorkers > 1) {
-    // Parallel: create per-worker engine instances with small pool
-    // PGLite is single-connection, so parallel workers are only for Postgres
+    // v0.22.13 (PR #490 A1 + Q3): use engine.kind discriminator (not config.engine
+    // string sniff) and fall back to serial when database_url is unset. Both
+    // checks belt-and-suspenders so we never crash on a null assertion.
     const config = loadConfig();
-    if (config?.engine === 'pglite') {
-      // PGLite: sequential import through single engine
+    if (engine.kind === 'pglite' || !config?.database_url) {
       for (const file of files) {
         await processFile(engine, file);
       }
     } else {
-    const { PostgresEngine } = await import('../core/postgres-engine.ts');
-    const workerEngines = await Promise.all(
-      Array.from({ length: actualWorkers }, async () => {
-        const eng = new PostgresEngine();
-        await eng.connect({ database_url: config!.database_url!, poolSize: 2 });
-        return eng;
-      })
-    );
+      const { PostgresEngine } = await import('../core/postgres-engine.ts');
+      const { resolvePoolSize } = await import('../core/db.ts');
+      // Default per-worker pool is 2 (small, parallel import case). Users on
+      // constrained poolers (e.g. Supabase port 6543) can cap below this via
+      // GBRAIN_POOL_SIZE=1.
+      const workerPoolSize = Math.min(2, resolvePoolSize(2));
+      const databaseUrl = config.database_url;
 
-    // Thread-safe queue: use an atomic index counter instead of array.shift()
-    let queueIndex = 0;
-    await Promise.all(workerEngines.map(async (eng) => {
-      while (true) {
-        const idx = queueIndex++;
-        if (idx >= files.length) break;
-        await processFile(eng, files[idx]);
+      // v0.22.13 (PR #490 A2): connect workers serially so a partial failure
+      // leaves us with the connected ones already pushed onto workerEngines
+      // for the finally-block cleanup. The prior Promise.all could leak any
+      // engine that connected before another's connect() rejected.
+      const workerEngines: InstanceType<typeof PostgresEngine>[] = [];
+      try {
+        for (let i = 0; i < actualWorkers; i++) {
+          const eng = new PostgresEngine();
+          await eng.connect({ database_url: databaseUrl, poolSize: workerPoolSize });
+          workerEngines.push(eng);
+        }
+
+        // Thread-safe queue: atomic index counter (JS is single-threaded; the
+        // read-then-increment happens between awaits so no lock is needed).
+        let queueIndex = 0;
+        await Promise.all(workerEngines.map(async (eng) => {
+          while (true) {
+            const idx = queueIndex++;
+            if (idx >= files.length) break;
+            await processFile(eng, files[idx]);
+          }
+        }));
+      } finally {
+        // v0.22.13 (PR #490 A2): try/finally guarantees cleanup even when the
+        // worker loop throws. Each disconnect is best-effort — one failing
+        // disconnect must not strand the others.
+        await Promise.all(
+          workerEngines.map(e =>
+            e.disconnect().catch((err: unknown) =>
+              console.error(`  worker disconnect failed: ${err instanceof Error ? err.message : String(err)}`),
+            ),
+          ),
+        );
       }
-    }));
-
-    await Promise.all(workerEngines.map(e => e.disconnect()));
     } // end else (postgres parallel)
   } else {
     // Sequential: use the provided engine
@@ -161,6 +209,8 @@ export async function runImport(engine: BrainEngine, args: string[]) {
       await processFile(engine, filePath);
     }
   }
+
+  progress.finish();
 
   // Error summary
   for (const [err, count] of Object.entries(errorCounts)) {
@@ -198,17 +248,41 @@ export async function runImport(engine: BrainEngine, args: string[]) {
     summary: `Imported ${imported} pages, ${skipped} skipped, ${chunksCreated} chunks`,
   });
 
-  // Import → sync continuity: write sync checkpoint if this is a git repo
+  // Import → sync continuity: write sync checkpoint if this is a git repo.
+  // Bug 9 — gate last_commit on "no failures" so import doesn't silently
+  // stomp on the sync bookmark when parsing broke. We still write
+  // last_run + repo_path either way (those are progress indicators).
+  let gitHead: string | null = null;
   try {
     if (existsSync(join(dir, '.git'))) {
-      const head = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
-      await engine.setConfig('sync.last_commit', head);
-      await engine.setConfig('sync.last_run', new Date().toISOString());
-      await engine.setConfig('sync.repo_path', dir);
+      gitHead = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
     }
   } catch {
-    // Not a git repo or git not available, skip checkpoint
+    // Not a git repo or git not available
   }
+
+  if (gitHead) {
+    // Record failures into the central JSONL so doctor can surface them.
+    // Use gitHead as the commit so a later sync can tell "same broken
+    // state as last time" from "new broken state."
+    if (failures.length > 0) {
+      const { recordSyncFailures } = await import('../core/sync.ts');
+      recordSyncFailures(failures, gitHead);
+    }
+    if (failures.length === 0) {
+      await engine.setConfig('sync.last_commit', gitHead);
+    } else {
+      console.error(
+        `\nImport completed with ${failures.length} failure(s). ` +
+        `sync.last_commit NOT advanced — re-run 'gbrain sync' to retry, or ` +
+        `'gbrain sync --skip-failed' to acknowledge and move past them.`,
+      );
+    }
+    await engine.setConfig('sync.last_run', new Date().toISOString());
+    await engine.setConfig('sync.repo_path', dir);
+  }
+
+  return { imported, skipped, errors, chunksCreated, failures };
 }
 
 export function collectMarkdownFiles(dir: string): string[] {

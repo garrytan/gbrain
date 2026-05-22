@@ -1,0 +1,117 @@
+# docker-compose.ci.yml
+#
+# Local CI gate with 4-way E2E sharding. Spins up 4 pgvector services + a bun
+# runner that bind-mounts the repo. Used by `bun run ci:local` and
+# `bun run ci:local:diff` (see scripts/ci-local.sh).
+#
+# All services are pulled as `image:` (no build) so `docker compose pull`
+# refreshes everything. The bun version floats with `oven/bun:1` to track CI's
+# `bun-version: latest`. Named volumes isolate the Linux container's deps from
+# the host's darwin-arm64 deps and keep bun + postgres data warm across runs.
+#
+# Why 4 postgres services: bun's E2E suite shares one DB across 36 files and
+# uses TRUNCATE CASCADE in setupDB(). Running files in parallel against ONE DB
+# races (file A's TRUNCATE clobbers file B's fixture import). 4 separate DBs
+# remove the race; we shard the file list 1/4..4/4 and run shards in parallel.
+# Within a shard, files still run sequentially. Total wall-time on a 16-core
+# host: ~6 min sequential -> ~1.5-2 min sharded.
+#
+# Postgres host ports default to 5434-5437 (avoid 5432 manual `gbrain-test-pg`
+# and 5433 sibling-project conflicts). Override BASE port with GBRAIN_CI_PG_PORT;
+# shards take BASE..BASE+3.
+
+services:
+  postgres-1:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gbrain_test
+    ports:
+      - "${GBRAIN_CI_PG_PORT:-5434}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - gbrain-ci-pg-data-1:/var/lib/postgresql/data
+
+  postgres-2:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gbrain_test
+    ports:
+      - "${GBRAIN_CI_PG_PORT_2:-5435}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - gbrain-ci-pg-data-2:/var/lib/postgresql/data
+
+  postgres-3:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gbrain_test
+    ports:
+      - "${GBRAIN_CI_PG_PORT_3:-5436}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - gbrain-ci-pg-data-3:/var/lib/postgresql/data
+
+  postgres-4:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gbrain_test
+    ports:
+      - "${GBRAIN_CI_PG_PORT_4:-5437}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - gbrain-ci-pg-data-4:/var/lib/postgresql/data
+
+  runner:
+    image: oven/bun:1
+    working_dir: /app
+    depends_on:
+      postgres-1:
+        condition: service_healthy
+      postgres-2:
+        condition: service_healthy
+      postgres-3:
+        condition: service_healthy
+      postgres-4:
+        condition: service_healthy
+    # No global DATABASE_URL — scripts/ci-local.sh sets per-shard URL via -e.
+    # Unit phase explicitly unsets DATABASE_URL so test/e2e/* gracefully skip.
+    volumes:
+      - .:/app
+      # Linux container's node_modules MUST be isolated from host darwin-arm64.
+      # Without this, container `bun install` stomps host node_modules and
+      # subsequent `bun test` on host fails with binary-incompat errors.
+      - gbrain-ci-node-modules:/app/node_modules
+      # Warm install cache across runs.
+      - gbrain-ci-bun-cache:/root/.bun/install/cache
+
+volumes:
+  gbrain-ci-pg-data-1:
+  gbrain-ci-pg-data-2:
+  gbrain-ci-pg-data-3:
+  gbrain-ci-pg-data-4:
+  gbrain-ci-node-modules:
+  gbrain-ci-bun-cache:

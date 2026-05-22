@@ -1,8 +1,9 @@
 # Remote MCP Deployment Options
 
 GBrain's MCP server runs via `gbrain serve` (stdio transport). To make it
-accessible from other devices and AI clients, you need an HTTP wrapper and
-a public tunnel. Here are your options.
+accessible from other devices and AI clients, run `gbrain serve --http`
+(built-in HTTP transport with bearer auth, Postgres-only ... see
+[DEPLOY.md](DEPLOY.md)) behind a public tunnel. Here are your tunnel options.
 
 ## ngrok (recommended)
 
@@ -13,8 +14,9 @@ a public tunnel. Here are your options.
 # 1. Install ngrok
 brew install ngrok
 
-# 2. Start your MCP server (behind an HTTP wrapper)
-# See docs/mcp/DEPLOY.md for the server setup
+# 2. Start the built-in HTTP transport
+gbrain serve --http --port 8787
+# See docs/mcp/DEPLOY.md for token setup
 
 # 3. Expose via ngrok
 ngrok http 8787 --url your-brain.ngrok.app
@@ -59,6 +61,7 @@ Both run Bun natively. No bundling, no Deno, no cold start, no timeout limits.
 | All 30 operations | Yes | Yes | Yes |
 | Setup time | 5 min | 10 min | 15 min |
 
-**Note:** `gbrain serve --http` (built-in HTTP transport) is planned but not yet
-implemented. Currently, remote MCP requires a custom HTTP wrapper around `gbrain serve`.
-See [DEPLOY.md](DEPLOY.md) for details.
+**Note:** `gbrain serve --http` is the built-in HTTP transport (v0.22.7+). Bearer auth
+against the `access_tokens` table, default-deny CORS, two-bucket rate limit, body cap,
+per-request audit log. Postgres-only by design (PGLite is local-only). See
+[DEPLOY.md](DEPLOY.md) and [SECURITY.md](../../SECURITY.md) for env vars and tunables.

@@ -113,8 +113,8 @@ export async function enrichEntity(
   let timelineAdded = false;
   try {
     await engine.addTimelineEntry(slug, {
-      date: new Date().toISOString().split('T')[0],
-      content: `Referenced in [${request.sourceSlug}](${request.sourceSlug}) — ${request.context}`,
+      date: new Date().toISOString().split('T')[0] ?? '',
+      summary: `Referenced in [${request.sourceSlug}](${request.sourceSlug}) — ${request.context}`,
       source: request.sourceSlug,
     });
     timelineAdded = true;
@@ -146,11 +146,13 @@ export async function enrichEntity(
 
 /**
  * Enrich multiple entities with throttling between each.
+ * config.onProgress is called after each entity so callers can stream
+ * progress to a reporter (CLI) or job.updateProgress (Minion).
  */
 export async function enrichEntities(
   engine: BrainEngine,
   requests: EnrichmentRequest[],
-  config?: { throttle?: boolean },
+  config?: { throttle?: boolean; onProgress?: (done: number, total: number, name: string) => void },
 ): Promise<EnrichmentResult[]> {
   const results: EnrichmentResult[] = [];
   for (const req of requests) {
@@ -159,6 +161,7 @@ export async function enrichEntities(
     }
     const result = await enrichEntity(engine, req);
     results.push(result);
+    config?.onProgress?.(results.length, requests.length, req.entityName);
   }
   return results;
 }

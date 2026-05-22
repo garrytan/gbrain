@@ -740,11 +740,10 @@ async function main() {
 
   const output = md.join('\n');
   console.log(output);
-
-  const fs = require('fs');
-  fs.mkdirSync('docs/benchmarks', { recursive: true });
-  fs.writeFileSync(`docs/benchmarks/${date}.md`, output);
-  console.log(`\nWritten to docs/benchmarks/${date}.md`);
+  // Note: this benchmark used to write to docs/benchmarks/{date}.md, but
+  // docs/benchmarks/ is now consolidated into BrainBench v1 (one file per
+  // dated benchmark run). Output goes to stdout only; redirect if you want
+  // to save it.
 
   await engine.disconnect();
 }

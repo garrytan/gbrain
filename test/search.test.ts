@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { rrfFusion, cosineSimilarity } from '../src/core/search/hybrid.ts';
+import { rrfFusion, cosineSimilarity, applyBacklinkBoost } from '../src/core/search/hybrid.ts';
 import type { SearchResult } from '../src/core/types.ts';
 
 function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -188,5 +188,54 @@ describe('CJK word count in expansion', () => {
     expect(hasCJK).toBe(true);
     const wordCount = query.replace(/\s/g, '').length;
     expect(wordCount).toBe(6); // "AI向量搜索" = 6 chars
+  });
+});
+
+describe('applyBacklinkBoost (v0.10.1)', () => {
+  test('zero backlinks: no change to score', () => {
+    const results: SearchResult[] = [makeResult({ slug: 'a', score: 1.0 })];
+    applyBacklinkBoost(results, new Map());
+    expect(results[0].score).toBe(1.0);
+  });
+
+  test('positive backlinks boost score by formula (1 + 0.05 * log(1 + count))', () => {
+    const results: SearchResult[] = [makeResult({ slug: 'popular', score: 1.0 })];
+    applyBacklinkBoost(results, new Map([['popular', 10]]));
+    // 1.0 * (1 + 0.05 * log(11)) ≈ 1.0 * 1.1199
+    const expected = 1.0 * (1 + 0.05 * Math.log(11));
+    expect(results[0].score).toBeCloseTo(expected, 4);
+  });
+
+  test('higher count = larger boost (log scaling)', () => {
+    const a: SearchResult[] = [makeResult({ slug: 'a', score: 1.0 })];
+    const b: SearchResult[] = [makeResult({ slug: 'b', score: 1.0 })];
+    applyBacklinkBoost(a, new Map([['a', 1]]));
+    applyBacklinkBoost(b, new Map([['b', 100]]));
+    expect(b[0].score).toBeGreaterThan(a[0].score);
+  });
+
+  test('mutates results in place (no return value)', () => {
+    const results: SearchResult[] = [makeResult({ slug: 'x', score: 1.0 })];
+    const ret = applyBacklinkBoost(results, new Map([['x', 5]]));
+    expect(ret).toBeUndefined();
+    expect(results[0].score).toBeGreaterThan(1.0);
+  });
+
+  test('slug not in counts map: no boost', () => {
+    const results: SearchResult[] = [makeResult({ slug: 'unknown', score: 0.5 })];
+    applyBacklinkBoost(results, new Map([['other', 100]]));
+    expect(results[0].score).toBe(0.5);
+  });
+
+  test('multiple results with mixed counts: each scored independently', () => {
+    const results: SearchResult[] = [
+      makeResult({ slug: 'a', score: 1.0 }),
+      makeResult({ slug: 'b', score: 1.0 }),
+      makeResult({ slug: 'c', score: 1.0 }),
+    ];
+    applyBacklinkBoost(results, new Map([['a', 0], ['b', 5], ['c', 50]]));
+    expect(results[0].score).toBe(1.0);
+    expect(results[1].score).toBeGreaterThan(1.0);
+    expect(results[2].score).toBeGreaterThan(results[1].score);
   });
 });

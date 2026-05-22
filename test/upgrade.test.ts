@@ -72,3 +72,26 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(source).not.toContain('npm upgrade');
   });
 });
+
+describe('post-upgrade behavior (post v0.12.0 merge)', () => {
+  // The earlier --execute / --yes / auto_execute tests were removed when the
+  // master merge replaced the markdown-driven runPostUpgrade with the TS
+  // migration registry + apply-migrations orchestrator. The new contract:
+  //   - Prints feature pitches for migrations newer than the prior binary
+  //     (via the TS registry, not skills/migrations/*.md).
+  //   - Always invokes `apply-migrations --yes` (idempotent; no-op when
+  //     nothing is pending).
+  //   - --help still prints usage.
+
+  test('--help prints usage', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'post-upgrade', '--help'], {
+      cwd: new URL('..', import.meta.url).pathname,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('Usage: gbrain post-upgrade');
+  });
+});

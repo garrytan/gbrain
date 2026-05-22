@@ -8,12 +8,12 @@
  */
 
 import { createEngine } from '../core/engine-factory.ts';
-import { loadConfig, saveConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
+import { loadConfig, saveConfig, toEngineConfig, gbrainPath, type GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
-import { homedir } from 'os';
-import { join } from 'path';
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
+import { createProgress } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -46,7 +46,7 @@ function parseArgs(args: string[]): MigrateOpts {
 }
 
 function getManifestPath(): string {
-  return join(homedir(), '.gbrain', 'migrate-manifest.json');
+  return gbrainPath('migrate-manifest.json');
 }
 
 interface MigrateManifest {
@@ -97,7 +97,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       process.exit(1);
     }
   } else {
-    targetConfig.database_path = opts.targetPath || join(homedir(), '.gbrain', 'brain.pglite');
+    targetConfig.database_path = opts.targetPath || gbrainPath('brain.pglite');
   }
 
   // Connect to target
@@ -145,6 +145,9 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   const pagesToMigrate = allPages.filter(p => !completedSet.has(p.slug));
 
   console.log(`Migrating ${pagesToMigrate.length} pages (${allPages.length} total, ${completedSet.size} already done)...`);
+
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('migrate.copy_pages', pagesToMigrate.length);
 
   let migrated = 0;
   for (const page of pagesToMigrate) {
@@ -203,20 +206,21 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     manifest!.completed_slugs.push(page.slug);
     saveManifest(manifest!);
     migrated++;
-
-    if (migrated % 50 === 0 || migrated === pagesToMigrate.length) {
-      console.log(`  Progress: ${migrated}/${pagesToMigrate.length} pages`);
-    }
+    progress.tick(1, page.slug);
   }
+  progress.finish();
 
   // Copy links (after all pages exist in target)
   console.log('Copying links...');
+  progress.start('migrate.copy_links', allPages.length);
   for (const page of allPages) {
     const links = await sourceEngine.getLinks(page.slug);
     for (const link of links) {
       await targetEngine.addLink(link.from_slug, link.to_slug, link.context, link.link_type);
     }
+    progress.tick(1);
   }
+  progress.finish();
 
   // Copy config (selective)
   const configKeys = ['embedding_model', 'embedding_dimensions', 'chunk_strategy'];
@@ -236,11 +240,64 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
 
   // Clean up
   clearManifest();
-  await targetEngine.disconnect();
 
   console.log(`\nMigration complete. ${migrated} pages transferred.`);
   console.log(`Config updated to engine: ${opts.targetEngine}`);
   if (config.engine === 'pglite' && config.database_path) {
     console.log(`Original PGLite brain preserved at ${config.database_path} (backup).`);
   }
+
+  // Post-migrate verification: confirm the target is healthy before we
+  // leave the user. Catches incomplete copies, schema drift, and missing
+  // embeddings immediately instead of on next CLI use. Non-fatal — prints
+  // warnings and keeps going so the user sees the full picture.
+  console.log('\nVerifying target...');
+  try {
+    await verifyTarget(targetEngine, sourceStats.page_count);
+  } catch (e) {
+    console.warn(`  Verification could not complete: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  await targetEngine.disconnect();
+}
+
+/**
+ * Lightweight doctor-style verify run against the migrated target.
+ * Prints a small table of signals; does not exit. Callers own engine
+ * lifecycle.
+ */
+async function verifyTarget(engine: BrainEngine, expectedPages: number): Promise<void> {
+  const stats = await engine.getStats();
+  if (stats.page_count === expectedPages) {
+    console.log(`  ok  pages: ${stats.page_count} (matches source)`);
+  } else {
+    console.warn(`  WARN pages: ${stats.page_count} (source had ${expectedPages})`);
+  }
+
+  try {
+    const health = await engine.getHealth();
+    const pct = (health.embed_coverage * 100).toFixed(0);
+    if (health.embed_coverage >= 0.9) {
+      console.log(`  ok  embeddings: ${pct}% coverage, ${health.missing_embeddings} missing`);
+    } else {
+      console.warn(`  WARN embeddings: ${pct}% coverage, ${health.missing_embeddings} missing. Run: gbrain embed --stale`);
+    }
+  } catch (e) {
+    console.warn(`  WARN embeddings: could not measure (${e instanceof Error ? e.message : String(e)})`);
+  }
+
+  try {
+    const version = await engine.getConfig('version');
+    const { LATEST_VERSION } = await import('../core/migrate.ts');
+    const schemaVersion = parseInt(version || '0', 10);
+    if (schemaVersion >= LATEST_VERSION) {
+      console.log(`  ok  schema: version ${schemaVersion}`);
+    } else {
+      console.warn(`  WARN schema: version ${schemaVersion} (latest: ${LATEST_VERSION}). Run: gbrain apply-migrations --yes`);
+    }
+  } catch {
+    console.warn('  WARN schema: version could not be read');
+  }
+
+  console.log('  Full health check: gbrain doctor');
 }

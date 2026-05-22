@@ -44,7 +44,10 @@ jobs:
   tier2:
     name: Tier 2 (LLM Skills)
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Runs on every push/PR now (promoted from schedule-only in v0.19.0).
+    # Tier 1 must pass first; Tier 2 uses OPENAI_API_KEY + ANTHROPIC_API_KEY
+    # from repo/org secrets. Nightly + manual triggers still supported via
+    # the workflow-level `on:` list.
     needs: tier1
     services:
       postgres:

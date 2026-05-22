@@ -102,7 +102,7 @@ beforeAll(async () => {
     },
   ];
   await engine.upsertChunks('concepts/ai-philosophy', aiChunks);
-});
+}, 60_000);
 
 afterAll(async () => {
   await engine.disconnect();

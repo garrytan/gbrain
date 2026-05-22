@@ -1,20 +1,30 @@
 #!/usr/bin/env bun
 /**
- * GBrain token management — standalone script, no gbrain CLI dependency.
+ * GBrain token management.
  *
- * Usage:
+ * Wired into the CLI as of v0.22.5:
+ *   gbrain auth create "claude-desktop"
+ *   gbrain auth list
+ *   gbrain auth revoke "claude-desktop"
+ *   gbrain auth test <url> --token <token>
+ *
+ * Also runs standalone (no compiled binary required):
  *   DATABASE_URL=... bun run src/commands/auth.ts create "claude-desktop"
- *   DATABASE_URL=... bun run src/commands/auth.ts list
- *   DATABASE_URL=... bun run src/commands/auth.ts revoke "claude-desktop"
- *   DATABASE_URL=... bun run src/commands/auth.ts test <url> --token <token>
+ *
+ * Both paths require DATABASE_URL or GBRAIN_DATABASE_URL (except `test`,
+ * which only hits the remote URL and doesn't need a local DB).
  */
 import postgres from 'postgres';
 import { createHash, randomBytes } from 'crypto';
+import { PHASE_4B_TOKEN_PRESETS, VALID_SCOPES, validateScopes, type Scope } from '../core/scopes.ts';
 
-const DATABASE_URL = process.env.DATABASE_URL || process.env.GBRAIN_DATABASE_URL;
-if (!DATABASE_URL && process.argv[2] !== 'test') {
-  console.error('Set DATABASE_URL or GBRAIN_DATABASE_URL environment variable.');
-  process.exit(1);
+function getDatabaseUrl(requireDb: boolean): string | undefined {
+  const url = process.env.DATABASE_URL || process.env.GBRAIN_DATABASE_URL;
+  if (!url && requireDb) {
+    console.error('Set DATABASE_URL or GBRAIN_DATABASE_URL environment variable.');
+    process.exit(1);
+  }
+  return url;
 }
 
 function hashToken(token: string): string {
@@ -25,19 +35,48 @@ function generateToken(): string {
   return 'gbrain_' + randomBytes(32).toString('hex');
 }
 
-async function create(name: string) {
-  if (!name) { console.error('Usage: auth create <name>'); process.exit(1); }
-  const sql = postgres(DATABASE_URL!);
+function parseCreateScopes(name: string, args: string[]): Scope[] {
+  if (args.includes('--admin-all')) {
+    return [...VALID_SCOPES];
+  }
+
+  const explicit: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === '--scope' || args[i] === '--scopes') && args[i + 1]) {
+      explicit.push(...args[i + 1].split(/[\s,]+/).map(s => s.trim()).filter(Boolean));
+      i += 1;
+    }
+  }
+
+  if (explicit.length > 0) return validateScopes(explicit);
+
+  const preset = PHASE_4B_TOKEN_PRESETS[name];
+  if (preset) return preset;
+
+  throw new Error(`Refusing to create unscoped token "${name}". Pass --scope <scope> (repeatable), --admin-all, or use a Phase 4B preset name. Valid scopes: ${VALID_SCOPES.join(', ')}`);
+}
+
+async function create(name: string, args: string[] = []) {
+  if (!name) { console.error('Usage: auth create <name> --scope pages:read [--scope chunks:read]'); process.exit(1); }
+  let scopes: Scope[];
+  try {
+    scopes = parseCreateScopes(name, args);
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  }
+  const sql = postgres(getDatabaseUrl(true)!);
   const token = generateToken();
   const hash = hashToken(token);
 
   try {
     await sql`
-      INSERT INTO access_tokens (name, token_hash)
-      VALUES (${name}, ${hash})
+      INSERT INTO access_tokens (name, token_hash, scopes)
+      VALUES (${name}, ${hash}, ${scopes})
     `;
     console.log(`Token created for "${name}":\n`);
     console.log(`  ${token}\n`);
+    console.log(`Scopes: ${scopes.join(', ')}`);
     console.log('Save this token — it will not be shown again.');
     console.log(`Revoke with: bun run src/commands/auth.ts revoke "${name}"`);
   } catch (e: any) {
@@ -53,10 +92,10 @@ async function create(name: string) {
 }
 
 async function list() {
-  const sql = postgres(DATABASE_URL!);
+  const sql = postgres(getDatabaseUrl(true)!);
   try {
     const rows = await sql`
-      SELECT name, created_at, last_used_at, revoked_at
+      SELECT name, scopes, created_at, last_used_at, revoked_at
       FROM access_tokens
       ORDER BY created_at DESC
     `;
@@ -64,14 +103,15 @@ async function list() {
       console.log('No tokens found. Create one: bun run src/commands/auth.ts create "my-client"');
       return;
     }
-    console.log('Name                  Created              Last Used            Status');
-    console.log('─'.repeat(80));
+    console.log('Name                  Created              Last Used            Status    Scopes');
+    console.log('─'.repeat(120));
     for (const r of rows) {
       const name = (r.name as string).padEnd(20);
       const created = new Date(r.created_at as string).toISOString().slice(0, 19);
       const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
-      const status = r.revoked_at ? 'REVOKED' : 'active';
-      console.log(`${name}  ${created}  ${lastUsed}  ${status}`);
+      const status = (r.revoked_at ? 'REVOKED' : 'active').padEnd(8);
+      const scopes = Array.isArray(r.scopes) && r.scopes.length > 0 ? r.scopes.join(',') : 'legacy:read,write,admin';
+      console.log(`${name}  ${created}  ${lastUsed}  ${status}  ${scopes}`);
     }
   } finally {
     await sql.end();
@@ -80,7 +120,7 @@ async function list() {
 
 async function revoke(name: string) {
   if (!name) { console.error('Usage: auth revoke <name>'); process.exit(1); }
-  const sql = postgres(DATABASE_URL!);
+  const sql = postgres(getDatabaseUrl(true)!);
   try {
     const result = await sql`
       UPDATE access_tokens SET revoked_at = now()
@@ -216,26 +256,104 @@ async function test(url: string, token: string) {
   console.log(`\n🧠 Your brain is live! (${elapsed}s)`);
 }
 
-// CLI dispatch
-const [cmd, ...args] = process.argv.slice(2);
-switch (cmd) {
-  case 'create': await create(args[0]); break;
-  case 'list': await list(); break;
-  case 'revoke': await revoke(args[0]); break;
-  case 'test': {
-    const tokenIdx = args.indexOf('--token');
-    const url = args.find(a => !a.startsWith('--') && a !== args[tokenIdx + 1]);
-    const token = tokenIdx >= 0 ? args[tokenIdx + 1] : '';
-    await test(url || '', token || '');
-    break;
+async function revokeClient(clientId: string) {
+  if (!clientId) {
+    console.error('Usage: auth revoke-client <client_id>');
+    process.exit(1);
   }
-  default:
-    console.log(`GBrain Token Management
+  const sql = postgres(getDatabaseUrl(true)!);
+  try {
+    // Atomic single-statement delete: no race window between count + delete.
+    // Postgres cascades to oauth_tokens and oauth_codes (FK ON DELETE CASCADE
+    // declared in src/schema.sql:370,382) before the transaction commits.
+    const rows = await sql`
+      DELETE FROM oauth_clients WHERE client_id = ${clientId}
+      RETURNING client_id, client_name
+    `;
+    if (rows.length === 0) {
+      console.error(`No client found with id "${clientId}"`);
+      process.exit(1);
+    }
+    console.log(`OAuth client revoked: "${rows[0].client_name}" (${clientId})`);
+    console.log('Tokens and authorization codes purged via cascade.');
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  } finally {
+    await sql.end();
+  }
+}
+
+async function registerClient(name: string, args: string[]) {
+  if (!name) { console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S]'); process.exit(1); }
+  const grantsIdx = args.indexOf('--grant-types');
+  const scopesIdx = args.indexOf('--scopes');
+  const grantTypes = grantsIdx >= 0 && args[grantsIdx + 1]
+    ? args[grantsIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
+    : ['client_credentials'];
+  const scopes = scopesIdx >= 0 && args[scopesIdx + 1] ? args[scopesIdx + 1] : 'read';
+
+  const sql = postgres(getDatabaseUrl(true)!);
+  try {
+    const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
+    const provider = new GBrainOAuthProvider({ sql: sql as any });
+    const { clientId, clientSecret } = await provider.registerClientManual(
+      name, grantTypes, scopes, [],
+    );
+    console.log(`OAuth client registered: "${name}"\n`);
+    console.log(`  Client ID:     ${clientId}`);
+    console.log(`  Client Secret: ${clientSecret}\n`);
+    console.log(`  Grant types: ${grantTypes.join(', ')}`);
+    console.log(`  Scopes:      ${scopes}\n`);
+    console.log('Save the client secret — it will not be shown again.');
+    console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  } finally {
+    await sql.end();
+  }
+}
+
+/**
+ * Entry point for the `gbrain auth` CLI subcommand. Also reused by the
+ * direct-script path (see bottom of file) so `bun run src/commands/auth.ts`
+ * still works.
+ */
+export async function runAuth(args: string[]): Promise<void> {
+  const [cmd, ...rest] = args;
+  switch (cmd) {
+    case 'create': await create(rest[0], rest.slice(1)); return;
+    case 'list': await list(); return;
+    case 'revoke': await revoke(rest[0]); return;
+    case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
+    case 'revoke-client': await revokeClient(rest[0]); return;
+    case 'test': {
+      const tokenIdx = rest.indexOf('--token');
+      const url = rest.find(a => !a.startsWith('--') && a !== rest[tokenIdx + 1]);
+      const token = tokenIdx >= 0 ? rest[tokenIdx + 1] : '';
+      await test(url || '', token || '');
+      return;
+    }
+    default:
+      console.log(`GBrain Token Management
 
 Usage:
-  bun run src/commands/auth.ts create <name>      Create a new access token
-  bun run src/commands/auth.ts list               List all tokens
-  bun run src/commands/auth.ts revoke <name>       Revoke a token
-  bun run src/commands/auth.ts test <url> --token <token>  Smoke test a remote MCP server
+  gbrain auth create <name> [--scope S] [--admin-all]     Create a scoped bearer token
+     Phase 4B preset names also work: agent-cto-ryde, agent-backend-ryde, agent-frontend-ryde, agent-ios-ryde, agent-head-of-product-ryde, orchestrator-ryde
+  gbrain auth list                                         List all tokens
+  gbrain auth revoke <name>                                Revoke a legacy token
+  gbrain auth register-client <name> [options]            Register an OAuth 2.1 client
+     --grant-types <client_credentials,authorization_code> (default: client_credentials)
+     --scopes "<read write admin>"                         (default: read)
+  gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
+  gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);
+  }
+}
+
+// Direct-script entry point — only runs when this file is invoked as the main module
+// (e.g. `bun run src/commands/auth.ts ...`). When imported by cli.ts, this block is skipped.
+if (import.meta.main) {
+  await runAuth(process.argv.slice(2));
 }

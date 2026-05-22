@@ -252,7 +252,7 @@ title: Chunked
 
 This is compiled truth content that should be chunked as compiled_truth source.
 
----
+<!-- timeline -->
 
 - 2024-01-01: This is timeline content that should be chunked as timeline source.
 `);

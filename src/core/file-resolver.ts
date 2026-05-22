@@ -119,18 +119,18 @@ export async function resolveFile(
 /** Parse v0.9+ .redirect.yaml pointer */
 export function parseRedirectYaml(path: string): RedirectYaml {
   const content = readFileSync(path, 'utf-8');
-  return parseYaml(content) as RedirectYaml;
+  return parseYaml(content) as unknown as RedirectYaml;
 }
 
 /** Parse legacy v0.8 .redirect breadcrumb */
 export function parseRedirect(path: string): RedirectInfo {
   const content = readFileSync(path, 'utf-8');
-  return parseYaml(content) as RedirectInfo;
+  return parseYaml(content) as unknown as RedirectInfo;
 }
 
 export function parseMarker(path: string): MarkerInfo {
   const content = readFileSync(path, 'utf-8');
-  return parseYaml(content) as MarkerInfo;
+  return parseYaml(content) as unknown as MarkerInfo;
 }
 
 /** Human-readable file size */

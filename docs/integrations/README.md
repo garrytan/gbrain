@@ -62,8 +62,13 @@ secrets:                        # API keys and credentials needed
   - name: TWILIO_ACCOUNT_SID
     description: Twilio account SID
     where: https://console.twilio.com    # exact URL to get this key
-health_checks:                  # commands to verify the integration is working
-  - "curl -sf https://api.twilio.com/..."
+health_checks:                  # typed DSL to verify the integration is working
+  - type: http
+    url: "https://api.twilio.com/2010-04-01/Accounts/$TWILIO_ACCOUNT_SID.json"
+    auth: basic
+    auth_user: "$TWILIO_ACCOUNT_SID"
+    auth_token: "$TWILIO_AUTH_TOKEN"
+    label: "Twilio account"
 setup_time: 30 min              # estimated time to complete setup
 ---
 
@@ -73,6 +78,16 @@ setup_time: 30 min              # estimated time to complete setup
 **The recipe IS the installer.** Your agent (OpenClaw, Hermes, Claude Code) reads
 the markdown body and executes the setup steps. It asks you for API keys, validates
 each one, configures the integration, and runs a smoke test.
+
+### Recipe trust boundary
+
+Only recipes shipped inside the gbrain package itself (the `recipes/` directory in
+a source install, or the global install copy) are trusted. Recipes discovered at
+runtime from `$GBRAIN_RECIPES_DIR` or a cwd-local `./recipes/` are marked untrusted:
+they cannot run `command` health checks, cannot run `http` health checks (SSRF
+defense), and cannot use the deprecated string health_check form. Untrusted recipes
+can still use `env_exists` and `any_of` compositions. To ship a recipe that runs
+live checks, contribute it upstream so it becomes package-bundled.
 
 ## The Deterministic Collector Pattern
 

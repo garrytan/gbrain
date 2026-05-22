@@ -12,6 +12,15 @@
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
+import { findResolverFile, RESOLVER_FILENAMES_LABEL } from './resolver-filenames.ts';
+import { loadOrDeriveManifest } from './skill-manifest.ts';
+import {
+  indexResolverTriggers,
+  lintRoutingFixtures,
+  loadRoutingFixtures,
+  runRoutingEval,
+} from './routing-eval.ts';
+import { runFilingAudit } from './filing-audit.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,7 +34,23 @@ export interface ResolvableFix {
 }
 
 export interface ResolvableIssue {
-  type: 'unreachable' | 'mece_overlap' | 'mece_gap' | 'dry_violation' | 'missing_file' | 'orphan_trigger';
+  type:
+    | 'unreachable'
+    | 'mece_overlap'
+    | 'mece_gap'
+    | 'dry_violation'
+    | 'missing_file'
+    | 'orphan_trigger'
+    // Check 5 (W2): routing eval results surfaced as advisories.
+    | 'routing_miss'
+    | 'routing_ambiguous'
+    | 'routing_false_positive'
+    | 'routing_fixture_lint'
+    // Check 6 (W3): brain-filing audit findings.
+    | 'filing_missing_writes_to'
+    | 'filing_unknown_directory'
+    // D-CX-9: scaffolded skill still carries SKILLIFY_STUB sentinel.
+    | 'skillify_stub_unreplaced';
   severity: 'error' | 'warning';
   skill: string;
   message: string;
@@ -34,7 +59,27 @@ export interface ResolvableIssue {
 }
 
 export interface ResolvableReport {
+  /**
+   * True when there are no error-severity issues. Warnings do NOT flip `ok`.
+   * Callers that want strict-mode (warnings fail CI too) should gate on
+   * `errors.length === 0 && warnings.length === 0`.
+   */
   ok: boolean;
+  /**
+   * Error-severity issues only. Determines `ok` and default exit codes.
+   * A subset of `issues[]`.
+   */
+  errors: ResolvableIssue[];
+  /**
+   * Warning-severity issues. Informational by default; `--strict` promotes.
+   * A subset of `issues[]`.
+   */
+  warnings: ResolvableIssue[];
+  /**
+   * @deprecated Use `errors` and `warnings` separately. Kept for one-release
+   * backwards compatibility; will be removed in v0.18. Equivalent to
+   * `[...errors, ...warnings]`.
+   */
   issues: ResolvableIssue[];
   summary: {
     total_skills: number;
@@ -111,17 +156,10 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
   return entries;
 }
 
-/** Extract skill names from manifest.json */
-function loadManifest(skillsDir: string): Array<{ name: string; path: string }> {
-  const manifestPath = join(skillsDir, 'manifest.json');
-  if (!existsSync(manifestPath)) return [];
-  try {
-    const content = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-    return content.skills || [];
-  } catch {
-    return [];
-  }
-}
+// Manifest loading is now delegated to src/core/skill-manifest.ts
+// (loadOrDeriveManifest). That module auto-derives from walking
+// `skillsDir/*/SKILL.md` when manifest.json is missing — the scenario
+// needed for AGENTS.md-only OpenClaw deployments. See D-CX-12 / F-ENG-1.
 
 /** Simple YAML frontmatter parser — extracts triggers array if present. */
 function extractTriggers(skillContent: string): string[] {
@@ -136,12 +174,66 @@ function extractTriggers(skillContent: string): string[] {
     .filter(Boolean);
 }
 
-/** Scan for inlined cross-cutting rules that should reference convention files. */
-const CROSS_CUTTING_PATTERNS = [
-  { pattern: /iron\s*law.*back-?link/i, convention: 'conventions/quality.md', label: 'Iron Law back-linking' },
-  { pattern: /citation.*format.*\[Source:/i, convention: 'conventions/quality.md', label: 'citation format rules' },
-  { pattern: /notability.*gate/i, convention: 'conventions/quality.md', label: 'notability gate' },
+/**
+ * Scan for inlined cross-cutting rules that should reference convention
+ * files. Each pattern can list multiple valid delegation targets — e.g.,
+ * notability rules live in both `conventions/quality.md` and
+ * `_brain-filing-rules.md`, and referencing either counts as delegation.
+ */
+export interface CrossCuttingPattern {
+  pattern: RegExp;
+  conventions: string[];
+  label: string;
+}
+
+export const CROSS_CUTTING_PATTERNS: CrossCuttingPattern[] = [
+  { pattern: /iron\s*law.*back-?link/i,
+    conventions: ['conventions/quality.md'],
+    label: 'Iron Law back-linking' },
+  { pattern: /citation.*format.*\[Source:/i,
+    conventions: ['conventions/quality.md'],
+    label: 'citation format rules' },
+  { pattern: /notability.*gate/i,
+    conventions: ['conventions/quality.md', '_brain-filing-rules.md'],
+    label: 'notability gate' },
 ];
+
+/** Proximity window (lines) within which a delegation reference suppresses
+ *  a DRY match. Typical skill section is 20-30 lines; 40 covers header +
+ *  section without leaking across document-length files. */
+export const DRY_PROXIMITY_LINES = 40;
+
+export interface DelegationRef {
+  convention: string; // normalized relative path, e.g., 'conventions/quality.md'
+  line: number;       // 1-indexed line number of the reference
+}
+
+/**
+ * Extract delegation references from skill content. Recognizes three shapes:
+ *   1. `> **Convention:** ... \`skills/<path>\` ...`
+ *   2. `> **Filing rule:** ... \`skills/<path>\` ...`
+ *   3. Inline backtick `\`skills/conventions/*.md\`` or
+ *      `\`skills/_brain-filing-rules.md\``
+ *
+ * Paths are normalized by stripping the leading `skills/` so they match the
+ * `conventions` field of CROSS_CUTTING_PATTERNS.
+ */
+export function extractDelegationTargets(content: string): DelegationRef[] {
+  const refs: DelegationRef[] = [];
+  const lines = content.split('\n');
+  // Match backtick-wrapped skills/ paths that point at a known delegation
+  // target. Scoped to conventions/ subtree and _brain-filing-rules.md.
+  const pathRe = /`skills\/((?:conventions\/[^`]+\.md)|(?:_brain-filing-rules\.md))`/g;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    pathRe.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = pathRe.exec(line)) !== null) {
+      refs.push({ convention: m[1], line: i + 1 });
+    }
+  }
+  return refs;
+}
 
 // ---------------------------------------------------------------------------
 // Main function
@@ -157,25 +249,34 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
   const issues: ResolvableIssue[] = [];
 
   // Load inputs
-  const resolverPath = join(skillsDir, 'RESOLVER.md');
-  if (!existsSync(resolverPath)) {
+  // Accept RESOLVER.md or AGENTS.md (W1). Also check one level up: the
+  // reference OpenClaw deployment layout places AGENTS.md at the
+  // workspace root, with skills/ below. We try skills dir first
+  // (gbrain-native), then its parent (OpenClaw-native).
+  const resolverPath =
+    findResolverFile(skillsDir) ?? findResolverFile(join(skillsDir, '..'));
+  if (!resolverPath) {
+    const suggested = join(skillsDir, 'RESOLVER.md');
+    const missingIssue: ResolvableIssue = {
+      type: 'missing_file',
+      severity: 'error',
+      skill: RESOLVER_FILENAMES_LABEL,
+      message: `${RESOLVER_FILENAMES_LABEL} not found in ${skillsDir} or its parent`,
+      action: `Create ${suggested} with skill routing tables`,
+      fix: { type: 'create_stub', file: suggested },
+    };
     return {
       ok: false,
-      issues: [{
-        type: 'missing_file',
-        severity: 'error',
-        skill: 'RESOLVER.md',
-        message: 'RESOLVER.md not found',
-        action: `Create ${resolverPath} with skill routing tables`,
-        fix: { type: 'create_stub', file: resolverPath },
-      }],
+      errors: [missingIssue],
+      warnings: [],
+      issues: [missingIssue],
       summary: { total_skills: 0, reachable: 0, unreachable: 0, overlaps: 0, gaps: 0 },
     };
   }
 
   const resolverContent = readFileSync(resolverPath, 'utf-8');
   const entries = parseResolverEntries(resolverContent);
-  const manifest = loadManifest(skillsDir);
+  const { skills: manifest } = loadOrDeriveManifest(skillsDir);
 
   // Build lookup sets
   const resolverSkillPaths = new Set(
@@ -317,24 +418,34 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
     }
   }
 
-  // 5. DRY detection — inlined cross-cutting rules
+  // 5. DRY detection — inlined cross-cutting rules.
+  // A match is suppressed when the skill references one of the pattern's
+  // accepted convention files within DRY_PROXIMITY_LINES lines of the match.
+  // This catches the common case where a skill delegates at a section
+  // header but still contains prose mentioning the rule by name.
   for (const skill of manifest) {
     const skillPath = join(skillsDir, skill.path);
     if (!existsSync(skillPath)) continue;
     try {
       const content = readFileSync(skillPath, 'utf-8');
-      for (const { pattern, convention, label } of CROSS_CUTTING_PATTERNS) {
-        if (pattern.test(content)) {
-          // Check if the skill also references the convention file
-          if (!content.includes(convention)) {
-            issues.push({
-              type: 'dry_violation',
-              severity: 'warning',
-              skill: skill.name,
-              message: `Skill '${skill.name}' inlines ${label} instead of referencing '${convention}'`,
-              action: `Replace inlined rules with a reference to '${convention}'`,
-            });
-          }
+      const delegations = extractDelegationTargets(content);
+      for (const { pattern, conventions, label } of CROSS_CUTTING_PATTERNS) {
+        const globalRe = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g');
+        const matches = [...content.matchAll(globalRe)];
+        for (const m of matches) {
+          const matchLine = content.slice(0, m.index ?? 0).split('\n').length;
+          const suppressed = delegations.some(
+            d => conventions.includes(d.convention) && Math.abs(d.line - matchLine) <= DRY_PROXIMITY_LINES
+          );
+          if (suppressed) continue;
+          issues.push({
+            type: 'dry_violation',
+            severity: 'warning',
+            skill: skill.name,
+            message: `Skill '${skill.name}' inlines ${label} instead of delegating to a convention file`,
+            action: `Replace inlined rules with a reference to one of: ${conventions.join(', ')}`,
+          });
+          break; // one issue per pattern per skill
         }
       }
     } catch {
@@ -342,8 +453,112 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
     }
   }
 
+  // Check 5 (W2, v0.17): structural routing eval. Surfaces as warnings
+  // only — routing issues are advisory. Agents running under --strict
+  // will fail on them; default runs see them as informational.
+  const loaded = loadRoutingFixtures(skillsDir);
+  if (loaded.fixtures.length > 0) {
+    const triggerIndex = indexResolverTriggers(resolverContent);
+    const lintIssues = lintRoutingFixtures(loaded.fixtures, triggerIndex);
+    for (const lint of lintIssues) {
+      issues.push({
+        type: 'routing_fixture_lint',
+        severity: 'warning',
+        skill: lint.fixture.expected_skill ?? 'unknown',
+        message: `Routing fixture lint (${lint.reason}): "${lint.fixture.intent}"`,
+        action: `Edit skills/<skill>/routing-eval.jsonl to fix: ${lint.detail}`,
+      });
+    }
+    const routingReport = runRoutingEval(resolverContent, loaded.fixtures);
+    for (const d of routingReport.details) {
+      if (d.outcome === 'pass') continue;
+      const kind =
+        d.outcome === 'missed'
+          ? 'routing_miss'
+          : d.outcome === 'ambiguous'
+            ? 'routing_ambiguous'
+            : 'routing_false_positive';
+      issues.push({
+        type: kind,
+        severity: 'warning',
+        skill: d.fixture.expected_skill ?? 'negative-case',
+        message: `Routing ${d.outcome} for intent "${d.fixture.intent}"`,
+        action: `Update routing-eval.jsonl fixture or broaden resolver triggers in RESOLVER.md (${d.note ?? 'no additional detail'})`,
+      });
+    }
+  }
+  for (const m of loaded.malformed) {
+    issues.push({
+      type: 'routing_fixture_lint',
+      severity: 'warning',
+      skill: 'routing-eval',
+      message: `Malformed routing fixture ${m.file}:${m.line}`,
+      action: `Fix the JSONL in routing-eval.jsonl at line ${m.line}: ${m.error}`,
+    });
+  }
+
+  // D-CX-9 SKILLIFY_STUB sentinel check: scan every SKILL.md + script
+  // file under skillsDir for the sentinel marker emitted by
+  // `gbrain skillify scaffold`. Presence means a scaffolded skill
+  // shipped without a real implementation — warning-severity in
+  // default mode, error-promoted under --strict via D-CX-3.
+  for (const skill of manifest) {
+    const skillDir = join(skillsDir, skill.path.replace(/\/SKILL\.md$/, ''));
+    const scriptDir = join(skillDir, 'scripts');
+    const candidates: string[] = [join(skillsDir, skill.path)];
+    if (existsSync(scriptDir)) {
+      try {
+        for (const f of readdirSync(scriptDir)) {
+          if (f.match(/\.(ts|mjs|js|py)$/)) candidates.push(join(scriptDir, f));
+        }
+      } catch {
+        // Skip unreadable script dir.
+      }
+    }
+    for (const candidate of candidates) {
+      try {
+        const content = readFileSync(candidate, 'utf-8');
+        if (content.includes('SKILLIFY_STUB: replace before running check-resolvable --strict')) {
+          issues.push({
+            type: 'skillify_stub_unreplaced',
+            severity: 'warning',
+            skill: skill.name,
+            message: `Skill '${skill.name}' still contains the SKILLIFY_STUB sentinel in ${relative(skillsDir, candidate)}`,
+            action: `Replace the SKILLIFY_STUB sentinel in ${candidate} with a real implementation or remove the file. D-CX-9 gate.`,
+          });
+          break; // one issue per skill
+        }
+      } catch {
+        // Skip unreadable file.
+      }
+    }
+  }
+
+  // Check 6 (W3, v0.17): brain-filing audit. Warning-only per
+  // D-CX-3 + D-CX-5 — does not break CI for workspaces that haven't
+  // adopted writes_pages:/writes_to: yet. Any errors in the rules
+  // doc itself surface as a single fatal-ish entry.
+  try {
+    const filingReport = runFilingAudit(skillsDir);
+    for (const issue of filingReport.issues) {
+      issues.push(issue);
+    }
+  } catch (err) {
+    issues.push({
+      type: 'filing_unknown_directory',
+      severity: 'warning',
+      skill: 'brain-filing-rules',
+      message: `_brain-filing-rules.json failed to load`,
+      action: `Fix skills/_brain-filing-rules.json: ${(err as Error).message}`,
+    });
+  }
+
+  const errors = issues.filter(i => i.severity === 'error');
+  const warnings = issues.filter(i => i.severity === 'warning');
   return {
-    ok: issues.filter(i => i.severity === 'error').length === 0,
+    ok: errors.length === 0,
+    errors,
+    warnings,
     issues,
     summary: {
       total_skills: manifest.length,
@@ -354,3 +569,7 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
     },
   };
 }
+
+// Re-export auto-fix so callers have one canonical entry point.
+export { autoFixDryViolations } from './dry-fix.ts';
+export type { AutoFixOptions, AutoFixReport, FixOutcome } from './dry-fix.ts';

@@ -1,0 +1,7 @@
+// Routing eval fixtures for skills/strategic-reading. Each intent
+// includes at least one trigger string as substring.
+{"intent":"Do a strategic reading of 'The Power Broker' against my current situation","expected_skill":"strategic-reading"}
+{"intent":"Read this through the lens of the board meeting next week and give me tactics","expected_skill":"strategic-reading"}
+{"intent":"Apply this to my problem with the launch — what to do, what to avoid, what to watch for","expected_skill":"strategic-reading"}
+{"intent":"What can I learn from this about handling a hostile gatekeeper","expected_skill":"strategic-reading"}
+{"intent":"Extract a playbook from this case study for my product launch","expected_skill":"strategic-reading"}
