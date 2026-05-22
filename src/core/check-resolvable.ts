@@ -12,6 +12,7 @@
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
+import { extractFrontmatterBlock } from './markdown.ts';
 import { findResolverFile, findAllResolverFiles, RESOLVER_FILENAMES_LABEL } from './resolver-filenames.ts';
 import { loadOrDeriveManifest } from './skill-manifest.ts';
 import {
@@ -163,9 +164,8 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
 
 /** Simple YAML frontmatter parser — extracts triggers array if present. */
 function extractTriggers(skillContent: string): string[] {
-  const fmMatch = skillContent.match(/^---\n([\s\S]*?)\n---/);
-  if (!fmMatch) return [];
-  const fm = fmMatch[1];
+  const fm = extractFrontmatterBlock(skillContent);
+  if (fm === null) return [];
   const triggersMatch = fm.match(/^triggers:\s*\n((?:\s+-\s+.+\n?)*)/m);
   if (!triggersMatch) return [];
   return triggersMatch[1]

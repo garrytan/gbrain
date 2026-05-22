@@ -354,6 +354,40 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     if (cli.forceAll) return; // both surfaces flushed
   }
 
+  const completed = loadCompletedMigrations();
+  const idx = indexCompleted(completed);
+  const plan = buildPlan(idx, installed, cli.specificMigration);
+
+  // Bug 3 — surface wedged migrations as a loud, actionable error.
+  if (plan.wedged.length > 0) {
+    for (const m of plan.wedged) {
+      console.error(
+        `\nMigration v${m.version} is WEDGED (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partials with no completion). ` +
+        `Check ~/.gbrain/upgrade-errors.jsonl for the last failure reasons, fix the underlying issue, then run:\n` +
+        `  gbrain apply-migrations --force-retry ${m.version}\n` +
+        `Then re-run \`gbrain apply-migrations --yes\`.`,
+      );
+    }
+    // Don't exit — applied/partial/pending are still worth reporting and running.
+  }
+
+  if (cli.specificMigration && plan.applied.length + plan.partial.length + plan.pending.length + plan.skippedFuture.length === 0) {
+    console.error(`No migration registered with version "${cli.specificMigration}". Run \`gbrain apply-migrations --list\` to see registered versions.`);
+    process.exit(2);
+  }
+
+  // Read-only branches: --list and --dry-run print plan/state without
+  // touching anything. Skip the schema-drift pre-flight (which opens a DB
+  // connection) — its only purpose is to warn before APPLYING; for
+  // informational commands the connect+disconnect cycle is both wasted
+  // work and a portability hazard. On Windows the PGLite WASM teardown
+  // leaks worker handles in execFileSync contexts, surfacing as a spurious
+  // exit-1 to parent processes that shell out to `apply-migrations --list`
+  // (e.g. `skillpack-check`). The PGLite-specific skip below is preserved
+  // for non-read-only paths.
+  if (cli.list) { printList(plan, installed); process.exit(0); }
+  if (cli.dryRun) { printDryRun(plan, installed); process.exit(0); }
+
   // Pre-flight: warn if schema migrations (migrate.ts) are behind.
   // apply-migrations runs orchestrator migrations only; schema migrations
   // run via connectEngine() / initSchema(). Users often expect this CLI
@@ -391,31 +425,6 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     // Non-fatal: if DB is unreachable, orchestrator migrations can still
     // run their filesystem-only phases.
   }
-
-  const completed = loadCompletedMigrations();
-  const idx = indexCompleted(completed);
-  const plan = buildPlan(idx, installed, cli.specificMigration);
-
-  // Bug 3 — surface wedged migrations as a loud, actionable error.
-  if (plan.wedged.length > 0) {
-    for (const m of plan.wedged) {
-      console.error(
-        `\nMigration v${m.version} is WEDGED (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partials with no completion). ` +
-        `Check ~/.gbrain/upgrade-errors.jsonl for the last failure reasons, fix the underlying issue, then run:\n` +
-        `  gbrain apply-migrations --force-retry ${m.version}\n` +
-        `Then re-run \`gbrain apply-migrations --yes\`.`,
-      );
-    }
-    // Don't exit — applied/partial/pending are still worth reporting and running.
-  }
-
-  if (cli.specificMigration && plan.applied.length + plan.partial.length + plan.pending.length + plan.skippedFuture.length === 0) {
-    console.error(`No migration registered with version "${cli.specificMigration}". Run \`gbrain apply-migrations --list\` to see registered versions.`);
-    process.exit(2);
-  }
-
-  if (cli.list) { printList(plan, installed); process.exit(0); }
-  if (cli.dryRun) { printDryRun(plan, installed); process.exit(0); }
 
   const toRun: Migration[] = [...plan.partial, ...plan.pending];
   if (toRun.length === 0) {

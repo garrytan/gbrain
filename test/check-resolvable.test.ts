@@ -282,6 +282,38 @@ describe("v0.22.4 regression — actual repo skills/ has 0 errors", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// CRLF tolerance — Windows-authored SKILL.md must not cause mece_gap
+// false-positives. The frontmatter parser used to anchor on literal `\n`
+// after the leading `---`, which failed silently on `\r\n`-terminated files
+// and made every skill on Windows look like it was missing a triggers: array.
+// ---------------------------------------------------------------------------
+describe("checkResolvable — CRLF line endings", () => {
+  let dir: string;
+  afterEachCleanup(() => rmSync(dir, { recursive: true, force: true }));
+
+  test("does not flag mece_gap for skills with CRLF-terminated frontmatter", () => {
+    const lfBody = `---\nname: alpha\ndescription: alpha skill\ntriggers:\n  - "alpha trigger"\n---\n\n# Alpha\n`;
+    dir = mkdtempSync(join(tmpdir(), "gbrain-crlf-"));
+    writeFileSync(
+      join(dir, "RESOLVER.md"),
+      `## Test\n| Trigger | Skill |\n|-----|-----|\n| "alpha trigger" | \`skills/alpha/SKILL.md\` |\n`,
+    );
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({ skills: [{ name: "alpha", path: "alpha/SKILL.md" }] }, null, 2),
+    );
+    mkdirSync(join(dir, "alpha"), { recursive: true });
+    // Convert the otherwise-valid SKILL.md to CRLF — this is the actual
+    // on-disk shape produced by editors on Windows.
+    writeFileSync(join(dir, "alpha", "SKILL.md"), lfBody.replace(/\n/g, "\r\n"));
+
+    const report = checkResolvable(dir);
+    const gaps = report.issues.filter(i => i.type === "mece_gap");
+    expect(gaps).toEqual([]);
+  });
+});
+
 // bun:test has no beforeEach/afterEach at module scope cleanly interacting
 // with closures; a small helper keeps cleanup readable and per-test.
 function afterEachCleanup(fn: () => void) {

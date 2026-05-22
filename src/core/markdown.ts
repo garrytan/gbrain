@@ -3,6 +3,24 @@ import { safeLoad as yamlSafeLoad } from 'js-yaml';
 import type { PageType } from './types.ts';
 import { slugifyPath } from './sync.ts';
 
+/**
+ * Extract the raw YAML frontmatter body between leading `---` fences.
+ *
+ * Returns the body string (LF-normalized) or `null` when no frontmatter is
+ * present. Tolerant of CRLF line endings — input is normalized before
+ * matching so the same call works on files authored on Windows.
+ *
+ * Use this when you only need to run a few targeted regexes against the
+ * frontmatter (e.g. extracting `name:` or `triggers:`); prefer
+ * `parseMarkdown` when you need the full body + timeline split + gray-matter
+ * YAML parsing, and `parseSkillFrontmatter` for SKILL.md-specific fields.
+ */
+export function extractFrontmatterBlock(content: string): string | null {
+  const normalized = content.replace(/\r\n/g, '\n');
+  const match = normalized.match(/^---\n([\s\S]*?)\n---/);
+  return match ? match[1] : null;
+}
+
 export type ParseValidationCode =
   | 'MISSING_OPEN'
   | 'MISSING_CLOSE'

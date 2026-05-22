@@ -175,6 +175,17 @@ describe('enumerateBundle (D-CX-10 dependency closure)', () => {
     expect(targets.some(t => t.startsWith('alpha/'))).toBe(true);
     expect(targets.some(t => t.startsWith('beta/'))).toBe(true);
   });
+  it('emits forward-slash relTarget paths on every platform', () => {
+    // relTarget is a portable bundle key consumed by string-matching
+    // callers (managed-block writer, install-plan diffs); Windows-style
+    // backslashes silently break them. This test fails fast if anyone
+    // re-introduces `path.join` for relTarget construction.
+    const { gbrainRoot } = scratchGbrain();
+    const m = loadBundleManifest(gbrainRoot);
+    const entries = enumerateBundle({ gbrainRoot, manifest: m });
+    const offending = entries.filter(e => e.relTarget.includes('\\'));
+    expect(offending).toEqual([]);
+  });
 });
 
 describe('buildManagedBlock + updateManagedBlock', () => {

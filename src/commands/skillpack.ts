@@ -29,6 +29,7 @@ import { runMigrateFence } from '../core/skillpack/migrate-fence.ts';
 import { runScrubLegacy } from '../core/skillpack/scrub-legacy.ts';
 import { runHarvest, HarvestError } from '../core/skillpack/harvest.ts';
 import { autoDetectSkillsDir } from '../core/repo-root.ts';
+import { extractFrontmatterBlock } from '../core/markdown.ts';
 import {
   RemoteSourceError,
   classifySpec,
@@ -216,9 +217,9 @@ async function cmdList(args: string[]): Promise<void> {
       let description: string | null = null;
       if (existsSync(skillMd)) {
         const body = readFileSync(skillMd, 'utf-8');
-        const fm = body.match(/^---\n([\s\S]*?)\n---/);
-        if (fm) {
-          const descMatch = fm[1].match(/^description:\s*["']?([^\n"']+)/m);
+        const fm = extractFrontmatterBlock(body);
+        if (fm !== null) {
+          const descMatch = fm.match(/^description:\s*["']?([^\n"']+)/m);
           if (descMatch) description = descMatch[1].trim();
         }
       }

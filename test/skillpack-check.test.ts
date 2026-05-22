@@ -26,7 +26,11 @@ let tmp: string;
 let origHome: string | undefined;
 
 function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
-  const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
+  // HOME alone doesn't redirect gbrain config on Windows: os.homedir() reads
+  // USERPROFILE on Win32. GBRAIN_HOME is the platform-neutral override that
+  // configDir() honors uniformly — set both so the test fixture isolates
+  // from the real user's `.gbrain/` directory on every platform.
+  const env = { ...process.env, HOME: tmp, GBRAIN_HOME: tmp } as Record<string, string | undefined>;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
   try {
@@ -56,6 +60,12 @@ afterEach(() => {
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
+// Each test below spawns `bun run cli.ts skillpack-check`, which itself
+// spawns child `doctor` + `apply-migrations --list` processes. On Windows
+// subprocess cold-start is ~600ms each; the default 5s bun:test timeout
+// is too tight for the chained spawns. 30s leaves headroom for slower CI.
+const SUBPROCESS_TIMEOUT = 30_000;
+
 describe('gbrain skillpack-check', () => {
   test('healthy fresh install → exit 0, healthy:true, empty actions', () => {
     const result = run(['skillpack-check']);
@@ -66,7 +76,7 @@ describe('gbrain skillpack-check', () => {
     expect(report.summary).toBe('gbrain skillpack healthy');
     expect(report.version).toBeTruthy();
     expect(report.ts).toBeTruthy();
-  });
+  }, SUBPROCESS_TIMEOUT);
 
   test('half-migrated (partial completed.jsonl) → exit 1, apply-migrations in actions', () => {
     const migrationsDir = join(tmp, '.gbrain', 'migrations');
@@ -88,7 +98,7 @@ describe('gbrain skillpack-check', () => {
     const minions = doctorChecks.find(c => c.name === 'minions_migration');
     expect(minions).toBeDefined();
     expect(minions!.status).toBe('fail');
-  });
+  }, SUBPROCESS_TIMEOUT);
 
   test('--quiet → no stdout, same exit code', () => {
     // Healthy path quiet
@@ -106,7 +116,7 @@ describe('gbrain skillpack-check', () => {
     const broken = run(['skillpack-check', '--quiet']);
     expect(broken.exitCode).toBe(1);
     expect(broken.stdout).toBe('');
-  });
+  }, SUBPROCESS_TIMEOUT);
 
   test('--help → exit 0, prints usage', () => {
     const result = run(['skillpack-check', '--help']);
@@ -114,7 +124,7 @@ describe('gbrain skillpack-check', () => {
     expect(result.stdout).toContain('skillpack-check');
     expect(result.stdout).toContain('healthy');
     expect(result.stdout).toContain('Exit codes');
-  });
+  }, SUBPROCESS_TIMEOUT);
 
   test('summary includes top action when multiple present', () => {
     // Partial record creates apply-migrations action + the migrations count
@@ -130,5 +140,5 @@ describe('gbrain skillpack-check', () => {
     const report = JSON.parse(result.stdout);
     expect(report.summary).toMatch(/\d+ action\(s\)/);
     expect(report.summary).toContain(report.actions[0]);
-  });
+  }, SUBPROCESS_TIMEOUT);
 });

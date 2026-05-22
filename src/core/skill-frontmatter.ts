@@ -82,7 +82,13 @@ export interface ParsedFrontmatter {
  * `readFileSync(path, 'utf-8')` at the boundary.
  */
 export function parseSkillFrontmatter(content: string): ParsedFrontmatter | null {
-  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  // Normalize CRLF → LF before matching. The literal `\n` after the opening
+  // `---` fence cannot match `\r`, so a Windows-authored SKILL.md (CRLF)
+  // would fall through with raw=='' and silently lose every parsed field.
+  // Normalizing here also gives downstream value parsers an LF-only body so
+  // `[^"'\n]+?` character classes don't accidentally swallow a trailing `\r`.
+  const normalized = content.replace(/\r\n/g, '\n');
+  const fmMatch = normalized.match(/^---\n([\s\S]*?)\n---/);
   if (!fmMatch) return null;
   const raw = fmMatch[1];
   const out: ParsedFrontmatter = { raw };

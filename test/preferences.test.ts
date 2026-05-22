@@ -21,12 +21,15 @@ beforeEach(() => {
   origHome = process.env.HOME;
   origGbrainHome = process.env.GBRAIN_HOME;
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-prefs-test-'));
-  // preferences.ts's gbrainDir() returns `$HOME/.gbrain` when GBRAIN_HOME
-  // is unset. Test fixtures write to `$tmp/.gbrain/...`, so set HOME only
-  // and clear GBRAIN_HOME — setting GBRAIN_HOME would route prefs to $tmp
-  // directly (no .gbrain suffix), which doesn't match the fixture layout.
+  // Both gbrainDir() (preferences) and configDir() (config) now share the
+  // same contract via configDir(): GBRAIN_HOME is the parent dir, and they
+  // always append `.gbrain`. So setting GBRAIN_HOME=$tmp routes prefs to
+  // `$tmp/.gbrain/...`, matching the fixture layout used in this file.
+  //
+  // HOME alone is unreliable for isolation: os.homedir() reads USERPROFILE
+  // on Windows, ignoring HOME. GBRAIN_HOME is the platform-neutral hook.
   process.env.HOME = tmp;
-  delete process.env.GBRAIN_HOME;
+  process.env.GBRAIN_HOME = tmp;
 });
 
 afterEach(() => {

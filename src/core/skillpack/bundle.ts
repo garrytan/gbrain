@@ -8,7 +8,7 @@
  */
 
 import { existsSync, readFileSync, statSync, readdirSync } from 'fs';
-import { join, dirname, isAbsolute, resolve } from 'path';
+import { join, dirname, isAbsolute, resolve, posix } from 'path';
 
 import { parseMarkdown } from '../markdown.ts';
 
@@ -142,9 +142,12 @@ function walkFiles(absDir: string, prefix: string, out: BundleEntry[], sharedDep
       continue;
     }
     if (stat.isDirectory()) {
-      walkFiles(abs, join(prefix, e), out, sharedDep);
+      // relTarget is a portable bundle path; always use forward-slash
+      // joining so Windows installs produce the same manifest shape as
+      // Linux/macOS (callers downstream string-match on `alpha/SKILL.md`).
+      walkFiles(abs, posix.join(prefix, e), out, sharedDep);
     } else if (stat.isFile()) {
-      out.push({ source: abs, relTarget: join(prefix, e), sharedDep });
+      out.push({ source: abs, relTarget: posix.join(prefix, e), sharedDep });
     }
   }
 }
