@@ -343,29 +343,31 @@ L82 说 feishu "dormant since 2026-05-05"。Caller source 未知。
 `sources/handoff-smoke-1779083446` 来证明 scope 有 write) 是 supply-chain
 风险。即使是 Lucien own script，docs 应该 capture。
 
-### [ ] (P1) Notion Knowledge Agent 停摆 + 缺 daily `gbrain sync` cron
+### [ ] (P1) Notion Knowledge Agent 停摆 — kos-worker MCP 流量 0
 
 **Evidence**:
-- `kos-worker` MCP traffic: **5/17 setup smoke 后 0 calls**（每日 mcp_request_log
+- `kos-worker` MCP traffic: **5/17 setup smoke 后 0 calls**（mcp_request_log
   从未再现 kos-worker client_id）
-- pages 增长: 5/15=56 → 5/16=10 → 5/17=3 → **5/18+5/19=0**
+- pages 增长: 5/15=56 → 5/16=10 → 5/17=3 → **5/18 起 0**
 - `git_sync` ingest_log: 5/15=142 → 5/16=51 → 5/17=2 → **5/18=1 / 5/19=0**
-- Doctor warning: `sync_freshness: Source 'default' last synced 41h ago`
-- `ls ~/Library/LaunchAgents/com.jarvis.*sync*` → 0 matches (no sync cron)
 
-**Two-part problem**:
-1. **Notion Knowledge Agent 没真用** — 你需要 verify Notion Agent UI v2→v3
-   update (`docs/NOTION-AGENT-UPDATE-CHECKLIST.md` 5 步) 是否真完成，OAuth
-   client + worker token 是否真有效。manual smoke: 在 Notion Agent UI 触发
-   一次 ingest，看 mcp_request_log 是否 record new kos-worker call。
-2. **没 fork-side sync cron** — notion-poller §6.27 retire 后，markdown
-   brain (`~/brain/`) 改动 (人工 vim edits / dream-cycle 写 takes) 没人
-   定期 push 进 DB。需加 launchd cron 跑 `bin/gbrain sync --skip-failed
-   --no-pull` daily (suggested 02:30 之间 dream-cycle 03:11 前 + 不 conflict
-   with image-ingest 04:33)。
+**问题**: Notion Knowledge Agent 没真用。verify Notion Agent UI v2→v3 update
+(`docs/NOTION-AGENT-UPDATE-CHECKLIST.md` 5 步) 是否真完成、OAuth client +
+worker token 是否有效。manual smoke: Notion Agent UI 触发一次 ingest，看
+mcp_request_log 是否 record new kos-worker call。**Scope**: 30 min verify。
 
-**Scope**: 30 min Notion Agent verify + 1 h sync cron 实施 (plist
-template + bootstrap + smoke)。
+> **「缺 sync cron」part — REFRAMED 2026-05-22 (v0.38.2.0 sync, §6.30)**:
+> 此 entry 原第 2 部分「需加 daily `gbrain sync` cron」**前提错误**。查证:
+> `~/brain/` markdown 工作树自 §6.28 cutover (5/17) 起冻结 —— Notion Agent
+> `put_page` 与 dream-cycle 都直接写 DB,没有东西再写 `~/brain/` markdown。
+> `gbrain sync`(markdown→DB)因此恒等 no-op;`sources.last_sync_at` 只在
+> 真正 import 时前进(`sync.ts:309`)。加 daily sync cron 只会每晚空转。
+> `sync_freshness` doctor check(过滤 `WHERE local_path IS NOT NULL`)对本
+> fork 的 DB-canonical 单源架构 **结构性失效** —— 量的是一条已废弃路径;
+> brain 内容由 `put_page` 保持新鲜(检索 0.9+,3140 pages)。
+> **决定 2026-05-22**: 不建 sync cron。`sync_freshness` FAIL 当 known
+> false-alarm —— 它只在 on-demand `gbrain doctor` 出现(无 cron 跑 doctor;
+> kos-patrol dashboard 是自身 inventory/gap 报告,不含 doctor 分数)。详见 §6.30。
 
 ### [ ] (P1) `frontmatter->>'source'` empty on 3139/3140 pages (provenance gap)
 
