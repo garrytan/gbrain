@@ -259,6 +259,24 @@ function collectValidationErrors(
 }
 
 /**
+ * Remove regions wrapped in <!-- gbrain:no-hash-start --> / <!-- gbrain:no-hash-end -->
+ * comments. Used by the content-hash computation in importFromContent so
+ * presentation-only edits (e.g., a generated footer or summary table) don't
+ * invalidate the page's content hash.
+ *
+ * The sentinels themselves are also stripped. Nested sentinels are not
+ * supported — the outermost end marker wins.
+ *
+ * This is purely a hash-input transform; the actual page body retains the
+ * sentinel-wrapped content for chunking, search, and display.
+ */
+const NO_HASH_RE = /<!--\s*gbrain:no-hash-start\s*-->[\s\S]*?<!--\s*gbrain:no-hash-end\s*-->/g;
+
+export function stripNoHashRegions(text: string): string {
+  return text.replace(NO_HASH_RE, '');
+}
+
+/**
  * Split body content at the first recognized timeline sentinel.
  * Returns compiled_truth (before) and timeline (after).
  *

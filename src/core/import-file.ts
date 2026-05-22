@@ -3,7 +3,7 @@ import { basename, extname } from 'path';
 import { createHash } from 'crypto';
 import { marked } from 'marked';
 import type { BrainEngine, FileSpec } from './engine.ts';
-import { parseMarkdown } from './markdown.ts';
+import { parseMarkdown, stripNoHashRegions } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
@@ -238,12 +238,14 @@ export async function importFromContent(
   const parsed = parseMarkdown(content, slug + '.md');
 
   // Hash includes ALL fields for idempotency (not just compiled_truth + timeline)
+  // stripNoHashRegions removes <!-- gbrain:no-hash-start/end --> sentinel regions
+  // so presentation-only changes (e.g., generated footers) don't invalidate the hash.
   const hash = createHash('sha256')
     .update(JSON.stringify({
       title: parsed.title,
       type: parsed.type,
-      compiled_truth: parsed.compiled_truth,
-      timeline: parsed.timeline,
+      compiled_truth: stripNoHashRegions(parsed.compiled_truth || ''),
+      timeline: stripNoHashRegions(parsed.timeline || ''),
       frontmatter: parsed.frontmatter,
       tags: parsed.tags.sort(),
     }))
