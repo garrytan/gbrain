@@ -1004,6 +1004,12 @@ export interface ImportImageOptions {
    * with sourceId would TS-error on the importImageFile branch.
    */
   sourceId?: string;
+  /**
+   * Bypass the content_hash short-circuit even when the hash matches.
+   * Mirrors the same option in importFromContent; exposed at the CLI via
+   * `gbrain import --force`.
+   */
+  forceRechunk?: boolean;
 }
 
 /** Module-level limiter so concurrent imports across files share the budget. */
@@ -1046,7 +1052,7 @@ export async function importImageFile(
   const hash = createHash('sha256').update(buf).digest('hex');
 
   const existing = await engine.getPage(imageSlug);
-  if (existing?.content_hash === hash) {
+  if (existing?.content_hash === hash && !opts.forceRechunk) {
     return { slug: imageSlug, status: 'skipped', chunks: 0 };
   }
 

@@ -49,6 +49,7 @@ export async function runImport(
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
+  const force = args.includes('--force');
   // v0.30.x follow-up to PR #707: programmatic sourceId support so internal
   // callers (performFullSync, future Step 6 paths) can route to a named
   // source. The CLI `gbrain import` deliberately has no --source flag per
@@ -73,7 +74,7 @@ export async function runImport(
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--force] [--json]');
     process.exit(1);
   }
   const dir: string = dirArg;  // narrowed; survives closure capture
@@ -147,8 +148,8 @@ export async function runImport(
       // up images when GBRAIN_EMBEDDING_MULTIMODAL=true so this branch is
       // unreachable when the gate is off; defense-in-depth check anyway.
       const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
-        ? await importImageFile(eng, filePath, relativePath, { noEmbed, sourceId })
-        : await importFile(eng, filePath, relativePath, { noEmbed, sourceId });
+        ? await importImageFile(eng, filePath, relativePath, { noEmbed, sourceId, forceRechunk: force })
+        : await importFile(eng, filePath, relativePath, { noEmbed, sourceId, forceRechunk: force });
       const _fileMs = Date.now() - _fileT0;
       if (_fileMs > 5000) {
         console.error(`[gbrain phase] import.process_file slow ${_fileMs}ms ${relativePath}`);
