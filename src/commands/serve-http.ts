@@ -43,6 +43,41 @@ export function classifySuccessfulMcpAuditStatus(result: unknown): 'success' | '
   return 'success';
 }
 
+export type McpAuditStatus = 'success' | 'error' | 'unauthorized' | 'forbidden' | 'validation_error' | 'dry_run';
+
+export function normalizeMcpAuditStatus(status: unknown): McpAuditStatus {
+  if (
+    status === 'success' ||
+    status === 'error' ||
+    status === 'unauthorized' ||
+    status === 'forbidden' ||
+    status === 'validation_error' ||
+    status === 'dry_run'
+  ) return status;
+  if (status === 'auth_failed') return 'unauthorized';
+  if (status === 'insufficient_scope') return 'forbidden';
+  return 'validation_error';
+}
+
+export function classifyMcpAuditStatusFromHttpCode(statusCode: number): McpAuditStatus {
+  if (statusCode === 401) return 'unauthorized';
+  if (statusCode === 403) return 'forbidden';
+  if (statusCode >= 400 && statusCode < 500) return 'validation_error';
+  if (statusCode >= 500) return 'error';
+  return 'success';
+}
+
+export function inferMcpAuditOperation(body: unknown): string {
+  if (!body || typeof body !== 'object') return 'unknown';
+  const rpc = body as { method?: unknown; params?: { name?: unknown } };
+  const method = typeof rpc.method === 'string' ? rpc.method : 'unknown';
+  if (method === 'tools/call') {
+    const toolName = rpc.params && typeof rpc.params.name === 'string' ? rpc.params.name : undefined;
+    return toolName || 'unknown';
+  }
+  return method;
+}
+
 interface ServeHttpOptions {
   port: number;
   tokenTtl: number;
@@ -639,8 +674,44 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const mcpOperations = operations.filter(op => !op.localOnly);
 
-  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
-    const startTime = Date.now();
+  function getMcpAuditStartMs(res: Response): number {
+    return typeof res.locals.mcpAuditStartMs === 'number' ? res.locals.mcpAuditStartMs : Date.now();
+  }
+
+  async function logMcpAudit(
+    res: Response,
+    tokenName: string | null,
+    agentName: string | null,
+    operation: string,
+    status: unknown,
+    latencyMs: number,
+  ) {
+    res.locals.mcpAuditLogged = true;
+    await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, client_transport, latency_ms, status)
+              VALUES (${tokenName}, ${agentName}, ${operation}, ${'http'}, ${latencyMs}, ${normalizeMcpAuditStatus(status)})`;
+  }
+
+  function auditUnloggedMcpRequest(req: Request, res: Response, next: NextFunction) {
+    res.locals.mcpAuditStartMs = Date.now();
+    res.on('finish', () => {
+      if (res.locals.mcpAuditLogged) return;
+      const authInfo = (req as any).auth as AuthInfo | undefined;
+      const tokenName = authInfo?.clientId ?? null;
+      const agentName = authInfo?.clientName ?? authInfo?.clientId ?? null;
+      void logMcpAudit(
+        res,
+        tokenName,
+        agentName,
+        inferMcpAuditOperation(req.body),
+        classifyMcpAuditStatusFromHttpCode(res.statusCode),
+        Date.now() - getMcpAuditStartMs(res),
+      ).catch(() => { /* best effort */ });
+    });
+    next();
+  }
+
+  app.post('/mcp', auditUnloggedMcpRequest, express.json({ type: ['application/json', 'application/*+json'], limit: '1mb' }), requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
+    const startTime = getMcpAuditStartMs(res);
     const authInfo = (req as any).auth as AuthInfo;
 
     // Human-readable agent name is now threaded through AuthInfo by
@@ -655,24 +726,30 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       { capabilities: { tools: {} } },
     );
 
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: mcpOperations.map(op => ({
-        name: op.name,
-        description: op.description,
-        inputSchema: {
-          type: 'object' as const,
-          properties: Object.fromEntries(
-            Object.entries(op.params).map(([k, v]) => [k, {
-              type: v.type,
-              description: v.description,
-              ...(v.enum ? { enum: v.enum } : {}),
-              ...(v.default !== undefined ? { default: v.default } : {}),
-            }]),
-          ),
-          required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k),
-        },
-      })),
-    }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      const latency = Date.now() - startTime;
+      try {
+        await logMcpAudit(res, authInfo.clientId, agentName, 'tools/list', 'success', latency);
+      } catch { /* best effort */ }
+      return {
+        tools: mcpOperations.map(op => ({
+          name: op.name,
+          description: op.description,
+          inputSchema: {
+            type: 'object' as const,
+            properties: Object.fromEntries(
+              Object.entries(op.params).map(([k, v]) => [k, {
+                type: v.type,
+                description: v.description,
+                ...(v.enum ? { enum: v.enum } : {}),
+                ...(v.default !== undefined ? { default: v.default } : {}),
+              }]),
+            ),
+            required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k),
+          },
+        })),
+      };
+    });
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: params } = request.params;
@@ -680,8 +757,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       if (!op) {
         const latency = Date.now() - startTime;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, client_transport, latency_ms, status)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${'unknown'}, ${'http'}, ${latency}, ${'validation_error'})`;
+          await logMcpAudit(res, authInfo.clientId, agentName, typeof name === 'string' ? name : 'unknown', 'validation_error', latency);
         } catch { /* best effort */ }
         return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }], isError: true };
       }
@@ -695,8 +771,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         const missingScopes = (authz as { ok: false; missingScopes: string[] }).missingScopes;
         const latency = Date.now() - startTime;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, client_transport, latency_ms, status)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${'http'}, ${latency}, ${'forbidden'})`;
+          await logMcpAudit(res, authInfo.clientId, agentName, name, 'forbidden', latency);
         } catch { /* best effort */ }
         return {
           content: [{
@@ -737,8 +812,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         const auditStatus = classifySuccessfulMcpAuditStatus(result);
 
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, client_transport, latency_ms, status)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${'http'}, ${latency}, ${auditStatus})`;
+          await logMcpAudit(res, authInfo.clientId, agentName, name, auditStatus, latency);
         } catch { /* best effort */ }
 
         broadcastEvent({
@@ -769,8 +843,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
             })
           : serializeError(e);
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, client_transport, latency_ms, status)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${'http'}, ${latency}, ${'error'})`;
+          await logMcpAudit(res, authInfo.clientId, agentName, name, 'error', latency);
         } catch { /* best effort */ }
 
         broadcastEvent({
@@ -799,6 +872,18 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       await transport.handleRequest(req, res, req.body);
     } catch (e) {
       console.error('MCP request handler error:', e instanceof Error ? e.message : e);
+      if (!res.locals.mcpAuditLogged) {
+        try {
+          await logMcpAudit(
+            res,
+            authInfo.clientId,
+            agentName,
+            inferMcpAuditOperation(req.body),
+            'error',
+            Date.now() - startTime,
+          );
+        } catch { /* best effort */ }
+      }
       if (!res.headersSent) {
         res.status(500).json({
           error: 'internal_error',
