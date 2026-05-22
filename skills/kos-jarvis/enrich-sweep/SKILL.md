@@ -23,6 +23,8 @@ mutating: true
 
 # enrich-sweep
 
+> **Convention:** see [conventions/brain-first.md](../../conventions/brain-first.md) — enrich-sweep scans the brain (Phase A) and dedups via `gbrain query` (Phase D) before any Tier 2 Tavily / Tier 1 Crustdata external augmentation.
+
 Batch-scan the brain, extract entity mentions, fill the gap between
 "86 pages, 3 entity pages" and "86 pages, ~30 entity pages" in one run.
 
