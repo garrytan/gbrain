@@ -2972,9 +2972,13 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // backups so it works for both git and non-git brain repos.
   progress.heartbeat('frontmatter_integrity');
   const fmHb = startHeartbeat(progress, 'scanning frontmatter…');
+  // Guard against full-brain FS walks hanging on large brains (200K+ pages).
+  // AbortSignal.timeout fires after 30s; scanBrainSources respects opts.signal.
+  const fmTimeoutMs = parseInt(process.env.GBRAIN_DOCTOR_FM_TIMEOUT_MS || '30000', 10);
   try {
     const { scanBrainSources } = await import('../core/brain-writer.ts');
-    const report = await scanBrainSources(engine);
+    const fmAbort = AbortSignal.timeout(fmTimeoutMs);
+    const report = await scanBrainSources(engine, { signal: fmAbort });
     if (report.total === 0) {
       const sources = report.per_source.length;
       checks.push({
@@ -3002,10 +3006,14 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       });
     }
   } catch (e) {
+    const isTimeout = e instanceof DOMException && e.name === 'AbortError';
     checks.push({
       name: 'frontmatter_integrity',
       status: 'warn',
-      message: `Could not scan frontmatter: ${e instanceof Error ? e.message : String(e)}`,
+      message: isTimeout
+        ? `Frontmatter scan timed out after ${fmTimeoutMs / 1000}s (brain too large for full walk). ` +
+          `Run \`gbrain frontmatter validate <source-path>\` directly, or raise GBRAIN_DOCTOR_FM_TIMEOUT_MS.`
+        : `Could not scan frontmatter: ${e instanceof Error ? e.message : String(e)}`,
     });
   } finally {
     fmHb();
