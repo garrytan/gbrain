@@ -2,11 +2,11 @@
 
 Your AI agent is smart but forgetful. GBrain gives it a brain.
 
-Built by the President and CEO of Y Combinator to run his actual AI agents. The production brain behind his OpenClaw and Hermes deployments: **17,888 pages, 4,383 people, 723 companies**, 21 cron jobs running autonomously, built in 12 days. The agent ingests meetings, emails, tweets, voice calls, and original ideas while you sleep. It enriches every person and company it encounters. It fixes its own citations and consolidates memory overnight. You wake up smarter than when you went to bed.
+Built by the President and CEO of Y Combinator to run his actual AI agents. The production brain behind his OpenClaw and Hermes deployments: **146,646 pages, 24,585 people, 5,339 companies**, 66 cron jobs running autonomously. The agent ingests meetings, emails, tweets, voice calls, and original ideas while you sleep. It enriches every person and company it encounters. It fixes its own citations and consolidates memory overnight. You wake up smarter than when you went to bed.
 
 The brain wires itself. Every page write extracts entity references and creates typed links (`attended`, `works_at`, `invested_in`, `founded`, `advises`) with zero LLM calls. Hybrid search. Self-wiring knowledge graph. Structured timeline. Backlink-boosted ranking. Ask "who works at Acme AI?" or "what did Bob invest in this quarter?" and get answers vector search alone can't reach. Benchmarked side-by-side: gbrain lands **P@5 49.1%, R@5 97.9%** on a 240-page Opus-generated rich-prose corpus, beating its graph-disabled variant by **+31.4 points P@5** and ripgrep-BM25 + vector-only RAG by a similar margin. Full BrainBench scorecards live in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo.
 
-**New default in v0.36.2.0: ZeroEntropy** for both embedding (`zembed-1` at 1280d via Matryoshka) and reranker (`zerank-2`). On a real-corpus benchmark vs OpenAI and Voyage: **2.2× faster** (442ms vs OpenAI 973ms), **2.6× cheaper at regular pricing** ($0.05/M vs OpenAI $0.13), wins 11 of 20 queries head-to-head, reshuffles 60% of top-1 results when used as a second-pass reranker. Bring your own key from [zeroentropy.dev](https://dashboard.zeroentropy.dev), or stay on OpenAI/Voyage via `gbrain config set embedding_model <provider:model>` — your choice is sticky.
+**New default in v0.36.2.0: ZeroEntropy** for both embedding (`zembed-1` at 1280d via Matryoshka) and reranker (`zerank-2`). On a real-corpus benchmark vs OpenAI and Voyage: **2.2× faster** (442ms vs OpenAI 973ms), **2.6× cheaper at regular pricing** ($0.05/M vs OpenAI $0.13), wins 11 of 20 queries head-to-head, reshuffles 60% of top-1 results when used as a second-pass reranker. Bring your own key from [zeroentropy.dev](https://dashboard.zeroentropy.dev), or switch to OpenAI/Voyage at install time via `gbrain init --pglite --embedding-model <provider:model> --embedding-dimensions <N>` — your choice is sticky. To switch an existing brain, run `gbrain reinit-pglite --embedding-model <provider:model> --embedding-dimensions <N>` (PGLite) or follow the SQL recipe in `docs/embedding-migrations.md` (Postgres). `gbrain config set embedding_model` is refused as of v0.37.11.0 because the schema column has to resize too.
 
 GBrain is those patterns, generalized. Install in 30 minutes. Your agent does the work. As Garry's personal agent gets smarter, so does yours.
 
@@ -63,6 +63,38 @@ gbrain serve --http       # HTTP MCP with OAuth 2.1 + admin dashboard
 
 Per-client guides (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork) live under [`docs/mcp/`](docs/mcp/). HTTP server supports DCR-style client registration, scope-gated access (`read`/`write`/`admin`), and built-in rate limiting.
 
+## How to get data in (v0.38+)
+
+One command, local or hosted, synchronous receipt:
+
+```bash
+gbrain capture "the thought I want to remember"
+gbrain capture --file ./notes/today.md
+echo "from a pipe" | gbrain capture --stdin
+SLUG=$(gbrain capture "..." --quiet)
+```
+
+The page lands in the DB AND on disk in one move (the v0.38 `put_page`
+write-through plumbing). Default slug `inbox/YYYY-MM-DD-<hash8>` so
+captures cluster in a predictable triage location. On thin-client installs
+the verb routes through MCP to the server — same command, same UX.
+
+For webhook ingestion (Zapier / IFTTT / Apple Shortcuts):
+
+```bash
+curl -X POST https://your-brain/ingest \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: text/markdown" \
+  -d "# a thought from a Shortcut"
+```
+
+For mobile capture, the inbox folder source picks up anything dropped into
+`~/.gbrain/inbox/` from iOS Shortcuts / AirDrop / Drafts / Finder.
+
+Third-party skillpacks can ship custom ingestion sources (Granola, Linear,
+voice, OCR) against the versioned `IngestionSource` contract at
+`gbrain/ingestion`. See [`docs/skillpack-anatomy.md`](docs/skillpack-anatomy.md).
+
 ## What it does (the loop)
 
 ```
@@ -98,7 +130,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 - **Voice**: Phone calls create brain pages via Twilio + OpenAI Realtime (or DIY STT+LLM+TTS). Setup recipe: [`recipes/twilio-voice-brain.md`](recipes/twilio-voice-brain.md).
 - **Email + calendar**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
-- **Embedding providers**: 14 recipes covering OpenAI (default fallback), Voyage, ZeroEntropy (default), Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy. Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md).
+- **Embedding providers**: 16 recipes covering OpenAI (default fallback), OpenRouter, Voyage, ZeroEntropy (default), Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy. Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md).
 - **Credential gateway**: vault-aware secret distribution. [`docs/integrations/credential-gateway.md`](docs/integrations/credential-gateway.md).
 - **MCP clients**: every major MCP client is supported. [`docs/mcp/`](docs/mcp/) per-client setup.
 
@@ -111,6 +143,10 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 **Two organizational axes (brain ⊥ source).** A *brain* is a database (your personal brain, a team mount you joined). A *source* is a repo inside that brain (wiki, gstack, an essay, a knowledge base). Routing lives in `.gbrain-source` dotfiles and resolves via a documented 6-tier precedence chain. Full diagrams in [`docs/architecture/brains-and-sources.md`](docs/architecture/brains-and-sources.md).
 
 **Why the graph matters.** Vector search returns chunks that are semantically close. The graph returns chunks that are factually connected. Hybrid search pulls from both; auto-linking on every write keeps the graph fresh. Deep dive: [`docs/architecture/RETRIEVAL.md`](docs/architecture/RETRIEVAL.md).
+
+## Troubleshooting
+
+**`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain retrieval-upgrade` command to repair the mismatch. You should not need to delete `~/.gbrain`. As of v0.37, fresh `gbrain init --pglite` auto-detects your embedding provider from API keys in your environment — set `OPENAI_API_KEY` (or `ZEROENTROPY_API_KEY` / `VOYAGE_API_KEY`) before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker. In non-TTY contexts (CI, Docker) with no keys, init exits 1 with a paste-ready setup hint; pass `--no-embedding` to defer setup until runtime. See [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](docs/operations/headless-install.md) for Docker/CI sequencing.
 
 ## Docs
 

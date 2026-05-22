@@ -43,7 +43,11 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 3 (1→2 v0.35.0.0 reranker; 2→3 v0.35.6.0 floor_ratio + v0.36 embedding-column)', () => {
+  test('version is 3 (1→2 v0.35.0.0 reranker; 2→3 v0.35.6.0 floor_ratio + v0.36 cross-modal + embedding-column appends)', () => {
+    // v0.35.0.0: 1→2 to fold reranker fields. v0.35.6.0: 2→3 to fold
+    // floor_ratio. v0.36 wave: piggybacks on v=3 with 7 cross-modal knobs
+    // (D2) PLUS column + provider context (D8/CDX-2 cross-column isolation),
+    // all appended per CDX2-F13 append-only convention.
     expect(KNOBS_HASH_VERSION).toBe(3);
   });
 

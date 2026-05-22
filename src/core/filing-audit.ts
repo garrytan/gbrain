@@ -24,6 +24,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
+import { parseSkillFrontmatter } from './skill-frontmatter.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -112,6 +113,19 @@ function normalizeDir(dir: string): string {
 // Skill frontmatter parsing (minimal, tolerant)
 // ---------------------------------------------------------------------------
 
+/**
+ * Public surface preserved for back-compat: SkillFrontmatter remains a
+ * narrow alias here, but the underlying parser now lives in
+ * `skill-frontmatter.ts` (`parseSkillFrontmatter`). The wider
+ * `ParsedFrontmatter` type from that module is structurally compatible
+ * with this narrower one — every field on SkillFrontmatter is optional
+ * and present on ParsedFrontmatter.
+ *
+ * If you're writing new code, import `parseSkillFrontmatter` and
+ * `ParsedFrontmatter` from `./skill-frontmatter.ts` directly. This
+ * thin wrapper exists so existing filing-audit callers don't need to
+ * be touched.
+ */
 export interface SkillFrontmatter {
   name?: string;
   writes_pages?: boolean;
@@ -127,41 +141,18 @@ function parseFrontmatter(skillMdPath: string): SkillFrontmatter | null {
   } catch {
     return null;
   }
-  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!fmMatch) return null;
-  const raw = fmMatch[1];
-  const out: SkillFrontmatter = { raw };
-
-  const nameMatch = raw.match(/^name:\s*["']?([^"'\n]+?)["']?\s*$/m);
-  if (nameMatch) out.name = nameMatch[1].trim();
-
-  const wpMatch = raw.match(/^writes_pages:\s*(true|false)\s*$/m);
-  if (wpMatch) out.writes_pages = wpMatch[1] === 'true';
-
-  const mutMatch = raw.match(/^mutating:\s*(true|false)\s*$/m);
-  if (mutMatch) out.mutating = mutMatch[1] === 'true';
-
-  // writes_to: supports inline `[a, b, c]` OR multi-line block list
-  //   writes_to:
-  //     - people/
-  //     - companies/
-  // AND inline `writes_to: [people/, companies/]`
-  const inlineWtMatch = raw.match(/^writes_to:\s*\[([^\]]*)\]\s*$/m);
-  if (inlineWtMatch) {
-    out.writes_to = inlineWtMatch[1]
-      .split(',')
-      .map(s => s.trim().replace(/^["']|["']$/g, ''))
-      .filter(Boolean);
-  } else {
-    const blockMatch = raw.match(/^writes_to:\s*\n((?:\s+-\s+[^\n]+\n?)+)/m);
-    if (blockMatch) {
-      out.writes_to = blockMatch[1]
-        .split('\n')
-        .map(l => l.replace(/^\s+-\s+/, '').replace(/^["']|["']$/g, '').trim())
-        .filter(Boolean);
-    }
-  }
-  return out;
+  const parsed = parseSkillFrontmatter(content);
+  if (!parsed) return null;
+  // Project the wider ParsedFrontmatter onto the narrower SkillFrontmatter
+  // shape filing-audit callers expect. Field order matches the original
+  // shape so tests that compare object keys via JSON.stringify stay stable.
+  return {
+    raw: parsed.raw,
+    name: parsed.name,
+    writes_pages: parsed.writes_pages,
+    writes_to: parsed.writes_to,
+    mutating: parsed.mutating,
+  };
 }
 
 // ---------------------------------------------------------------------------

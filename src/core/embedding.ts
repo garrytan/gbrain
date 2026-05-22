@@ -16,8 +16,22 @@ import {
 // v0.27.1: re-export multimodal embedding so callers can pull both text and
 // image embedding APIs from `src/core/embedding`. import-image-file consumes
 // embedMultimodal directly.
-export { embedMultimodal } from './ai/gateway.ts';
-export type { MultimodalInput } from './ai/types.ts';
+//
+// v0.36 cross-modal wave: query-side multimodal embedding (text and image
+// variants) for hybridSearch routing image-intent queries to the multimodal
+// column. embedMultimodalSafe is the partial-failure variant Phase 3 reindex
+// uses to make forward progress on transient batch failures.
+export {
+  embedMultimodal,
+  embedMultimodalSafe,
+  embedQueryMultimodal,
+  embedQueryMultimodalImage,
+} from './ai/gateway.ts';
+export type {
+  MultimodalInput,
+  EmbedMultimodalOpts,
+  MultimodalBatchResult,
+} from './ai/types.ts';
 
 /** Embed one text (document-side for asymmetric providers). */
 export async function embed(text: string): Promise<Float32Array> {

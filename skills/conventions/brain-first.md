@@ -73,3 +73,46 @@ If you spawn your own sub-agents, include this line in their task prompt:
 > Read `skills/conventions/brain-first.md` before starting work.
 
 This ensures the convention propagates through any depth of sub-agent chain.
+
+## Declarative opt-out (v0.36.x)
+
+A skill can declare it does not need brain-first by adding this line to its
+frontmatter:
+
+    brain_first: exempt
+
+Use this for pure-infra skills (cron schedulers, container managers,
+ask-user prompters, browser drivers) whose entire job is to operate without
+consulting the brain. The doctor `skill_brain_first` check honors this opt-
+out; the `gbrain doctor --fix` auto-add of the canonical Convention callout
+skips opted-out skills.
+
+**Strict canonical form (the parser is loud about typos):**
+
+| Form | Result |
+|---|---|
+| `brain_first: exempt` | ✅ matches |
+| `brain-first: exempt` | ⚠ doctor hint — snake_case required |
+| `BrainFirst: exempt`  | ⚠ doctor hint — snake_case required |
+| `brain_first: "exempt"` | ⚠ doctor hint — drop the quotes |
+| `brain_first: Exempt` | ⚠ doctor hint — value must be lowercase |
+| `brain_first: required` | ⚠ doctor hint — only `exempt` is supported in v0.36 |
+
+A near-miss prints a paste-ready fix line and the skill stays flagged
+until the canonical form lands. Silent typos would be the worst outcome
+("I declared exempt and it still flags!"), so the parser refuses to guess.
+
+**You do NOT need to declare `brain_first: exempt` when:**
+
+- The skill ALREADY includes the canonical Convention callout above
+  (this file's path). The compliance check matches `> **Convention:**`
+  blockquotes referencing `brain-first.md` and short-circuits to OK.
+  `brain-ops`, `signal-detector`, `idea-ingest`, `enrich`,
+  `perplexity-research`, and `academic-verify` all pass via this path.
+- The skill has no external-lookup references at all (`web_search`,
+  `exa`, `perplexity`, `happenstance`, `crustdata`, `captain-api`,
+  `firecrawl`). Trivially exempt.
+
+When in doubt: declare `brain_first: exempt` explicitly OR add the
+canonical Convention callout near the top of the skill body. Both are
+zero-friction one-line operations.

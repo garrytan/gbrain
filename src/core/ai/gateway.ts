@@ -31,6 +31,8 @@ import { z } from 'zod';
 
 import type {
   AIGatewayConfig,
+  EmbedMultimodalOpts,
+  MultimodalBatchResult,
   MultimodalInput,
   Recipe,
   TouchpointKind,
@@ -54,8 +56,10 @@ const MAX_CHARS = 8000;
 // src/core/ai/dims.ts:ZEROENTROPY_VALID_DIMS.
 // New installs without ZEROENTROPY_API_KEY size for 1280d anyway — the
 // AIConfigError surfaces at first embed with a paste-ready setup hint.
-const DEFAULT_EMBEDDING_MODEL = 'zeroentropyai:zembed-1';
-const DEFAULT_EMBEDDING_DIMENSIONS = 1280;
+// Re-exported from the leaf `defaults.ts` so heavy schema/registry modules
+// don't transitively load every provider SDK just to read the defaults.
+export { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './defaults.ts';
+import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './defaults.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker default. Used only when search.reranker.enabled is set
@@ -260,19 +264,52 @@ export function applyResolveAuth(
     ? recipe.resolveAuth(cfg.env)
     : defaultResolveAuth(recipe, cfg.env, touchpoint);
 
+  // v0.37.6.0 — resolve default_headers (static or env-templated). Mutually
+  // exclusive; declaring both is a config error.
+  if (recipe.default_headers && recipe.resolveDefaultHeaders) {
+    throw new AIConfigError(
+      `Recipe "${recipe.id}" declares both default_headers and resolveDefaultHeaders. Pick one.`,
+      recipe.setup_hint,
+    );
+  }
+  const defaults = recipe.resolveDefaultHeaders
+    ? recipe.resolveDefaultHeaders(cfg.env)
+    : recipe.default_headers;
+
+  // v0.37.6.0 — defaults MUST NOT shadow the resolved auth header. SDK applies
+  // headers after apiKey, so an `Authorization` entry in defaults would replace
+  // the Bearer the SDK adds. Custom-header recipes (Azure: api-key) are
+  // protected the same way.
+  if (defaults) {
+    const lcResolved = resolved.headerName.toLowerCase();
+    for (const k of Object.keys(defaults)) {
+      const lc = k.toLowerCase();
+      if (lc === 'authorization' || lc === lcResolved) {
+        throw new AIConfigError(
+          `Recipe "${recipe.id}" default_headers contains "${k}" which would shadow the auth header. Remove it.`,
+          recipe.setup_hint,
+        );
+      }
+    }
+  }
+
   // Bearer-via-Authorization: use the SDK's native apiKey path (which sets
   // Authorization: Bearer <key> internally). Strip the 'Bearer ' prefix the
-  // resolver returned.
+  // resolver returned. Default headers ride alongside if declared.
   if (
     resolved.headerName === 'Authorization' &&
     resolved.token.startsWith('Bearer ')
   ) {
-    return { apiKey: resolved.token.slice('Bearer '.length) };
+    return defaults
+      ? { apiKey: resolved.token.slice('Bearer '.length), headers: { ...defaults } }
+      : { apiKey: resolved.token.slice('Bearer '.length) };
   }
 
   // Custom header (Azure: api-key). Use headers; do NOT pass apiKey, or the
   // SDK will also set Authorization and the server may reject double-auth.
-  return { headers: { [resolved.headerName]: resolved.token } };
+  // Defaults merge in first, resolver wins on key conflict (the shadow guard
+  // above already rejects conflicts, so this is defense-in-depth).
+  return { headers: { ...(defaults ?? {}), [resolved.headerName]: resolved.token } };
 }
 
 /**
@@ -1338,7 +1375,10 @@ const MULTIMODAL_MAX_IMAGE_BYTES = 20 * 1024 * 1024;
  *
  * Empty input → returns []. Preserves the `embed([])` contract.
  */
-export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float32Array[]> {
+export async function embedMultimodal(
+  inputs: MultimodalInput[],
+  opts: EmbedMultimodalOpts = {},
+): Promise<Float32Array[]> {
   if (!inputs || inputs.length === 0) return [];
 
   const cfg = requireConfig();
@@ -1375,7 +1415,7 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
   // recipe is `openai-compat` per tier but uses its own /multimodalembeddings
   // path, so we still branch on recipe.id for that one.
   if (recipe.id !== 'voyage' && recipe.implementation === 'openai-compatible') {
-    return embedMultimodalOpenAICompat(inputs, recipe, parsed.modelId, cfg);
+    return embedMultimodalOpenAICompat(inputs, recipe, parsed.modelId, cfg, opts);
   }
   if (recipe.id !== 'voyage') {
     throw new AIConfigError(
@@ -1408,6 +1448,10 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
   // landing in `embedding_image` the column itself is fixed at 1024.
   const targetDims = 1024;
 
+  // v0.36 (D22-2): thread Voyage's retrieval input_type discipline through.
+  // Default 'document' preserves pre-v0.36 ingest behavior.
+  const inputType = opts.inputType ?? 'document';
+
   // Batch in groups of 32 (Voyage's published max). Each batch is one HTTP
   // call; results concatenate in input order.
   const allEmbeddings: Float32Array[] = [];
@@ -1415,17 +1459,19 @@ export async function embedMultimodal(inputs: MultimodalInput[]): Promise<Float3
     const batch = inputs.slice(i, i + MULTIMODAL_BATCH_SIZE);
     const body = {
       inputs: batch.map(input => ({
-        // Voyage's documented shape for image inputs:
-        //   { content: [{ type: "image_base64", image_base64: "data:image/png;base64,..." }] }
+        // Voyage's documented content shape supports both image and text
+        // entries. v0.36 cross-modal: text variant for query embedding.
         content: [
-          {
-            type: 'image_base64',
-            image_base64: `data:${input.mime};base64,${input.data}`,
-          },
+          input.kind === 'text'
+            ? { type: 'text', text: input.text }
+            : {
+              type: 'image_base64',
+              image_base64: `data:${input.mime};base64,${input.data}`,
+            },
         ],
       })),
       model: parsed.modelId,
-      input_type: 'document',
+      input_type: inputType,
     };
 
     let res: Response;
@@ -1513,6 +1559,7 @@ async function embedMultimodalOpenAICompat(
   recipe: Recipe,
   modelId: string,
   cfg: AIGatewayConfig,
+  opts: EmbedMultimodalOpts = {},
 ): Promise<Float32Array[]> {
   // Auth resolution via the gateway's canonical helper so LiteLLM-style
   // optional-auth recipes (Authorization: Bearer LITELLM_API_KEY) and
@@ -1546,19 +1593,27 @@ async function embedMultimodalOpenAICompat(
   // multimodal content array varies per provider. Single-input requests
   // are the safe lowest common denominator; LiteLLM's proxy backend
   // batches internally if it can.
+  // v0.36 (D22-2): inputType opt threaded for symmetry with the Voyage path.
+  // Most openai-compatible proxies don't forward this field, but recording
+  // it in the body keeps LiteLLM-style providers that DO accept it correct.
+  const inputType = opts.inputType ?? 'document';
+
   const allEmbeddings: Float32Array[] = [];
   for (const input of inputs) {
-    const body = {
+    const body: Record<string, unknown> = {
       model: modelId,
       input: [
-        {
-          // OpenAI's documented multimodal content shape. The data-URL
-          // form embeds the image bytes inline so the proxy doesn't need
-          // network access to fetch the image.
-          type: 'image_url',
-          image_url: { url: `data:${input.mime};base64,${input.data}` },
-        },
+        input.kind === 'text'
+          ? { type: 'input_text', text: input.text }
+          : {
+            // OpenAI's documented multimodal content shape. The data-URL
+            // form embeds the image bytes inline so the proxy doesn't need
+            // network access to fetch the image.
+            type: 'image_url',
+            image_url: { url: `data:${input.mime};base64,${input.data}` },
+          },
       ],
+      input_type: inputType,
     };
 
     let res: Response;
@@ -1631,6 +1686,120 @@ async function embedMultimodalOpenAICompat(
   }
 
   return allEmbeddings;
+}
+
+// ---- v0.36 cross-modal wave: query-side multimodal embedding + safe variant ----
+
+/**
+ * Embed a TEXT query through the configured multimodal model.
+ *
+ * Routes through `embedding_multimodal_model` (defaults to Voyage multimodal-3)
+ * so the resulting vector lives in the multimodal embedding space — the same
+ * space the brain's `embedding_image` column was populated into. A text
+ * query embedded here can match image chunks (Phase 1 of the cross-modal
+ * wave) and, post Phase 3 reindex, text chunks in the unified column.
+ *
+ * Threads `inputType: 'query'` (D22-2) so Voyage routes to the retrieval
+ * half of its asymmetric embedding space.
+ *
+ * Sibling of v0.35.0.0's `embedQuery(text)`, which uses the TEXT embedding
+ * model (typically OpenAI text-embedding-3-large at 1536d or 2560d, NOT
+ * compatible with the 1024d multimodal column).
+ */
+export async function embedQueryMultimodal(text: string): Promise<Float32Array> {
+  const [vec] = await embedMultimodal([{ kind: 'text', text }], { inputType: 'query' });
+  if (!vec) {
+    throw new AITransientError('embedQueryMultimodal: gateway returned no vector for non-empty text input');
+  }
+  return vec;
+}
+
+/**
+ * Embed an IMAGE as a query through the configured multimodal model.
+ *
+ * Sibling of `embedQueryMultimodal(text)` for the Phase 2 image-as-query
+ * path. The image bytes must already be loaded and base64-encoded by the
+ * caller (see `src/core/search/image-loader.ts` for the SSRF-defended
+ * loader). Threads `inputType: 'query'` so Voyage routes to the
+ * retrieval half of its asymmetric space.
+ */
+export async function embedQueryMultimodalImage(
+  input: { data: string; mime: string },
+): Promise<Float32Array> {
+  const [vec] = await embedMultimodal(
+    [{ kind: 'image_base64', data: input.data, mime: input.mime }],
+    { inputType: 'query' },
+  );
+  if (!vec) {
+    throw new AITransientError('embedQueryMultimodalImage: gateway returned no vector');
+  }
+  return vec;
+}
+
+/**
+ * Partial-failure-aware variant of `embedMultimodal`.
+ *
+ * The default `embedMultimodal()` throws on first failure to preserve the
+ * pre-v0.36 contract (used by `importImageFile` which can't proceed on
+ * partial data). Phase 3 `reindex --multimodal` ingests many thousands
+ * of chunks and CAN make forward progress with partial results — it
+ * uses this variant so a 401 on chunk 87K doesn't discard the 31
+ * already-computed embeddings in that batch.
+ *
+ * Strategy:
+ *   1. Try the full input set via `embedMultimodal`. On success, return.
+ *   2. On AIConfigError (permanent), surface every input as failed —
+ *      the misconfig isn't going to fix itself by retrying smaller.
+ *   3. On AITransientError or other thrown error, split-and-retry
+ *      via binary search. Single-input attempts that fail are recorded
+ *      in `failedIndices` and skipped.
+ *
+ * Returns `MultimodalBatchResult` with parallel-indexed `embeddings`
+ * (undefined for failed slots) and a `failedIndices` array.
+ */
+export async function embedMultimodalSafe(
+  inputs: MultimodalInput[],
+  opts: EmbedMultimodalOpts = {},
+): Promise<MultimodalBatchResult> {
+  if (!inputs || inputs.length === 0) {
+    return { embeddings: [], failedIndices: [] };
+  }
+
+  const embeddings: Array<Float32Array | undefined> = new Array(inputs.length).fill(undefined);
+  const failedIndices: number[] = [];
+  let lastError: Error | undefined;
+
+  async function attempt(startIdx: number, items: MultimodalInput[]): Promise<void> {
+    if (items.length === 0) return;
+    try {
+      const vecs = await embedMultimodal(items, opts);
+      for (let i = 0; i < vecs.length; i++) {
+        embeddings[startIdx + i] = vecs[i];
+      }
+      return;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // AIConfigError = permanent misconfig. Retrying smaller won't help.
+      if (lastError instanceof AIConfigError) {
+        for (let i = 0; i < items.length; i++) failedIndices.push(startIdx + i);
+        return;
+      }
+      // Single input that failed — record and move on.
+      if (items.length === 1) {
+        failedIndices.push(startIdx);
+        return;
+      }
+      // Binary-search split. Each half gets its own retry.
+      const mid = Math.floor(items.length / 2);
+      await attempt(startIdx, items.slice(0, mid));
+      await attempt(startIdx + mid, items.slice(mid));
+    }
+  }
+
+  await attempt(0, inputs);
+  failedIndices.sort((a, b) => a - b);
+
+  return { embeddings, failedIndices, lastError };
 }
 
 // ---- Expansion ----
@@ -2009,6 +2178,310 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }
 }
 
+// ---- Tool loop (v0.38 — D11 + D6/D7 gateway-native subagent path) ----
+
+/**
+ * A tool handler runs a single tool invocation. `idempotent` lets the loop
+ * safely re-execute a pending row on crash-replay; non-idempotent tools that
+ * crashed mid-execute are surfaced as a hard error.
+ */
+export interface ToolHandler {
+  idempotent?: boolean;
+  execute(input: unknown, signal: AbortSignal): Promise<unknown>;
+}
+
+/**
+ * State the caller carries in from a prior crashed run. The reconciler keys
+ * by gbrain-owned `gbrainToolUseId` (D11), NOT provider-supplied IDs.
+ * `priorMessages` is the chat history up to the assistant's last turn;
+ * `priorTools` maps gbrainToolUseId → outcome. The D5 read-time shim
+ * synthesizes gbrainToolUseIds for legacy v1 rows so this Map sees both
+ * shapes uniformly.
+ */
+export interface ToolLoopReplayState {
+  priorMessages: ChatMessage[];
+  priorTools: Map<string, { status: 'pending' | 'complete' | 'failed'; output?: unknown; error?: string }>;
+  nextTurnIdx: number;
+  nextMessageIdx: number;
+}
+
+export interface ToolLoopOpts {
+  /** "provider:modelId" — defaults to config.chat_model. */
+  model?: string;
+  /** System prompt (provider-neutral). Cached when caching supported + cacheSystem true. */
+  system?: string;
+  /**
+   * Initial user message(s). When `replayState` is set, these are prepended only
+   * if `replayState.priorMessages` is empty — typically empty on a fresh call,
+   * non-empty on a fresh-from-scratch run.
+   */
+  initialMessages: ChatMessage[];
+  /** Tool definitions (provider-neutral JSON Schema). */
+  tools: ChatToolDef[];
+  /** Implementations keyed by tool name. */
+  toolHandlers: Map<string, ToolHandler>;
+  /** Hard cap on loop iterations. Default 20. */
+  maxTurns?: number;
+  /** Per-turn max output tokens. Default 4096. */
+  maxTokens?: number;
+  abortSignal?: AbortSignal;
+  /** Apply Anthropic cache_control to system + last tool. Silently ignored elsewhere. */
+  cacheSystem?: boolean;
+
+  /** Crash-replay state. When set, the loop resumes from the recorded position. */
+  replayState?: ToolLoopReplayState;
+
+  /**
+   * D11 + write-ordering invariant callbacks. Fire BEFORE side effects so a
+   * crash mid-execute is reconcilable on the next replay.
+   *
+   * Ordering per turn:
+   *   1. onAssistantTurn  — assistant message persisted (D11 step 1)
+   *   2. onToolCallStart   — pending row persisted (D11 step 2)
+   *   3. handler.execute   — side effect
+   *   4. onToolCallComplete / onToolCallFailed (D11 step 4)
+   */
+  onAssistantTurn?: (turnIdx: number, messageIdx: number, blocks: ChatBlock[], usage: ChatResult['usage'], model: string) => Promise<void>;
+  /**
+   * Persist a pending tool execution. The caller assigns ordinal + uuid v7 and
+   * returns them so the loop can key replay by gbrainToolUseId. The provider
+   * supplies its own `providerToolCallId` (kept as a debug-only side channel).
+   */
+  onToolCallStart?: (
+    turnIdx: number,
+    messageIdx: number,
+    ordinal: number,
+    toolName: string,
+    input: unknown,
+    providerToolCallId: string,
+  ) => Promise<{ gbrainToolUseId: string }>;
+  onToolCallComplete?: (gbrainToolUseId: string, output: unknown) => Promise<void>;
+  onToolCallFailed?: (gbrainToolUseId: string, error: string) => Promise<void>;
+
+  /** Optional per-call heartbeat for observability. */
+  onHeartbeat?: (event: string, data: Record<string, unknown>) => void;
+}
+
+export type ToolLoopStopReason = 'end' | 'max_turns' | 'refusal' | 'content_filter' | 'aborted' | 'unrecoverable';
+
+export interface ToolLoopResult {
+  finalText: string;
+  totalTurns: number;
+  totalUsage: ChatResult['usage'];
+  stopReason: ToolLoopStopReason;
+  /** Final messages array including all assistant + tool results. Caller persists if desired. */
+  messages: ChatMessage[];
+}
+
+/**
+ * Provider-agnostic tool-calling loop. Wraps `gateway.chat()` with:
+ *   - assistant→tool-dispatch→tool-result cycle
+ *   - gbrain-stable IDs (D11) at first observation
+ *   - write-ordering invariant (persist before side effect)
+ *   - crash-replay reconciliation via gbrainToolUseId
+ *   - capability-driven cache_control (Anthropic only)
+ *
+ * This replaces the direct `new Anthropic()` + `client.create()` path in
+ * `src/core/minions/handlers/subagent.ts`. The provider abstraction lives in
+ * `gateway.chat()` (Vercel AI SDK); this function is just the loop control.
+ *
+ * Designed so the caller (subagent handler) supplies persistence callbacks —
+ * the loop itself is stateless beyond `replayState`. That keeps it testable
+ * via `__setChatTransportForTests` without any DB.
+ */
+export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
+  const maxTurns = opts.maxTurns ?? 20;
+  const maxTokens = opts.maxTokens ?? 4096;
+  const handlers = opts.toolHandlers;
+  const totalUsage: ChatResult['usage'] = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
+  };
+
+  // Seed messages: prior history (replay) or initial.
+  const messages: ChatMessage[] = opts.replayState
+    ? [...opts.replayState.priorMessages]
+    : [...opts.initialMessages];
+  if (opts.replayState && opts.replayState.priorMessages.length === 0) {
+    messages.push(...opts.initialMessages);
+  }
+  let turnIdx = opts.replayState?.nextTurnIdx ?? 0;
+  let messageIdx = opts.replayState?.nextMessageIdx ?? 0;
+  let finalText = '';
+  let stopReason: ToolLoopStopReason = 'end';
+
+  while (turnIdx < maxTurns) {
+    if (opts.abortSignal?.aborted) {
+      stopReason = 'aborted';
+      break;
+    }
+
+    opts.onHeartbeat?.('turn_start', { turn_idx: turnIdx });
+
+    let chatResult: ChatResult;
+    try {
+      chatResult = await chat({
+        model: opts.model,
+        system: opts.system,
+        messages,
+        tools: opts.tools,
+        maxTokens,
+        abortSignal: opts.abortSignal,
+        cacheSystem: opts.cacheSystem,
+      });
+    } catch (err) {
+      opts.onHeartbeat?.('llm_call_failed', {
+        turn_idx: turnIdx,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+
+    totalUsage.input_tokens += chatResult.usage.input_tokens;
+    totalUsage.output_tokens += chatResult.usage.output_tokens;
+    totalUsage.cache_read_tokens += chatResult.usage.cache_read_tokens;
+    totalUsage.cache_creation_tokens += chatResult.usage.cache_creation_tokens;
+
+    // D11 step 1: persist assistant turn BEFORE any tool dispatch.
+    const assistantMessageIdx = messageIdx++;
+    await opts.onAssistantTurn?.(turnIdx, assistantMessageIdx, chatResult.blocks, chatResult.usage, chatResult.model);
+    messages.push({ role: 'assistant', content: chatResult.blocks });
+
+    // Check stop reason BEFORE tool dispatch. The loop only continues on tool_calls.
+    if (chatResult.stopReason === 'refusal') {
+      stopReason = 'refusal';
+      finalText = chatResult.text;
+      break;
+    }
+    if (chatResult.stopReason === 'content_filter') {
+      stopReason = 'content_filter';
+      finalText = chatResult.text;
+      break;
+    }
+
+    const toolCalls = chatResult.blocks.filter(
+      (b): b is { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown } =>
+        b.type === 'tool-call',
+    );
+
+    if (toolCalls.length === 0) {
+      stopReason = 'end';
+      finalText = chatResult.text;
+      break;
+    }
+
+    // D11 + write-ordering invariant: persist pending → execute → settle.
+    const toolResultBlocks: ChatBlock[] = [];
+    for (let callIdx = 0; callIdx < toolCalls.length; callIdx++) {
+      const call = toolCalls[callIdx];
+      if (opts.abortSignal?.aborted) {
+        stopReason = 'aborted';
+        break;
+      }
+
+      const handler = handlers.get(call.toolName);
+      if (!handler) {
+        // Tool not registered. Synthesize an error result; don't persist.
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output: `tool "${call.toolName}" is not in the registry for this subagent`,
+          isError: true,
+        });
+        opts.onHeartbeat?.('tool_failed', { turn_idx: turnIdx, tool_name: call.toolName, error: 'not_registered' });
+        continue;
+      }
+
+      // Step 2: persist pending row + claim gbrainToolUseId. The caller's
+      // callback handles uniqueness contention via ON CONFLICT DO NOTHING +
+      // re-read pattern (see persistToolExecPending in subagent.ts).
+      const { gbrainToolUseId } = (await opts.onToolCallStart?.(
+        turnIdx,
+        assistantMessageIdx,
+        callIdx,
+        call.toolName,
+        call.input,
+        call.toolCallId,
+      )) ?? { gbrainToolUseId: `inline-${turnIdx}-${callIdx}` };
+
+      // Replay short-circuit: prior outcome wins, idempotent re-execute allowed.
+      const prior = opts.replayState?.priorTools.get(gbrainToolUseId);
+      if (prior?.status === 'complete') {
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output: prior.output,
+        });
+        opts.onHeartbeat?.('tool_replay_complete', { turn_idx: turnIdx, tool_name: call.toolName });
+        continue;
+      }
+      if (prior?.status === 'failed') {
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output: prior.error ?? 'tool failed',
+          isError: true,
+        });
+        opts.onHeartbeat?.('tool_replay_failed', { turn_idx: turnIdx, tool_name: call.toolName });
+        continue;
+      }
+      if (prior?.status === 'pending' && !handler.idempotent) {
+        // Non-idempotent crash-mid-execute. Surface as unrecoverable.
+        stopReason = 'unrecoverable';
+        throw new Error(
+          `non-idempotent tool "${call.toolName}" pending on resume; gbrainToolUseId=${gbrainToolUseId} — cannot safely re-run`,
+        );
+      }
+
+      // Step 3: execute (side effect).
+      opts.onHeartbeat?.('tool_called', { turn_idx: turnIdx, tool_name: call.toolName });
+      try {
+        const output = await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal);
+        // Step 4: settle complete.
+        await opts.onToolCallComplete?.(gbrainToolUseId, output);
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output,
+        });
+        opts.onHeartbeat?.('tool_result', { turn_idx: turnIdx, tool_name: call.toolName });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        await opts.onToolCallFailed?.(gbrainToolUseId, errMsg);
+        toolResultBlocks.push({
+          type: 'tool-result',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output: errMsg,
+          isError: true,
+        });
+        opts.onHeartbeat?.('tool_failed', { turn_idx: turnIdx, tool_name: call.toolName, error: errMsg });
+      }
+    }
+
+    if (stopReason === 'aborted') break;
+
+    // Feed all tool results back as a single user message.
+    const userMessageIdx = messageIdx++;
+    void userMessageIdx;
+    messages.push({ role: 'user', content: toolResultBlocks });
+
+    turnIdx++;
+  }
+
+  if (turnIdx >= maxTurns && stopReason === 'end') {
+    stopReason = 'max_turns';
+  }
+
+  return { finalText, totalTurns: turnIdx, totalUsage, stopReason, messages };
+}
+
 // ---- Reranker (v0.35.0.0+) ----
 
 /** Tagged error class for gateway.rerank() failures. `reason` classifies into the
@@ -2109,14 +2582,15 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   const url = `${compat.baseURL.replace(/\/$/, '')}/models/rerank`;
   const auth = applyResolveAuth(recipe, cfg, 'reranker');
   // applyResolveAuth returns { apiKey } for Bearer-style auth (SDK's native
-  // path) or { headers } for custom-header providers (Azure). gateway.rerank
-  // builds the HTTP request directly (no SDK adapter), so we materialize
-  // both shapes into a Headers map.
-  const authHeaders: Record<string, string> = auth.headers
-    ? { ...auth.headers }
-    : auth.apiKey
-    ? { Authorization: `Bearer ${auth.apiKey}` }
-    : {};
+  // path) or { headers } for custom-header providers (Azure). v0.37.6.0:
+  // recipes can ALSO declare default_headers (attribution etc.) which flow
+  // through `auth.headers` alongside Bearer-style apiKey. The merge below
+  // materializes both shapes so static-default-headers ride on the reranker
+  // wire path the same way they ride the SDK paths.
+  const authHeaders: Record<string, string> = {
+    ...(auth.apiKey ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
+    ...(auth.headers ?? {}),
+  };
   const body = JSON.stringify({
     model: parsed.modelId,
     query: input.query,

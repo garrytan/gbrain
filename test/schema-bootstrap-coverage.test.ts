@@ -129,6 +129,22 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   { kind: 'column', table: 'sources', column: 'archived' },
   { kind: 'column', table: 'sources', column: 'archived_at' },
   { kind: 'column', table: 'sources', column: 'archive_expires_at' },
+  // v0.37.0 (v79) — forward-referenced by `CREATE INDEX
+  // pages_last_retrieved_at_idx ON pages (last_retrieved_at)`. Pre-v79 brains
+  // have pages without this column; bootstrap adds it before SCHEMA_SQL
+  // replay creates the index.
+  { kind: 'column', table: 'pages', column: 'last_retrieved_at' },
+  // v0.38.0 (v81) — pages_provenance_columns adds four nullable columns
+  // (ingested_via, ingested_at, source_uri, source_kind) to track WHERE
+  // every page came from (capture-cli, webhook, put_page, dream, etc.).
+  // No SCHEMA_SQL index/FK references them today, but bootstrap probes
+  // are added defense-in-depth so future schema work that does reference
+  // them doesn't wedge pre-v81 brains. Renumbered v80→v81 during master
+  // merge with v0.37.2.0 takes_unresolvable_quality hotfix.
+  { kind: 'column', table: 'pages', column: 'ingested_via' },
+  { kind: 'column', table: 'pages', column: 'ingested_at' },
+  { kind: 'column', table: 'pages', column: 'source_uri' },
+  { kind: 'column', table: 'pages', column: 'source_kind' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {

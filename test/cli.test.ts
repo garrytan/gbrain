@@ -122,7 +122,12 @@ describe('CLI dispatch integration', () => {
     expect(exitCode).toBe(0);
   });
 
-  test('sync --help short-circuits CLI-only dispatch without running sync', async () => {
+  test('sync --help prints sync-specific usage block without running sync (v0.37 D.4)', async () => {
+    // v0.37 fix wave (Lane D.4 + CDX2-12): sync was added to
+    // CLI_ONLY_SELF_HELP so `gbrain sync --help` reaches runSync's own
+    // usage block (which lists --no-embed, the flag that didn't surface
+    // anywhere pre-fix). Pre-fix the generic CLI-only short-circuit
+    // printed a header but never mentioned --no-embed.
     const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
     try {
       const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'sync', '--help'], {
@@ -135,7 +140,10 @@ describe('CLI dispatch integration', () => {
       const stderr = await new Response(proc.stderr).text();
       const exitCode = await proc.exited;
       expect(stdout).toContain('Usage: gbrain sync');
-      expect(stdout).toContain('run gbrain --help for the full command list');
+      // D.4 regression: the user-visible flag that the bug report wanted
+      // surfaced. Pre-v0.37 this string was unreachable.
+      expect(stdout).toContain('--no-embed');
+      // Sync must NOT actually run (no engine bind, no init).
       expect(stdout).not.toContain('Already up to date.');
       expect(stderr).not.toContain('Already up to date.');
       expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);

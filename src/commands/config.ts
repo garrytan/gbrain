@@ -106,6 +106,74 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       process.exit(1);
     }
   } else if (action === 'set' && key && value) {
+    // v0.37.11.0 fix wave (Lane C.2 + CDX2-13): refuse writes to schema-sizing
+    // fields unconditionally. These fields size the `content_chunks.embedding`
+    // column at init time and are file-plane canonical. `gbrain config set
+    // embedding_model X` writes the DB plane, which the embed pipeline
+    // never reads — silent lie that took users hours to diagnose.
+    //
+    // No `--force` escape hatch (CDX2-13): keeping a known-no-op DB-only
+    // write preserves the split-brain footgun the wave exists to close.
+    // Switching providers requires wipe-and-reinit; the recipe below is
+    // paste-ready and uses the actual command path that works after Lane B.
+    if (key === 'embedding_model' || key === 'embedding_dimensions') {
+      const { gbrainPath } = await import('../core/config.ts');
+      const isPgliteEngine = (await import('../core/config.ts')).loadConfig()?.engine === 'pglite';
+      const dbPath = gbrainPath('brain.pglite');
+      console.error(`[config] ${key} is a file-plane field that sizes the schema.`);
+      console.error(`[config] Setting it in the DB has no effect on the embed pipeline (silent no-op).`);
+      console.error(`[config]`);
+      if (isPgliteEngine) {
+        console.error(`[config] To switch embedding models/dimensions on PGLite, wipe and re-init:`);
+        console.error(`[config]   mv ${dbPath} ${dbPath}.bak`);
+        if (key === 'embedding_model') {
+          console.error(`[config]   gbrain init --pglite --embedding-model ${value}`);
+        } else {
+          console.error(`[config]   gbrain init --pglite --embedding-dimensions ${value}`);
+        }
+        console.error(`[config]   gbrain sync   # re-imports your brain repo`);
+      } else {
+        console.error(`[config] To switch embedding models/dimensions on Postgres, see:`);
+        console.error(`[config]   docs/embedding-migrations.md`);
+      }
+      console.error(`[config]`);
+      console.error(`[config] No --force escape: silently writing a no-op preserves the bug class this rejection closes.`);
+      process.exit(1);
+    }
+
+    // v0.37.10.0 (D6): strict unknown-key rejection with --force escape hatch.
+    // Catches the silent-no-op class for namespaced typos like `embedding.provider`,
+    // `embedding.model`, `embedding.dimensions` — Levenshtein suggests the canonical
+    // key (`embedding_model`, `embedding_dimensions`) when one is within edit
+    // distance ≤ 3, after which the v0.37.11.0 hard-refuse above kicks in for those
+    // specific schema-sizing fields.
+    const forceFlag = args.includes('--force');
+    if (!forceFlag) {
+      const { KNOWN_CONFIG_KEYS, KNOWN_CONFIG_KEY_PREFIXES } = await import('../core/config.ts');
+      const isKnown = KNOWN_CONFIG_KEYS.includes(key);
+      const matchesPrefix = KNOWN_CONFIG_KEY_PREFIXES.some(p => key.startsWith(p));
+      if (!isKnown && !matchesPrefix) {
+        const { suggestNearest } = await import('../core/levenshtein.ts');
+        const suggestion = suggestNearest(key, KNOWN_CONFIG_KEYS, 3);
+        console.error(`[config] Unknown config key "${key}".`);
+        if (suggestion) {
+          console.error(`[config] Did you mean "${suggestion}"?`);
+        } else {
+          console.error(`[config] No similar known key. Run \`gbrain config show\` to see currently-set keys.`);
+        }
+        console.error(`[config] If this is intentional (downstream tooling, forward-compat), re-run with --force.`);
+        process.exit(1);
+      }
+    } else {
+      // --force: accept but warn loudly so the user sees what they're doing.
+      const { KNOWN_CONFIG_KEYS, KNOWN_CONFIG_KEY_PREFIXES } = await import('../core/config.ts');
+      const isKnown = KNOWN_CONFIG_KEYS.includes(key);
+      const matchesPrefix = KNOWN_CONFIG_KEY_PREFIXES.some(p => key.startsWith(p));
+      if (!isKnown && !matchesPrefix) {
+        console.error(`[config] WARN: writing unknown key "${key}" with --force. Nothing in gbrain reads this.`);
+      }
+    }
+
     // v0.36 (D12 + D14): validate embedding-column keys at set time so a
     // bad config gets rejected loud + early. The `--coverage-override`
     // flag lets the user proceed past the < 90% gate when they know

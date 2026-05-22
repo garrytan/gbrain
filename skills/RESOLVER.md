@@ -29,6 +29,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 
 | Trigger | Skill |
 |---------|-------|
+| "capture this", "save this thought", "remember this", "drop this in the inbox", "save to brain" | `skills/capture/SKILL.md` |
 | User shares a link, article, tweet, or idea | `skills/idea-ingest/SKILL.md` |
 | "watch this video", "process this YouTube link", "ingest this PDF", "save this podcast", "process this book", "summarize this book", "PDF book", "ingest it into my brain", "what's in this screenshot", "check out this repo" | `skills/media-ingest/SKILL.md` |
 | Meeting transcript received | `skills/meeting-ingestion/SKILL.md` |

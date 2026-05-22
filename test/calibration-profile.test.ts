@@ -138,6 +138,8 @@ describe('pickFallbackSlots', () => {
       accuracy: 0.4,
       brier: 0.32,
       partial_rate: 0,
+      unresolvable_count: 0,
+      unresolvable_rate: null,
     };
     expect(__testing.pickFallbackSlots(scorecard).direction).toBe('over-confident');
   });
@@ -152,6 +154,8 @@ describe('pickFallbackSlots', () => {
       accuracy: 0.8,
       brier: 0.12,
       partial_rate: 0,
+      unresolvable_count: 0,
+      unresolvable_rate: null,
     };
     expect(__testing.pickFallbackSlots(scorecard).direction).toBe('mostly right');
   });
@@ -166,6 +170,8 @@ describe('pickFallbackSlots', () => {
       accuracy: null,
       brier: null,
       partial_rate: null,
+      unresolvable_count: 0,
+      unresolvable_rate: null,
     };
     const out = __testing.pickFallbackSlots(scorecard);
     expect(out.nRight).toBe(0);
@@ -184,6 +190,8 @@ const ENOUGH_RESOLVED_SCORECARD: TakesScorecard = {
   accuracy: 0.636,
   brier: 0.21,
   partial_rate: 0.083,
+  unresolvable_count: 0,
+  unresolvable_rate: null,
 };
 
 describe('runPhaseCalibrationProfile — phase integration', () => {

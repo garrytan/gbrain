@@ -53,6 +53,14 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalCodeRetrieval } = await import('./eval-code-retrieval.ts');
     return runEvalCodeRetrieval(engine, args.slice(1));
   }
+  if (sub === 'brainstorm') {
+    // v0.37.0 (D3 + codex r2 #11) — three-axis evaluation gate for the
+    // brainstorm + LSD wave. Engine connected (calls hybridSearch +
+    // listAllPageRefs for grounding signal). Exit code mirrors eval
+    // convention: 0 pass, 1 fail, 2 inconclusive.
+    const { runEvalBrainstorm } = await import('./eval-brainstorm.ts');
+    process.exit(await runEvalBrainstorm(engine, args.slice(1)));
+  }
   if (sub === 'whoknows') {
     // v0.33 two-layer eval gate (ENG-D2): hand-labeled fixture =
     // quality, eval_candidates replay = regression. Pass criteria

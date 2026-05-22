@@ -35,7 +35,7 @@ import { MinionQueue } from '../minions/queue.ts';
 import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { discoverTranscripts, type DiscoveredTranscript } from './transcript-discovery.ts';
-import { serializeMarkdown } from '../markdown.ts';
+import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
 
@@ -939,21 +939,18 @@ async function reverseWriteRefs(
  * `serializeMarkdown` does not embed the page slug in the body.
  */
 export function renderPageToMarkdown(page: Page, tags: string[]): string {
-  const frontmatter: Record<string, unknown> = {
-    ...((page.frontmatter ?? {}) as Record<string, unknown>),
-    dream_generated: true,
-    dream_cycle_date: today(),
-  };
-  return serializeMarkdown(
-    frontmatter,
-    page.compiled_truth ?? '',
-    page.timeline ?? '',
-    {
-      type: (page.type as PageType) ?? 'note',
-      title: page.title ?? '',
-      tags,
+  // v0.38 DRY: the dream-output identity stamp (dream_generated +
+  // dream_cycle_date) is the ONLY thing that differs from the v0.38
+  // put_page write-through renderer. Both call the shared
+  // serializePageToMarkdown helper in markdown.ts; this wrapper passes
+  // the dream-specific overrides. Future markdown-shape changes happen
+  // in one place.
+  return serializePageToMarkdown(page, tags, {
+    frontmatterOverrides: {
+      dream_generated: true,
+      dream_cycle_date: today(),
     },
-  );
+  });
 }
 
 // ── Summary index page ───────────────────────────────────────────────

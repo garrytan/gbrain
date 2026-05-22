@@ -194,3 +194,145 @@ describe('IRON RULE: existing 9 recipes survive the v0.32 resolveAuth refactor',
     expect(overrides.map(r => r.id).sort()).toEqual(['azure-openai']);
   });
 });
+
+/**
+ * v0.37.2.0 — default_headers / resolveDefaultHeaders contract. Six cases pin
+ * the merge semantics + the two safety guards (mutual-exclusion + auth-shadow).
+ *
+ * Codex caught the auth-shadow class during plan review: AI SDK applies
+ * `headers` AFTER `apiKey`, so an `Authorization` entry in a recipe's defaults
+ * would replace the Bearer the SDK adds. The guard fires at applyResolveAuth
+ * call time so the failure is loud at gateway configure, not silent on the
+ * wire.
+ */
+describe('default_headers / resolveDefaultHeaders contract (v0.37.2.0)', () => {
+  const baseCfg = { env: {} } as any;
+
+  test('Bearer auth + default_headers returns both apiKey AND headers', () => {
+    const synthetic: Recipe = {
+      id: 'fake-bearer-defaults',
+      name: 'Fake Bearer Defaults',
+      tier: 'openai-compat',
+      implementation: 'openai-compatible',
+      auth_env: { required: ['FAKE_KEY'] },
+      touchpoints: {},
+      default_headers: {
+        'HTTP-Referer': 'https://example.test',
+        'X-App-Title': 'fake-app',
+      },
+    };
+    const env = { FAKE_KEY: 'sk-fake' };
+    const auth = applyResolveAuth(synthetic, { env } as any, 'embedding');
+    expect(auth.apiKey).toBe('sk-fake');
+    expect(auth.headers).toEqual({
+      'HTTP-Referer': 'https://example.test',
+      'X-App-Title': 'fake-app',
+    });
+  });
+
+  test('resolveDefaultHeaders is preferred over static default_headers when only resolveDefaultHeaders is set', () => {
+    const synthetic: Recipe = {
+      id: 'fake-resolver',
+      name: 'Fake Resolver',
+      tier: 'openai-compat',
+      implementation: 'openai-compatible',
+      auth_env: { required: ['FAKE_KEY'] },
+      touchpoints: {},
+      resolveDefaultHeaders(env) {
+        return {
+          'HTTP-Referer': env.OVERRIDE_REFERER ?? 'https://default.test',
+          'X-Title': env.OVERRIDE_TITLE ?? 'default-title',
+        };
+      },
+    };
+    const env = { FAKE_KEY: 'sk-fake', OVERRIDE_REFERER: 'https://forked.test', OVERRIDE_TITLE: 'Forked' };
+    const auth = applyResolveAuth(synthetic, { env } as any, 'chat');
+    expect(auth.headers).toEqual({
+      'HTTP-Referer': 'https://forked.test',
+      'X-Title': 'Forked',
+    });
+  });
+
+  test('declaring BOTH default_headers AND resolveDefaultHeaders throws AIConfigError', () => {
+    const synthetic: Recipe = {
+      id: 'fake-conflict',
+      name: 'Fake Conflict',
+      tier: 'openai-compat',
+      implementation: 'openai-compatible',
+      auth_env: { required: ['FAKE_KEY'] },
+      touchpoints: {},
+      default_headers: { 'X-One': '1' },
+      resolveDefaultHeaders: () => ({ 'X-Two': '2' }),
+    };
+    const env = { FAKE_KEY: 'sk-fake' };
+    expect(() =>
+      applyResolveAuth(synthetic, { env } as any, 'embedding'),
+    ).toThrow(AIConfigError);
+  });
+
+  test('default_headers containing Authorization throws AIConfigError (auth-shadow guard)', () => {
+    const synthetic: Recipe = {
+      id: 'fake-shadow-auth',
+      name: 'Fake Shadow Auth',
+      tier: 'openai-compat',
+      implementation: 'openai-compatible',
+      auth_env: { required: ['FAKE_KEY'] },
+      touchpoints: {},
+      // Any casing of Authorization should be caught — SDK header keys are
+      // case-insensitive on the wire, so 'authorization', 'Authorization', and
+      // 'AUTHORIZATION' all reach the same final header.
+      default_headers: { authorization: 'Bearer attacker-token' },
+    };
+    const env = { FAKE_KEY: 'sk-fake' };
+    expect(() =>
+      applyResolveAuth(synthetic, { env } as any, 'embedding'),
+    ).toThrow(AIConfigError);
+  });
+
+  test('default_headers shadowing a custom-header resolveAuth (Azure-style) throws AIConfigError', () => {
+    const synthetic: Recipe = {
+      id: 'fake-shadow-custom',
+      name: 'Fake Shadow Custom',
+      tier: 'openai-compat',
+      implementation: 'openai-compatible',
+      auth_env: { required: ['FAKE_AZ_KEY'] },
+      touchpoints: {},
+      resolveAuth(env) {
+        const k = env.FAKE_AZ_KEY;
+        if (!k) throw new AIConfigError('missing key');
+        return { headerName: 'api-key', token: k };
+      },
+      // 'api-key' shadows the resolver's header — must throw.
+      default_headers: { 'api-key': 'attacker-value' },
+    };
+    const env = { FAKE_AZ_KEY: 'real-key' };
+    expect(() =>
+      applyResolveAuth(synthetic, { env } as any, 'embedding'),
+    ).toThrow(AIConfigError);
+  });
+
+  test('all four touchpoints produce identical default_headers for the same recipe + env', () => {
+    // Critical regression: defaults must apply identically across
+    // embedding/expansion/chat/reranker; the recipe declares them once and the
+    // gateway must thread them through every site.
+    const synthetic: Recipe = {
+      id: 'fake-all-touchpoints',
+      name: 'Fake All Touchpoints',
+      tier: 'openai-compat',
+      implementation: 'openai-compatible',
+      auth_env: { required: ['FAKE_KEY'] },
+      touchpoints: {},
+      default_headers: { 'X-Static': 'static-val' },
+    };
+    const env = { FAKE_KEY: 'sk-fake' };
+    const e = applyResolveAuth(synthetic, { env } as any, 'embedding');
+    const x = applyResolveAuth(synthetic, { env } as any, 'expansion');
+    const c = applyResolveAuth(synthetic, { env } as any, 'chat');
+    const r = applyResolveAuth(synthetic, { env } as any, 'reranker');
+    expect(e).toEqual(x);
+    expect(x).toEqual(c);
+    expect(c).toEqual(r);
+    expect(e.headers).toEqual({ 'X-Static': 'static-val' });
+  });
+});
+

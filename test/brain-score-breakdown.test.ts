@@ -31,14 +31,19 @@ beforeEach(async () => {
 });
 
 describe('Bug 11 — brain_score breakdown sums to total', () => {
-  test('empty brain returns zero score with all breakdown fields present', async () => {
+  test('empty brain returns full score (vacuous truth) with all breakdown fields present', async () => {
+    // v0.37.10.0: empty brain = no coverage problems = full marks. Pre-fix
+    // this returned 0/100, which surprised users running `gbrain doctor`
+    // immediately after `gbrain init --pglite`. Each component returns its
+    // max weight when pageCount === 0; the sum equals brain_score=100 by
+    // construction (same invariant as the non-empty path, see next test).
     const h = await engine.getHealth();
-    expect(h.brain_score).toBe(0);
-    expect(h.embed_coverage_score).toBe(0);
-    expect(h.link_density_score).toBe(0);
-    expect(h.timeline_coverage_score).toBe(0);
-    expect(h.no_orphans_score).toBe(0);
-    expect(h.no_dead_links_score).toBe(0);
+    expect(h.brain_score).toBe(100);
+    expect(h.embed_coverage_score).toBe(35);
+    expect(h.link_density_score).toBe(25);
+    expect(h.timeline_coverage_score).toBe(15);
+    expect(h.no_orphans_score).toBe(15);
+    expect(h.no_dead_links_score).toBe(10);
     // dead_links is now on the type.
     expect(h.dead_links).toBe(0);
   });

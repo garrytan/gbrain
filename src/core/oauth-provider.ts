@@ -626,6 +626,47 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   // Client Credentials (called by custom handler, not SDK)
   // -------------------------------------------------------------------------
 
+  /**
+   * v0.37.7.0 #1166 — verify a confidential client's secret without
+   * spending it. Returns the validated client info on success, throws
+   * with an opaque "Invalid client" message on failure (mirrors RFC 6749
+   * §5.2 invalid_client semantics). Used by the serve-http custom
+   * /token handler for `authorization_code` + `refresh_token` grants on
+   * confidential clients, since the SDK's plaintext compare in
+   * clientAuth.js can't see our hash-only storage.
+   *
+   * Public clients (token_endpoint_auth_method === 'none') return
+   * `client_secret_hash = NULL` from getClient; this method refuses
+   * them so the SDK's PKCE path stays the canonical surface.
+   */
+  async verifyConfidentialClientSecret(
+    clientId: string,
+    presentedSecret: string,
+  ): Promise<OAuthClientInformationFull> {
+    const client = await this._clientsStore.getClient(clientId);
+    if (!client) throw new Error('Invalid client');
+    // Public client — refuse to use this hash-compare path.
+    if (client.client_secret === undefined) {
+      throw new Error('Invalid client');
+    }
+    const presentedHash = hashToken(presentedSecret);
+    // client.client_secret is the stored SHA-256 hash (getClient returns
+    // it as the `client_secret` field per the v0.34.1.0 normalization).
+    // Compare via SHA-256-then-equals; constant-time compare a follow-up.
+    if (client.client_secret !== presentedHash) {
+      throw new Error('Invalid client');
+    }
+    // Soft-delete probe — same shape as exchangeClientCredentials.
+    try {
+      const [revoked] = await this.sql`SELECT deleted_at FROM oauth_clients WHERE client_id = ${clientId} AND deleted_at IS NOT NULL`;
+      if (revoked) throw new Error('Client has been revoked');
+    } catch (e) {
+      if (e instanceof Error && e.message === 'Client has been revoked') throw e;
+      if (!isUndefinedColumnError(e, 'deleted_at')) throw e;
+    }
+    return client;
+  }
+
   async exchangeClientCredentials(
     clientId: string,
     clientSecret: string,

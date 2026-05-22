@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'capture']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -39,6 +39,17 @@ const CLI_ONLY_SELF_HELP = new Set([
   'frontmatter', 'check-resolvable',
   'models',
   'cache',
+  'brainstorm', 'lsd',
+  // v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was
+  // unreachable via help because the dispatcher's generic CLI-only
+  // short-circuit fired before runSync could print its own usage block.
+  // Adding `sync` here routes `gbrain sync --help` into runSync.
+  'sync',
+  // v0.37 fix wave (deferred TODO, shipped): reinit-pglite has its
+  // own --help in runReinitPglite. Routing through SELF_HELP avoids
+  // the generic short-circuit so the destructive-action warning text
+  // reaches the user.
+  'reinit-pglite',
 ]);
 
 async function main() {
@@ -739,6 +750,13 @@ async function handleCliOnly(command: string, args: string[]) {
     await runInit(args);
     return;
   }
+  // v0.37 fix wave (deferred TODO, shipped): one-command wipe-and-reinit.
+  // Spawns its own engine internally so no pre-bound engine needed.
+  if (command === 'reinit-pglite') {
+    const { runReinitPglite } = await import('./commands/reinit-pglite.ts');
+    await runReinitPglite(args);
+    return;
+  }
   if (command === 'auth') {
     const { runAuth } = await import('./commands/auth.ts');
     await runAuth(args);
@@ -1037,6 +1055,18 @@ async function handleCliOnly(command: string, args: string[]) {
     }
   }
 
+  // v0.37 fix wave (Lane D.4 + CDX2-12): short-circuit `gbrain sync --help`
+  // BEFORE the engine bind. runSync has its own --help branch but can't
+  // reach it without an engine — which means a user running `--help` from
+  // a fresh tmpdir with no config gets a no-such-config error instead of
+  // help text. Importing runSync without the engine + passing null works
+  // because runSync's --help path doesn't touch the engine argument.
+  if (command === 'sync' && (args.includes('--help') || args.includes('-h'))) {
+    const { runSync } = await import('./commands/sync.ts');
+    await runSync(null as any, args);
+    return;
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
@@ -1152,7 +1182,28 @@ async function handleCliOnly(command: string, args: string[]) {
         break;
       }
       // v0.32.7 CJK wave — post-upgrade markdown re-chunk sweep.
+      // v0.36 Phase 3 wave — `gbrain reindex --multimodal` re-embeds content_chunks
+      // into the unified Voyage multimodal-3 column.
       case 'reindex': {
+        if (args.includes('--multimodal')) {
+          const { runReindexMultimodal } = await import('./commands/reindex-multimodal.ts');
+          const limitIdx = args.indexOf('--limit');
+          const limitVal = limitIdx >= 0 && limitIdx + 1 < args.length ? parseInt(args[limitIdx + 1], 10) : undefined;
+          const result = await runReindexMultimodal(engine, {
+            limit: Number.isFinite(limitVal as number) ? (limitVal as number) : undefined,
+            dryRun: args.includes('--dry-run'),
+            costEstimate: args.includes('--cost-estimate'),
+            noEmbed: args.includes('--no-embed'),
+            json: args.includes('--json'),
+            yes: args.includes('--yes'),
+          });
+          if (args.includes('--json')) {
+            console.log(JSON.stringify(result, null, 2));
+          } else {
+            console.log(`reindex --multimodal: ${result.reembedded} re-embedded, ${result.failed} failed, ${result.pending_after} pending. est. cost: $${result.cost_usd_estimate.toFixed(2)}`);
+          }
+          break;
+        }
         const { runReindex } = await import('./commands/reindex.ts');
         await runReindex(engine, args);
         break;
@@ -1166,6 +1217,12 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'anomalies': {
         const { runAnomalies } = await import('./commands/anomalies.ts');
         await runAnomalies(engine, args);
+        break;
+      }
+      // v0.38 — Capture: single human-facing entrypoint for ingestion.
+      case 'capture': {
+        const { runCapture } = await import('./commands/capture.ts');
+        await runCapture(engine, args);
         break;
       }
       case 'edges-backfill': {
@@ -1183,6 +1240,23 @@ async function handleCliOnly(command: string, args: string[]) {
         // happens inside runWhoknows via isThinClient(cfg) (v0.31.1 pattern).
         const { runWhoknows } = await import('./commands/whoknows.ts');
         await runWhoknows(engine, args);
+        break;
+      }
+      case 'brainstorm': {
+        // v0.37.0 (Open Collider wave): bisociation idea generator grounded
+        // in the user's own brain. Prefix-stratified domain-bank (D14) +
+        // shared judges + citation transparency (D6). LSD MCP exposure
+        // deferred to D7; this is CLI-only.
+        const { runBrainstormCommand } = await import('./commands/brainstorm.ts');
+        await runBrainstormCommand(engine, args);
+        break;
+      }
+      case 'lsd': {
+        // v0.37.0 — Lateral Synaptic Drift. Inverted-judge / stale-bias
+        // variant of brainstorm. Shares the orchestrator + judges via
+        // LSD_PROFILE config. Local-only by design (cost + weirdness gate).
+        const { runLsdCommand } = await import('./commands/lsd.ts');
+        await runLsdCommand(engine, args);
         break;
       }
       case 'calibration': {
@@ -1354,12 +1428,14 @@ async function handleCliOnly(command: string, args: string[]) {
   }
 }
 
-// Build the AIGatewayConfig payload from a GBrainConfig. File-local; not
-// exported. Both configureGateway sites in connectEngine() pass through this
-// helper so adding a new field touches one place. Adding a field to one site
-// but not the other previously required remembering to mirror the change;
-// the helper makes that structural.
-function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
+// Build the AIGatewayConfig payload from a GBrainConfig. Both configureGateway
+// sites in connectEngine() pass through this helper so adding a new field
+// touches one place. Adding a field to one site but not the other previously
+// required remembering to mirror the change; the helper makes that structural.
+// v0.37.6.0: exported so `test/ai/build-gateway-config.test.ts` can pin the
+// env-baseURL passthrough contract for every `_BASE_URL` env var the CLI
+// reads (LLAMA_SERVER, OLLAMA, LMSTUDIO, LITELLM, OPENROUTER).
+export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // v0.32 (#121 reworked): when ~/.gbrain/config.json declares
   // openai_api_key / anthropic_api_key, fold them into the gateway env so
   // recipes that read OPENAI_API_KEY / ANTHROPIC_API_KEY find them. Process
@@ -1368,6 +1444,12 @@ function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   const envFromConfig: Record<string, string> = {};
   if (c.openai_api_key) envFromConfig.OPENAI_API_KEY = c.openai_api_key;
   if (c.anthropic_api_key) envFromConfig.ANTHROPIC_API_KEY = c.anthropic_api_key;
+  // v0.37 fix wave (CDX2-5+6): ZE became the default provider in v0.36 but
+  // the env-mapping at this seam never picked it up. `gbrain config set
+  // zeroentropy_api_key X` wrote DB plane (ignored by gateway). The file-
+  // plane field now exists (GBrainConfig type) and gets mapped here, so
+  // setting it via `~/.gbrain/config.json` propagates into the gateway.
+  if (c.zeroentropy_api_key) envFromConfig.ZEROENTROPY_API_KEY = c.zeroentropy_api_key;
 
   // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
   // into base_urls so the gateway hits the user's configured port. Without
@@ -1380,6 +1462,7 @@ function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   if (process.env.OLLAMA_BASE_URL) envBaseUrls['ollama'] = process.env.OLLAMA_BASE_URL;
   if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
   if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
+  if (process.env.OPENROUTER_BASE_URL) envBaseUrls['openrouter'] = process.env.OPENROUTER_BASE_URL;
 
   return {
     embedding_model: c.embedding_model,

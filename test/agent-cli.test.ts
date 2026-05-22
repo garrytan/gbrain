@@ -165,17 +165,28 @@ describe('queue.add trusted-submit gate for subagent', () => {
     expect(ok.name).toBe('subagent_aggregator');
   });
 
-  test('v0.31.12: subagent with non-Anthropic data.model is rejected at submit time (Layer 1)', async () => {
-    // Codex F1 in v0.31.12 plan review: the subagent loop is Anthropic Messages
-    // API + prompt caching. A job submitted with `data.model = openai:gpt-5.5`
-    // would silently fail at runtime with a confusing provider error. The
-    // submit-time guard rejects BEFORE the job enters the queue.
-    await expect(
-      queue.add('subagent', { prompt: 'hi', model: 'openai:gpt-5.5' }, {}, { allowProtectedSubmit: true }),
-    ).rejects.toThrow(/non-Anthropic/i);
+  test('v0.38 S1.7: subagent with any tool-supporting provider passes the queue gate', async () => {
+    // v0.38 D6/D7 — the Anthropic pin is removed. The gateway tool loop
+    // routes any provider with native tool calling. Submit-time guard now
+    // refuses ONLY on unusable:no_tools or unknown verdicts.
+    const openaiJob = await queue.add(
+      'subagent',
+      { prompt: 'hi', model: 'openai:gpt-5.2' },
+      {},
+      { allowProtectedSubmit: true },
+    );
+    expect(openaiJob.name).toBe('subagent');
+
+    const googleJob = await queue.add(
+      'subagent',
+      { prompt: 'hi', model: 'google:gemini-1.5-pro' },
+      {},
+      { allowProtectedSubmit: true },
+    );
+    expect(googleJob.name).toBe('subagent');
   });
 
-  test('v0.31.12: subagent with Anthropic data.model still succeeds', async () => {
+  test('v0.38 S1.7: subagent with Anthropic data.model still succeeds', async () => {
     const job = await queue.add(
       'subagent',
       { prompt: 'hi', model: 'anthropic:claude-opus-4-7' },
@@ -185,15 +196,21 @@ describe('queue.add trusted-submit gate for subagent', () => {
     expect(job.name).toBe('subagent');
   });
 
-  test('v0.31.12: subagent with bare claude- model id passes (provider-prefix optional)', async () => {
-    // isAnthropicProvider accepts both `anthropic:claude-foo` and bare `claude-foo`.
-    const job = await queue.add(
-      'subagent',
-      { prompt: 'hi', model: 'claude-sonnet-4-6' },
-      {},
-      { allowProtectedSubmit: true },
-    );
-    expect(job.name).toBe('subagent');
+  test('v0.38 S1.7: subagent with unknown provider is rejected at submit time', async () => {
+    // The remaining hard reject — unknown providers can't be classified, so
+    // we refuse the job rather than risk burning money on something we
+    // can't verify supports tools.
+    await expect(
+      queue.add('subagent', { prompt: 'hi', model: 'madeup-provider:foo' }, {}, { allowProtectedSubmit: true }),
+    ).rejects.toThrow(/unknown provider/i);
+  });
+
+  test('v0.38 S1.7: subagent with embedding-only provider (no chat) is rejected', async () => {
+    // Voyage has no chat touchpoint → classifyCapabilities returns 'unknown' →
+    // refused at submit. Same rejection path as unknown provider.
+    await expect(
+      queue.add('subagent', { prompt: 'hi', model: 'voyage:voyage-3-large' }, {}, { allowProtectedSubmit: true }),
+    ).rejects.toThrow(/unknown provider/i);
   });
 });
 

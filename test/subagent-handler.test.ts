@@ -341,6 +341,88 @@ describe('subagent handler replay (crash recovery)', () => {
     expect(client.calls.length).toBe(1);
   });
 
+  // v0.37.7.0 #1151 regression — terminal-on-resume.
+  // Pre-fix, this scenario dead-lettered the job: replay reconciler saw
+  // last=assistant with zero tool_uses, did nothing, main loop called
+  // messages.create against a conversation ending in assistant → Sonnet
+  // 4.6+ rejects assistant-prefill with HTTP 400 → 3 retries → dead.
+  // Post-fix, the reconciler short-circuits: reconstructs finalText from
+  // the persisted text blocks and returns stop_reason='end_turn' without
+  // any LLM call.
+  test('text-only assistant tail on resume returns terminal without LLM call (#1151)', async () => {
+    const ctx = await makeCtx({ prompt: 'start' });
+    // Seed prior state: user prompt, then a TERMINAL assistant turn
+    // (text-only, no tool_use blocks). This is the exact shape the
+    // #1151 reporter found in their dead jobs (job 190's last message
+    // was a synthesis summary listing 3 written slugs).
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+       VALUES ($1, 0, 'user', $2::jsonb)`,
+      [ctx.id, JSON.stringify([{ type: 'text', text: 'start' }])],
+    );
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks, model, tokens_in, tokens_out)
+       VALUES ($1, 1, 'assistant', $2::jsonb, 'claude-sonnet-4-6', 100, 50)`,
+      [
+        ctx.id,
+        JSON.stringify([
+          { type: 'text', text: 'wrote 3 pages: wiki/notes/a, wiki/notes/b, wiki/notes/c' },
+        ]),
+      ],
+    );
+
+    // The FakeMessagesClient has ZERO scripted responses. If the handler
+    // tries to call messages.create, it throws. The fix guarantees we
+    // never reach that path.
+    const client = new FakeMessagesClient([]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+    const result = await handler(ctx);
+
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.result).toBe('wrote 3 pages: wiki/notes/a, wiki/notes/b, wiki/notes/c');
+    // Crucial assertion: no messages.create call was made on resume.
+    expect(client.calls.length).toBe(0);
+    // Token totals from the persisted assistant message rolled up.
+    expect(result.tokens.in).toBe(100);
+    expect(result.tokens.out).toBe(50);
+  });
+
+  // Companion: the existing tool-use replay path is unchanged.
+  test('text-only terminal short-circuit does NOT affect tool-use replay path', async () => {
+    // This is a smoke test that the new else-branch doesn't accidentally
+    // swallow the pending-tool-use case. If we have a persisted assistant
+    // with a tool_use block (no synthesized user turn yet), the existing
+    // tool-synthesis path must still fire.
+    const echoTool = makeEchoTool('echo_x');
+    const ctx = await makeCtx({ prompt: 'start' });
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+       VALUES ($1, 0, 'user', $2::jsonb)`,
+      [ctx.id, JSON.stringify([{ type: 'text', text: 'start' }])],
+    );
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks, model)
+       VALUES ($1, 1, 'assistant', $2::jsonb, 'claude-sonnet-4-6')`,
+      [
+        ctx.id,
+        JSON.stringify([
+          { type: 'tool_use', id: 'tu_pending', name: 'echo_x', input: { v: 'r' } },
+        ]),
+      ],
+    );
+    // No prior tool_exec row — replay reconciler will dispatch.
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'done after tool' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [echoTool] });
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.result).toBe('done after tool');
+    // The handler DID call messages.create (one call) after synthesizing
+    // the tool_result wrapper.
+    expect(client.calls.length).toBe(1);
+  });
+
   test('pending non-idempotent tool exec rejects on resume', async () => {
     const nonIdempotent = { ...makeEchoTool('do_once'), idempotent: false };
     const ctx = await makeCtx({ prompt: 'start' });

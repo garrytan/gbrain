@@ -168,6 +168,92 @@ export async function getDefaultSourcePath(
   return legacyPath ?? null;
 }
 
+/**
+ * v0.37.7.0 — tier labels for `resolveSourceWithTier()`. Exported so
+ * `gbrain sources current --json` and downstream consumers share a
+ * canonical vocabulary instead of redefining strings inline.
+ *
+ * Order matches the 1-6 priority of `resolveSourceId()`.
+ */
+export const SOURCE_TIER_NAMES = [
+  'flag',
+  'env',
+  'dotfile',
+  'local_path',
+  'brain_default',
+  'seed_default',
+] as const;
+export type SourceTier = typeof SOURCE_TIER_NAMES[number];
+
+/**
+ * Same resolution chain as `resolveSourceId()`, but also returns
+ * WHICH tier won. Additive — does not duplicate the logic; runs the
+ * same six steps in the same order. Used by `gbrain sources current`
+ * so users can verify the resolved source AND the reason it resolved
+ * before destructive ops.
+ *
+ * @returns `{ source_id, tier, detail? }` where `detail` is an
+ *          optional human-readable extra (e.g. the env-var name or
+ *          the matched dotfile / local_path).
+ */
+export async function resolveSourceWithTier(
+  engine: BrainEngine,
+  explicit: string | null | undefined,
+  cwd: string = process.cwd(),
+): Promise<{ source_id: string; tier: SourceTier; detail?: string }> {
+  // 1. Explicit flag wins.
+  if (explicit) {
+    if (!SOURCE_ID_RE.test(explicit)) {
+      throw new Error(`Invalid --source value "${explicit}". Must match [a-z0-9-]{1,32}.`);
+    }
+    await assertSourceExists(engine, explicit);
+    return { source_id: explicit, tier: 'flag', detail: `--source ${explicit}` };
+  }
+
+  // 2. Env var.
+  const env = process.env.GBRAIN_SOURCE;
+  if (env && env.length > 0) {
+    if (!SOURCE_ID_RE.test(env)) {
+      throw new Error(`Invalid GBRAIN_SOURCE value "${env}". Must match [a-z0-9-]{1,32}.`);
+    }
+    await assertSourceExists(engine, env);
+    return { source_id: env, tier: 'env', detail: `GBRAIN_SOURCE=${env}` };
+  }
+
+  // 3. .gbrain-source dotfile walk-up.
+  const dotfile = readDotfileWalk(cwd);
+  if (dotfile) {
+    await assertSourceExists(engine, dotfile);
+    return { source_id: dotfile, tier: 'dotfile', detail: `.gbrain-source` };
+  }
+
+  // 4. Registered source whose local_path contains CWD.
+  const registered = await engine.executeRaw<{ id: string; local_path: string }>(
+    `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
+  );
+  const cwdResolved = resolve(cwd);
+  let best: { id: string; path: string; pathLen: number } | null = null;
+  for (const r of registered) {
+    const p = resolve(r.local_path);
+    if (cwdResolved === p || cwdResolved.startsWith(p + '/')) {
+      if (!best || p.length > best.pathLen) {
+        best = { id: r.id, path: p, pathLen: p.length };
+      }
+    }
+  }
+  if (best) return { source_id: best.id, tier: 'local_path', detail: best.path };
+
+  // 5. Brain-level default.
+  const globalDefault = await engine.getConfig('sources.default');
+  if (globalDefault && SOURCE_ID_RE.test(globalDefault)) {
+    await assertSourceExists(engine, globalDefault);
+    return { source_id: globalDefault, tier: 'brain_default', detail: 'sources.default config' };
+  }
+
+  // 6. Fallback: seeded 'default' source.
+  return { source_id: 'default', tier: 'seed_default' };
+}
+
 /** Exposed for tests. */
 export const __testing = {
   readDotfileWalk,

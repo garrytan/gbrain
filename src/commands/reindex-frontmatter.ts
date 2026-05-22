@@ -164,7 +164,14 @@ export async function reindexFrontmatterCli(args: string[]): Promise<void> {
     console.error('No gbrain config; run `gbrain init` first.');
     process.exit(1);
   }
-  const engine = await createEngine(toEngineConfig(cfg));
+  const engineConfig = toEngineConfig(cfg);
+  const engine = await createEngine(engineConfig);
+  // v0.37.7.0 #1225: createEngine() only constructs; callers MUST connect
+  // before any executeRaw call. Pre-fix, the first query in countAffected
+  // crashed with "PGLite not connected. Call connect() first." even on
+  // --dry-run. initSchema is idempotent on a current schema, costs ~1ms.
+  await engine.connect(engineConfig);
+  await engine.initSchema();
 
   try {
     const result = await runReindexFrontmatter(engine, opts);
