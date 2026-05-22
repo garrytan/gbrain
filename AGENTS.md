@@ -86,7 +86,13 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
   for a four-signal JSON rollup (claim_accuracy / consistency /
   growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
-  same data — read scope, visibility-filtered for remote callers.
+  same data — read scope, visibility-filtered for remote callers. **v0.40.2.0:**
+  `gbrain think` now uses this substrate automatically on temporal /
+  knowledge_update intent (default ON; flip `think.trajectory_enabled=false`
+  to opt out). Migration v82 added `facts.event_type` so non-metric event
+  rows (`meeting`, `job_change`, `location_change`) ride through the same
+  pipeline; pass `kind: 'event'` or `'all'` to `find_trajectory` to query
+  them.
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
   single-fetch ingestion.
