@@ -1,7 +1,7 @@
-{"intent": "lift this skill back into gbrain so others can use it", "expected_skill": "skillpack-harvest"}
-{"intent": "publish my fork-only skill upstream", "expected_skill": "skillpack-harvest"}
-{"intent": "share this skill with the gbrain bundle", "expected_skill": "skillpack-harvest"}
-{"intent": "harvest my skill into gbrain for the other clients", "expected_skill": "skillpack-harvest"}
-{"intent": "promote this skill to gbrain so neuromancer can scaffold it", "expected_skill": "skillpack-harvest"}
-{"intent": "I want this skill in the gbrain bundle", "expected_skill": "skillpack-harvest"}
-{"intent": "move my custom skill into the gbrain core", "expected_skill": "skillpack-harvest"}
+{"intent": "I want to harvest this skill into gbrain so the whole team can use it", "expected_skill": "skillpack-harvest"}
+{"intent": "can you publish this skill to gbrain for me", "expected_skill": "skillpack-harvest"}
+{"intent": "help me lift this skill upstream into the main repo", "expected_skill": "skillpack-harvest"}
+{"intent": "I need to share this skill with other gbrain clients I have running", "expected_skill": "skillpack-harvest"}
+{"intent": "how do I promote my skill to gbrain from my local fork", "expected_skill": "skillpack-harvest"}
+{"intent": "please harvest this skill into gbrain before we ship", "expected_skill": "skillpack-harvest"}
+{"intent": "ready to lift this skill upstream once the privacy lint passes", "expected_skill": "skillpack-harvest"}

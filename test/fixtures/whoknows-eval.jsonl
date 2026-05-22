@@ -1,21 +1,14 @@
-// v0.33 whoknows eval fixture — 10 real routing queries from Garry's
-// brain. Each row: {query, expected_top_3_slugs, notes}.
-//
-// Source: reference/vc-intro-network ("Who Takes Intros from Garry") and
-// adjacent routing context Garry maintains in his brain. Slugs verified
-// against the markdown source at ~/git/brain/people/<slug>.md as of
-// 2026-05-11.
-//
-// Ground truth is "would Garry actually route this intro / consider this
-// person an expert here." A hit is achieved when ANY of the expected
-// top-3 slugs appears in the eval's top-3 returned slugs.
-{"query":"healthtech seed VC who takes intros from Garry","expected_top_3_slugs":["people/eric-vishria","people/kristina-shen","people/rebecca-kaden"],"notes":"Eric Vishria (Benchmark, 1-Best, healthtech), Kristina Shen (Chemistry, healthtech), Rebecca Kaden (USV)"}
-{"query":"fintech seed investor","expected_top_3_slugs":["people/nick-shalek","people/parul-singh","people/elad-gil"],"notes":"Nick Shalek (Ribbit Capital, fintech-focused), Parul Singh (645 Ventures), Elad Gil (angel)"}
-{"query":"AI angel investor early stage","expected_top_3_slugs":["people/elad-gil","people/lachy-groom","people/gokul-rajaram"],"notes":"Three top-rated angels for AI seed rounds"}
-{"query":"Founders Fund partner for defense and deep tech","expected_top_3_slugs":["people/trae-stephens"],"notes":"Trae Stephens, defense partner at FF"}
-{"query":"USV partner for consumer marketplaces","expected_top_3_slugs":["people/rebecca-kaden"],"notes":"Rebecca Kaden at USV"}
-{"query":"Accel partner who funds YC seed","expected_top_3_slugs":["people/amit-kumar"],"notes":"Amit Kumar at Accel, 102 YC deals"}
-{"query":"YC partner who advises on fintech","expected_top_3_slugs":["people/diana-hu","people/jon-xu"],"notes":"Diana Hu and Jon Xu, YC GPs"}
-{"query":"Menlo Ventures Series A lead","expected_top_3_slugs":["people/joff-redfern"],"notes":"Joff Redfern at Menlo, ex-CPO Atlassian"}
-{"query":"Quiet Capital partner","expected_top_3_slugs":["people/lee-edwards"],"notes":"Lee Edwards at Quiet Capital, 52 YC deals"}
-{"query":"Index Ventures partner for SaaS","expected_top_3_slugs":["people/nina-achadian"],"notes":"Nina Achadian at Index, 69 YC deals"}
+// Matt Gunnin brain — whoknows eval fixture (10 routing queries)
+// Format: {query, expected_top_3_slugs, notes}
+// Slugs verified against the brain as of 2026-05-19.
+// A hit is achieved when ANY expected slug appears in the top-3 returned.
+{"query":"GuardXChange account executive or sales contact","expected_top_3_slugs":["wiki/entities/ric-diaz","wiki/entities/guardxchange","2026-04-10-guardxchange-2026-04-10"],"notes":"GuardXChange weekly check-ins involve Ric Diaz"}
+{"query":"Kamp Events founder or lead contact","expected_top_3_slugs":["wiki/entities/phil","wiki/entities/kamp-events","2026-04-14-kamp-2026-04-14"],"notes":"Phil at Kamp Events is the main contact"}
+{"query":"PlateWorth product or data operations","expected_top_3_slugs":["wiki/entities/kit","wiki/entities/plateworth","wiki/clients/plateworth"],"notes":"Kit is the PlateWorth contact; plateworth client pages"}
+{"query":"Vertical Labs engineering or agent platform","expected_top_3_slugs":["wiki/entities/raquel","wiki/entities/matt-gunnin","wiki/concepts/cortex-design-system"],"notes":"Vertical Labs internal team pages"}
+{"query":"Cortex analytics or BI dashboard","expected_top_3_slugs":["wiki/concepts/cortex-bi-analytics","wiki/concepts/cortex-design-system","wiki/concepts/cortex-people-hr"],"notes":"Cortex internal product concepts"}
+{"query":"poly-alpha prediction markets trading","expected_top_3_slugs":["wiki/clients/poly-alpha","wiki/concepts/poly-alpha-trainer","wiki/entities/kalshi"],"notes":"poly-alpha is the Kalshi/Polymarket trading client"}
+{"query":"ibyte government RFP procurement","expected_top_3_slugs":["wiki/clients/ibyte","wiki/entities/ibyte","wiki/concepts/ibyte-rfp"],"notes":"iByte Enterprises government procurement project"}
+{"query":"gbrain knowledge base or memory system","expected_top_3_slugs":["wiki/concepts/gbrain","wiki/entities/garry-tan","wiki/concepts/obsidian-nexus"],"notes":"gbrain is the personal brain/memory system"}
+{"query":"Austin Petals flower shop marketing","expected_top_3_slugs":["wiki/clients/austin-petals","wiki/entities/austin-petals","wiki/concepts/austin-petals-doordash"],"notes":"Austin Petals is a flower shop client with DoorDash and marketing work"}
+{"query":"agent or AI infrastructure cross-agent memory","expected_top_3_slugs":["wiki/concepts/honcho","wiki/concepts/cortex-design-system","wiki/entities/lyra"],"notes":"Cross-agent memory and infra concepts in the brain"}

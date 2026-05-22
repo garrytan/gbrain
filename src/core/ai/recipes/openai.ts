@@ -17,6 +17,19 @@ export const openai: Recipe = {
       dims_options: [256, 512, 768, 1024, 1536, 3072],
       cost_per_1m_tokens_usd: 0.13,
       price_last_verified: '2026-04-20',
+      // OpenAI embeddings endpoint hard-caps a single request at 300k tokens
+      // total across all `input` items. Without these, large gbrain page
+      // batches (e.g. dense Discord transcripts, code-heavy pages) blow up
+      // with "maximum request size is 300000 tokens per request".
+      //
+      // chars_per_token=3 is conservative for transcript/code content where
+      // tiktoken averages ~3 chars/token rather than the default 4. Combined
+      // with a 220k token budget and 0.8 safety factor → effective ceiling
+      // ~176k tokens, well under the 300k hard cap with headroom for
+      // tokenizer drift.
+      max_batch_tokens: 220000,
+      chars_per_token: 3,
+      safety_factor: 0.8,
     },
     expansion: {
       models: ['gpt-5.2', 'gpt-4o-mini'],
