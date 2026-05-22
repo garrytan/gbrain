@@ -393,8 +393,6 @@ CREATE TABLE IF NOT EXISTS mcp_request_log (
   latency_ms       INTEGER,
   status           TEXT NOT NULL DEFAULT 'success'
     CHECK (status IN ('success', 'error', 'unauthorized', 'forbidden', 'validation_error', 'dry_run')),
-  params           JSONB,
-  error_message    TEXT,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -402,8 +400,6 @@ CREATE TABLE IF NOT EXISTS mcp_request_log (
 -- migrations, so add dashboard/logging columns before baseline indexes use them.
 ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS agent_name TEXT;
 ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS client_transport TEXT;
-ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS params JSONB;
-ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS error_message TEXT;
 
 -- ============================================================
 -- OAuth 2.1: clients, tokens, authorization codes

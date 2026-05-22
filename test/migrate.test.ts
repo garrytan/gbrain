@@ -167,6 +167,7 @@ describe('migrate v38 — mcp_request_log indexes + pg_partman', () => {
   test('v38 configures pg_partman monthly partitioning before 100k rows', () => {
     const sql = v38!.sqlFor!.postgres!;
     expect(sql).toContain('CREATE EXTENSION IF NOT EXISTS pg_partman');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS client_transport TEXT');
     expect(sql).toContain('row_count >= 100000');
     expect(sql).toContain('PARTITION BY RANGE (created_at)');
     expect(sql).toContain('create_parent');
@@ -174,6 +175,17 @@ describe('migrate v38 — mcp_request_log indexes + pg_partman', () => {
     expect(sql).toContain('part_config');
     expect(sql).toContain("'12 months'");
     expect(sql).toContain('mcp_request_log_legacy');
+  });
+
+  test('v38 keeps legacy payload fields only in mcp_request_log_legacy', () => {
+    const sql = v38!.sqlFor!.postgres!;
+    const activeCreate = sql.slice(
+      sql.indexOf('CREATE TABLE public.mcp_request_log'),
+      sql.indexOf(') PARTITION BY RANGE (created_at);'),
+    );
+    expect(activeCreate).not.toMatch(/\bparams\b/);
+    expect(activeCreate).not.toMatch(/\berror_message\b/);
+    expect(sql).not.toContain('status, params, error_message, created_at');
   });
 
   test('v38 is Postgres-only; PGLite skips partitioning', () => {
@@ -191,6 +203,8 @@ describe('migrate v40 — mcp_request_log audit taxonomy', () => {
     expect(v40).toBeDefined();
     const sql = v40!.sqlFor!.postgres!;
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS client_transport TEXT');
+    expect(sql).toContain('DROP COLUMN IF EXISTS params');
+    expect(sql).toContain('DROP COLUMN IF EXISTS error_message');
     expect(sql).toContain("WHEN status = 'auth_failed' THEN 'unauthorized'");
     expect(sql).toContain("WHEN status = 'insufficient_scope' THEN 'forbidden'");
     expect(sql).toContain("'validation_error'");
@@ -200,6 +214,10 @@ describe('migrate v40 — mcp_request_log audit taxonomy', () => {
 
   test('v40 adds audit lookup indexes and skips PGLite', () => {
     const sql = v40!.sqlFor!.postgres!;
+    expect(sql).toContain('DROP INDEX IF EXISTS idx_mcp_request_log_created_at_desc');
+    expect(sql).toContain('DROP INDEX IF EXISTS idx_mcp_request_log_operation_created_at_desc');
+    expect(sql).toContain('DROP INDEX IF EXISTS idx_mcp_request_log_token_name_created_at_desc');
+    expect(sql).toContain('DROP INDEX IF EXISTS idx_mcp_request_log_status_created_at_desc');
     expect(sql).toContain('idx_mcp_request_log_created_at_desc');
     expect(sql).toContain('idx_mcp_request_log_operation_created_at_desc');
     expect(sql).toContain('idx_mcp_request_log_token_name_created_at_desc');

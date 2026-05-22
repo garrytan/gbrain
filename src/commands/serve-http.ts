@@ -26,12 +26,22 @@ import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
-import { summarizeMcpParams } from '../mcp/dispatch.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
 import { authorizeScopes, normalizeTokenScopes, VALID_SCOPES } from '../core/scopes.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
+
+export function classifySuccessfulMcpAuditStatus(result: unknown): 'success' | 'dry_run' {
+  if (
+    result &&
+    typeof result === 'object' &&
+    ((result as { dry_run?: unknown }).dry_run === true || (result as { status?: unknown }).status === 'dry_run')
+  ) {
+    return 'dry_run';
+  }
+  return 'success';
+}
 
 interface ServeHttpOptions {
   port: number;
@@ -46,26 +56,15 @@ interface ServeHttpOptions {
    */
   publicUrl?: string;
   /**
-   * When true, write raw request payloads to mcp_request_log + the admin SSE
-   * feed. Default false: payloads are summarized via dispatch.summarizeMcpParams
-   * (declared keys only, no values, no attacker-controlled key names).
-   *
-   * Operators running gbrain on their own laptop and debugging agent behavior
-   * can flip this on with `--log-full-params`. The flag prints a loud warning
-   * at startup so the privacy posture change is visible.
+   * Deprecated. Request logging is audit-only: no parameters, tokens, page
+   * content, or raw payloads are written to mcp_request_log.
    */
   logFullParams?: boolean;
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
+  const { port, tokenTtl, enableDcr, publicUrl } = options;
   const config = loadConfig() || { engine: 'pglite' as const };
-
-  if (logFullParams) {
-    console.error(
-      '[serve-http] WARNING: --log-full-params writes raw request payloads to mcp_request_log + SSE feed. Disable for shared dashboards or production.',
-    );
-  }
 
   // Get raw SQL connection for OAuth provider
   const sql = db.getConnection() as SqlQuery;
@@ -490,7 +489,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
       const rows = await sql`
         SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
-               operation, latency_ms, status, params, error_message, created_at
+               operation, client_transport, latency_ms, status, created_at
         FROM mcp_request_log
         WHERE 1=1 ${agentFilter} ${opFilter} ${statusFilter}
         ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}
@@ -679,7 +678,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const { name, arguments: params } = request.params;
       const op = mcpOperations.find(o => o.name === name);
       if (!op) {
-        return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }] };
+        const latency = Date.now() - startTime;
+        try {
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, client_transport, latency_ms, status)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${'unknown'}, ${'http'}, ${latency}, ${'validation_error'})`;
+        } catch { /* best effort */ }
+        return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }], isError: true };
       }
 
       // Fine-grained scope enforcement. Legacy OAuth scopes (`read`, `write`, `admin`)
@@ -691,8 +695,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         const missingScopes = (authz as { ok: false; missingScopes: string[] }).missingScopes;
         const latency = Date.now() - startTime;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'forbidden'}, ${`Missing scope(s): ${missingScopes.join(', ')}`})`;
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, client_transport, latency_ms, status)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${'http'}, ${latency}, ${'forbidden'})`;
         } catch { /* best effort */ }
         return {
           content: [{
@@ -727,33 +731,22 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         auth: authInfo,
       };
 
-      // F8: redact request payload by default (declared keys only via the
-      // op's `params` allow-list; values + attacker-controlled key names
-      // never written to mcp_request_log or the SSE feed). --log-full-params
-      // bypasses this for operators debugging on their own laptop, with the
-      // startup warning printed earlier.
-      const safeParamsSummary = summarizeMcpParams(name, params);
-      const logParams = logFullParams
-        ? (params ? JSON.stringify(params) : null)
-        : (safeParamsSummary ? JSON.stringify(safeParamsSummary) : null);
-      const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
-
       try {
         const result = await op.handler(ctx, (params || {}) as Record<string, unknown>);
         const latency = Date.now() - startTime;
+        const auditStatus = classifySuccessfulMcpAuditStatus(result);
 
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'success'}, ${logParams})`;
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, client_transport, latency_ms, status)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${'http'}, ${latency}, ${auditStatus})`;
         } catch { /* best effort */ }
 
         broadcastEvent({
           agent: agentName,
           operation: name,
-          params: broadcastParams,
           scopes: authInfo.scopes.join(','),
           latency_ms: latency,
-          status: 'success',
+          status: auditStatus,
           timestamp: new Date().toISOString(),
         });
 
@@ -775,16 +768,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
               docs_url: e.docs,
             })
           : serializeError(e);
-        const errMsg = errorPayload.message;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
-                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errMsg})`;
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, client_transport, latency_ms, status)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${'http'}, ${latency}, ${'error'})`;
         } catch { /* best effort */ }
 
         broadcastEvent({
           agent: agentName,
           operation: name,
-          params: broadcastParams,
           scopes: authInfo.scopes.join(','),
           latency_ms: latency,
           status: 'error',

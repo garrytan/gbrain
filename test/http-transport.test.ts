@@ -17,6 +17,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
+import { operations } from '../src/core/operations.ts';
 
 type SqlResult = unknown[] | unknown;
 type SqlHandler = (query: string, values: unknown[]) => SqlResult | Promise<SqlResult>;
@@ -25,6 +26,7 @@ interface FakeEngine {
   kind: 'postgres';
   sql: ReturnType<typeof makeSqlTag>;
   audit: { token_name: string | null; operation: string; client_transport: string | null; status: string; latency_ms: number }[];
+  listPages: () => Promise<unknown[]>;
 }
 
 function makeSqlTag(handler: SqlHandler) {
@@ -90,7 +92,7 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
     return [];
   });
 
-  return { kind: 'postgres', sql, audit };
+  return { kind: 'postgres', sql, audit, listPages: async () => [] };
 }
 
 interface TestServer {
@@ -565,6 +567,71 @@ describe('http-transport: mcp_request_log audit', () => {
       expect(row.operation).not.toBe('tools/call:get_page');
       expect(row.client_transport).toBe('http');
       expect(row.status).toBe('validation_error');
+    } finally { srv.stop(); }
+  });
+
+  test('24. caller cannot spoof dry_run audit status with an ignored dry_run argument', async () => {
+    const TOK = 'audit-dryrun-spoof-token';
+    const srv = await startTest({ validTokens: new Map([[hash(TOK), { id: 'a-3', name: 'audit-dryrun-spoof' }]]) });
+    try {
+      await fetch(`${srv.url}/mcp`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
+        body: rpc('tools/call', { name: 'list_pages', arguments: { limit: 1, dry_run: true } }),
+      });
+      await new Promise(r => setTimeout(r, 10));
+      const row = srv.engine.audit[srv.engine.audit.length - 1];
+      expect(row.operation).toBe('list_pages');
+      expect(row.status).toBe('success');
+    } finally { srv.stop(); }
+  });
+
+  test('25. legitimate status:dry_run operation result logs dry_run', async () => {
+    operations.push({
+      name: 'audit_status_dry_run_probe',
+      description: 'test-only dry-run status probe',
+      params: {},
+      requiredScopes: [],
+      handler: async () => ({ status: 'dry_run' }),
+    });
+    const TOK = 'audit-real-dryrun-token';
+    const srv = await startTest({ validTokens: new Map([[hash(TOK), { id: 'a-4', name: 'audit-real-dryrun' }]]) });
+    try {
+      await fetch(`${srv.url}/mcp`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
+        body: rpc('tools/call', { name: 'audit_status_dry_run_probe', arguments: {} }),
+      });
+      await new Promise(r => setTimeout(r, 10));
+      const row = srv.engine.audit[srv.engine.audit.length - 1];
+      expect(row.operation).toBe('audit_status_dry_run_probe');
+      expect(row.status).toBe('dry_run');
+    } finally {
+      srv.stop();
+      operations.splice(operations.findIndex(op => op.name === 'audit_status_dry_run_probe'), 1);
+    }
+  });
+
+  test('26. initialized notification is audited exactly once', async () => {
+    const TOK = 'audit-notification-token';
+    const srv = await startTest({ validTokens: new Map([[hash(TOK), { id: 'a-5', name: 'audit-notification' }]]) });
+    try {
+      const before = srv.engine.audit.length;
+      const r = await fetch(`${srv.url}/mcp`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
+        body: rpc('notifications/initialized'),
+      });
+      expect(r.status).toBe(204);
+      await new Promise(r => setTimeout(r, 10));
+      const rows = srv.engine.audit.slice(before);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        token_name: 'audit-notification',
+        operation: 'notifications/initialized',
+        client_transport: 'http',
+        status: 'success',
+      });
     } finally { srv.stop(); }
   });
 });

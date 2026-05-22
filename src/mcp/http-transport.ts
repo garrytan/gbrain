@@ -321,8 +321,9 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         );
       }
 
-      // notifications/initialized — acknowledge with 204
+      // notifications/initialized — acknowledge with 204 and audit the remote call.
       if (method === 'notifications/initialized') {
+        logRequest(auth.tokenName!, 'notifications/initialized', 'success', Date.now() - startedMs);
         return new Response(null, { status: 204, headers: corsHeaders(origin) });
       }
 
@@ -351,7 +352,14 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         });
         let status = result.isError ? 'error' : 'success';
         const resultText = result.content[0]?.text ?? '';
-        if (!result.isError && args?.dry_run === true) {
+        let resultDryRun = false;
+        if (!result.isError) {
+          try {
+            const parsed = JSON.parse(resultText);
+            resultDryRun = parsed?.dry_run === true || parsed?.status === 'dry_run';
+          } catch { resultDryRun = false; }
+        }
+        if (resultDryRun) {
           status = 'dry_run';
         } else if (result.isError && resultText.includes('insufficient_scope')) {
           status = 'forbidden';

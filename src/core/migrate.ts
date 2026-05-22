@@ -1563,6 +1563,8 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_mcp_log_op_status
           ON mcp_request_log (operation, status) WHERE status <> 'success';
 
+        ALTER TABLE public.mcp_request_log ADD COLUMN IF NOT EXISTS client_transport TEXT;
+
         DO $$
         DECLARE
           row_count BIGINT;
@@ -1613,10 +1615,9 @@ export const MIGRATIONS: Migration[] = [
             token_name    TEXT,
             agent_name    TEXT,
             operation     TEXT NOT NULL,
+            client_transport TEXT,
             latency_ms    INTEGER,
             status        TEXT NOT NULL DEFAULT 'success',
-            params        JSONB,
-            error_message TEXT,
             created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
           ) PARTITION BY RANGE (created_at);
 
@@ -1634,8 +1635,8 @@ export const MIGRATIONS: Migration[] = [
             ) USING 'public.mcp_request_log', 'created_at', 'native', 'monthly', 3;
           END;
 
-          INSERT INTO public.mcp_request_log (id, token_name, agent_name, operation, latency_ms, status, params, error_message, created_at)
-          SELECT id, token_name, agent_name, operation, latency_ms, status, params, error_message, created_at
+          INSERT INTO public.mcp_request_log (id, token_name, agent_name, operation, client_transport, latency_ms, status, created_at)
+          SELECT id, token_name, agent_name, operation, client_transport, latency_ms, status, created_at
           FROM public.mcp_request_log_legacy;
 
           EXECUTE format(
@@ -1681,11 +1682,13 @@ export const MIGRATIONS: Migration[] = [
     name: 'mcp_request_log_audit_taxonomy_v0_27_3',
     sql: '',
     // Phase 4D follow-up: keep request logging full-fidelity but metadata-only.
-    // Preserve legacy params/error_message columns for older dashboard code, but
-    // the HTTP transport now writes operation/client/status/latency only.
+    // Drop legacy payload/error columns so future audit rows cannot retain raw
+    // page content, prompts, paths, or private note snippets by accident.
     sqlFor: {
       postgres: `
         ALTER TABLE mcp_request_log ADD COLUMN IF NOT EXISTS client_transport TEXT;
+        ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS params;
+        ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS error_message;
 
         UPDATE mcp_request_log
         SET status = CASE
@@ -1699,6 +1702,11 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE mcp_request_log DROP CONSTRAINT IF EXISTS mcp_request_log_status_check;
         ALTER TABLE mcp_request_log ADD CONSTRAINT mcp_request_log_status_check
           CHECK (status IN ('success', 'error', 'unauthorized', 'forbidden', 'validation_error', 'dry_run'));
+
+        DROP INDEX IF EXISTS idx_mcp_request_log_created_at_desc;
+        DROP INDEX IF EXISTS idx_mcp_request_log_operation_created_at_desc;
+        DROP INDEX IF EXISTS idx_mcp_request_log_token_name_created_at_desc;
+        DROP INDEX IF EXISTS idx_mcp_request_log_status_created_at_desc;
 
         CREATE INDEX IF NOT EXISTS idx_mcp_request_log_created_at_desc
           ON mcp_request_log (created_at DESC);
