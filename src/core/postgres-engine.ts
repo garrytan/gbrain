@@ -21,6 +21,7 @@ import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes } from './vector-index.ts';
+import { getLiveVectorColumnDims, resolveSchemaDims } from './vector-introspect.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -227,6 +228,37 @@ export class PostgresEngine implements BrainEngine {
       dims = gw.getEmbeddingDimensions();
       model = gw.getEmbeddingModel() || model;
     } catch { /* gateway not yet configured — use defaults */ }
+
+    // #1141/#1189 guard: when the gateway isn't configured (the
+    // `gbrain init --migrate-only` path inside `gbrain upgrade`'s Phase A),
+    // `dims` falls back to DEFAULT_EMBEDDING_DIMENSIONS. If the live
+    // content_chunks.embedding column was dimensioned for a high-dim
+    // embedder (zembed-1 2560d, Qwen3-Embedding-4B 2560d, etc.), the
+    // gateway value disagrees with what's actually on disk. Schema replay
+    // then emits `idx_chunks_embedding USING hnsw` via the
+    // applyChunkEmbeddingIndexPolicy at the gateway dim — pgvector
+    // rejects with `column cannot have more than 2000 dimensions for hnsw
+    // index` and Phase A aborts before any subsequent migration runs.
+    //
+    // The defensive read: introspect the column via format_type() and
+    // override `dims` when the live value crosses the HNSW-2000 boundary
+    // in the other direction from the gateway value. resolveSchemaDims()
+    // intentionally only fires the override when the override would
+    // change the HNSW policy decision — otherwise we'd silently mask
+    // genuine model/config drift.
+    const liveDims = await getLiveVectorColumnDims(
+      async (sql, params) => {
+        const rows = await conn.unsafe(sql, (params ? Array.from(params) : []) as never[]);
+        return rows as ReadonlyArray<Record<string, unknown>>;
+      },
+      'content_chunks',
+      'embedding',
+    );
+    const resolved = resolveSchemaDims(dims, liveDims);
+    if (resolved.overridden) {
+      process.stderr.write(`[initSchema] ${resolved.reason}\n`);
+      dims = resolved.dims;
+    }
 
     const sqlText = getPostgresSchema(dims, model);
 

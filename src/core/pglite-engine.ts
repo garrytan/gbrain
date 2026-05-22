@@ -18,6 +18,7 @@ import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
+import { getLiveVectorColumnDims, resolveSchemaDims } from './vector-introspect.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -230,6 +231,29 @@ export class PGLiteEngine implements BrainEngine {
       dims = gw.getEmbeddingDimensions();
       model = gw.getEmbeddingModel() || model;
     } catch { /* gateway not configured — use defaults */ }
+
+    // #1141/#1189 guard: see the matching block in PostgresEngine.initSchema
+    // for the full rationale. When the gateway isn't configured (the
+    // `apply-migrations` Phase A path inside `gbrain upgrade`) and the
+    // live content_chunks.embedding column is wider than 2000 dims from
+    // a previous switch to a high-dim embedder, the schema replay would
+    // otherwise emit `idx_chunks_embedding USING hnsw` and pgvector would
+    // reject before any v47+ migration runs. resolveSchemaDims() only
+    // overrides when the HNSW-2000 decision flips, so this can't mask
+    // genuine config drift.
+    const liveDims = await getLiveVectorColumnDims(
+      async (sql, params) => {
+        const result = await this.db.query(sql, params ? Array.from(params) : []);
+        return result.rows as ReadonlyArray<Record<string, unknown>>;
+      },
+      'content_chunks',
+      'embedding',
+    );
+    const resolved = resolveSchemaDims(dims, liveDims);
+    if (resolved.overridden) {
+      process.stderr.write(`[initSchema] ${resolved.reason}\n`);
+      dims = resolved.dims;
+    }
 
     await this.db.exec(getPGLiteSchema(dims, model));
 
