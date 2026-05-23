@@ -299,6 +299,21 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
+  // Check if a page with the same content hash already exists in this source under a different slug.
+  const duplicateRows = await engine.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages 
+     WHERE source_id = $1 AND content_hash = $2 AND deleted_at IS NULL LIMIT 1`,
+    [sourceId ?? 'default', hash]
+  );
+  const existingDuplicate = duplicateRows?.[0];
+
+  if (existingDuplicate && existingDuplicate.slug !== slug) {
+    console.warn(
+      `[warning] "${slug}" is a duplicate of existing page "${existingDuplicate.slug}" (same content hash). Skipping.`
+    );
+    return { slug, status: 'skipped', chunks: 0, parsedPage };
+  }
+
   const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
   if (existing?.content_hash === hash && !opts.forceRechunk) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };

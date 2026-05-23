@@ -702,3 +702,53 @@ body unchanged
     expect(shortCircuited).toBe(true);
   });
 });
+
+describe('importFromContent — duplicate slug detection (#1309)', () => {
+  test('skips and warns when identical content hash exists under a different slug', async () => {
+    const content = `---
+type: concept
+title: Unique Content
+---
+
+This content is unique and will be duplicate-checked.
+`;
+
+    // 1. Calculate the hash using identical logic
+    const { createHash } = await import('crypto');
+    const { parseMarkdown } = await import('../src/core/markdown.ts');
+    const parsed = parseMarkdown(content, 'concepts/a.md');
+    const hash = createHash('sha256')
+      .update(JSON.stringify({
+        title: parsed.title,
+        type: parsed.type,
+        compiled_truth: parsed.compiled_truth,
+        timeline: parsed.timeline,
+        frontmatter: parsed.frontmatter,
+        tags: parsed.tags.sort(),
+      }))
+      .digest('hex');
+
+    // 2. Setup mock engine returning a row representing the duplicate slug 'concepts/old-slug'
+    const engine = mockEngine({
+      executeRaw: (sql: string, params?: unknown[]) => {
+        expect(sql).toContain('SELECT slug FROM pages');
+        expect(params).toEqual(['default', hash]);
+        return Promise.resolve([{ slug: 'concepts/old-slug' }]);
+      },
+    });
+
+    // 3. Attempt importing to a new slug 'concepts/new-slug'
+    const result = await importFromContent(engine, 'concepts/new-slug', content, { noEmbed: true });
+
+    // 4. Verify duplicate detection skipped the import
+    expect(result.status).toBe('skipped');
+    expect(result.slug).toBe('concepts/new-slug');
+    expect(result.chunks).toBe(0);
+
+    // Verify putPage was NOT called because of the early return
+    const calls = (engine as any)._calls;
+    const putCall = calls.find((c: any) => c.method === 'putPage');
+    expect(putCall).toBeUndefined();
+  });
+});
+
