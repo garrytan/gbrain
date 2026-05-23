@@ -1444,6 +1444,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // plane field now exists (GBrainConfig type) and gets mapped here, so
   // setting it via `~/.gbrain/config.json` propagates into the gateway.
   if (c.zeroentropy_api_key) envFromConfig.ZEROENTROPY_API_KEY = c.zeroentropy_api_key;
+  if (c.voyage_api_key) envFromConfig.VOYAGE_API_KEY = c.voyage_api_key;
 
   // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
   // into base_urls so the gateway hits the user's configured port. Without

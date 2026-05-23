@@ -41,6 +41,15 @@ export interface GBrainConfig {
    * merge → buildGatewayConfig env dict → recipe reads ZEROENTROPY_API_KEY.
    */
   zeroentropy_api_key?: string;
+  /**
+   * Voyage AI API key. Parallel slot to zeroentropy_api_key above —
+   * the v0.37.11.0 fix wave only wired ZE; this closes the same gap
+   * for Voyage users (voyage-3-large, voyage-code-3, etc). Recipe
+   * declares VOYAGE_API_KEY in auth_env.required, so loadConfig
+   * merges the env var here and buildGatewayConfig maps this field
+   * back to VOYAGE_API_KEY in the gateway env dict.
+   */
+  voyage_api_key?: string;
   /** AI gateway config (v0.14+). v0.36+ default: "zeroentropyai:zembed-1" / 1280 / "anthropic:claude-haiku-4-5-20251001". */
   embedding_model?: string;
   embedding_dimensions?: number;
@@ -240,6 +249,7 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
     ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
     ...(process.env.ZEROENTROPY_API_KEY ? { zeroentropy_api_key: process.env.ZEROENTROPY_API_KEY } : {}),
+    ...(process.env.VOYAGE_API_KEY ? { voyage_api_key: process.env.VOYAGE_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
     ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
