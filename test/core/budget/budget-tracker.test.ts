@@ -161,6 +161,60 @@ describe('BudgetTracker.reserve', () => {
     const audit = readAudit();
     expect(audit.filter((e) => e.event === 'reserve_unpriced').length).toBe(2);
   });
+
+  test('v0.40.6.1: rerank kind for llama-server-reranker prices at $0 (no TX2 throw under --max-cost)', () => {
+    // The FREE_LOCAL_RERANK_PROVIDERS contract — local inference costs
+    // electricity, not API tokens. Pre-v0.40.6.1 setting --max-cost while
+    // configured for a local reranker would TX2 hard-fail because the
+    // lookupPricing fall-through path returned null for any provider not
+    // in ANTHROPIC_PRICING. Now the rerank kind recognizes the local
+    // provider prefix and returns zero pricing.
+    const t = new BudgetTracker({ maxCostUsd: 0.0001, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'llama-server-reranker:qwen3-reranker-4b',
+        estimatedInputTokens: 5000,
+        maxOutputTokens: 0,
+        kind: 'rerank',
+      }),
+    ).not.toThrow();
+    expect(t.totalSpent).toBe(0);
+  });
+
+  test('v0.40.6.1: rerank kind for arbitrary model id under llama-server-reranker provider still zero-priced', () => {
+    // Empty allowlist on the recipe means any model id is valid; budget
+    // path must agree.
+    const t = new BudgetTracker({ maxCostUsd: 0.0001, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'llama-server-reranker:some-custom-gguf-id',
+        estimatedInputTokens: 5000,
+        maxOutputTokens: 0,
+        kind: 'rerank',
+      }),
+    ).not.toThrow();
+  });
+
+  test('v0.40.6.1: chat kind for the same provider prefix is NOT zero-priced (rerank-only contract)', () => {
+    // The free-local zero-price applies ONLY to the rerank kind. If someone
+    // wires a chat call through this provider with --max-cost, the TX2 hard-
+    // fail behavior is preserved so the user gets a clear "no pricing entry"
+    // signal rather than silent zero accounting.
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    let caught: unknown = null;
+    try {
+      t.reserve({
+        modelId: 'llama-server-reranker:not-actually-a-chat-model',
+        estimatedInputTokens: 100,
+        maxOutputTokens: 100,
+        kind: 'chat',
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(BudgetExhausted);
+    expect((caught as BudgetExhausted).reason).toBe('no_pricing');
+  });
 });
 
 describe('BudgetTracker.record', () => {

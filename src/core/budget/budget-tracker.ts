@@ -124,6 +124,17 @@ function defaultAuditPath(): string {
 }
 
 /**
+ * Provider id prefixes that always price at $0 (electricity, not API tokens).
+ * Centralized here so `--max-cost` callers don't hard-fail TX2 when a local
+ * rerank provider is configured. Matched against the provider half of the
+ * `provider:model` string. Extend this set when adding new local-inference
+ * recipes.
+ */
+const FREE_LOCAL_RERANK_PROVIDERS: ReadonlySet<string> = new Set([
+  'llama-server-reranker',
+]);
+
+/**
  * Look up `modelId` in the chat or embedding pricing maps. Returns a
  * per-1M-token price tuple, or null when unknown.
  *
@@ -132,8 +143,10 @@ function defaultAuditPath(): string {
  *     are bare claude-* ids). Fall back to the provider-prefixed key.
  *   - Embed: lookupEmbeddingPrice already handles the provider:model form,
  *     defaulting to openai when the colon is missing.
- *   - Rerank: not priced today — treat as a chat call with no output cost
- *     when caller passes ANTHROPIC_PRICING-shaped id, else unknown.
+ *   - Rerank: try ANTHROPIC_PRICING (legacy path for any Claude-priced
+ *     rerank); else if the provider half is in FREE_LOCAL_RERANK_PROVIDERS,
+ *     return zero pricing so `--max-cost` callers don't TX2 hard-fail on
+ *     local inference recipes (electricity, not tokens); else unknown.
  */
 function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   if (kind === 'embed') {
@@ -146,10 +159,17 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   // chat or rerank: try bare key first, then provider:model
   const bare = ANTHROPIC_PRICING[modelId];
   if (bare) return bare;
-  const [, modelTail] = modelId.includes(':') ? modelId.split(':', 2) : [null, modelId];
+  const [providerId, modelTail] = modelId.includes(':') ? modelId.split(':', 2) : [null, modelId];
   if (modelTail) {
     const tailHit = ANTHROPIC_PRICING[modelTail];
     if (tailHit) return tailHit;
+  }
+  // v0.40.6.1: zero-price local-inference rerank providers so the budget
+  // tracker's TX2 hard-fail doesn't trip on `llama-server-reranker:<model>`
+  // under `--max-cost`. Only the rerank kind — chat/embed already have
+  // their own provider-specific pricing surfaces.
+  if (kind === 'rerank' && providerId && FREE_LOCAL_RERANK_PROVIDERS.has(providerId)) {
+    return { input: 0, output: 0 };
   }
   return null;
 }

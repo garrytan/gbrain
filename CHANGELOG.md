@@ -2,6 +2,66 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.40.6.1] - 2026-05-23
+
+**Run your reranker on your own hardware. Point gbrain at it. Search keeps the same fail-open safety.** Until now, gbrain's reranker call only talked to ZeroEntropy's hosted API. Some people have a llama.cpp server on their LAN with a Qwen3 reranker model loaded, or they've pulled the open-source ZeroEntropy weights and want to run those locally too. This release wires that path up. One new recipe (`llama-server-reranker`), one path override on the reranker touchpoint, and a few small fixes around the edges so things like budget caps and cold-start timeouts don't trip you up the first time.
+
+This is for you if you already run llama.cpp for embeddings, want to keep retrieval data inside your network, or just want to use Qwen3-Reranker (or any open-weight cross-encoder) without paying a per-rerank fee. The hosted ZeroEntropy path is unchanged for everyone else.
+
+### How to turn it on
+
+```bash
+# Launch llama.cpp in reranking mode (separate port from embeddings):
+llama-server --model qwen3-reranker-4b-q4_k_m.gguf --alias qwen3-reranker-4b --reranking --port 8081
+
+# Point gbrain at it:
+gbrain config set provider_base_urls.llama-server-reranker http://your-host:8081/v1
+gbrain config set search.reranker.model llama-server-reranker:qwen3-reranker-4b
+gbrain config set search.reranker.enabled true
+gbrain models doctor      # confirms reachability + that --reranking mode is on
+```
+
+The `--alias` matters: without it, `/v1/models` defaults the model id to the gguf file path, and your config string gets ugly. With `--alias qwen3-reranker-4b`, your config is short and stable. Full setup details in `docs/ai-providers/llama-server-reranker.md`.
+
+### What you'd see in a concrete example
+
+| Scenario | Before | After |
+|---|---|---|
+| LAN llama.cpp + Qwen3-Reranker-4B | Not possible — code was wired to ZE only | `gbrain config set search.reranker.model llama-server-reranker:qwen3-reranker-4b` |
+| Self-hosted ZE weights via llama.cpp | Not possible | Same recipe, just `--model zerank-2.gguf` at server launch |
+| Cold-start on CPU (first call ~10s) | Recipe-level timeout was dead — 5s mode-bundle default always won, request silently fell-open as "timeout" | Recipe's 30s timeout flows through search-mode resolution; first call lands |
+| `gbrain models doctor` with `search.reranker.model` set in DB plane | "reranker not configured" (read the wrong config field) | Reports the model live search actually uses |
+| `GBRAIN_MAX_USD=0.01` + local reranker | TX2 hard-fail — "no pricing entry" | Recognized as zero-cost (electricity, not tokens) |
+
+### What's safe to know about
+
+- ZE-hosted users are unchanged. The path override defaults to ZE's `/models/rerank`. Your existing `gbrain config set search.reranker.model zeroentropyai:zerank-2` keeps working byte-identically.
+- Voyage / Cohere / vLLM rerankers are NOT yet supported. Their wire shapes differ from ZE/llama.cpp (different field names, different response shape). They need adapter hooks designed against the real wire shape, which lands in a separate plan.
+- Self-hosted ZeroEntropy weights work as a transport, but score quality is not guaranteed to match ZE-hosted. GGUF conversion + quantization + tokenizer special tokens all affect ranking. If you run self-hosted ZE for production retrieval, pin your own brain-relevant eval as a regression guard.
+
+## To take advantage of v0.40.6.1
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about anything:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **No schema migration is required** for this release. The only changes are TypeScript code — a new recipe, a new optional field on the reranker touchpoint, a 0-cost pricing entry for the local provider, and a doctor probe fix.
+3. **If you want to use a local reranker**, follow the setup section above or the full guide in `docs/ai-providers/llama-server-reranker.md`. If you're staying on ZeroEntropy-hosted, nothing changes for you.
+4. **If any step fails or the numbers look wrong,** please file an issue: https://github.com/garrytan/gbrain/issues with output of `gbrain doctor` and contents of `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+- New recipe `llama-server-reranker` registered alongside the existing `llama-server` embedding recipe. Sibling rather than extension because llama.cpp's `--reranking` and `--embeddings` flags are mutually exclusive at launch — one process per mode, two recipes for two base URLs. Default port 8081 distinct from the embedding recipe's 8080.
+- `RerankerTouchpoint` gains two optional fields: `path?: string` (defaults to ZE's legacy `/models/rerank`; new recipe sets the leaf `/rerank` because the recipe's `base_url_default` already provides the `/v1` prefix) and `default_timeout_ms?: number` (recipe-level fallback for `gateway.rerank()`). Both fields are absent on ZE's recipe, so behavior there is unchanged.
+- `src/core/search/mode.ts` reranker timeout resolution now slots the recipe's touchpoint default between the config-key override and the mode-bundle default. Precedence: per-call > `search.reranker.timeout_ms` config > recipe `default_timeout_ms` > mode bundle. Closes the dead-default-timeout bug class where recipe-level timeouts never fired because `hybridSearch` always passed the bundle's value.
+- `src/core/budget/budget-tracker.ts` recognizes the `llama-server-reranker:` provider prefix (and any future entry added to `FREE_LOCAL_RERANK_PROVIDERS`) as zero-cost for the rerank kind. `--max-cost`-bounded callers no longer hit TX2 hard-fail when configured for a local reranker. The chat kind on the same provider still triggers `no_pricing` so accidentally routing chat through the recipe doesn't get a silent free pass.
+- `src/cli.ts buildGatewayConfig` maps `LLAMA_SERVER_RERANKER_BASE_URL` env var to `provider_base_urls.llama-server-reranker`. Sibling of the existing `LLAMA_SERVER_BASE_URL` mapping.
+- `src/commands/models.ts` reranker probes now resolve the model the same way live search does (via `loadSearchModeConfig` + `resolveSearchMode`). Pre-fix the probe read `getRerankerModel()` from the gateway, which is fed by `GBrainConfig.reranker_model` — a file-plane field nothing writes — so doctor said "not configured" while live search was actively reranking. The reachability probe also picks up the recipe's `default_timeout_ms` so cold-start on a local CPU-only reranker doesn't false-fail as `network`.
+- 22 new test cases across 5 files: `test/ai/rerank.test.ts` (path override + empty allowlist + regression), `test/ai/recipe-llama-server-reranker.test.ts` (recipe shape regression guard), `test/search-mode.test.ts` (5 cases pinning the new timeout precedence chain), `test/models-doctor-reranker.test.ts` (5 cases on the new divergence-fix helper), `test/core/budget/budget-tracker.test.ts` (3 cases on free-local-rerank pricing).
+- New doc `docs/ai-providers/llama-server-reranker.md` covers build, launch with `--alias`, gbrain config, verification, cold-start headroom, and the budget-cap interaction.
+
 ## [0.40.2.0] - 2026-05-22
 
 **gbrain now uses the typed-claim timeline it's been quietly building to ground answers about what changed and when.** Ask `gbrain think` "when did Marco last switch jobs" or "what was the ARR in March" and the answer comes back rooted in a real chronological timeline of the metric facts your brain already extracted via the `extract_facts` cycle phase. The feature is on by default; flip `think.trajectory_enabled=false` to opt out.

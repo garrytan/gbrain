@@ -1481,6 +1481,11 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // OLLAMA_BASE_URL. Caller-provided cfg.provider_base_urls wins.
   const envBaseUrls: Record<string, string> = {};
   if (process.env.LLAMA_SERVER_BASE_URL) envBaseUrls['llama-server'] = process.env.LLAMA_SERVER_BASE_URL;
+  // v0.40.6.1: sibling recipe for llama-server in reranking mode. Separate
+  // env var because --reranking and --embeddings are mutually exclusive at
+  // server launch — users running both will have two llama-server processes
+  // on different ports.
+  if (process.env.LLAMA_SERVER_RERANKER_BASE_URL) envBaseUrls['llama-server-reranker'] = process.env.LLAMA_SERVER_RERANKER_BASE_URL;
   if (process.env.OLLAMA_BASE_URL) envBaseUrls['ollama'] = process.env.OLLAMA_BASE_URL;
   if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
   if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;

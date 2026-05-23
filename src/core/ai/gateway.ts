@@ -2767,7 +2767,12 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
   const cfg = requireConfig();
   const compat = applyOpenAICompatConfig(recipe, cfg);
-  const url = `${compat.baseURL.replace(/\/$/, '')}/models/rerank`;
+  // v0.40.6.1: rerank URL path is recipe-pluggable. Defaults to ZeroEntropy's
+  // legacy `/models/rerank`; openai-style providers like llama.cpp's
+  // llama-server set `/v1/rerank`. Wire shape is unchanged — any provider
+  // whose request/response shape differs from ZE/llama.cpp (e.g. Voyage with
+  // `top_k` / `data[]`) needs separate adapter hooks in a follow-up plan.
+  const url = `${compat.baseURL.replace(/\/$/, '')}${tp.path ?? '/models/rerank'}`;
   const auth = applyResolveAuth(recipe, cfg, 'reranker');
   // applyResolveAuth returns { apiKey } for Bearer-style auth (SDK's native
   // path) or { headers } for custom-header providers (Azure). v0.37.6.0:
