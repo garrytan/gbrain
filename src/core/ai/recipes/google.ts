@@ -14,6 +14,12 @@ export const google: Recipe = {
       models: ['gemini-embedding-001'],
       default_dims: 768,
       dims_options: [768, 1536, 3072],
+      // Gemini embedding requests have provider-side size limits; keep the
+      // gateway on the pre-split path instead of relying on post-error
+      // recursive halving. Conservative until upstream recipe metadata is
+      // refreshed from current Google docs.
+      max_batch_tokens: 8192,
+      chars_per_token: 4,
       cost_per_1m_tokens_usd: 0.15,
       price_last_verified: '2026-04-20',
     },

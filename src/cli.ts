@@ -178,6 +178,13 @@ async function main() {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   } finally {
+    if (op.name === 'query') {
+      // Bun/PGLite currently hangs during disconnect after vector-backed
+      // query runs on this local substrate. The command is read-only and has
+      // already flushed its output; exit directly so CLI probes terminate.
+      // Other shared ops keep the normal disconnect path.
+      process.exit(0);
+    }
     await engine.disconnect();
   }
 }
