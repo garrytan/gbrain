@@ -6,7 +6,14 @@
  */
 
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
-import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwChat } from '../core/ai/gateway.ts';
+import {
+  configureGateway,
+  embedOne,
+  formatAuthRequirement,
+  isAvailable as gwIsAvailable,
+  isRecipeAuthReady,
+  chat as gwChat,
+} from '../core/ai/gateway.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
@@ -45,9 +52,7 @@ function configureFromEnv(): void {
 }
 
 export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): boolean {
-  const required = recipe.auth_env?.required ?? [];
-  if (required.length === 0) return true; // e.g. local Ollama
-  return required.every(k => !!env[k]);
+  return isRecipeAuthReady(recipe, env);
 }
 
 /**
@@ -67,7 +72,7 @@ export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = pr
     const hasExpand = !!r.touchpoints.expansion;
     const hasChat = !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
     const ready = envReady(r, env);
-    const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
+    const status = ready ? '✓ ready' : `✗ missing ${formatAuthRequirement(r)}`;
     rows.push(
       r.id.padEnd(14) +
       r.tier.padEnd(18) +
@@ -242,6 +247,7 @@ function runEnv(args: string[]): void {
   console.log('');
   const required = recipe.auth_env?.required ?? [];
   const optional = recipe.auth_env?.optional ?? [];
+  const oauth = recipe.auth_env?.oauth_access_token ?? [];
   if (required.length > 0) {
     console.log('Required:');
     for (const k of required) {
@@ -258,6 +264,13 @@ function runEnv(args: string[]): void {
       console.log(`  ${k.padEnd(32)} ${set ? '✓ set' : '✗ not set'}`);
     }
   }
+  if (oauth.length > 0) {
+    console.log('\nOAuth access token alternatives:');
+    for (const k of oauth) {
+      const set = !!process.env[k];
+      console.log(`  ${k.padEnd(32)} ${set ? '✓ set' : '✗ not set'}`);
+    }
+  }
   if (recipe.auth_env?.setup_url) {
     console.log(`\nSetup: ${recipe.auth_env.setup_url}`);
   }
@@ -270,15 +283,13 @@ async function runExplain(args: string[]): Promise<void> {
   const asJson = args.includes('--json') || args.includes('-j');
 
   const recipes = listRecipes();
-  const env_detected = {
-    OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
-    GOOGLE_GENERATIVE_AI_API_KEY: !!process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-    ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
-    VOYAGE_API_KEY: !!process.env.VOYAGE_API_KEY,
-    DEEPSEEK_API_KEY: !!process.env.DEEPSEEK_API_KEY,
-    GROQ_API_KEY: !!process.env.GROQ_API_KEY,
-    TOGETHER_API_KEY: !!process.env.TOGETHER_API_KEY,
-  };
+  const authEnvNames = Array.from(new Set(recipes.flatMap(r => [
+    ...(r.auth_env?.required ?? []),
+    ...(r.auth_env?.oauth_access_token ?? []),
+  ]))).sort();
+  const env_detected: Record<string, boolean> = Object.fromEntries(
+    authEnvNames.map(k => [k, !!process.env[k]]),
+  );
 
   // Parallel probes for local providers (1s timeout each)
   const [ollama, lmstudio] = await Promise.all([probeOllama(), probeLMStudio()]);
@@ -416,21 +427,21 @@ function consFor(r: Recipe): string[] {
 function pickRecommended(options: ProviderOption[], env: Record<string, boolean>, ollamaReady: boolean): { id: string; reason: string } {
   // Embedding recommendation: prefer env-ready native providers in this order.
   const embOpts = options.filter(o => o.touchpoint === 'embedding');
-  if (env.OPENAI_API_KEY) {
-    const openai = embOpts.find(o => o.id.startsWith('openai:'));
-    if (openai) return { id: openai.id, reason: 'OPENAI_API_KEY set — OpenAI default is high-quality and preserves existing 1536-dim schema.' };
+  if (env.OPENAI_API_KEY || env.OPENAI_OAUTH_ACCESS_TOKEN || env.OPENAI_ACCESS_TOKEN) {
+    const openai = embOpts.find(o => o.id.startsWith('openai:') && o.env_ready);
+    if (openai) return { id: openai.id, reason: 'OpenAI credentials detected — OpenAI default is high-quality and preserves existing 1536-dim schema.' };
   }
   if (ollamaReady) {
     const ollama = embOpts.find(o => o.id.startsWith('ollama:'));
     if (ollama) return { id: ollama.id, reason: 'Ollama detected locally — zero cost + private.' };
   }
-  if (env.GOOGLE_GENERATIVE_AI_API_KEY) {
-    const google = embOpts.find(o => o.id.startsWith('google:'));
-    if (google) return { id: google.id, reason: 'GOOGLE_GENERATIVE_AI_API_KEY set — Gemini embedding at 768 dims.' };
+  if (env.GOOGLE_GENERATIVE_AI_API_KEY || env.GOOGLE_GENERATIVE_AI_OAUTH_ACCESS_TOKEN || env.GOOGLE_GENERATIVE_AI_ACCESS_TOKEN || env.GOOGLE_OAUTH_ACCESS_TOKEN) {
+    const google = embOpts.find(o => o.id.startsWith('google:') && o.env_ready);
+    if (google) return { id: google.id, reason: 'Google credentials detected — Gemini embedding at 768 dims.' };
   }
-  if (env.VOYAGE_API_KEY) {
-    const voyage = embOpts.find(o => o.id.startsWith('voyage:'));
-    if (voyage) return { id: voyage.id, reason: 'VOYAGE_API_KEY set — Voyage at 1024 dims.' };
+  if (env.VOYAGE_API_KEY || env.VOYAGE_OAUTH_ACCESS_TOKEN || env.VOYAGE_ACCESS_TOKEN) {
+    const voyage = embOpts.find(o => o.id.startsWith('voyage:') && o.env_ready);
+    if (voyage) return { id: voyage.id, reason: 'Voyage credentials detected — Voyage at 1024 dims.' };
   }
   // Nothing ready. Recommend OpenAI as the lowest-friction path.
   return {

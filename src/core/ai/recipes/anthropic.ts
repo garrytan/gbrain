@@ -12,6 +12,8 @@ export const anthropic: Recipe = {
   implementation: 'native-anthropic',
   auth_env: {
     required: ['ANTHROPIC_API_KEY'],
+    oauth_access_token: ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_OAUTH_ACCESS_TOKEN'],
+    oauth_replaces: ['ANTHROPIC_API_KEY'],
     setup_url: 'https://console.anthropic.com/settings/keys',
   },
   touchpoints: {

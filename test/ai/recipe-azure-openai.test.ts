@@ -2,13 +2,13 @@
  * Azure OpenAI recipe smoke (Commit 8 of the v0.32 wave).
  *
  * Azure is the first recipe to exercise BOTH new seams:
- *   - resolveAuth → custom header (api-key, NOT Authorization Bearer)
+ *   - resolveAuth → custom header (api-key) or OAuth Bearer token
  *   - resolveOpenAICompatConfig → templated baseURL + fetch wrapper that
  *     splices `?api-version=` onto every request
  *
  * Coverage:
  *  - Recipe registered with expected shape
- *  - resolveAuth returns api-key header; missing key → AIConfigError
+ *  - resolveAuth returns api-key header, or Authorization Bearer for OAuth
  *  - resolveOpenAICompatConfig templates baseURL from endpoint + deployment
  *  - resolveOpenAICompatConfig throws when endpoint or deployment missing
  *  - fetch wrapper splices api-version query param (default + override)
@@ -44,6 +44,8 @@ describe('recipe: azure-openai', () => {
       'AZURE_OPENAI_DEPLOYMENT',
     ]);
     expect(r!.auth_env?.optional).toContain('AZURE_OPENAI_API_VERSION');
+    expect(r!.auth_env?.oauth_access_token).toContain('AZURE_OPENAI_OAUTH_ACCESS_TOKEN');
+    expect(r!.auth_env?.oauth_replaces).toEqual(['AZURE_OPENAI_API_KEY']);
   });
 
   test('embedding touchpoint declares 3 models + 1536 default + Matryoshka options', () => {
@@ -71,11 +73,35 @@ describe('recipe: azure-openai', () => {
     expect(() => r.resolveAuth!({})).toThrow(AIConfigError);
   });
 
+  test('resolveAuth returns Authorization Bearer when OAuth access token is set', () => {
+    const r = getRecipe('azure-openai')!;
+    const auth = r.resolveAuth!({
+      AZURE_OPENAI_OAUTH_ACCESS_TOKEN: 'az-oauth-token',
+    });
+    expect(auth).toEqual({
+      headerName: 'Authorization',
+      token: 'Bearer az-oauth-token',
+    });
+  });
+
   test('applyResolveAuth puts the key in headers (NOT apiKey) — no double-auth', () => {
     const r = getRecipe('azure-openai')!;
     const result = applyResolveAuth(r, { env: FULL_ENV } as any, 'embedding');
     expect(result.apiKey, 'apiKey must be undefined to avoid double-auth').toBeUndefined();
     expect(result.headers).toEqual({ 'api-key': 'az-fake-key' });
+  });
+
+  test('applyResolveAuth uses SDK apiKey path for Azure OAuth Bearer token', () => {
+    const r = getRecipe('azure-openai')!;
+    const result = applyResolveAuth(r, {
+      env: {
+        ...FULL_ENV,
+        AZURE_OPENAI_API_KEY: undefined,
+        AZURE_OPENAI_OAUTH_ACCESS_TOKEN: 'az-oauth-token',
+      },
+    } as any, 'embedding');
+    expect(result.apiKey).toBe('az-oauth-token');
+    expect(result.headers).toBeUndefined();
   });
 
   test('resolveOpenAICompatConfig templates baseURL from endpoint + deployment', () => {

@@ -220,6 +220,24 @@ export interface Recipe {
   auth_env?: {
     required: string[];
     optional?: string[];
+    /**
+     * Env var name(s) containing a pre-minted OAuth/OIDC access token that can
+     * be sent as `Authorization: Bearer <token>`.
+     *
+     * gbrain does not mint or refresh these tokens; it only consumes a token
+     * provided by the operator or an external credential helper. When present,
+     * this token is preferred over API-key auth for all gateway touchpoints
+     * (embedding, expansion, chat, reranker).
+     */
+    oauth_access_token?: string[];
+    /**
+     * Which `required` env vars are satisfied by `oauth_access_token`.
+     * Defaults to the first required env var, which is the API-key slot for
+     * current recipes. Recipes that also require non-auth config (Azure's
+     * endpoint/deployment) should leave those entries out so readiness checks
+     * still require them.
+     */
+    oauth_replaces?: string[];
     setup_url?: string;
   };
   touchpoints: {

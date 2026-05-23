@@ -24,6 +24,8 @@ export const minimax: Recipe = {
   auth_env: {
     required: ['MINIMAX_API_KEY'],
     optional: ['MINIMAX_GROUP_ID'],
+    oauth_access_token: ['MINIMAX_OAUTH_ACCESS_TOKEN', 'MINIMAX_ACCESS_TOKEN'],
+    oauth_replaces: ['MINIMAX_API_KEY'],
     setup_url: 'https://www.minimaxi.com/document/guides/embeddings',
   },
   touchpoints: {

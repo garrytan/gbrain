@@ -13,6 +13,8 @@ export const together: Recipe = {
   base_url_default: 'https://api.together.xyz/v1',
   auth_env: {
     required: ['TOGETHER_API_KEY'],
+    oauth_access_token: ['TOGETHER_OAUTH_ACCESS_TOKEN', 'TOGETHER_ACCESS_TOKEN'],
+    oauth_replaces: ['TOGETHER_API_KEY'],
     setup_url: 'https://api.together.ai/settings/api-keys',
   },
   touchpoints: {

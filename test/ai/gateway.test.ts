@@ -68,6 +68,15 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
     expect(isAvailable('embedding')).toBe(false);
   });
 
+  test('embedding available when OPENAI_OAUTH_ACCESS_TOKEN replaces OPENAI_API_KEY', () => {
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { OPENAI_OAUTH_ACCESS_TOKEN: 'oauth-openai-token' },
+    });
+    expect(isAvailable('embedding')).toBe(true);
+  });
+
   test('embedding AVAILABLE for google when GOOGLE_GENERATIVE_AI_API_KEY set even if OPENAI_API_KEY is NOT (Codex silent-drop regression)', () => {
     configureGateway({
       embedding_model: 'google:gemini-embedding-001',
@@ -99,6 +108,14 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
     configureGateway({
       expansion_model: 'anthropic:claude-haiku-4-5-20251001',
       env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+    expect(isAvailable('expansion')).toBe(true);
+  });
+
+  test('expansion available when ANTHROPIC_AUTH_TOKEN replaces ANTHROPIC_API_KEY', () => {
+    configureGateway({
+      expansion_model: 'anthropic:claude-haiku-4-5-20251001',
+      env: { ANTHROPIC_AUTH_TOKEN: 'oauth-anthropic-token' },
     });
     expect(isAvailable('expansion')).toBe(true);
   });
@@ -184,6 +201,78 @@ describe('dims.dimsProviderOptions', () => {
   test('voyage-4-nano returns undefined (open-weight, fixed-dim)', () => {
     const opts = dimsProviderOptions('openai-compatible', 'voyage-4-nano', 512);
     expect(opts).toBeUndefined();
+  });
+});
+
+describe('gateway OAuth bearer auth', () => {
+  beforeEach(() => resetGateway());
+
+  test('native OpenAI embedding sends OAuth token as Authorization Bearer', async () => {
+    const originalFetch = globalThis.fetch;
+    let authHeader = '';
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers ?? (_url instanceof Request ? _url.headers : undefined));
+      authHeader = headers.get('authorization') ?? '';
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            object: 'embedding',
+            index: 0,
+            embedding: new Array(1536).fill(0.01),
+          },
+        ],
+        model: 'text-embedding-3-large',
+        usage: { prompt_tokens: 1, total_tokens: 1 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      configureGateway({
+        embedding_model: 'openai:text-embedding-3-large',
+        embedding_dimensions: 1536,
+        env: { OPENAI_OAUTH_ACCESS_TOKEN: 'oauth-native-openai' },
+      });
+
+      await embed(['oauth probe']);
+      expect(authHeader).toBe('Bearer oauth-native-openai');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('native Google embedding sends OAuth Bearer without x-goog-api-key', async () => {
+    const originalFetch = globalThis.fetch;
+    let authHeader = '';
+    let googleApiKeyHeader: string | null = null;
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers ?? (_url instanceof Request ? _url.headers : undefined));
+      authHeader = headers.get('authorization') ?? '';
+      googleApiKeyHeader = headers.get('x-goog-api-key');
+      return new Response(JSON.stringify({
+        embedding: { values: new Array(768).fill(0.01) },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      configureGateway({
+        embedding_model: 'google:gemini-embedding-001',
+        embedding_dimensions: 768,
+        env: { GOOGLE_GENERATIVE_AI_OAUTH_ACCESS_TOKEN: 'oauth-google' },
+      });
+
+      await embed(['oauth probe']);
+      expect(authHeader).toBe('Bearer oauth-google');
+      expect(googleApiKeyHeader).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

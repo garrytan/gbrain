@@ -26,6 +26,8 @@ export const voyage: Recipe = {
   base_url_default: 'https://api.voyageai.com/v1',
   auth_env: {
     required: ['VOYAGE_API_KEY'],
+    oauth_access_token: ['VOYAGE_OAUTH_ACCESS_TOKEN', 'VOYAGE_ACCESS_TOKEN'],
+    oauth_replaces: ['VOYAGE_API_KEY'],
     setup_url: 'https://dash.voyageai.com/api-keys',
   },
   touchpoints: {

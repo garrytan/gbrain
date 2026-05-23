@@ -22,6 +22,12 @@ describe('envReady', () => {
     expect(envReady(openai!, {})).toBe(false);
   });
 
+  test('true when OAuth access token alternative is set', () => {
+    const openai = getRecipe('openai');
+    expect(openai).toBeDefined();
+    expect(envReady(openai!, { OPENAI_OAUTH_ACCESS_TOKEN: 'oauth-token' })).toBe(true);
+  });
+
   test('false on empty-string env var', () => {
     const openai = getRecipe('openai');
     expect(envReady(openai!, { OPENAI_API_KEY: '' })).toBe(false);
@@ -59,7 +65,7 @@ describe('formatRecipeTable', () => {
     // openai should show missing OPENAI_API_KEY
     const openaiLine = out.split('\n').find(line => line.startsWith('openai'));
     expect(openaiLine).toBeDefined();
-    expect(openaiLine).toContain('✗ missing OPENAI_API_KEY');
+    expect(openaiLine).toContain('✗ missing OPENAI_API_KEY or OPENAI_OAUTH_ACCESS_TOKEN');
   });
 
   test('each recipe appears at most once', () => {
@@ -91,6 +97,14 @@ describe('formatRecipeTable', () => {
     expect(lines[2]).toContain('openai');
     expect(lines[2]).toContain('✓ ready');
     expect(lines[3]).toContain('zeroentropyai');
-    expect(lines[3]).toContain('✗ missing ZEROENTROPY_API_KEY');
+    expect(lines[3]).toContain('✗ missing ZEROENTROPY_API_KEY or ZEROENTROPY_OAUTH_ACCESS_TOKEN');
+  });
+
+  test('shows ready when OAuth token satisfies provider auth', () => {
+    const openai = getRecipe('openai');
+    expect(openai).toBeDefined();
+    const out = formatRecipeTable([openai!], { OPENAI_OAUTH_ACCESS_TOKEN: 'oauth-token' });
+    const line = out.split('\n').find(row => row.startsWith('openai'));
+    expect(line).toContain('✓ ready');
   });
 });

@@ -21,7 +21,12 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { defaultResolveAuth, applyResolveAuth } from '../../src/core/ai/gateway.ts';
+import {
+  defaultResolveAuth,
+  applyResolveAuth,
+  missingRequiredAuthEnv,
+  resolveOAuthAccessToken,
+} from '../../src/core/ai/gateway.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
 import type { Recipe } from '../../src/core/ai/types.ts';
@@ -143,6 +148,33 @@ describe('IRON RULE: existing 9 recipes survive the v0.32 resolveAuth refactor',
     const auth = applyResolveAuth(voyage, { env } as any, 'embedding');
     expect(auth.apiKey).toBe('fake-voyage-key');
     expect(auth.headers).toBeUndefined();
+  });
+
+  test('OAuth access token is preferred over API key for Bearer auth', () => {
+    const voyage = getRecipe('voyage')!;
+    const env = {
+      VOYAGE_API_KEY: 'fake-voyage-key',
+      VOYAGE_OAUTH_ACCESS_TOKEN: 'oauth-voyage-token',
+    };
+    const resolved = resolveOAuthAccessToken(voyage, env);
+    expect(resolved).toEqual({
+      envName: 'VOYAGE_OAUTH_ACCESS_TOKEN',
+      token: 'oauth-voyage-token',
+    });
+    const auth = defaultResolveAuth(voyage, env, 'embedding');
+    expect(auth).toEqual({
+      headerName: 'Authorization',
+      token: 'Bearer oauth-voyage-token',
+    });
+    const applied = applyResolveAuth(voyage, { env } as any, 'embedding');
+    expect(applied.apiKey).toBe('oauth-voyage-token');
+  });
+
+  test('OAuth token satisfies only the API-key slot, not other required config', () => {
+    const azure = getRecipe('azure-openai')!;
+    expect(missingRequiredAuthEnv(azure, {
+      AZURE_OPENAI_OAUTH_ACCESS_TOKEN: 'oauth-azure-token',
+    })).toEqual(['AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_DEPLOYMENT']);
   });
 
   test('applyResolveAuth respects a recipe.resolveAuth override that returns a custom header', () => {

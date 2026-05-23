@@ -7,6 +7,12 @@ export const google: Recipe = {
   implementation: 'native-google',
   auth_env: {
     required: ['GOOGLE_GENERATIVE_AI_API_KEY'],
+    oauth_access_token: [
+      'GOOGLE_GENERATIVE_AI_OAUTH_ACCESS_TOKEN',
+      'GOOGLE_GENERATIVE_AI_ACCESS_TOKEN',
+      'GOOGLE_OAUTH_ACCESS_TOKEN',
+    ],
+    oauth_replaces: ['GOOGLE_GENERATIVE_AI_API_KEY'],
     setup_url: 'https://aistudio.google.com/apikey',
   },
   touchpoints: {

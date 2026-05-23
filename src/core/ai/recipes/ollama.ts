@@ -9,6 +9,7 @@ export const ollama: Recipe = {
   auth_env: {
     required: [], // Ollama runs unauthenticated locally; users pass `ollama` as the key.
     optional: ['OLLAMA_BASE_URL', 'OLLAMA_API_KEY'],
+    oauth_access_token: ['OLLAMA_OAUTH_ACCESS_TOKEN', 'OLLAMA_ACCESS_TOKEN'],
     setup_url: 'https://ollama.ai',
   },
   touchpoints: {

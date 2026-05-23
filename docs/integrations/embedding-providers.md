@@ -19,6 +19,12 @@ As of v0.37, `gbrain init --pglite` auto-detects which provider to use from your
 
 The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atomically, so subsequent runs are deterministic across releases.
 
+## API keys and OAuth bearer tokens
+
+Provider recipes accept the traditional `*_API_KEY` env vars and, where the provider or proxy accepts bearer auth, a pre-minted OAuth/OIDC access token env var such as `OPENAI_OAUTH_ACCESS_TOKEN`, `ANTHROPIC_AUTH_TOKEN`, `ZEROENTROPY_OAUTH_ACCESS_TOKEN`, or `AZURE_OPENAI_OAUTH_ACCESS_TOKEN`.
+
+GBrain does not run OAuth grant flows or refresh tokens itself. Put a valid access token into the env snapshot before starting GBrain and the gateway will prefer `Authorization: Bearer <token>` over API-key auth for embedding, query expansion, chat, multimodal embedding, and reranking. Non-auth config is still required: for example Azure OAuth replaces `AZURE_OPENAI_API_KEY`, but still requires `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_DEPLOYMENT`.
+
 ## TL;DR table
 
 | Provider | env vars | default dims | cost ($/1M tokens) | local? | multimodal? |

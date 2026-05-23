@@ -46,6 +46,8 @@ export const openrouter: Recipe = {
   auth_env: {
     required: ['OPENROUTER_API_KEY'],
     optional: ['OPENROUTER_BASE_URL', 'OPENROUTER_REFERER', 'OPENROUTER_TITLE'],
+    oauth_access_token: ['OPENROUTER_OAUTH_ACCESS_TOKEN', 'OPENROUTER_ACCESS_TOKEN'],
+    oauth_replaces: ['OPENROUTER_API_KEY'],
     setup_url: 'https://openrouter.ai/settings/keys',
   },
   resolveDefaultHeaders(env) {

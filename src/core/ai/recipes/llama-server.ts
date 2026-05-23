@@ -24,6 +24,7 @@ export const llamaServer: Recipe = {
   auth_env: {
     required: [],
     optional: ['LLAMA_SERVER_BASE_URL', 'LLAMA_SERVER_API_KEY'],
+    oauth_access_token: ['LLAMA_SERVER_OAUTH_ACCESS_TOKEN', 'LLAMA_SERVER_ACCESS_TOKEN'],
     setup_url:
       'https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md',
   },

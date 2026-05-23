@@ -20,6 +20,13 @@ describe('groupReadyByProvider — embedding touchpoint', () => {
     expect(got.map(p => p.recipeId)).toContain('openai');
   });
 
+  test('OPENAI_OAUTH_ACCESS_TOKEN alone → openai is ready', async () => {
+    const got = await groupReadyByProvider('embedding', {
+      OPENAI_OAUTH_ACCESS_TOKEN: 'oauth-openai-token',
+    });
+    expect(got.map(p => p.recipeId)).toContain('openai');
+  });
+
   test('VOYAGE_API_KEY alone → voyage is ready', async () => {
     const got = await groupReadyByProvider('embedding', { VOYAGE_API_KEY: 'pa-test' });
     expect(got.map(p => p.recipeId)).toContain('voyage');
@@ -82,6 +89,11 @@ describe('groupReadyByProvider — chat touchpoint', () => {
 
   test('ANTHROPIC_API_KEY → anthropic chat ready', async () => {
     const got = await groupReadyByProvider('chat', { ANTHROPIC_API_KEY: 'sk-ant-test' });
+    expect(got.map(p => p.recipeId)).toContain('anthropic');
+  });
+
+  test('ANTHROPIC_AUTH_TOKEN → anthropic chat ready', async () => {
+    const got = await groupReadyByProvider('chat', { ANTHROPIC_AUTH_TOKEN: 'oauth-ant-test' });
     expect(got.map(p => p.recipeId)).toContain('anthropic');
   });
 });

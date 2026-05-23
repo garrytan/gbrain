@@ -14,6 +14,8 @@ export const deepseek: Recipe = {
   base_url_default: 'https://api.deepseek.com/v1',
   auth_env: {
     required: ['DEEPSEEK_API_KEY'],
+    oauth_access_token: ['DEEPSEEK_OAUTH_ACCESS_TOKEN', 'DEEPSEEK_ACCESS_TOKEN'],
+    oauth_replaces: ['DEEPSEEK_API_KEY'],
     setup_url: 'https://platform.deepseek.com/api_keys',
   },
   touchpoints: {

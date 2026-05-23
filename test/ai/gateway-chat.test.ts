@@ -170,6 +170,11 @@ describe('chat touchpoint — gateway config plumbing', () => {
     expect(isAvailable('chat')).toBe(true);
   });
 
+  test('isAvailable("chat") returns true when Anthropic bearer token is present', () => {
+    configureGateway({ env: { ANTHROPIC_AUTH_TOKEN: 'oauth-anthropic-token' } });
+    expect(isAvailable('chat')).toBe(true);
+  });
+
   test('isAvailable("chat") returns false when configured provider has no key', () => {
     configureGateway({ chat_model: 'openai:gpt-5.2', env: {} });
     expect(isAvailable('chat')).toBe(false);

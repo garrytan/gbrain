@@ -100,6 +100,21 @@ describe('gateway.rerank() — happy path', () => {
     expect(authHeader).toBe('Bearer sk-test-zerokey');
   });
 
+  test('uses OAuth Bearer token when ZEROENTROPY_API_KEY is absent', async () => {
+    configureGateway({
+      reranker_model: 'zeroentropyai:zerank-2',
+      env: { ZEROENTROPY_OAUTH_ACCESS_TOKEN: 'oauth-zeroentropy' },
+    });
+    let authHeader = '';
+    __setRerankTransportForTests(async (_url, init) => {
+      const headers = new Headers(init.headers as HeadersInit);
+      authHeader = headers.get('authorization') ?? '';
+      return mockResp({ results: [{ index: 0, relevance_score: 1.0 }] });
+    });
+    await rerank({ query: 'q', documents: ['d'] });
+    expect(authHeader).toBe('Bearer oauth-zeroentropy');
+  });
+
   test('Content-Type: application/json', async () => {
     let contentType = '';
     __setRerankTransportForTests(async (_url, init) => {

@@ -13,6 +13,8 @@ export const groq: Recipe = {
   base_url_default: 'https://api.groq.com/openai/v1',
   auth_env: {
     required: ['GROQ_API_KEY'],
+    oauth_access_token: ['GROQ_OAUTH_ACCESS_TOKEN', 'GROQ_ACCESS_TOKEN'],
+    oauth_replaces: ['GROQ_API_KEY'],
     setup_url: 'https://console.groq.com/keys',
   },
   touchpoints: {

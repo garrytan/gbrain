@@ -289,6 +289,15 @@ interface ReadyProvider {
   recipe: import('../core/ai/types.ts').Recipe;
 }
 
+function detectedAuthEnvName(
+  recipe: import('../core/ai/types.ts').Recipe,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const oauth = (recipe.auth_env?.oauth_access_token ?? []).find(k => !!env[k]);
+  if (oauth) return oauth;
+  return (recipe.auth_env?.required ?? []).find(k => !!env[k]) ?? recipe.id;
+}
+
 /**
  * Walk recipes and return providers env-ready for the given touchpoint.
  * Exported for unit tests (parameterizable via env arg).
@@ -368,6 +377,7 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
   console.error('  export OPENAI_API_KEY=sk-…        # openai:text-embedding-3-large (1536d)');
   console.error('  export ZEROENTROPY_API_KEY=ze-…   # zeroentropyai:zembed-1 (2560d, Matryoshka)');
   console.error('  export VOYAGE_API_KEY=pa-…        # voyage:voyage-3-large (1024d)');
+  console.error('  # Or provide a pre-minted bearer token, e.g. OPENAI_OAUTH_ACCESS_TOKEN=...');
   console.error('Then re-run: gbrain init --pglite');
   console.error('');
   console.error('Or pick explicitly:');
@@ -409,7 +419,7 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
       out.embedding_model = fullModel;
       out.embedding_dimensions = dims;
       console.error(
-        `Detected ${r.auth_env?.required?.[0] ?? r.id} env var. ` +
+        `Detected ${detectedAuthEnvName(r)} env var. ` +
         `Using ${fullModel} (${dims}d). ` +
         `Override with --embedding-model.`,
       );
@@ -461,7 +471,7 @@ async function resolveExpansionByEnv(out: ResolvedAIOptions): Promise<void> {
     const tp = r.touchpoints.expansion!;
     if (Array.isArray(tp.models) && tp.models.length > 0) {
       out.expansion_model = `${r.id}:${tp.models[0]}`;
-      console.error(`Detected ${r.auth_env?.required?.[0] ?? r.id} env var. Using ${out.expansion_model} for expansion.`);
+      console.error(`Detected ${detectedAuthEnvName(r)} env var. Using ${out.expansion_model} for expansion.`);
     }
   }
   // 0 or >1 → silent: gateway default (`anthropic:claude-haiku-4-5-…`) wins
@@ -475,7 +485,7 @@ async function resolveChatByEnv(out: ResolvedAIOptions): Promise<void> {
     const tp = r.touchpoints.chat!;
     if (Array.isArray(tp.models) && tp.models.length > 0) {
       out.chat_model = `${r.id}:${tp.models[0]}`;
-      console.error(`Detected ${r.auth_env?.required?.[0] ?? r.id} env var. Using ${out.chat_model} for chat.`);
+      console.error(`Detected ${detectedAuthEnvName(r)} env var. Using ${out.chat_model} for chat.`);
     }
   }
   // 0 or >1 → silent: gateway default (`anthropic:claude-sonnet-4-6`) wins.

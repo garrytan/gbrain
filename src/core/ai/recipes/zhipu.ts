@@ -22,6 +22,8 @@ export const zhipu: Recipe = {
   base_url_default: 'https://open.bigmodel.cn/api/paas/v4',
   auth_env: {
     required: ['ZHIPUAI_API_KEY'],
+    oauth_access_token: ['ZHIPUAI_OAUTH_ACCESS_TOKEN', 'ZHIPUAI_ACCESS_TOKEN'],
+    oauth_replaces: ['ZHIPUAI_API_KEY'],
     setup_url: 'https://open.bigmodel.cn/',
   },
   touchpoints: {

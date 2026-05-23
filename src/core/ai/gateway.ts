@@ -211,6 +211,68 @@ export class ZeroEntropyResponseTooLargeError extends Error {
 // so existing recipes need zero code changes; only deviating recipes (Azure
 // with `api-key:` instead of `Authorization: Bearer`) override.
 
+type AuthTouchpoint = 'embedding' | 'expansion' | 'chat' | 'reranker';
+
+type EnvSnapshot = Record<string, string | undefined>;
+
+/**
+ * Resolve a pre-minted OAuth/OIDC access token declared by a recipe.
+ *
+ * This deliberately does NOT mint or refresh tokens. OAuth grant flows vary by
+ * provider and deployment (device flow, service account, Entra ID, workforce
+ * identity, etc.); the gateway only needs a stable place to consume the access
+ * token once an external helper has placed it in the env snapshot.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function resolveOAuthAccessToken(
+  recipe: Recipe,
+  env: EnvSnapshot,
+): { envName: string; token: string } | null {
+  for (const envName of recipe.auth_env?.oauth_access_token ?? []) {
+    const token = env[envName];
+    if (typeof token === 'string' && token.length > 0) {
+      return { envName, token };
+    }
+  }
+  return null;
+}
+
+function oauthReplacesRequired(recipe: Recipe): Set<string> {
+  const required = recipe.auth_env?.required ?? [];
+  const explicit = recipe.auth_env?.oauth_replaces;
+  if (explicit) return new Set(explicit);
+  return required.length > 0 && (recipe.auth_env?.oauth_access_token?.length ?? 0) > 0
+    ? new Set([required[0]])
+    : new Set();
+}
+
+/**
+ * Return missing required auth/config env vars after accounting for an OAuth
+ * bearer token replacing the recipe's API-key slot. Used by isAvailable() and
+ * the provider CLI so every touchpoint agrees on readiness.
+ */
+export function missingRequiredAuthEnv(recipe: Recipe, env: EnvSnapshot): string[] {
+  const required = recipe.auth_env?.required ?? [];
+  if (required.length === 0) return [];
+  const oauth = resolveOAuthAccessToken(recipe, env);
+  const replaced = oauth ? oauthReplacesRequired(recipe) : new Set<string>();
+  return required.filter(k => !env[k] && !replaced.has(k));
+}
+
+export function isRecipeAuthReady(recipe: Recipe, env: EnvSnapshot): boolean {
+  return missingRequiredAuthEnv(recipe, env).length === 0;
+}
+
+export function formatAuthRequirement(recipe: Recipe): string {
+  const required = recipe.auth_env?.required ?? [];
+  if (required.length === 0) return 'setup';
+  const oauth = recipe.auth_env?.oauth_access_token ?? [];
+  return oauth.length > 0
+    ? `${required[0]} or ${oauth[0]}`
+    : required[0];
+}
+
 /**
  * Default auth resolver: returns `{headerName: 'Authorization', token: 'Bearer
  * <key>'}` where `<key>` is the first present env var from `auth_env.required`,
@@ -225,9 +287,14 @@ export class ZeroEntropyResponseTooLargeError extends Error {
  */
 export function defaultResolveAuth(
   recipe: Recipe,
-  env: Record<string, string | undefined>,
-  touchpoint: 'embedding' | 'expansion' | 'chat' | 'reranker',
+  env: EnvSnapshot,
+  touchpoint: AuthTouchpoint,
 ): { headerName: string; token: string } {
+  const oauth = resolveOAuthAccessToken(recipe, env);
+  if (oauth) {
+    return { headerName: 'Authorization', token: `Bearer ${oauth.token}` };
+  }
+
   const required = recipe.auth_env?.required ?? [];
   const optional = recipe.auth_env?.optional ?? [];
 
@@ -246,12 +313,53 @@ export function defaultResolveAuth(
 
   const key = env[required[0]];
   if (!key) {
+    const oauthVars = recipe.auth_env?.oauth_access_token ?? [];
+    const requirement = oauthVars.length > 0
+      ? `${required[0]} or ${oauthVars.join(' / ')}`
+      : required[0];
     throw new AIConfigError(
-      `${recipe.name} ${touchpoint} requires ${required[0]}.`,
+      `${recipe.name} ${touchpoint} requires ${requirement}.`,
       recipe.setup_hint,
     );
   }
   return { headerName: 'Authorization', token: `Bearer ${key}` };
+}
+
+function resolveRecipeDefaultHeaders(
+  recipe: Recipe,
+  env: EnvSnapshot,
+  authHeaderName: string,
+): Record<string, string> | undefined {
+  // v0.37.6.0 — resolve default_headers (static or env-templated). Mutually
+  // exclusive; declaring both is a config error.
+  if (recipe.default_headers && recipe.resolveDefaultHeaders) {
+    throw new AIConfigError(
+      `Recipe "${recipe.id}" declares both default_headers and resolveDefaultHeaders. Pick one.`,
+      recipe.setup_hint,
+    );
+  }
+  const defaults = recipe.resolveDefaultHeaders
+    ? recipe.resolveDefaultHeaders(env)
+    : recipe.default_headers;
+
+  // v0.37.6.0 — defaults MUST NOT shadow the resolved auth header. SDK applies
+  // headers after apiKey, so an `Authorization` entry in defaults would replace
+  // the Bearer the SDK adds. Custom-header recipes (Azure: api-key) are
+  // protected the same way.
+  if (defaults) {
+    const lcResolved = authHeaderName.toLowerCase();
+    for (const k of Object.keys(defaults)) {
+      const lc = k.toLowerCase();
+      if (lc === 'authorization' || lc === lcResolved) {
+        throw new AIConfigError(
+          `Recipe "${recipe.id}" default_headers contains "${k}" which would shadow the auth header. Remove it.`,
+          recipe.setup_hint,
+        );
+      }
+    }
+  }
+
+  return defaults;
 }
 
 /**
@@ -265,40 +373,13 @@ export function defaultResolveAuth(
 export function applyResolveAuth(
   recipe: Recipe,
   cfg: AIGatewayConfig,
-  touchpoint: 'embedding' | 'expansion' | 'chat' | 'reranker',
+  touchpoint: AuthTouchpoint,
 ): { apiKey?: string; headers?: Record<string, string> } {
   const resolved = recipe.resolveAuth
     ? recipe.resolveAuth(cfg.env)
     : defaultResolveAuth(recipe, cfg.env, touchpoint);
 
-  // v0.37.6.0 — resolve default_headers (static or env-templated). Mutually
-  // exclusive; declaring both is a config error.
-  if (recipe.default_headers && recipe.resolveDefaultHeaders) {
-    throw new AIConfigError(
-      `Recipe "${recipe.id}" declares both default_headers and resolveDefaultHeaders. Pick one.`,
-      recipe.setup_hint,
-    );
-  }
-  const defaults = recipe.resolveDefaultHeaders
-    ? recipe.resolveDefaultHeaders(cfg.env)
-    : recipe.default_headers;
-
-  // v0.37.6.0 — defaults MUST NOT shadow the resolved auth header. SDK applies
-  // headers after apiKey, so an `Authorization` entry in defaults would replace
-  // the Bearer the SDK adds. Custom-header recipes (Azure: api-key) are
-  // protected the same way.
-  if (defaults) {
-    const lcResolved = resolved.headerName.toLowerCase();
-    for (const k of Object.keys(defaults)) {
-      const lc = k.toLowerCase();
-      if (lc === 'authorization' || lc === lcResolved) {
-        throw new AIConfigError(
-          `Recipe "${recipe.id}" default_headers contains "${k}" which would shadow the auth header. Remove it.`,
-          recipe.setup_hint,
-        );
-      }
-    }
-  }
+  const defaults = resolveRecipeDefaultHeaders(recipe, cfg.env, resolved.headerName);
 
   // Bearer-via-Authorization: use the SDK's native apiKey path (which sets
   // Authorization: Bearer <key> internally). Strip the 'Bearer ' prefix the
@@ -317,6 +398,15 @@ export function applyResolveAuth(
   // Defaults merge in first, resolver wins on key conflict (the shadow guard
   // above already rejects conflicts, so this is defense-in-depth).
   return { headers: { ...(defaults ?? {}), [resolved.headerName]: resolved.token } };
+}
+
+function authOptionsToHeaders(
+  auth: { apiKey?: string; headers?: Record<string, string> },
+): Record<string, string> {
+  return {
+    ...(auth.apiKey ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
+    ...(auth.headers ?? {}),
+  };
 }
 
 /**
@@ -343,6 +433,97 @@ export function applyOpenAICompatConfig(
     );
   }
   return { baseURL };
+}
+
+function requireApiKeyAuth(
+  recipe: Recipe,
+  cfg: AIGatewayConfig,
+  touchpoint: AuthTouchpoint,
+): string {
+  const keyName = recipe.auth_env?.required[0];
+  if (!keyName || !cfg.env[keyName]) {
+    throw new AIConfigError(
+      `${recipe.name} ${touchpoint} requires ${formatAuthRequirement(recipe)}.`,
+      recipe.setup_hint,
+    );
+  }
+  return cfg.env[keyName]!;
+}
+
+function fetchWithoutRequestHeaders(headerNames: string[]): typeof fetch {
+  const names = headerNames.map(h => h.toLowerCase());
+  return (async (input: any, init?: any) => {
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    for (const name of names) headers.delete(name);
+    return fetch(input, { ...(init ?? {}), headers });
+  }) as unknown as typeof fetch;
+}
+
+function nativeOpenAIOptions(
+  recipe: Recipe,
+  cfg: AIGatewayConfig,
+  touchpoint: AuthTouchpoint,
+): Record<string, unknown> {
+  const oauth = resolveOAuthAccessToken(recipe, cfg.env);
+  const defaults = resolveRecipeDefaultHeaders(recipe, cfg.env, 'Authorization');
+  const apiKey = oauth?.token ?? requireApiKeyAuth(recipe, cfg, touchpoint);
+  return {
+    apiKey,
+    ...(cfg.env.OPENAI_ORG_ID ? { organization: cfg.env.OPENAI_ORG_ID } : {}),
+    ...(cfg.env.OPENAI_PROJECT ? { project: cfg.env.OPENAI_PROJECT } : {}),
+    ...(defaults ? { headers: defaults } : {}),
+  };
+}
+
+function nativeGoogleOptions(
+  recipe: Recipe,
+  cfg: AIGatewayConfig,
+  touchpoint: AuthTouchpoint,
+): Record<string, unknown> {
+  const oauth = resolveOAuthAccessToken(recipe, cfg.env);
+  if (oauth) {
+    const defaults = resolveRecipeDefaultHeaders(recipe, cfg.env, 'Authorization');
+    return {
+      // @ai-sdk/google always adds x-goog-api-key from apiKey/process.env.
+      // Passing an empty string plus a tiny fetch wrapper keeps the gateway's
+      // "env snapshot only" contract while allowing Bearer-token auth.
+      apiKey: '',
+      headers: {
+        ...(defaults ?? {}),
+        Authorization: `Bearer ${oauth.token}`,
+      },
+      fetch: fetchWithoutRequestHeaders(['x-goog-api-key']),
+    };
+  }
+
+  const defaults = resolveRecipeDefaultHeaders(recipe, cfg.env, 'x-goog-api-key');
+  return {
+    apiKey: requireApiKeyAuth(recipe, cfg, touchpoint),
+    ...(defaults ? { headers: defaults } : {}),
+  };
+}
+
+function nativeAnthropicOptions(
+  recipe: Recipe,
+  cfg: AIGatewayConfig,
+  touchpoint: AuthTouchpoint,
+): Record<string, unknown> {
+  const oauth = resolveOAuthAccessToken(recipe, cfg.env);
+  if (oauth) {
+    const defaults = resolveRecipeDefaultHeaders(recipe, cfg.env, 'Authorization');
+    return {
+      authToken: oauth.token,
+      ...(defaults ? { headers: defaults } : {}),
+    };
+  }
+
+  const defaults = resolveRecipeDefaultHeaders(recipe, cfg.env, 'x-api-key');
+  return {
+    apiKey: requireApiKeyAuth(recipe, cfg, touchpoint),
+    ...(defaults ? { headers: defaults } : {}),
+  };
 }
 
 /** Configure the gateway. Called by cli.ts#connectEngine. Clears cached models. */
@@ -642,10 +823,7 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
       (recipe.id === 'litellm' || isUserProvided)
     ) return false;
 
-    // For openai-compatible without auth requirements (Ollama local), treat as always-available.
-    const required = recipe.auth_env?.required ?? [];
-    if (required.length === 0) return true;
-    return required.every(k => !!_config!.env[k]);
+    return isRecipeAuthReady(recipe, _config!.env);
   } catch {
     return false;
   }
@@ -969,24 +1147,14 @@ async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any;
 function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
   switch (recipe.implementation) {
     case 'native-openai': {
-      const apiKey = cfg.env.OPENAI_API_KEY;
-      if (!apiKey) throw new AIConfigError(
-        `OpenAI embedding requires OPENAI_API_KEY.`,
-        recipe.setup_hint,
-      );
-      const client = createOpenAI({ apiKey });
+      const client = createOpenAI(nativeOpenAIOptions(recipe, cfg, 'embedding') as any);
       // AI SDK v6: use .textEmbeddingModel() for embeddings
       return (client as any).textEmbeddingModel
         ? (client as any).textEmbeddingModel(modelId)
         : (client as any).embedding(modelId);
     }
     case 'native-google': {
-      const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
-      if (!apiKey) throw new AIConfigError(
-        `Google embedding requires GOOGLE_GENERATIVE_AI_API_KEY.`,
-        recipe.setup_hint,
-      );
-      const client = createGoogleGenerativeAI({ apiKey });
+      const client = createGoogleGenerativeAI(nativeGoogleOptions(recipe, cfg, 'embedding') as any);
       return (client as any).textEmbeddingModel
         ? (client as any).textEmbeddingModel(modelId)
         : (client as any).embedding(modelId);
@@ -1472,13 +1640,7 @@ export async function embedMultimodal(
     );
   }
 
-  const apiKey = cfg.env[recipe.auth_env?.required[0] ?? 'VOYAGE_API_KEY'];
-  if (!apiKey) {
-    throw new AIConfigError(
-      `${recipe.name} requires ${recipe.auth_env?.required[0]} for multimodal embedding.`,
-      recipe.setup_hint,
-    );
-  }
+  const authHeaders = authOptionsToHeaders(applyResolveAuth(recipe, cfg, 'embedding'));
   const baseUrl = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
   if (!baseUrl) {
     throw new AIConfigError(
@@ -1528,7 +1690,7 @@ export async function embedMultimodal(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+          ...authHeaders,
         },
         body: JSON.stringify(body),
       });
@@ -1541,7 +1703,7 @@ export async function embedMultimodal(
       if (res.status === 401 || res.status === 403) {
         throw new AIConfigError(
           `Voyage multimodal returned ${res.status}: ${text || 'auth failed'}.`,
-          `Re-export ${recipe.auth_env?.required[0]} or rotate the key at ${recipe.auth_env?.setup_url}.`,
+          `Re-export ${formatAuthRequirement(recipe)} or rotate credentials at ${recipe.auth_env?.setup_url ?? recipe.setup_hint}.`,
         );
       }
       // 429 / 5xx are transient; let the caller retry.
@@ -1614,9 +1776,7 @@ async function embedMultimodalOpenAICompat(
   // hard-required-auth recipes (OpenAI Authorization: Bearer
   // OPENAI_API_KEY) both work via the same code path. Throws AIConfigError
   // when required env is missing.
-  const authResult = recipe.resolveAuth
-    ? recipe.resolveAuth(cfg.env)
-    : defaultResolveAuth(recipe, cfg.env, 'embedding');
+  const authHeaders = authOptionsToHeaders(applyResolveAuth(recipe, cfg, 'embedding'));
   const baseUrl = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
   if (!baseUrl) {
     throw new AIConfigError(
@@ -1670,7 +1830,7 @@ async function embedMultimodalOpenAICompat(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          [authResult.headerName]: authResult.token,
+          ...authHeaders,
         },
         body: JSON.stringify(body),
       });
@@ -1685,7 +1845,7 @@ async function embedMultimodalOpenAICompat(
         throw new AIConfigError(
           `${recipe.name} multimodal returned ${res.status}: ${text || 'auth failed'}.`,
           requiredKey
-            ? `Re-export ${requiredKey} or rotate the key at ${recipe.auth_env?.setup_url ?? recipe.setup_hint}.`
+            ? `Re-export ${formatAuthRequirement(recipe)} or rotate credentials at ${recipe.auth_env?.setup_url ?? recipe.setup_hint}.`
             : recipe.setup_hint,
         );
       }
@@ -1869,19 +2029,13 @@ async function resolveExpansionProvider(modelStr: string): Promise<{ model: any;
 function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
   switch (recipe.implementation) {
     case 'native-openai': {
-      const apiKey = cfg.env.OPENAI_API_KEY;
-      if (!apiKey) throw new AIConfigError(`OpenAI expansion requires OPENAI_API_KEY.`, recipe.setup_hint);
-      return createOpenAI({ apiKey }).languageModel(modelId);
+      return createOpenAI(nativeOpenAIOptions(recipe, cfg, 'expansion') as any).languageModel(modelId);
     }
     case 'native-google': {
-      const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
-      if (!apiKey) throw new AIConfigError(`Google expansion requires GOOGLE_GENERATIVE_AI_API_KEY.`, recipe.setup_hint);
-      return createGoogleGenerativeAI({ apiKey }).languageModel(modelId);
+      return createGoogleGenerativeAI(nativeGoogleOptions(recipe, cfg, 'expansion') as any).languageModel(modelId);
     }
     case 'native-anthropic': {
-      const apiKey = cfg.env.ANTHROPIC_API_KEY;
-      if (!apiKey) throw new AIConfigError(`Anthropic expansion requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
-      return createAnthropic({ apiKey }).languageModel(modelId);
+      return createAnthropic(nativeAnthropicOptions(recipe, cfg, 'expansion') as any).languageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
@@ -2114,19 +2268,13 @@ async function resolveChatProvider(modelStr: string): Promise<{ model: any; reci
 function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
   switch (recipe.implementation) {
     case 'native-openai': {
-      const apiKey = cfg.env.OPENAI_API_KEY;
-      if (!apiKey) throw new AIConfigError(`OpenAI chat requires OPENAI_API_KEY.`, recipe.setup_hint);
-      return createOpenAI({ apiKey }).languageModel(modelId);
+      return createOpenAI(nativeOpenAIOptions(recipe, cfg, 'chat') as any).languageModel(modelId);
     }
     case 'native-google': {
-      const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
-      if (!apiKey) throw new AIConfigError(`Google chat requires GOOGLE_GENERATIVE_AI_API_KEY.`, recipe.setup_hint);
-      return createGoogleGenerativeAI({ apiKey }).languageModel(modelId);
+      return createGoogleGenerativeAI(nativeGoogleOptions(recipe, cfg, 'chat') as any).languageModel(modelId);
     }
     case 'native-anthropic': {
-      const apiKey = cfg.env.ANTHROPIC_API_KEY;
-      if (!apiKey) throw new AIConfigError(`Anthropic chat requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
-      return createAnthropic({ apiKey }).languageModel(modelId);
+      return createAnthropic(nativeAnthropicOptions(recipe, cfg, 'chat') as any).languageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
@@ -2775,10 +2923,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // through `auth.headers` alongside Bearer-style apiKey. The merge below
   // materializes both shapes so static-default-headers ride on the reranker
   // wire path the same way they ride the SDK paths.
-  const authHeaders: Record<string, string> = {
-    ...(auth.apiKey ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
-    ...(auth.headers ?? {}),
-  };
+  const authHeaders: Record<string, string> = authOptionsToHeaders(auth);
   const body = JSON.stringify({
     model: parsed.modelId,
     query: input.query,

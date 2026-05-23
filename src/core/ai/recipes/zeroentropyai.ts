@@ -36,6 +36,8 @@ export const zeroentropyai: Recipe = {
   base_url_default: 'https://api.zeroentropy.dev/v1',
   auth_env: {
     required: ['ZEROENTROPY_API_KEY'],
+    oauth_access_token: ['ZEROENTROPY_OAUTH_ACCESS_TOKEN', 'ZEROENTROPY_ACCESS_TOKEN'],
+    oauth_replaces: ['ZEROENTROPY_API_KEY'],
     setup_url: 'https://dashboard.zeroentropy.dev',
   },
   touchpoints: {

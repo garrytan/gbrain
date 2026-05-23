@@ -17,6 +17,7 @@ export const litellmProxy: Recipe = {
   auth_env: {
     required: [], // LITELLM_API_KEY is optional (users may run proxy unauthenticated locally)
     optional: ['LITELLM_BASE_URL', 'LITELLM_API_KEY'],
+    oauth_access_token: ['LITELLM_OAUTH_ACCESS_TOKEN', 'LITELLM_ACCESS_TOKEN'],
     setup_url: 'https://docs.litellm.ai/docs/proxy/quick_start',
   },
   touchpoints: {

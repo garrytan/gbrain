@@ -35,6 +35,8 @@ export const azureOpenAI: Recipe = {
       'AZURE_OPENAI_DEPLOYMENT',
     ],
     optional: ['AZURE_OPENAI_API_VERSION'],
+    oauth_access_token: ['AZURE_OPENAI_OAUTH_ACCESS_TOKEN', 'AZURE_OPENAI_ACCESS_TOKEN'],
+    oauth_replaces: ['AZURE_OPENAI_API_KEY'],
     setup_url:
       'https://learn.microsoft.com/en-us/azure/ai-services/openai/quickstart',
   },
@@ -54,10 +56,17 @@ export const azureOpenAI: Recipe = {
     },
   },
   resolveAuth(env) {
+    const oauthToken =
+      env.AZURE_OPENAI_OAUTH_ACCESS_TOKEN ??
+      env.AZURE_OPENAI_ACCESS_TOKEN;
+    if (oauthToken) {
+      return { headerName: 'Authorization', token: `Bearer ${oauthToken}` };
+    }
+
     const key = env.AZURE_OPENAI_API_KEY;
     if (!key) {
       throw new AIConfigError(
-        `Azure OpenAI requires AZURE_OPENAI_API_KEY.`,
+        `Azure OpenAI requires AZURE_OPENAI_API_KEY or AZURE_OPENAI_OAUTH_ACCESS_TOKEN.`,
         'Get a key from your Azure portal: https://learn.microsoft.com/en-us/azure/ai-services/openai/quickstart',
       );
     }

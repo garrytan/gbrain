@@ -8,6 +8,8 @@ export const openai: Recipe = {
   auth_env: {
     required: ['OPENAI_API_KEY'],
     optional: ['OPENAI_ORG_ID', 'OPENAI_PROJECT'],
+    oauth_access_token: ['OPENAI_OAUTH_ACCESS_TOKEN', 'OPENAI_ACCESS_TOKEN'],
+    oauth_replaces: ['OPENAI_API_KEY'],
     setup_url: 'https://platform.openai.com/api-keys',
   },
   touchpoints: {

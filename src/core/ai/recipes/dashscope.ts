@@ -20,6 +20,8 @@ export const dashscope: Recipe = {
   base_url_default: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   auth_env: {
     required: ['DASHSCOPE_API_KEY'],
+    oauth_access_token: ['DASHSCOPE_OAUTH_ACCESS_TOKEN', 'DASHSCOPE_ACCESS_TOKEN'],
+    oauth_replaces: ['DASHSCOPE_API_KEY'],
     setup_url: 'https://help.aliyun.com/zh/model-studio/getting-started/',
   },
   touchpoints: {
