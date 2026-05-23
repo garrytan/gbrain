@@ -2,6 +2,69 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.40.8.0] - 2026-05-23
+
+**Local embedding providers (Ollama, llama-server) are now treated as a real, first-class choice everywhere gbrain checks your setup.** If you run your embeddings on your own machine instead of paying OpenAI or Voyage, gbrain used to half-trust you. `gbrain doctor` would correctly say your embeddings were 100% healthy, but `gbrain doctor --remediation-plan` would turn around and tell you it was "blocked" on a missing embedding API key that you never needed. Cost-capped jobs (`gbrain reindex`, `gbrain embed` under `--max-cost`) would refuse to run at all because there was no price on file for a local model. And `gbrain models doctor` never actually checked whether your local embedding server was reachable, so a server that was down stayed invisible until your first real embed call failed. This release fixes all three so a local-embeddings brain behaves exactly like a hosted one.
+
+To take advantage: nothing to turn on. If you already run `embedding_model: ollama:nomic-embed-text` or `llama-server:...`, the false "missing API key" block disappears, cost-bounded jobs price your local embeds at $0 and run, and `gbrain models doctor` now fires a real reachability probe against your local embed server.
+
+What you'd see in a concrete example: on a brain configured for `ollama:nomic-embed-text`, `gbrain doctor --remediation-plan --json` used to surface a `blocked` item with reason "missing embedding API key" even though coverage was 100%. Now it agrees with `gbrain doctor`: no false block. The remediation planner is also smarter about hosted providers now — a Voyage brain is judged by whether `VOYAGE_API_KEY` resolves, not by whether some unrelated OpenAI key happens to be set (the old fallback quietly judged every non-OpenAI/non-ZE provider by "any OpenAI/ZE key present").
+
+Things to know about: the hosted-provider behavior change above is strictly more correct, but it IS a behavior change if you run a Voyage or Google embedding brain and were relying on an OpenAI key making the planner happy. Set the provider's own key (`VOYAGE_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`) and the planner is satisfied. Hosted brains with no key still block, exactly as before.
+
+### Itemized changes
+
+**Recipe-aware embedding-provider check (shared by doctor + autopilot):**
+
+- New exported `embeddingProviderConfigured(embeddingModel, resolveKey)` in `src/core/brain-score-recommendations.ts`. Pure data-layer: reads the recipe registry (`getRecipe` / `parseModelId`), not the gateway runtime, so it works before `engine.connect()` and stays free of AI-SDK coupling. Empty `auth_env.required` (ollama, llama-server) returns `true` with no key; hosted providers return `true` iff every required key resolves. Malformed model ids are caught and return `false`.
+- New exported `HOSTED_EMBED_KEY_CONFIG` map (env-var → config field) so both producers build a synchronous `resolveKey` closure without re-parsing recipes.
+- `RecommendationContext.hasEmbeddingApiKey` renamed to `embeddingProviderConfigured` (the field never meant "API key"). The blocker reason broadened from `"missing embedding API key"` to `"embedding provider not configured"` — the honest superset covering both missing hosted key and missing local recipe.
+- `src/commands/doctor.ts:loadRecommendationContext` replaces the hosted-only prefix ladder (`startsWith('openai:')` / `'zeroentropyai:'` / else-any-key fallback) with the shared helper.
+- `src/commands/autopilot.ts` had its own parallel copy of the hosted-only check (the DRY violation that caused the bug). It now resolves the embedding model (gateway → DB fallback), pre-awaits the hosted-key config values once, and calls the same shared helper.
+
+**Zero-price local embed providers in the budget tracker:**
+
+- New `FREE_LOCAL_EMBED_PROVIDERS = {ollama, llama-server}` set in `src/core/budget/budget-tracker.ts`, sibling to the existing `FREE_LOCAL_RERANK_PROVIDERS`. On a `lookupEmbeddingPrice` miss, these providers price at `$0` so a `--max-cost`-bounded embed/reindex job runs instead of TX2 hard-failing with `no_pricing`.
+- `lmstudio` excluded (no registered recipe, so the model strings never resolve) and `litellm` excluded (a proxy can front a paid provider, so pricing-unknown is the honest state).
+
+**Embedding reachability probe in `gbrain models doctor`:**
+
+- New `probeEmbeddingReachability()` in `src/commands/models.ts`, mirroring the existing `probeRerankerReachability`. Fires a 1-input `embed(['probe'], { inputType: 'query', abortSignal })` with a 5s timeout and classifies failures via `classifyError`.
+- New `'embedding_reachability'` member on `ProbeResult.touchpoint`, distinct from the zero-network `'embedding_config'` probe.
+- Gated on the config probe returning `ok` first, so a misconfigured model doesn't produce duplicate/misleading reachability failures.
+
+**Tests:**
+
+- `test/brain-score-recommendations.test.ts`: 6 new cases for the helper (empty/undefined → false, local → true regardless of keys, hosted configured iff key resolves, the Voyage behavior change, unknown provider → false, malformed model id → false) plus the renamed consumer assertions.
+- `test/core/budget/budget-tracker.test.ts`: local embed providers price at $0 (no TX2); regression that unknown-hosted embed still TX2 hard-fails; regression that known-hosted (openai) still trips a real cost gate.
+- `test/models-doctor-embed.test.ts` (new): source-grep structure test pinning the three reachability-probe invariants (uses `embed` not `embedQuery`, distinct touchpoint member, gated on config-probe-ok).
+- `test/v0_37_gap_fill.serial.test.ts`: source-grep updated from the old inline prefix-ladder strings to `embeddingProviderConfigured` + `HOSTED_EMBED_KEY_CONFIG`.
+
+### For contributors
+
+- `FREE_LOCAL_EMBED_PROVIDERS` and `FREE_LOCAL_RERANK_PROVIDERS` are sibling hardcoded sets. A follow-up TODO (in `TODOS.md`) tracks unifying them into one `FREE_LOCAL_PROVIDERS` keyed by kind, and evaluating recipe-cost-driven resolution (read each recipe's declared `cost_per_1m_tokens_usd === 0`) as the true single source of truth, once the rerank and embed sides land together.
+
+## To take advantage of v0.40.8.0
+
+`gbrain upgrade` should do this automatically. No schema migration ships in this release. If you run local embeddings:
+
+1. **Confirm the remediation planner now agrees with the health check:**
+   ```bash
+   gbrain doctor --json | jq '.checks[] | select(.name=="embeddings")'
+   gbrain doctor --remediation-plan --json | jq '[.. | objects | select(.reason? == "embedding provider not configured")]'
+   ```
+   The second command should return `[]` for a configured local-embeddings brain.
+2. **Confirm cost-bounded local embed jobs run:**
+   ```bash
+   GBRAIN_MAX_USD=0.01 gbrain reindex --embed   # expect no BudgetExhausted(no_pricing)
+   ```
+3. **Confirm the new reachability probe fires:**
+   ```bash
+   gbrain models doctor   # expect an embedding reachability row (ok, or network if the server is down)
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and which step broke.
+
 ## [0.40.6.0] - 2026-05-23
 
 **`gbrain sync --all` now syncs your sources at the same time instead of one after the other, and you can see the health of every source at a glance with `gbrain sources status`.** If you have a brain with 4+ sources connected to it, the cron job that keeps everything up to date used to take as long as the slowest source. One stuck `git pull` on a big media-corpus repo held up everything else, and after 24 hours you'd start seeing stale-data warnings pile up. Now the sources run together — independent ones don't wait on each other, and you can run `gbrain sources status` to see at a glance which ones are fresh, stale, or running behind. Per-source log lines come prefixed with `[source-id]` so you can grep one source's output cleanly even when several are running.

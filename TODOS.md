@@ -1,5 +1,19 @@
 # TODOS
 
+## local-embeddings follow-ups (v0.41+)
+
+- [ ] **Unify `FREE_LOCAL_EMBED_PROVIDERS` + `FREE_LOCAL_RERANK_PROVIDERS`.**
+  Two sibling hardcoded sets now live in `src/core/budget/budget-tracker.ts`
+  (rerank one lands with the llama-server-reranker PR; embed one with the
+  local-embeddings PR). Once both have merged, unify into one
+  `FREE_LOCAL_PROVIDERS` keyed by kind. Per codex plan-review #10, ALSO
+  evaluate dropping the hardcoded sets entirely in favor of reading each
+  recipe's declared `touchpoints.<kind>.cost_per_1m_tokens_usd === 0` (true
+  single source of truth — ollama + llama-server recipes already declare cost
+  0). Deferred from each PR to avoid coupling two in-flight branches; the
+  recipe-cost approach couples budget-tracker.ts to the recipe registry, so
+  it's a deliberate cross-cutting refactor, not a drive-by.
+
 ## v0.40.3.0 follow-ups (v0.41+)
 
 - [ ] **v0.41+: source-scope the `sync-failures.jsonl` log so `--skip-failed` works under `--parallel > 1`.**
