@@ -8,6 +8,50 @@ import { importFromContent } from '../core/import-file.ts';
 import { createHash, createHmac, randomBytes } from 'crypto';
 import pkg from '../../package.json' with { type: 'json' };
 
+// ── Chunked upload buffer ─────────────────────────────────────────────────────
+// Three-step GET-safe upload for GET-only LLM callers (Claude crawler, etc.).
+// Step 1: action=start_chunked  → upload_id
+// Step 2: action=append_chunk × N (any order, idempotent)
+// Step 3: action=commit_chunked → assemble + write, same path as put_page
+//
+// ⚠  VOLATILE: sessions live in process memory. A server restart wipes them.
+//    Always supply idempotency_key so commit is re-entrant across retries.
+const CHUNK_UPLOAD_TTL_MS  = 10 * 60 * 1000; // 10 min — generous for slow networks
+const CHUNK_MAX_CHUNKS     = 20;              // hard ceiling even when total_chunks omitted
+const CHUNK_MAX_TOTAL      = 50_000;          // same cap as put_page
+const CHUNK_MAX_SINGLE     = 1_500;           // per-chunk char cap (keeps URLs under 8k)
+
+interface ChunkUploadState {
+  slug: string;
+  totalChunks: number | null;    // null = auto-inferred at commit (open-ended)
+  chunks: Map<number, string>;   // key = chunk_index; Map supports sparse / out-of-order
+  accumulatedSize: number;       // running total chars, updated on each append
+  params: Record<string, string>;
+  created: number;
+}
+
+const chunkUploads = new Map<string, ChunkUploadState>();
+
+function sweepChunkUploads(): void {
+  const cutoff = Date.now() - CHUNK_UPLOAD_TTL_MS;
+  for (const [id, state] of chunkUploads) {
+    if (state.created < cutoff) chunkUploads.delete(id);
+  }
+}
+
+/** Assemble a chunk Map into an ordered string (gaps → missing indices detected later). */
+function assembleChunks(chunks: Map<number, string>): string {
+  const indices = [...chunks.keys()].sort((a, b) => a - b);
+  return indices.map(i => chunks.get(i)!).join('');
+}
+
+/** Return sorted list of missing indices in 0..maxIndex, given a received Map. */
+function missingIndices(chunks: Map<number, string>, total: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < total; i++) { if (!chunks.has(i)) out.push(i); }
+  return out;
+}
+
 // ── In-process async job tracking ─────────────────────────────────────────────
 // Async is the default for PUT /page and GET /write?action=put_page. Callers
 // get 202 immediately; embedding runs in background. Poll GET /job?id=... for completion. Jobs expire after
@@ -900,7 +944,14 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           error_envelope: {
             ok: 'false',
             error: 'string — human-readable message',
-            code: 'string — machine-readable; current values: otp_required, otp_invalid, unauthorized, missing_param, invalid_json, invalid_tags, too_large, not_found, warming_up',
+            code: 'string — machine-readable; values: otp_required, otp_invalid, unauthorized, missing_param, invalid_json, invalid_tags, too_large, not_found, warming_up, upload_not_found, incomplete_upload, chunk_index_out_of_range, chunk_too_large, total_exceeded',
+            chunked_upload_codes: {
+              upload_not_found:          'upload_id does not exist or session expired (TTL 10 min). Start over with action=start_chunked.',
+              incomplete_upload:         'commit_chunked called before all chunks arrived. Response includes missing_indices[] and expected_total.',
+              chunk_index_out_of_range:  'chunk_index is negative, ≥ CHUNK_MAX_CHUNKS (20), or ≥ declared total_chunks.',
+              chunk_too_large:           'Single chunk exceeds 1 500 chars. Split further so each URL stays under 8 000 chars.',
+              total_exceeded:            'Accumulated content (running total across all chunks) would exceed 50 000 chars. Reduce content or split into multiple pages.',
+            },
             retry_after_ms: 'integer? — when present, agent should wait this long before retrying',
             hint: 'string? — concrete next step (e.g. "fall back to ?q=")',
             dropped: 'array? — on warming_up, lists which subqueries timed out',
@@ -946,6 +997,14 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
               put_page: {
                 params: 'slug (required), content (required, URL-encoded, ≤50k), title, type (default: concept), tags (comma-separated), source, ai_confidence, created (YYYY-MM-DD), sync (0|1, default 0 = async), idempotency_key',
                 note: 'If content already has YAML frontmatter (starts with ---), it is used as-is. Otherwise frontmatter is built from the other params.',
+              },
+              chunked_upload: {
+                description: 'Four-action GET-safe protocol for long content (> ~1 500 UTF-8 chars). Use when put_page would exceed the 8 000 char URL limit. ⚠ Sessions live in process memory — volatile across restarts. Always pass idempotency_key.',
+                step1_start_chunked: 'slug (required), total_chunks 1–20 (optional — omit to auto-infer at commit), plus any put_page metadata (title, type, source, tags, ai_confidence, created, sync, idempotency_key). Returns upload_id.',
+                step2_append_chunk:  'upload_id (required), chunk_index 0-based (required), content or content_b64 (required, ≤1 500 chars). Idempotent — re-send same index to overwrite. Returns received/remaining/accumulated_size.',
+                step3_status_chunked: 'upload_id (required). Read-only progress query — safe to call after any timeout to see which indices arrived. Returns received_indices, missing_indices, ready_to_commit.',
+                step4_commit_chunked: 'upload_id (required). Assembles chunks in index order and writes the page — produces the same content_hash as a single put_page with identical content. Same response envelope as put_page.',
+                workflow: 'start_chunked → upload_id  →  append_chunk × N (any order)  →  [status_chunked to check]  →  commit_chunked',
               },
               add_tag: { params: 'slug (required), tag (required)' },
               remove_tag: { params: 'slug (required), tag (required)' },
@@ -1175,8 +1234,357 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           return ok({ action, slug, deleted: true }, Date.now() - t0);
         }
 
+        // ── action=start_chunked ──────────────────────────────────────────────
+        // Initialise a chunked upload session.
+        // Required: slug
+        // Optional: total_chunks (1–20) — omit to let commit_chunked infer from
+        //   highest received index. Useful when you don't know the count upfront.
+        // Optional metadata forwarded to commit: title, type, source, tags,
+        //   ai_confidence, created, sync, idempotency_key
+        if (action === 'start_chunked') {
+          const slug = url.searchParams.get('slug');
+          if (!slug) return err('missing_param', 'slug is required for start_chunked');
+          const totalChunksStr = url.searchParams.get('total_chunks');
+          let totalChunks: number | null = null;
+          if (totalChunksStr !== null) {
+            totalChunks = parseInt(totalChunksStr, 10);
+            if (!Number.isFinite(totalChunks) || totalChunks < 1 || totalChunks > CHUNK_MAX_CHUNKS) {
+              return err('invalid_param', `total_chunks must be 1–${CHUNK_MAX_CHUNKS}`, 400, {
+                hint: 'Omit total_chunks to let commit_chunked infer the count automatically',
+              });
+            }
+          }
+          sweepChunkUploads();
+          const uploadId = randomBytes(8).toString('hex');
+          const params: Record<string, string> = {};
+          for (const key of ['title', 'type', 'source', 'tags', 'ai_confidence', 'created', 'sync', 'idempotency_key']) {
+            const v = url.searchParams.get(key);
+            if (v !== null) params[key] = v;
+          }
+          chunkUploads.set(uploadId, {
+            slug,
+            totalChunks,
+            chunks: new Map(),
+            accumulatedSize: 0,
+            params,
+            created: Date.now(),
+          });
+          return ok({
+            action,
+            upload_id: uploadId,
+            slug,
+            total_chunks: totalChunks ?? 'auto',
+            storage: 'memory',
+            volatile: true,
+            volatile_note: 'Session is lost on server restart. Supply idempotency_key at start_chunked so commit_chunked can de-duplicate across retries.',
+            expires_ms: CHUNK_UPLOAD_TTL_MS,
+            next: `action=append_chunk&upload_id=${uploadId}&chunk_index=0&content=<url-encoded-chunk>`,
+          }, Date.now() - t0);
+        }
+
+        // ── action=append_chunk ───────────────────────────────────────────────
+        // Append (or overwrite) one chunk. Idempotent: re-sending the same
+        // chunk_index replaces the previous value, so retries are safe.
+        // Required: upload_id, chunk_index (0-based), content OR content_b64
+        // Each chunk must be ≤ CHUNK_MAX_SINGLE chars. Cumulative total must
+        // stay ≤ CHUNK_MAX_TOTAL; check fires early so you don't discover the
+        // overflow at commit time.
+        if (action === 'append_chunk') {
+          const uploadId = url.searchParams.get('upload_id');
+          if (!uploadId) return err('missing_param', 'upload_id is required for append_chunk');
+          const state = chunkUploads.get(uploadId);
+          if (!state) {
+            return err('upload_not_found', `Upload session not found or expired: ${uploadId}`, 404, {
+              hint: 'Sessions expire after 10 min. Start a new upload with action=start_chunked.',
+            });
+          }
+          const chunkIndexStr = url.searchParams.get('chunk_index');
+          if (chunkIndexStr === null) return err('missing_param', 'chunk_index is required for append_chunk');
+          const chunkIndex = parseInt(chunkIndexStr, 10);
+          if (!Number.isFinite(chunkIndex) || chunkIndex < 0 || chunkIndex >= CHUNK_MAX_CHUNKS) {
+            return err('chunk_index_out_of_range',
+              `chunk_index must be 0–${CHUNK_MAX_CHUNKS - 1}`,
+              400,
+              { hint: `Maximum ${CHUNK_MAX_CHUNKS} chunks per session (indices 0–${CHUNK_MAX_CHUNKS - 1})` }
+            );
+          }
+          if (state.totalChunks !== null && chunkIndex >= state.totalChunks) {
+            return err('chunk_index_out_of_range',
+              `chunk_index ${chunkIndex} exceeds declared total_chunks ${state.totalChunks} (valid: 0–${state.totalChunks - 1})`,
+              400,
+            );
+          }
+
+          const contentB64 = url.searchParams.get('content_b64');
+          const chunkText = contentB64
+            ? Buffer.from(contentB64, 'base64').toString('utf8')
+            : url.searchParams.get('content');
+          if (!chunkText) return err('missing_param', 'content or content_b64 is required for append_chunk');
+
+          // Per-chunk size guard.
+          if (chunkText.length > CHUNK_MAX_SINGLE) {
+            return err('chunk_too_large',
+              `Chunk ${chunkIndex} is ${chunkText.length} chars; max is ${CHUNK_MAX_SINGLE}`,
+              413,
+              { hint: `Split this chunk further. Keep each chunk ≤ ${CHUNK_MAX_SINGLE} UTF-8 chars so the URL stays under 8 000 chars.` }
+            );
+          }
+
+          // Update accumulated size (subtract old chunk if replacing).
+          const oldText = state.chunks.get(chunkIndex);
+          const oldSize = oldText ? oldText.length : 0;
+          const newAccumulated = state.accumulatedSize - oldSize + chunkText.length;
+          if (newAccumulated > CHUNK_MAX_TOTAL) {
+            return err('total_exceeded',
+              `Accumulated content (${newAccumulated} chars) would exceed ${CHUNK_MAX_TOTAL} char limit`,
+              413,
+              { hint: 'Reduce content length or split into multiple pages with an index page.' }
+            );
+          }
+          state.chunks.set(chunkIndex, chunkText);
+          state.accumulatedSize = newAccumulated;
+
+          const received = state.chunks.size;
+          const remaining = state.totalChunks !== null ? state.totalChunks - received : null;
+          const readyToCommit = state.totalChunks !== null && remaining === 0;
+          return ok({
+            action,
+            upload_id: uploadId,
+            chunk_index: chunkIndex,
+            received,
+            remaining,          // null when total_chunks was not declared
+            ready_to_commit: readyToCommit,
+            accumulated_size: state.accumulatedSize,
+            next: readyToCommit
+              ? `action=commit_chunked&upload_id=${uploadId}`
+              : `action=append_chunk&upload_id=${uploadId}&chunk_index=${chunkIndex + 1}&content=<next-chunk>`,
+          }, Date.now() - t0);
+        }
+
+        // ── action=commit_chunked ─────────────────────────────────────────────
+        // Assemble all chunks and write the page. Same logic as put_page.
+        // Required: upload_id
+        // When total_chunks was declared: verifies 0..total-1 are all present.
+        // When total_chunks was omitted: infers total from max received index.
+        // Session is deleted only after the async job is enqueued (or sync write
+        // succeeds) so 503-overloaded retries can re-commit with the same upload_id.
+        if (action === 'commit_chunked') {
+          const uploadId = url.searchParams.get('upload_id');
+          if (!uploadId) return err('missing_param', 'upload_id is required for commit_chunked');
+          const state = chunkUploads.get(uploadId);
+          if (!state) {
+            return err('upload_not_found', `Upload session not found or expired: ${uploadId}`, 404, {
+              hint: 'Sessions expire after 10 min. Start a new upload with action=start_chunked.',
+            });
+          }
+
+          if (state.chunks.size === 0) {
+            return err('incomplete_upload', 'No chunks received yet. Send at least one chunk before committing.', 400);
+          }
+
+          // Determine expected total: declared or inferred from max index.
+          const maxIndex = Math.max(...state.chunks.keys());
+          const expectedTotal = state.totalChunks ?? (maxIndex + 1);
+
+          // Completeness check — list every missing index explicitly.
+          const missing = missingIndices(state.chunks, expectedTotal);
+          if (missing.length > 0) {
+            return err('incomplete_upload',
+              `Missing chunk indices: [${missing.join(', ')}]`,
+              400,
+              {
+                missing_indices: missing,
+                received: state.chunks.size,
+                expected_total: expectedTotal,
+                hint: `Send the missing chunk(s) with action=append_chunk&chunk_index=<index> before committing.`,
+              }
+            );
+          }
+
+          // Assemble in index order (same as put_page single write → same content_hash).
+          const rawContent = assembleChunks(state.chunks);
+          // assembleChunks already guards via accumulatedSize, but double-check here.
+          if (rawContent.length > CHUNK_MAX_TOTAL) {
+            chunkUploads.delete(uploadId);
+            return err('total_exceeded',
+              `Assembled content (${rawContent.length} chars) exceeds ${CHUNK_MAX_TOTAL} char limit`, 413,
+              { hint: 'Reduce content length or split into multiple pages with an index page.' }
+            );
+          }
+
+          const slug = state.slug;
+          const params = state.params;
+
+          // Build fullContent with frontmatter (same logic as put_page action).
+          const hasfm = rawContent.trimStart().startsWith('---');
+          let fullContent: string;
+          if (hasfm) {
+            fullContent = rawContent;
+          } else {
+            const source = params.source ?? 'agent';
+            const type   = params.type   ?? 'concept';
+            const title  = params.title;
+            const tagsRaw = params.tags;
+            const tags   = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+            const aiConf = params.ai_confidence;
+            const created = params.created ?? new Date().toISOString().slice(0, 10);
+            const fmLines = ['---'];
+            if (title) fmLines.push(`title: ${JSON.stringify(title)}`);
+            fmLines.push(`type: ${type}`, `source: ${source}`);
+            if (tags.length) fmLines.push(`tags:\n${tags.map(t => `  - ${t}`).join('\n')}`);
+            if (aiConf) fmLines.push(`ai_confidence: ${aiConf}`);
+            fmLines.push(`created: ${created}`, '---', '', rawContent);
+            fullContent = fmLines.join('\n');
+          }
+
+          const commitIdempotencyKey = params.idempotency_key ?? null;
+          const commitAsync = params.sync !== '1';
+
+          // Idempotency check — return cached result within TTL window.
+          if (commitIdempotencyKey) {
+            sweepIdempotency();
+            const cached = idempotencyCache.get(commitIdempotencyKey);
+            if (cached && cached.slug === slug) {
+              return ok({ action, slug, content_hash: cached.content_hash, idempotent: true, ...cached.result }, Date.now() - t0);
+            }
+            if (commitAsync) {
+              const existingJobId = asyncInFlight.get(commitIdempotencyKey);
+              if (existingJobId) {
+                const existingJob = asyncJobs.get(existingJobId);
+                if (existingJob) {
+                  return Response.json(
+                    { ok: true, action, job_id: existingJobId, slug, status: existingJob.status, idempotent: true },
+                    { status: 202 },
+                  );
+                }
+                asyncInFlight.delete(commitIdempotencyKey);
+              }
+            }
+          }
+
+          if (commitAsync) {
+            // Backpressure check BEFORE deleting the session so 503 is re-triable.
+            if (asyncPendingQueue.length >= ASYNC_QUEUE_MAX) {
+              return Response.json(
+                { ok: false, code: 'overloaded', error: 'Embedding queue is full. Retry after a few seconds.' },
+                { status: 503, headers: { 'Retry-After': '5' } },
+              );
+            }
+            sweepJobs();
+            const jobId = newJobId();
+            const jobState: AsyncJobState = { status: 'pending', slug, content_hash: '', created: Date.now() };
+            asyncJobs.set(jobId, jobState);
+            if (commitIdempotencyKey) asyncInFlight.set(commitIdempotencyKey, jobId);
+            // Session consumed: delete AFTER job is registered so 503 retries could re-commit.
+            chunkUploads.delete(uploadId);
+
+            // Phase 1 (sync): write without embedding so keyword search works immediately.
+            try {
+              const phase1 = await importFromContent(engine, slug, fullContent, { noEmbed: true });
+              jobState.content_hash = phase1.content_hash ?? '';
+              pendingEmbeds.add(slug);
+              void engine.getPage(slug).then(p => { if (p) pageCacheSet(slug, p); });
+            } catch (e) {
+              console.warn(`[gbrain] chunked phase1 write failed for ${slug}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+
+            const canEmbedChunk = !!process.env.OPENAI_API_KEY;
+            ;(async () => {
+              await acquireAsyncSlot();
+              jobState.status = 'running';
+              try {
+                const result = await withEmbedRetry(slug, () => importFromContent(engine, slug, fullContent, {
+                  forceReembed: canEmbedChunk,
+                  noEmbed: !canEmbedChunk,
+                })) as { content_hash?: string } & object;
+                const resolvedHash = (result as { content_hash?: string }).content_hash ?? jobState.content_hash;
+                jobState.status = 'completed';
+                jobState.content_hash = resolvedHash;
+                jobState.result = result;
+                if (commitIdempotencyKey) {
+                  idempotencyCache.set(commitIdempotencyKey, { slug, content_hash: resolvedHash, result, created: Date.now() });
+                }
+              } catch (e) {
+                jobState.status = 'failed';
+                jobState.error = e instanceof Error ? e.message : String(e);
+              } finally {
+                pendingEmbeds.delete(slug);
+                releaseAsyncSlot();
+                if (commitIdempotencyKey) asyncInFlight.delete(commitIdempotencyKey);
+              }
+            })();
+
+            return Response.json(
+              {
+                ok: true,
+                action,
+                job_id: jobId,
+                slug,
+                status: 'pending',
+                page_committed: jobState.content_hash !== '',
+                content_hash: jobState.content_hash || undefined,
+              },
+              { status: 202 },
+            );
+          }
+
+          // Sync write — delete session only after successful write.
+          const result = await putPageOp.handler(ctx, { slug, content: fullContent }) as { content_hash?: string } & object;
+          chunkUploads.delete(uploadId);
+          const commitHash = result.content_hash ?? '';
+          if (commitIdempotencyKey) {
+            sweepIdempotency();
+            idempotencyCache.set(commitIdempotencyKey, { slug, content_hash: commitHash, result, created: Date.now() });
+          }
+          const SEARCH_INDEX_LAG_MS = 2000;
+          return ok({
+            action,
+            slug,
+            content_hash: commitHash,
+            search_indexed_at: new Date(Date.now() + SEARCH_INDEX_LAG_MS).toISOString(),
+            ...result,
+          }, Date.now() - t0);
+        }
+
+        // ── action=status_chunked ─────────────────────────────────────────────
+        // Read-only progress query. Safe to call at any time without side effects.
+        // Returns the same info as append_chunk without touching state, so a
+        // client that timed out mid-upload can recover without re-sending data.
+        if (action === 'status_chunked') {
+          const uploadId = url.searchParams.get('upload_id');
+          if (!uploadId) return err('missing_param', 'upload_id is required for status_chunked');
+          const state = chunkUploads.get(uploadId);
+          if (!state) {
+            return err('upload_not_found', `Upload session not found or expired: ${uploadId}`, 404, {
+              hint: 'Sessions expire after 10 min. Start a new upload with action=start_chunked.',
+            });
+          }
+          const received = state.chunks.size;
+          const expectedTotal = state.totalChunks ?? null;
+          const remaining = expectedTotal !== null ? expectedTotal - received : null;
+          const maxReceivedIndex = state.chunks.size > 0 ? Math.max(...state.chunks.keys()) : -1;
+          const receivedIndices = [...state.chunks.keys()].sort((a, b) => a - b);
+          const missingList = expectedTotal !== null ? missingIndices(state.chunks, expectedTotal) : [];
+          return ok({
+            action,
+            upload_id: uploadId,
+            slug: state.slug,
+            total_chunks: expectedTotal ?? 'auto',
+            received,
+            remaining,
+            missing_indices: missingList,
+            accumulated_size: state.accumulatedSize,
+            max_received_index: maxReceivedIndex,
+            received_indices: receivedIndices,
+            ready_to_commit: expectedTotal !== null && remaining === 0,
+            expires_at: new Date(state.created + CHUNK_UPLOAD_TTL_MS).toISOString(),
+            storage: 'memory',
+            volatile: true,
+          }, Date.now() - t0);
+        }
+
         return err('invalid_action', `Unknown action: ${action}`, 400, {
-          hint: 'Supported actions: put_page, add_tag, remove_tag, add_link, add_timeline_entry, delete_page',
+          hint: 'Supported actions: put_page, add_tag, remove_tag, add_link, add_timeline_entry, delete_page, start_chunked, append_chunk, commit_chunked, status_chunked',
         });
         } catch (e) {
           return err('internal_error', String(e instanceof Error ? e.message : e).slice(0, 500), 500);
@@ -1230,6 +1638,9 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   console.error('  DELETE /page?slug=...&otp=<code>');
   console.error('  GET  /pages/recent?limit=50&otp=<code>');
   console.error('  GET  /write?action=<action>&otp=<code>&...  (put_page|add_tag|remove_tag|add_link|add_timeline_entry|delete_page)');
+  console.error('  GET  /write?action=start_chunked&slug=...&total_chunks=N   (step 1/3 chunked upload for long content)');
+  console.error('  GET  /write?action=append_chunk&upload_id=...&chunk_index=N&content=... (step 2/3)');
+  console.error('  GET  /write?action=commit_chunked&upload_id=...             (step 3/3 — assemble + write)');
 
   // Cron: re-embed pages whose chunks are missing embeddings (e.g. written with noEmbed=true)
   // Runs every EMBED_CRON_INTERVAL_MS (default 60s). Limit: up to 20 pages per sweep.
