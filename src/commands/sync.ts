@@ -161,6 +161,21 @@ export interface SyncOpts {
    * v0.22.13 (PR #490 CODEX-2). Not part of the public CLI surface.
    */
   skipLock?: boolean;
+  /**
+   * Override the DB lock id taken around the writer window.
+   * Defaults to `SYNC_LOCK_ID` (the global `'gbrain-sync'` lock).
+   *
+   * Set by the `sync --all` parallel fan-out path so concurrent
+   * per-source syncs each take an independent per-source lock
+   * (`gbrain-sync:<source_id>`) instead of contending on a single
+   * global lock. Each source already has its own `sourceId` and
+   * `last_commit` bookmark, so the per-source lock is sufficient to
+   * serialize syncs of the SAME source while letting DIFFERENT
+   * sources sync concurrently.
+   *
+   * Not part of the public CLI surface.
+   */
+  lockId?: string;
 }
 
 /**
@@ -372,10 +387,16 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // mechanism (none in v0.22.13; reserved for future).
   let lockHandle: { release: () => Promise<void> } | null = null;
   if (!opts.skipLock) {
-    lockHandle = await tryAcquireDbLock(engine, SYNC_LOCK_ID);
+    // v0.40.3 — parallel `sync --all` passes an explicit per-source lockId
+    // (`gbrain-sync:<source_id>`). The CLI-default / cycle / jobs-handler
+    // path falls back to the global SYNC_LOCK_ID so historical behavior
+    // (single-process serialization of single-source syncs) is preserved
+    // for callers that do not opt in.
+    const lockId = opts.lockId ?? SYNC_LOCK_ID;
+    lockHandle = await tryAcquireDbLock(engine, lockId);
     if (!lockHandle) {
       throw new Error(
-        `Another sync is in progress (lock ${SYNC_LOCK_ID} held). ` +
+        `Another sync is in progress (lock ${lockId} held). ` +
         `Wait for it to finish, or run 'gbrain doctor' if it has been more than 30 minutes.`,
       );
     }
@@ -1219,6 +1240,15 @@ Options:
   --no-pull            Skip 'git pull' before the sync (useful for tests).
   --all                Sync every registered source instead of just the
                        default (multi-source brains).
+  --parallel N         Run --all sources concurrently with N at-a-time.
+                       Default: min(sourceCount, --workers, 4). Set N=1
+                       to force the legacy sequential walk. Each source
+                       takes its own per-source DB lock
+                       (gbrain-sync:<source_id>) so independent sources
+                       sync concurrently without contending.
+  --status             Print the per-source sync dashboard (last sync,
+                       staleness, embedding coverage, unacked failures)
+                       and exit. Pairs with --all. Read-only.
   --json               Emit a structured JSON summary on stdout.
   --yes                Accept any interactive prompts (CI / non-TTY).
 
@@ -1240,6 +1270,8 @@ See also:
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed');
   const syncAll = args.includes('--all');
+  const statusOnly = args.includes('--status');
+  const parallelStr = args.find((a, i) => args[i - 1] === '--parallel');
   const jsonOut = args.includes('--json');
   const yesFlag = args.includes('--yes');
   const strategyArg = args.find((a, i) => args[i - 1] === '--strategy') as SyncOpts['strategy'] | undefined;
@@ -1250,6 +1282,19 @@ See also:
   let concurrency: number | undefined;
   try {
     concurrency = parseWorkers(concurrencyStr);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
+
+  // v0.40.3 — `--parallel N` controls how many sources `sync --all` runs
+  // concurrently. Validated through the same parseWorkers helper as
+  // `--workers` (positive integer, throw on '0', '-3', 'foo', '1.5').
+  // Resolved against the source count below once we know how many
+  // sources are registered.
+  let parallelOverride: number | undefined;
+  try {
+    parallelOverride = parseWorkers(parallelStr);
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
@@ -1350,33 +1395,144 @@ See also:
       }
     }
 
+    // v0.40.3 — `--all --status` short-circuits before any sync work runs.
+    // It's a read-only per-source dashboard: last sync time, staleness,
+    // embedding coverage, unacknowledged failures. Honors --json.
+    // Reported by operators of large brains who needed a quick "why did the
+    // doctor score drop?" view without scheduling another sync.
+    if (statusOnly) {
+      const report = await buildSyncStatusReport(engine, sources);
+      if (jsonOut) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        printSyncStatusReport(report);
+      }
+      return;
+    }
+
+    // v0.40.3 — fan out per-source syncs concurrently. Each source has its
+    // own `sourceId`, its own `last_commit` bookmark, and its own per-source
+    // DB lock (`gbrain-sync:<source_id>`). Sequential walk was the floor for
+    // brains with 4+ federated sources: one stalled source held up the
+    // whole pass and made staleness penalties pile up between cron ticks.
+    //
+    // Concurrency budget: explicit --parallel wins, else min(sources,
+    // --workers, DEFAULT_PARALLEL_WORKERS=4). Cap exists because each
+    // worker opens its own small Postgres pool inside performSync; an
+    // unbounded fan-out on a 30-source brain would exhaust the pooler.
+    // Single-source brains short-circuit to serial (parallel cost == 0).
+    //
+    // Promise.allSettled (not Promise.all): one source's failure must not
+    // prevent the others from finishing. Per-source errors are reported
+    // inline (matches the old sequential `try/catch` per-source loop) and
+    // summarized at the end so the operator can see, e.g., "3 ok, 1 failed".
+    const activeSources = sources.filter((src) => {
+      const cfg = (src.config || {}) as { syncEnabled?: boolean };
+      return cfg.syncEnabled !== false;
+    });
+    const disabledCount = sources.length - activeSources.length;
     for (const src of sources) {
-      const cfg = (src.config || {}) as { syncEnabled?: boolean; strategy?: 'markdown' | 'code' | 'auto' };
-      if (cfg.syncEnabled === false) {
-        console.log(`Skipping disabled source: ${src.name}`);
-        continue;
-      }
-      console.log(`\n--- Syncing source: ${src.name} ---`);
-      const repoOpts: SyncOpts = {
-        repoPath: src.local_path!,
-        dryRun, full, noPull, noEmbed, skipFailed, retryFailed,
-        sourceId: src.id,
-        strategy: cfg.strategy,
-        concurrency,
-      };
-      try {
-        const result = await performSync(engine, repoOpts);
-        printSyncResult(result);
-        // Codex P2: --all loop must also manage .gitignore per-source. Without
-        // this, multi-source users who rely on `gbrain sync --all` never get
-        // the advertised db_only ignore rules unless they sync each repo
-        // individually.
-        if (result.status !== 'dry_run' && result.status !== 'blocked_by_failures') {
-          manageGitignore(src.local_path!, engine.kind);
+      const cfg = (src.config || {}) as { syncEnabled?: boolean };
+      if (cfg.syncEnabled === false) console.log(`Skipping disabled source: ${src.name}`);
+    }
+    if (activeSources.length === 0) {
+      if (disabledCount > 0) console.log('All sources are syncEnabled=false. Nothing to sync.');
+      return;
+    }
+
+    const parallel = resolveParallelism({
+      sourceCount: activeSources.length,
+      explicitParallel: parallelOverride,
+      workers: concurrency,
+      engineKind: engine.kind,
+    });
+
+    if (parallel > 1) {
+      console.log(
+        `\nSyncing ${activeSources.length} source(s) with ${parallel} concurrent worker(s)...`,
+      );
+    }
+
+    const perSourceResults: Array<{
+      sourceId: string;
+      sourceName: string;
+      status: 'ok' | 'error';
+      result?: SyncResult;
+      error?: string;
+    }> = [];
+
+    // Bounded fan-out: dispatch in waves of `parallel` so the worker budget
+    // is respected on brains with more sources than workers. Within a wave
+    // we use Promise.allSettled so a single thrown sync doesn't abort the
+    // wave; across waves the next batch dispatches only after the current
+    // wave drains. Output is buffered per-source so concurrent stdout from
+    // performSync doesn't interleave into unreadable noise.
+    for (let waveStart = 0; waveStart < activeSources.length; waveStart += parallel) {
+      const wave = activeSources.slice(waveStart, waveStart + parallel);
+      const results = await Promise.allSettled(
+        wave.map((src) => syncOneSource(engine, src, {
+          dryRun, full, noPull, noEmbed, skipFailed, retryFailed,
+          concurrency,
+        })),
+      );
+      for (let i = 0; i < wave.length; i++) {
+        const src = wave[i];
+        const settled = results[i];
+        if (settled.status === 'fulfilled') {
+          const { result, log } = settled.value;
+          process.stdout.write(log);
+          printSyncResult(result);
+          perSourceResults.push({
+            sourceId: src.id,
+            sourceName: src.name,
+            status: 'ok',
+            result,
+          });
+          // Codex P2: --all loop must also manage .gitignore per-source.
+          // Without this, multi-source users never get the advertised
+          // db_only ignore rules unless they sync each repo individually.
+          if (result.status !== 'dry_run' && result.status !== 'blocked_by_failures') {
+            manageGitignore(src.local_path!, engine.kind);
+          }
+        } else {
+          const msg = settled.reason instanceof Error
+            ? settled.reason.message
+            : String(settled.reason);
+          console.error(`Error syncing ${src.name}: ${msg}`);
+          perSourceResults.push({
+            sourceId: src.id,
+            sourceName: src.name,
+            status: 'error',
+            error: msg,
+          });
         }
-      } catch (e: unknown) {
-        console.error(`Error syncing ${src.name}: ${e instanceof Error ? e.message : String(e)}`);
       }
+    }
+
+    if (parallel > 1) {
+      const ok = perSourceResults.filter((r) => r.status === 'ok').length;
+      const failed = perSourceResults.filter((r) => r.status === 'error').length;
+      console.log(`\n--- sync --all complete: ${ok} ok, ${failed} failed ---`);
+    }
+
+    if (jsonOut) {
+      console.log(JSON.stringify({
+        sources: perSourceResults.map((r) => ({
+          source_id: r.sourceId,
+          name: r.sourceName,
+          status: r.status,
+          ...(r.result ? {
+            sync_status: r.result.status,
+            added: r.result.added,
+            modified: r.result.modified,
+            deleted: r.result.deleted,
+            chunks_created: r.result.chunksCreated,
+            embedded: r.result.embedded,
+          } : {}),
+          ...(r.error ? { error: r.error } : {}),
+        })),
+        parallel,
+      }));
     }
     return;
   }
@@ -1445,6 +1601,273 @@ See also:
       }
     }
     await new Promise(r => setTimeout(r, interval * 1000));
+  }
+}
+
+/**
+ * v0.40.3 — resolve effective per-source concurrency for `sync --all`.
+ *
+ * Inputs:
+ *   - sourceCount: number of `syncEnabled !== false` sources to walk
+ *   - explicitParallel: user's `--parallel N` value, if any
+ *   - workers: user's `--workers N` value, used as a soft cap when no
+ *     explicit `--parallel` is given (so `--workers 8 --all` doesn't fan
+ *     out wider than the import-phase pool budget allows)
+ *   - engineKind: PGLite is single-connection — always 1
+ *
+ * Rules (mirror the in-source `autoConcurrency` policy so the user model is
+ * consistent):
+ *   - PGLite → always 1
+ *   - explicit `--parallel` wins (clamped to sourceCount, min 1)
+ *   - auto path → min(sourceCount, workers ?? DEFAULT_PARALLEL_WORKERS)
+ *
+ * Returns >= 1. Single-source `--all` runs return 1 (no point fanning out).
+ */
+export function resolveParallelism(input: {
+  sourceCount: number;
+  explicitParallel?: number;
+  workers?: number;
+  engineKind: 'pglite' | 'postgres';
+}): number {
+  if (input.engineKind === 'pglite') return 1;
+  if (input.sourceCount <= 0) return 1;
+  if (input.explicitParallel !== undefined) {
+    return Math.max(1, Math.min(input.explicitParallel, input.sourceCount));
+  }
+  const DEFAULT_PARALLEL_SOURCES = 4;
+  const ceiling = input.workers && input.workers > 0
+    ? Math.min(input.workers, DEFAULT_PARALLEL_SOURCES)
+    : DEFAULT_PARALLEL_SOURCES;
+  return Math.max(1, Math.min(input.sourceCount, ceiling));
+}
+
+/**
+ * v0.40.3 — per-source sync wrapper for parallel `sync --all`.
+ *
+ * Captures stdout/stderr-style log lines into a string buffer so concurrent
+ * worker output doesn't interleave on the terminal; caller flushes the buffer
+ * once the source finishes, in source order. The intra-source `performSync`
+ * call uses an explicit per-source DB lock id so two `sync --all` invocations
+ * — or one `sync --all` and one targeted `sync --source X` — still serialize
+ * correctly against THE SAME source while leaving other sources free.
+ */
+export async function syncOneSource(
+  engine: BrainEngine,
+  src: { id: string; name: string; local_path: string | null; config: Record<string, unknown> },
+  shared: {
+    dryRun: boolean;
+    full: boolean;
+    noPull: boolean;
+    noEmbed: boolean;
+    skipFailed: boolean;
+    retryFailed: boolean;
+    concurrency: number | undefined;
+  },
+): Promise<{ result: SyncResult; log: string }> {
+  const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
+  const log = `\n--- Syncing source: ${src.name} ---\n`;
+  const repoOpts: SyncOpts = {
+    repoPath: src.local_path!,
+    dryRun: shared.dryRun,
+    full: shared.full,
+    noPull: shared.noPull,
+    noEmbed: shared.noEmbed,
+    skipFailed: shared.skipFailed,
+    retryFailed: shared.retryFailed,
+    sourceId: src.id,
+    strategy: cfg.strategy,
+    concurrency: shared.concurrency,
+    // Per-source lock keeps independent sources from contending on the
+    // global gbrain-sync lock when fanning out via `sync --all`.
+    lockId: `${SYNC_LOCK_ID}:${src.id}`,
+  };
+  const result = await performSync(engine, repoOpts);
+  return { result, log };
+}
+
+/**
+ * v0.40.3 — read-only per-source dashboard for `sync --all --status`.
+ *
+ * Aggregates from existing tables (no schema changes):
+ *   - sources: last_commit, last_sync_at, archived, config.syncEnabled
+ *   - pages:   per-source page count
+ *   - chunks:  per-source total + count of unembedded chunks
+ *   - sync-failures.jsonl: unacknowledged failures (best-effort, in-process)
+ *
+ * Staleness penalty mirrors `gbrain doctor`'s sync-freshness rule (24h /
+ * 72h thresholds). Sources that have NEVER synced (last_sync_at IS NULL)
+ * report `staleness_hours: null` so callers can disambiguate "first run
+ * pending" from "32h since last successful sync".
+ */
+export async function buildSyncStatusReport(
+  engine: BrainEngine,
+  sources: Array<{ id: string; name: string; local_path: string | null; config: Record<string, unknown> }>,
+): Promise<{
+  generated_at: string;
+  sources: Array<{
+    source_id: string;
+    name: string;
+    local_path: string | null;
+    sync_enabled: boolean;
+    last_sync_at: string | null;
+    staleness_hours: number | null;
+    staleness_class: 'fresh' | 'stale' | 'severe' | 'unknown';
+    last_commit: string | null;
+    pages: number;
+    chunks_total: number;
+    chunks_unembedded: number;
+    embedding_coverage_pct: number;
+  }>;
+  unacknowledged_failures: number;
+}> {
+  const sourceIds = sources.map((s) => s.id);
+  type SourceRow = {
+    id: string;
+    last_commit: string | null;
+    last_sync_at: string | null;
+  };
+  type CountRow = { source_id: string; pages: string | number; chunks_total: string | number; chunks_unembedded: string | number };
+
+  // Pull last_commit + last_sync_at fresh (caller may have called us with stale rows).
+  const sourceRows = sourceIds.length === 0
+    ? []
+    : await engine.executeRaw<SourceRow>(
+        `SELECT id, last_commit, last_sync_at FROM sources WHERE id = ANY($1::text[])`,
+        [sourceIds],
+      );
+  const sourceMap = new Map<string, SourceRow>();
+  for (const r of sourceRows) sourceMap.set(r.id, r);
+
+  // Per-source page + chunk + unembedded-chunk counts in a single round-trip.
+  // LEFT JOIN guards against sources that have no pages yet (first sync pending).
+  let countRows: CountRow[] = [];
+  if (sourceIds.length > 0) {
+    try {
+      countRows = await engine.executeRaw<CountRow>(
+        `WITH s AS (
+           SELECT unnest($1::text[]) AS source_id
+         )
+         SELECT
+           s.source_id,
+           COALESCE(p.pages, 0) AS pages,
+           COALESCE(c.chunks_total, 0) AS chunks_total,
+           COALESCE(c.chunks_unembedded, 0) AS chunks_unembedded
+         FROM s
+         LEFT JOIN (
+           SELECT source_id, COUNT(*) AS pages FROM pages GROUP BY source_id
+         ) p ON p.source_id = s.source_id
+         LEFT JOIN (
+           SELECT pg.source_id,
+                  COUNT(*) AS chunks_total,
+                  COUNT(*) FILTER (WHERE ch.embedding IS NULL) AS chunks_unembedded
+           FROM chunks ch JOIN pages pg ON pg.slug = ch.page_slug
+           GROUP BY pg.source_id
+         ) c ON c.source_id = s.source_id`,
+        [sourceIds],
+      );
+    } catch {
+      // Defensive: schema variations across versions (e.g. chunks.source_id
+      // shortcut vs join through pages) shouldn't crash --status. Fall back
+      // to empty counts; the dashboard still prints sync timing.
+      countRows = [];
+    }
+  }
+  const countMap = new Map<string, { pages: number; chunks_total: number; chunks_unembedded: number }>();
+  for (const r of countRows) {
+    countMap.set(r.source_id, {
+      pages: Number(r.pages) || 0,
+      chunks_total: Number(r.chunks_total) || 0,
+      chunks_unembedded: Number(r.chunks_unembedded) || 0,
+    });
+  }
+
+  const now = Date.now();
+  const out = sources.map((src) => {
+    const cfg = (src.config || {}) as { syncEnabled?: boolean };
+    const row = sourceMap.get(src.id) || { id: src.id, last_commit: null, last_sync_at: null };
+    const counts = countMap.get(src.id) || { pages: 0, chunks_total: 0, chunks_unembedded: 0 };
+    const lastSyncMs = row.last_sync_at ? Date.parse(row.last_sync_at) : null;
+    const stalenessHours = lastSyncMs && Number.isFinite(lastSyncMs)
+      ? (now - lastSyncMs) / 3_600_000
+      : null;
+    let stalenessClass: 'fresh' | 'stale' | 'severe' | 'unknown' = 'unknown';
+    if (stalenessHours !== null) {
+      if (stalenessHours < 24) stalenessClass = 'fresh';
+      else if (stalenessHours < 72) stalenessClass = 'stale';
+      else stalenessClass = 'severe';
+    }
+    const embeddingCoveragePct = counts.chunks_total === 0
+      ? 100
+      : Math.round(((counts.chunks_total - counts.chunks_unembedded) / counts.chunks_total) * 1000) / 10;
+    return {
+      source_id: src.id,
+      name: src.name,
+      local_path: src.local_path,
+      sync_enabled: cfg.syncEnabled !== false,
+      last_sync_at: row.last_sync_at,
+      staleness_hours: stalenessHours === null ? null : Math.round(stalenessHours * 10) / 10,
+      staleness_class: stalenessClass,
+      last_commit: row.last_commit,
+      pages: counts.pages,
+      chunks_total: counts.chunks_total,
+      chunks_unembedded: counts.chunks_unembedded,
+      embedding_coverage_pct: embeddingCoveragePct,
+    };
+  });
+
+  // Unacked sync failures — brain-global (the JSONL log isn't per-source).
+  let unackedCount = 0;
+  try {
+    unackedCount = unacknowledgedSyncFailures().length;
+  } catch {
+    unackedCount = 0;
+  }
+
+  return {
+    generated_at: new Date().toISOString(),
+    sources: out,
+    unacknowledged_failures: unackedCount,
+  };
+}
+
+export function printSyncStatusReport(report: ReturnType<typeof buildSyncStatusReport> extends Promise<infer T> ? T : never): void {
+  console.log(`\nSync status — generated ${report.generated_at}\n`);
+  if (report.sources.length === 0) {
+    console.log('  (no sources registered)');
+    return;
+  }
+  // Column widths sized to the longest value for readability without
+  // requiring a TTY library. Mirrors the table conventions used by
+  // `gbrain sources ls`.
+  const headers = ['SOURCE', 'STATE', 'STALENESS', 'PAGES', 'EMBEDDED', 'LAST SYNC'];
+  const rows = report.sources.map((s) => {
+    const stale = s.staleness_hours === null
+      ? 'never'
+      : `${s.staleness_hours.toFixed(1)}h`;
+    const stateBits: string[] = [];
+    if (!s.sync_enabled) stateBits.push('disabled');
+    stateBits.push(s.staleness_class);
+    return [
+      s.name,
+      stateBits.join(','),
+      stale,
+      String(s.pages),
+      `${s.embedding_coverage_pct}%`,
+      s.last_sync_at ?? '(never)',
+    ];
+  });
+  const widths = headers.map((h, i) =>
+    Math.max(h.length, ...rows.map((r) => r[i].length)),
+  );
+  const fmt = (cells: string[]) =>
+    cells.map((c, i) => c.padEnd(widths[i])).join('  ');
+  console.log(fmt(headers));
+  console.log(fmt(widths.map((w) => '-'.repeat(w))));
+  for (const r of rows) console.log(fmt(r));
+  console.log(`\nUnacknowledged sync failures (brain-wide): ${report.unacknowledged_failures}`);
+  const severe = report.sources.filter((s) => s.staleness_class === 'severe').length;
+  if (severe > 0) {
+    console.log(`⚠️  ${severe} source(s) are SEVERELY stale (>72h). Run \`gbrain sync --all\` to refresh.`);
   }
 }
 
