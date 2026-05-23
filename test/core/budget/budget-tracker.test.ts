@@ -161,6 +161,47 @@ describe('BudgetTracker.reserve', () => {
     const audit = readAudit();
     expect(audit.filter((e) => e.event === 'reserve_unpriced').length).toBe(2);
   });
+
+  test('v0.40.x: local embed providers price at $0 (no TX2 throw under --max-cost)', () => {
+    // FREE_LOCAL_EMBED_PROVIDERS — ollama / llama-server run on local inference
+    // (electricity, not tokens). Pre-fix a --max-cost embed/reindex job
+    // configured for a local provider TX2 hard-failed because
+    // lookupEmbeddingPrice has no entry for them.
+    for (const modelId of ['ollama:nomic-embed-text', 'llama-server:my-gguf']) {
+      const t = new BudgetTracker({ maxCostUsd: 0.0001, label: 'test', auditPath });
+      expect(() =>
+        t.reserve({ modelId, estimatedInputTokens: 5000, maxOutputTokens: 0, kind: 'embed' }),
+      ).not.toThrow();
+      expect(t.totalSpent).toBe(0);
+    }
+  });
+
+  test('v0.40.x REGRESSION: unknown hosted embed provider still TX2 hard-fails under cap', () => {
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    let caught: unknown = null;
+    try {
+      t.reserve({ modelId: 'mystery:some-embed-model', estimatedInputTokens: 100, maxOutputTokens: 0, kind: 'embed' });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(BudgetExhausted);
+    expect((caught as BudgetExhausted).reason).toBe('no_pricing');
+  });
+
+  test('v0.40.x REGRESSION: known hosted embed (openai) still real-priced (trips a tiny cap)', () => {
+    // 3-small is $0.02/1M tokens. 1M tokens projects $0.02 > $0.0001 cap, so a
+    // real (nonzero) price trips the cost gate — proving it's NOT on the $0
+    // local-provider path. The local providers above do NOT throw at the same cap.
+    const t = new BudgetTracker({ maxCostUsd: 0.0001, label: 'test', auditPath });
+    let caught: unknown = null;
+    try {
+      t.reserve({ modelId: 'openai:text-embedding-3-small', estimatedInputTokens: 1_000_000, maxOutputTokens: 0, kind: 'embed' });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(BudgetExhausted);
+    expect((caught as BudgetExhausted).reason).toBe('cost');
+  });
 });
 
 describe('BudgetTracker.record', () => {
