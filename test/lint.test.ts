@@ -44,6 +44,37 @@ describe('lintContent', () => {
     expect(issues.some(i => i.rule === 'placeholder-date')).toBe(true);
   });
 
+  test('skips placeholder dates inside fenced code blocks', () => {
+    const content = '---\ntitle: Test\ntype: person\ncreated: 2026-04-11\n---\n\n# Test\n\n```\nbriefings/YYYY-MM-DD-morning.md\n```\n';
+    const issues = lintContent(content, 'test.md');
+    expect(issues.some(i => i.rule === 'placeholder-date')).toBe(false);
+  });
+
+  test('skips placeholder dates inside inline backticks', () => {
+    const content = '---\ntitle: Test\ntype: person\ncreated: 2026-04-11\n---\n\n# Test\n\nFilename pattern: `YYYY-MM-DD-slug.md`.\n';
+    const issues = lintContent(content, 'test.md');
+    expect(issues.some(i => i.rule === 'placeholder-date')).toBe(false);
+  });
+
+  test('skips placeholder dates on documentation pages (type: convention)', () => {
+    const content = '---\ntitle: Citation Format\ntype: convention\ncreated: 2026-04-11\n---\n\n# Citation Format\n\nUse `[Source: User, {context}, YYYY-MM-DD]` for user statements.\nTimeline entries: - **YYYY-MM-DD** | Event description.\n';
+    const issues = lintContent(content, 'test.md');
+    expect(issues.some(i => i.rule === 'placeholder-date')).toBe(false);
+  });
+
+  test('skips placeholder dates on documentation pages (type: template)', () => {
+    const content = '---\ntitle: Person Template\ntype: template\ncreated: 2026-04-11\n---\n\ncreated: YYYY-MM-DD\nupdated: YYYY-MM-DD\n';
+    const issues = lintContent(content, 'test.md');
+    expect(issues.some(i => i.rule === 'placeholder-date')).toBe(false);
+  });
+
+  test('still detects placeholder dates in prose on non-doc pages', () => {
+    // Regression guard: the fix must NOT silently relax the rule on regular brain pages.
+    const content = '---\ntitle: Test\ntype: person\ncreated: 2026-04-11\n---\n\n# Test\n\nLast assessed: YYYY-MM-DD by the team.\n';
+    const issues = lintContent(content, 'test.md');
+    expect(issues.some(i => i.rule === 'placeholder-date')).toBe(true);
+  });
+
   test('detects missing frontmatter title', () => {
     const content = '---\ntype: person\ncreated: 2026-04-11\n---\n\n# Test';
     const issues = lintContent(content, 'test.md');

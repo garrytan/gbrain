@@ -105,13 +105,35 @@ export function lintContent(content: string, filePath: string): LintIssue[] {
   }
 
   // Rule: Placeholder dates
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].match(/\bYYYY-MM-DD\b/) || lines[i].match(/\bXX-XX\b/) || lines[i].match(/\b\d{4}-XX-XX\b/)) {
-      issues.push({
-        file: filePath, line: i + 1, rule: 'placeholder-date',
-        message: `Placeholder date found: ${lines[i].trim().slice(0, 60)}`,
-        fixable: false,
-      });
+  // Skip three false-positive sources that documentation pages legitimately
+  // contain: (1) lines inside fenced code blocks (e.g., shell examples showing
+  // a date pattern), (2) YYYY-MM-DD inside `inline backticks` (literal format
+  // spec, not an unfilled blank), and (3) pages whose frontmatter type is
+  // template/convention/resolver/schema/log, where the literal YYYY-MM-DD IS
+  // the documented format users should follow.
+  const PLACEHOLDER_DOC_TYPES = new Set(['template', 'convention', 'resolver', 'schema', 'log']);
+  const fmTypeMatch = content.match(/^---\n[\s\S]*?\ntype:\s*['"]?([^\s'"\n]+)/);
+  const fmType = fmTypeMatch ? fmTypeMatch[1].trim() : '';
+  const isDocPage = PLACEHOLDER_DOC_TYPES.has(fmType);
+
+  if (!isDocPage) {
+    let inFence = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.match(/^\s*```/)) {
+        inFence = !inFence;
+        continue;
+      }
+      if (inFence) continue;
+      // Strip inline code spans before testing so `YYYY-MM-DD` in backticks doesn't trip.
+      const stripped = line.replace(/`[^`]*`/g, '');
+      if (stripped.match(/\bYYYY-MM-DD\b/) || stripped.match(/\bXX-XX\b/) || stripped.match(/\b\d{4}-XX-XX\b/)) {
+        issues.push({
+          file: filePath, line: i + 1, rule: 'placeholder-date',
+          message: `Placeholder date found: ${line.trim().slice(0, 60)}`,
+          fixable: false,
+        });
+      }
     }
   }
 
