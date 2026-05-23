@@ -246,6 +246,57 @@ paths outside cwd are rejected. Page slugs and filenames are allowlist-validated
 CLI callers (`gbrain file upload ...`) keep unrestricted filesystem access since
 the user owns the machine.
 
+## Supabase Deployment Caveat
+
+If your brain is backed by Supabase and you are deploying `gbrain serve --http`
+to an external host (Fly.io, Render, Railway, your own VPS), set:
+
+```bash
+GBRAIN_DISABLE_DIRECT_POOL=1
+GBRAIN_POOL_SIZE=1
+GBRAIN_TRUST_PROXY=1
+```
+
+**Why `GBRAIN_DISABLE_DIRECT_POOL=1`:** GBrain's dual-pool routing tries to open
+a direct connection to the Postgres host (port 5432) alongside the standard
+pooler connection. On Supabase that direct host is only reachable from inside
+Supabase's VPC — not accessible from external deployments. Without this flag the
+startup sequence attempts an IPv6 connection to the direct host, times out (or
+receives connection-refused), and either crashes or falls back to a degraded
+state.
+
+**Why `GBRAIN_TRUST_PROXY=1`:** Express defaults to `trust proxy: 'loopback'`
+which only trusts proxies on `127.0.0.1`. PaaS load balancers (Fly, Render,
+Railway, Vercel) terminate TLS one network hop in front of your app, so the
+real client IP arrives in `X-Forwarded-For` after **exactly 1 hop**. Setting
+`GBRAIN_TRUST_PROXY=1` tells Express to trust that one hop, which is required
+for both rate limiting (correct client IPs) and `req.secure` detection
+(needed for OAuth flows that require HTTPS).
+
+**Connection string:** use the **Transaction Pooler** URL (port **6543**, not
+5432):
+
+```
+postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/<db>
+```
+
+The Session Pooler (port 5432 on the pooler host) also works but has higher
+per-connection overhead. The **direct** connection string
+(`db.<project-ref>.supabase.co:5432`) will not work from outside the Supabase
+VPC and should not be used for externally-deployed servers.
+
+**Minimal Fly.io `fly.toml` env block example:**
+
+```toml
+[env]
+  GBRAIN_DISABLE_DIRECT_POOL = "1"
+  GBRAIN_POOL_SIZE = "1"
+  GBRAIN_TRUST_PROXY = "1"
+```
+
+Set `DATABASE_URL` as a secret (`fly secrets set DATABASE_URL=...`) — never
+commit it to `fly.toml`.
+
 ## Deployment Options
 
 See [ALTERNATIVES.md](ALTERNATIVES.md) for a comparison of ngrok, Tailscale
