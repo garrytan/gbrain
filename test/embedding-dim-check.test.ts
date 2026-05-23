@@ -265,6 +265,20 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (!got.ok) expect(got.error).toMatch(/exceed pgvector's column cap/);
   });
 
+  test('user-provided llama-server model accepts explicit native dimensions', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:qwen3-embedding-8b',
+      embedding_dimensions: 4096,
+    });
+    expect(got).toEqual({
+      ok: true,
+      dim: 4096,
+      model: 'llama-server:qwen3-embedding-8b',
+      provider: 'llama-server',
+      recipeDefault: 0,
+    });
+  });
+
   test('regression: bug-reporter scenario — OpenAI auto-pick resolves at 1536', () => {
     const got = resolveSchemaEmbeddingDim({ embedding_model: 'openai:text-embedding-3-large' });
     expect(got.ok).toBe(true);

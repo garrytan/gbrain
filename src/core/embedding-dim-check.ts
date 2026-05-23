@@ -409,6 +409,20 @@ function isCustomDimValidForProvider(
   requestedDims: number,
   dimsOptions: number[] | undefined,
 ): CustomDimCheck {
+  const embedding = recipe.touchpoints.embedding;
+
+  // User-provided local/proxy embedding recipes (llama-server, LiteLLM, etc.)
+  // are different from fixed allow-listed providers. The model id and native
+  // dimension are supplied by the operator because GBrain cannot know the
+  // server-side model catalogue ahead of time. For these recipes an explicit
+  // dimension is not an unsupported Matryoshka truncation; it is the contract
+  // that sizes the pgvector column before the first embed call. The actual
+  // provider response is still validated later by gateway.embed(), so a wrong
+  // value fails loudly instead of corrupting the index.
+  if (embedding?.user_provided_models === true) {
+    return { valid: true, error: '' };
+  }
+
   // Tier 1: recipe-declared dims_options.
   if (dimsOptions && dimsOptions.length > 0) {
     if (dimsOptions.includes(requestedDims)) return { valid: true, error: '' };

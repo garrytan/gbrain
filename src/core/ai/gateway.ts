@@ -639,7 +639,7 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
     if (
       Array.isArray(touchpointConfig.models) &&
       touchpointConfig.models.length === 0 &&
-      (recipe.id === 'litellm' || isUserProvided)
+      !(recipe.id === 'litellm' || isUserProvided)
     ) return false;
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.

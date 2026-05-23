@@ -11,6 +11,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
@@ -92,5 +93,42 @@ describe('migration v45 facts column shape', () => {
        WHERE table_name = 'facts' AND column_name = 'embedding'`,
     );
     expect(after[0].udt_name).toBe(before[0].udt_name);
+  });
+});
+
+describe('4096d local embeddings above HNSW caps', () => {
+  test('facts and query_cache skip HNSW indexes above pgvector caps', async () => {
+    resetGateway();
+    configureGateway({
+      embedding_model: 'llama-server:qwen3-embedding-8b',
+      embedding_dimensions: 4096,
+      env: {},
+    });
+
+    const local = new PGLiteEngine();
+    try {
+      await local.connect({});
+      await local.initSchema();
+
+      const dimRows = await local.executeRaw<{ value: string }>(
+        `SELECT value FROM config WHERE key = 'embedding_dimensions'`,
+      );
+      expect(dimRows[0].value).toBe('4096');
+
+      const factsIndexRows = await local.executeRaw<{ indexname: string }>(
+        `SELECT indexname FROM pg_indexes
+         WHERE tablename = 'facts' AND indexname = 'idx_facts_embedding_hnsw'`,
+      );
+      expect(factsIndexRows.length).toBe(0);
+
+      const queryCacheIndexRows = await local.executeRaw<{ indexname: string }>(
+        `SELECT indexname FROM pg_indexes
+         WHERE tablename = 'query_cache' AND indexname = 'idx_query_cache_embedding_hnsw'`,
+      );
+      expect(queryCacheIndexRows.length).toBe(0);
+    } finally {
+      await local.disconnect();
+      resetGateway();
+    }
   });
 });

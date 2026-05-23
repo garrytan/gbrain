@@ -86,6 +86,15 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
     expect(isAvailable('embedding')).toBe(true);
   });
 
+  test('embedding AVAILABLE for user-provided llama-server model with no API key', () => {
+    configureGateway({
+      embedding_model: 'llama-server:qwen3-embedding-8b',
+      embedding_dimensions: 4096,
+      env: {},
+    });
+    expect(isAvailable('embedding')).toBe(true);
+  });
+
   test('anthropic rejects embedding touchpoint (has no embedding model)', () => {
     configureGateway({
       embedding_model: 'anthropic:claude-haiku-4-5-20251001',
