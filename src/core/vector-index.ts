@@ -17,15 +17,37 @@
 import type { BrainEngine } from './engine.ts';
 
 export const PGVECTOR_HNSW_VECTOR_MAX_DIMS = 2000;
+export const PGVECTOR_HNSW_HALFVEC_MAX_DIMS = 4000;
+export const PGVECTOR_HNSW_BIT_MAX_DIMS = 64000;
+
+export function pgvectorHnswMaxDimsForType(type: 'vector' | 'halfvec'): number {
+  return type === 'halfvec' ? PGVECTOR_HNSW_HALFVEC_MAX_DIMS : PGVECTOR_HNSW_VECTOR_MAX_DIMS;
+}
 
 const CHUNK_EMBEDDING_HNSW_INDEX =
   'CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);';
 
+export function chunkEmbeddingBinaryHnswIndexSql(dims: number): string {
+  return [
+    'CREATE INDEX IF NOT EXISTS idx_chunks_embedding_binary_hnsw',
+    `  ON content_chunks USING hnsw ((binary_quantize(embedding)::bit(${dims})) bit_hamming_ops)`,
+    '  WHERE embedding IS NOT NULL;',
+  ].join('\n');
+}
+
 export function chunkEmbeddingIndexSql(dims: number): string {
   if (dims <= PGVECTOR_HNSW_VECTOR_MAX_DIMS) return CHUNK_EMBEDDING_HNSW_INDEX;
+  if (dims <= PGVECTOR_HNSW_BIT_MAX_DIMS) {
+    return [
+      '-- Full-dimensional vector HNSW skipped: pgvector vector indexes support',
+      `-- at most ${PGVECTOR_HNSW_VECTOR_MAX_DIMS} dimensions. Use binary-quantized HNSW`,
+      '-- as an ANN candidate generator, then exact cosine/reranker re-rank.',
+      chunkEmbeddingBinaryHnswIndexSql(dims),
+    ].join('\n');
+  }
   return [
-    '-- idx_chunks_embedding skipped: pgvector HNSW vector indexes support',
-    `-- at most ${PGVECTOR_HNSW_VECTOR_MAX_DIMS} dimensions; exact vector scans remain available.`,
+    '-- idx_chunks_embedding skipped: pgvector vector HNSW and binary HNSW indexes support',
+    `-- at most ${PGVECTOR_HNSW_VECTOR_MAX_DIMS} and ${PGVECTOR_HNSW_BIT_MAX_DIMS} dimensions respectively; exact vector scans remain available.`,
   ].join('\n');
 }
 

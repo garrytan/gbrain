@@ -34,13 +34,14 @@ describe('getPGLiteSchema', () => {
     expect(sql).toContain('idx_chunks_embedding ON content_chunks USING hnsw');
   });
 
-  test('Voyage 2048d skips unsupported HNSW index but keeps vector column', () => {
+  test('Voyage 2048d uses binary-quantized HNSW candidate index and keeps vector column', () => {
     const sql = getPGLiteSchema(2048, 'voyage-4-large');
     expect(sql).toMatch(/vector\(2048\)/);
     expect(sql).toMatch(/'voyage-4-large'/);
     expect(sql).toMatch(/\('embedding_dimensions', '2048'\)/);
     expect(sql).not.toContain('idx_chunks_embedding ON content_chunks USING hnsw');
-    expect(sql).toContain('exact vector scans remain available');
+    expect(sql).toContain('idx_chunks_embedding_binary_hnsw');
+    expect(sql).toContain('binary_quantize(embedding)::bit(2048)');
   });
 
   test('PGLITE_SCHEMA_SQL back-compat constant is the default-dim schema', () => {
@@ -49,12 +50,13 @@ describe('getPGLiteSchema', () => {
 });
 
 describe('getPostgresSchema', () => {
-  test('Voyage 2048d updates vector column and seeded config but skips HNSW', () => {
+  test('Voyage 2048d updates vector column and seeded config but uses binary HNSW', () => {
     const sql = getPostgresSchema(2048, 'voyage-4-large');
     expect(sql).toMatch(/vector\(2048\)/);
     expect(sql).toMatch(/\('embedding_model', 'voyage-4-large'\)/);
     expect(sql).toMatch(/\('embedding_dimensions', '2048'\)/);
     expect(sql).not.toContain('idx_chunks_embedding ON content_chunks USING hnsw');
+    expect(sql).toContain('idx_chunks_embedding_binary_hnsw');
   });
 
   test('escapes configured model before inserting into schema SQL literals', () => {

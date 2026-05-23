@@ -97,7 +97,7 @@ describe('migration v45 facts column shape', () => {
 });
 
 describe('4096d local embeddings above HNSW caps', () => {
-  test('facts and query_cache skip HNSW indexes above pgvector caps', async () => {
+  test('facts/query_cache skip native HNSW above caps; content_chunks gets binary HNSW', async () => {
     resetGateway();
     configureGateway({
       embedding_model: 'llama-server:qwen3-embedding-8b',
@@ -126,6 +126,14 @@ describe('4096d local embeddings above HNSW caps', () => {
          WHERE tablename = 'query_cache' AND indexname = 'idx_query_cache_embedding_hnsw'`,
       );
       expect(queryCacheIndexRows.length).toBe(0);
+
+      const binaryIndexRows = await local.executeRaw<{ indexdef: string }>(
+        `SELECT indexdef FROM pg_indexes
+         WHERE tablename = 'content_chunks' AND indexname = 'idx_chunks_embedding_binary_hnsw'`,
+      );
+      expect(binaryIndexRows.length).toBe(1);
+      expect(binaryIndexRows[0].indexdef).toContain('binary_quantize');
+      expect(binaryIndexRows[0].indexdef).toContain('bit(4096)');
     } finally {
       await local.disconnect();
       resetGateway();

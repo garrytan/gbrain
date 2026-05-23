@@ -1,5 +1,7 @@
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
+import { readContentChunksEmbeddingDim } from './embedding-dim-check.ts';
+import { chunkEmbeddingBinaryHnswIndexSql, PGVECTOR_HNSW_BIT_MAX_DIMS, PGVECTOR_HNSW_VECTOR_MAX_DIMS } from './vector-index.ts';
 
 /**
  * Schema migrations — run automatically on initSchema().
@@ -4059,6 +4061,39 @@ export const MIGRATIONS: Migration[] = [
     sql: `
       ALTER TABLE facts ADD COLUMN IF NOT EXISTS event_type TEXT;
     `,
+  },
+  {
+    version: 90,
+    name: 'content_chunks_binary_quantized_hnsw',
+    // v0.40.x scale guardrail: for high-dimensional local embeddings
+    // (Qwen3 4096d, OpenAI 3072d, etc.), pgvector cannot build native
+    // vector HNSW (cap 2000). Binary quantization indexes up to 64k dims,
+    // so use it as an ANN candidate generator and let searchVector re-rank
+    // candidates by exact full-dimensional cosine + optional reranker.
+    idempotent: true,
+    sql: '',
+    handler: async (engine: BrainEngine) => {
+      const { exists, dims } = await readContentChunksEmbeddingDim(engine);
+      if (!exists || !dims) return;
+      if (dims <= PGVECTOR_HNSW_VECTOR_MAX_DIMS) return;
+      if (dims > PGVECTOR_HNSW_BIT_MAX_DIMS) return;
+      await engine.executeRaw(chunkEmbeddingBinaryHnswIndexSql(dims));
+    },
+    verify: async (engine: BrainEngine) => {
+      const { exists, dims } = await readContentChunksEmbeddingDim(engine);
+      if (!exists || !dims) return true;
+      if (dims <= PGVECTOR_HNSW_VECTOR_MAX_DIMS) return true;
+      if (dims > PGVECTOR_HNSW_BIT_MAX_DIMS) return true;
+      const rows = await engine.executeRaw<{ exists: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM pg_indexes
+           WHERE schemaname = 'public'
+             AND tablename = 'content_chunks'
+             AND indexname = 'idx_chunks_embedding_binary_hnsw'
+         ) AS exists`,
+      );
+      return !!rows?.[0]?.exists;
+    },
   },
 ];
 

@@ -21,7 +21,7 @@ import { normalizeWeightForStorage } from './takes-fence.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
-import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes } from './vector-index.ts';
+import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, PGVECTOR_HNSW_BIT_MAX_DIMS, pgvectorHnswMaxDimsForType } from './vector-index.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -1601,6 +1601,13 @@ export class PostgresEngine implements BrainEngine {
     // is the discriminator (rows without embedding_multimodal aren't searched).
     const resolvedCol = normalizeEngineColumn(opts?.embeddingColumn);
     const { col, castSql } = buildVectorCastFragment(resolvedCol);
+    const hnswDimCap = pgvectorHnswMaxDimsForType(resolvedCol.type);
+    const canUseBinaryAnn =
+      resolvedCol.dimensions > hnswDimCap &&
+      resolvedCol.dimensions <= PGVECTOR_HNSW_BIT_MAX_DIMS;
+    const candidateOrderSql = canUseBinaryAnn
+      ? `(binary_quantize(cc.${col})::bit(${resolvedCol.dimensions})) <~> (binary_quantize(${castSql})::bit(${resolvedCol.dimensions}))`
+      : `cc.${col} <=> ${castSql}`;
     let modalityFilter: string;
     if (resolvedCol.name === 'embedding_image') {
       modalityFilter = `AND cc.modality = 'image'`;
@@ -1632,7 +1639,7 @@ export class PostgresEngine implements BrainEngine {
           ${sourceClause}
           ${hardExcludeClause}
           ${visibilityClause}
-        ORDER BY cc.${col} <=> ${castSql}
+        ORDER BY ${candidateOrderSql}
         LIMIT ${innerLimitParam}
       )
       SELECT

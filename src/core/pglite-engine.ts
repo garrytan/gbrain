@@ -52,6 +52,7 @@ import {
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
 import { hasCJK, escapeLikePattern } from './cjk.ts';
+import { PGVECTOR_HNSW_BIT_MAX_DIMS, pgvectorHnswMaxDimsForType } from './vector-index.ts';
 
 type PGLiteDB = PGlite;
 
@@ -1562,6 +1563,14 @@ export class PGLiteEngine implements BrainEngine {
     // itself is the discriminator (only re-embedded rows have non-NULL).
     const resolvedCol = normalizeEngineColumn(opts?.embeddingColumn);
     const { col, castSql } = buildVectorCastFragment(resolvedCol);
+    const hnswDimCap = pgvectorHnswMaxDimsForType(resolvedCol.type);
+    const canUseBinaryAnn =
+      resolvedCol.dimensions > hnswDimCap &&
+      resolvedCol.dimensions <= PGVECTOR_HNSW_BIT_MAX_DIMS;
+    const candidateOrderSql = canUseBinaryAnn
+      ? `(binary_quantize(cc.${col})::bit(${resolvedCol.dimensions})) <~> (binary_quantize(${castSql})::bit(${resolvedCol.dimensions}))`
+      : `cc.${col} <=> ${castSql}`;
+
     let modalityFilter: string;
     if (resolvedCol.name === 'embedding_image') {
       modalityFilter = `AND cc.modality = 'image'`;
@@ -1582,7 +1591,7 @@ export class PGLiteEngine implements BrainEngine {
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
          WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-         ORDER BY cc.${col} <=> ${castSql}
+         ORDER BY ${candidateOrderSql}
          LIMIT $2
        )
        SELECT

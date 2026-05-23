@@ -54,6 +54,8 @@ export interface GBrainConfig {
    */
   embedding_disabled?: boolean;
   expansion_model?: string;
+  /** Optional reranker model for hybrid search re-ranking (provider:model). */
+  reranker_model?: string;
   /**
    * Default chat model for `gateway.chat()` callers (v0.27+).
    * Default: "anthropic:claude-sonnet-4-6" (dateless per Anthropic's v0.31.12+ model-ID format).
@@ -410,6 +412,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embedding_dimensions',
   'embedding_disabled',
   'expansion_model',
+  'reranker_model',
   'chat_model',
   'chat_fallback_chain',
   'provider_base_urls',
