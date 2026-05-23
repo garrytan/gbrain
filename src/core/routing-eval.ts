@@ -96,6 +96,7 @@ export interface RoutingCaseResult {
  * variants that agents emit in practice.
  */
 export function normalizeText(s: string): string {
+  if (!s) return '';
   return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
@@ -298,6 +299,10 @@ export function loadRoutingFixtures(skillsDir: string): LoadResult {
       if (raw.startsWith('//') || raw.startsWith('#')) continue;
       try {
         const obj = JSON.parse(raw) as RoutingFixture;
+        if (typeof obj.intent !== 'string') {
+          malformed.push({ file: fixturePath, line: i + 1, raw, error: `missing required field 'intent' (found keys: ${Object.keys(obj).join(', ')})` });
+          continue;
+        }
         fixtures.push({ ...obj, source: fixturePath });
       } catch (err) {
         malformed.push({
