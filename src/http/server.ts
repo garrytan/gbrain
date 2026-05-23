@@ -1008,7 +1008,18 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
               },
               add_tag: { params: 'slug (required), tag (required)' },
               remove_tag: { params: 'slug (required), tag (required)' },
-              add_link: { params: 'from (required), to (required), link_type (default: mentions)' },
+              add_link: {
+                params: 'from (required), to (required), type or link_type (default: relates_to)',
+                note: 'Bidirectional — inserts from→to AND to→from. type enum: derives_from, supersedes, relates_to, example_of, contradicts, mentions. Returns neighbors: [{slug, type, title}].',
+              },
+              patch_page: {
+                params: 'slug (required), find (required), replace (optional, default ""), sync (0|1)',
+                note: 'String-replace on page body. The find string must occur exactly once (ambiguous multi-match rejected). Async by default.',
+              },
+              put_page_batch: {
+                params: 'pages (required, JSON array of {slug, content} objects, max 10)',
+                note: 'Write multiple pages in one GET request. Per-page results returned. Use for building pages + adding tags together.',
+              },
               add_timeline_entry: { params: 'slug (required), date YYYY-MM-DD (required), description (required), event_type (default: note)' },
               delete_page: { params: 'slug (required), confirm=true (required — prevents accidental deletion)' },
             },
@@ -1201,11 +1212,39 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         if (action === 'add_link') {
           const from = url.searchParams.get('from');
           const to = url.searchParams.get('to');
-          const link_type = url.searchParams.get('link_type') ?? 'mentions';
+          // Accept 'type' (new canonical) or 'link_type' (legacy) param
+          const rawType = url.searchParams.get('type') ?? url.searchParams.get('link_type') ?? 'relates_to';
+          const NEURAL_LINK_TYPES = ['derives_from', 'supersedes', 'relates_to', 'example_of', 'contradicts', 'mentions'];
+          if (!NEURAL_LINK_TYPES.includes(rawType)) {
+            return err('invalid_param',
+              `Invalid link type: "${rawType}". Valid: ${NEURAL_LINK_TYPES.join(', ')}`,
+              400,
+              { hint: 'Use one of the enum values — e.g. type=relates_to' },
+            );
+          }
           if (!from) return err('missing_param', 'from is required for add_link');
           if (!to) return err('missing_param', 'to is required for add_link');
-          await addLinkOp.handler(ctx, { from, to, link_type });
-          return ok({ action, from, to, link_type }, Date.now() - t0);
+          // Bidirectional: insert from→to and to→from in parallel
+          await Promise.all([
+            addLinkOp.handler(ctx, { from, to, link_type: rawType }),
+            addLinkOp.handler(ctx, { from: to, to: from, link_type: rawType }),
+          ]);
+          // Build neighbors list for 'from' page (outgoing + incoming, deduplicated)
+          const [outLinks, inLinks] = await Promise.all([
+            engine.getLinks(from),
+            engine.getBacklinks(from),
+          ]);
+          const neighborMap = new Map<string, string>(); // slug → link_type
+          for (const l of outLinks) neighborMap.set(l.to_slug, l.link_type);
+          for (const l of inLinks) neighborMap.set(l.from_slug, l.link_type);
+          neighborMap.delete(from); // exclude self if any self-loop
+          const neighbors = await Promise.all(
+            [...neighborMap.entries()].slice(0, 20).map(async ([nSlug, nType]) => {
+              const nPage = await engine.getPage(nSlug);
+              return { slug: nSlug, type: nType, title: nPage?.title ?? nSlug };
+            }),
+          );
+          return ok({ action, from, to, link_type: rawType, bidirectional: true, neighbors }, Date.now() - t0);
         }
 
         if (action === 'add_timeline_entry') {
@@ -1232,6 +1271,238 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           }
           await deletePageOp.handler(ctx, { slug });
           return ok({ action, slug, deleted: true }, Date.now() - t0);
+        }
+
+        // ── action=patch_page ─────────────────────────────────────────────────
+        // Lightweight string-replace on a page's body — avoids re-sending the
+        // entire content when fixing a small typo. The find string must occur
+        // EXACTLY ONCE (ambiguous multi-match is rejected). Async by default.
+        // Required: slug, find. Optional: replace (default ""), sync=1.
+        if (action === 'patch_page') {
+          const slug = url.searchParams.get('slug');
+          const find = url.searchParams.get('find');
+          const replace = url.searchParams.get('replace') ?? '';
+          if (!slug) return err('missing_param', 'slug is required for patch_page');
+          if (find === null) return err('missing_param', 'find is required for patch_page');
+
+          const page = await engine.getPage(slug);
+          if (!page) return err('not_found', `Page not found: ${slug}`, 404);
+
+          const body = page.compiled_truth ?? '';
+          const occurrences = body.split(find).length - 1;
+          if (occurrences === 0) {
+            return err('not_found', `String not found in page: "${find.slice(0, 80)}"`, 404, {
+              hint: 'Match is case-sensitive and exact. Use GET /page?slug=... to inspect current content.',
+            });
+          }
+          if (occurrences > 1) {
+            return err('ambiguous_match',
+              `Found ${occurrences} occurrences. Provide more context to make the match unique.`,
+              400,
+              { hint: 'Include surrounding text in the find parameter to narrow to exactly one occurrence.' },
+            );
+          }
+
+          const patchedBody = body.replace(find, replace);
+
+          // Reconstruct full markdown: YAML frontmatter + patched body
+          const fm = (page.frontmatter as Record<string, unknown>) ?? {};
+          const fmLines = ['---'];
+          if (page.type) fmLines.push(`type: ${page.type}`);
+          if (page.title) fmLines.push(`title: ${JSON.stringify(page.title)}`);
+          for (const [k, v] of Object.entries(fm)) {
+            if (['type', 'title'].includes(k) || v === null || v === undefined) continue;
+            if (typeof v === 'string') {
+              fmLines.push(`${k}: ${(v.includes(':') || v.includes('#') || v.includes('"')) ? JSON.stringify(v) : v}`);
+            } else if (Array.isArray(v)) {
+              fmLines.push(`${k}:\n${(v as unknown[]).map(i => `  - ${i}`).join('\n')}`);
+            } else {
+              fmLines.push(`${k}: ${JSON.stringify(v)}`);
+            }
+          }
+          fmLines.push('---', '');
+          const patchFullContent = fmLines.join('\n') + patchedBody;
+
+          const patchAsync = url.searchParams.get('sync') !== '1';
+
+          if (patchAsync) {
+            if (asyncPendingQueue.length >= ASYNC_QUEUE_MAX) {
+              return Response.json(
+                { ok: false, code: 'overloaded', error: 'Embedding queue is full. Retry after a few seconds.' },
+                { status: 503, headers: { 'Retry-After': '5' } },
+              );
+            }
+            sweepJobs();
+            const patchJobId = newJobId();
+            const patchJobState: AsyncJobState = { status: 'pending', slug, content_hash: '', created: Date.now() };
+            asyncJobs.set(patchJobId, patchJobState);
+            try {
+              const phase1 = await importFromContent(engine, slug, patchFullContent, { noEmbed: true });
+              patchJobState.content_hash = phase1.content_hash ?? '';
+              pendingEmbeds.add(slug);
+              void engine.getPage(slug).then(p => { if (p) pageCacheSet(slug, p); });
+            } catch (e) {
+              console.warn(`[gbrain] patch_page phase1 failed for ${slug}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+            const canEmbedPatch = !!process.env.OPENAI_API_KEY;
+            ;(async () => {
+              await acquireAsyncSlot();
+              patchJobState.status = 'running';
+              try {
+                const result = await withEmbedRetry(slug, () => importFromContent(engine, slug, patchFullContent, {
+                  forceReembed: canEmbedPatch, noEmbed: !canEmbedPatch,
+                })) as { content_hash?: string } & object;
+                patchJobState.status = 'completed';
+                patchJobState.content_hash = (result as { content_hash?: string }).content_hash ?? patchJobState.content_hash;
+                patchJobState.result = result;
+              } catch (e) {
+                patchJobState.status = 'failed';
+                patchJobState.error = e instanceof Error ? e.message : String(e);
+              } finally {
+                pendingEmbeds.delete(slug);
+                releaseAsyncSlot();
+              }
+            })();
+            return Response.json({
+              ok: true, action, job_id: patchJobId, slug,
+              status: 'pending',
+              page_committed: patchJobState.content_hash !== '',
+              content_hash: patchJobState.content_hash || undefined,
+              find: find.slice(0, 80), replace: replace.slice(0, 80), occurrences_replaced: 1,
+            }, { status: 202 });
+          }
+
+          const patchResult = await putPageOp.handler(ctx, { slug, content: patchFullContent }) as { content_hash?: string } & object;
+          const patchHash = (patchResult as { content_hash?: string }).content_hash ?? '';
+          return ok({ action, slug, find: find.slice(0, 80), replace: replace.slice(0, 80), occurrences_replaced: 1, content_hash: patchHash }, Date.now() - t0);
+        }
+
+        // ── action=put_page_batch ─────────────────────────────────────────────
+        // Write multiple pages in one request. Accepts a JSON-encoded array
+        // in the 'pages' URL param: pages=[{"slug":"...","content":"..."},...]
+        // Max 10 pages per batch. Each page processed sequentially so failures
+        // are isolated. Returns per-page results.
+        if (action === 'put_page_batch') {
+          const pagesParam = url.searchParams.get('pages');
+          if (!pagesParam) {
+            return err('missing_param', 'pages (JSON array of {slug,content} objects) is required for put_page_batch', 400, {
+              hint: 'Example: pages=[{"slug":"mem/2026-05-24/note","content":"# Hello"}]',
+            });
+          }
+          let batchInput: Array<{ slug: string; content: string; tags?: string }>;
+          try { batchInput = JSON.parse(pagesParam); } catch {
+            return err('invalid_json', 'pages must be a valid JSON array', 400);
+          }
+          if (!Array.isArray(batchInput) || batchInput.length === 0) {
+            return err('invalid_param', 'pages must be a non-empty JSON array', 400);
+          }
+          if (batchInput.length > 10) {
+            return err('too_large', `Batch size ${batchInput.length} exceeds 10-page limit`, 400, {
+              hint: 'Split into multiple put_page_batch calls.',
+            });
+          }
+
+          const batchResults: Array<{ slug: string; ok: boolean; content_hash?: string; error?: string }> = [];
+          for (const item of batchInput) {
+            if (!item.slug || !item.content) {
+              batchResults.push({ slug: item.slug ?? '?', ok: false, error: 'slug and content are required' });
+              continue;
+            }
+            if (item.content.length > 50_000) {
+              batchResults.push({ slug: item.slug, ok: false, error: 'content exceeds 50k char limit' });
+              continue;
+            }
+            try {
+              const hasFm = item.content.trimStart().startsWith('---');
+              const batchFullContent = hasFm ? item.content : [
+                '---', 'source: agent',
+                `created: ${new Date().toISOString().slice(0, 10)}`,
+                '---', '', item.content,
+              ].join('\n');
+              const batchRes = await putPageOp.handler(ctx, { slug: item.slug, content: batchFullContent }) as { content_hash?: string };
+              batchResults.push({ slug: item.slug, ok: true, content_hash: batchRes.content_hash });
+            } catch (e) {
+              batchResults.push({ slug: item.slug, ok: false, error: e instanceof Error ? e.message : String(e) });
+            }
+          }
+
+          const batchSucceeded = batchResults.filter(r => r.ok).length;
+          return ok({
+            action,
+            batch_size: batchInput.length,
+            succeeded: batchSucceeded,
+            failed: batchInput.length - batchSucceeded,
+            results: batchResults,
+          }, Date.now() - t0);
+        }
+
+        // ── action=append_chunks (plural) ─────────────────────────────────────
+        // Multi-chunk variant of append_chunk: send multiple chunks in one GET
+        // request. Required: upload_id, chunks (JSON array of {idx,content}).
+        // Max 5 chunks per call to stay within URL limits. Each chunk ≤ 1 500 chars.
+        // Idempotent: re-sending the same idx overwrites the previous value.
+        if (action === 'append_chunks') {
+          const uploadId = url.searchParams.get('upload_id');
+          if (!uploadId) return err('missing_param', 'upload_id is required for append_chunks');
+          const state = chunkUploads.get(uploadId);
+          if (!state) {
+            return err('upload_not_found', `Upload session not found or expired: ${uploadId}`, 404, {
+              hint: 'Sessions expire after 10 min. Start a new upload with action=start_chunked.',
+            });
+          }
+          const chunksParam = url.searchParams.get('chunks');
+          if (!chunksParam) return err('missing_param', 'chunks (JSON array of {idx,content}) is required');
+          let chunksInput: Array<{ idx: number; content?: string; content_b64?: string }>;
+          try { chunksInput = JSON.parse(chunksParam); } catch {
+            return err('invalid_json', 'chunks must be a valid JSON array of {idx, content} objects', 400);
+          }
+          if (!Array.isArray(chunksInput) || chunksInput.length === 0) {
+            return err('invalid_param', 'chunks must be a non-empty array', 400);
+          }
+          if (chunksInput.length > 5) {
+            return err('too_large', 'append_chunks is limited to 5 chunks per call', 400, {
+              hint: 'Send up to 5 chunks at once; call again for more.',
+            });
+          }
+          const multiResults: Array<{ idx: number; ok: boolean; error?: string }> = [];
+          for (const item of chunksInput) {
+            const chunkIndex = item.idx;
+            if (!Number.isFinite(chunkIndex) || chunkIndex < 0 || chunkIndex >= CHUNK_MAX_CHUNKS) {
+              multiResults.push({ idx: chunkIndex, ok: false, error: `chunk_index must be 0–${CHUNK_MAX_CHUNKS - 1}` });
+              continue;
+            }
+            if (state.totalChunks !== null && chunkIndex >= state.totalChunks) {
+              multiResults.push({ idx: chunkIndex, ok: false, error: `chunk_index ${chunkIndex} ≥ declared total_chunks ${state.totalChunks}` });
+              continue;
+            }
+            const chunkText = item.content_b64
+              ? Buffer.from(item.content_b64, 'base64').toString('utf8')
+              : (item.content ?? null);
+            if (!chunkText) { multiResults.push({ idx: chunkIndex, ok: false, error: 'content or content_b64 is required' }); continue; }
+            if (chunkText.length > CHUNK_MAX_SINGLE) {
+              multiResults.push({ idx: chunkIndex, ok: false, error: `chunk too large (${chunkText.length} > ${CHUNK_MAX_SINGLE})` });
+              continue;
+            }
+            const oldText = state.chunks.get(chunkIndex);
+            const newAccumulated = state.accumulatedSize - (oldText?.length ?? 0) + chunkText.length;
+            if (newAccumulated > CHUNK_MAX_TOTAL) {
+              multiResults.push({ idx: chunkIndex, ok: false, error: `accumulated size ${newAccumulated} would exceed ${CHUNK_MAX_TOTAL}` });
+              continue;
+            }
+            state.chunks.set(chunkIndex, chunkText);
+            state.accumulatedSize = newAccumulated;
+            multiResults.push({ idx: chunkIndex, ok: true });
+          }
+          const received = state.chunks.size;
+          const remaining = state.totalChunks !== null ? state.totalChunks - received : null;
+          const readyToCommit = state.totalChunks !== null && remaining === 0;
+          return ok({
+            action, upload_id: uploadId,
+            chunk_results: multiResults,
+            received, remaining, ready_to_commit: readyToCommit,
+            accumulated_size: state.accumulatedSize,
+            next: readyToCommit ? `action=commit_chunked&upload_id=${uploadId}` : null,
+          }, Date.now() - t0);
         }
 
         // ── action=start_chunked ──────────────────────────────────────────────
@@ -1584,7 +1855,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         }
 
         return err('invalid_action', `Unknown action: ${action}`, 400, {
-          hint: 'Supported actions: put_page, add_tag, remove_tag, add_link, add_timeline_entry, delete_page, start_chunked, append_chunk, commit_chunked, status_chunked',
+          hint: 'Supported actions: put_page, put_page_batch, patch_page, add_tag, remove_tag, add_link, add_timeline_entry, delete_page, start_chunked, append_chunk, append_chunks, commit_chunked, status_chunked',
         });
         } catch (e) {
           return err('internal_error', String(e instanceof Error ? e.message : e).slice(0, 500), 500);
@@ -1637,10 +1908,15 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   console.error('  GET  /job?id=<job_id>   → poll async job status');
   console.error('  DELETE /page?slug=...&otp=<code>');
   console.error('  GET  /pages/recent?limit=50&otp=<code>');
-  console.error('  GET  /write?action=<action>&otp=<code>&...  (put_page|add_tag|remove_tag|add_link|add_timeline_entry|delete_page)');
-  console.error('  GET  /write?action=start_chunked&slug=...&total_chunks=N   (step 1/3 chunked upload for long content)');
-  console.error('  GET  /write?action=append_chunk&upload_id=...&chunk_index=N&content=... (step 2/3)');
-  console.error('  GET  /write?action=commit_chunked&upload_id=...             (step 3/3 — assemble + write)');
+  console.error('  GET  /write?action=<action>&otp=<code>&...  (put_page|put_page_batch|patch_page|add_tag|remove_tag|add_link|add_timeline_entry|delete_page)');
+  console.error('  GET  /write?action=add_link&from=...&to=...&type=derives_from|supersedes|relates_to|example_of|contradicts  (bidirectional + neighbors)');
+  console.error('  GET  /write?action=patch_page&slug=...&find=...&replace=...  (single-occurrence string replace)');
+  console.error('  GET  /write?action=put_page_batch&pages=[{"slug":"...","content":"..."},...]  (up to 10 pages)');
+  console.error('  GET  /write?action=start_chunked&slug=...&total_chunks=N   (step 1/4 chunked upload for long content)');
+  console.error('  GET  /write?action=append_chunk&upload_id=...&chunk_index=N&content=... (step 2/4, single chunk)');
+  console.error('  GET  /write?action=append_chunks&upload_id=...&chunks=[{idx,content},...]  (step 2/4, multi-chunk variant, max 5)');
+  console.error('  GET  /write?action=status_chunked&upload_id=...             (step 3/4 — progress check)');
+  console.error('  GET  /write?action=commit_chunked&upload_id=...             (step 4/4 — assemble + write)');
 
   // Cron: re-embed pages whose chunks are missing embeddings (e.g. written with noEmbed=true)
   // Runs every EMBED_CRON_INTERVAL_MS (default 60s). Limit: up to 20 pages per sweep.
