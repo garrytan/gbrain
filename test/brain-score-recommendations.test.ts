@@ -5,6 +5,7 @@ import {
   maxReachableScore,
   estimateAnthropicCost,
   embeddingProviderConfigured,
+  HOSTED_EMBED_KEY_CONFIG,
 } from '../src/core/brain-score-recommendations.ts';
 import type { BrainHealth } from '../src/core/types.ts';
 
@@ -49,6 +50,20 @@ describe('embeddingProviderConfigured (recipe-aware helper)', () => {
     expect(embeddingProviderConfigured('::', alwaysTrue)).toBe(false);
     expect(embeddingProviderConfigured(':model', alwaysTrue)).toBe(false);
     expect(embeddingProviderConfigured('provider:', alwaysTrue)).toBe(false);
+  });
+
+  // Regression (codex review of the local-embeddings PR): the producer closures
+  // (doctor + autopilot) consult HOSTED_EMBED_KEY_CONFIG to decide which config
+  // field backs each env key. Only keys that buildGatewayConfig actually folds
+  // into the gateway env may appear, or a config-plane key the gateway ignores
+  // would make the provider look "configured" and dispatch a doomed embed job.
+  test('HOSTED_EMBED_KEY_CONFIG only maps gateway-propagated config keys', () => {
+    expect(HOSTED_EMBED_KEY_CONFIG.OPENAI_API_KEY).toBe('openai_api_key');
+    expect(HOSTED_EMBED_KEY_CONFIG.ZEROENTROPY_API_KEY).toBe('zeroentropy_api_key');
+    // Not propagated to the gateway today → must NOT be backed by a config field
+    // (producer closures fall through to process.env only for these).
+    expect(HOSTED_EMBED_KEY_CONFIG.VOYAGE_API_KEY).toBeUndefined();
+    expect(HOSTED_EMBED_KEY_CONFIG.GOOGLE_GENERATIVE_AI_API_KEY).toBeUndefined();
   });
 });
 

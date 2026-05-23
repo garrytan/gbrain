@@ -6,16 +6,26 @@ import { getRecipe } from './ai/recipes/index.ts';
 import { parseModelId } from './ai/model-resolver.ts';
 
 /**
- * v0.40.x: env-var name → file/DB config field, for the handful of hosted
- * embedding providers that require an API key. Producers of
+ * v0.40.x: env-var name → file/DB config field, for hosted embedding providers
+ * whose config-plane key is actually propagated to the AI gateway. Producers of
  * RecommendationContext (doctor + autopilot) use this to build a sync
  * `resolveKey` closure without re-parsing recipes.
+ *
+ * Only OPENAI_API_KEY and ZEROENTROPY_API_KEY appear here because those are the
+ * only embedding keys `buildGatewayConfig` (src/cli.ts) folds from config into
+ * the gateway env. VOYAGE_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY are deliberately
+ * absent: their config fields are NOT threaded to the gateway today, so the
+ * producer closures fall through to checking `process.env` ONLY for them. That
+ * matches what the gateway can actually use (the recipes read those keys from
+ * env). Counting a config-plane voyage_api_key/google_api_key here would be a
+ * false positive: doctor/autopilot would call the provider "configured" and
+ * dispatch an embed.stale job that then fails auth at the gateway. When a future
+ * change threads voyage_api_key/google_api_key into buildGatewayConfig (the open
+ * voyage-config-mapping work), re-add the matching entry here in the same change.
  */
 export const HOSTED_EMBED_KEY_CONFIG: Record<string, string> = {
   OPENAI_API_KEY: 'openai_api_key',
   ZEROENTROPY_API_KEY: 'zeroentropy_api_key',
-  VOYAGE_API_KEY: 'voyage_api_key',
-  GOOGLE_GENERATIVE_AI_API_KEY: 'google_api_key',
 };
 
 /**
