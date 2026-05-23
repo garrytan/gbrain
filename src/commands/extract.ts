@@ -273,11 +273,28 @@ export async function extractLinksFromFile(
 export function extractTimelineFromContent(content: string, slug: string): ExtractedTimelineEntry[] {
   const entries: ExtractedTimelineEntry[] = [];
 
-  // Format 1: Bullet — - **YYYY-MM-DD** | Source — Summary
-  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)\s*[—–-]\s*(.+)$/gm;
+  // Format 1: Bullet — `- **YYYY-MM-DD** | [Source — ]Summary`
+  // Capture everything after `|`, then peel off an optional leading "Source"
+  // label ONLY when it is unambiguous: a short label (<=24 chars), containing
+  // no markdown link/bracket syntax, followed by a SPACED em-dash or en-dash.
+  // A bare hyphen — or a dash inside a slug or word like `eos-consulting-group`
+  // or `architecture-fix` — is NOT a source delimiter.
+  //
+  // The previous pattern `(.+?)\s*[—–-]\s*(.+)` split greedily on the first
+  // em/en/hyphen anywhere after `|`, so it chopped ordinary prose and markdown
+  // link slugs at the wrong place and rendered the two halves reordered in the
+  // timeline readout. This guarded form also matches the behavior of
+  // `parseTimelineEntries` (link-extraction.ts), the other timeline parser,
+  // which already treats the whole line as the summary.
+  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+)$/gm;
+  const sourceLabel = /^([^[\]()\n]{1,24}?) [—–] (.+)$/;
   let match;
   while ((match = bulletPattern.exec(content)) !== null) {
-    entries.push({ slug, date: match[1], source: match[2].trim(), summary: match[3].trim() });
+    const text = match[2].trim();
+    const labeled = text.match(sourceLabel);
+    entries.push(labeled
+      ? { slug, date: match[1], source: labeled[1].trim(), summary: labeled[2].trim() }
+      : { slug, date: match[1], source: '', summary: text });
   }
 
   // Format 2: Header — ### YYYY-MM-DD — Title

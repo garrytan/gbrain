@@ -135,6 +135,30 @@ describe('extractTimelineFromContent', () => {
     const entries = extractTimelineFromContent(content, 'test');
     expect(entries).toHaveLength(1);
   });
+
+  it('does not split a markdown link slug containing hyphens', () => {
+    const content = `- **2026-05-11** | Referenced in [Acme Consulting Group](../companies/acme-consulting-group.md)`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('');
+    expect(entries[0].summary).toBe('Referenced in [Acme Consulting Group](../companies/acme-consulting-group.md)');
+  });
+
+  it('does not split prose on a bare hyphen', () => {
+    const content = `- **2026-05-03** | Created during architecture-fix session after 6 violations`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('');
+    expect(entries[0].summary).toBe('Created during architecture-fix session after 6 violations');
+  });
+
+  it('does not split a long prose clause that precedes a spaced em dash', () => {
+    const content = `- **2026-05-19** | Reviewed the long range roadmap — initial planning notes`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('');
+    expect(entries[0].summary).toBe('Reviewed the long range roadmap — initial planning notes');
+  });
 });
 
 describe('walkMarkdownFiles', () => {
