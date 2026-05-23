@@ -9,6 +9,7 @@ import {
   DEFAULT_ALIASES,
   TIER_DEFAULTS,
   isAnthropicProvider,
+  stripAnthropicPrefix,
   _resetDeprecationWarningsForTest,
 } from '../src/core/model-config.ts';
 
@@ -218,6 +219,25 @@ describe('resolveModel — v0.31.12 tier system', () => {
     expect(isAnthropicProvider('openai:gpt-5.5')).toBe(false);
     expect(isAnthropicProvider('gemini-3-pro')).toBe(false);
     expect(isAnthropicProvider('')).toBe(false);
+  });
+
+  test('stripAnthropicPrefix returns bare model id for SDK consumption', () => {
+    // Prefixed form: strip provider segment.
+    expect(stripAnthropicPrefix('anthropic:claude-sonnet-4-6')).toBe('claude-sonnet-4-6');
+    expect(stripAnthropicPrefix('anthropic:claude-haiku-4-5-20251001')).toBe('claude-haiku-4-5-20251001');
+    // Case-insensitive provider segment.
+    expect(stripAnthropicPrefix('Anthropic:claude-opus-4-7')).toBe('claude-opus-4-7');
+    // Bare model id: pass through unchanged (legacy callers + TIER_DEFAULTS).
+    expect(stripAnthropicPrefix('claude-sonnet-4-6')).toBe('claude-sonnet-4-6');
+    // Whitespace tolerance — matches isAnthropicProvider's trim() pattern.
+    expect(stripAnthropicPrefix('  anthropic:claude-sonnet-4-6  ')).toBe('claude-sonnet-4-6');
+    // Empty input passes through (callers usually guard upstream).
+    expect(stripAnthropicPrefix('')).toBe('');
+  });
+
+  test('stripAnthropicPrefix throws on non-Anthropic providers', () => {
+    expect(() => stripAnthropicPrefix('openai:gpt-5.5')).toThrow(/non-Anthropic provider "openai"/);
+    expect(() => stripAnthropicPrefix('google:gemini-3-pro')).toThrow(/non-Anthropic provider "google"/);
   });
 
   test('alias-chain conflict: forward + reverse for same id (Codex F6)', async () => {

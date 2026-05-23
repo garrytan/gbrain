@@ -96,6 +96,36 @@ export function isAnthropicProvider(modelString: string): boolean {
   return trimmed.toLowerCase().startsWith('claude-');
 }
 
+/**
+ * Strip the `anthropic:` provider prefix so the result can be passed to the
+ * Anthropic SDK, which expects bare model ids (e.g. `claude-sonnet-4-6`, not
+ * `anthropic:claude-sonnet-4-6`). Bare model ids pass through unchanged.
+ *
+ * v0.38.1.0 made `provider:model` the canonical config format and added a
+ * submission-time validator that rejects bare ids. The gateway tool loop
+ * (`agent.use_gateway_loop=true`) parses the prefix internally, but the
+ * legacy Anthropic-direct path in `src/core/minions/handlers/subagent.ts`
+ * passed the resolved model string straight to `client.messages.create()`,
+ * producing a 404 (`not_found_error: model: anthropic:claude-…`).
+ *
+ * Callers must guard with `isAnthropicProvider()` first — passing a
+ * non-Anthropic provider throws, since the legacy path can't route it.
+ */
+export function stripAnthropicPrefix(modelString: string): string {
+  if (!modelString) return modelString;
+  const trimmed = modelString.trim();
+  const colon = trimmed.indexOf(':');
+  if (colon === -1) return trimmed; // bare model id — pass through
+  const provider = trimmed.slice(0, colon).trim().toLowerCase();
+  if (provider !== 'anthropic') {
+    throw new Error(
+      `stripAnthropicPrefix called with non-Anthropic provider "${provider}" ` +
+      `(model: "${modelString}"). Guard with isAnthropicProvider() first.`,
+    );
+  }
+  return trimmed.slice(colon + 1).trim();
+}
+
 const _subagentTierWarningsEmitted = new Set<string>();
 
 // Module-level set of deprecated config keys we've already warned about.
