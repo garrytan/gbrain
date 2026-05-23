@@ -1067,7 +1067,43 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
       repoPath, sourceId, noPull, noEmbed, noExtract,
       concurrency: concurrencyOverride,
     });
-    return result;
+
+    // v0.40 D22: auto_embed_backfill defaults TRUE when sourceId is set AND
+    // the feature flag is enabled. Submits a child embed-backfill job
+    // (fire-and-forget — D15.1) so stale chunks get embedded async without
+    // the sync handler waiting on the embed pipeline.
+    const autoEmbed = job.data.auto_embed_backfill !== false;
+    let embedJobId: number | null = null;
+    let embedSkipReason: string | null = null;
+    if (autoEmbed && sourceId && result.status !== 'up_to_date' && result.status !== 'dry_run') {
+      try {
+        const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
+        if (await isFederatedV2Enabled(engine)) {
+          const { submitEmbedBackfill } = await import('../core/embed-backfill-submit.ts');
+          const submission = await submitEmbedBackfill(engine, sourceId, {
+            reason: typeof job.data.embed_reason === 'string'
+              ? (job.data.embed_reason as string)
+              : 'sync_handler',
+          });
+          if (submission.status === 'submitted') {
+            embedJobId = submission.jobId ?? null;
+          } else {
+            embedSkipReason = submission.status;
+          }
+        } else {
+          embedSkipReason = 'feature_flag_disabled';
+        }
+      } catch (err) {
+        // Embed-backfill submission failure must NOT fail the sync job.
+        embedSkipReason = `submit_error:${err instanceof Error ? err.message : String(err)}`;
+      }
+    } else if (!sourceId) {
+      embedSkipReason = 'no_source_id';
+    } else if (!autoEmbed) {
+      embedSkipReason = 'auto_embed_disabled';
+    }
+
+    return { ...result, embed_job_id: embedJobId, embed_skip_reason: embedSkipReason };
   });
 
   worker.register('embed', async (job) => {
@@ -1095,6 +1131,28 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     const target = typeof job.data.dir === 'string' ? job.data.dir : '.';
     const result = await runLintCore({ target, fix: !!job.data.fix, dryRun: !!job.data.dryRun });
     return result;
+  });
+
+  // v0.40.3.0 T8b: RemediationStep consumer handlers. Thin wrappers
+  // around already-shipping CLI commands so doctor --remediate can
+  // submit them as Minion jobs. NOT in PROTECTED_JOB_NAMES (no shell
+  // exec, no cost spike, MCP-safe).
+  worker.register('lint-fix', async (job) => {
+    const { runLintCore } = await import('./lint.ts');
+    const target = typeof job.data.dir === 'string' ? job.data.dir : '.';
+    return await runLintCore({ target, fix: true, dryRun: false });
+  });
+
+  worker.register('integrity-auto', async () => {
+    const { runIntegrity } = await import('./integrity.ts');
+    await runIntegrity(['auto']);
+    return { ok: true };
+  });
+
+  worker.register('sync-retry-failed', async () => {
+    const { runSync } = await import('./sync.ts');
+    await runSync(engine, ['--retry-failed']);
+    return { ok: true };
   });
 
   worker.register('import', async (job) => {
@@ -1140,6 +1198,19 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
   // renewal callback and the stalled-sweeper kills the job.
   //
   // Phase failures surface as report.status='partial' (via runCycle's
+  // v0.40.3.0: per-page contextual retrieval re-embed handler. PROTECTED
+  // name (src/core/minions/protected-names.ts) — MCP/OAuth callers can't
+  // submit; only trusted local callers (config.ts mode-switch hook,
+  // reindex sweep, doctor --remediate). Composes the global Haiku rate-
+  // leaser per D26 P0-3 + delegates to contextual-retrieval-service.ts
+  // for the two-phase build.
+  {
+    const { makeContextualReindexHandler } = await import(
+      '../core/minions/handlers/contextual-reindex-per-chunk.ts'
+    );
+    worker.register('contextual_reindex_per_chunk', makeContextualReindexHandler({ engine }));
+  }
+
   // derivation); the handler returns { partial, status, report } so
   // `gbrain jobs get <id>` shows the full structured report. Does NOT
   // throw on partial: a flaky phase must not block every future cycle.
@@ -1357,7 +1428,16 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
   worker.register('resolve_symbol_edges', makePhaseHandler('resolve_symbol_edges'));
   worker.register('recompute_emotional_weight', makePhaseHandler('recompute_emotional_weight'));
 
-  process.stderr.write('[minion worker] brain-health-100 handlers registered (11 ops, 3 protected)\n');
+  // v0.40 Federated Sync v2 — embed-backfill: per-source decoupled embed.
+  // Cost-bounded via D6 ($10/job BudgetTracker) + D19 (source-level cooldown
+  // + 24h rolling cap, gated at submit time). NOT in PROTECTED_JOB_NAMES —
+  // embedding-only spend, no API-by-the-minute risk like subagent.
+  worker.register('embed-backfill', async (job) => {
+    const { makeEmbedBackfillHandler } = await import('../core/minions/handlers/embed-backfill.ts');
+    return await makeEmbedBackfillHandler(engine)(job);
+  });
+
+  process.stderr.write('[minion worker] brain-health-100 handlers registered (11 ops, 3 protected) + embed-backfill (v0.40)\n');
 
   // Plugin discovery — one line per discovered plugin (mirrors the
   // openclaw-seam startup line convention from v0.11+). Loaded

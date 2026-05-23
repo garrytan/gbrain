@@ -81,6 +81,10 @@ export const SECTIONS: DocSection[] = [
         description:
           "MECE directory structure (people/, companies/, concepts/).",
         path: "docs/GBRAIN_RECOMMENDED_SCHEMA.md",
+        // v0.40.6.0: 64KB reference doc. Web index entry stays; the single-fetch
+        // bundle gets the README + setup guides instead. Keeps llms-full.txt
+        // under the 600KB budget as CLAUDE.md grows with each release.
+        includeInFull: false,
       },
       {
         title: "docs/guides/live-sync.md",

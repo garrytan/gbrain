@@ -326,7 +326,7 @@ describe('gateway.rerank() — guard rails', () => {
   });
 });
 
-describe('gateway.rerank() — v0.40.6.1 RerankerTouchpoint.path override', () => {
+describe('gateway.rerank() — v0.40.7.1 RerankerTouchpoint.path override', () => {
   test('honors tp.path when recipe declares one (llama-server-reranker → /v1/rerank)', async () => {
     configureGateway({
       reranker_model: 'llama-server-reranker:qwen3-reranker-4b',
@@ -361,7 +361,7 @@ describe('gateway.rerank() — v0.40.6.1 RerankerTouchpoint.path override', () =
   });
 });
 
-describe('gateway.rerank() — v0.40.6.1 user-provided models (empty allowlist)', () => {
+describe('gateway.rerank() — v0.40.7.1 user-provided models (empty allowlist)', () => {
   test('empty models[] on the recipe accepts any model id', async () => {
     // llama-server-reranker declares `models: []` — anything goes.
     configureGateway({
@@ -397,7 +397,7 @@ describe('gateway.rerank() — v0.40.6.1 user-provided models (empty allowlist)'
   });
 });
 
-describe('gateway.rerank() — v0.40.6.1 path regression: zerank-1-small unaffected', () => {
+describe('gateway.rerank() — v0.40.7.1 path regression: zerank-1-small unaffected', () => {
   test('legacy ZE allowlist members still hit /models/rerank', async () => {
     configureZE('zeroentropyai:zerank-1-small');
     let capturedUrl = '';

@@ -5,7 +5,7 @@ is the HTTP wrapper that ships with llama.cpp. With `--reranking`, it
 exposes an OpenAI-style `POST /v1/rerank` endpoint that returns
 `{results: [{index, relevance_score}]}` — exactly the wire shape gbrain
 already drives for ZeroEntropy's hosted reranker. The
-`llama-server-reranker` recipe (added in v0.40.6.1) routes
+`llama-server-reranker` recipe (added in v0.40.7.1) routes
 `gateway.rerank()` at your local llama.cpp instance instead of ZE.
 
 Two flavors of "local" this recipe covers:

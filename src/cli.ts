@@ -573,6 +573,15 @@ function formatResult(opName: string, result: unknown): string {
     case 'query': {
       const results = result as any[];
       if (results.length === 0) return 'No results.\n';
+      // v0.40.4 — --explain switches to per-stage attribution formatter.
+      // Reads CliOptions.explain via the module-level singleton.
+      const cliOpts = getCliOptions();
+      if (cliOpts.explain) {
+        // Lazy import keeps formatResult's startup hot path narrow for
+        // the common non-explain case.
+        const { formatResultsExplain } = require('./core/search/explain-formatter.ts');
+        return formatResultsExplain(results);
+      }
       return results.map(r =>
         `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,
       ).join('\n') + '\n';
@@ -1481,7 +1490,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // OLLAMA_BASE_URL. Caller-provided cfg.provider_base_urls wins.
   const envBaseUrls: Record<string, string> = {};
   if (process.env.LLAMA_SERVER_BASE_URL) envBaseUrls['llama-server'] = process.env.LLAMA_SERVER_BASE_URL;
-  // v0.40.6.1: sibling recipe for llama-server in reranking mode. Separate
+  // v0.40.7.1: sibling recipe for llama-server in reranking mode. Separate
   // env var because --reranking and --embeddings are mutually exclusive at
   // server launch — users running both will have two llama-server processes
   // on different ports.

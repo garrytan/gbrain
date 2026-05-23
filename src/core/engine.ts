@@ -15,6 +15,7 @@ import type {
   SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
+  AdjacencyRow,
 } from './types.ts';
 
 /**
@@ -938,6 +939,32 @@ export interface BrainEngine {
    */
   getBacklinkCounts(slugs: string[]): Promise<Map<string, number>>;
   /**
+   * v0.40.4 — for a list of page_ids, return adjacency aggregates
+   * restricted to the subgraph induced by them. Returns ALL pages with
+   * `hits >= 1` (callers apply their own threshold). Empty input → empty
+   * Map, no SQL.
+   *
+   * Returned shape per page (AdjacencyRow):
+   *   - `hits`: distinct from_page_id count, in-set
+   *   - `cross_source_hits`: distinct OTHER source_ids count (excluding
+   *     target's own source), in-set
+   *
+   * SOURCE-SCOPE CONTRACT: pageIds MUST already be source-scoped by the
+   * caller. This method does NOT filter by source_id. Adjacency is
+   * page-id keyed and the in-set restriction makes cross-source leakage
+   * impossible BY CONSTRUCTION (a leaked-in page_id from another source
+   * would have to also appear in the caller's input set, which the
+   * caller is responsible for preventing). The only consumer in v0.40.4
+   * is hybridSearch via runPostFusionStages, which is source-scoped
+   * upstream. Same trust posture as `cosineReScore`'s chunk_id handling.
+   *
+   * Known limitation: cross_source_hits doesn't distinguish "genuinely
+   * linked from another team" from "mirrored imports from another
+   * source" (codex outside-voice #15). T-todo-4 captures the v0.41+
+   * sync-topology-aware refinement.
+   */
+  getAdjacencyBoosts(pageIds: number[]): Promise<Map<number, AdjacencyRow>>;
+  /**
    * v0.27.0: for a list of slugs, return their updated_at timestamps (or created_at fallback).
    * Used by hybrid search recency boost. Single SQL query, not N+1.
    * Slugs with no timestamp get no entry in the map.
@@ -1470,6 +1497,30 @@ export interface BrainEngine {
     compiledTruth: string,
     timeline: string,
     contentHash: string,
+  ): Promise<void>;
+
+  /**
+   * v0.40.3.0 — narrow UPDATE that stamps the two CR-state columns
+   * (`contextual_retrieval_mode`, `corpus_generation`) plus
+   * `updated_at = now()` and nothing else.
+   *
+   * Used by `src/core/contextual-retrieval-service.ts:reembedPageWithContextualRetrieval`
+   * at the end of its PHASE 2 transaction. Why narrow instead of routing
+   * through `putPage`: stamping the CR state alone shouldn't trigger the
+   * full page-version snapshot machinery (createVersion fires on every
+   * putPage with an existing row, which would bloat page_versions on every
+   * tier upgrade).
+   *
+   * Skips soft-deleted rows (deleted_at filter). Idempotent — same args
+   * twice produces the same row state. Both columns are NULL-tolerant
+   * (callers pass NULL for `corpusGeneration` only on the 'none' tier
+   * path; 'title' and 'per_chunk_synopsis' always supply a hash).
+   */
+  updatePageContextualRetrievalState(
+    slug: string,
+    sourceId: string,
+    mode: string,
+    corpusGeneration: string | null,
   ): Promise<void>;
 
   /**

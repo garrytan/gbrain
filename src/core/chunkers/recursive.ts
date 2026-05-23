@@ -23,9 +23,18 @@ import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } fr
  * Markdown chunker version. Folded into the per-page chunker_version column
  * so post-upgrade reindex sweeps can find pages built with old chunkers and
  * rebuild them on the new shape. Bump on any change that affects chunk
- * boundaries (delimiters, word counting, maxChars cap).
+ * boundaries (delimiters, word counting, maxChars cap) OR the per-chunk
+ * embedding shape (wrapper prefix added at embed time).
+ *
+ * v3 (v0.40.3.0): chunks embed with optional contextual retrieval wrapper
+ * per Anthropic's published methodology. Wrapper is built JUST IN TIME at
+ * embed call; stored `content_chunks.chunk_text` stays canonical. Chunk
+ * boundaries themselves are unchanged from v2 — bumping the version forces
+ * re-embed (not re-chunk) so existing pages pick up the wrapper on the
+ * post-upgrade reembed sweep. See
+ * `src/core/contextual-retrieval-service.ts`.
  */
-export const MARKDOWN_CHUNKER_VERSION = 2;
+export const MARKDOWN_CHUNKER_VERSION = 3;
 
 const DELIMITERS: string[][] = [
   ['\n\n'],                          // L0: paragraphs

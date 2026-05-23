@@ -1,9 +1,9 @@
 /**
- * llama-server-reranker recipe smoke (v0.40.6.1).
+ * llama-server-reranker recipe smoke (v0.40.7.1).
  *
  * Sibling of recipe-llama-server.test.ts. Pins the recipe shape so:
  *  - id + tier + implementation + base_url stay byte-stable
- *  - reranker touchpoint declares the v0.40.6.1 `path` + `default_timeout_ms`
+ *  - reranker touchpoint declares the v0.40.7.1 `path` + `default_timeout_ms`
  *    fields that the gateway + mode resolution depend on
  *  - models: [] (user-provided), with realistic default_model placeholder
  *  - env vars LLAMA_SERVER_RERANKER_BASE_URL + _API_KEY are declared optional
@@ -31,7 +31,7 @@ describe('recipe: llama-server-reranker', () => {
     expect(r.auth_env?.optional ?? []).toContain('LLAMA_SERVER_RERANKER_API_KEY');
   });
 
-  test('declares reranker touchpoint with path + default_timeout_ms (v0.40.6.1)', () => {
+  test('declares reranker touchpoint with path + default_timeout_ms (v0.40.7.1)', () => {
     const r = getRecipe('llama-server-reranker')!;
     const tp = r.touchpoints.reranker;
     expect(tp).toBeDefined();

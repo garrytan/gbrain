@@ -136,6 +136,9 @@ export function applyExactMatchBoost(
     const title = (r.title ?? '').toLowerCase().trim();
     if (slug === q || slug === qKebab || slug.endsWith(`/${qKebab}`) || title === q) {
       r.score *= weights.exactMatchBoost;
+      // v0.40.4 attribution stamp (D12=A) — formatter reads this for
+      // --explain output. Only stamped when boost actually fires.
+      r.exact_match_boost = weights.exactMatchBoost;
     }
   }
 }

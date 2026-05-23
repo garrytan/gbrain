@@ -1,7 +1,7 @@
 /**
- * v0.40.6.1 — gbrain models doctor reranker probe divergence fix.
+ * v0.40.7.1 — gbrain models doctor reranker probe divergence fix.
  *
- * Pre-v0.40.6.1 the reranker probe read `getRerankerModel()` from the
+ * Pre-v0.40.7.1 the reranker probe read `getRerankerModel()` from the
  * gateway, which is fed from `GBrainConfig.reranker_model` — a file-plane
  * field nothing writes. Meanwhile live search resolves
  * `search.reranker.model` from the DB config plane via `resolveSearchMode`.

@@ -85,11 +85,21 @@ export function formatReembedPrompt(est: ReembedEstimate, graceSeconds: number):
     return `[chunker-bump] No pending markdown pages. Skipping re-embed.`;
   }
   const minEst = Math.max(1, Math.ceil(est.pendingCount / 60)); // ~60 pages/min wall-clock heuristic
+  // v0.40.3.0 — chunker version bump to 3 includes the contextual retrieval
+  // wrapper (Anthropic's published methodology). Re-embed picks up the
+  // title-tier wrapper for balanced-mode users automatically (free at
+  // runtime — pure string concat). Tokenmax users can later run
+  // `gbrain config set search.mode tokenmax` to upgrade pages to per-chunk
+  // Haiku synopsis via the contextual_reindex_per_chunk Minion handler.
+  // Documented inline so the prompt explains WHY the re-embed is firing.
+  const crNote =
+    `\n[contextual retrieval] v0.40.3.0 wraps each chunk with its page ` +
+    `title before embedding (Anthropic's published method).`;
   if (est.pricingKnown && est.estimatedCostUsd !== null) {
     const dollars = est.estimatedCostUsd.toFixed(2);
-    return `[chunker-bump] Will re-embed ~${est.pendingCount} markdown pages via ${est.modelString}, est. ~$${dollars}, ~${minEst}min. Press Ctrl-C within ${graceSeconds}s to abort.`;
+    return `[chunker-bump] Will re-embed ~${est.pendingCount} markdown pages via ${est.modelString}, est. ~$${dollars}, ~${minEst}min. Press Ctrl-C within ${graceSeconds}s to abort.${crNote}`;
   }
-  return `[chunker-bump] Will re-embed ~${est.pendingCount} markdown pages via ${est.modelString}; pricing estimate unavailable for this provider. Press Ctrl-C within ${graceSeconds}s to abort.`;
+  return `[chunker-bump] Will re-embed ~${est.pendingCount} markdown pages via ${est.modelString}; pricing estimate unavailable for this provider. Press Ctrl-C within ${graceSeconds}s to abort.${crNote}`;
 }
 
 export interface PromptResult {

@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -679,5 +679,110 @@ describe('stub_guard_24h check (v0.34.5)', () => {
     // Codify this in source-grep form so a future refactor doesn't add an
     // "ok: 0 hits" line that pollutes every doctor run.
     expect(source).toMatch(/events\.length === 0|Zero hits is the goal/);
+  });
+});
+
+describe('v0.40.4 — graph_signals_coverage check', () => {
+  const { PGLiteEngine } = require('../src/core/pglite-engine.ts');
+  const { checkGraphSignalsCoverage } = require('../src/commands/doctor.ts');
+
+  let engine: any;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' });
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    if (engine) await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    // Wipe pages + links + config between tests for isolation.
+    await engine.executeRaw(`DELETE FROM links`);
+    await engine.executeRaw(`DELETE FROM pages`);
+    await engine.executeRaw(`DELETE FROM config WHERE key IN ('search.graph_signals', 'search.mode')`);
+  });
+
+  test('graph_signals disabled (conservative mode) → silent ok regardless of coverage', async () => {
+    await engine.setConfig('search.mode', 'conservative');
+    // Seed pages without links (would normally warn) but conservative
+    // disables graph_signals so the check stays ok.
+    for (let i = 0; i < 5; i++) {
+      await engine.putPage(`page/${i}`, { type: 'note', title: `page-${i}`, compiled_truth: 'body' });
+    }
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('disabled');
+  });
+
+  test('graph_signals enabled (balanced default) + zero links → warn at <10%', async () => {
+    // No config set → balanced default (graph_signals=true).
+    for (let i = 0; i < 10; i++) {
+      await engine.putPage(`page/${i}`, { type: 'note', title: `page-${i}`, compiled_truth: 'body' });
+    }
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('0.0%');
+    expect(check.message).toContain('gbrain extract all');
+  });
+
+  test('graph_signals enabled + >=30% coverage → ok with metric', async () => {
+    for (let i = 0; i < 10; i++) {
+      await engine.putPage(`page/${i}`, { type: 'note', title: `page-${i}`, compiled_truth: 'body' });
+    }
+    // Add inbound links to 4/10 pages = 40%.
+    await engine.addLinksBatch([
+      { from_slug: 'page/0', to_slug: 'page/1', link_type: 'mentions' },
+      { from_slug: 'page/0', to_slug: 'page/2', link_type: 'mentions' },
+      { from_slug: 'page/0', to_slug: 'page/3', link_type: 'mentions' },
+      { from_slug: 'page/0', to_slug: 'page/4', link_type: 'mentions' },
+    ]);
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('40.0%');
+    expect(check.message).toContain('fire on most queries');
+  });
+
+  test('graph_signals enabled + 10-29% coverage → ok with occasional-fire note', async () => {
+    for (let i = 0; i < 10; i++) {
+      await engine.putPage(`page/${i}`, { type: 'note', title: `page-${i}`, compiled_truth: 'body' });
+    }
+    // Add inbound to 2/10 = 20%.
+    await engine.addLinksBatch([
+      { from_slug: 'page/0', to_slug: 'page/1', link_type: 'mentions' },
+      { from_slug: 'page/0', to_slug: 'page/2', link_type: 'mentions' },
+    ]);
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('20.0%');
+    expect(check.message).toContain('fire occasionally');
+  });
+
+  test('explicit search.graph_signals=false overrides mode default', async () => {
+    // Balanced normally enables; explicit override turns it off.
+    await engine.setConfig('search.graph_signals', 'false');
+    // No links → would normally warn, but override means we don't check.
+    for (let i = 0; i < 5; i++) {
+      await engine.putPage(`page/${i}`, { type: 'note', title: `page-${i}`, compiled_truth: 'body' });
+    }
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('disabled');
+  });
+
+  test('empty brain → ok with explanation', async () => {
+    const check = await checkGraphSignalsCoverage(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('Empty brain');
+  });
+
+  test('check is wired into runDoctor (source-grep)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    // Local engine path.
+    expect(source).toMatch(/await checkGraphSignalsCoverage\(engine\)/);
+    // Remote/JSON path heartbeat.
+    expect(source).toContain("progress.heartbeat('graph_signals_coverage')");
   });
 });

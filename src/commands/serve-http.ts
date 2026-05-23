@@ -15,7 +15,8 @@ import type { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { randomBytes, createHash, timingSafeEqual } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
+import { safeHexEqual } from '../core/timing-safe.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -592,17 +593,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // Admin authentication (cookie-based)
   // ---------------------------------------------------------------------------
+  // v0.40 D15.5: safeHexEqual extracted to src/core/timing-safe.ts so the new
+  // /webhooks/github HMAC verifier reuses the same constant-time compare.
   // POST /admin/login — JSON body with token (for programmatic/UI login)
-  // Constant-time hex compare. Both inputs are sha256 hex (64 chars),
-  // so they're always equal length. timingSafeEqual throws on length
-  // mismatch — we already short-circuit on non-string above. Catches
-  // would-be timing oracles even though the inputs are pre-hashed
-  // (defense-in-depth on the hash bits).
-  function safeHexEqual(a: string, b: string): boolean {
-    if (a.length !== b.length) return false;
-    return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
-  }
-
   app.post('/admin/login', express.json(), (req, res) => {
     const token = req.body?.token;
     if (!token || typeof token !== 'string') {
@@ -1783,6 +1776,158 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
             message: msg,
           });
         }
+      }
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // POST /webhooks/github — push-triggered sync (v0.40 Federated Sync v2)
+  // ---------------------------------------------------------------------------
+  // Anonymous endpoint by necessity (GitHub doesn't carry an OAuth token).
+  // Auth is via per-source HMAC-SHA256 in the X-Hub-Signature-256 header.
+  //
+  // D3: 60 req/min/IP rate limit + pre-DB short-circuit on missing
+  //     signature, so probe traffic doesn't even touch the source-lookup
+  //     query.
+  // D5: event=push AND ref-match against sources.config.tracked_branch.
+  //     Other event types (ping, pull_request, etc.) return 202 'ignored'
+  //     so GitHub doesn't retry.
+  // D15.5: HMAC compare uses the shared safeHexEqual helper.
+  // D18: submits 'sync' job with auto_embed_backfill=true and priority -10
+  //     (above autopilot's 0).
+  // ---------------------------------------------------------------------------
+  const githubWebhookLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'rate_limit_exceeded', message: 'too many GitHub webhook requests' },
+  });
+
+  app.post(
+    '/webhooks/github',
+    githubWebhookLimiter,
+    express.raw({ type: '*/*', limit: '1mb' }),
+    async (req: Request, res: Response) => {
+      // D3 pre-DB short-circuit: missing signature → 401 without any
+      // source lookup. Bot probe traffic ends here.
+      const sigHeader = req.header('X-Hub-Signature-256');
+      if (!sigHeader) {
+        res.status(401).json({ error: 'missing_signature', message: 'X-Hub-Signature-256 header is required' });
+        return;
+      }
+
+      // D5: filter by event header. GitHub fires webhooks for every event
+      // type. Anything other than 'push' is acknowledged with 202 + reason
+      // so GitHub doesn't retry — but no source lookup or job submission.
+      const event = req.header('X-GitHub-Event') ?? '';
+      if (event !== 'push') {
+        res.status(202).json({ status: 'ignored', reason: `event=${event || '(missing)'}` });
+        return;
+      }
+
+      const payload = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body), 'utf8');
+      if (payload.length === 0) {
+        res.status(400).json({ error: 'empty_body' });
+        return;
+      }
+
+      let parsed: { repository?: { full_name?: string }; ref?: string };
+      try {
+        parsed = JSON.parse(payload.toString('utf8'));
+      } catch {
+        res.status(400).json({ error: 'malformed_json' });
+        return;
+      }
+
+      const fullName = parsed.repository?.full_name;
+      const ref = parsed.ref;
+      if (!fullName || !ref) {
+        res.status(400).json({ error: 'missing_fields', message: 'repository.full_name and ref are required' });
+        return;
+      }
+
+      // Source lookup via the v87 partial expression index on
+      // config->>'github_repo'. fast even on large brains.
+      let source: { id: string; config: Record<string, unknown> | string } | null = null;
+      try {
+        const rows = await engine.executeRaw<{ id: string; config: Record<string, unknown> | string }>(
+          `SELECT id, config FROM sources WHERE config->>'github_repo' = $1 LIMIT 1`,
+          [fullName],
+        );
+        source = rows[0] ?? null;
+      } catch (err) {
+        console.error('webhook: source lookup error:', err);
+        res.status(500).json({ error: 'lookup_failed' });
+        return;
+      }
+      if (!source) {
+        res.status(404).json({ error: 'unknown_repo', repo: fullName });
+        return;
+      }
+
+      const cfg = (typeof source.config === 'string' ? JSON.parse(source.config) : source.config) as {
+        webhook_secret?: string;
+        tracked_branch?: string;
+      };
+
+      // D5: ref must match the configured tracked branch (default 'main').
+      const trackedBranch = cfg.tracked_branch ?? 'main';
+      const expectedRef = `refs/heads/${trackedBranch}`;
+      if (ref !== expectedRef) {
+        res.status(202).json({
+          status: 'ignored',
+          reason: `ref_mismatch`,
+          received_ref: ref,
+          tracked_branch: trackedBranch,
+        });
+        return;
+      }
+
+      const secret = cfg.webhook_secret;
+      if (!secret || typeof secret !== 'string') {
+        res.status(401).json({ error: 'webhook_not_configured', message: 'Run: gbrain sources webhook set ' + source.id });
+        return;
+      }
+
+      // HMAC verify. GitHub sends "sha256=<hex>" — strip the prefix BEFORE
+      // safeHexEqual because Buffer.from('sha256=...', 'hex') silently
+      // truncates at the first non-hex char (the 's'), leaving both
+      // operands as 0-byte buffers and making every signature "match".
+      // Pinned by test/sources-webhook.test.ts tamper assertions.
+      const { createHmac } = await import('node:crypto');
+      const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
+      const prefix = 'sha256=';
+      if (!sigHeader.startsWith(prefix)) {
+        res.status(401).json({ error: 'signature_mismatch', message: 'expected sha256= prefix' });
+        return;
+      }
+      if (!safeHexEqual(sigHeader.slice(prefix.length), computedHex)) {
+        res.status(401).json({ error: 'signature_mismatch' });
+        return;
+      }
+
+      // Submit sync job with priority -10 (above autopilot's 0).
+      try {
+        const queue = new MinionQueue(engine);
+        const job = await queue.add(
+          'sync',
+          {
+            sourceId: source.id,
+            auto_embed_backfill: true,
+            embed_reason: 'webhook',
+          },
+          {
+            priority: -10,
+            idempotency_key: `webhook:sync:${source.id}:${Math.floor(Date.now() / 30_000)}`,
+            maxWaiting: 1,
+          },
+        );
+        res.status(202).json({ job_id: job.id, source_id: source.id });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('webhook: queue submission error:', msg);
+        res.status(500).json({ error: 'queue_submission_failed', message: msg });
       }
     },
   );

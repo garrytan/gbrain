@@ -11,11 +11,15 @@
  * 80 chars for cmd / stored as JSON array for argv — the command text itself can contain
  * inline tokens (`curl -H 'Authorization: Bearer ...'`) and the guide explicitly tells
  * operators to put secrets in `env:` instead of embedding them in the command line.
+ *
+ * v0.40.4.0: internals delegate to the shared `src/core/audit/audit-writer.ts`
+ * primitive. The public surface (logShellSubmission, computeAuditFilename,
+ * resolveAuditDir) is preserved bit-for-bit because every other audit module
+ * AND callers across `gbrain-home-isolation.test.ts`, `minions.test.ts`,
+ * `minions-shell.test.ts` import these by name.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { isoWeekFilename, resolveAuditDir as _sharedResolveAuditDir } from '../../audit-week-file.ts';
+import { createAuditWriter, computeIsoWeekFilename, resolveAuditDir as sharedResolveAuditDir } from '../../audit/audit-writer.ts';
 
 export interface ShellAuditEvent {
   ts: string;
@@ -30,34 +34,37 @@ export interface ShellAuditEvent {
   inherit?: string[];
 }
 
-/** Compute `shell-jobs-YYYY-Www.jsonl`. Delegates to the shared helper in
- *  `src/core/audit-week-file.ts` — Year-boundary edges (2027-01-01 → W53 of
- *  2026, 2020-W53 etc.) are covered by `test/core/audit-week-file.test.ts`. */
+/** Compute `shell-jobs-YYYY-Www.jsonl` using ISO-8601 week numbering.
+ *
+ *  Year-boundary edge: 2027-01-01 is ISO week 53 of year 2026, so the correct
+ *  filename is `shell-jobs-2026-W53.jsonl`. This matches the ISO week standard
+ *  (week containing the first Thursday of the year is W1; week containing Dec 28
+ *  is always W52 or W53 of that year).
+ */
 export function computeAuditFilename(now: Date = new Date()): string {
-  return isoWeekFilename('shell-jobs', now);
+  return computeIsoWeekFilename('shell-jobs', now);
 }
 
 /** Resolve the audit dir. Honors `GBRAIN_AUDIT_DIR` for container/sandbox deployments
- *  where `$HOME` is read-only. Defaults to `~/.gbrain/audit/`. Delegates to the
- *  shared helper. */
+ *  where `$HOME` is read-only. Defaults to `~/.gbrain/audit/`.
+ *
+ *  v0.40.4.0: re-exported from `src/core/audit/audit-writer.ts` so the single
+ *  source of truth lives in the shared primitive. Existing imports (every
+ *  refactored audit module, plus tests) keep working unchanged.
+ */
 export function resolveAuditDir(): string {
-  return _sharedResolveAuditDir();
+  return sharedResolveAuditDir();
 }
 
-export function logShellSubmission(event: Omit<ShellAuditEvent, 'ts'>): void {
-  const dir = resolveAuditDir();
-  const filename = computeAuditFilename();
-  const fullPath = path.join(dir, filename);
-  const line = JSON.stringify({ ...event, ts: new Date().toISOString() }) + '\n';
+// Module-scoped writer instance. featureName matches the pre-v0.40.4 filename
+// prefix, errorLabel matches the pre-v0.40.4 stderr label, errorTrailer matches
+// the pre-v0.40.4 trailing phrase. Byte-identical operator-visible behavior.
+const writer = createAuditWriter<ShellAuditEvent>({
+  featureName: 'shell-jobs',
+  errorLabel: 'shell-audit',
+  errorTrailer: '; submission continues',
+});
 
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(fullPath, line, { encoding: 'utf8' });
-  } catch (err) {
-    // Best-effort: log to stderr and keep going. A disk-full or EACCES attacker
-    // can silently disable this trail, which is why CHANGELOG calls it an
-    // operational trace, not forensic insurance.
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[shell-audit] write failed (${msg}); submission continues\n`);
-  }
+export function logShellSubmission(event: Omit<ShellAuditEvent, 'ts'>): void {
+  writer.log(event);
 }

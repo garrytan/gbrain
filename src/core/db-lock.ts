@@ -134,10 +134,36 @@ export async function tryAcquireDbLock(
   throw new Error(`Unknown engine kind for db-lock: ${engine.kind}`);
 }
 
-/** Lock id for performSync's writer window. Distinct from gbrain-cycle so the
- * cycle handler can hold gbrain-cycle while performSync (called from inside
- * the cycle) acquires gbrain-sync. */
-export const SYNC_LOCK_ID = 'gbrain-sync';
+/**
+ * v0.40 (Federated Sync v2): per-source sync lock helper.
+ *
+ * Before v0.40: SYNC_LOCK_ID was a bare 'gbrain-sync' constant, taken by
+ * performSync's writer window. That meant only ONE sync could run at a time
+ * across the whole brain — even when two sources are completely independent
+ * (different git repos, different last_commit, different DB row anchors).
+ *
+ * v0.40 namespaces the lock key by sourceId so cross-source sync runs in
+ * parallel. The cycle's broader `gbrain-cycle` lock still serializes inside
+ * a single cycle invocation. Two-source layered semantics:
+ *
+ *   cycle              acquires `gbrain-cycle`
+ *     → performSync(A) acquires `gbrain-sync:A`
+ *     → performSync(B) acquires `gbrain-sync:B`  (in a different process, fine)
+ *
+ * Audit: `SYNC_LOCK_ID` (back-compat alias) resolves to `syncLockId('default')`.
+ * Every consumer in src/ MUST namespace by source. Tracked consumers:
+ *   - src/commands/sync.ts:performSync (per-source)
+ *   - src/core/cycle/phantom-redirect.ts (per-source, D16)
+ */
+export function syncLockId(sourceId: string): string {
+  return `gbrain-sync:${sourceId}`;
+}
+
+/**
+ * Back-compat alias. Resolves to `syncLockId('default')`. New code should call
+ * `syncLockId(sourceId)` directly.
+ */
+export const SYNC_LOCK_ID = syncLockId('default');
 
 /**
  * v0.30.1 (T4 + A4): wrap long-running work in a refreshing TTL lock.

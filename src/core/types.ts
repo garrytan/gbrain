@@ -139,6 +139,23 @@ export interface Page {
   ingested_via?: string | null;
   /** Server-stamped first-write audit timestamp; CV12 COALESCE-preserved across edits. */
   ingested_at?: Date | null;
+  /**
+   * v0.40.3.0 (renumbered from v0.40.3.0 v81 to v90 on master merge):
+   * which contextual retrieval tier the page was last embedded under. One
+   * of CRMode ('none' | 'title' | 'per_chunk_synopsis'). NULL on pre-v90
+   * rows; drift detection treats NULL as 'none' for reindex predicates,
+   * so unmigrated pages enter the sweep on first upgrade to non-conservative
+   * mode.
+   */
+  contextual_retrieval_mode?: CRMode | null;
+  /**
+   * v0.40.3.0 (renumbered from v0.40.3.0 v81 to v90 on master merge):
+   * composite hash of (synopsis_prompt_version, haiku_model,
+   * title_wrapper_version, embedding_model) captured at write time by
+   * `reembedPageWithContextualRetrieval`. Used by `query_cache.page_generations`
+   * for document-side cache invalidation per D27 P1-5. NULL on pre-v90 rows.
+   */
+  corpus_generation?: string | null;
 }
 
 export type EffectiveDateSource =
@@ -150,6 +167,27 @@ export type EffectiveDateSource =
 
 // `image` (v0.27.1): multimodal ingestion path, parallel to markdown + code.
 export type PageKind = 'markdown' | 'code' | 'image';
+
+/**
+ * v0.40.3.0 — contextual retrieval tier ladder per `search.mode`.
+ *
+ *   none                — no wrapper applied at embed time (conservative)
+ *   title               — `<context>{title}</context>\n{chunk}` (balanced)
+ *   per_chunk_synopsis  — per-chunk Haiku synopsis prepended (tokenmax)
+ *
+ * Resolution chain (highest wins): page frontmatter > source row > global
+ * mode bundle. Mount-frontmatter overrides are honored only when the
+ * source's `trust_frontmatter_overrides` flag is true (host source
+ * id='default' is always trusted). See
+ * `src/core/contextual-retrieval-resolver.ts`.
+ */
+export const CR_MODES = ['none', 'title', 'per_chunk_synopsis'] as const;
+export type CRMode = typeof CR_MODES[number];
+
+/** Type guard for parsing untrusted frontmatter / config values. */
+export function isCRMode(value: unknown): value is CRMode {
+  return typeof value === 'string' && (CR_MODES as readonly string[]).includes(value);
+}
 
 export interface PageInput {
   type: PageType;
@@ -550,6 +588,69 @@ export interface SearchResult {
    */
   effective_date?: string | null;
   effective_date_source?: string | null;
+  /**
+   * v0.40.4 graph signals — populated by applyGraphSignals when the
+   * graph_signals mode-bundle knob is on. Surfaced in JSON envelope
+   * for agent introspection + the `gbrain search --explain` formatter.
+   */
+  /** Number of OTHER top-K pages linking to this page (>= ADJACENCY_MIN_HITS). */
+  graph_adjacency_hits?: number;
+  /** Number of distinct OTHER source_ids (excluding this page's own source)
+   *  linking to this page from within top-K (>= CROSS_SOURCE_MIN_HITS). */
+  graph_cross_source_hits?: number;
+  /** True when this result was demoted (score multiplied by SESSION_DEMOTE)
+   *  because it shares a session prefix with a higher-scoring result. */
+  graph_session_demoted?: boolean;
+  /** Slug prefix used for the session-diversification grouping. */
+  graph_session_prefix?: string;
+  /**
+   * v0.40.4 full attribution (D12=A) — per-stage score deltas for the
+   * `gbrain search --explain` formatter. Every boost stage stamps its
+   * contribution so the formatter can reconstruct the score derivation.
+   *
+   * base_score is captured once at runPostFusionStages entry BEFORE any
+   * mutation; the other fields are stamped by their respective stages.
+   */
+  /** RRF + cosine score BEFORE any boost stage mutated it. */
+  base_score?: number;
+  /** Multiplier applied by applyBacklinkBoost (1.0 = unchanged). */
+  backlink_boost?: number;
+  /** Multiplier applied by applySalienceBoost. */
+  salience_boost?: number;
+  /** Multiplier applied by applyRecencyBoost. */
+  recency_boost?: number;
+  /** Multiplier applied by applyExactMatchBoost. */
+  exact_match_boost?: number;
+  /** Multiplier applied by applyGraphSignals (adjacency hit). */
+  graph_adjacency_boost?: number;
+  /** Multiplier applied by applyGraphSignals (cross-source hit). */
+  graph_cross_source_boost?: number;
+  /** Multiplier applied by applyGraphSignals (session demote; <1.0). */
+  session_demote_factor?: number;
+  /** Post-rerank rank delta: original_index - new_index in the reranker's
+   *  topNIn head. Positive means rank improved (moved closer to top).
+   *  Undefined when no reranker fired. The raw reranker relevance score
+   *  is separately stamped as `rerank_score` for back-compat. */
+  reranker_delta?: number;
+}
+
+/**
+ * v0.40.4 — adjacency aggregates for a single page within a
+ * subgraph induced by an input set. Returned by
+ * BrainEngine.getAdjacencyBoosts.
+ */
+export interface AdjacencyRow {
+  /** Distinct from_page_id count, restricted to the input set. */
+  hits: number;
+  /**
+   * Distinct OTHER source_id count, restricted to the input set,
+   * EXCLUDING the target page's own source. A page in source A linked
+   * from 2 pages in source A reports cross_source_hits = 0. Linked
+   * from 1 in source B + 1 in source C reports 2. The exclusion of
+   * self-source matches the "cross-team corroboration" intent
+   * (D15=A in the v0.40.4 plan).
+   */
+  cross_source_hits: number;
 }
 
 /**
@@ -797,6 +898,18 @@ export interface SearchOpts {
    * sending them produces garbage scores.
    */
   crossModal?: 'text' | 'image' | 'both' | 'auto';
+  /**
+   * v0.40.4 — per-call override for the graph-signals stage. Threads
+   * through to PostFusionOpts.graphSignalsEnabled. When undefined,
+   * falls through to the active mode bundle default (conservative=false,
+   * balanced/tokenmax=true) via the resolveSearchMode chain.
+   *
+   * Primary consumer is eval gates: `graph-signals-eval.test.ts` runs
+   * each fixture question twice (off vs on) and needs explicit per-call
+   * control, not mode-bundle default. Without this field, both branches
+   * would resolve to the same mode default and the gate would be a no-op.
+   */
+  graph_signals?: boolean;
 }
 
 /**

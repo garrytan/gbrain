@@ -4052,6 +4052,211 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE facts ADD COLUMN IF NOT EXISTS event_type TEXT;
     `,
   },
+  {
+    version: 90,
+    name: 'contextual_retrieval_columns',
+    // v0.40.3.0 contextual retrieval wave (renumbered from v81 on master
+    // merge — v82-v88 claimed by master's v0.38/v0.39 cathedrals, v89
+    // reserved by garrytan/v0.40.2.0-trajectory-routing for
+    // facts_event_type_column).
+    //
+    // Five additive columns wiring the three-tier wrapper ladder
+    // (none/title/per_chunk_synopsis) into the schema. All NULL-tolerant
+    // or have safe defaults so existing rows continue to work unchanged
+    // until the post-upgrade reindex sweep catches up.
+    //
+    // pages.contextual_retrieval_mode — what mode the page was last
+    //   embedded under. NULL means pre-v90 (treat as 'none' for drift
+    //   detection until reindex).
+    // pages.corpus_generation — composite hash of (synopsis_prompt_version,
+    //   haiku_model, title_wrapper_version, embedding_model). Used for
+    //   document-side provenance in query_cache invalidation. NULL means
+    //   pre-v90; the query_cache.page_generations check treats NULL and
+    //   any current generation as freshness-mismatched, so cache rows
+    //   tagged with a real generation correctly invalidate against pre-v90
+    //   pages that get re-embedded.
+    // sources.contextual_retrieval_mode — per-source override. NULL means
+    //   fall through to global mode. CLI-write-only per D15 security.
+    // sources.trust_frontmatter_overrides — per-source mount-frontmatter
+    //   trust gate (D15). FALSE for mounted sources by default; flipped
+    //   explicitly via `gbrain mounts trust-frontmatter <source>`. Host
+    //   source (id='default') is always trusted regardless of this column.
+    // query_cache.page_generations — JSONB map {page_id: corpus_generation}
+    //   tagged at write time per D27 P1-5. Lookup query LEFT JOINs against
+    //   current pages and excludes rows where any tagged generation
+    //   differs from the page's current corpus_generation. Empty default
+    //   so v55-era rows continue to work until they age out via TTL.
+    //
+    // No indexes needed: all five columns are read alongside their parent
+    // row, never queried independently. corpus_generation participates in
+    // query_cache's existing index (source_id, knobs_hash, created_at).
+    //
+    // ADD COLUMN with NULL or constant DEFAULT is metadata-only on
+    // Postgres 11+ and PGLite 17.5, instant on tables of any size.
+    idempotent: true,
+    sql: `
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS contextual_retrieval_mode TEXT NULL;
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS corpus_generation TEXT NULL;
+      ALTER TABLE sources ADD COLUMN IF NOT EXISTS contextual_retrieval_mode TEXT NULL;
+      ALTER TABLE sources ADD COLUMN IF NOT EXISTS trust_frontmatter_overrides BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE query_cache ADD COLUMN IF NOT EXISTS page_generations JSONB NOT NULL DEFAULT '{}'::jsonb;
+    `,
+  },
+  {
+    version: 91,
+    name: 'pages_generation_trigger_and_bookmark',
+    // v0.40.3.0 cache invalidation gate. Two columns + a trigger + an
+    // index. Wires the document-side staleness signal for the new
+    // query_cache two-layer gate.
+    //
+    //   pages.generation BIGINT NOT NULL DEFAULT 1
+    //     — monotonically increasing per-page generation counter. Bumped
+    //       by `bump_page_generation_trg` on UPDATE when any content
+    //       column is IS DISTINCT FROM. Read by the per-page snapshot
+    //       check in query-cache-gate.ts.
+    //
+    //   query_cache.max_generation_at_store BIGINT NOT NULL DEFAULT 0
+    //     — corpus-state bookmark stamped at cache-write time. Read by
+    //       the Layer 1 (cheap) gate in query-cache-gate.ts: if
+    //       MAX(generation) > stamp, the brain has had a write since
+    //       this row was stored, fall through to Layer 2 (per-page).
+    //
+    //   bump_page_generation_fn() + BEFORE INSERT OR UPDATE trigger
+    //     — handles every write path uniformly. INSERT: pages get
+    //       generation = COALESCE(MAX(generation) FROM pages, 0) + 1
+    //       so the bookmark gate fires for any cache row stored before
+    //       the new page existed (codex #4 INSERT coverage fix).
+    //       UPDATE: bumps generation only when content columns are
+    //       IS DISTINCT FROM — read-time mutations (e.g., last_retrieved_at
+    //       from v0.37 Open Collider) intentionally don't bump.
+    //
+    //     Allow-list (per D6 widened from the original 6-column plan):
+    //       body, frontmatter, compiled_truth, timeline, deleted_at,
+    //       contextual_retrieval_mode (the v0.40.3.0 wave),
+    //       title, type, page_kind, corpus_generation
+    //
+    //     Provenance fields (ingested_via/ingested_at/source_uri/
+    //     source_kind from master's v81) deliberately NOT in the
+    //     allow-list — they're channel metadata, not content; re-importing
+    //     the same content via a different source shouldn't invalidate
+    //     caches. (Codex #6 verify: confirmed putPage at this version
+    //     does not treat these as content-bearing.)
+    //
+    //   CREATE INDEX pages_generation_idx ON pages (generation)
+    //     — supports O(log N) MAX(generation) for the Layer 1 bookmark
+    //       check. Plain btree (codex #8 confirmed DESC unnecessary —
+    //       Postgres backward-scans plain btrees for MAX). CONCURRENTLY
+    //       on Postgres so large brains don't lock; PGLite has no
+    //       concurrent writers so plain CREATE INDEX is identical.
+    //
+    // Engine-aware via handler (not multi-statement SQL): Postgres uses
+    // CREATE INDEX CONCURRENTLY to avoid the write-blocking SHARE lock on
+    // `pages`. CONCURRENTLY refuses to run inside a transaction AND
+    // postgres.js's multi-statement `.unsafe()` wraps in an implicit
+    // transaction, so we MUST split the work into separate runMigration
+    // calls (columns + function + trigger as one transactional batch;
+    // CONCURRENTLY index as a separate non-transactional statement).
+    // A failed CONCURRENTLY leaves an invalid index with the target name;
+    // pre-drop any invalid remnant via pg_index.indisvalid. PGLite has
+    // no concurrent writers, so a single multi-statement call with plain
+    // CREATE INDEX is safe. Mirrors the v14 pages_updated_at_index handler
+    // pattern verbatim.
+    //
+    // Forward-reference bootstrap: the column + trigger + index land in
+    // PGLITE_SCHEMA_SQL CREATE TABLE body so fresh PGLite installs get
+    // them without migration replay. REQUIRED_BOOTSTRAP_COVERAGE in
+    // test/schema-bootstrap-coverage.test.ts pins the contract.
+    idempotent: true,
+    sql: '',
+    handler: async (engine) => {
+      // Columns + trigger function + trigger. Same SQL on both engines —
+      // multi-statement is fine for these (transactional is fine for
+      // ALTER + CREATE FUNCTION + CREATE TRIGGER).
+      const columnsAndTrigger = `
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS generation BIGINT NOT NULL DEFAULT 1;
+        ALTER TABLE query_cache ADD COLUMN IF NOT EXISTS max_generation_at_store BIGINT NOT NULL DEFAULT 0;
+
+        CREATE OR REPLACE FUNCTION bump_page_generation_fn() RETURNS trigger AS $func$
+        BEGIN
+          IF (TG_OP = 'INSERT') THEN
+            NEW.generation := COALESCE((SELECT MAX(generation) FROM pages), 0) + 1;
+          ELSIF (OLD.compiled_truth IS DISTINCT FROM NEW.compiled_truth)
+             OR (OLD.timeline IS DISTINCT FROM NEW.timeline)
+             OR (OLD.frontmatter IS DISTINCT FROM NEW.frontmatter)
+             OR (OLD.deleted_at IS DISTINCT FROM NEW.deleted_at)
+             OR (OLD.contextual_retrieval_mode IS DISTINCT FROM NEW.contextual_retrieval_mode)
+             OR (OLD.title IS DISTINCT FROM NEW.title)
+             OR (OLD.type IS DISTINCT FROM NEW.type)
+             OR (OLD.page_kind IS DISTINCT FROM NEW.page_kind)
+             OR (OLD.corpus_generation IS DISTINCT FROM NEW.corpus_generation)
+             OR (OLD.content_hash IS DISTINCT FROM NEW.content_hash)
+          THEN
+            NEW.generation := OLD.generation + 1;
+          END IF;
+          RETURN NEW;
+        END;
+        $func$ LANGUAGE plpgsql;
+
+        DROP TRIGGER IF EXISTS bump_page_generation_trg ON pages;
+        CREATE TRIGGER bump_page_generation_trg
+          BEFORE INSERT OR UPDATE ON pages
+          FOR EACH ROW
+          EXECUTE FUNCTION bump_page_generation_fn();
+      `;
+      await engine.runMigration(91, columnsAndTrigger);
+
+      if (engine.kind === 'postgres') {
+        // Pre-drop any invalid index from a prior CONCURRENTLY failure
+        // (matches v14 pattern).
+        await engine.runMigration(
+          91,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'pages_generation_idx' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS pages_generation_idx';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          91,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS pages_generation_idx ON pages (generation);`
+        );
+      } else {
+        await engine.runMigration(
+          91,
+          `CREATE INDEX IF NOT EXISTS pages_generation_idx ON pages (generation);`
+        );
+      }
+    },
+  },
+  {
+    version: 92,
+    name: 'sources_github_repo_index',
+    // v0.40.5.0 Federated Sync v2 (D13): partial expression index on
+    // sources.config->>'github_repo' so the new POST /webhooks/github
+    // handler's source-by-repo lookup uses an index instead of a sequential
+    // scan. Sources is small today (<100 rows in practice) so the impact is
+    // microseconds, but the lookup fires on every webhook event (including
+    // ignored ones) and a team with hundreds of sources would feel it.
+    //
+    // Partial WHERE clause keeps the index small — only rows with a
+    // configured webhook actually take up index entries. Both Postgres and
+    // PGLite support partial expression indexes; no engine-specific shape.
+    // Idempotent (IF NOT EXISTS).
+    //
+    // Plan called this v81 originally; renumbered through v87 → v89 → v90 → v92
+    // across successive master merges (v0.40.2.0 claimed v89 for
+    // facts_event_type_column; v0.40.3.0 claimed v90 + v91 for
+    // contextual_retrieval_columns + pages_generation_trigger_and_bookmark).
+    sql: `
+      CREATE INDEX IF NOT EXISTS sources_github_repo_idx
+        ON sources ((config->>'github_repo'))
+        WHERE config ? 'github_repo';
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

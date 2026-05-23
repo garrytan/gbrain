@@ -145,6 +145,19 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   { kind: 'column', table: 'pages', column: 'ingested_at' },
   { kind: 'column', table: 'pages', column: 'source_uri' },
   { kind: 'column', table: 'pages', column: 'source_kind' },
+  // v0.40.3.0 (v90, renumbered from v0.40.3.0 v81 on master merge) —
+  // contextual_retrieval_columns adds five additive columns wiring the
+  // three-tier wrapper ladder. Bootstrap probes added defense-in-depth
+  // for future schema work.
+  { kind: 'column', table: 'pages', column: 'contextual_retrieval_mode' },
+  { kind: 'column', table: 'pages', column: 'corpus_generation' },
+  { kind: 'column', table: 'sources', column: 'contextual_retrieval_mode' },
+  { kind: 'column', table: 'sources', column: 'trust_frontmatter_overrides' },
+  // v0.40.3.0 (v91) — pages.generation BIGINT bumped by the
+  // bump_page_generation_fn trigger. Forward-referenced by
+  // pages_generation_idx (CREATE INDEX ON pages (generation)) so bootstrap
+  // probes guard pre-v91 brains.
+  { kind: 'column', table: 'pages', column: 'generation' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -217,6 +230,19 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       DROP INDEX IF EXISTS idx_oauth_clients_federated_read;
       ALTER TABLE oauth_clients DROP COLUMN IF EXISTS source_id;
       ALTER TABLE oauth_clients DROP COLUMN IF EXISTS federated_read;
+
+      -- v0.40.3.0 v90 + v91 column strips so applyForwardReferenceBootstrap
+      -- has work to do. Only strip pages columns + the trigger; sources
+      -- columns were already nuked by the earlier DROP TABLE IF EXISTS
+      -- sources CASCADE, and the bootstrap needsPagesBootstrap branch
+      -- recreates sources from schema-embedded.ts (which now includes the
+      -- CR columns inline). Same convention as the sources.archived note.
+      DROP TRIGGER IF EXISTS bump_page_generation_trg ON pages;
+      DROP FUNCTION IF EXISTS bump_page_generation_fn;
+      DROP INDEX IF EXISTS pages_generation_idx;
+      ALTER TABLE pages DROP COLUMN IF EXISTS generation;
+      ALTER TABLE pages DROP COLUMN IF EXISTS contextual_retrieval_mode;
+      ALTER TABLE pages DROP COLUMN IF EXISTS corpus_generation;
     `);
 
     // Note: we don't strip sources.archived* here because they're inline in the
@@ -656,6 +682,18 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'pages.source_path',
   'content_chunks.edges_backfilled_at',
   'query_cache.knobs_hash',
+  // v0.40.3.0 (migration v90, renumbered from v0.40.3.0 v81 on master merge)
+  // — query_cache is migration-only (added in v55), not in PGLITE_SCHEMA_SQL.
+  // The v90 ALTER TABLE query_cache ADD COLUMN page_generations runs after
+  // v55 in the migration sequence, so fresh installs get it correctly. No
+  // forward-reference exists for PGLITE_SCHEMA_SQL to trip on because
+  // query_cache isn't in the schema blob to begin with. Same exemption
+  // rationale as knobs_hash.
+  'query_cache.page_generations',
+  // v0.40.3.0 (migration v91) — same exemption rationale: query_cache is
+  // migration-only; max_generation_at_store is added by v91 ALTER and never
+  // forward-referenced by PGLITE_SCHEMA_SQL.
+  'query_cache.max_generation_at_store',
   // v0.35.6 (migration v67) — typed-claim columns + facts_typed_claim_idx
   // partial index are co-defined in the same migration, so the schema-blob
   // forward-reference path isn't tripped. Bootstrap is only required when an

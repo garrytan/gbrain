@@ -270,8 +270,8 @@ async function probeEmbeddingConfig(): Promise<ProbeResult> {
 }
 
 /**
- * v0.40.6.1: resolve the reranker model the same way live search does, so
- * doctor doesn't drift from the live path. Pre-v0.40.6.1 the probe read
+ * v0.40.7.1: resolve the reranker model the same way live search does, so
+ * doctor doesn't drift from the live path. Pre-v0.40.7.1 the probe read
  * `getRerankerModel()` from the gateway, which is fed from
  * `GBrainConfig.reranker_model` — a file-plane field nothing currently
  * writes. Meanwhile live search resolves `search.reranker.model` via
@@ -306,7 +306,7 @@ export async function resolveLiveRerankerModel(engine: BrainEngine): Promise<str
  * this, `search.reranker.model=zeroentropyai:made-up-name` would silently
  * pass config probes and fail at first rerank call.
  *
- * v0.40.6.1: resolves via `resolveLiveRerankerModel(engine)` so probe and
+ * v0.40.7.1: resolves via `resolveLiveRerankerModel(engine)` so probe and
  * live search read the same value (closes the file-plane / DB-plane
  * divergence flagged in plan review).
  *
@@ -385,7 +385,7 @@ async function probeRerankerConfig(engine: BrainEngine): Promise<ProbeResult> {
  * Returns 'ok' silently when reranker is unconfigured (no probe needed) —
  * probeRerankerConfig already surfaced the missing-config state.
  *
- * v0.40.6.1: uses the resolved live model (same path live search uses),
+ * v0.40.7.1: uses the resolved live model (same path live search uses),
  * and reads the per-call timeout from the recipe's `default_timeout_ms`
  * when set — so a CPU-only local reranker's cold-start warmup doesn't
  * cause the probe to false-fail with `network`/timeout.
@@ -521,7 +521,7 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
   // 400 on first embed. Fast feedback before we spend a single token.
   results.push(await probeEmbeddingConfig());
   // v0.35.0.0+ reranker config probe — same zero-network model as embedding.
-  // v0.40.6.1: takes the engine so it can read the same `search.reranker.*`
+  // v0.40.7.1: takes the engine so it can read the same `search.reranker.*`
   // config keys live search reads (closes file-plane / DB-plane divergence).
   results.push(await probeRerankerConfig(engine));
 
@@ -533,7 +533,7 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
     results.push(await probeModel(modelStr, touchpoint));
   }
 
-  // v0.40.6.1: reachability uses the live-search resolution path; only fires
+  // v0.40.7.1: reachability uses the live-search resolution path; only fires
   // when reranker is actually enabled (per the resolved mode bundle).
   const liveRerankerModel = await resolveLiveRerankerModel(engine);
   if (liveRerankerModel && !shouldSkipProvider(liveRerankerModel, skip)) {

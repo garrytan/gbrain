@@ -38,48 +38,32 @@ export interface Check {
  */
 
 /**
- * Severity buckets — drive ordering (critical first) and operator UX
- * (in the human-readable plan output, critical items get a louder prefix).
+ * v0.40.3.0: RemediationStep + RemediationSeverity + RemediationStatus
+ * lifted to src/core/remediation-step.ts so other doctor checks (lint,
+ * integrity, sync_failures) can emit RemediationStep without circular
+ * importing brain-score code. Re-exported here for back-compat AND to
+ * avoid forcing every importer to update the path in one PR.
+ *
+ * The `Remediation` name is deprecated as of v0.40.3.0; use
+ * `RemediationStep` going forward. Same shape; rename was for clarity.
  */
-export type RemediationSeverity = 'critical' | 'high' | 'medium' | 'low';
-
-/** Status of an individual check's autofix path. */
-export type RemediationStatus = 'remediable' | 'human_only' | 'blocked';
-
-export interface Remediation {
-  /** Stable id (e.g. 'sync.repo', 'embed.stale', 'embed.code'). Survives
-   *  check renames; referenced by `depends_on`. */
-  id: string;
-  /** Minion handler name (must match a registered handler). */
-  job: string;
-  /** Params passed to the handler. */
-  params: Record<string, unknown>;
-  /** Content-hash idempotency key: `<source>:<job>:sha8(canonical-JSON(params))`.
-   *  Per D9: NO time-slot. Retry suffix `:r<N>` appended by --remediate when
-   *  prior key's job is in `failed`/`dead` state. */
-  idempotency_key: string;
-  severity: RemediationSeverity;
-  /** Upper-bound runtime estimate for ordering + --target-score budgeting. */
-  est_seconds: number;
-  /** USD cost estimate when applicable (embed by chunk count × $/MTok;
-   *  synthesize / patterns / consolidate by est Sonnet calls × $/MTok).
-   *  Sum across plan steps is the gate for --max-usd. */
-  est_usd_cost?: number;
-  /** Other Remediation.id values that MUST complete first. References ids,
-   *  NOT check names (D14 — closes codex #22 fan-out ambiguity). */
-  depends_on?: string[];
-  /** One-line "what this fixes" for human output. */
-  rationale: string;
-  /** True if `job` is in PROTECTED_JOB_NAMES (D11). Mirrors trust-gate state
-   *  so callers don't have to re-derive it. */
-  protected?: boolean;
-  /** Always 'remediable' when this struct is in the plan. The doctor surface
-   *  also produces blocked-entries (with `blocked_reason`) but those don't
-   *  enter the executable plan. */
-  status: RemediationStatus;
-  /** Populated when status === 'blocked'. E.g. 'missing OPENAI_API_KEY'. */
-  blocked_reason?: string;
-}
+export {
+  type RemediationStep,
+  type RemediationStep as Remediation,
+  type RemediationSeverity,
+  type RemediationStatus,
+  makeRemediationStep,
+  idempotencyKey as makeRemediationIdempotencyKey,
+  canonicalJson,
+} from './remediation-step.ts';
+import type {
+  RemediationStep,
+  RemediationStatus,
+  RemediationSeverity,
+} from './remediation-step.ts';
+// Internal alias so the existing implementation below keeps compiling
+// without a sed pass. New code should reference RemediationStep directly.
+type Remediation = RemediationStep;
 
 export interface RecommendationContext {
   /** Source id this remediation is scoped to (multi-source brains). */

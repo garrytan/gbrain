@@ -162,9 +162,9 @@ describe('BudgetTracker.reserve', () => {
     expect(audit.filter((e) => e.event === 'reserve_unpriced').length).toBe(2);
   });
 
-  test('v0.40.6.1: rerank kind for llama-server-reranker prices at $0 (no TX2 throw under --max-cost)', () => {
+  test('v0.40.7.1: rerank kind for llama-server-reranker prices at $0 (no TX2 throw under --max-cost)', () => {
     // The FREE_LOCAL_RERANK_PROVIDERS contract — local inference costs
-    // electricity, not API tokens. Pre-v0.40.6.1 setting --max-cost while
+    // electricity, not API tokens. Pre-v0.40.7.1 setting --max-cost while
     // configured for a local reranker would TX2 hard-fail because the
     // lookupPricing fall-through path returned null for any provider not
     // in ANTHROPIC_PRICING. Now the rerank kind recognizes the local
@@ -181,7 +181,7 @@ describe('BudgetTracker.reserve', () => {
     expect(t.totalSpent).toBe(0);
   });
 
-  test('v0.40.6.1: rerank kind for arbitrary model id under llama-server-reranker provider still zero-priced', () => {
+  test('v0.40.7.1: rerank kind for arbitrary model id under llama-server-reranker provider still zero-priced', () => {
     // Empty allowlist on the recipe means any model id is valid; budget
     // path must agree.
     const t = new BudgetTracker({ maxCostUsd: 0.0001, label: 'test', auditPath });
@@ -195,7 +195,7 @@ describe('BudgetTracker.reserve', () => {
     ).not.toThrow();
   });
 
-  test('v0.40.6.1: chat kind for the same provider prefix is NOT zero-priced (rerank-only contract)', () => {
+  test('v0.40.7.1: chat kind for the same provider prefix is NOT zero-priced (rerank-only contract)', () => {
     // The free-local zero-price applies ONLY to the rerank kind. If someone
     // wires a chat call through this provider with --max-cost, the TX2 hard-
     // fail behavior is preserved so the user gets a clear "no pricing entry"
