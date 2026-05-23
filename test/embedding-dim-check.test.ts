@@ -220,6 +220,41 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (got.ok) expect(got.dim).toBe(768);
   });
 
+  test('llama-server user-provided model accepts explicit schema dim', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:qwen3-embedding-8b',
+      embedding_dimensions: 4096,
+    });
+    expect(got).toEqual({
+      ok: true,
+      dim: 4096,
+      model: 'llama-server:qwen3-embedding-8b',
+      provider: 'llama-server',
+      recipeDefault: 0,
+    });
+  });
+
+  test('llama-server user-provided model still requires explicit dimensions', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:qwen3-embedding-8b',
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/positive integer/);
+  });
+
+  test('LiteLLM user-provided model accepts explicit schema dim', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'litellm:any-local-embedder',
+      embedding_dimensions: 2048,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.dim).toBe(2048);
+      expect(got.provider).toBe('litellm');
+      expect(got.recipeDefault).toBe(0);
+    }
+  });
+
   test('unknown provider rejected with provider list hint', () => {
     const got = resolveSchemaEmbeddingDim({ embedding_model: 'notarealprovider:foo' });
     expect(got.ok).toBe(false);

@@ -21,6 +21,20 @@ export const ollama: Recipe = {
       // OLLAMA_NUM_PARALLEL config; no static cap to declare. v0.32 (#779).
       no_batch_cap: true,
     },
+    expansion: {
+      models: ['qwen3.6:27b', 'qwen3.5:27b', 'llama3.1', 'mistral'],
+      cost_per_1m_tokens_usd: 0,
+      price_last_verified: '2026-05-22',
+    },
+    chat: {
+      models: ['qwen3.6:27b', 'qwen3.5:27b', 'llama3.1', 'mistral'],
+      supports_tools: false,
+      supports_subagent_loop: false,
+      supports_prompt_cache: false,
+      cost_per_1m_input_usd: 0,
+      cost_per_1m_output_usd: 0,
+      price_last_verified: '2026-05-22',
+    },
   },
-  setup_hint: 'Install Ollama from https://ollama.ai, then `ollama pull nomic-embed-text` and `ollama serve`.',
+  setup_hint: 'Install Ollama from https://ollama.ai, then `ollama pull nomic-embed-text` for embeddings or `ollama pull qwen3.6:27b` for local chat/expansion, and run `ollama serve`.',
 };

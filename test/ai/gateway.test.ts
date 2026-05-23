@@ -86,6 +86,24 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
     expect(isAvailable('embedding')).toBe(true);
   });
 
+  test('embedding AVAILABLE for llama-server user-provided model with no API key (local)', () => {
+    configureGateway({
+      embedding_model: 'llama-server:qwen3-embedding-8b',
+      embedding_dimensions: 4096,
+      env: {},
+    });
+    expect(isAvailable('embedding')).toBe(true);
+  });
+
+  test('embedding AVAILABLE for LiteLLM user-provided model with no API key (local proxy)', () => {
+    configureGateway({
+      embedding_model: 'litellm:any-local-embedder',
+      embedding_dimensions: 2048,
+      env: {},
+    });
+    expect(isAvailable('embedding')).toBe(true);
+  });
+
   test('anthropic rejects embedding touchpoint (has no embedding model)', () => {
     configureGateway({
       embedding_model: 'anthropic:claude-haiku-4-5-20251001',
@@ -99,6 +117,14 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
     configureGateway({
       expansion_model: 'anthropic:claude-haiku-4-5-20251001',
       env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+    expect(isAvailable('expansion')).toBe(true);
+  });
+
+  test('expansion available for local Ollama with no API key', () => {
+    configureGateway({
+      expansion_model: 'ollama:qwen3.6:27b',
+      env: {},
     });
     expect(isAvailable('expansion')).toBe(true);
   });

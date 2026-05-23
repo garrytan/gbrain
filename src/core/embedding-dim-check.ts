@@ -282,7 +282,14 @@ export function resolveSchemaEmbeddingDim(opts: ResolveSchemaEmbeddingDimOpts): 
           `Pick a recipe with an embedding touchpoint (gbrain providers list).`,
       };
     }
-    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp.default_dims, tp.dims_options, opts.embedding_dimensions);
+    return validateDimAgainstTouchpoint(
+      parsed.modelId,
+      recipe,
+      tp.default_dims,
+      tp.dims_options,
+      opts.embedding_dimensions,
+      tp.user_provided_models === true,
+    );
   } catch (err) {
     return { ok: false, error: err instanceof AIConfigError ? err.message : String(err) };
   }
@@ -333,7 +340,14 @@ export function resolveSchemaMultimodalDim(opts: ResolveSchemaMultimodalDimOpts)
           `Pick a multimodal-capable model from this provider.`,
       };
     }
-    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp.default_dims, tp.dims_options, opts.embedding_multimodal_dimensions);
+    return validateDimAgainstTouchpoint(
+      parsed.modelId,
+      recipe,
+      tp.default_dims,
+      tp.dims_options,
+      opts.embedding_multimodal_dimensions,
+      tp.user_provided_models === true,
+    );
   } catch (err) {
     return { ok: false, error: err instanceof AIConfigError ? err.message : String(err) };
   }
@@ -363,6 +377,7 @@ function validateDimAgainstTouchpoint(
   defaultDims: number,
   dimsOptions: number[] | undefined,
   requestedDims: number | undefined,
+  userProvidedModels = false,
 ): ResolveSchemaDimResult {
   const dim = requestedDims ?? defaultDims;
 
@@ -381,7 +396,7 @@ function validateDimAgainstTouchpoint(
     };
   }
 
-  if (requestedDims !== undefined && requestedDims !== defaultDims) {
+  if (requestedDims !== undefined && requestedDims !== defaultDims && !userProvidedModels) {
     // User asked for a non-default dim. Walk the precedence chain.
     const customDimOk = isCustomDimValidForProvider(recipe, modelId, requestedDims, dimsOptions);
     if (!customDimOk.valid) {

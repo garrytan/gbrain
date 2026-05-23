@@ -1,5 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
+import { PGVECTOR_HNSW_HALFVEC_MAX_DIMS, PGVECTOR_HNSW_VECTOR_MAX_DIMS } from './vector-index.ts';
 
 /**
  * Schema migrations — run automatically on initSchema().
@@ -2277,6 +2278,12 @@ export const MIGRATIONS: Migration[] = [
       //   VECTOR(n)  → vector_cosine_ops
       //   HALFVEC(n) → halfvec_cosine_ops
       const opclass = useHalfvec ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+      const hnswMaxDims = useHalfvec ? PGVECTOR_HNSW_HALFVEC_MAX_DIMS : PGVECTOR_HNSW_VECTOR_MAX_DIMS;
+      const factsEmbeddingHnswDDL = embeddingDim <= hnswMaxDims
+        ? `CREATE INDEX IF NOT EXISTS idx_facts_embedding_hnsw
+          ON facts USING hnsw (embedding ${opclass})
+          WHERE embedding IS NOT NULL AND expired_at IS NULL;`
+        : `-- idx_facts_embedding_hnsw skipped: ${vecType} HNSW supports at most ${hnswMaxDims} dimensions.`;
       // FK to sources is added in a separate ALTER TABLE rather than inline
       // on the column. Inline `REFERENCES` worked on PGLite but silently
       // got dropped by postgres.js's `unsafe()` multi-statement path on
@@ -2350,9 +2357,7 @@ export const MIGRATIONS: Migration[] = [
           ON facts(source_id, entity_slug)
           WHERE consolidated_at IS NULL AND expired_at IS NULL;
 
-        CREATE INDEX IF NOT EXISTS idx_facts_embedding_hnsw
-          ON facts USING hnsw (embedding ${opclass})
-          WHERE embedding IS NOT NULL AND expired_at IS NULL;
+        ${factsEmbeddingHnswDDL}
       `;
 
       await engine.runMigration(40, factsDDL);
@@ -2868,6 +2873,12 @@ export const MIGRATIONS: Migration[] = [
 
       const vecType = useHalfvec ? 'HALFVEC' : 'VECTOR';
       const opclass = useHalfvec ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+      const hnswMaxDims = useHalfvec ? PGVECTOR_HNSW_HALFVEC_MAX_DIMS : PGVECTOR_HNSW_VECTOR_MAX_DIMS;
+      const queryCacheEmbeddingHnswDDL = embeddingDim <= hnswMaxDims
+        ? `CREATE INDEX IF NOT EXISTS idx_query_cache_embedding_hnsw
+          ON query_cache USING hnsw (embedding ${opclass})
+          WHERE embedding IS NOT NULL;`
+        : `-- idx_query_cache_embedding_hnsw skipped: ${vecType} HNSW supports at most ${hnswMaxDims} dimensions.`;
 
       const ddl = `
         CREATE TABLE IF NOT EXISTS query_cache (
@@ -2886,9 +2897,7 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_query_cache_source_created
           ON query_cache(source_id, created_at DESC);
 
-        CREATE INDEX IF NOT EXISTS idx_query_cache_embedding_hnsw
-          ON query_cache USING hnsw (embedding ${opclass})
-          WHERE embedding IS NOT NULL;
+        ${queryCacheEmbeddingHnswDDL}
       `;
 
       await engine.runMigration(55, ddl);

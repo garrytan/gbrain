@@ -214,6 +214,42 @@ describe('v0.28.5 cluster B — embedding dim corruption regression', () => {
       configureGateway({ env: { ...process.env } });
     }
   }, 60000);
+
+  test('4096-dim init skips every embedding HNSW index that exceeds pgvector caps', async () => {
+    const { configureGateway } = await import('../../src/core/ai/gateway.ts');
+    configureGateway({
+      embedding_model: 'llama-server:qwen3-embedding-8b',
+      embedding_dimensions: 4096,
+      env: { ...process.env },
+    });
+
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const dim = await readContentChunksEmbeddingDim(engine);
+      expect(dim.exists).toBe(true);
+      expect(dim.dims).toBe(4096);
+
+      const indexes = await engine.executeRaw<{ indexname: string }>(
+        `SELECT indexname
+         FROM pg_indexes
+         WHERE schemaname = 'public'
+           AND indexname = ANY($1::text[])`,
+        [
+          [
+            'idx_chunks_embedding',
+            'idx_facts_embedding_hnsw',
+            'idx_query_cache_embedding_hnsw',
+          ],
+        ],
+      );
+      expect(indexes.map(r => r.indexname).sort()).toEqual([]);
+    } finally {
+      await engine.disconnect();
+      configureGateway({ env: { ...process.env } });
+    }
+  }, 60000);
 });
 
 describe('v0.28.5 A4 — existing-brain dim mismatch loud failure', () => {

@@ -17,6 +17,7 @@
 import type { BrainEngine } from './engine.ts';
 
 export const PGVECTOR_HNSW_VECTOR_MAX_DIMS = 2000;
+export const PGVECTOR_HNSW_HALFVEC_MAX_DIMS = 4000;
 
 const CHUNK_EMBEDDING_HNSW_INDEX =
   'CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);';
