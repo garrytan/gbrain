@@ -190,6 +190,10 @@ async function main() {
       const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
       await awaitPendingSearchCacheWrites();
     }
+    if (op.name === 'search' || op.name === 'query' || op.name === 'get_page') {
+      const { awaitPendingLastRetrievedWrites } = await import('./core/last-retrieved.ts');
+      await awaitPendingLastRetrievedWrites();
+    }
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       console.error(`Error [${e.code}]: ${e.message}`);
@@ -1493,6 +1497,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     embedding_multimodal_model: c.embedding_multimodal_model,
     expansion_model: c.expansion_model,
     chat_model: c.chat_model,
+    reranker_model: c.reranker_model,
     chat_fallback_chain: c.chat_fallback_chain,
     base_urls: { ...envBaseUrls, ...(c.provider_base_urls ?? {}) }, // config wins over env
     env: { ...envFromConfig, ...process.env }, // process.env wins

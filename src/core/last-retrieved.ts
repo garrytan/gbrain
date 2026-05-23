@@ -38,6 +38,7 @@ import { isUndefinedColumnError } from './utils.ts';
 
 let _trackRetrievalCache: { ts: number; enabled: boolean } | null = null;
 const TRACK_RETRIEVAL_CACHE_TTL_MS = 30_000;
+const _pendingBumps = new Set<Promise<void>>();
 
 /**
  * Resolve `search.track_retrieval` config with a 30s in-process cache so
@@ -65,6 +66,18 @@ async function isTrackingEnabled(engine: BrainEngine): Promise<boolean> {
 /** Test seam — drops the cache so subsequent calls re-read config. */
 export function _resetTrackRetrievalCacheForTests(): void {
   _trackRetrievalCache = null;
+  _pendingBumps.clear();
+}
+
+/**
+ * Drain best-effort retrieval write-backs before short-lived CLI processes
+ * disconnect their engine. MCP/server callers can keep using fire-and-forget;
+ * the CLI needs a bounded join so PGLite doesn't keep the event loop alive
+ * after results have already been printed.
+ */
+export async function awaitPendingLastRetrievedWrites(): Promise<void> {
+  if (_pendingBumps.size === 0) return;
+  await Promise.allSettled([..._pendingBumps]);
 }
 
 /**
@@ -78,7 +91,7 @@ export function _resetTrackRetrievalCacheForTests(): void {
 export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): void {
   if (pageIds.length === 0) return;
   // Fire-and-forget on purpose. We deliberately do NOT return the promise.
-  void (async () => {
+  const promise = (async () => {
     try {
       const enabled = await isTrackingEnabled(engine);
       if (!enabled) return;
@@ -102,4 +115,6 @@ export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): voi
       console.warn(`[last-retrieved] write-back failed (best-effort): ${msg}`);
     }
   })();
+  _pendingBumps.add(promise);
+  promise.finally(() => _pendingBumps.delete(promise));
 }

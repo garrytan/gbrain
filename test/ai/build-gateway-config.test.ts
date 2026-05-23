@@ -25,6 +25,7 @@ import { withEnv } from '../helpers/with-env.ts';
 
 const PASSTHROUGHS: Array<{ envVar: string; recipeId: string }> = [
   { envVar: 'LLAMA_SERVER_BASE_URL', recipeId: 'llama-server' },
+  { envVar: 'LLAMA_SERVER_RERANKER_BASE_URL', recipeId: 'llama-server-reranker' },
   { envVar: 'OLLAMA_BASE_URL', recipeId: 'ollama' },
   { envVar: 'LMSTUDIO_BASE_URL', recipeId: 'lmstudio' },
   { envVar: 'LITELLM_BASE_URL', recipeId: 'litellm' },
@@ -83,5 +84,12 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
         expect(cfg.base_urls?.openrouter).toBe('http://config.example/v1');
       },
     );
+  });
+
+  test('reranker_model flows from config into gateway config', async () => {
+    const cfg = buildGatewayConfig({
+      reranker_model: 'llama-server-reranker:qwen3-reranker-4b',
+    } as unknown as GBrainConfig);
+    expect(cfg.reranker_model).toBe('llama-server-reranker:qwen3-reranker-4b');
   });
 });
