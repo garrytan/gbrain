@@ -370,3 +370,40 @@ describe('runRoutingEval', () => {
     expect(r.passed + r.missed + r.ambiguous + r.falsePositives).toBe(3);
   });
 });
+
+// End-to-end against the bundled skill set. This loads the actual
+// shipped RESOLVER.md and the shipped routing-eval.jsonl fixtures,
+// so any future drift between a skill's triggers and its fixture
+// intents fails this test loudly instead of degrading the doctor
+// resolver_health check silently on user installs.
+describe('bundled resolver matches bundled fixtures', () => {
+  const repoRoot = require('path').resolve(__dirname, '..');
+  const resolverPath = require('path').join(repoRoot, 'skills', 'RESOLVER.md');
+  const skillsDir = require('path').join(repoRoot, 'skills');
+
+  it('skillpack-harvest fixtures all route to skillpack-harvest', () => {
+    const fs = require('fs');
+    if (!fs.existsSync(resolverPath)) return; // not in a checkout (npm install) — skip
+    const harvestFixturePath = require('path').join(skillsDir, 'skillpack-harvest', 'routing-eval.jsonl');
+    if (!fs.existsSync(harvestFixturePath)) return;
+
+    const resolver = fs.readFileSync(resolverPath, 'utf-8');
+    const { fixtures } = loadRoutingFixtures(skillsDir);
+    const harvestFixtures = fixtures.filter((f) => f.expected_skill === 'skillpack-harvest');
+    expect(harvestFixtures.length).toBeGreaterThan(0); // sanity: fixtures shipped
+
+    const r = runRoutingEval(resolver, harvestFixtures);
+    // Every shipped fixture for skillpack-harvest MUST route correctly.
+    // Failure mode: the resolver row's triggers and the fixture intents
+    // share no substrings — either broaden the resolver or rewrite the
+    // fixtures so realistic phrasings overlap.
+    if (r.missed > 0) {
+      const misses = r.details.filter((d) => d.outcome === 'missed').map((d) => d.fixture.intent);
+      throw new Error(
+        `skillpack-harvest routing-eval has ${r.missed} miss(es). Intents that did not match any resolver trigger:\n  - ${misses.join('\n  - ')}`,
+      );
+    }
+    expect(r.missed).toBe(0);
+    expect(r.passed).toBe(harvestFixtures.length);
+  });
+});
