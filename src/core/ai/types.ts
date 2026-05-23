@@ -182,10 +182,17 @@ export interface ExpansionTouchpoint {
  */
 export interface RerankerTouchpoint {
   models: string[];
+  /**
+   * Local/proxy rerankers may serve arbitrary operator-provided model ids.
+   * Same semantics as embedding touchpoint user_provided_models.
+   */
+  user_provided_models?: true;
   default_model: string;
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string;
   max_payload_bytes: number;
+  /** Endpoint path appended to base URL. Defaults to ZeroEntropy-compatible /models/rerank. */
+  path?: string;
 }
 
 export interface ChatTouchpoint {

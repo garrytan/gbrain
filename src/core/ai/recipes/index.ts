@@ -17,6 +17,7 @@ import { deepseek } from './deepseek.ts';
 import { groq } from './groq.ts';
 import { together } from './together.ts';
 import { llamaServer } from './llama-server.ts';
+import { llamaServerReranker } from './llama-server-reranker.ts';
 import { minimax } from './minimax.ts';
 import { dashscope } from './dashscope.ts';
 import { zhipu } from './zhipu.ts';
@@ -35,6 +36,7 @@ const ALL: Recipe[] = [
   groq,
   together,
   llamaServer,
+  llamaServerReranker,
   minimax,
   dashscope,
   zhipu,

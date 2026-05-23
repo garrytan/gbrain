@@ -8,6 +8,8 @@ import {
   getEmbeddingDimensions,
   getExpansionModel,
   VoyageResponseTooLargeError,
+  rerank,
+  __setRerankTransportForTests,
 } from '../../src/core/ai/gateway.ts';
 import { parseModelId, resolveRecipe } from '../../src/core/ai/model-resolver.ts';
 import {
@@ -93,6 +95,45 @@ describe('gateway.isAvailable (silent-drop regression surface)', () => {
       env: {},
     });
     expect(isAvailable('embedding')).toBe(true);
+  });
+
+  test('reranker supports dedicated no-auth llama-server endpoint/path', async () => {
+    let capturedUrl = '';
+    let capturedAuth: string | null = null;
+    let capturedBody: any = null;
+    __setRerankTransportForTests(async (url, init) => {
+      capturedUrl = url;
+      const headers = new Headers(init.headers as HeadersInit);
+      capturedAuth = headers.get('authorization');
+      capturedBody = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({
+        results: [
+          { index: 1, relevance_score: 0.91 },
+          { index: 0, relevance_score: 0.12 },
+        ],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    try {
+      configureGateway({
+        reranker_model: 'llama-server-reranker:qwen3-reranker-4b',
+        base_urls: { 'llama-server-reranker': 'http://127.0.0.1:8081/v1' },
+        env: {},
+      });
+      expect(isAvailable('reranker')).toBe(true);
+      const out = await rerank({
+        query: 'gbrain local reranker',
+        documents: ['irrelevant', 'local Qwen3 reranker document'],
+      });
+      expect(capturedUrl).toBe('http://127.0.0.1:8081/v1/rerank');
+      expect(capturedAuth).toBeNull();
+      expect(capturedBody.model).toBe('qwen3-reranker-4b');
+      expect(out).toEqual([
+        { index: 1, relevanceScore: 0.91 },
+        { index: 0, relevanceScore: 0.12 },
+      ]);
+    } finally {
+      __setRerankTransportForTests(null);
+    }
   });
 
   test('anthropic rejects embedding touchpoint (has no embedding model)', () => {

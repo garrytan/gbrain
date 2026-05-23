@@ -633,9 +633,7 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
     // EmbeddingTouchpoint.user_provided_models (D8=A), or the legacy
     // `recipe.id === 'litellm'` heuristic (back-compat for pre-v0.32 builds
     // where the field hadn't been declared yet).
-    const isUserProvided =
-      touchpoint === 'embedding' &&
-      (touchpointConfig as any).user_provided_models === true;
+    const isUserProvided = (touchpointConfig as any).user_provided_models === true;
     if (
       Array.isArray(touchpointConfig.models) &&
       touchpointConfig.models.length === 0 &&
@@ -2756,7 +2754,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       'unknown',
     );
   }
-  if (tp.models.length > 0 && !tp.models.includes(parsed.modelId)) {
+  if (tp.models.length > 0 && !tp.models.includes(parsed.modelId) && !tp.user_provided_models) {
     throw new RerankError(
       `Model "${parsed.modelId}" is not listed for ${recipe.name} reranker. ` +
       `Known: ${tp.models.join(', ')}.`,
@@ -2767,7 +2765,8 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
   const cfg = requireConfig();
   const compat = applyOpenAICompatConfig(recipe, cfg);
-  const url = `${compat.baseURL.replace(/\/$/, '')}/models/rerank`;
+  const rerankPath = tp.path ?? '/models/rerank';
+  const url = `${compat.baseURL.replace(/\/$/, '')}${rerankPath.startsWith('/') ? rerankPath : `/${rerankPath}`}`;
   const auth = applyResolveAuth(recipe, cfg, 'reranker');
   // applyResolveAuth returns { apiKey } for Bearer-style auth (SDK's native
   // path) or { headers } for custom-header providers (Azure). v0.37.6.0:
@@ -2776,7 +2775,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // materializes both shapes so static-default-headers ride on the reranker
   // wire path the same way they ride the SDK paths.
   const authHeaders: Record<string, string> = {
-    ...(auth.apiKey ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
+    ...(auth.apiKey && auth.apiKey !== 'unauthenticated' ? { Authorization: `Bearer ${auth.apiKey}` } : {}),
     ...(auth.headers ?? {}),
   };
   const body = JSON.stringify({
