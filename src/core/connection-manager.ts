@@ -136,6 +136,14 @@ export function deriveDirectUrl(url: string): string | null {
     const hostname = parsed.hostname;
     const isPoolerHost = SUPABASE_POOLER_HOSTNAME_PATTERNS.some(re => re.test(hostname));
     if (port !== '6543' && !isPoolerHost) return null;
+    // Session Pooler (port 6543) maintains full session state and supports DDL
+    // natively — the dual-pool architecture exists to work around Transaction
+    // Pooler's statelessness and 2-minute statement_timeout, neither of which
+    // applies to Session Pooler. Deriving a direct URL would produce
+    // db.<ref>.supabase.co:5432 which is IPv6-only on most networks, causing
+    // ECONNREFUSED for the majority of users on standard IPv4 connections.
+    // Users who need a dedicated DDL pool can set GBRAIN_DIRECT_DATABASE_URL.
+    if (port === '6543') return null;
     // User part on Supabase pooler is typically `postgres.<project-ref>`.
     // Extract <project-ref> for the direct hostname.
     const user = parsed.username || '';
