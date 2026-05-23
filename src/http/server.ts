@@ -1009,8 +1009,8 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
               add_tag: { params: 'slug (required), tag (required)' },
               remove_tag: { params: 'slug (required), tag (required)' },
               add_link: {
-                params: 'from (required), to (required), type or link_type (default: relates_to)',
-                note: 'Bidirectional — inserts from→to AND to→from. type enum: derives_from, supersedes, relates_to, example_of, contradicts, mentions. Returns neighbors: [{slug, type, title}].',
+                params: 'from (required), to (required), type or link_type (default: mentions)',
+                note: 'Bidirectional — inserts from→to AND to→from. type enum: mentions|relates_to|works_at|attended|founded|invested_in|advises|source|derives_from|supersedes|example_of|contradicts. Returns neighbors: [{slug, type, title}].',
               },
               patch_page: {
                 params: 'slug (required), find (required), replace (optional, default ""), sync (0|1)',
@@ -1213,11 +1213,16 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           const from = url.searchParams.get('from');
           const to = url.searchParams.get('to');
           // Accept 'type' (new canonical) or 'link_type' (legacy) param
-          const rawType = url.searchParams.get('type') ?? url.searchParams.get('link_type') ?? 'relates_to';
-          const NEURAL_LINK_TYPES = ['derives_from', 'supersedes', 'relates_to', 'example_of', 'contradicts', 'mentions'];
-          if (!NEURAL_LINK_TYPES.includes(rawType)) {
+          const rawType = url.searchParams.get('type') ?? url.searchParams.get('link_type') ?? 'mentions';
+          const VALID_LINK_TYPES = [
+            // Neural/epistemic types
+            'derives_from', 'supersedes', 'relates_to', 'example_of', 'contradicts',
+            // Graph/entity types (from inferLinkType heuristics)
+            'mentions', 'attended', 'founded', 'works_at', 'invested_in', 'advises', 'source',
+          ];
+          if (!VALID_LINK_TYPES.includes(rawType)) {
             return err('invalid_param',
-              `Invalid link type: "${rawType}". Valid: ${NEURAL_LINK_TYPES.join(', ')}`,
+              `Invalid link type: "${rawType}". Valid: ${VALID_LINK_TYPES.join(', ')}`,
               400,
               { hint: 'Use one of the enum values — e.g. type=relates_to' },
             );
@@ -1909,7 +1914,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
   console.error('  DELETE /page?slug=...&otp=<code>');
   console.error('  GET  /pages/recent?limit=50&otp=<code>');
   console.error('  GET  /write?action=<action>&otp=<code>&...  (put_page|put_page_batch|patch_page|add_tag|remove_tag|add_link|add_timeline_entry|delete_page)');
-  console.error('  GET  /write?action=add_link&from=...&to=...&type=derives_from|supersedes|relates_to|example_of|contradicts  (bidirectional + neighbors)');
+  console.error('  GET  /write?action=add_link&from=...&to=...&type=mentions|relates_to|works_at|derives_from|...  (bidirectional + neighbors)');
   console.error('  GET  /write?action=patch_page&slug=...&find=...&replace=...  (single-occurrence string replace)');
   console.error('  GET  /write?action=put_page_batch&pages=[{"slug":"...","content":"..."},...]  (up to 10 pages)');
   console.error('  GET  /write?action=start_chunked&slug=...&total_chunks=N   (step 1/4 chunked upload for long content)');
