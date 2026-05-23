@@ -5232,31 +5232,27 @@ async function loadRecommendationContext(engine: BrainEngine) {
     embeddingModel = dbModel ?? undefined;
     embeddingDimensions = dbDims ? Number(dbDims) : undefined;
   }
-  // Provider-aware key check. The active embedding provider determines
-  // which key matters. Pre-fix this was OpenAI-only, so a ZE brain with
-  // OPENAI_API_KEY set looked "healthy" even though no key reached ZE.
+  // v0.40.x: recipe-aware provider check, shared with autopilot.ts via
+  // embeddingProviderConfigured(). Local providers (ollama, llama-server —
+  // empty auth_env.required) need no hosted key; hosted providers check
+  // their OWN required key (so a Voyage brain is judged by VOYAGE_API_KEY,
+  // not by whether an OpenAI/ZE key happens to exist — the pre-fix wart).
+  // fileCfg loads synchronously, so the resolveKey closure is sync.
   const { loadConfigFileOnly } = await import('../core/config.ts');
   const fileCfg = loadConfigFileOnly();
-  let hasEmbeddingApiKey = false;
-  if (embeddingModel?.startsWith('openai:')) {
-    hasEmbeddingApiKey = !!(process.env.OPENAI_API_KEY || fileCfg?.openai_api_key);
-  } else if (embeddingModel?.startsWith('zeroentropyai:')) {
-    hasEmbeddingApiKey = !!(process.env.ZEROENTROPY_API_KEY || fileCfg?.zeroentropy_api_key);
-  } else {
-    // Voyage / generic openai-compatible / unknown provider — fall back
-    // to "any key present" as the legacy hint.
-    hasEmbeddingApiKey = !!(
-      process.env.OPENAI_API_KEY ||
-      process.env.ZEROENTROPY_API_KEY ||
-      fileCfg?.openai_api_key ||
-      fileCfg?.zeroentropy_api_key
-    );
-  }
+  const { embeddingProviderConfigured, HOSTED_EMBED_KEY_CONFIG } = await import(
+    '../core/brain-score-recommendations.ts'
+  );
+  const embeddingConfigured = embeddingProviderConfigured(embeddingModel, (envVar) => {
+    const cfgField = HOSTED_EMBED_KEY_CONFIG[envVar];
+    const fromCfg = cfgField ? (fileCfg as Record<string, unknown> | null)?.[cfgField] : undefined;
+    return !!(process.env[envVar] || fromCfg);
+  });
   return {
     repoPath: repoPath ?? undefined,
     embeddingModel,
     embeddingDimensions,
-    hasEmbeddingApiKey,
+    embeddingProviderConfigured: embeddingConfigured,
     hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || fileCfg?.anthropic_api_key),
   };
 }

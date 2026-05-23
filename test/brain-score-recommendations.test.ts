@@ -4,8 +4,53 @@ import {
   classifyChecks,
   maxReachableScore,
   estimateAnthropicCost,
+  embeddingProviderConfigured,
 } from '../src/core/brain-score-recommendations.ts';
 import type { BrainHealth } from '../src/core/types.ts';
+
+/**
+ * v0.40.x — recipe-aware embedding-provider check (shared by doctor +
+ * autopilot). Pure: `resolveKey` is injected, so no env mutation (R1-safe).
+ */
+describe('embeddingProviderConfigured (recipe-aware helper)', () => {
+  const alwaysTrue = () => true;
+  const alwaysFalse = () => false;
+
+  test('empty / undefined model → false', () => {
+    expect(embeddingProviderConfigured(undefined, alwaysTrue)).toBe(false);
+    expect(embeddingProviderConfigured('', alwaysTrue)).toBe(false);
+  });
+
+  test('local providers (empty auth_env.required) → true regardless of keys', () => {
+    // The core fix: ollama / llama-server need no hosted key.
+    expect(embeddingProviderConfigured('ollama:nomic-embed-text', alwaysFalse)).toBe(true);
+    expect(embeddingProviderConfigured('llama-server:my-gguf', alwaysFalse)).toBe(true);
+  });
+
+  test('hosted provider configured iff its required key resolves', () => {
+    expect(embeddingProviderConfigured('openai:text-embedding-3-small', (k) => k === 'OPENAI_API_KEY')).toBe(true);
+    // REGRESSION: hosted without its key still blocks.
+    expect(embeddingProviderConfigured('openai:text-embedding-3-small', alwaysFalse)).toBe(false);
+  });
+
+  test('behavior-change: voyage judged by VOYAGE_API_KEY, not an OpenAI key', () => {
+    // New (correct) behavior — pre-fix doctor judged voyage by whether any
+    // openai/ZE key existed.
+    expect(embeddingProviderConfigured('voyage:voyage-3', (k) => k === 'VOYAGE_API_KEY')).toBe(true);
+    expect(embeddingProviderConfigured('voyage:voyage-3', (k) => k === 'OPENAI_API_KEY')).toBe(false);
+  });
+
+  test('unknown provider (no recipe) → false', () => {
+    expect(embeddingProviderConfigured('made-up-provider:foo', alwaysTrue)).toBe(false);
+  });
+
+  test('malformed model id → false (parseModelId throws, caught)', () => {
+    expect(embeddingProviderConfigured('noColon', alwaysTrue)).toBe(false);
+    expect(embeddingProviderConfigured('::', alwaysTrue)).toBe(false);
+    expect(embeddingProviderConfigured(':model', alwaysTrue)).toBe(false);
+    expect(embeddingProviderConfigured('provider:', alwaysTrue)).toBe(false);
+  });
+});
 
 /**
  * D6 #5 + D13 + D14 pinning tests for brain-score-recommendations.
@@ -38,13 +83,13 @@ function makeHealth(overrides: Partial<BrainHealth> = {}): BrainHealth {
 describe('computeRecommendations', () => {
   test('healthy brain (score 100) produces empty plan', () => {
     const health = makeHealth();
-    const recs = computeRecommendations(health, { repoPath: '/brain', hasEmbeddingApiKey: true });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     expect(recs).toEqual([]);
   });
 
   test('missing embeddings produces embed.stale remediation', () => {
     const health = makeHealth({ missing_embeddings: 1432, brain_score: 65 });
-    const recs = computeRecommendations(health, { repoPath: '/brain', hasEmbeddingApiKey: true });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const ids = recs.map((r) => r.id);
     expect(ids).toContain('embed.stale');
     const embedRec = recs.find((r) => r.id === 'embed.stale')!;
@@ -55,7 +100,7 @@ describe('computeRecommendations', () => {
 
   test('missing embeddings + API key absent: NOT emitted (blocked surfaces separately)', () => {
     const health = makeHealth({ missing_embeddings: 1432 });
-    const recs = computeRecommendations(health, { repoPath: '/brain', hasEmbeddingApiKey: false });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: false });
     expect(recs.find((r) => r.id === 'embed.stale')).toBeUndefined();
   });
 
@@ -65,7 +110,7 @@ describe('computeRecommendations', () => {
       dead_links: 8,
       brain_score: 70,
     });
-    const recs = computeRecommendations(health, { repoPath: '/brain', hasEmbeddingApiKey: true });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const ids = recs.map((r) => r.id);
     expect(ids).toContain('sync.repo');
     expect(ids).toContain('backlinks.fix');
@@ -74,7 +119,7 @@ describe('computeRecommendations', () => {
 
   test('extract.all depends on sync.repo (D14: stable ids)', () => {
     const health = makeHealth({ stale_pages: 10 });
-    const recs = computeRecommendations(health, { repoPath: '/brain', hasEmbeddingApiKey: true });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const extract = recs.find((r) => r.id === 'extract.all');
     expect(extract?.depends_on).toContain('sync.repo');
   });
@@ -84,14 +129,14 @@ describe('computeRecommendations', () => {
       stale_pages: 10,
       missing_embeddings: 100,
     });
-    const recs = computeRecommendations(health, { repoPath: '/brain', hasEmbeddingApiKey: true });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const embed = recs.find((r) => r.id === 'embed.stale');
     expect(embed?.depends_on).toContain('sync.repo');
   });
 
   test('embed.stale has no sync dependency when nothing stale', () => {
     const health = makeHealth({ missing_embeddings: 100 });
-    const recs = computeRecommendations(health, { repoPath: '/brain', hasEmbeddingApiKey: true });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const embed = recs.find((r) => r.id === 'embed.stale');
     expect(embed?.depends_on).toEqual([]);
   });
@@ -101,7 +146,7 @@ describe('computeRecommendations', () => {
       missing_embeddings: 100,  // critical
       stale_pages: 80,          // high
     });
-    const recs = computeRecommendations(health, { repoPath: '/brain', hasEmbeddingApiKey: true });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const critIdx = recs.findIndex((r) => r.severity === 'critical');
     const highIdx = recs.findIndex((r) => r.severity === 'high');
     expect(critIdx).toBeLessThan(highIdx);
@@ -114,7 +159,7 @@ describe('computeRecommendations', () => {
       missing_embeddings: 50,
       dead_links: 3,
     });
-    const ctx = { repoPath: '/brain', hasEmbeddingApiKey: true, sourceId: 'default' };
+    const ctx = { repoPath: '/brain', embeddingProviderConfigured: true, sourceId: 'default' };
     const run1 = computeRecommendations(health, ctx);
     const run2 = computeRecommendations(health, ctx);
     expect(JSON.stringify(run1)).toBe(JSON.stringify(run2));
@@ -124,7 +169,7 @@ describe('computeRecommendations', () => {
     const health = makeHealth({ missing_embeddings: 50 });
     const recs = computeRecommendations(health, {
       repoPath: '/brain',
-      hasEmbeddingApiKey: true,
+      embeddingProviderConfigured: true,
       sourceId: 'default',
     });
     const embed = recs.find((r) => r.id === 'embed.stale')!;
@@ -136,14 +181,14 @@ describe('computeRecommendations', () => {
 
   test('D9: different sources produce different idempotency keys', () => {
     const health = makeHealth({ missing_embeddings: 50 });
-    const a = computeRecommendations(health, { repoPath: '/brain', hasEmbeddingApiKey: true, sourceId: 'A' });
-    const b = computeRecommendations(health, { repoPath: '/brain', hasEmbeddingApiKey: true, sourceId: 'B' });
+    const a = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true, sourceId: 'A' });
+    const b = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true, sourceId: 'B' });
     expect(a[0]!.idempotency_key).not.toBe(b[0]!.idempotency_key);
   });
 
   test('status field is always remediable in the output list (D13)', () => {
     const health = makeHealth({ missing_embeddings: 50 });
-    const recs = computeRecommendations(health, { repoPath: '/brain', hasEmbeddingApiKey: true });
+    const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     for (const r of recs) expect(r.status).toBe('remediable');
   });
 
@@ -151,7 +196,7 @@ describe('computeRecommendations', () => {
     const health = makeHealth({ missing_embeddings: 1000 });
     const recs = computeRecommendations(health, {
       repoPath: '/brain',
-      hasEmbeddingApiKey: true,
+      embeddingProviderConfigured: true,
       embeddingModel: 'openai:text-embedding-3-large',
       embeddingDimensions: 3072,
     });
@@ -163,14 +208,14 @@ describe('computeRecommendations', () => {
 describe('classifyChecks (D13)', () => {
   test('remediable: missing_embeddings with API key', () => {
     const result = classifyChecks([{ name: 'missing_embeddings', status: 'fail' }], {
-      hasEmbeddingApiKey: true,
+      embeddingProviderConfigured: true,
     });
     expect(result[0]).toEqual({ check: 'missing_embeddings', status: 'remediable' });
   });
 
   test('blocked: missing_embeddings without API key', () => {
     const result = classifyChecks([{ name: 'missing_embeddings', status: 'fail' }], {
-      hasEmbeddingApiKey: false,
+      embeddingProviderConfigured: false,
     });
     expect(result[0]?.status).toBe('blocked');
     expect(result[0]?.reason).toContain('embedding');
