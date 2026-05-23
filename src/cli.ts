@@ -40,6 +40,8 @@ const CLI_ONLY_SELF_HELP = new Set([
   'models',
   'cache',
   'brainstorm', 'lsd',
+  // schema has its own rich printHelp() covering 20+ verbs.
+  'schema',
   // v0.39.3.0 WARN-5: capture's detailed HELP constant
   // (src/commands/capture.ts:90+) was unreachable because the dispatcher's
   // generic short-circuit (printCliOnlyHelp at :204-208) fired before

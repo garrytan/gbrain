@@ -1,20 +1,17 @@
-// v0.38 Phase C — `gbrain schema` CLI surface.
+// `gbrain schema` CLI surface.
 //
-// Five essential subcommands ship in v0.38:
-//   gbrain schema active                 — show resolved pack + tier source
-//   gbrain schema list                   — list installed packs
-//   gbrain schema show [<pack>]          — pretty-print manifest
-//   gbrain schema validate [<pack>]      — validate manifest shape
-//   gbrain schema use <pack>             — activate pack (file-plane)
+// The active schema pack drives type inference, link verbs, expert
+// routing, extractable types, enrichment rubrics, and per-source
+// closure for search. See `src/core/schema-pack/load-active.ts` for
+// the boundary helper that all engines + operations consume.
 //
-// Deferred to v0.39+:
-//   init, fork, edit, diff, detect, suggest, review-candidates,
-//   review-orphans, graph, lint, explain
-//
-// The active pack drives type inference, link verbs, expert routing,
-// extractable types, enrichment rubrics, and per-source closure for
-// search. See `src/core/schema-pack/load-active.ts` for the boundary
-// helper that all engines + operations consume.
+// Verbs are grouped by lifecycle:
+//   Read-only inspection: active, list, show, validate, graph, lint,
+//                         stats, explain, usage
+//   Activation:           use, downgrade
+//   Authoring:            init, fork, edit, diff, add-type, remove-type
+//   Discovery + repair:   detect, suggest, review-candidates,
+//                         review-orphans, sync
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -53,6 +50,10 @@ export async function runSchema(args: string[]): Promise<void> {
     case 'review-orphans': return runReviewOrphansCmd(args.slice(1));
     case 'downgrade': return runDowngradeCmd(args.slice(1));
     case 'usage':    return runUsageCmd(args.slice(1));
+    case 'stats':    return runStatsCmd(args.slice(1));
+    case 'sync':     return runSyncCmd(args.slice(1));
+    case 'add-type': return runAddTypeCmd(args.slice(1));
+    case 'remove-type': return runRemoveTypeCmd(args.slice(1));
     case undefined:
     case '--help':
     case '-h':
@@ -67,18 +68,47 @@ export async function runSchema(args: string[]): Promise<void> {
 function printHelp(): void {
   console.log(`gbrain schema — active schema pack management
 
-Subcommands:
+Inspection:
   active                  Show resolved pack + which tier provided it
   list                    List installed packs (bundled + ~/.gbrain/schema-packs/)
   show [<pack>]           Pretty-print a manifest (default: active pack)
-  validate [<pack>]       Validate manifest shape against the v0.38 schema
+  validate [<pack>]       Validate manifest shape against the v1 schema
+  graph                   Show type/primitive graph with link-verb edges
+  lint [<pack>]           Lint a pack for duplicates, dangling refs, etc.
+  stats                   Per-type page counts + typed-coverage from the DB
+  explain <type>          Print resolved settings for a single type
+  usage [--since N(d|w|m)] CLI invocation telemetry summary
+
+Activation:
   use <pack>              Activate pack (writes ~/.gbrain/config.json schema_pack)
+  downgrade [--to <pack>] Restore the previous active pack
 
-v0.38 ships the schema-pack engine + these five inspection/activation
-commands. detect, suggest, init, fork, edit, graph, lint, explain,
-review-candidates, review-orphans, and diff land in v0.39.
+Authoring:
+  init <name>             Scaffold a new pack (extends gbrain-base)
+  fork <src> <new>        Copy a pack to a new editable name
+  edit <name>             Print the on-disk pack file path
+  diff <a> <b>            Compare page_type sets across two packs
+  add-type <name>         Add a page_type to the active pack
+    --primitive <p>       One of entity|media|temporal|annotation|concept (required)
+    --prefix <dir/>       Path prefix bound to the type (required)
+    --extractable         Mark as facts-extraction eligible
+    --expert              Mark as expert/whoknows routable
+    --alias <a>           Alias name; repeatable
+    --pack <name>         Target pack (default: active pack)
+  remove-type <name>      Remove a page_type from the active pack
+    --pack <name>         Target pack (default: active pack)
 
-Resolution chain (D13 7-tier, tier 1 trust-gated):
+Discovery + repair:
+  detect                  Cluster pages by source_path → candidate page_types
+  suggest                 Heuristic refinement on detect output
+  review-candidates       Review disk-derived candidates; promote with --apply
+  review-orphans          List pages with no active-pack type match
+  sync [--apply]          Backfill page.type for rows matching pack prefixes
+                          (dry-run by default)
+
+All new verbs accept --json. Verbs scoped by source accept --source <id>.
+
+Resolution chain (7-tier, tier 1 trust-gated):
   1. Per-call --schema-pack flag (CLI only)
   2. GBRAIN_SCHEMA_PACK env var
   3. Per-source DB config schema_pack.source.<id>
@@ -361,11 +391,18 @@ async function withConnectedEngine<T>(fn: (engine: import('../core/engine.ts').B
   const { createEngine } = await import('../core/engine-factory.ts');
   const cfg = loadConfig() ?? {};
   const engineKind = (cfg as { engine?: string }).engine === 'postgres' ? 'postgres' : 'pglite';
-  const engine = await createEngine({
+  // Build the EngineConfig once and pass it to BOTH createEngine and
+  // engine.connect. The prior version passed `{}` to connect(), which
+  // silently caused PGLite to point at a stub path and Postgres to
+  // read DATABASE_URL out-of-band rather than honoring the resolved
+  // config — the cathedral verbs that issued real SQL (detect, suggest,
+  // review-*) were quietly running against an unconfigured engine.
+  const connectConfig: import('../core/types.ts').EngineConfig = {
     engine: engineKind,
     database_url: (cfg as { database_url?: string }).database_url,
-  });
-  await engine.connect({});
+  };
+  const engine = await createEngine(connectConfig);
+  await engine.connect(connectConfig);
   try {
     return await fn(engine);
   } finally {
@@ -599,24 +636,70 @@ async function runDiffCmd(args: string[]): Promise<void> {
 }
 
 async function runGraphCmd(args: string[]): Promise<void> {
-  const { json } = parseFlags(args);
+  const { json, positional } = parseFlags(args);
   const cfg = loadConfig();
-  const pack = await loadActivePack({ cfg, remote: false });
+  const packName = positional[0];
+  let manifest: SchemaPackManifest;
+  if (packName) {
+    const p = packPathByName(packName);
+    if (!p) {
+      console.error(`Unknown pack: ${packName}`);
+      process.exit(1);
+    }
+    manifest = loadPackFromFile(p);
+  } else {
+    manifest = (await loadActivePack({ cfg, remote: false })).manifest;
+  }
+  const typeNames = new Set(manifest.page_types.map((t) => t.name));
+  // Edge model: a link_type with inference.page_type points FROM that
+  // type via the verb. inference.target_type (when present) points to
+  // the destination; otherwise the destination is '*' (any type).
+  interface Edge { from: string; verb: string; to: string }
+  const edges: Edge[] = [];
+  for (const lt of manifest.link_types) {
+    const inf = lt.inference;
+    if (!inf || !inf.page_type) continue;
+    edges.push({ from: inf.page_type, verb: lt.name, to: inf.target_type ?? '*' });
+  }
+  // Frontmatter links are an additional edge source: page_type --(link_type)--> *
+  for (const fl of manifest.frontmatter_links ?? []) {
+    edges.push({ from: fl.page_type, verb: fl.link_type, to: '*' });
+  }
+  edges.sort((a, b) =>
+    a.from.localeCompare(b.from) || a.verb.localeCompare(b.verb) || a.to.localeCompare(b.to),
+  );
   if (json) {
     console.log(JSON.stringify({
       schema_version: 1,
-      pack: pack.manifest.name,
-      types: pack.manifest.page_types.map((t) => ({ name: t.name, primitive: t.primitive, aliases: t.aliases ?? [] })),
-      tier: 'experimental',
+      pack: manifest.name,
+      types: manifest.page_types.map((t) => ({
+        name: t.name,
+        primitive: t.primitive,
+        aliases: t.aliases ?? [],
+      })),
+      edges,
     }, null, 2));
     return;
   }
-  console.log(`(experimental) ASCII graph for pack \`${pack.manifest.name}\`:`);
+  console.log(`Schema graph for pack \`${manifest.name}\`:`);
   console.log('');
-  for (const t of pack.manifest.page_types) {
+  console.log('Types:');
+  for (const t of manifest.page_types) {
     const aliases = (t.aliases ?? []).length ? `  aliases: ${(t.aliases ?? []).join(', ')}` : '';
-    console.log(`  ${t.name.padEnd(20)} (${t.primitive})${aliases}`);
+    console.log(`  ${t.name.padEnd(24)} (${t.primitive})${aliases}`);
   }
+  console.log('');
+  if (edges.length === 0) {
+    console.log('Edges: (none — pack defines no link_type inferences)');
+    return;
+  }
+  console.log(`Edges (${edges.length}):`);
+  for (const e of edges) {
+    const fromMark = e.from !== '*' && !typeNames.has(e.from) ? '?' : '';
+    const toMark = e.to !== '*' && !typeNames.has(e.to) ? '?' : '';
+    console.log(`  ${fromMark}${e.from} --(${e.verb})--> ${toMark}${e.to}`);
+  }
+  // '?' prefix flags references to types not declared in this pack.
 }
 
 async function runLintCmd(args: string[]): Promise<void> {
@@ -636,11 +719,52 @@ async function runLintCmd(args: string[]): Promise<void> {
   }
   const warnings: string[] = [];
   const seenTypeNames = new Set<string>();
+  const aliasOwner = new Map<string, string>(); // alias → type that declared it
   for (const t of pack.page_types) {
     if (seenTypeNames.has(t.name)) warnings.push(`duplicate type name: ${t.name}`);
     seenTypeNames.add(t.name);
     if (!t.path_prefixes || t.path_prefixes.length === 0) {
       warnings.push(`type \`${t.name}\` has no path_prefixes — unreachable by inferType`);
+    }
+  }
+  // Alias collision: any alias that matches another type's name.
+  // (A type can alias ITSELF as a no-op; we ignore self-aliases.)
+  for (const t of pack.page_types) {
+    for (const a of t.aliases ?? []) {
+      if (a !== t.name && seenTypeNames.has(a)) {
+        warnings.push(`type \`${t.name}\` aliases \`${a}\` which is itself a declared type — query closure may shadow`);
+      }
+      const prev = aliasOwner.get(a);
+      if (prev && prev !== t.name) {
+        warnings.push(`alias \`${a}\` declared by both \`${prev}\` and \`${t.name}\` — closure direction will collide`);
+      } else if (!prev) {
+        aliasOwner.set(a, t.name);
+      }
+    }
+  }
+  // Enrichable types must point at declared page_types.
+  for (const e of pack.enrichable_types ?? []) {
+    if (!seenTypeNames.has(e.type)) {
+      warnings.push(`enrichable_types references unknown type \`${e.type}\``);
+    }
+  }
+  // Link inference referencing nonexistent page_types.
+  for (const lt of pack.link_types) {
+    if (lt.inference?.page_type && !seenTypeNames.has(lt.inference.page_type)) {
+      warnings.push(`link_type \`${lt.name}\` inference.page_type references unknown type \`${lt.inference.page_type}\``);
+    }
+    if (lt.inference?.target_type && lt.inference.target_type !== '*' && !seenTypeNames.has(lt.inference.target_type)) {
+      warnings.push(`link_type \`${lt.name}\` inference.target_type references unknown type \`${lt.inference.target_type}\``);
+    }
+  }
+  // Frontmatter links referencing unknown page_types or link_types.
+  const linkNames = new Set(pack.link_types.map((l) => l.name));
+  for (const fl of pack.frontmatter_links ?? []) {
+    if (!seenTypeNames.has(fl.page_type)) {
+      warnings.push(`frontmatter_links page_type \`${fl.page_type}\` is not a declared type`);
+    }
+    if (!linkNames.has(fl.link_type)) {
+      warnings.push(`frontmatter_links link_type \`${fl.link_type}\` is not a declared link verb`);
     }
   }
   if (json) {
@@ -778,6 +902,183 @@ async function runUsageCmd(args: string[]): Promise<void> {
   }
   console.log('');
   console.log('Experimental verbs are candidates for deprecation in v0.40+ if usage stays low.');
+}
+
+// ------------- Schema cathedral v2: stats / sync / add-type / remove-type
+
+import { runStats } from '../core/schema-pack/stats.ts';
+import { runSync } from '../core/schema-pack/sync.ts';
+import {
+  addTypeToPack,
+  removeTypeFromPack,
+  SchemaPackMutationError,
+} from '../core/schema-pack/mutate.ts';
+import type { PackPrimitive } from '../core/schema-pack/manifest-v1.ts';
+import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
+
+async function runStatsCmd(args: string[]): Promise<void> {
+  const { json, source } = parseFlags(args);
+  const result = await withConnectedEngine((engine) => runStats(engine, { sourceId: source }));
+  if (json) {
+    console.log(JSON.stringify({ schema_version: 1, ...result }, null, 2));
+    return;
+  }
+  console.log(`Schema stats${result.source_id ? ` (source: ${result.source_id})` : ''}:`);
+  console.log(`  Total pages:    ${result.total_pages}`);
+  console.log(`  Typed pages:    ${result.typed_pages}`);
+  console.log(`  Untyped pages:  ${result.untyped_pages}`);
+  const pct = (result.coverage * 100).toFixed(2);
+  console.log(`  Coverage:       ${pct}%`);
+  console.log('');
+  if (result.per_type.length === 0) {
+    console.log('(no pages — brain is empty)');
+    return;
+  }
+  console.log('Per-type:');
+  for (const row of result.per_type) {
+    console.log(`  ${row.type.padEnd(28)} ${String(row.count).padStart(8)}`);
+  }
+}
+
+async function runSyncCmd(args: string[]): Promise<void> {
+  const { json, source, positional } = parseFlags(args);
+  const apply = positional.includes('--apply');
+  const result = await withConnectedEngine((engine) =>
+    runSync(engine, { sourceId: source, apply }),
+  );
+  if (json) {
+    console.log(JSON.stringify({ schema_version: 1, ...result }, null, 2));
+    return;
+  }
+  const verb = result.applied ? 'Updated' : 'Would update';
+  console.log(`schema sync — pack: ${result.pack}${result.source_id ? `, source: ${result.source_id}` : ''}`);
+  console.log(`Mode: ${result.applied ? 'APPLY' : 'DRY-RUN (pass --apply to write)'}`);
+  console.log(`${verb} ${result.total_matched} page rows across ${result.per_type.length} types.`);
+  if (result.per_type.length === 0) {
+    console.log('No untyped pages matched any active-pack path_prefix.');
+    return;
+  }
+  console.log('');
+  for (const row of result.per_type) {
+    console.log(`  ${row.type.padEnd(24)} ${String(row.matched).padStart(8)}  (prefixes: ${row.prefixes.join(', ')})`);
+  }
+}
+
+interface AddTypeExtras {
+  pack: string | undefined;
+  primitive: PackPrimitive | undefined;
+  prefix: string | undefined;
+  extractable: boolean;
+  expert: boolean;
+  aliases: string[];
+}
+
+/**
+ * Layered flag parser for the authoring verbs. Defers --json / --source
+ * / positional capture to parseFlags(), then walks the positional list a
+ * second time to peel off authoring-specific flags. This preserves the
+ * CLI contract (every handler reads parseFlags()) while still supporting
+ * the richer flag surface add-type / remove-type need.
+ */
+function parseAddTypeExtras(positional: string[]): { extras: AddTypeExtras; remaining: string[] } {
+  let pack: string | undefined;
+  let primitive: PackPrimitive | undefined;
+  let prefix: string | undefined;
+  let extractable = false;
+  let expert = false;
+  const aliases: string[] = [];
+  const remaining: string[] = [];
+  for (let i = 0; i < positional.length; i++) {
+    const a = positional[i];
+    if (a === '--pack') { pack = positional[++i]; continue; }
+    if (a.startsWith('--pack=')) { pack = a.slice('--pack='.length); continue; }
+    if (a === '--primitive') { primitive = positional[++i] as PackPrimitive; continue; }
+    if (a.startsWith('--primitive=')) { primitive = a.slice('--primitive='.length) as PackPrimitive; continue; }
+    if (a === '--prefix') { prefix = positional[++i]; continue; }
+    if (a.startsWith('--prefix=')) { prefix = a.slice('--prefix='.length); continue; }
+    if (a === '--extractable') { extractable = true; continue; }
+    if (a === '--expert' || a === '--expert-routing') { expert = true; continue; }
+    if (a === '--alias') { const v = positional[++i]; if (v) aliases.push(v); continue; }
+    if (a.startsWith('--alias=')) { aliases.push(a.slice('--alias='.length)); continue; }
+    remaining.push(a);
+  }
+  return { extras: { pack, primitive, prefix, extractable, expert, aliases }, remaining };
+}
+
+async function resolveTargetPackName(explicit: string | undefined): Promise<string> {
+  if (explicit) return explicit;
+  const cfg = loadConfig();
+  const pack = await loadActivePack({ cfg, remote: false });
+  return pack.manifest.name;
+}
+
+async function runAddTypeCmd(args: string[]): Promise<void> {
+  // Honor the --json / --source contract via parseFlags() first.
+  const flags = parseFlags(args);
+  const { extras, remaining } = parseAddTypeExtras(flags.positional);
+  const name = remaining[0];
+  if (!name) {
+    console.error('Usage: gbrain schema add-type <name> --primitive <p> --prefix <dir/> [--extractable] [--expert] [--alias <a>]...');
+    process.exit(2);
+  }
+  if (!extras.primitive) {
+    console.error(`--primitive is required. One of: ${PACK_PRIMITIVES.join(', ')}`);
+    process.exit(2);
+  }
+  if (!extras.prefix) {
+    console.error('--prefix is required (e.g. --prefix media/photos/)');
+    process.exit(2);
+  }
+  const targetPack = await resolveTargetPackName(extras.pack);
+  try {
+    const result = addTypeToPack(targetPack, {
+      name,
+      primitive: extras.primitive,
+      prefix: extras.prefix,
+      extractable: extras.extractable,
+      expertRouting: extras.expert,
+      aliases: extras.aliases,
+    });
+    if (flags.json) {
+      console.log(JSON.stringify({ schema_version: 1, action: 'add-type', ...result }, null, 2));
+      return;
+    }
+    console.log(`✓ Added type \`${result.type}\` to pack \`${result.pack}\``);
+    console.log(`  File: ${result.path} (${result.format})`);
+    console.log(`  Next: gbrain schema validate ${result.pack}`);
+  } catch (e) {
+    if (e instanceof SchemaPackMutationError) {
+      console.error(`✗ ${e.message}`);
+      process.exit(1);
+    }
+    throw e;
+  }
+}
+
+async function runRemoveTypeCmd(args: string[]): Promise<void> {
+  const flags = parseFlags(args);
+  const { extras, remaining } = parseAddTypeExtras(flags.positional);
+  const name = remaining[0];
+  if (!name) {
+    console.error('Usage: gbrain schema remove-type <name> [--pack <name>]');
+    process.exit(2);
+  }
+  const targetPack = await resolveTargetPackName(extras.pack);
+  try {
+    const result = removeTypeFromPack(targetPack, { name });
+    if (flags.json) {
+      console.log(JSON.stringify({ schema_version: 1, action: 'remove-type', ...result }, null, 2));
+      return;
+    }
+    console.log(`✓ Removed type \`${result.type}\` from pack \`${result.pack}\``);
+    console.log(`  File: ${result.path} (${result.format})`);
+  } catch (e) {
+    if (e instanceof SchemaPackMutationError) {
+      console.error(`✗ ${e.message}`);
+      process.exit(1);
+    }
+    throw e;
+  }
 }
 
 function parseSinceDays(s: string): number {

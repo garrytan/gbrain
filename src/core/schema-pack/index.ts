@@ -112,3 +112,30 @@ export {
   enrichableTypesFromPack,
   rubricNameForType,
 } from './enrichable.ts';
+
+export {
+  type AddTypeOpts,
+  type RemoveTypeOpts,
+  type MutateResult,
+  type PackFileFormat,
+  SchemaPackMutationError,
+  addTypeToPack,
+  removeTypeFromPack,
+  locateMutablePackFile,
+  readPackForMutation,
+  writePackManifest,
+} from './mutate.ts';
+
+export {
+  type StatsOpts,
+  type StatsResult,
+  type PerTypeCount,
+  runStats,
+} from './stats.ts';
+
+export {
+  type SyncOpts,
+  type SyncResult,
+  type SyncPerType,
+  runSync,
+} from './sync.ts';

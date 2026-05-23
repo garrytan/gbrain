@@ -22,6 +22,8 @@ const NEW_VERBS = [
   'detect', 'suggest', 'review-candidates',
   'init', 'fork', 'edit', 'diff', 'graph', 'lint', 'explain', 'review-orphans',
   'downgrade', 'usage',
+  // Schema cathedral v2: pack mutation + data-plane verbs.
+  'stats', 'sync', 'add-type', 'remove-type',
 ];
 
 describe('v0.39 T6 — schema CLI contract', () => {
