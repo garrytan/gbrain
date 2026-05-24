@@ -38,6 +38,17 @@ import { isUndefinedColumnError } from './utils.ts';
 
 let _trackRetrievalCache: { ts: number; enabled: boolean } | null = null;
 const TRACK_RETRIEVAL_CACHE_TTL_MS = 30_000;
+const pendingRetrievalWrites = new Set<Promise<unknown>>();
+
+export async function awaitPendingLastRetrievedWrites(): Promise<void> {
+  if (pendingRetrievalWrites.size === 0) return;
+  await Promise.allSettled([...pendingRetrievalWrites]);
+}
+
+function trackRetrievalWrite(promise: Promise<unknown>): void {
+  pendingRetrievalWrites.add(promise);
+  promise.finally(() => pendingRetrievalWrites.delete(promise)).catch(() => { /* swallow */ });
+}
 
 /**
  * Resolve `search.track_retrieval` config with a 30s in-process cache so
@@ -78,7 +89,7 @@ export function _resetTrackRetrievalCacheForTests(): void {
 export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): void {
   if (pageIds.length === 0) return;
   // Fire-and-forget on purpose. We deliberately do NOT return the promise.
-  void (async () => {
+  trackRetrievalWrite((async () => {
     try {
       const enabled = await isTrackingEnabled(engine);
       if (!enabled) return;
@@ -101,5 +112,5 @@ export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): voi
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[last-retrieved] write-back failed (best-effort): ${msg}`);
     }
-  })();
+  })());
 }

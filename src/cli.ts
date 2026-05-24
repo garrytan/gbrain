@@ -61,6 +61,7 @@ const CLI_ONLY_SELF_HELP = new Set([
   // generic short-circuit's one-line stub.
   'schema',
 ]);
+const SEARCH_NAMESPACE_SUBCOMMANDS = new Set(['modes', 'stats', 'tune']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -93,6 +94,14 @@ async function main() {
   // DX alias: `ask` is a natural-language alias for `query`
   if (command === 'ask') {
     command = 'query';
+  }
+
+  // `gbrain search` is both a legacy operation (`gbrain search <query>`) and
+  // a newer command namespace (`gbrain search modes/stats/tune`). Route only
+  // the known namespace verbs here; all other invocations stay on the op path.
+  if (command === 'search' && (SEARCH_NAMESPACE_SUBCOMMANDS.has(subArgs[0] ?? '') || hasHelpFlag(subArgs))) {
+    await handleCliOnly(command, subArgs);
+    return;
   }
 
   // Per-command --help
@@ -190,6 +199,10 @@ async function main() {
     const result = JSON.parse(JSON.stringify(rawResult));
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
+    if (op.name === 'search' || op.name === 'query' || op.name === 'get_page') {
+      const { awaitPendingLastRetrievedWrites } = await import('./core/last-retrieved.ts');
+      await awaitPendingLastRetrievedWrites();
+    }
     if (op.name === 'query') {
       const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
       await awaitPendingSearchCacheWrites();
@@ -1099,6 +1112,11 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'capture' && (args.includes('--help') || args.includes('-h'))) {
     const { runCapture } = await import('./commands/capture.ts');
     await runCapture(null, args);
+    return;
+  }
+  if (command === 'search' && (args.includes('--help') || args.includes('-h'))) {
+    const { runSearch } = await import('./commands/search.ts');
+    await runSearch(null as any, args);
     return;
   }
 

@@ -4,6 +4,10 @@
  *
  *  - #1125 query drain cache writes — assert cli.ts awaits the drain after
  *    the query op completes.
+ *  - search CLI exit — assert cli.ts drains last_retrieved_at writes before
+ *    disconnecting after search/query/get_page.
+ *  - search namespace dispatch — assert `gbrain search modes/stats/tune`
+ *    routes before the legacy `search <query>` operation.
  *  - #1090 admin embed — assert the two-tier resolution (cwd path + embedded
  *    manifest fallback) is in serve-http.ts and consumes ADMIN_ASSETS.
  *  - #1077 admin register-client PKCE — assert the admin endpoint honors
@@ -33,6 +37,30 @@ describe('v0.36.1.x #1125 — query drain cache writes before CLI exit', () => {
     expect(src).toMatch(/export async function awaitPendingSearchCacheWrites/);
     expect(src).toMatch(/pendingCacheWrites\.add\(promise\)/);
     expect(src).toMatch(/trackCacheWrite\(/);
+  });
+});
+
+describe('search CLI one-shot cleanup', () => {
+  test('cli.ts drains last_retrieved_at write-backs before disconnecting', () => {
+    const src = readFileSync('src/cli.ts', 'utf8');
+    expect(src).toMatch(/op\.name\s*===\s*'search'[\s\S]{0,220}awaitPendingLastRetrievedWrites/);
+    expect(src).toMatch(/await\s+awaitPendingLastRetrievedWrites\(\)/);
+  });
+
+  test('last-retrieved.ts tracks pending write-back promises', () => {
+    const src = readFileSync('src/core/last-retrieved.ts', 'utf8');
+    expect(src).toContain('pendingRetrievalWrites');
+    expect(src).toMatch(/export async function awaitPendingLastRetrievedWrites/);
+    expect(src).toMatch(/trackRetrievalWrite\(/);
+  });
+});
+
+describe('search namespace dispatch', () => {
+  test('cli.ts routes search modes/stats/tune before the legacy search op', () => {
+    const src = readFileSync('src/cli.ts', 'utf8');
+    expect(src).toMatch(/SEARCH_NAMESPACE_SUBCOMMANDS\s*=\s*new Set\(\[['"]modes['"], ['"]stats['"], ['"]tune['"]\]\)/);
+    expect(src).toMatch(/command\s*===\s*'search'[\s\S]{0,180}SEARCH_NAMESPACE_SUBCOMMANDS\.has/);
+    expect(src).toMatch(/await handleCliOnly\(command,\s*subArgs\)/);
   });
 });
 
