@@ -20,6 +20,7 @@ import { runCapture, __testing } from '../../src/commands/capture.ts';
 let engine: PGLiteEngine;
 let tmpRoot: string;
 let brainDir: string;
+const originalCwd = process.cwd();
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -28,10 +29,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  process.chdir(originalCwd);
   await engine.disconnect();
 });
 
 beforeEach(async () => {
+  process.chdir(originalCwd);
   await resetPgliteState(engine);
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-capture-'));
   brainDir = path.join(tmpRoot, 'brain');
@@ -204,6 +207,109 @@ describe('capture — local install integration', () => {
     const page = await engine.getPage('inbox/from-file');
     expect(page).not.toBeNull();
     expect(page?.compiled_truth).toContain('body content here');
+  });
+
+  test('plain capture ignores cwd .gbrain-source and writes to default inbox', async () => {
+    const repoDir = path.join(tmpRoot, 'repo');
+    const repoMirror = path.join(brainDir, '.sources', 'repo-src');
+    fs.mkdirSync(repoDir, { recursive: true });
+    fs.mkdirSync(repoMirror, { recursive: true });
+    fs.writeFileSync(path.join(repoDir, '.gbrain-source'), 'repo-src\n');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ('repo-src', 'repo-src', $1)
+       ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+      [repoMirror],
+    );
+
+    const logCaptured: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logCaptured.push(args.map(String).join(' '));
+    try {
+      process.chdir(repoDir);
+      await runCapture(engine, ['--slug', 'inbox/plain-default', '--quiet', 'plain capture']);
+    } finally {
+      console.log = origLog;
+      process.chdir(originalCwd);
+    }
+
+    expect(logCaptured[0]).toBe('inbox/plain-default');
+    const defaultPage = await engine.getPage('inbox/plain-default', { sourceId: 'default' });
+    const sourcePage = await engine.getPage('inbox/plain-default', { sourceId: 'repo-src' });
+    expect(defaultPage).not.toBeNull();
+    expect(sourcePage).toBeNull();
+    expect(fs.existsSync(path.join(brainDir, 'inbox/plain-default.md'))).toBe(true);
+    expect(fs.existsSync(path.join(repoMirror, 'inbox/plain-default.md'))).toBe(false);
+  });
+
+  test('--source still routes capture to the explicit source', async () => {
+    const explicitMirror = path.join(brainDir, '.sources', 'explicit-src');
+    fs.mkdirSync(explicitMirror, { recursive: true });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ('explicit-src', 'explicit-src', $1)
+       ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+      [explicitMirror],
+    );
+
+    const logCaptured: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logCaptured.push(args.map(String).join(' '));
+    try {
+      await runCapture(engine, [
+        '--source',
+        'explicit-src',
+        '--slug',
+        'inbox/explicit-source',
+        '--quiet',
+        'explicit capture',
+      ]);
+    } finally {
+      console.log = origLog;
+    }
+
+    expect(logCaptured[0]).toBe('inbox/explicit-source');
+    const defaultPage = await engine.getPage('inbox/explicit-source', { sourceId: 'default' });
+    const sourcePage = await engine.getPage('inbox/explicit-source', { sourceId: 'explicit-src' });
+    expect(defaultPage).toBeNull();
+    expect(sourcePage).not.toBeNull();
+    expect(fs.existsSync(path.join(explicitMirror, 'inbox/explicit-source.md'))).toBe(true);
+  });
+
+  test('GBRAIN_SOURCE still routes capture to the operator-selected source', async () => {
+    const envMirror = path.join(brainDir, '.sources', 'env-src');
+    fs.mkdirSync(envMirror, { recursive: true });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ('env-src', 'env-src', $1)
+       ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+      [envMirror],
+    );
+
+    const logCaptured: string[] = [];
+    const origLog = console.log;
+    const previousEnv = process.env.GBRAIN_SOURCE;
+    console.log = (...args: unknown[]) => logCaptured.push(args.map(String).join(' '));
+    try {
+      process.env.GBRAIN_SOURCE = 'env-src';
+      await runCapture(engine, [
+        '--slug',
+        'inbox/env-source',
+        '--quiet',
+        'env capture',
+      ]);
+    } finally {
+      console.log = origLog;
+      if (previousEnv === undefined) {
+        delete process.env.GBRAIN_SOURCE;
+      } else {
+        process.env.GBRAIN_SOURCE = previousEnv;
+      }
+    }
+
+    expect(logCaptured[0]).toBe('inbox/env-source');
+    const defaultPage = await engine.getPage('inbox/env-source', { sourceId: 'default' });
+    const sourcePage = await engine.getPage('inbox/env-source', { sourceId: 'env-src' });
+    expect(defaultPage).toBeNull();
+    expect(sourcePage).not.toBeNull();
+    expect(fs.existsSync(path.join(envMirror, 'inbox/env-source.md'))).toBe(true);
   });
 
   test('--json emits structured output', async () => {

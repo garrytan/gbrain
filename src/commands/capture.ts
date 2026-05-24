@@ -103,11 +103,11 @@ Options:
   --slug SLUG          Override the default inbox/YYYY-MM-DD-<hash6> slug
   --type TYPE          Override the page type (default: note)
   --source ID          Multi-source brains: write under a non-default source.
-                       Resolution: --source flag > GBRAIN_SOURCE env >
-                       .gbrain-source dotfile (walk-up) > local_path >
-                       brain_default > 'default'. NOT supported on
-                       thin-client installs (server-side OAuth client
-                       registration scopes the source).
+                       Capture is inbox-first: without --source or
+                       GBRAIN_SOURCE it writes to 'default' and intentionally
+                       ignores .gbrain-source, local_path, and brain_default.
+                       NOT supported on thin-client installs (server-side
+                       OAuth client registration scopes the source).
   --quiet, -q          Print just the slug on stdout (for shell pipelines)
   --json               JSON output for agents
   --help, -h           Show this help
@@ -414,10 +414,11 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
     process.exit(1);
   }
 
-  // CV15: route source resolution through the canonical 6-tier chain
-  // (flag → env → dotfile → local_path → brain_default → seed_default).
-  // resolveSourceWithTier handles the assertSourceExists check and throws
-  // a friendly error BEFORE put_page is called if the source is missing.
+  // Capture is human inbox-first. It honors explicit operator intent via
+  // --source or GBRAIN_SOURCE, but intentionally ignores cwd-derived source
+  // hints (.gbrain-source/local_path) and brain_default. Those are correct for
+  // repo/source operations; they are surprising for "save this thought".
+  // resolveSourceWithTier is still used for explicit/env validation.
   // Only run on the LOCAL path — thin-client has no engine handle to
   // probe the sources table; CV7 above already rejected explicit --source
   // on thin-client. Implicit source resolution on thin-client uses
@@ -425,8 +426,10 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
   let resolvedSourceId = 'default';
   if (!isThinClient(cfg) && engine) {
     try {
-      const { source_id } = await resolveSourceWithTier(engine, parsed.source ?? null);
-      resolvedSourceId = source_id;
+      if (parsed.source || process.env.GBRAIN_SOURCE) {
+        const { source_id } = await resolveSourceWithTier(engine, parsed.source ?? null);
+        resolvedSourceId = source_id;
+      }
     } catch (e) {
       // assertSourceExists throws "Source 'X' not found. Available sources: ..."
       console.error(`gbrain capture: ${e instanceof Error ? e.message : String(e)}`);
@@ -522,10 +525,9 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
     },
     dryRun: false,
     remote: false,
-    // v0.39.3.0 CV15: thread the resolved source from the canonical 6-tier
-    // chain (was `parsed.source ?? 'default'` pre-fix, which silently
-    // ignored env / dotfile / local_path / brain_default tiers — divergent
-    // from every other CLI op's behavior).
+    // Capture-specific source policy: explicit --source and GBRAIN_SOURCE are
+    // honored; cwd-derived source hints are ignored so plain capture remains a
+    // general inbox command.
     sourceId: resolvedSourceId,
   };
   try {
