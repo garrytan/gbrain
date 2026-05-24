@@ -894,8 +894,7 @@ export class PostgresEngine implements BrainEngine {
   async getHealth(): Promise<BrainHealth> {
     const sql = this.sql;
     // dead_links omitted (always 0 under ON DELETE CASCADE on link FKs).
-    // orphan_pages now matches PGLite definition: no inbound links (regardless of outbound).
-    // stale_pages aligned to PGLite definition (page updated_at < latest timeline entry).
+    // stale_pages tracks chunks whose embeddings are missing or older than the page content.
     const [h] = await sql`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
@@ -905,7 +904,11 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
-         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
+         WHERE EXISTS (
+           SELECT 1 FROM content_chunks cc
+           WHERE cc.page_id = p.id
+             AND (cc.embedded_at IS NULL OR cc.embedded_at < p.updated_at)
+         )
         ) as stale_pages,
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)

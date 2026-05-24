@@ -18,7 +18,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'apply-migrations', 'skillpack-check', 'resolvers', 'integrity', 'repair-jsonb', 'orphans']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'optimize', 'features', 'autopilot', 'graph-query', 'jobs', 'apply-migrations', 'skillpack-check', 'resolvers', 'integrity', 'repair-jsonb', 'orphans']);
 
 async function main() {
   const args = process.argv.slice(2);
@@ -54,6 +54,7 @@ async function main() {
       printOpHelp(op);
       return;
     }
+    if (printCliOnlyHelp(command)) return;
   }
 
   // CLI-only commands
@@ -412,6 +413,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runExtract(engine, args);
         break;
       }
+      case 'optimize': {
+        const { runOptimize } = await import('./commands/optimize.ts');
+        await runOptimize(engine, args);
+        break;
+      }
       case 'features': {
         const { runFeatures } = await import('./commands/features.ts');
         await runFeatures(engine, args);
@@ -467,6 +473,27 @@ function printOpHelp(op: Operation) {
   }
 }
 
+function printCliOnlyHelp(command: string): boolean {
+  switch (command) {
+    case 'optimize':
+      console.log(`Usage: gbrain optimize [--dry-run] [--json] [--type T] [--max-words N] [--overlap-words N] [--max-chars N] [--no-extract]
+
+Rechunk stale or oversized pages and enrich DB links/timeline.
+
+Options:
+  --dry-run                    Report work without writing changes
+  --json                       Print machine-readable JSON
+  --type T                     Only process pages of type T
+  --max-words N                Target max words per recursive chunk
+  --overlap-words N            Word overlap for recursive chunks
+  --max-chars N                Hard character budget per final chunk
+  --no-extract                 Skip link and timeline extraction`);
+      return true;
+    default:
+      return false;
+  }
+}
+
 function printHelp() {
   // Gather shared operations grouped by category
   const cliNames = Array.from(cliOps.entries())
@@ -513,6 +540,7 @@ FILES
 
 EMBEDDINGS
   embed [<slug>|--all|--stale]       Generate/refresh embeddings
+  optimize [--dry-run] [--json]      Rechunk stale/oversized pages + enrich graph/timeline
 
 LINKS
   link <from> <to> [--type T]        Create typed link
