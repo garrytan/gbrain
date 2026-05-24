@@ -450,12 +450,25 @@ export class MinionQueue {
     });
   }
 
-  /** Re-queue a failed or dead job for retry. */
+  /**
+   * Re-queue a failed or dead job for retry.
+   *
+   * Resets `started_at` and the attempts counters so the user-initiated retry
+   * gets a fresh wall-clock budget and a fresh max_attempts round. Without
+   * resetting `started_at`, the DB-side wall-clock detector
+   * (handleWallClockTimeouts) compares `now() - started_at` against
+   * `timeout_ms * 2` and immediately dead-letters any retry where more time
+   * has elapsed since the original start than the timeout window — which is
+   * always true for a job dead long enough that an operator notices and
+   * retries it. Preserving `stacktrace` retains debug history.
+   */
   async retryJob(id: number): Promise<MinionJob | null> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
       `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
         lock_token = NULL, lock_until = NULL, delay_until = NULL,
-        finished_at = NULL, updated_at = now()
+        finished_at = NULL, started_at = NULL,
+        attempts_made = 0, attempts_started = 0,
+        updated_at = now()
        WHERE id = $1 AND status IN ('failed', 'dead')
        RETURNING *`,
       [id]

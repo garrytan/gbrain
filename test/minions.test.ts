@@ -640,6 +640,26 @@ describe('MinionQueue: Cancel & Retry', () => {
     expect(retried!.status).toBe('waiting');
     expect(retried!.error_text).toBeNull();
   });
+
+  test('retry resets started_at and attempts counters', async () => {
+    // Regression: pre-fix, retryJob left started_at populated from the
+    // original run. handleWallClockTimeouts then immediately dead-lettered
+    // the retry on the next worker tick because elapsed > timeout_ms * 2.
+    const job = await queue.add('sync', {}, { max_attempts: 1 });
+    await queue.claim('tok1', 30000, 'default', ['sync']);
+    await queue.failJob(job.id, 'tok1', 'error', 'dead');
+
+    const beforeRetry = await queue.getJob(job.id);
+    expect(beforeRetry!.started_at).not.toBeNull();
+    expect(beforeRetry!.attempts_made).toBe(1);
+    expect(beforeRetry!.attempts_started).toBe(1);
+
+    const retried = await queue.retryJob(job.id);
+    expect(retried!.status).toBe('waiting');
+    expect(retried!.started_at).toBeNull();
+    expect(retried!.attempts_made).toBe(0);
+    expect(retried!.attempts_started).toBe(0);
+  });
 });
 
 // --- Pause / Resume (5 tests) ---
