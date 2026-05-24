@@ -1,47 +1,41 @@
-# Local Patches — Triage & Upstream Plan
+# Local Patches — Triage
 
-Living document. Every patch carried on top of `origin/master` belongs here, with
-a triage decision: **PR upstream**, **keep local (extension point)**, or **delete**.
+Living document. Every patch carried on top of `upstream/master` belongs here, with
+a triage decision: **carry on our master**, **move to extension point**, or **delete**.
 
-Audit cadence: every upgrade. If a patch sits here for >30 days without a PR
-filed or a justification, delete it or land it.
+`anoopkansupada/gbrain` is our canonical repo. `upstream` (garrytan/gbrain) is
+read-only — we pull, never push. The default action for any local patch is to
+carry it on our master indefinitely; upstreaming is opt-in only when Anoop says so.
+
+Audit cadence: every upgrade. Re-evaluate whether each patch is still load-bearing.
 
 Last audit: 2026-05-23 (post-v0.40.6 upgrade)
 
 ---
 
-## Patches that touch `src/` (conflict-prone — these are the ones that cost time)
+## Patches that touch `src/` (conflict-prone — minimize these)
 
 ### 1. `dc76d3c7` — `--unsafe-bypass-lock` flag on `gbrain dream`
 - **Files:** `src/commands/dream.ts` (+7), `src/core/cycle.ts` (+9)
-- **What it does:** Adds CLI flag that skips the cycle advisory-lock gate, so manual `gbrain dream --phase X` can run while the autopilot daemon holds the lock. Loud stderr warning. Cron MUST NOT use.
+- **What it does:** CLI flag that skips the cycle advisory-lock gate, so manual `gbrain dream --phase X` can run while the autopilot daemon holds the lock. Loud stderr warning. Cron MUST NOT use.
 - **Why it exists:** PC2 manual backfill via `~/.gbrain/backfill-synthesize.sh` blocked by `cycle_already_running`.
-- **Triage: PR UPSTREAM.** Useful for any operator doing manual backfill against a continuously-running brain. Upstream already has `--unsafe-bypass-dream-guard` (precedent: same naming convention, same caveats).
-- **PR action:** open against `garrytan/gbrain` titled `feat(dream): --unsafe-bypass-lock flag for manual backfill while autopilot runs`. Body: cherry-pick `dc76d3c7` summary.
-- **Owner:** Anoop
-- **Status:** not yet filed
+- **Triage: CARRY.** Operationally needed for manual backfill against a continuously-running autopilot. Pattern matches upstream's existing `--unsafe-bypass-dream-guard`.
+- **Maintenance:** verify the lock-gate hook hasn't moved on each upgrade. Currently at `src/core/cycle.ts:1140` (`needsLock` calculation).
 
 ### 2. `ea7e039f` — Bootstrap forward-reference for v51/v60/v61 columns
-- **Files:** `src/commands/migrations/v0_32_2.ts` (3 lines) — the larger commit also reworked the postgres-engine bootstrap probe list, but that survived in upstream form.
-- **What it does:** `notability` column was removed from `facts` table in a later wave; the v0_32_2 phase B `SELECT` still referenced it. Patches to `NULL::text AS notability` so brains migrating from <v51 don't crash.
+- **Files:** `src/commands/migrations/v0_32_2.ts` (3 lines)
+- **What it does:** `notability` column was removed from `facts` in a later wave; the v0_32_2 phase B `SELECT` still referenced it. Patches to `NULL::text AS notability` so brains migrating from <v51 don't crash.
 - **Why it exists:** schema v49→v66 forward migration on Supabase brains.
-- **Triage: PR UPSTREAM.** Surgical, low-risk, addresses a real forward-compat bug for older brains. Likely already moot for fresh installs (v0_32_2 is a long way back), but cheap insurance.
-- **PR action:** title `fix(migrations/v0_32_2): tolerate dropped notability column in phase B SELECT`. Surface the IPv6 / `GBRAIN_DISABLE_DIRECT_POOL=1` note in the issue body so future operators find it.
-- **Owner:** Anoop
-- **Status:** not yet filed
+- **Triage: CARRY (until next major schema rev makes v0_32_2 unreachable).** Surgical; bears no real maintenance cost.
 
-### 3. `2a7c51c0` — `repair-type-field.ts` + `types-enum.ts` (additive)
-- **Files:** `src/commands/repair-type-field.ts` (+199, NEW), `src/core/types-enum.ts` (+45, NEW).
-- **What it does:** maintenance CLI to fix pages with bad `type:` frontmatter values, backed by a canonical enum of allowed types.
-- **Why it exists:** our brain accumulated junk type values; needed one-shot repair.
-- **Triage: MOVE TO `scripts/`.** This is a maintenance tool, not a feature. Other gbrain operators won't hit our specific type-value drift. Keeping it under `src/commands/` means upstream renames will conflict every upgrade.
-- **Action:** `git mv src/commands/repair-type-field.ts scripts/repair-type-field.ts`; same for `types-enum.ts` if it's only referenced by repair-type-field. Verify nothing else imports it. Update the launchd plist (`com.gbrain.repair-type-field-canary`) if it references the old path.
-- **Owner:** Anoop
-- **Status:** not yet moved
+### 3. `2a7c51c0` — `repair-type-field.ts` + `types-enum.ts`
+- **Files:** `src/commands/repair-type-field.ts` (+199), `src/core/types-enum.ts` (+45)
+- **Status:** another agent (pc1) is currently mid-flight moving these to `scripts/` per the original triage suggestion. See `pc1/move-repair-type-field-to-scripts` branch.
+- **Triage: MOVE TO `scripts/`** (in progress on pc1 branch). After their PR merges, this entry can be deleted.
 
 ---
 
-## Patches in extension points (never conflict — leave alone)
+## Patches in extension points (never conflict)
 
 These touch only `skills/`, `recipes/`, `evals/`, `docs/`, `scripts/`. Upstream additions in these dirs are additive too, so they rebase cleanly. No action required.
 
@@ -60,28 +54,36 @@ These touch only `skills/`, `recipes/`, `evals/`, `docs/`, `scripts/`. Upstream 
 
 ---
 
-## Patches dropped during 2026-05-23 upgrade (lessons)
+## Detached work preserved on the fork
 
-These were on the old `safety/pre-upgrade-2026-05-16` branch as "carry-along" patches. The v0.40 rebase showed upstream had either superseded them or the patch was no longer needed:
+- `orphan-fix/infer-links-arrays` (a31157ce), `orphan-fix/infer-links-phase` (2e8e25b6) — `infer_links` cycle phase that addresses the 24k orphan crisis. Not on master because the cherry-pick conflicted with later upstream phase additions. Rebase one of these branches on current master and open a PR to our master when ready to ship.
+
+---
+
+## Patches dropped during 2026-05-23 upgrade
+
+Carried for months as deferred work but obsoleted by upstream evolution. Documented as lessons:
 
 - `disk_pressure` doctor check w/ backfill-pause at <5Gi free — upstream's `remediation` system supersedes the simple `actions[]` pattern.
 - `actions[]` field on `Check` type — upstream has structured `RemediationStep[]` (richer).
-- `markdown.ts` quote-strip fix — upstream rewrote frontmatter handling; verify if the YAML re-quote bug recurs before re-patching.
+- `markdown.ts` quote-strip fix — upstream rewrote frontmatter handling; verify if the YAML re-quote bug recurs.
 - The original `--no-recurse-submodules` patch on `git-remote.ts` — upstream now splits global vs subcommand flag positions correctly.
-- The original `safety-snapshot-of-uncommitted` commit pattern — useless after rebase; just commit work as you go.
+- The original `safety-snapshot-of-uncommitted` commit pattern — useless after rebase.
 
-**Lesson:** the conflict cost of every src/ patch compounds. Of the 8 unpushed local commits coming into the upgrade, **3 were already obsolete** because upstream solved the same problem differently. Audit before assuming a patch needs to be re-applied.
+**Lesson:** the conflict cost of every `src/` patch compounds. Of the 8 unpushed local commits coming into the upgrade, **3 were already obsolete** because upstream solved the same problem differently. Audit before assuming a patch needs to be re-applied.
 
 ---
 
 ## Rules for future patches
 
-1. **Default to extension points.** Before touching `src/`, ask: can this be a skill (`skills/`), a recipe (`recipes/`), an integration (`~/.gbrain/integrations/`), or a one-shot script (`scripts/`)? 90% of the time, yes.
+1. **Default to extension points.** Before touching `src/`, ask: can this be a skill (`skills/`), a recipe (`recipes/`), an integration (`~/.gbrain/integrations/`), or a one-shot script (`scripts/`)? Yes 90% of the time.
 
-2. **If you must touch `src/`, file the upstream PR within 7 days.** Carrying core patches without upstreaming them is interest-bearing debt. By the next upgrade, half are obsolete and you paid the conflict cost for nothing.
+2. **`src/` patches need a load-bearing justification.** If it's not operationally critical, don't carry it. The conflict tax on the next upgrade is real.
 
-3. **Don't commit scratch.** `*.mjs`, `*.bak`, `analyze_*.ts` debugging files in the repo root blocked the v0.40 rebase. `.gitignore` now catches them — keep it that way.
+3. **Don't commit scratch.** `*.mjs`, `*.bak`, `analyze_*.ts` debugging files blocked the v0.40 rebase. `.gitignore` catches them now — keep it that way.
 
-4. **One commit, one logical change.** "Safety snapshot of uncommitted patches" commits add nothing and become empty after rebase. If work isn't ready to commit cleanly, branch + stash instead.
+4. **No "safety snapshot" commits.** They add nothing and become empty after rebase. If work isn't ready to commit cleanly, branch + stash.
 
-5. **`scripts/upgrade.sh` is the canonical upgrade.** Don't hand-roll. If the script breaks, fix the script, not the workaround.
+5. **`scripts/upgrade.sh` is the canonical upgrade.** Don't hand-roll. If it breaks, fix the script.
+
+6. **Our fork is canonical.** Push to `origin` (= anoopkansupada/gbrain). `upstream` (garrytan) is read-only — we pull, never push. Don't propose upstream PRs unless Anoop asks.
