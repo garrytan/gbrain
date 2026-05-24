@@ -110,6 +110,22 @@ function warnUnknownModelOnce(model: string): void {
   );
 }
 
+// ── Surrogate-safe string slicing ─────────────────────────────────────
+
+/**
+ * Slice a string at `index` without splitting a UTF-16 surrogate pair.
+ * If `index` lands between a high and low surrogate, back up by one so
+ * the pair stays intact in the left half.
+ */
+function safeSliceEnd(index: number, str: string): number {
+  if (index <= 0 || index >= str.length) return index;
+  const code = str.charCodeAt(index - 1);
+  // If the char just before the cut is a high surrogate (D800–DBFF),
+  // the cut would orphan it. Back up one.
+  if (code >= 0xD800 && code <= 0xDBFF) return index - 1;
+  return index;
+}
+
 // ── Hash-deterministic transcript chunker (D9) ────────────────────────
 
 /**
@@ -178,8 +194,9 @@ function findBoundary(text: string, maxChars: number, searchStart: number): numb
   // Tier 3: any newline.
   const nlIdx = window.lastIndexOf('\n');
   if (nlIdx >= 0) return searchStart + nlIdx;
-  // No boundary fits; hard-split at maxChars (deterministic).
-  return maxChars;
+  // No boundary fits; hard-split at maxChars (deterministic),
+  // but avoid splitting a UTF-16 surrogate pair.
+  return safeSliceEnd(maxChars, text);
 }
 
 /**
@@ -659,7 +676,7 @@ export async function judgeSignificance(
   // doesn't need the full body; the opening + closing sections are usually
   // representative of significance.
   const trimmed = t.content.length > 8000
-    ? t.content.slice(0, 4000) + '\n[...truncated...]\n' + t.content.slice(-4000)
+    ? t.content.slice(0, safeSliceEnd(4000, t.content)) + '\n[...truncated...]\n' + t.content.slice(safeSliceEnd(t.content.length - 4000, t.content))
     : t.content;
 
   const sys = `You judge whether a conversation transcript is worth synthesizing into a personal knowledge brain.
