@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS sources (
   archived            BOOLEAN NOT NULL DEFAULT false,
   archived_at         TIMESTAMPTZ,
   archive_expires_at  TIMESTAMPTZ,
+  -- v0.40.3.0: per-source CR mode override + mount-frontmatter trust gate.
+  -- contextual_retrieval_mode NULL = fall through to global mode bundle.
+  -- trust_frontmatter_overrides FALSE for mounts by default; host source
+  -- (id='default') is always trusted regardless of this column.
+  contextual_retrieval_mode   TEXT,
+  trust_frontmatter_overrides BOOLEAN NOT NULL DEFAULT false,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -58,6 +64,15 @@ CREATE TABLE IF NOT EXISTS sources (
 INSERT INTO sources (id, name, config)
   VALUES ('default', 'default', '{"federated": true}'::jsonb)
   ON CONFLICT (id) DO NOTHING;
+
+-- v0.40 Federated Sync v2: partial expression index on config->>'github_repo'
+-- so POST /webhooks/github's source-by-repo lookup hits an index. Only rows
+-- with a configured webhook actually take up index entries. Both Postgres and
+-- PGLite support partial expression indexes. Migration v87 installs the same
+-- index on legacy brains (idempotent IF NOT EXISTS).
+CREATE INDEX IF NOT EXISTS sources_github_repo_idx
+  ON sources ((config->>'github_repo'))
+  WHERE config ? 'github_repo';
 
 -- ============================================================
 -- pages: the core content table
@@ -108,8 +123,67 @@ CREATE TABLE IF NOT EXISTS pages (
   -- (NOT inside engine methods — internal callers must not pollute the
   -- signal). NULL = never retrieved (LSD prioritizes these first).
   last_retrieved_at     TIMESTAMPTZ,
+  -- v0.40.3.0 contextual retrieval (renumbered from v81 to v90 on master
+  -- merge). contextual_retrieval_mode is what tier the page was last embedded
+  -- under (NULL = pre-v90 = treated as 'none' for drift detection).
+  -- corpus_generation is the composite hash of (synopsis_prompt_version,
+  -- haiku_model, title_wrapper_version, embedding_model) — document-side
+  -- provenance for query_cache invalidation per D27 P1-5. NULL means pre-v90;
+  -- the page_generations JSONB check correctly invalidates pre-v90 cache
+  -- rows against any current generation.
+  contextual_retrieval_mode  TEXT,
+  corpus_generation          TEXT,
+  -- v0.40.3.0 cache invalidation gate (migration v91). Monotonic per-page
+  -- counter bumped by bump_page_generation_trg on INSERT (initial value =
+  -- MAX(generation) + 1 so the bookmark fires for any cache row stored
+  -- before this page existed — codex #4) and on UPDATE when any column in
+  -- the content allow-list IS DISTINCT FROM. Read by the per-page snapshot
+  -- check in query-cache-gate.ts.
+  generation     BIGINT NOT NULL DEFAULT 1,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
+
+-- v0.40.3.0 cache invalidation trigger (migration v91; mirrored in
+-- src/core/pglite-schema.ts). BEFORE INSERT OR UPDATE so every write path
+-- bumps generation per D6 / codex #4. INSERT: pages get
+-- COALESCE(MAX(generation), 0) + 1 so the bookmark gate fires for any
+-- cache row stored before the new page existed. UPDATE: bumps only when
+-- content columns IS DISTINCT FROM (allow-list widened per D6 + codex #3
+-- to include title/type/page_kind/corpus_generation/content_hash) so
+-- read-time mutations don't invalidate every cache row.
+CREATE OR REPLACE FUNCTION bump_page_generation_fn() RETURNS trigger AS \$func\$
+BEGIN
+  IF (TG_OP = 'INSERT') THEN
+    NEW.generation := COALESCE((SELECT MAX(generation) FROM pages), 0) + 1;
+  ELSIF (OLD.compiled_truth IS DISTINCT FROM NEW.compiled_truth)
+     OR (OLD.timeline IS DISTINCT FROM NEW.timeline)
+     OR (OLD.frontmatter IS DISTINCT FROM NEW.frontmatter)
+     OR (OLD.deleted_at IS DISTINCT FROM NEW.deleted_at)
+     OR (OLD.contextual_retrieval_mode IS DISTINCT FROM NEW.contextual_retrieval_mode)
+     OR (OLD.title IS DISTINCT FROM NEW.title)
+     OR (OLD.type IS DISTINCT FROM NEW.type)
+     OR (OLD.page_kind IS DISTINCT FROM NEW.page_kind)
+     OR (OLD.corpus_generation IS DISTINCT FROM NEW.corpus_generation)
+     OR (OLD.content_hash IS DISTINCT FROM NEW.content_hash)
+  THEN
+    NEW.generation := OLD.generation + 1;
+  END IF;
+  RETURN NEW;
+END;
+\$func\$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS bump_page_generation_trg ON pages;
+CREATE TRIGGER bump_page_generation_trg
+  BEFORE INSERT OR UPDATE ON pages
+  FOR EACH ROW
+  EXECUTE FUNCTION bump_page_generation_fn();
+
+-- v0.40.3.0 supports O(log N) MAX(generation) for the Layer 1 bookmark
+-- check in query-cache-gate.ts. Plain btree (DESC unnecessary; Postgres
+-- backward-scans plain btrees for MAX per codex #8). CONCURRENTLY would
+-- be used inside a migration; in the schema-bootstrap path it's a plain
+-- CREATE INDEX since the table is empty.
+CREATE INDEX IF NOT EXISTS pages_generation_idx ON pages (generation);
 
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
@@ -266,8 +340,11 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
 -- ============================================================
 -- links: cross-references between pages
 -- ============================================================
--- Provenance model (v0.13):
---   link_source       — 'markdown' | 'frontmatter' | 'manual' | NULL
+-- Provenance model (v0.13, extended issue #972):
+--   link_source       — 'markdown' | 'frontmatter' | 'manual' | 'wikilink-resolved' | NULL
+--                       'wikilink-resolved' is the opt-in
+--                       (link_resolution.global_basename) basename-match
+--                       provenance — see issue #972 / migration v93.
 --                       (NULL = legacy row written before v0.13; unknown source)
 --   origin_page_id    — for link_source='frontmatter', the page whose YAML
 --                       frontmatter created this edge; scopes reconciliation
@@ -283,7 +360,7 @@ CREATE TABLE IF NOT EXISTS links (
   to_page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   link_type      TEXT    NOT NULL DEFAULT '',
   context        TEXT    NOT NULL DEFAULT '',
-  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual')),
+  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'wikilink-resolved')),
   origin_page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
   origin_field   TEXT,
   -- v0.18.0 Step 4: 'qualified' when the link was written as

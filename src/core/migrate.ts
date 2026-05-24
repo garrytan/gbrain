@@ -4257,6 +4257,31 @@ export const MIGRATIONS: Migration[] = [
         WHERE config ? 'github_repo';
     `,
   },
+  {
+    version: 93,
+    name: 'links_link_source_widen_for_wikilink_basename',
+    // Issue #972: opt-in global-basename wikilink resolution emits edges
+    // tagged `link_source = 'wikilink-resolved'`. The v12-era CHECK
+    // constraint only admits {'markdown', 'frontmatter', 'manual'}; new
+    // edges fail with `links_link_source_check`. Drop + re-add the
+    // constraint with the additional value. Idempotent: the DROP IF
+    // EXISTS no-ops on installs that never created the constraint.
+    //
+    // Both engines share the constraint shape (declared in pglite-schema
+    // and replayed via schema-embedded). Use a single `sql` so both
+    // engines get the same widening on upgrade.
+    sql: `
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'links_link_source_check'
+        ) THEN
+          ALTER TABLE links DROP CONSTRAINT links_link_source_check;
+        END IF;
+      END $$;
+      ALTER TABLE links ADD CONSTRAINT links_link_source_check
+        CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'wikilink-resolved'));
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

@@ -336,8 +336,11 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
 -- ============================================================
 -- links: cross-references between pages
 -- ============================================================
--- Provenance model (v0.13):
---   link_source       — 'markdown' | 'frontmatter' | 'manual' | NULL
+-- Provenance model (v0.13, extended issue #972):
+--   link_source       — 'markdown' | 'frontmatter' | 'manual' | 'wikilink-resolved' | NULL
+--                       'wikilink-resolved' is the opt-in
+--                       (link_resolution.global_basename) basename-match
+--                       provenance — see issue #972 / migration v93.
 --                       (NULL = legacy row written before v0.13; unknown source)
 --   origin_page_id    — for link_source='frontmatter', the page whose YAML
 --                       frontmatter created this edge; scopes reconciliation
@@ -353,7 +356,7 @@ CREATE TABLE IF NOT EXISTS links (
   to_page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   link_type      TEXT    NOT NULL DEFAULT '',
   context        TEXT    NOT NULL DEFAULT '',
-  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual')),
+  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'wikilink-resolved')),
   origin_page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
   origin_field   TEXT,
   -- v0.18.0 Step 4: 'qualified' when the link was written as

@@ -26,6 +26,10 @@ import { gbrainPath } from '../core/config.ts';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import {
+  extractEntityRefs,
+  isGlobalBasenameEnabled,
+} from '../core/link-extraction.ts';
 
 export interface Check {
   name: string;
@@ -625,6 +629,11 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   //   - synopsis-failures audit JSONL entries from the last 7 days
   checks.push(await checkContextualRetrievalCoverage(engine));
 
+  // 11a. issue #972 link_resolution_opportunity — same check the local
+  // doctor runs at the equivalent slot in buildChecks. Mirrored for
+  // thin-client parity so `gbrain remote doctor` sees the same hint.
+  checks.push(await checkLinkResolutionOpportunity(engine));
+
   // 12. v0.40.5.0 Federated Sync v2 (T12) — federation_health:
   //   - Per-source lag, embed coverage, failed-job rate.
   //   - Single-source brain short-circuits to ok.
@@ -722,6 +731,124 @@ export async function checkContextualRetrievalCoverage(engine: BrainEngine): Pro
       name: 'contextual_retrieval_coverage',
       status: 'warn',
       message: `Could not check contextual retrieval coverage: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * Issue #972 — link_resolution_opportunity check.
+ *
+ * Walks every page in the brain, scans for bare wikilinks
+ * (`[[struktura]]` outside DIR_PATTERN) that would resolve to at least
+ * one page under global-basename mode, and surfaces a paste-ready
+ * `gbrain config set link_resolution.global_basename true` hint when
+ * the count is meaningful (>=5 would-resolve AND >=20% of bare
+ * wikilinks have matches). Skipped silently when the flag is already
+ * enabled (no signal to surface) or the brain is empty.
+ *
+ * Full scan with a 60s budget. On timeout / DB error, downgrades to an
+ * informational `ok` so doctor never blocks on this check.
+ */
+export async function checkLinkResolutionOpportunity(
+  engine: BrainEngine,
+  progress?: ProgressReporter,
+): Promise<Check> {
+  const name = 'link_resolution_opportunity';
+  try {
+    if (await isGlobalBasenameEnabled(engine)) {
+      return { name, status: 'ok', message: 'global_basename mode already enabled' };
+    }
+    const allSlugs = await engine.getAllSlugs();
+    if (allSlugs.size === 0) {
+      return { name, status: 'ok', message: 'Brain is empty — nothing to scan' };
+    }
+    // Build a basename → slug[] index ONCE for the entire scan. Mirrors
+    // the resolver's in-memory index shape; key by raw tail + lowercase
+    // tail so case-only variants still hit.
+    const basenameIndex = new Map<string, string[]>();
+    const addKey = (key: string, slug: string) => {
+      const existing = basenameIndex.get(key);
+      if (existing) existing.push(slug);
+      else basenameIndex.set(key, [slug]);
+    };
+    for (const slug of allSlugs) {
+      const tail = slug.includes('/') ? slug.slice(slug.lastIndexOf('/') + 1) : slug;
+      addKey(tail, slug);
+      const lower = tail.toLowerCase();
+      if (lower !== tail) addKey(lower, slug);
+    }
+
+    let bareCount = 0;
+    let wouldResolveCount = 0;
+    const distinctTargets = new Set<string>();
+    let pagesScanned = 0;
+
+    const refs = await engine.listAllPageRefs();
+    const deadline = Date.now() + 60_000;
+    const hb = progress ? startHeartbeat(progress, `scanning ${refs.length} pages for bare wikilinks…`) : null;
+    try {
+      for (const ref of refs) {
+        if (Date.now() > deadline) {
+          return {
+            name,
+            status: 'ok',
+            message: `Scanned ${pagesScanned} of ${refs.length} page(s) before the 60s budget elapsed; partial result: ${wouldResolveCount}/${bareCount} bare wikilinks would resolve.`,
+          };
+        }
+        const page = await engine.getPage(ref.slug, { sourceId: ref.source_id });
+        if (!page) continue;
+        pagesScanned++;
+        const content = page.compiled_truth + '\n' + (page.timeline || '');
+        for (const e of extractEntityRefs(content)) {
+          if (!e.needsResolution) continue;
+          bareCount++;
+          const matches =
+            basenameIndex.get(e.name) ||
+            basenameIndex.get(e.name.toLowerCase()) ||
+            [];
+          if (matches.length > 0) {
+            wouldResolveCount++;
+            for (const m of matches) distinctTargets.add(m);
+          }
+        }
+      }
+    } finally {
+      hb?.();
+    }
+
+    if (bareCount === 0) {
+      return { name, status: 'ok', message: 'No bare wikilinks found' };
+    }
+    if (wouldResolveCount === 0) {
+      return {
+        name,
+        status: 'ok',
+        message: `${bareCount} bare wikilink(s) found, but none have basename matches in the brain.`,
+      };
+    }
+    const ratio = wouldResolveCount / bareCount;
+    if (wouldResolveCount >= 5 && ratio >= 0.20) {
+      const pct = Math.round(ratio * 100);
+      return {
+        name,
+        status: 'warn',
+        message:
+          `${wouldResolveCount} of ${bareCount} bare wikilinks (${pct}%) would resolve to ` +
+          `${distinctTargets.size} distinct page(s) under global_basename mode. ` +
+          `Enable with: gbrain config set link_resolution.global_basename true`,
+      };
+    }
+    const pct = Math.round(ratio * 100);
+    return {
+      name,
+      status: 'ok',
+      message: `${wouldResolveCount}/${bareCount} bare wikilinks (${pct}%) would resolve — below the 20% / 5-link threshold for surfacing a hint.`,
+    };
+  } catch (e) {
+    return {
+      name,
+      status: 'ok',
+      message: `Skipped (${e instanceof Error ? e.message : String(e)})`,
     };
   }
 }
@@ -4473,6 +4600,13 @@ export async function buildChecks(
     // v0.37.0 brainstorm_health — migration v79, track_retrieval, calibration cold-start.
     progress.heartbeat('brainstorm_health');
     checks.push(await checkBrainstormHealth(engine));
+    // issue #972 link_resolution_opportunity — full scan: count bare wikilinks
+    // that would resolve under global_basename mode. Surfaces a paste-ready
+    // enable hint when ≥5 hits AND ≥20% of bare wikilinks would resolve.
+    // Skipped silently when the flag is already enabled. Bounded by a 60s
+    // budget so a huge brain never wedges doctor on this check.
+    progress.heartbeat('link_resolution_opportunity');
+    checks.push(await checkLinkResolutionOpportunity(engine, progress));
     // v0.36.0.0 (A5): ZE embedding key health + schema/config width consistency.
     progress.heartbeat('ze_embedding_health');
     checks.push(await checkZeEmbeddingHealth(engine));

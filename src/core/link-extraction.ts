@@ -31,7 +31,31 @@ export interface EntityRef {
    *   - sourceId null  → 'unqualified'
    */
   sourceId?: string | null;
+  /**
+   * Issue #972: set when the ref came from the generic `[[bare-name]]`
+   * pass (not gated by DIR_PATTERN). The `slug` field holds the literal
+   * wikilink text — callers MUST run it through a SlugResolver's
+   * `resolveBasenameMatches` (gated by `link_resolution.global_basename`)
+   * before persisting. Untagged refs already match a known entity dir
+   * (people/, companies/, etc.) and need no resolution.
+   *
+   * One ref tagged `needsResolution: true` may resolve to MULTIPLE target
+   * slugs when multiple pages share the basename. The caller emits one
+   * LinkCandidate per resolved match.
+   */
+  needsResolution?: boolean;
 }
+
+/**
+ * Issue #972: edge type stamped on graph rows produced by the
+ * global-basename wikilink resolution path. Distinct from the verb-
+ * inferred types (`mentions`, `works_at`, etc.) so users can audit or
+ * prune via `gbrain graph-query <slug> --type wikilink_basename`.
+ *
+ * All edges from this path also carry `linkSource: 'wikilink-resolved'`
+ * (the link-source provenance is the why; this edge type is the what).
+ */
+export const WIKILINK_BASENAME_LINK_TYPE = 'wikilink_basename';
 
 /** v0.17.0: how a link's target source was pinned at extraction time. */
 export type LinkResolutionType = 'qualified' | 'unqualified';
@@ -89,6 +113,29 @@ const QUALIFIED_WIKILINK_RE = new RegExp(
   `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
+
+/**
+ * Issue #972: generic Obsidian-style wikilink — matches `[[anything]]`
+ * with no DIR_PATTERN gate. Wiki/topic/learning pages frequently link
+ * via `[[bare-name]]` (`[[Fast-Weigh]]`, `[[2026-05-07-cost-plan]]`,
+ * `[[struktura]]`) where the literal text isn't a canonical slug; the
+ * resolver is responsible for matching it to the real page via
+ * basename uniqueness.
+ *
+ * Used AFTER QUALIFIED_WIKILINK_RE and WIKILINK_RE pick off their
+ * cases — the masked-ranges pass in extractEntityRefs prevents
+ * double-emission. Refs from this pass are tagged
+ * `needsResolution: true` so callers know to run them through a
+ * SlugResolver before the page-existence check.
+ *
+ * Regex shape is the union of the two existing wikilink regexes,
+ * minus the DIR_PATTERN gate. The character class disallows pipe,
+ * close-bracket, hash (anchor separator), newline, and open-bracket
+ * so we never match across line breaks or capture nested `[[...]]`.
+ *
+ * Adapted from PR #1233 (rayers).
+ */
+const WIKILINK_GENERIC_RE = /\[\[([^|\]#\n[]+?)(?:#[^|\]]*?)?(?:\|([^\]]+?))?\]\]/g;
 
 /**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
@@ -263,6 +310,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
 
   // 2b. Unqualified Obsidian wikilinks: [[path]] or [[path|Display Text]]
   //     Same shape rule: omit sourceId when unqualified.
+  const unqualifiedRanges: Array<[number, number]> = [];
   const unmasked = maskRanges(stripped, qualifiedRanges);
   const wikiPattern = new RegExp(WIKILINK_RE.source, WIKILINK_RE.flags);
   while ((match = wikiPattern.exec(unmasked)) !== null) {
@@ -273,6 +321,27 @@ export function extractEntityRefs(content: string): EntityRef[] {
     const displayName = (match[2] || slug).trim();
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir });
+    unqualifiedRanges.push([match.index, match.index + match[0].length]);
+  }
+
+  // 2c. Issue #972: generic `[[bare-name]]` wikilinks not gated by
+  //     DIR_PATTERN. Wiki/topic/learning content frequently uses these
+  //     where the bare text isn't a canonical brain slug. Tagged
+  //     `needsResolution: true` so the caller routes them through a
+  //     SlugResolver's `resolveBasenameMatches` before persisting.
+  //     Mask out 2a/2b ranges so we don't double-emit; skip qualified-
+  //     syntax tokens (contain `:`) that would be 2a's job.
+  const genericMasked = maskRanges(stripped, [...qualifiedRanges, ...unqualifiedRanges]);
+  const genericPattern = new RegExp(WIKILINK_GENERIC_RE.source, WIKILINK_GENERIC_RE.flags);
+  while ((match = genericPattern.exec(genericMasked)) !== null) {
+    let slug = match[1].trim();
+    if (!slug) continue;
+    if (slug.includes('://')) continue;
+    if (slug.includes(':')) continue; // qualified-syntax token; 2a owns these
+    if (slug.endsWith('.md')) slug = slug.slice(0, -3);
+    const displayName = (match[2] || slug).trim();
+    const dir = slug.includes('/') ? slug.split('/')[0] : '';
+    refs.push({ name: displayName, slug, dir, needsResolution: true });
   }
 
   return refs;
@@ -361,11 +430,37 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
+  opts: { globalBasename?: boolean; skipFrontmatter?: boolean } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
   // 1. Markdown entity refs.
   for (const ref of extractEntityRefs(content)) {
+    // Issue #972: refs from the generic `[[bare-name]]` pass carry the
+    // literal wikilink text, not a real page slug. When global_basename
+    // mode is on AND the resolver implements basename lookup, resolve
+    // to every matching page and emit one candidate per match. When the
+    // flag is off (default), drop silently — back-compat with the
+    // pre-v0.40.8.2 behavior of dropping bare wikilinks outside
+    // DIR_PATTERN.
+    if (ref.needsResolution) {
+      if (!opts.globalBasename || typeof resolver.resolveBasenameMatches !== 'function') {
+        continue;
+      }
+      const matches = await resolver.resolveBasenameMatches(ref.name);
+      if (matches.length === 0) continue;
+      const idx = content.indexOf(ref.name);
+      const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
+      for (const matched of matches) {
+        candidates.push({
+          targetSlug: matched,
+          linkType: WIKILINK_BASENAME_LINK_TYPE,
+          context,
+          linkSource: 'wikilink-resolved',
+        });
+      }
+      continue;
+    }
     const idx = content.indexOf(ref.name);
     // Wider context window (240 chars vs original 80) catches verbs that
     // appear at sentence-or-paragraph distance from the slug — common in
@@ -403,9 +498,19 @@ export async function extractPageLinks(
   }
 
   // 3. Frontmatter-derived edges (v0.13). Includes the legacy `source:`
-  // field along with the full field map.
-  const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
-  candidates.push(...fm.candidates);
+  // field along with the full field map. Caller can suppress via
+  // `opts.skipFrontmatter` — used by `extractLinksFromDB` to keep
+  // `--include-frontmatter` off semantics while still passing a real
+  // resolver (needed for `resolveBasenameMatches` in global-basename
+  // mode). Pre-issue-#972 this gating lived in the caller via a
+  // synthetic `nullResolver`; that pattern broke once the bare-wikilink
+  // path needed `resolveBasenameMatches` on the real resolver.
+  let fmUnresolved: UnresolvedFrontmatterRef[] = [];
+  if (!opts.skipFrontmatter) {
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
+    candidates.push(...fm.candidates);
+    fmUnresolved = fm.unresolved;
+  }
 
   // Within-page dedup: same (fromSlug, targetSlug, linkType, linkSource)
   // collapses to one entry. First occurrence wins.
@@ -417,7 +522,7 @@ export async function extractPageLinks(
     seen.add(key);
     result.push(c);
   }
-  return { candidates: result, unresolved: fm.unresolved };
+  return { candidates: result, unresolved: fmUnresolved };
 }
 
 /** Excerpt a window of `width` chars around `idx`, collapsed to one line. */
@@ -640,6 +745,19 @@ export interface SlugResolver {
    * extract/put_page summary so the user can see the gap.
    */
   resolve(name: string, dirHint?: string | string[]): Promise<string | null>;
+  /**
+   * Issue #972: return every slug whose basename (final `/`-segment, or
+   * the whole slug if it has no `/`) matches `name`. Multi-match by
+   * design — `[[struktura]]` referencing both `projects/struktura` and
+   * `archive/struktura` returns both; the caller emits one graph edge
+   * per result. Returns `[]` when no matches.
+   *
+   * Optional so existing SlugResolver consumers (e.g. synthetic
+   * frontmatter-only resolvers) keep working without code changes.
+   * Implementations should make this cheap to call repeatedly within
+   * a single extract run (build the index once, reuse it).
+   */
+  resolveBasenameMatches?(name: string): Promise<string[]>;
 }
 
 /**
@@ -665,7 +783,71 @@ export function makeResolver(
 
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
 
+  // Issue #972: lazy-built basename → slug[] index for global-basename
+  // resolution. Built on first call to `resolveBasenameMatches`; reused
+  // for the rest of the resolver instance's lifetime. Cost is bounded
+  // (one `engine.getAllSlugs()` call per extract run / put_page). The
+  // index keys BOTH the raw tail and the slugified-tail so a wikilink
+  // `[[Fast-Weigh]]` matches a page slugged `companies/fast-weigh` as
+  // well as `notes/Fast-Weigh`.
+  let basenameIndex: Map<string, string[]> | null = null;
+  async function ensureBasenameIndex(): Promise<Map<string, string[]>> {
+    if (basenameIndex !== null) return basenameIndex;
+    const idx = new Map<string, string[]>();
+    if (typeof engine.getAllSlugs !== 'function') {
+      basenameIndex = idx;
+      return idx;
+    }
+    try {
+      const all = await engine.getAllSlugs();
+      const addKey = (key: string, slug: string) => {
+        const existing = idx.get(key);
+        if (existing) {
+          // Defensive: avoid duplicate slugs in the same bucket. Pages
+          // share a (slug, source_id) PK so this should only fire on a
+          // case-only collision between raw + slugified keys.
+          if (!existing.includes(slug)) existing.push(slug);
+        } else {
+          idx.set(key, [slug]);
+        }
+      };
+      for (const slug of all) {
+        const tail = slug.includes('/') ? slug.slice(slug.lastIndexOf('/') + 1) : slug;
+        // Raw tail (preserves case so `[[Fast-Weigh]]` hits its own line).
+        addKey(tail, slug);
+        // Lowercase tail (so case-only mismatches still resolve).
+        const lower = tail.toLowerCase();
+        if (lower !== tail) addKey(lower, slug);
+        // Slugified tail (so `[[Fast Weigh]]` / `[[Fast.Weigh]]` reach
+        // the same `fast-weigh`-suffixed page).
+        const slugified = norm(tail);
+        if (slugified && slugified !== tail && slugified !== lower) {
+          addKey(slugified, slug);
+        }
+      }
+    } catch {
+      // Index build failed — empty map → resolveBasenameMatches finds
+      // nothing, resolver continues as if the flag was off. Never throw.
+    }
+    basenameIndex = idx;
+    return idx;
+  }
+
   return {
+    async resolveBasenameMatches(name: string): Promise<string[]> {
+      if (!name || typeof name !== 'string') return [];
+      const trimmed = name.trim();
+      if (!trimmed) return [];
+      const idx = await ensureBasenameIndex();
+      const raw = idx.get(trimmed);
+      if (raw) return [...raw];
+      const lower = idx.get(trimmed.toLowerCase());
+      if (lower) return [...lower];
+      const slugified = idx.get(norm(trimmed));
+      if (slugified) return [...slugified];
+      return [];
+    },
+
     async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
       if (!name || typeof name !== 'string') return null;
       const trimmed = name.trim();
@@ -932,4 +1114,32 @@ export async function isAutoTimelineEnabled(engine: BrainEngine): Promise<boolea
   if (val == null) return true;
   const normalized = val.trim().toLowerCase();
   return !['false', '0', 'no', 'off'].includes(normalized);
+}
+
+/**
+ * Read the `link_resolution.global_basename` config flag. Defaults to
+ * FALSE (opt-in only; existing brains keep ancestor-walk resolution).
+ *
+ * When TRUE: bare wikilinks like `[[struktura]]` (no DIR_PATTERN prefix)
+ * that don't resolve via the existing path are matched against every
+ * page's basename. Each unique match emits a graph edge tagged
+ * `linkType: 'wikilink_basename'`. Multiple matches emit multiple edges.
+ *
+ * Resolution order (highest → lowest):
+ *   1. Env var `GBRAIN_LINK_RESOLUTION_GLOBAL_BASENAME=1` (operator override)
+ *   2. DB plane via `engine.getConfig('link_resolution.global_basename')`
+ *   3. Default false
+ *
+ * Closes https://github.com/garrytan/gbrain/issues/972.
+ */
+export async function isGlobalBasenameEnabled(engine: BrainEngine): Promise<boolean> {
+  const envVal = process.env.GBRAIN_LINK_RESOLUTION_GLOBAL_BASENAME;
+  if (envVal != null) {
+    const normalized = envVal.trim().toLowerCase();
+    return ['1', 'true', 'yes', 'on'].includes(normalized);
+  }
+  const val = await engine.getConfig('link_resolution.global_basename');
+  if (val == null) return false;
+  const normalized = val.trim().toLowerCase();
+  return ['1', 'true', 'yes', 'on'].includes(normalized);
 }

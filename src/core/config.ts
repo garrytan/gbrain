@@ -478,6 +478,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',
+  // Link resolution (issue #972)
+  'link_resolution',
+  'link_resolution.global_basename',
 ];
 
 /**

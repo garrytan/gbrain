@@ -212,7 +212,7 @@ CREATE TABLE IF NOT EXISTS links (
   to_page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   link_type      TEXT    NOT NULL DEFAULT '',
   context        TEXT    NOT NULL DEFAULT '',
-  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual')),
+  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'wikilink-resolved')),
   origin_page_id INTEGER REFERENCES pages(id) ON DELETE SET NULL,
   origin_field   TEXT,
   -- v0.18.0 Step 4: see src/schema.sql.
