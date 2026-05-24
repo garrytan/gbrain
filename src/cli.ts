@@ -16,6 +16,7 @@ import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from './core/mcp-client.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { VERSION } from './version.ts';
+import { awaitPendingLastRetrievedWrites } from './core/last-retrieved.ts';
 
 // Build CLI name -> operation lookup
 const cliOps = new Map<string, Operation>();
@@ -194,6 +195,7 @@ async function main() {
       const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
       await awaitPendingSearchCacheWrites();
     }
+    await awaitPendingLastRetrievedWrites();
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       console.error(`Error [${e.code}]: ${e.message}`);
