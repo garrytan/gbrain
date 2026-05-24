@@ -47,7 +47,7 @@ import {
   logSubagentSubmission,
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
-import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import { resolveModel, isAnthropicProvider, stripAnthropicPrefix, TIER_DEFAULTS } from '../../model-config.ts';
 import { toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
 import { classifyCapabilities } from '../../ai/capabilities.ts';
@@ -437,7 +437,11 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       // complexity; for v0.15 we lean on the 120s TTL + abort-on-signal.
       try {
         const params: Anthropic.MessageCreateParamsNonStreaming = {
-          model,
+          // v0.38.1.0 made `provider:model` the canonical config format, but
+          // the Anthropic SDK expects bare model ids. The gateway loop strips
+          // the prefix; the legacy path must do it explicitly. `isAnthropicProvider`
+          // guard upstream guarantees this is safe.
+          model: stripAnthropicPrefix(model),
           max_tokens: 4096,
           system: [
             { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
