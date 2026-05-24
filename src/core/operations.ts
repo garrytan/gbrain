@@ -459,6 +459,17 @@ const get_page: Operation = {
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
+
+    // v0.40: support file parameter to bypass Windows pipe buffer limitation
+    if (p.file) {
+      const fs = await import('node:fs/promises');
+      p.content = await fs.readFile(p.file as string, 'utf-8');
+    }
+
+    if (!p.content) {
+      throw new OperationError('invalid_request', 'put_page requires either content or file parameter');
+    }
+
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
     // v0.31.8 (D20): thread ctx.sourceId through read-side ops. Only pass
@@ -537,7 +548,8 @@ const put_page: Operation = {
   description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries.',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
-    content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
+    content: { type: 'string', required: false, description: 'Full markdown content with YAML frontmatter (alternative: use file param)' },
+    file: { type: 'string', required: false, description: 'File path to read content from (alternative to content param). Bypasses Windows pipe buffer limitation.' },
     // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6). Optional fields
     // for trusted local callers (capture CLI, autopilot, dream cycle). Remote
     // MCP callers (ctx.remote !== false) have their values OVERRIDDEN with
