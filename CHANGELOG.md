@@ -2,6 +2,10 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## Unreleased
+
+- Ollama `qwen3-embedding` models now pass Matryoshka `embedding_dimensions` through the OpenAI-compatible provider options path. For example, `gbrain init --pglite --embedding-model ollama:qwen3-embedding:4B --embedding-dimensions 1536` creates a 1536d local PGLite brain and embeds through Ollama with the requested output width.
+
 ## [0.40.9.0] - 2026-05-24
 
 **`gbrain sync` now indexes your `.sql` files, and `gbrain code-def` works on SQL tables, functions, views, and indexes the same way it works on TypeScript.**

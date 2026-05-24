@@ -13,7 +13,7 @@ export const ollama: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm'],
+      models: ['nomic-embed-text', 'qwen3-embedding:4B', 'mxbai-embed-large', 'all-minilm'],
       default_dims: 768, // nomic-embed-text native dim
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-04-20',

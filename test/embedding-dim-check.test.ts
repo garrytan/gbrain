@@ -220,6 +220,28 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (got.ok) expect(got.dim).toBe(768);
   });
 
+  test('Ollama qwen3-embedding accepts explicit Matryoshka dimensions', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:qwen3-embedding:4B',
+      embedding_dimensions: 1536,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.provider).toBe('ollama');
+      expect(got.model).toBe('ollama:qwen3-embedding:4B');
+      expect(got.dim).toBe(1536);
+    }
+  });
+
+  test('Ollama qwen3-embedding rejects dimensions above the model native width', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:qwen3-embedding:4B',
+      embedding_dimensions: 4096,
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toContain('accepts dimensions 1..2560');
+  });
+
   test('unknown provider rejected with provider list hint', () => {
     const got = resolveSchemaEmbeddingDim({ embedding_model: 'notarealprovider:foo' });
     expect(got.ok).toBe(false);

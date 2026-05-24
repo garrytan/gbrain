@@ -114,6 +114,7 @@ export function dimsProviderOptions(
   modelId: string,
   dims: number,
   inputType?: 'query' | 'document',
+  recipeId?: string,
 ): Record<string, any> | undefined {
   switch (implementation) {
     case 'native-openai': {
@@ -145,6 +146,15 @@ export function dimsProviderOptions(
       // Anthropic has no embedding model.
       return undefined;
     case 'openai-compatible':
+      // Ollama's OpenAI-compatible /v1/embeddings endpoint accepts
+      // `dimensions` for Matryoshka-capable local models such as
+      // qwen3-embedding:4B. The AI SDK forwards that field through the
+      // openai-compatible providerOptions namespace used by this recipe.
+      // The key is `openaiCompatible` because Ollama is registered through
+      // the openai-compatible adapter, not a dedicated Ollama adapter.
+      if (recipeId === 'ollama' && isOllamaQwen3EmbeddingModel(modelId)) {
+        return { openaiCompatible: { dimensions: dims } };
+      }
       // ZE zembed-1 — flexible Matryoshka dims + asymmetric input_type.
       // Lives BEFORE the generic openai-compatible fall-through to avoid
       // sending input_type to providers (Azure/DashScope/Zhipu) that
@@ -230,4 +240,8 @@ export function dimsProviderOptions(
       }
       return undefined;
   }
+}
+
+function isOllamaQwen3EmbeddingModel(modelId: string): boolean {
+  return /^qwen3-embedding(?::|$)/i.test(modelId);
 }

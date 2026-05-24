@@ -448,6 +448,18 @@ function isCustomDimValidForProvider(
         `OpenAI ${modelId} accepts dimensions 1..${maxDim}, got ${requestedDims}.`,
     };
   }
+  if (recipe.id === 'ollama') {
+    const maxQwen3Dim = ollamaQwen3EmbeddingMaxDim(modelId);
+    if (maxQwen3Dim !== null) {
+      if (requestedDims > 0 && requestedDims <= maxQwen3Dim) return { valid: true, error: '' };
+      return {
+        valid: false,
+        error:
+          `Ollama Qwen3 embedding model "${modelId}" accepts dimensions 1..${maxQwen3Dim}, ` +
+          `got ${requestedDims}.`,
+      };
+    }
+  }
 
   // Tier 3: provider not known to support custom dims at all.
   return {
@@ -457,4 +469,13 @@ function isCustomDimValidForProvider(
       `(this model only emits its default vector size). ` +
       `Either drop --embedding-dimensions or pick a Matryoshka-aware model.`,
   };
+}
+
+function ollamaQwen3EmbeddingMaxDim(modelId: string): number | null {
+  const normalized = modelId.toLowerCase();
+  if (!normalized.startsWith('qwen3-embedding')) return null;
+  if (normalized.includes('0.6b')) return 1024;
+  if (normalized.includes('4b')) return 2560;
+  if (normalized.includes('8b')) return 4096;
+  return null;
 }

@@ -173,6 +173,44 @@ describe('dims.dimsProviderOptions', () => {
     expect(opts).toBeUndefined();
   });
 
+  test('Ollama openai-compatible embeddings return dimensions', () => {
+    const opts = dimsProviderOptions(
+      'openai-compatible',
+      'qwen3-embedding:4B',
+      1536,
+      undefined,
+      'ollama',
+    );
+    expect(opts).toEqual({ openaiCompatible: { dimensions: 1536 } });
+  });
+
+  test('Ollama fixed-dim embeddings keep the previous no-dim fallback', () => {
+    const opts = dimsProviderOptions(
+      'openai-compatible',
+      'nomic-embed-text',
+      768,
+      undefined,
+      'ollama',
+    );
+    expect(opts).toBeUndefined();
+  });
+
+  test('openai-compatible without recipeId keeps the previous no-dim fallback', () => {
+    const opts = dimsProviderOptions('openai-compatible', 'unknown-embed-model', 1536);
+    expect(opts).toBeUndefined();
+  });
+
+  test('non-Ollama openai-compatible recipes keep their provider-specific dimension routing', () => {
+    const opts = dimsProviderOptions(
+      'openai-compatible',
+      'voyage-3-large',
+      1024,
+      undefined,
+      'voyage',
+    );
+    expect(opts).toEqual({ openaiCompatible: { dimensions: 1024 } });
+  });
+
   test('Voyage flexible-dim models return dimensions for the SDK shim', () => {
     const opts = dimsProviderOptions('openai-compatible', 'voyage-3-large', 1024);
     expect(opts).toEqual({ openaiCompatible: { dimensions: 1024 } });

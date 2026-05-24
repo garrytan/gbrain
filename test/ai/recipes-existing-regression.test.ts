@@ -96,6 +96,11 @@ describe('IRON RULE: existing 9 recipes survive the v0.32 resolveAuth refactor',
     expect(auth.token).toBe('Bearer unauthenticated');
   });
 
+  test('Ollama recipe advertises qwen3-embedding as an explicit model option', () => {
+    const ollama = getRecipe('ollama');
+    expect(ollama!.touchpoints.embedding?.models).toContain('qwen3-embedding:4B');
+  });
+
   test('URL-shaped optional env (OLLAMA_BASE_URL, LLAMA_SERVER_BASE_URL) does NOT become the Bearer token', () => {
     // Regression for the v0.32 default-fallback design: optional entries
     // ending in _URL or _BASE_URL are config (cfg.base_urls), not auth.
@@ -335,4 +340,3 @@ describe('default_headers / resolveDefaultHeaders contract (v0.37.2.0)', () => {
     expect(e.headers).toEqual({ 'X-Static': 'static-val' });
   });
 });
-

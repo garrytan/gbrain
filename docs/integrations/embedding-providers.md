@@ -140,7 +140,24 @@ Set `ZHIPUAI_API_KEY`. Models: `embedding-3` (current; Matryoshka 256-2048 dims)
 
 No env required — Ollama runs unauthenticated locally. Optional `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`) and `OLLAMA_API_KEY` (for auth-enabled deployments).
 
-Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1024d), `all-minilm` (384d). `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
+Recipe ships with `nomic-embed-text` (768d, recommended), `qwen3-embedding:4B` (2560d native, Matryoshka-capable), `mxbai-embed-large` (1024d), `all-minilm` (384d). `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
+
+For a local Qwen3 brain with a smaller pgvector column, request the Matryoshka output width at init time:
+
+```bash
+export OLLAMA_BASE_URL=http://localhost:11434/v1
+gbrain init --pglite \
+  --embedding-model ollama:qwen3-embedding:4B \
+  --embedding-dimensions 1536
+```
+
+Existing PGLite brains need a reinit because the pgvector column width is part of the schema:
+
+```bash
+gbrain reinit-pglite \
+  --embedding-model ollama:qwen3-embedding:4B \
+  --embedding-dimensions 1536
+```
 
 ### llama-server (local, llama.cpp)
 
