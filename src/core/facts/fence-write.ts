@@ -37,6 +37,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendF
 import { join, dirname } from 'node:path';
 
 import type { BrainEngine, NewFact, FactVisibility } from '../engine.ts';
+import type { PageType } from '../types.ts';
 import { withPageLock } from '../page-lock.ts';
 import { gbrainPath } from '../config.ts';
 import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
@@ -115,23 +116,31 @@ function recordWriteFailure(slug: string, sourceId: string, warnings: string[], 
 /**
  * Stub-create body for a new entity page. Minimum frontmatter so the
  * page validates as gbrain-canonical markdown and survives an
- * `importFromFile` round-trip. Type inferred from slug prefix
- * (e.g. `people/alice` → 'person'); unknown prefixes fall back to
- * 'concept' which is the most permissive PageType.
+ * `importFromFile` round-trip. Type inferred from an explicit slug-prefix
+ * map. Unsupported prefixes are rejected instead of silently becoming
+ * generic concepts; that keeps extract_facts from creating durable-looking
+ * slop pages under arbitrary directories.
  */
+const STUB_PAGE_TYPES: Record<string, PageType> = {
+  people: 'person',
+  companies: 'company',
+  deals: 'deal',
+  topics: 'concept',
+  projects: 'project',
+  services: 'project',
+};
+
 function stubEntityPage(slug: string): string {
   const prefix = slug.split('/')[0];
-  const type =
-    prefix === 'people'    ? 'person' :
-    prefix === 'companies' ? 'company' :
-    prefix === 'deals'     ? 'deal' :
-    prefix === 'topics'    ? 'concept' :
-    /* fallback */           'concept';
+  const type = STUB_PAGE_TYPES[prefix];
+  if (!type) {
+    throw new Error(`Refusing to stub-create unsupported fact target prefix: ${prefix}`);
+  }
   const tail = slug.split('/').slice(1).join('/');
   const title = tail
     .replace(/[-_/]+/g, ' ')
     .replace(/\b\w/g, c => c.toUpperCase()) || slug;
-  return `---\ntype: ${type}\ntitle: ${title}\nslug: ${slug}\n---\n\n# ${title}\n`;
+  return `---\ntype: ${type}\ntitle: ${title}\nslug: ${slug}\ngraph_role: stub\ngenerated_by: gbrain.extract_facts\n---\n\n# ${title}\n`;
 }
 
 /**

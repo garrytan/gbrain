@@ -80,6 +80,8 @@ describe('writeFactsToFence — happy path', () => {
     const body = readFileSync(filePath, 'utf-8');
     expect(body).toContain('type: person');
     expect(body).toContain('slug: people/alice');
+    expect(body).toContain('graph_role: stub');
+    expect(body).toContain('generated_by: gbrain.extract_facts');
     expect(body).toContain('## Facts');
     expect(body).toContain('Founded Acme in 2017');
 
@@ -166,7 +168,7 @@ describe('writeFactsToFence — happy path', () => {
     expect(rows.rows[2]).toMatchObject({ row_num: 3, fact: 'Third' });
   });
 
-  test('stub-creates nested directories (companies/x → mkdir companies)', async () => {
+  test('stub-creates nested directories with exact prefix types', async () => {
     const result = await writeFactsToFence(
       engine,
       { sourceId: 'default', localPath: brainDir, slug: 'companies/acme' },
@@ -175,8 +177,18 @@ describe('writeFactsToFence — happy path', () => {
 
     expect(result.inserted).toBe(1);
     expect(existsSync(join(brainDir, 'companies/acme.md'))).toBe(true);
-    const body = readFileSync(join(brainDir, 'companies/acme.md'), 'utf-8');
-    expect(body).toContain('type: company');  // type inferred from slug prefix
+    const companyBody = readFileSync(join(brainDir, 'companies/acme.md'), 'utf-8');
+    expect(companyBody).toContain('type: company');
+
+    const projectResult = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'projects/marketbot' },
+      [baseInput({ fact: 'MarketBot exists' })],
+    );
+    expect(projectResult.inserted).toBe(1);
+    const projectBody = readFileSync(join(brainDir, 'projects/marketbot.md'), 'utf-8');
+    expect(projectBody).toContain('type: project');
+    expect(projectBody).toContain('graph_role: stub');
   });
 });
 
