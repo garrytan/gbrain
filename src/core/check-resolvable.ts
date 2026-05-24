@@ -127,29 +127,50 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
       continue;
     }
 
-    // Skip non-table rows
-    if (!line.startsWith('|') || line.includes('---')) continue;
+    // ── Format 1: Markdown table rows ──
+    // | trigger phrase | `skills/<name>/SKILL.md` |
+    if (line.startsWith('|') && !line.includes('---')) {
+      const cols = line.split('|').map(c => c.trim()).filter(Boolean);
+      if (cols.length < 2) continue;
 
-    // Split table columns
-    const cols = line.split('|').map(c => c.trim()).filter(Boolean);
-    if (cols.length < 2) continue;
+      const trigger = cols[0];
+      const skillCol = cols[1];
 
-    const trigger = cols[0];
-    const skillCol = cols[1];
+      // Skip header rows
+      if (trigger.toLowerCase() === 'trigger' || trigger.toLowerCase() === 'skill') continue;
 
-    // Skip header rows
-    if (trigger.toLowerCase() === 'trigger' || trigger.toLowerCase() === 'skill') continue;
+      // Check for GStack entries
+      if (skillCol.startsWith('GStack:') || skillCol.startsWith('Check ') || skillCol.startsWith('Read ')) {
+        entries.push({ trigger, skillPath: skillCol, isGStack: true, section: currentSection });
+        continue;
+      }
 
-    // Check for GStack entries
-    if (skillCol.startsWith('GStack:') || skillCol.startsWith('Check ') || skillCol.startsWith('Read ')) {
-      entries.push({ trigger, skillPath: skillCol, isGStack: true, section: currentSection });
+      // Extract skill path from backtick-wrapped references
+      const pathMatch = skillCol.match(/`(skills\/[^`]+\/SKILL\.md)`/);
+      if (pathMatch) {
+        entries.push({ trigger, skillPath: pathMatch[1], isGStack: false, section: currentSection });
+      }
       continue;
     }
 
-    // Extract skill path from backtick-wrapped references
-    const pathMatch = skillCol.match(/`(skills\/[^`]+\/SKILL\.md)`/);
-    if (pathMatch) {
-      entries.push({ trigger, skillPath: pathMatch[1], isGStack: false, section: currentSection });
+    // ── Format 2: List-based resolver (OpenClaw compact format) ──
+    // - **skill-name**: trigger1 | trigger2 | trigger3
+    // - skill-name: trigger1 | trigger2 | trigger3
+    const listBold = line.match(/^-\s+\*\*([^*]+)\*\*\s*:\s*(.+)/);
+    const listPlain = !listBold ? line.match(/^-\s+([\w-]+)\s*:\s*(.+)/) : null;
+    const listMatch = listBold || listPlain;
+    if (listMatch) {
+      const skillName = listMatch[1].trim();
+      const triggersRaw = listMatch[2].trim();
+      // Remove optional trailing path reference: → `skills/<name>/SKILL.md`
+      const cleaned = triggersRaw.replace(/\s*→\s*`skills\/[^`]+`/, '');
+      // Split on | delimiter
+      const triggers = cleaned.split('|').map(t => t.trim()).filter(t => t.length > 0 && t !== '...');
+      const skillPath = `skills/${skillName}/SKILL.md`;
+      for (const trigger of triggers) {
+        entries.push({ trigger, skillPath, isGStack: false, section: currentSection });
+      }
+      continue;
     }
   }
 
