@@ -209,7 +209,7 @@ function buildUserPrompt(
  * Gateway throws Anthropic-flavored errors with HTTP status info; we
  * pattern-match on those for the classification.
  */
-function classifyChatError(err: unknown): {
+export function classifyChatError(err: unknown): {
   kind: SynopsisFailureKind;
   detail: string;
 } {
@@ -218,12 +218,16 @@ function classifyChatError(err: unknown): {
   }
   const e = err as { status?: number; message?: string; code?: string; name?: string };
   const msg = (e.message ?? String(err)).slice(0, 200);
+  const msgLower = msg.toLowerCase();
 
   if (e.status === 401 || e.status === 403) {
     return { kind: 'auth_failure', detail: `status=${e.status} msg=${msg}` };
   }
-  if (e.status === 429) {
-    return { kind: 'rate_limit', detail: `status=429 msg=${msg}` };
+  if (
+    e.status === 429 ||
+    /rate limit|too many requests|cooling down|quota exceeded|temporarily unavailable/.test(msgLower)
+  ) {
+    return { kind: 'rate_limit', detail: `status=${e.status ?? '?'} msg=${msg}` };
   }
   if (e.status != null && e.status >= 500 && e.status < 600) {
     return { kind: 'provider_5xx', detail: `status=${e.status} msg=${msg}` };
@@ -231,7 +235,7 @@ function classifyChatError(err: unknown): {
   if (
     e.name === 'AbortError' ||
     e.code === 'ETIMEDOUT' ||
-    /timeout/i.test(msg)
+    /timeout|timed out|deadline exceeded|context canceled|context cancelled/.test(msgLower)
   ) {
     return { kind: 'timeout', detail: msg };
   }
@@ -239,7 +243,7 @@ function classifyChatError(err: unknown): {
     e.code === 'ENOTFOUND' ||
     e.code === 'ECONNREFUSED' ||
     e.code === 'ECONNRESET' ||
-    /network|fetch/i.test(msg)
+    /network|fetch|socket|eof|lock-lost|connection reset/.test(msgLower)
   ) {
     return { kind: 'network', detail: `code=${e.code ?? '?'} msg=${msg}` };
   }
