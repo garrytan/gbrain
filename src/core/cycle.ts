@@ -69,6 +69,7 @@ export type CyclePhase =
   | 'embed' | 'orphans' | 'purge'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
   // Wraps runSuggest() — same library the CLI verb + EIIRP call.
+  | 'infer_links'  // v0.36 typed-edge inference from frontmatter
   | 'schema-suggest';
 
 export const ALL_PHASES: CyclePhase[] = [
@@ -114,6 +115,8 @@ export const ALL_PHASES: CyclePhase[] = [
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  // v0.36 infer_links: typed-edge inference
+  'infer_links',
   'embed',
   'orphans',
   // v0.39 T12: passive schema-suggest. Runs LATE so post-sync brain state
@@ -196,6 +199,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  'infer_links',
   'embed',
   'purge',
 ]);
@@ -271,6 +275,10 @@ export interface CycleReport {
     facts_consolidated: number;
     /** v0.31: number of new takes created by the consolidate phase. */
     consolidate_takes_written: number;
+    /** v0.36: number of typed-edge wikilinks emitted into frontmatter by infer_links. */
+    links_inferred: number;
+    /** v0.36: number of would-be inferences whose target slug was missing. */
+    links_unresolved: number;
     /**
      * v0.35.5: number of phantom unprefixed entity pages (e.g. `alice.md`)
      * redirected to their canonical prefixed slugs (`people/alice-example`)
@@ -1602,6 +1610,55 @@ export async function runCycle(
       }
     }
 
+    // ── Phase 7.5: infer_links (v0.36) ─────────────────────────
+
+    if (phases.includes('infer_links')) {
+
+      checkAborted(opts.signal);
+
+      if (!engine) {
+
+        phaseResults.push({
+
+          phase: 'infer_links',
+
+          status: 'skipped',
+
+          duration_ms: 0,
+
+          summary: 'no database connected',
+
+          details: { reason: 'no_database' },
+
+        });
+
+      } else {
+
+        progress.start('cycle.infer_links');
+
+        const { runPhaseInferLinks } = await import('./cycle/phases/infer-links.ts');
+
+        const { result, duration_ms } = await timePhase(() => runPhaseInferLinks(engine, {
+
+          dryRun,
+
+          yieldDuringPhase: opts.yieldDuringPhase,
+
+        }));
+
+        result.duration_ms = duration_ms;
+
+        phaseResults.push(result);
+
+        progress.finish();
+
+      }
+
+      await safeYield(opts.yieldBetweenPhases);
+
+    }
+
+
     // ── Phase 8: embed ──────────────────────────────────────────
     if (phases.includes('embed')) {
       checkAborted(opts.signal);
@@ -1776,6 +1833,8 @@ function emptyTotals(): CycleReport['totals'] {
     purged_pages_count: 0,
     facts_consolidated: 0,
     consolidate_takes_written: 0,
+    links_inferred: 0,
+    links_unresolved: 0,
     phantoms_redirected: 0,
     phantoms_ambiguous: 0,
     phantoms_skipped_drift: 0,
@@ -1817,6 +1876,9 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
     } else if (p.phase === 'consolidate' && p.details) {
       t.facts_consolidated = Number(p.details.facts_consolidated ?? 0);
       t.consolidate_takes_written = Number(p.details.takes_written ?? 0);
+    } else if (p.phase === 'infer_links' && p.details) {
+      t.links_inferred = Number(p.details.links_inferred ?? 0);
+      t.links_unresolved = Number(p.details.links_unresolved ?? 0);
     } else if (p.phase === 'extract_facts' && p.details) {
       // v0.35.5: phantom-redirect counters live inside the extract_facts
       // phase's details block (the pre-pass runs before the main reconcile
