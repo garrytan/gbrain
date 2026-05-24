@@ -63,6 +63,9 @@ const CLI_ONLY_SELF_HELP = new Set([
 ]);
 
 async function main() {
+  if (shouldForceExitAfterMain()) {
+    process.env.GBRAIN_PGLITE_SKIP_CLOSE_ON_DISCONNECT ??= '1';
+  }
   // Parse global flags (--quiet / --progress-json / --progress-interval)
   // BEFORE command dispatch, so `gbrain --progress-json doctor` works.
   // The stripped argv is what the command sees.
@@ -1759,7 +1762,22 @@ Run gbrain <command> --help for command-specific help.
 `);
 }
 
-main().catch(e => {
+function shouldForceExitAfterMain(argv = process.argv.slice(2)): boolean {
+  const command = argv.find(arg => !arg.startsWith('-'));
+  // `serve --http` returns after binding the server and relies on the HTTP
+  // listener to keep the process alive. Do not turn the PGLite one-shot exit
+  // workaround into a daemon killer.
+  return command !== 'serve';
+}
+
+// PGLite/WASM can leave runtime handles open after a successful one-shot CLI
+// command even after engine.disconnect(). That makes foreground reads print
+// results but hang indefinitely, and it makes launchd-launched maintenance look
+// like a stuck daemon. Force one-shot CLI lifecycles closed after main resolves,
+// while preserving commands that intentionally leave listeners/watchers running.
+main().then(() => {
+  if (shouldForceExitAfterMain()) process.exit(0);
+}).catch(e => {
   console.error(e.message || e);
   process.exit(1);
 });

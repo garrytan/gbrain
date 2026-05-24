@@ -196,13 +196,14 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async disconnect(): Promise<void> {
-    if (this._db) {
-      await this._db.close();
-      this._db = null;
-    }
+    const db = this._db;
+    this._db = null;
     if (this._lock?.acquired) {
       await releaseLock(this._lock);
       this._lock = null;
+    }
+    if (db && process.env.GBRAIN_PGLITE_SKIP_CLOSE_ON_DISCONNECT !== '1') {
+      await db.close();
     }
   }
 
