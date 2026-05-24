@@ -407,11 +407,19 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       return;
     }
     for (const entry of entries) {
-      // Skip hidden dirs (.git, .claude, .raw, etc.) and `node_modules`/`ops`.
-      // Same set the legacy walkers honored, surfaced once at the top of
-      // every iteration.
+      // Skip hidden dirs (.git, .claude, .raw, etc.) and known vendor/build
+      // dirs that are gitignored in their ecosystem and would flood the index
+      // with thousands of generated/external files.
+      //   node_modules — npm/yarn/pnpm/bun (JS)
+      //   ops          — gbrain operational scratch
+      //   Pods         — CocoaPods (iOS/macOS): one .h per RN/Expo native
+      //                  module, easily 8000+ files in a single app
+      //   Carthage     — Carthage (iOS/macOS): vendored framework binaries
+      //   DerivedData  — Xcode build cache: regenerated on every build
       if (entry.startsWith('.')) continue;
       if (entry === 'node_modules' || entry === 'ops') continue;
+      if (entry === 'Pods' || entry === 'Carthage' || entry === 'DerivedData')
+        continue;
 
       const full = join(d, entry);
       let stat;
