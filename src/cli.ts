@@ -3,7 +3,7 @@
 import { installSigchldHandler } from './core/zombie-reap.ts';
 installSigchldHandler();
 
-import { readFileSync } from 'fs';
+import { readFileSync, readSync } from 'fs';
 import { loadConfig, loadConfigWithEngine, toEngineConfig, isThinClient } from './core/config.ts';
 import type { GBrainConfig } from './core/config.ts';
 import type { AIGatewayConfig } from './core/ai/types.ts';
@@ -508,7 +508,21 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
 
   // Read stdin for content params
   if (op.cliHints?.stdin && !params[op.cliHints.stdin] && !process.stdin.isTTY) {
-    const stdinContent = readFileSync('/dev/stdin', 'utf-8');
+    let stdinContent: string;
+    try {
+      // Try Unix /dev/stdin first
+      stdinContent = readFileSync('/dev/stdin', 'utf-8');
+    } catch {
+      // Windows fallback: read from stdin fd directly
+      const fd = 0;
+      const chunks: Buffer[] = [];
+      const buf = Buffer.alloc(65536);
+      let nread: number;
+      while ((nread = readSync(fd, buf, 0, buf.length, null)) > 0) {
+        chunks.push(buf.slice(0, nread));
+      }
+      stdinContent = Buffer.concat(chunks).toString('utf-8');
+    }
     const MAX_STDIN = 5_000_000; // 5MB
     if (Buffer.byteLength(stdinContent, 'utf-8') > MAX_STDIN) {
       console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
