@@ -135,6 +135,22 @@ describe('extractTimelineFromContent', () => {
     const entries = extractTimelineFromContent(content, 'test');
     expect(entries).toHaveLength(1);
   });
+
+  it('does not split a hyphenated word in the bullet body (bare-hyphen regression)', () => {
+    // Regression: a hyphen inside a word (slug, compound) must not be read as the
+    // source/summary separator. Only a spaced em/en dash splits Source — Summary.
+    const content = `- **2025-05-13** | acme-consulting-group kickoff call`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries.find((e) => e.source === 'acme')).toBeUndefined();
+  });
+
+  it('keeps hyphenated words intact in the summary when splitting on a spaced dash', () => {
+    const content = `- **2025-05-13** | Call — acme-consulting-group renewed`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('Call');
+    expect(entries[0].summary).toBe('acme-consulting-group renewed');
+  });
 });
 
 describe('walkMarkdownFiles', () => {

@@ -274,7 +274,7 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
   const entries: ExtractedTimelineEntry[] = [];
 
   // Format 1: Bullet — - **YYYY-MM-DD** | Source — Summary
-  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+?)\s*[—–-]\s*(.+)$/gm;
+  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*([^[\]()\n]{1,24}?) [—–] (.+)$/gm;
   let match;
   while ((match = bulletPattern.exec(content)) !== null) {
     entries.push({ slug, date: match[1], source: match[2].trim(), summary: match[3].trim() });
