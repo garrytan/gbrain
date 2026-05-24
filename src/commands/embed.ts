@@ -7,6 +7,7 @@ import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts'
 import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
 import { loadConfig } from '../core/config.ts';
 import { slog, serr } from '../core/console-prefix.ts';
+import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -353,7 +354,18 @@ async function embedAll(
   }
 
   // v0.31.12: when sourceId is set, scope listPages to that source.
-  const pages = await engine.listPages({ limit: 100000, ...(sourceId && { sourceId }) });
+  // v0.41 (D8 + Codex r2 #11): apply embed-skip filter via the shared
+  // helper so the `--all` path honors `frontmatter.embed_skip` the same
+  // way the `--stale` path does. Without this filter, `gbrain embed --all`
+  // (common after model swaps) re-embeds every soft-blocked page,
+  // defeating the soft-block. Filtering JS-side here mirrors the SQL-side
+  // filter that listStaleChunks/countStaleChunks apply on --stale.
+  const allPages = await engine.listPages({ limit: 100000, ...(sourceId && { sourceId }) });
+  const pages = filterOutEmbedSkipped(allPages);
+  const skippedByEmbedSkip = allPages.length - pages.length;
+  if (skippedByEmbedSkip > 0) {
+    serr(`[embed] skipped ${skippedByEmbedSkip} page(s) with frontmatter.embed_skip set`);
+  }
   let processed = 0;
 
   // Concurrency limit for parallel page embedding.

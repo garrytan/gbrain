@@ -844,6 +844,19 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(result.status).json(result.body);
   });
 
+  // v0.41 D2 — live jobs dashboard data. Shares readSnapshot() with the
+  // TTY `gbrain jobs watch` command so the two surfaces stay 1:1.
+  app.get('/admin/api/jobs/watch', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { readSnapshot } = await import('./jobs-watch.ts');
+      const snap = await readSnapshot(engine);
+      res.json(snap);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // v0.36.1.0 (T15 / E6 / D23) — Calibration tab data endpoints.
   // Server-rendered SVG charts; admin SPA renders via TrustedSVG wrapper.
   // v0.36.1.0 (TD3) — pattern drill-down. Returns the source takes that

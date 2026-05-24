@@ -876,6 +876,179 @@ async function runCurrent(engine: BrainEngine, args: string[]): Promise<void> {
   console.log(`  tier: ${result.tier}${result.detail ? ` (${result.detail})` : ''}`);
 }
 
+/**
+ * v0.41 — `gbrain sources audit <id>` dry-run scan.
+ *
+ * Walks the source's `local_path` on disk, runs `assessContentSanity`
+ * per `.md` file, and reports:
+ *   - file count + size distribution (p50 / p99 / max)
+ *   - would-hard-blocks (junk-pattern matches; new ingests would refuse)
+ *   - would-soft-blocks (oversize-only; new ingests would set embed_skip)
+ *   - junk-pattern hit counts grouped by pattern name
+ *
+ * Read-only: NO DB writes, NO file mutations. Intended for operators to
+ * inspect a source repo BEFORE syncing (catches junk early) or AFTER
+ * the new gate ships (audit existing inventory against the new rules
+ * without touching state).
+ *
+ * Uses `pruneDir` from sync.ts so node_modules / .git / .obsidian are
+ * skipped at descent — same walker semantics as the actual sync path.
+ */
+async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
+  const sourceId = args.find((a) => !a.startsWith('--'));
+  const json = args.includes('--json');
+  const includeWarns = args.includes('--include-warns');
+
+  if (!sourceId) {
+    console.error('Usage: gbrain sources audit <source-id> [--json] [--include-warns]');
+    process.exit(2);
+  }
+
+  const { fetchSource } = await import('../core/sources-load.ts');
+  const src = await fetchSource(engine, sourceId);
+  if (!src) {
+    console.error(`Source not found: ${sourceId} (run \`gbrain sources list\` to see registered sources)`);
+    process.exit(1);
+  }
+  if (!src.local_path) {
+    console.error(`Source ${sourceId} has no local_path — cannot audit on disk`);
+    process.exit(1);
+  }
+
+  // Lazy-load FS + walker bits so the command stays import-cheap when
+  // not invoked (every subcommand pays the import cost on dispatch).
+  const { readFileSync, readdirSync, lstatSync, existsSync: _exists } =
+    await import('fs');
+  const { join: pathJoin } = await import('path');
+  const { pruneDir } = await import('../core/sync.ts');
+  const { assessContentSanity } = await import('../core/content-sanity.ts');
+  const { loadOperatorLiterals } = await import('../core/content-sanity-literals.ts');
+  const { parseMarkdown } = await import('../core/markdown.ts');
+
+  if (!_exists(src.local_path)) {
+    console.error(`local_path does not exist on disk: ${src.local_path}`);
+    process.exit(1);
+  }
+
+  // Walk recursively. Mirror gbrain sync's descent rules so the file set
+  // we audit matches the file set that would actually be ingested.
+  const files: string[] = [];
+  function walk(dir: string): void {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return; // permission denied; skip silently
+    }
+    for (const entry of entries) {
+      const full = pathJoin(dir, entry);
+      let stat;
+      try {
+        stat = lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        if (pruneDir(entry, dir)) continue;
+        walk(full);
+      } else if (entry.endsWith('.md')) {
+        files.push(full);
+      }
+    }
+  }
+  walk(src.local_path);
+
+  const literals = loadOperatorLiterals();
+  const sizes: number[] = [];
+  const wouldHardBlock: Array<{ file: string; matched: string[]; bytes: number }> = [];
+  const wouldSoftBlock: Array<{ file: string; bytes: number }> = [];
+  const wouldWarn: Array<{ file: string; bytes: number }> = [];
+  const patternHits: Record<string, number> = {};
+
+  for (const file of files) {
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf-8');
+    } catch {
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = parseMarkdown(content, file);
+    } catch {
+      continue; // malformed page; not our concern in audit
+    }
+    const sanity = assessContentSanity({
+      compiled_truth: parsed.compiled_truth,
+      timeline: parsed.timeline ?? '',
+      title: parsed.title,
+      extra_literals: literals,
+    });
+    sizes.push(sanity.bytes);
+    if (sanity.shouldHardBlock) {
+      const matched = [...sanity.junk_pattern_matches, ...sanity.literal_substring_matches];
+      for (const name of matched) {
+        patternHits[name] = (patternHits[name] ?? 0) + 1;
+      }
+      wouldHardBlock.push({ file, matched, bytes: sanity.bytes });
+    } else if (sanity.shouldSkipEmbed) {
+      wouldSoftBlock.push({ file, bytes: sanity.bytes });
+    } else if (sanity.reasons.includes('oversize_warn')) {
+      wouldWarn.push({ file, bytes: sanity.bytes });
+    }
+  }
+
+  // Size distribution stats.
+  sizes.sort((a, b) => a - b);
+  const p = (q: number) =>
+    sizes.length === 0 ? 0 : sizes[Math.min(sizes.length - 1, Math.floor(q * sizes.length))];
+
+  if (json) {
+    console.log(JSON.stringify({
+      schema_version: 1,
+      source_id: sourceId,
+      local_path: src.local_path,
+      total_files: files.length,
+      distribution: { p50: p(0.5), p99: p(0.99), max: sizes[sizes.length - 1] ?? 0 },
+      hard_block_count: wouldHardBlock.length,
+      soft_block_count: wouldSoftBlock.length,
+      warn_count: wouldWarn.length,
+      pattern_hits: patternHits,
+      hard_blocks: wouldHardBlock.slice(0, 20),
+      soft_blocks: wouldSoftBlock.slice(0, 20),
+      ...(includeWarns ? { warns: wouldWarn.slice(0, 20) } : {}),
+    }, null, 2));
+    return;
+  }
+
+  console.log(`Source: ${sourceId} (${src.local_path})`);
+  console.log(`Files scanned: ${files.length} markdown files`);
+  if (sizes.length > 0) {
+    console.log(`Size distribution: p50=${p(0.5)} bytes, p99=${p(0.99)} bytes, max=${sizes[sizes.length - 1]} bytes`);
+  }
+  console.log(`Would-hard-block: ${wouldHardBlock.length}`);
+  console.log(`Would-soft-block: ${wouldSoftBlock.length}`);
+  if (includeWarns) {
+    console.log(`Would-warn: ${wouldWarn.length}`);
+  }
+  if (Object.keys(patternHits).length > 0) {
+    const sorted = Object.entries(patternHits).sort((a, b) => b[1] - a[1]);
+    console.log(`Junk-pattern hits: ${sorted.map(([n, c]) => `${n} ×${c}`).join(', ')}`);
+  }
+  if (wouldHardBlock.length > 0) {
+    console.log('\nTop hard-blocks:');
+    for (const h of wouldHardBlock.slice(0, 10)) {
+      console.log(`  ${h.file} [${h.matched.join(', ')}] (${h.bytes}b)`);
+    }
+  }
+  if (wouldSoftBlock.length > 0) {
+    console.log('\nTop soft-blocks (would write but skip embedding):');
+    for (const s of wouldSoftBlock.slice(0, 10)) {
+      console.log(`  ${s.file} (${s.bytes}b)`);
+    }
+  }
+}
+
 // ── Dispatcher ──────────────────────────────────────────────
 
 // v0.40.6.0: my duplicate `runStatus` (line ~895 pre-resolution) was
@@ -917,6 +1090,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'tracked-branch': return runTrackedBranch(engine, rest);
     // v0.40.3.0 contextual retrieval (from master)
     case 'set-cr-mode': return runSetCrMode(engine, rest);
+    case 'audit':      return runAudit(engine, rest);
     case undefined:
     case '--help':
     case '-h':

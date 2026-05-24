@@ -125,6 +125,33 @@ export interface GBrainConfig {
   search_embedding_column?: string;
 
   /**
+   * v0.41 content-sanity tunables. Read via file/env/DB plane (D1: lint
+   * lifts to DB config when reachable). Resolution order:
+   * env > file > DB > defaults from `src/core/content-sanity.ts`.
+   *
+   * Both lint AND ingest go through the same effective resolution so a
+   * `gbrain config set content_sanity.bytes_block N` flips both surfaces
+   * uniformly. CI without `~/.gbrain/` falls through to env/defaults.
+   */
+  content_sanity?: {
+    /** Stderr warn + lint `huge-page` rule fires above this (UTF-8 bytes
+     *  of compiled_truth + timeline). Default: 50_000. Env override:
+     *  `GBRAIN_PAGE_WARN_BYTES`. */
+    bytes_warn?: number;
+    /** Soft-block: page writes with `frontmatter.embed_skip` set but
+     *  embedder skips on next sweep. Default: 500_000. Env override:
+     *  `GBRAIN_PAGE_BLOCK_BYTES`. */
+    bytes_block?: number;
+    /** Master switch for the built-in junk-pattern set. Default: true.
+     *  Env override: `GBRAIN_NO_JUNK_PATTERNS=1` flips to false. */
+    junk_patterns_enabled?: boolean;
+    /** Master kill-switch for all sanity checks. When true, ingest emits
+     *  loud stderr per page but lets everything through. Default: false.
+     *  Env override: `GBRAIN_NO_SANITY=1` flips to true. */
+    disabled?: boolean;
+  };
+
+  /**
    * Thin-client mode (multi-topology v1). When set, this install does NOT
    * have a local DB; it talks to a remote `gbrain serve --http` over MCP.
    * The CLI dispatch guard in `src/cli.ts` checks for this field BEFORE
@@ -284,6 +311,37 @@ export function loadConfig(): GBrainConfig | null {
       ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }
       : {}),
   };
+
+  // v0.41 content-sanity env overrides. Built up as a sparse object so
+  // env presence wins over file/DB only for the specific keys set,
+  // matching the precedence pattern used elsewhere in loadConfig.
+  // The env vars use natural names (GBRAIN_NO_SANITY=1 is more
+  // operator-friendly than GBRAIN_CONTENT_SANITY_DISABLED=true).
+  const envContentSanity: GBrainConfig['content_sanity'] = {};
+  if (process.env.GBRAIN_PAGE_WARN_BYTES) {
+    const n = parseInt(process.env.GBRAIN_PAGE_WARN_BYTES, 10);
+    if (Number.isFinite(n) && n > 0) envContentSanity.bytes_warn = n;
+  }
+  if (process.env.GBRAIN_PAGE_BLOCK_BYTES) {
+    const n = parseInt(process.env.GBRAIN_PAGE_BLOCK_BYTES, 10);
+    if (Number.isFinite(n) && n > 0) envContentSanity.bytes_block = n;
+  }
+  if (process.env.GBRAIN_NO_JUNK_PATTERNS === '1') {
+    envContentSanity.junk_patterns_enabled = false;
+  }
+  if (process.env.GBRAIN_NO_SANITY === '1') {
+    envContentSanity.disabled = true;
+  }
+  // Only attach the field when at least one env var was set, so the
+  // sparse-merge semantics elsewhere in loadConfigWithEngine work
+  // (env presence => "this key already has a value, don't read DB").
+  if (Object.keys(envContentSanity).length > 0) {
+    (merged as GBrainConfig).content_sanity = {
+      ...(fileConfig?.content_sanity ?? {}),
+      ...envContentSanity,
+    };
+  }
+
   return merged as GBrainConfig;
 }
 
@@ -381,6 +439,41 @@ export async function loadConfigWithEngine(
   if (merged.search_embedding_column === undefined && dbSearchEmbeddingColumn !== undefined) {
     merged.search_embedding_column = dbSearchEmbeddingColumn;
   }
+
+  // v0.41 content-sanity DB-plane merge (D1: lint lifts to read these
+  // when reachable). Per-key sparse-merge: env/file wins per individual
+  // key; DB fills the gaps. The container object is constructed only if
+  // at least one source provides a value, mirroring the env-merge logic
+  // in loadConfig().
+  async function dbInt(key: string): Promise<number | undefined> {
+    const v = await dbStr(key);
+    if (v === undefined) return undefined;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }
+  const dbWarnBytes = await dbInt('content_sanity.bytes_warn');
+  const dbBlockBytes = await dbInt('content_sanity.bytes_block');
+  const dbJunkEnabled = await dbBool('content_sanity.junk_patterns_enabled');
+  const dbSanityDisabled = await dbBool('content_sanity.disabled');
+
+  const existingCS = merged.content_sanity ?? {};
+  const mergedCS: NonNullable<GBrainConfig['content_sanity']> = { ...existingCS };
+  if (mergedCS.bytes_warn === undefined && dbWarnBytes !== undefined) {
+    mergedCS.bytes_warn = dbWarnBytes;
+  }
+  if (mergedCS.bytes_block === undefined && dbBlockBytes !== undefined) {
+    mergedCS.bytes_block = dbBlockBytes;
+  }
+  if (mergedCS.junk_patterns_enabled === undefined && dbJunkEnabled !== undefined) {
+    mergedCS.junk_patterns_enabled = dbJunkEnabled;
+  }
+  if (mergedCS.disabled === undefined && dbSanityDisabled !== undefined) {
+    mergedCS.disabled = dbSanityDisabled;
+  }
+  if (Object.keys(mergedCS).length > 0) {
+    merged.content_sanity = mergedCS;
+  }
+
   return merged;
 }
 
@@ -475,6 +568,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'emotional_weight.user_holder',
   // Cycle phase config
   'cycle.grade_takes.write_gstack_learnings',
+  // Content sanity (v0.41)
+  'content_sanity.bytes_warn',
+  'content_sanity.bytes_block',
+  'content_sanity.junk_patterns_enabled',
+  'content_sanity.disabled',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',
@@ -492,6 +590,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'cycle.',            // cycle.<phase>.*
   'embedding_columns.', // per-column overrides
   'provider_base_urls.', // per-provider base URL overrides
+  'content_sanity.',    // v0.41 content-sanity tunables
 ];
 
 export function saveConfig(config: GBrainConfig): void {

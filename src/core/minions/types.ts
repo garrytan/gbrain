@@ -449,6 +449,38 @@ export interface SubagentHandlerData {
    * and direct CLI submitters set it.
    */
   allowed_slug_prefixes?: string[];
+  /**
+   * v0.41 Approach C: opt out of the auto-generated tool-usage preamble
+   * that `buildSystemPrompt()` splices into `system`. Default behavior
+   * (omitted or false) prepends a deterministic preamble listing each
+   * tool's name + usage_hint. Set to `true` to keep `system` byte-for-byte
+   * as provided.
+   *
+   * Use when the caller has hand-tuned a complete system prompt for a
+   * specific subagent (no benefit from auto-generated guidance, prompt
+   * cache hits ride entirely on the caller-supplied prefix).
+   */
+  system_no_tool_preamble?: boolean;
+  /**
+   * v0.41 E6 — opt OUT of classifier-gated auto-resubmit on terminal
+   * failures. Default behavior (omitted or false) runs the
+   * `RECOVERABLE_CLUSTERS` self-fix path when the failure classifies as
+   * one of {`prompt_too_long`, `tool_schema_mismatch`, `malformed_json`}.
+   * Set true to disable per-job (useful for graders / probes where a
+   * retry would muddy the signal).
+   */
+  no_self_fix?: boolean;
+  /**
+   * v0.41 E6 — internal marker set by `submitSelfFixChild` so the
+   * chain-depth walker can count self-fix ancestors. Counter starts at
+   * 0 on a fresh user-submitted job; increments by 1 per chain hop.
+   */
+  is_self_fix_child?: boolean;
+  /**
+   * v0.41 E6 — which classifier bucket triggered this self-fix child.
+   * Read by audit + diagnostic surfaces (jobs get / dashboard).
+   */
+  self_fix_cluster?: string;
 }
 
 /**
@@ -499,6 +531,20 @@ export interface ToolDef {
   input_schema: Record<string, unknown>;
   idempotent: boolean;
   execute(input: unknown, ctx: ToolCtx): Promise<unknown>;
+  /**
+   * v0.41 Approach C: one-line hint surfaced verbatim in the subagent
+   * system prompt's tool preamble. Tells the model WHEN to use this tool.
+   * The `description` tells the model HOW; the `usage_hint` tells WHEN.
+   *
+   * Field-report case: a `shell` tool sat in the registry and the subagent
+   * never used it because nothing told the model "to write a file, use
+   * shell." Per-tool hints surface that directly. Plugin authors get this
+   * affordance for free.
+   *
+   * Optional — omitted tools just don't get a hint line. Must be a single
+   * line (no embedded newlines) so the rendered preamble stays scannable.
+   */
+  usage_hint?: string;
 }
 
 /**

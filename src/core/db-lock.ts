@@ -284,6 +284,48 @@ async function engineSelectOne(engine: BrainEngine): Promise<void> {
 }
 
 /**
+ * v0.41 Eng D9 (codex pass-2 #7 + #8) — per-tick election convenience.
+ *
+ * Thin wrapper over `tryAcquireDbLock` for the E5 lease-cap controller
+ * use case: each worker ticks every 30s and tries to acquire the
+ * controller lock; the winner runs `fn` (read fleet signal, write new
+ * lease cap), then releases. Losers no-op for this tick; next tick
+ * re-elects.
+ *
+ * The codex pass-3 #8 + #9 audit confirmed this should reuse the
+ * existing `gbrain_cycle_locks` table (which `tryAcquireDbLock` already
+ * wraps for both engines) rather than build a parallel new primitive.
+ *
+ * Semantics:
+ *   - Returns the result of `fn` on lock acquisition.
+ *   - Returns `null` when another worker holds the lock (not an error;
+ *     just "not my tick").
+ *   - `fn` throws → release lock cleanly + rethrow.
+ *
+ * For long-running work that needs mid-flight TTL refresh, use
+ * `withRefreshingLock` instead. This helper is for sub-second / single-
+ * statement work where the initial TTL covers the whole call.
+ */
+export async function tryWithDbElection<T>(
+  engine: BrainEngine,
+  lockId: string,
+  ttlMinutes: number,
+  fn: () => Promise<T>,
+): Promise<T | null> {
+  const handle = await tryAcquireDbLock(engine, lockId, ttlMinutes);
+  if (!handle) return null;
+  try {
+    return await fn();
+  } finally {
+    try {
+      await handle.release();
+    } catch {
+      /* idempotent — lock will auto-expire under TTL */
+    }
+  }
+}
+
+/**
  * Compose a multi-tenant-safe lock id (cherry D4). Suffixes the lock id
  * with the database name so two gbrain installs sharing a Postgres cluster
  * (different databases on the same Supabase project) don't contend.

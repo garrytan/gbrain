@@ -2,6 +2,288 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.41.0.0] - 2026-05-24
+
+**Your 100-job subagent batch now actually completes.** A real user ran `gbrain jobs work --concurrency 10` against an Azure-hosted Anthropic endpoint, submitted 100 background jobs, and watched every single one dead-letter with `rate lease "anthropic:messages" full (8/8)`. The default cap of 8 starved 2 workers; every starved job got marked as a failure, hit `max_attempts = 3` after 3 lease-full bounces, and dead-lettered. This release turns minions from "a CLI you drive" into "a fleet you supervise" — submit a batch, walk away, come back to completed work.
+
+Four bugs from the field report fixed first. Then the surrounding ergonomics so leaving the room is a real promise, not honor system.
+
+To turn it on: run `gbrain upgrade`. The defaults do the right thing for fresh installs and existing brains. If you're on Azure / Bedrock / self-hosted with no provider rate limit, also run `export GBRAIN_ANTHROPIC_MAX_INFLIGHT=unlimited` so you're not capped by gbrain's safety default.
+
+What you'd see in a concrete example. A 100-job subagent batch on default settings:
+- **Pre-v0.41:** queue accepts → 100 dead-lettered in 30 seconds → operator stares at the carnage
+- **v0.41:** queue accepts → bounces pace against the upstream → 100 completed in ~3-5 min → `gbrain doctor` shows `subagent_health: ok` → audit row per bounce visible for forensics
+
+Things to know about. (1) Cost protection: `gbrain agent run --budget-usd 5 ...` now actually enforces the ceiling via a reservation pattern that holds even under fan-out. Pre-submit projection prints "this batch will take ~30 min and cost ~$2.40 at current cap of 32" with a paste-ready cap-raise hint. (2) Self-healing batches: when a subagent fails with `prompt_too_long`, `tool_schema_mismatch`, or `malformed_json`, the worker auto-submits one retry with the failure context — `tool_crash` / `tool_unavailable` / `tool_permission` deliberately do NOT self-fix (those are real bugs you need to see). (3) Live dashboard: `gbrain jobs watch` now exists — TTY tail of throughput / lease pressure / clustered errors / budget remaining; admin SPA gets a matching Jobs Watch tab. (4) Auto-adaptive lease cap: the worker reads bounce rate + upstream 429s + latency stability and adjusts the cap automatically. Bounces with NO 429s = workers starving = cap goes UP (the correct sign per codex pass-2 #9 — the original draft had this inverted and would have cratered cap during healthy bursts).
+
+What we caught and fixed before merging. Three independent reviews + three codex outside-voice passes converged on the wave. The reviews found five silently-broken designs that would have shipped without them: an inverted controller, a depth-1 budget ceiling, an unbounded audit table, PGLite-broken lock paths, and deleted-owner budget zombies. All five caught and fixed; ironclad regression tests pin each correction. Test surface: ~120 new unit tests across the new modules plus an IRON-RULE regression test on the E5 controller's bounce-sign that would scream if a future "let's simplify the rule" PR ever flipped it back.
+
+### Itemized changes
+
+**The four base bug fixes (field report):**
+
+- **Bug 1 — rate-lease default 8 → 32 + `unlimited` sentinel.** `src/core/minions/handlers/subagent.ts:61` new `resolveLeaseCap()`. Default cap goes from 8 to 32 (matches 10-concurrency batches without starving). Accepts `unlimited` / `none` as explicit POSITIVE_INFINITY sentinel for upstreams with no provider rate limit. Throws on `NaN` / `0` / negative input with paste-ready hint (codex pass-1 #7: silent `=0`-uncapped semantics were dangerous; "0 means disabled" is the universal convention).
+- **Bug 2 — lease-full bypass that doesn't burn `attempts_made`.** Pre-v0.41, lease-full bounces routed through `failJob` which incremented `attempts_made`. After 3 bounces a job hit `max_attempts` and dead-lettered with `rate lease "anthropic:messages" full (8/8)`. Now: new `MinionQueue.releaseLeaseFullJob()` mirrors `failJob` minus the attempt bump; worker catch block detects `RateLeaseUnavailableError` BEFORE the existing `isUnrecoverable` gate; routes through the bypass with 1-3s jittered backoff. The handler comment at `subagent.ts:425` ("treat as renewable error so the worker re-claims") is now actually true.
+- **Bug 3 — strip `provider:` prefix at the Anthropic SDK call site.** `gbrain agent run --model anthropic:claude-sonnet-4-6` used to send the qualified string straight to `client.messages.create` which Anthropic rejects with "model not found." New `stripProviderPrefix()` helper applies at the one SDK call site; `model` stays qualified everywhere else (persistence, recipe lookup, capability gate).
+- **Bug 4 (absorbed into Approach C) — composable system prompt renderer with per-tool `usage_hint`.** Pre-v0.41 the default subagent system prompt was one generic line; if a tool sat in the registry, the model had no idea when to reach for it. The field-report repro: a `shell` tool was registered, the subagent never used it, and instead described file contents in prose. New `src/core/minions/system-prompt.ts` splices a deterministic preamble listing each tool's name + `usage_hint` (description tells the model HOW; hint tells it WHEN). All 13 brain tools annotated. Closing paragraph names `shell` / `bash` explicitly + tells the model brain tools write to the DB, not local files. Deterministic so the Anthropic prompt-cache marker on the system block stays a hit.
+
+**Visibility infrastructure (Approach C base + Eng D3 / D7 / D8 / D10):**
+
+- New migration v93 `minions_v0_41_audit_and_budget`: three audit tables (`minion_lease_pressure_log`, `minion_budget_log`, `minion_self_fix_log`) with `ON DELETE SET NULL` FKs so audit rows survive `gbrain jobs prune`; denormalized columns (queue_name, model, provider, owner_id, event_type, etc.) persisted inline so post-NULL forensic queries still see context. Three new `minion_jobs` columns: `budget_remaining_cents`, `budget_owner_job_id` (FK SET NULL), `budget_root_owner_id` (no FK — Eng D10 immutable historical reference that survives owner deletion so children can disambiguate "never had a budget" from "owner deleted, halt cleanly"). Postgres + PGLite parity.
+- `gbrain doctor` gains `subagent_health` check. Reads 24h of `minion_lease_pressure_log`. 0 bounces → ok; 100+ with no completed subagents → warn with paste-ready cap-raise hint; 1000+ → fail (blocking). Pre-v93 brains silently skip.
+- `gbrain jobs stats` gains a `Lease pressure (1h)` line + `--cluster-errors` flag that groups dead/failed jobs by classifier bucket via the new `src/core/minions/error-classify.ts` (the shared classifier consumed by both `gbrain jobs stats --cluster-errors` and the E6 self-fix gate).
+- New `src/core/minions/lease-pressure-audit.ts` + `src/core/minions/budget-tracker.ts` — best-effort writers + readers for the new audit tables. Stderr-warn on failure; never blocks the bypass path.
+
+**Live dashboard (D2):**
+
+- New `gbrain jobs watch` command (`src/commands/jobs-watch.ts`). Manual ANSI cursor management, 1s refresh, color-coded lease pressure (green/yellow/red by severity), top-5 clustered errors, budget owners panel. Non-TTY mode emits JSON snapshots per tick.
+- New admin SPA `Jobs Watch` tab (`admin/src/pages/JobsWatch.tsx`) consuming the new `/admin/api/jobs/watch` endpoint. Layout matches TTY 1:1.
+- New `GET /admin/api/jobs/watch` endpoint in `src/commands/serve-http.ts` — shares `readSnapshot()` with the TTY command so the two surfaces stay 1:1.
+
+**Cost cathedral (D4 + D5):**
+
+- New `src/core/minions/batch-projection.ts` — pure math for submit-time projection. Cold-start fallback (no history → model-default per-token pricing + 5s mean latency guess + `(no history; estimate is a wide guess)` annotation). Unknown-model handling returns the tagged variant so `--budget-usd` enforcement can refuse to gate against an unavailable cost estimate (matches the cross-modal-eval precedent). ±30% confidence band; threshold-gated TTY prompt (default $5 / 30min) overridable via env.
+- New `src/core/minions/budget-tracker.ts` — D5 enforcement via reservation pattern (codex pass-2 #5 / Eng D7): worker calls `reserveBudget(parentJobId, expectedMaxTurnCostCents)` BEFORE each turn; SQL UPDATE with CAS guarantees no overspend even across N parallel children of one budget owner. `refundBudget()` returns unspent cents. `haltBudgetSubtree()` walks `budget_owner_job_id = X` to flip the entire subtree to dead with reason `budget_exhausted`. Eng D10 NULL-bypass: jobs without an owner skip reservation cleanly; the immutable `budget_root_owner_id` disambiguates "never had budget" from "owner deleted, halt cleanly."
+
+**Self-tuning fleet (E5 — reframed):**
+
+- New `src/core/minions/lease-cap-controller.ts` — adapts the rate-lease cap (NOT worker concurrency; codex pass-1 caught the original framing was solving the wrong bottleneck). **Eng D6 corrected control law (load-bearing fix):** ramp DOWN ONLY when upstream pushes back (429s > 0.5/min OR latency unstable); ramp UP fast when bounces > 1/min AND no upstream pushback (workers starving inside our artificial cap); ramp UP slow on healthy headroom (no bounces + util > 50%); deadband otherwise. Codex pass-2 #9 caught the original draft had this sign inverted — would have cratered cap during the field-report's 100-job burst. IRON-RULE regression test (`test/lease-cap-controller.test.ts`) pins the correct sign so future "let's simplify" PRs can't silently regress.
+- Per-tick election via new `tryWithDbElection(engine, lockId, ttlMinutes, fn)` helper in `src/core/db-lock.ts` — thin convenience over the existing `tryAcquireDbLock` primitive (codex pass-3 #8/#9: extend the existing primitive rather than build a parallel new one). Eng D9 retrofit of existing rate-leases + queue maxWaiting call sites to the same primitive is filed as a v0.42 follow-up since the existing PGLite single-connection mutex preserves correctness by accident.
+- Workers read `lease_cap_current` from config on every acquire (short-TTL cache) so they pick up controller writes within ~5s of a decision.
+- A/B harness `scripts/e5-lease-cap-ab.ts` per D11 — 500-job batch under Anthropic with log-normal prompt distribution, 15-min 429 burst injection, $8 budget per arm, committed receipt fixture at `test/fixtures/e5-lease-cap-ab/`. Dry-run smoke verified; full-run dispatcher is a v0.41.1 follow-up.
+
+**Self-healing batches (E6 — narrowed):**
+
+- New `src/core/minions/self-fix.ts` — classifier-gated auto-resubmit on terminal failures. RECOVERABLE_CLUSTERS narrowed per codex pass-2 #4: only `prompt_too_long`, `tool_schema_mismatch`, `malformed_json` qualify; `tool_crash` / `tool_unavailable` / `tool_permission` route through normal dead-letter so real bugs stay visible. Chain depth cap default 2 (D15); per-job opt-out via `data.no_self_fix: true`; global off-switch via config.
+- `prompt_too_long` reduction (codex pass-1 #11): v0.41 ships truncate-with-leaf-preservation; full semantic reduction (drop tool_result blocks then Haiku-summarize older pairs) is a v0.42 follow-up. Worst-case current behavior — truncate-then-fail — is safe (no infinite loops, depth cap prevents chains).
+- Children inherit budget owner from parent (Eng D7 + D10) but DO NOT copy the remaining cents (codex pass-3 #5 caught the original plan's contradiction; only the owner row holds spendable balance).
+
+**Three review passes + three codex outside-voice passes converged.** The wave got CEO review + eng review + a third "second eng pass" + codex pass-1 (on CEO plan) + codex pass-2 (on eng additions) + codex pass-3 (on post-corrections plan). Each pass caught corrections the previous pass missed. The post-corrections plan ships with 0 unresolved decisions across 20 user-decided AUQs.
+
+### For contributors
+
+- `test/lease-cap-controller.test.ts` includes the field-report-scenario simulation: starving workers (bounces but no upstream pushback) get MORE capacity, not less. Don't simplify this rule without re-reading codex pass-2 #9.
+- `src/core/minions/error-classify.ts` is the single source of truth for the cluster taxonomy. Adding new clusters is an explicit `RECOVERABLE_CLUSTERS` decision (self-fix qualification gate).
+- Audit table denormalization is load-bearing: codex pass-3 #7 caught that without it, post-NULL FK rows are timestamp-only residue. New audit kinds MUST denormalize the context columns at write time.
+- The retrofit of `pg_advisory_xact_lock` call sites in `src/core/minions/rate-leases.ts:80` and `src/core/minions/queue.ts:152` to the new shared primitive is a v0.42 follow-up (the existing PGLite single-connection mutex preserves correctness by accident; the retrofit makes it explicit).
+
+## To take advantage of v0.41.0.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the outcome:**
+   ```bash
+   gbrain doctor          # should show subagent_health check
+   gbrain jobs stats      # should show Lease pressure (1h) line
+   ```
+3. **Tune the rate-lease cap for your upstream:**
+   - Default Anthropic API → leave at 32 (the new default; works for most workloads).
+   - Azure / Bedrock / self-hosted with no provider-side rate limit:
+     ```bash
+     export GBRAIN_ANTHROPIC_MAX_INFLIGHT=unlimited
+     ```
+4. **Try the live dashboard during your next batch:**
+   ```bash
+   gbrain jobs work --concurrency 10 &
+   gbrain jobs watch                    # in another terminal
+   ```
+5. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor --json` output.
+## [0.40.10.0] - 2026-05-24
+
+**Your brain stops accepting junk pages, and oversize content stops crashing the embedder.** A page from one of your source repos can no longer break embedding, defeat search, or pollute your knowledge graph just because it's a Cloudflare challenge dump or an absurdly large file. The new sanity gate lives at the narrow waist of ingestion, so every path that writes pages — sync, capture, `put_page` MCP, the `/ingest` webhook — picks it up uniformly.
+
+Two failure modes treated differently:
+
+- **Scraper junk** (Cloudflare challenge pages, CAPTCHAs, 403 dumps, bare error-page titles): HARD-BLOCK at ingest. Your CLI exits non-zero, your MCP call gets a proper error envelope, your sync surfaces the failure with code `PAGE_JUNK_PATTERN` so doctor groups it. The page never lands. Six hand-vetted patterns ship built-in; operators add literal substrings for site-specific cases via `~/.gbrain/junk-substrings.txt`.
+
+- **Legitimate large content** (your 2MB conversation transcripts, long essays, big articles): SOFT-BLOCK. The page writes successfully, you can still query it by title and slug, but the embedder skips it on the next sweep. The 5 places the embedder reads from now share one source-of-truth helper so the skip can't drift across them. If you edit a page past the size threshold, its old chunks get deleted in the same transaction so search stops returning matches against content that's no longer there.
+
+**New surfaces:**
+- `gbrain sources audit <id>` — walk a source repo's disk, report size distribution + would-blocks + junk-pattern hits without touching the DB. Catches junk before sync. Read-only by design.
+- `gbrain doctor` gains `oversized_pages`, `scraper_junk_pages`, `content_sanity_audit_recent` checks. Default scans the 1000 most-recent pages; `--content-audit` opts into a full scan for the cleanup wave.
+- `gbrain lint` gains `huge-page` and `scraper-junk` rules. Lint reads DB config when reachable (matches what `gbrain config set` writes) and falls back to file/env on CI.
+- `GBRAIN_NO_SANITY=1` kill-switch with loud stderr per bypassed ingest. Operators who really want junk through have to ask for it explicitly and see the warning every time.
+
+**Knobs (all four read env > file > DB > defaults):**
+- `content_sanity.bytes_warn` (default 50_000) — `GBRAIN_PAGE_WARN_BYTES`
+- `content_sanity.bytes_block` (default 500_000) — `GBRAIN_PAGE_BLOCK_BYTES`
+- `content_sanity.junk_patterns_enabled` (default true) — `GBRAIN_NO_JUNK_PATTERNS=1` flips off
+- `content_sanity.disabled` (default false) — `GBRAIN_NO_SANITY=1` flips on
+
+**ISO-week JSONL audit** at `~/.gbrain/audit/content-sanity-YYYY-Www.jsonl` records every hard-block, soft-block, and warn-trip event. Doctor reads the last 7 days, aggregates by pattern + source, surfaces "31 ingest blocks this week, 28 from straylight-brain" so operators see which scraper is the actual problem. Honors `GBRAIN_AUDIT_DIR` for shared-filesystem multi-host setups; documented caveat in the doctor message for ops that don't share the dir.
+
+**No schema migration this PR.** The soft-block flag rides in `frontmatter.embed_skip` JSONB so the embedder filter is a single SQL fragment shared by both engines. Schema column for `pages.embed_skipped_at` lands in v0.41+ with the chunk-level quarantine refactor — deferred for the right reason (Codex caught that page-level granularity loses good chunks; chunk-level is the right axis).
+
+**Review provenance.** This wave went through `/plan-ceo-review` (5 cherry-picks surfaced, 3 accepted, 2 deferred post-Codex round 1) and `/plan-eng-review` (4 architectural decisions resolved + 4 strategic Codex round 2 tensions resolved). Codex caught one load-bearing bug class during planning — `importFromContent.status` vocabulary mismatch that would have made the gate silently fail at the CLI / MCP / sync wrapper sites. Fixed by throwing a typed `ContentSanityBlockError` instead of inventing a new status value; the existing exception flow at every wrapper site fires correctly through one throw point. The plan was substantially tightened post-Codex (dropped 2 cherry-picks that needed v0.42 chunk-level rework, dropped an operator-regex feature that needed a real ReDoS story, dropped the HTML-density rule that needed careful handling of code fences). What ships is what the actual bug needed plus the audit + cleanup surfaces.
+
+**99 new unit tests** (207 assertions) across 6 files covering the assessor, literal loader, embed-skip helper, audit JSONL, lint rules, and the import-file gate. 136 surface-area regression tests on the files touched all pass in isolation. Full bun:test suite returns clean.
+
+### To take advantage of v0.40.10.0
+
+`gbrain upgrade` carries this for you. No migration, no manual steps. After upgrading:
+
+1. **Audit your existing inventory** (optional but recommended):
+   ```bash
+   gbrain doctor --content-audit --json | jq '.checks[] | select(.name == "scraper_junk_pages" or .name == "oversized_pages")'
+   ```
+   Surfaces existing junk pages and oversized pages already in your brain.
+
+2. **For any junk pages doctor flags**, the right cleanup is at the source — `git rm` the file from the source repo, push, then `gbrain sync`. The v0.41+ wave will ship `gbrain sources prune-junk <id>` to automate this; for v0.40.10.0 it's a manual two-step.
+
+3. **For oversized pages doctor flags** as warn-tier, no action needed unless you want to split. New oversize will automatically write with `frontmatter.embed_skip` and be queryable by title (just not search-rankable until split).
+
+4. **If you have a site-specific scraper-junk pattern** (LinkedIn auth wall, Reddit blocked page, etc.), drop a literal in `~/.gbrain/junk-substrings.txt`:
+   ```
+   # name=linkedin_auth_wall
+   Sign in to your account to continue
+
+   # name=reddit_blocked
+   You're being blocked from accessing
+   ```
+   Loaded on every ingest. Missing file is fine; malformed lines are impossible (no regex).
+
+5. **If any step surprises you,** please file an issue: https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor --json`
+   - a sanitized example of the page that surprised you
+   - which step broke
+
+   The audit JSONL at `~/.gbrain/audit/content-sanity-YYYY-Www.jsonl` carries the assessor's full reasoning per event if you want to debug a specific decision.
+
+### Itemized changes
+
+**Added:**
+- `src/core/content-sanity.ts` — pure assessor with 6 hand-vetted junk patterns + `ContentSanityBlockError` class
+- `src/core/content-sanity-literals.ts` — operator literal-substring loader (fail-soft on ENOENT)
+- `src/core/embed-skip.ts` — 5-site shared predicate (JS + SQL fragment + marker builder)
+- `src/core/audit/content-sanity-audit.ts` — ISO-week JSONL writer/reader on the v0.40.4.0 audit-writer primitive
+- `gbrain sources audit <id>` CLI for dry-run source-repo scanning
+- `gbrain doctor --content-audit` flag for full-scan opt-in
+- `gbrain doctor` checks: `oversized_pages`, `scraper_junk_pages`, `content_sanity_audit_recent`
+- `gbrain lint` rules: `huge-page`, `scraper-junk`
+- 4 `content_sanity.*` config keys (file/env/DB plane)
+
+**Changed:**
+- `importFromContent` throws `ContentSanityBlockError` on hard-block (junk pattern match) and sets `frontmatter.embed_skip` on soft-block (oversize alone). Old chunks deleted on transition to soft-block.
+- `gbrain import` honors `errors > 0` for non-zero exit (was silently exit-0 on failed files).
+- Embed sweep skips pages with `embed_skip` flag at all 5 sites: `embed.ts --stale`, `embed.ts --all`, `embed-stale.ts` Minion helper, both engines' `listStaleChunks` + `countStaleChunks`.
+- `lint.ts` lifts DB config when `~/.gbrain/` is reachable; falls back to file/env on CI.
+- `classifyErrorCode` recognizes `PAGE_JUNK_PATTERN` for sync-failures.jsonl grouping.
+
+**Test coverage:**
+- 99 new unit tests across 6 files (207 assertions)
+- All new modules covered at the boundary level
+- Cross-site embed-skip invariant pinned by `test/embed-skip.test.ts`
+- Bytes-parity assertion (D2) pinned in `test/content-sanity.test.ts`
+
+### For contributors
+
+The plan file lives at `~/.claude/plans/system-instruction-you-are-working-temporal-brook.md` with the full decision provenance: CEO review (D1-D16) + Eng review (D1-D9) + Codex round 1 (17 findings) + Codex round 2 (13 findings). The deferred-to-v0.41+ TODOs are in `TODOS.md` under "v0.41 content-sanity follow-ups" — chunk-level quarantine, source-repo remediation CLI, threshold validation post-deploy, brain-score `no_junk_pages_score` component, plus the operator-regex + HTML-density features that need real ReDoS / code-fence-handling stories before they're worth shipping.
+## [0.40.9.0] - 2026-05-24
+
+**`gbrain sync` now indexes your `.sql` files, and `gbrain code-def` works on SQL tables, functions, views, and indexes the same way it works on TypeScript.**
+
+Until today, point gbrain at a repo that ships database migrations or query libraries and the `.sql` files dropped silently on the floor. The code chunker shipped support for 36 languages — SQL was the conspicuous absence. Closes [#1173](https://github.com/garrytan/gbrain/issues/1173).
+
+Concretely, what changes: `gbrain sync` running over a repo with a `migrations/001_users.sql` file now produces a code page in your brain. Each top-level statement becomes its own chunk. `CREATE TABLE users (...)` lands with `symbol_name='users'` and `symbol_type='table'`. `CREATE OR REPLACE FUNCTION get_user_by_email(...)` lands with `symbol_name='get_user_by_email'` and `symbol_type='function'`. Same for `CREATE VIEW`, `CREATE INDEX`, `CREATE PROCEDURE`, `CREATE TYPE`, `CREATE SCHEMA`, `CREATE DATABASE`, `CREATE TRIGGER`, and `ALTER TABLE` / `ALTER VIEW`. Then `gbrain code-def users` returns the CREATE TABLE site directly — same shape as `gbrain code-def AuthService` on a TypeScript class.
+
+INSERT/UPDATE/DELETE/SELECT statements still get chunked (so a query library stays searchable via vector + keyword) but they emit unnamed — `code-def` is a definition signal, not a query-mention signal, so DML doesn't pollute the symbol surface. PostgreSQL's `$$ ... $$` dollar-quoted function bodies parse cleanly. Files with malformed SQL fall through to the recursive chunker instead of throwing.
+
+**One honesty note about binary size.** The grammar this release vendors (`DerekStride/tree-sitter-sql`) covers PostgreSQL, MySQL, SQLite, and T-SQL basics in one parser. That breadth comes from a 40 MB generated `parser.c` that compiles to an 11 MB WASM. The plan projected 400 KB-1.4 MB before measurement; the real number is ~8x bigger. The compiled gbrain binary grows roughly 6% as a result. If that matters in your deployment, file an issue and we'll evaluate a narrower-coverage fork as a follow-up.
+
+### How to take advantage of v0.40.9.0
+
+Existing brains pick up SQL automatically on the next `gbrain sync` over a repo containing `.sql` files. No migration, no flag, no reembed prompt. No flag exists to turn it off — if you'd previously been ignoring `.sql` files via `.gitignore` and want to keep doing that, that path still works exactly as before.
+
+To verify it works end-to-end on your own brain:
+
+```bash
+gbrain sync                                # syncs any .sql files in your tracked sources
+gbrain code-def <your-table-name>          # should return the CREATE TABLE site
+gbrain code-def <your-function-name>       # should return the CREATE FUNCTION site
+```
+
+If `code-def` returns nothing on a table you know exists in a sync'd `.sql` file, file an issue with the SQL syntax — the DerekStride grammar covers the common dialects but some edge cases (vendor-specific extensions) may parse to a generic statement node where the name isn't reachable via the standard field paths.
+
+### Itemized changes
+
+#### Chunker
+
+- **`src/core/chunkers/code.ts:30+` — vendor `tree-sitter-sql.wasm` (DerekStride/tree-sitter-sql @ c2e1e08db1ea20dc23bdb8d228a81a8756e9c450, built with `tree-sitter-cli@v0.26.3 --abi 14`).** ABI 14 chosen explicitly because gbrain's `web-tree-sitter@0.22.6` supports ABI range 13-14; the CLI's default ABI 15 is incompatible (verified by a load-time `Incompatible language version 15. Compatibility range 13 through 14.` throw during Step 0 grammar inspection). Binary is 11 MB.
+- **`src/core/chunkers/code.ts:121-125` — `SupportedCodeLanguage` union extended with `'sql'`.**
+- **`src/core/chunkers/code.ts:199-229` — `LANGUAGE_MANIFEST` registers `sql: { displayName: 'SQL', embeddedPath: G_SQL }`.**
+- **`src/core/chunkers/code.ts:410+` — `detectCodeLanguage('foo.sql')` returns `'sql'` (case-insensitive).**
+- **`src/core/chunkers/code.ts:325+` — `TOP_LEVEL_TYPES.sql = new Set(['statement'])` catch-all.** DerekStride's grammar wraps every top-level statement in a single `statement` node whose only named child carries the actual kind. The Step 0 grammar-inspection script (`tools/inspect-sql-grammar.ts`) verified this shape against 9 representative SQL fixtures.
+- **`src/core/chunkers/code.ts:1025+` — `extractSymbolName` gains an inline SQL branch.** When the node is `type === 'statement'` with a single named child, it dives into `extractSqlSymbolName(node.namedChild(0))`. That helper recognizes 11 DDL kinds (`create_table`, `create_view`, `create_index`, `create_function`, `create_procedure`, `create_type`, `create_schema`, `create_database`, `create_trigger`, `alter_table`, `alter_view`) and pulls the target identifier from the inner node's `name` field, with fallback to the first `object_reference`/`identifier`-shaped child. Six DML kinds (`select`, `insert`, `update`, `delete`, `merge`, `with`) deliberately return null so chunks emit unnamed.
+- **`src/core/chunkers/code.ts:1044+` — `normalizeSymbolType` gains parallel SQL branches** mapping `create_table → 'table'`, `create_view`/`alter_view → 'view'`, `create_index → 'index'`, `create_procedure → 'procedure'`, `create_type → 'type'`, `create_schema → 'schema'`, `create_database → 'database'`, `create_trigger → 'trigger'`, `alter_table → 'table'`.
+- **`src/core/chunkers/code.ts:639+` — chunker emit-path passes the inner-child type to `normalizeSymbolType` when the outer node is `statement`** so chunk headers say "[SQL] file.sql:1-5 table users" instead of "statement users".
+
+#### Sync routing
+
+- **`src/core/sync.ts:88+` — `CODE_EXTENSIONS` adds `'.sql'`.** `isCodeFilePath('migrations/001_init.sql')` now returns `true`, routing through `importCodeFile()` with `page_kind='code'`.
+
+#### `gbrain code-def` extension
+
+- **`src/commands/code-def.ts:35` — `DEF_TYPES` allowlist extended with `'table'`, `'view'`, `'index'`, `'procedure'`, `'schema'`, `'database'`, `'trigger'`.** Without this, the chunks were indexed correctly but invisible to `gbrain code-def <name>` because the SQL `symbol_type` values fell outside the hardcoded definition-types filter. This was the load-bearing missing piece codex caught in `/plan-eng-review` (F2 finding).
+
+#### Tools + docs
+
+- **`tools/inspect-sql-grammar.ts` (NEW)** — one-shot Step 0 inspection script. Loads the vendored wasm via `web-tree-sitter`, parses 9 representative SQL fixtures (CREATE TABLE / FUNCTION / INDEX / VIEW / ALTER TABLE / CREATE TYPE / mixed DDL+DML / pure DML / invalid SQL), prints top-level node types + the `extractSymbolName` generic output. Output drove the `TOP_LEVEL_TYPES` + `extractSqlSymbolName` design decisions.
+- **`CLAUDE.md`** — grammar count bumped 36→37 with the DerekStride SHA + ABI rationale + 11 MB size disclosure. `src/core/chunkers/` entry extended with the SQL branch documentation.
+- **`llms.txt` + `llms-full.txt`** — regenerated via `bun run build:llms` (CI gate).
+
+#### Tests
+
+- **`test/chunkers/code.test.ts`** — 8 new SQL cases: extension count bump 29→30, `Schema.SQL` case-insensitivity, CREATE TABLE/FUNCTION/INDEX/VIEW/ALTER TABLE each extract correct symbolName + symbolType, DML emits unnamed chunks, mixed DDL+DML per-statement emission, header includes `[SQL]` tag, invalid SQL doesn't crash the parser.
+- **`test/sync-classifier-widening.test.ts`** — 1 new case: SQL extensions classified as code (case-insensitive).
+- **`test/e2e/code-indexing.test.ts`** — 7 new cases against real PGLite. The load-bearing canary asserts `findCodeDef(engine, 'users_account_...', { language: 'sql' })` returns the CREATE TABLE site with `symbol_type='table'`. `beforeAll` timeout bumped to 30s (92-migration replay + 11 MB grammar load pushes past the default 5s on slower CI runners).
+
+### Decisions captured during `/plan-eng-review`
+
+- **D1** (scope, initial): bundle `.sql` + TS/JS JSDoc extraction. Reverted by D6.
+- **D2** (grammar source): `DerekStride/tree-sitter-sql` over the official-org fork. Active maintenance, broad dialect coverage, MIT, reproducible wasm build.
+- **D3** (TOP_LEVEL_TYPES): filtered to schema-defining statements. Corrected by Step 0 to catch-all `statement` because DerekStride wraps every top-level statement in that node type.
+- **D4** (CHUNKER_VERSION): bump 4→5 + wire post-upgrade reembed prompt. Dropped by D6 (no longer needed without JSDoc).
+- **D5** (JSDoc extraction): preceding-sibling AST scan. Dropped by D6.
+- **D6** (scope correction, post-codex): strip JSDoc + CHUNKER_VERSION + reembed-prompt. Keep `.sql` + add SQL symbol-name extraction. Driven by codex's F2 finding that SQL chunking without symbol extraction is "just searchable text," not code intelligence.
+
+## [0.40.8.1] - 2026-05-23
+
+**The README and tutorials are rewritten for someone who has never touched GBrain.** The front-door docs now read as a story you can understand cold: what GBrain does, what it looks like, how to install it, two real walkthroughs that take you from zero to a working brain. No internal jargon, no version archaeology, no assumed context.
+
+The big rewrite covers:
+
+- **README lead** rewritten in first-person voice. Opens with "Search gives you raw pages. GBrain gives you the answer." Frames GBrain as both a personal brain and a company brain, with a link to YC's company-brain Request for Startups.
+- **"What this looks like" section** is now a concrete meeting-prep scenario any professional gets cold: you ask "what do I need to know before my meeting with Alice tomorrow?", you see what a typical retrieval tool returns (a list of 5 pages), you see what GBrain returns (a synthesized briefing with citations and a gap-analysis note). No eval jargon, no judge scores, just the two answers side by side. Closes with "search finds the pages, the brain reads them for you and writes the answer."
+- **New `## Tutorials` section** in the README. Replaces the prior `## Recent Releases` changelog summary (that lives in this file, where it belongs).
+- **New `## Your brain's shape (schema packs)` section** in the README explains the dynamic-schema cathedral in plain English: drop your Notion export or your custom layout, run `gbrain schema detect`, the brain adapts to your shape instead of forcing you to learn its.
+- **All version chatter stripped from the README body.** Per the iron rule "the README should read as the current docs written for people who have never known GBrain before." Version history belongs in this file.
+
+Two new end-to-end tutorials in `docs/tutorials/`:
+
+- **`personal-brain.md`** — the canonical full-stack solo install. Two GitHub repos, a Telegram bot, AlphaClaw on Render, OpenClaw + GBrain + Supabase. About two hours, $100-$150 a month. Includes the three Supabase gotchas every install hits (turn on the `vector` extension, use the connection pooler not the direct connection, buy the IPv4 add-on).
+- **`company-brain.md`** — extends the personal brain into a multi-user shared brain for a 10-50 person team. Federated sources with OAuth-scoped per-user reads, per-person folder conventions, per-person crons, per-person skills, the Slack integration callout (two-cron architecture, channel-to-task-ID mapping, deterministic links, dismissed-items state), and the botmaster onboarding pattern (pre-populate each teammate's slice → walk them through 2-3 wow flows → graduate them to DM only after the wow moment lands).
+- New tutorial-roadmap index at `docs/tutorials/README.md` listing what shipped and what's planned (connect-your-agent, VC dealflow brain, vault migration, code brain, fully-local brain, dream-cycle setup).
+
+Cross-linked from the relevant architecture docs (`docs/INSTALL.md` for the install-path readers, `docs/architecture/topologies.md` for the design-doc readers).
+
+`bun run build:llms` regenerated to pick up the doc structure changes.
+
+### Itemized changes
+
+- `README.md` — first-person lead rewritten; "Search vs Think" section retitled "Two ways to query your brain" (think is a CLI verb, not a brand); company-brain framing paragraph added with YC RFS link; Tutorials section added; `## Your brain's shape (schema packs)` section added; `## Recent Releases` section removed (changelog summary belongs in CHANGELOG.md); all `(v0.X+)` version cites stripped from body; proper-noun capitalization sweep (`alice` → `Alice` in prose, slug forms unchanged); the visceral before/after example rewritten as a universal meeting-prep scenario with zero internal jargon.
+- `docs/tutorials/personal-brain.md` (new) — solo install walkthrough sourced from the live setup session notes. ~2000 words. Includes the three Supabase gotchas (pgvector, connection pooler, IPv4 add-on) in their own subsection.
+- `docs/tutorials/company-brain.md` (new) — multi-user walkthrough, restructured as a true superset of personal-brain (no duplicated install steps). ~5000 words. Covers two scoping models (separate sources with OAuth scoping vs `partners/<slug>/` directory convention in one source), shared rule files at the skills root (`_brain-filing-rules.md`, `_excluded-people.md`, `_output-rules.md`), Slack wiring conventions, and the botmaster onboarding pattern.
+- `docs/tutorials/README.md` (new) — tutorial-roadmap index page.
+- `docs/INSTALL.md` — pointer to the company-brain tutorial in the shared/multi-machine deployment section.
+- `docs/architecture/topologies.md` — pointer to the tutorials directory in the "See also" section.
+- `docs/ethos/ORIGIN.md` — closing paragraph naming the synthesis layer as the reason the brain is worth building.
+- `llms-full.txt` + `llms.txt` — regenerated.
+
 ## [0.40.8.0] - 2026-05-23
 
 **Your doctor checks, your operations trust boundary, and your cycle phases now have real behavioral tests — not just source-grep guards.**

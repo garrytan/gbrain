@@ -25,3 +25,5 @@ None of those are novel ideas. The contribution is shipping all of them together
 The production brain has been running for months now. 17,888 pages. 4,383 people. 723 companies. 21 cron jobs running autonomously. It wakes Garry up smarter than the day before.
 
 GBrain is what happens when you write the brain you actually wanted to have.
+
+The reason the brain is worth building is `gbrain think`. Without it, the brain is just a place that holds your notes. With it, the brain is a thing you can query about itself: what does it know, what does it not know yet, where does it contradict itself, where are the holes. The 24/7 cron cycle keeps the brain sharp. `think` is what makes a sharp brain useful.

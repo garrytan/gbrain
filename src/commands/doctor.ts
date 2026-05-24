@@ -563,6 +563,9 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     checks.push({ name: 'queue_health', status: 'ok', message: 'PGLite — no queue to check' });
   }
 
+  // v0.41 Bug 2 / Eng D8 — subagent_health surfaces rate-lease pressure to the operator.
+  checks.push(await checkSubagentHealth(engine));
+
   // v0.31.12 subagent runtime enforcement (Layer 3 of 3 — Codex F13).
   // The subagent loop is Anthropic-only. If models.tier.subagent or
   // models.default is explicitly set to a non-Anthropic provider, warn here
@@ -852,6 +855,77 @@ export async function checkGradeConfidenceDrift(engine: BrainEngine): Promise<Ch
  * isolation (template fallback is fine), but a sustained high rate signals
  * the rubric needs tuning.
  */
+/**
+ * v0.41 Bug 2 / Eng D8 — surfaces rate-lease pressure from
+ * `minion_lease_pressure_log` (populated by the worker's lease-full bypass
+ * path). The operator's primary forensic signal for "is the lease cap too
+ * tight" — without this check, the v0.41 bypass would be invisible (no
+ * dead-letter, but also no operator awareness).
+ *
+ * Thresholds (windowed at 24h):
+ *   0 bounces                                            → ok ("no pressure")
+ *   1-99 bounces                                         → ok ("transient")
+ *   100+ bounces + subagent jobs completed in same window → ok ("healthy backpressure")
+ *   100+ bounces + ZERO completed subagent jobs           → warn (paste-ready cap-raise hint)
+ *   1000+ bounces                                        → fail ("blocking real work")
+ *
+ * Works on both Postgres + PGLite (migration v93 creates the table on both).
+ * Pre-v93 brains (no table) silently skip with an OK message.
+ */
+export async function checkSubagentHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const bounceRows = await engine.executeRaw<{ count: string }>(
+      `SELECT count(*)::text AS count FROM minion_lease_pressure_log
+        WHERE bounced_at > now() - interval '24 hours'`,
+    );
+    const bounces = parseInt(bounceRows[0]?.count ?? '0', 10);
+    if (bounces === 0) {
+      return {
+        name: 'subagent_health',
+        status: 'ok',
+        message: 'No rate-lease pressure in last 24h',
+      };
+    }
+    if (bounces >= 1000) {
+      return {
+        name: 'subagent_health',
+        status: 'fail',
+        message: `${bounces} lease-pressure bounces in last 24h — this is blocking real work. Raise the cap: \`export GBRAIN_ANTHROPIC_MAX_INFLIGHT=64\` (or \`unlimited\` for Azure / Bedrock / self-hosted upstreams with no provider-side rate limit). After raising, restart \`gbrain jobs work\`.`,
+      };
+    }
+    // 1-999 bounces: cross-check forward progress.
+    const completedRows = await engine.executeRaw<{ count: string }>(
+      `SELECT count(*)::text AS count FROM minion_jobs
+        WHERE finished_at > now() - interval '24 hours'
+          AND status = 'completed'
+          AND name = 'subagent'`,
+    ).catch(() => [{ count: '0' }]);
+    const completed = parseInt(completedRows[0]?.count ?? '0', 10);
+    if (bounces >= 100 && completed === 0) {
+      return {
+        name: 'subagent_health',
+        status: 'warn',
+        message: `${bounces} lease-pressure bounces in last 24h with no completed subagent jobs — cap is too tight. Raise via \`export GBRAIN_ANTHROPIC_MAX_INFLIGHT=64\` (or \`unlimited\` for upstreams with no provider-side cap).`,
+      };
+    }
+    return {
+      name: 'subagent_health',
+      status: 'ok',
+      message: `Lease pressure: ${bounces} bounces in last 24h, ${completed} subagent jobs completed — backpressure is binding but throughput is healthy`,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (process.env.GBRAIN_DEBUG === '1') {
+      process.stderr.write(`[doctor] subagent_health skipped: ${msg}\n`);
+    }
+    return {
+      name: 'subagent_health',
+      status: 'ok',
+      message: 'Skipped (minion_lease_pressure_log unavailable — pre-v0.41 brain)',
+    };
+  }
+}
+
 export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> {
   try {
     const rows = await engine.executeRaw<{ total: number; failures: number }>(
@@ -3667,6 +3741,176 @@ export async function buildChecks(
     checks.push({ name: 'markdown_body_completeness', status: 'ok', message: 'Skipped (raw_data unavailable)' });
   } finally {
     mbcHb();
+  }
+
+  // 11b. Content sanity checks (v0.41).
+  //
+  // Three sibling checks all backed by the shared assessor in
+  // src/core/content-sanity.ts so the surface stays aligned with the
+  // ingest gate at importFromContent and the lint rules at lintContent.
+  //
+  // - oversized_pages: indexed-free table scan (~100ms on 100K-page brains)
+  //   counting pages whose body (compiled_truth + timeline, UTF-8 bytes
+  //   via octet_length per Codex r2 #13) exceeds the block threshold.
+  //   Status warn when 1+ rows; never fail (oversize is now a soft state).
+  // - scraper_junk_pages: capped 1000-most-recent default + --content-audit
+  //   opt-in for full scan (D10 mirrors --index-audit precedent). Applies
+  //   the assessor per-page on title + 2KB head-slice + frontmatter.
+  // - content_sanity_audit_recent: reads ~/.gbrain/audit/content-sanity-*.jsonl
+  //   over the last 7 days, aggregates by event type + source. Caveat
+  //   (Codex r1 #14): JSONL is local-only — multi-host operators should
+  //   share GBRAIN_AUDIT_DIR. Message names this so the limitation is
+  //   visible at the doctor surface.
+  const fullContentAudit = args.includes('--content-audit');
+  progress.heartbeat('oversized_pages');
+  try {
+    const sql = db.getConnection();
+    // Read effective bytes_block from the cached effectiveCfg loaded
+    // earlier in this doctor run if available; otherwise default.
+    // (We re-read here per-check to avoid threading config through
+    // every check — bytes_block is read once per doctor run via
+    // loadConfig which caches in module-level config layer.)
+    const { loadConfig: _loadCfg } = await import('../core/config.ts');
+    const _cfg = _loadCfg();
+    const bytesBlock = _cfg?.content_sanity?.bytes_block ?? 500_000;
+    const rows = await sql`
+      SELECT p.slug, p.source_id,
+             octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) AS bytes
+      FROM pages p
+      WHERE p.deleted_at IS NULL
+        AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) > ${bytesBlock}
+      ORDER BY bytes DESC
+      LIMIT 100
+    `;
+    if (rows.length === 0) {
+      checks.push({
+        name: 'oversized_pages',
+        status: 'ok',
+        message: `No pages exceed ${bytesBlock} bytes`,
+      });
+    } else {
+      const oversizeRows = rows as unknown as Array<{ slug: string; source_id: string; bytes: number }>;
+      const top = oversizeRows.slice(0, 3)
+        .map(r => `${r.slug} (${r.bytes}b, src=${r.source_id})`)
+        .join('; ');
+      checks.push({
+        name: 'oversized_pages',
+        status: 'warn',
+        message: `${rows.length} page(s) exceed ${bytesBlock}-byte block threshold. Top: ${top}. New ingests with the same shape get frontmatter.embed_skip set automatically; existing oversized pages can be split or accepted as non-embeddable.`,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({
+      name: 'oversized_pages',
+      status: 'ok',
+      message: `Skipped (${msg})`,
+    });
+  }
+
+  progress.heartbeat('scraper_junk_pages');
+  try {
+    const sql = db.getConnection();
+    const { assessContentSanity } = await import('../core/content-sanity.ts');
+    const { loadOperatorLiterals } = await import('../core/content-sanity-literals.ts');
+    const literals = loadOperatorLiterals();
+    const scanLimit = fullContentAudit ? null : 1000;
+    const rows = scanLimit
+      ? await sql`
+          SELECT p.slug, p.source_id, p.title,
+                 LEFT(p.compiled_truth, 2048) AS body_head,
+                 LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
+                 p.frontmatter
+            FROM pages p
+           WHERE p.deleted_at IS NULL
+           ORDER BY p.updated_at DESC
+           LIMIT ${scanLimit}
+        `
+      : await sql`
+          SELECT p.slug, p.source_id, p.title,
+                 LEFT(p.compiled_truth, 2048) AS body_head,
+                 LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
+                 p.frontmatter
+            FROM pages p
+           WHERE p.deleted_at IS NULL
+        `;
+    const hits: Array<{ slug: string; matched: string[] }> = [];
+    const scanRows = rows as unknown as Array<{ slug: string; source_id: string; title: string; body_head: string; tl_head: string; frontmatter: Record<string, unknown> | null }>;
+    for (const r of scanRows) {
+      const sanity = assessContentSanity({
+        compiled_truth: r.body_head ?? '',
+        timeline: r.tl_head ?? '',
+        title: r.title ?? '',
+        bytes_warn: Number.MAX_SAFE_INTEGER, // we ONLY care about junk-pattern hits here
+        bytes_block: Number.MAX_SAFE_INTEGER,
+        extra_literals: literals,
+      });
+      if (sanity.shouldHardBlock) {
+        hits.push({
+          slug: r.slug,
+          matched: [...sanity.junk_pattern_matches, ...sanity.literal_substring_matches],
+        });
+      }
+    }
+    if (hits.length === 0) {
+      checks.push({
+        name: 'scraper_junk_pages',
+        status: 'ok',
+        message: scanLimit
+          ? `No junk-pattern hits in ${rows.length} recent page(s) (use --content-audit for full scan)`
+          : `No junk-pattern hits in ${rows.length} page(s) (full audit)`,
+      });
+    } else {
+      const top = hits.slice(0, 3).map(h => `${h.slug} [${h.matched.join(',')}]`).join('; ');
+      checks.push({
+        name: 'scraper_junk_pages',
+        status: 'warn',
+        message: `${hits.length} page(s) match junk patterns. Top: ${top}. ${scanLimit ? '(scanned 1000 most-recent; rerun with --content-audit for full scan)' : '(full audit)'} New ingests with these shapes are now hard-blocked; existing inventory should be cleaned at source.`,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({
+      name: 'scraper_junk_pages',
+      status: 'ok',
+      message: `Skipped (${msg})`,
+    });
+  }
+
+  progress.heartbeat('content_sanity_audit_recent');
+  try {
+    const { readRecentContentSanityEvents, summarizeContentSanityEvents } =
+      await import('../core/audit/content-sanity-audit.ts');
+    const events = readRecentContentSanityEvents(7);
+    if (events.length === 0) {
+      checks.push({
+        name: 'content_sanity_audit_recent',
+        status: 'ok',
+        message: 'No content-sanity events in last 7 days (audit JSONL is local to this host; share GBRAIN_AUDIT_DIR for multi-host visibility)',
+      });
+    } else {
+      const summary = summarizeContentSanityEvents(events);
+      const topPatterns = summary.top_patterns.slice(0, 3).map(p => `${p.name}=${p.count}`).join(', ');
+      const topSources = Object.entries(summary.by_source)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([s, n]) => `${s}=${n}`)
+        .join(', ');
+      const status: 'ok' | 'warn' | 'fail' =
+        events.length >= 100 ? 'fail' : events.length >= 10 ? 'warn' : 'ok';
+      checks.push({
+        name: 'content_sanity_audit_recent',
+        status,
+        message: `${events.length} events (hard=${summary.by_type.hard_block} soft=${summary.by_type.soft_block} warn=${summary.by_type.warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({
+      name: 'content_sanity_audit_recent',
+      status: 'ok',
+      message: `Skipped (${msg})`,
+    });
   }
 
   // 11a. Frontmatter integrity (v0.22.4, hardened in v0.38.2.0).

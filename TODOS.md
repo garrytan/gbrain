@@ -1,5 +1,168 @@
 # TODOS
 
+## v0.41.0.0 follow-ups (v0.41.1+)
+
+- [ ] **v0.41+: per-key rate-lease caps (`openai:responses`, `google:gemini`, etc.).**
+  v0.41 ships a single `anthropic:messages` rate-lease cap. When users run
+  subagents against multiple providers via the gateway path, each provider
+  should have its OWN rate-lease bucket so they don't share capacity. The
+  right time for this is right after `agent.use_gateway_loop=true` becomes
+  the default — before that, you're solving for a configuration no one uses.
+  Priority: P2. Filed via CEO D13. References: `src/core/minions/rate-leases.ts`
+  + `src/core/minions/handlers/subagent.ts:GBRAIN_ANTHROPIC_MAX_INFLIGHT`.
+
+- [ ] **v0.41+: `minion_lease_pressure_log` + budget/self-fix audit retention sweep.**
+  v0.41 migration v93 promoted `ON DELETE SET NULL` on audit FKs so rows
+  survive `gbrain jobs prune`. Codex pass-3 #5 caught the corollary: without
+  retention, audit tables grow unbounded. On a steady-pressure install
+  (heavy daily batches), `minion_lease_pressure_log` is millions of rows by
+  year 2. Add a sweep phase to the autopilot cycle's `purge` phase (the
+  v0.26.5 pattern, sibling to `engine.purgeDeletedPages(72)`):
+  `engine.purgeOldAuditRows({ lease_pressure_max_age_days: 90, budget_log_max_age_days: 365, self_fix_log_max_age_days: 180 })`.
+  Defaults match operator use cases (90 days lease pressure for capacity
+  tuning, 365 days budget for accounting, 180 days self-fix for
+  classifier-tuning); all overridable via config. Priority: P3. Filed via
+  CEO D16. Closes the unbounded-growth concern that codex flagged as
+  load-bearing pass-3 #5.
+
+- [ ] **v0.41.1: full E5 A/B dispatcher (currently scaffolded as dry-run only).**
+  `scripts/e5-lease-cap-ab.ts` ships the spec + harness + receipt fixture
+  shape but the real-run dispatcher (queue submit + worker spin-up + 15-min
+  429 injector + tick loop + cost-tracking) is deferred. v0.41.1 follow-up
+  writes the dispatcher and commits the first real-API receipt as the
+  baseline before flipping `minions.auto_lease_cap` to default ON.
+
+- [ ] **v0.41.1: `tryWithDbElection` retrofit for existing `pg_advisory_xact_lock` call sites.**
+  Codex pass-2 #7 caught that `src/core/minions/rate-leases.ts:80`
+  (`acquireLease`) and `src/core/minions/queue.ts:152` (maxWaiting coalesce)
+  call `pg_advisory_xact_lock` unconditionally. PGLite has no advisory locks
+  (`src/core/pglite-schema.ts:6`); current code passes by accident because
+  PGLite is single-connection. New `tryWithDbElection` primitive in
+  `src/core/db-lock.ts` is engine-dispatched. Retrofit the two existing
+  call sites to use it so PGLite correctness is explicit, not accidental.
+  Two call shapes needed (codex pass-3 #10): one starts a new tx (E5 use
+  case, already shipped); one accepts an existing tx (rate-leases +
+  maxWaiting use cases). Filed via Eng D9.
+
+- [ ] **v0.42: semantic-aware `prompt_too_long` reduction in E6 self-fix.**
+  v0.41 ships truncate-with-leaf-preservation (first 1000 + last 2000 chars).
+  Codex pass-1 #11 specified the right strategy: walk the conversation, drop
+  tool_result blocks first (largest non-task content), summarize older
+  user/asst pairs via Haiku, never delete the leaf user task. Implementation
+  lives in `src/core/minions/self-fix.ts:buildSelfFixPrompt`. Worst-case
+  current behavior (truncate-then-fail) is safe — no infinite loops,
+  depth-cap prevents chains — but full semantic reduction unlocks higher
+  self-fix success rates on legitimately-long prompts.
+## v0.41 content-sanity follow-ups (filed during ship of `garrytan/lint-page-size-gate`)
+
+Source: CEO + Eng review on the content-sanity defense plan. Both reviews
+ran Codex (round 1 + round 2 — 30 total findings) and the wave shipped
+with the strategic items addressed. These are the deliberately-deferred
+follow-ups, captured here so v0.42 starts informed.
+
+- [ ] **v0.42 P1 — Chunk-level embed-quarantine.** The v0.41 wave landed
+  page-level soft-block (`frontmatter.embed_skip`); Codex r1 #3 caught
+  that staleness is chunk-based (`content_chunks.embedding IS NULL`).
+  Right granularity for the embed-pipeline-overflow case is per-chunk,
+  not per-page. Move: add `content_chunks.embed_quarantined_at TIMESTAMPTZ`
+  + partial index, catch `TokenLimitError` from gateway, mark the offending
+  chunk only (keep good siblings), surface in doctor's
+  `embedding_coverage`. Requires repro of the original 890K embed failure
+  on current code FIRST to confirm whether it's batch-overflow vs
+  single-oversized-chunk vs token-estimate-miss. Effort: human ~2 days /
+  CC ~3 hours.
+
+- [ ] **v0.42 P1 — Source-repo remediation surface.** Codex r1 #7
+  caught: cleanup CLI that deletes DB rows doesn't fix source of truth
+  — junk file in source repo reappears on next sync. Move: add
+  `gbrain sources prune-junk <id>` that walks `local_path`, finds files
+  matching the junk-pattern set, soft-deletes DB rows AND `git rm`s the
+  files in the source repo (commit message: `auto: prune junk pages
+  flagged by gbrain content-sanity`). Operator pushes the commit.
+  Pairs with the v0.42 chunk-quarantine for a complete cleanup story.
+  Effort: human ~1 day / CC ~2 hours.
+
+- [ ] **v0.41 + 30 days — Threshold default validation post-deploy.**
+  Codex r1 #15 caught: we invented 50K warn / 500K block thresholds
+  before measuring real corpus distribution. Move: run `gbrain sources
+  audit <id>` on real source repos (start with Garry's own brain),
+  collect distribution stats from the JSON envelope, tune defaults
+  if the measured p99 disagrees with the 50K assumption. Either
+  publish updated defaults in a v0.41.x patch or document the env
+  override path in CHANGELOG. Effort: human ~30min / CC ~10min.
+
+- [ ] **v0.42 P2 — Pages soft-delete CLI (`gbrain pages soft-delete
+  --where`).** Cherry-pick 3 from the original CEO review; dropped
+  during eng review because Codex r1 #7 weakened it (doesn't fix
+  source-of-truth). Resurface in v0.42 as a PAIRED tool alongside
+  the v0.42 source-repo remediation. Filter expressions:
+  `matches_junk_pattern`, `bytes > N`. Required UX gates: `--dry-run`
+  preview, `--confirm-destructive` flag when affected > 0, 1000-page
+  per-invocation cap. Routes through existing `engine.softDeletePage()`
+  (v0.26.5 72h-TTL safe-delete; reversible).
+
+- [ ] **v0.42 P3 — Brain-score `no_junk_pages_score` component.**
+  Add a 6th component to the v0.36.4.0 5-component brain-score
+  formula (currently embed_coverage 35 + link_density 25 +
+  timeline_coverage 15 + no_orphans 15 + no_dead_links 10). Reweight
+  to make room (probably take 5 from no_dead_links: 35/25/15/15/5/5).
+  File AFTER v0.41's audit JSONL has 30+ days of signal so we know
+  the realistic distribution of junk-page rates across brains before
+  pinning a score weight.
+
+- [ ] **post-v0.45 — Operator-supplied regex extensibility.** Dropped
+  in v0.41 per Codex r1 #10 (JavaScript RegExp lacks atomic groups /
+  possessive quantifiers, making a reliable ReDoS shape detector
+  hard). The v0.41 ship has literal-substring extensibility instead
+  which covers ~95% of real operator use cases. If real operators
+  ask for regex, add it with a real story: either re2 (Google's
+  linear-time engine; native dep, build complications) or worker-
+  thread per-pattern timeout (50ms cap, runtime overhead).
+
+- [ ] **post-v0.45 — HTML-density rule.** Dropped in v0.41 per Codex
+  r1 #16. Was: flag pages where `<div>`/`<span>`/etc tag density is
+  too high (raw HTML dump indicator). Requires careful handling of
+  fenced code blocks, JSX/XML in technical notes, escaped HTML.
+  Without that rigor, false-positives on legitimate code-heavy
+  technical writing. The scraper-junk pattern set catches the real
+  junk class without needing density math; revisit only if a junk
+  pattern leaks through that ONLY density would catch.
+
+- [ ] **v0.41+ — Bytes parity assertion across lint + doctor.** D2
+  acceptance test included in `test/content-sanity.test.ts` as a
+  unit-level parity check. Promote to an E2E that seeds a real
+  fixture page with frontmatter + body, runs `gbrain lint` AND
+  `gbrain doctor --content-audit`, asserts both surfaces report
+  the same byte count. Catches drift between
+  `Buffer.byteLength` (assessor) and `octet_length` (doctor SQL)
+  if either surface changes the measurement axis.
+
+- [ ] **v0.41+ — `gbrain sources audit` E2E pin test.** The CLI
+  shipped with unit tests pinning `assessContentSanity` shape;
+  the integration test (walk a fixture source dir, run the CLI
+  end-to-end, assert JSON envelope shape) is deferred. Trivial to
+  add (~30 LOC) once a stable test fixture set lands under
+  `test/fixtures/content-sanity/`.
+
+- [ ] **v0.41+ — Doctor checks integration tests.** The 3 new doctor
+  checks (`oversized_pages`, `scraper_junk_pages`,
+  `content_sanity_audit_recent`) ship verified by typecheck +
+  runtime-shape via the unit suite. Integration tests (seed fixture
+  pages into PGLite, run doctor, assert check status + message
+  format) are deferred. Same pattern as existing
+  `test/doctor.test.ts` extensions.
+
+- [ ] **v0.41+ — 5-path narrow-waist E2E pin tests (cherry-pick 5).**
+  Sync + import + put_page MCP + capture + /ingest webhook all
+  route through `importFromContent` so the new gate applies
+  uniformly. Unit tests pin the gate behavior; E2E pin tests
+  prove each ingestion path actually goes through it. Tests for
+  sync + import + put_page MCP + capture are PGLite-hermetic;
+  the /ingest webhook test needs real-Postgres E2E (DATABASE_URL).
+  Filed during eng review as P2; not blocking ship since the
+  narrow-waist contract is structurally enforced by every wrapper
+  routing through `importFromContent` already.
+
 ## v0.41+ wave commitments (decided 2026-05-23)
 
 Source: `/plan-ceo-review` + `/plan-eng-review` triage of TODOS as roadmap

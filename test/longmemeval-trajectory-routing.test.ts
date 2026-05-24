@@ -196,7 +196,16 @@ describe('runEvalLongMemEval — methodology_note presence', () => {
 });
 
 describe('runEvalLongMemEval — perf gate preserved', () => {
-  test('run completes for the 2-question fixture in under 10s with stubs', async () => {
+  // v0.40.10 flake-hardening: the perf assertion's ceiling is mode-aware.
+  // Solo run (10s) is the tight gate — catches real harness regressions.
+  // Shard run (60s) is the loose gate — CPU contention with 8 parallel
+  // shards routinely 3-5x's wallclock, which is contention, not a code
+  // regression. `SHARD=N/M` env var is set by scripts/run-unit-parallel.sh
+  // when running under the parallel wrapper. Per-test timeout always bumped
+  // to outrun bun's 5s default.
+  const SHARD_MODE = !!process.env.SHARD;
+  const PERF_CEILING_MS = SHARD_MODE ? 60_000 : 10_000;
+  test(`run completes for the 2-question fixture in under ${PERF_CEILING_MS / 1000}s with stubs`, async () => {
     const state: StubState = { answerCalls: [], extractorCalls: 0 };
     const { answerClient, extractorClient } = stubClients(state);
     const start = Date.now();
@@ -205,6 +214,6 @@ describe('runEvalLongMemEval — perf gate preserved', () => {
       { client: answerClient, extractorClient, extractorModel: 'stub' },
     );
     const elapsed = Date.now() - start;
-    expect(elapsed).toBeLessThan(10_000);
-  });
+    expect(elapsed).toBeLessThan(PERF_CEILING_MS);
+  }, 90_000);
 });
