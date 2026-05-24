@@ -2,7 +2,8 @@ import type { Recipe } from '../types.ts';
 import { AIConfigError } from '../errors.ts';
 
 /**
- * NVIDIA NIM / API Catalog exposes an OpenAI-compatible /v1/embeddings API.
+ * NVIDIA NIM / API Catalog exposes OpenAI-compatible /v1/chat/completions
+ * and /v1/embeddings APIs.
  *
  * Retrieval models use asymmetric encoding. The gateway maps gbrain's
  * document/query distinction to NVIDIA's wire values:
@@ -26,6 +27,8 @@ export const nvidia: Recipe = {
   aliases: {
     'nv-embedqa-e5-v5': 'nvidia/nv-embedqa-e5-v5',
     'llama-nemotron-embed-1b-v2': 'nvidia/llama-nemotron-embed-1b-v2',
+    'nemotron-3-super': 'nvidia/nemotron-3-super-120b-a12b',
+    'nemotron-3-super-120b-a12b': 'nvidia/nemotron-3-super-120b-a12b',
     'nv-embed-v1': 'nvidia/nv-embed-v1',
     'nv-embedcode-7b-v1': 'nvidia/nv-embedcode-7b-v1',
   },
@@ -40,6 +43,17 @@ export const nvidia: Recipe = {
     return { headerName: 'Authorization', token: `Bearer ${key}` };
   },
   touchpoints: {
+    chat: {
+      models: [
+        'nvidia/nemotron-3-super-120b-a12b',
+      ],
+      supports_tools: false,
+      supports_subagent_loop: false,
+      // Do not treat Nemotron as a Minions subagent driver until tool-calling
+      // and replay stability are proven through a separate adapter test.
+      max_context_tokens: 128000,
+      price_last_verified: '2026-05-24',
+    },
     embedding: {
       models: [
         'nvidia/nv-embedqa-e5-v5',

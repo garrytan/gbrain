@@ -27,6 +27,14 @@ describe('recipe: nvidia', () => {
     expect(() => nvidia.resolveAuth!({})).toThrow(AIConfigError);
   });
 
+  test('chat touchpoint declares Nemotron 3 Super without subagent-loop claims', () => {
+    const chat = nvidia.touchpoints.chat!;
+    expect(chat.models).toContain('nvidia/nemotron-3-super-120b-a12b');
+    expect(chat.supports_tools).toBe(false);
+    expect(chat.supports_subagent_loop).toBe(false);
+    expect(chat.max_context_tokens).toBe(128000);
+  });
+
   test('embedding touchpoint declares tested NVIDIA models and natural dimensions', () => {
     const e = nvidia.touchpoints.embedding!;
     expect(e.models).toContain('nvidia/nv-embedqa-e5-v5');
@@ -41,6 +49,8 @@ describe('recipe: nvidia', () => {
   test('aliases allow short model names while preserving NVIDIA catalog ids', () => {
     expect(nvidia.aliases?.['nv-embedqa-e5-v5']).toBe('nvidia/nv-embedqa-e5-v5');
     expect(nvidia.aliases?.['llama-nemotron-embed-1b-v2']).toBe('nvidia/llama-nemotron-embed-1b-v2');
+    expect(nvidia.aliases?.['nemotron-3-super']).toBe('nvidia/nemotron-3-super-120b-a12b');
+    expect(nvidia.aliases?.['nemotron-3-super-120b-a12b']).toBe('nvidia/nemotron-3-super-120b-a12b');
   });
 
   test('dimsProviderOptions emits passage input_type by default for NVIDIA embeddings', () => {
