@@ -38,6 +38,49 @@ import { isUndefinedColumnError } from './utils.ts';
 
 let _trackRetrievalCache: { ts: number; enabled: boolean } | null = null;
 const TRACK_RETRIEVAL_CACHE_TTL_MS = 30_000;
+const pendingLastRetrievedWrites = new Set<Promise<unknown>>();
+const LAST_RETRIEVED_SHUTDOWN_DRAIN_TIMEOUT_MS = 2_000;
+
+function trackLastRetrievedWrite(promise: Promise<unknown>): void {
+  pendingLastRetrievedWrites.add(promise);
+  promise.finally(() => pendingLastRetrievedWrites.delete(promise)).catch(() => {
+    /* swallow: write-back is best-effort */
+  });
+}
+
+/**
+ * Wait briefly for best-effort retrieval write-backs before closing the CLI
+ * engine.
+ *
+ * The visible op path still does not await `bumpLastRetrievedAt()`. This
+ * shutdown hook only prevents short-lived CLI processes from racing
+ * `engine.disconnect()` against a write-back that is already in flight. The
+ * timeout preserves the best-effort contract: a stuck write-back must not keep
+ * the CLI alive forever.
+ */
+export async function awaitPendingLastRetrievedWrites(
+  timeoutMs = LAST_RETRIEVED_SHUTDOWN_DRAIN_TIMEOUT_MS,
+): Promise<void> {
+  if (pendingLastRetrievedWrites.size === 0) return;
+  const pending = Promise.allSettled([...pendingLastRetrievedWrites]);
+  if (timeoutMs <= 0) {
+    await pending;
+    return;
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      pending,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+        (timer as unknown as { unref?: () => void }).unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /**
  * Resolve `search.track_retrieval` config with a 30s in-process cache so
@@ -78,7 +121,7 @@ export function _resetTrackRetrievalCacheForTests(): void {
 export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): void {
   if (pageIds.length === 0) return;
   // Fire-and-forget on purpose. We deliberately do NOT return the promise.
-  void (async () => {
+  trackLastRetrievedWrite((async () => {
     try {
       const enabled = await isTrackingEnabled(engine);
       if (!enabled) return;
@@ -101,5 +144,5 @@ export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): voi
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[last-retrieved] write-back failed (best-effort): ${msg}`);
     }
-  })();
+  })());
 }
