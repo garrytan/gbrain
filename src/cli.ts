@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'optimize', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -209,12 +209,6 @@ async function main() {
 
 function hasHelpFlag(args: string[]): boolean {
   return args.includes('--help') || args.includes('-h');
-}
-
-function printCliOnlyHelp(command: string) {
-  console.log(`Usage: gbrain ${command}`);
-  console.log('');
-  console.log(`gbrain ${command} - run gbrain --help for the full command list.`);
 }
 
 /**
@@ -1187,6 +1181,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runExtract(engine, args);
         break;
       }
+      case 'optimize': {
+        const { runOptimize } = await import('./commands/optimize.ts');
+        await runOptimize(engine, args);
+        break;
+      }
       case 'features': {
         const { runFeatures } = await import('./commands/features.ts');
         await runFeatures(engine, args);
@@ -1614,6 +1613,30 @@ function printOpHelp(op: Operation) {
   }
 }
 
+function printCliOnlyHelp(command: string): boolean {
+  switch (command) {
+    case 'optimize':
+      console.log(`Usage: gbrain optimize [--dry-run] [--json] [--type T] [--max-words N] [--overlap-words N] [--max-chars N] [--no-extract]
+
+Rechunk stale or oversized pages and enrich DB links/timeline.
+
+Options:
+  --dry-run                    Report work without writing changes
+  --json                       Print machine-readable JSON
+  --type T                     Only process pages of type T
+  --max-words N                Target max words per recursive chunk
+  --overlap-words N            Word overlap for recursive chunks
+  --max-chars N                Hard character budget per final chunk
+  --no-extract                 Skip link and timeline extraction`);
+      return true;
+    default:
+      console.log(`Usage: gbrain ${command}`);
+      console.log('');
+      console.log(`gbrain ${command} - run gbrain --help for the full command list.`);
+      return true;
+  }
+}
+
 function printHelp() {
   // Gather shared operations grouped by category
   const cliNames = Array.from(cliOps.entries())
@@ -1662,6 +1685,7 @@ FILES
 
 EMBEDDINGS
   embed [<slug>|--all|--stale]       Generate/refresh embeddings
+  optimize [--dry-run] [--json]      Rechunk stale/oversized pages + enrich graph/timeline
 
 LINKS
   link <from> <to> [--type T]        Create typed link

@@ -3922,6 +3922,8 @@ export class PostgresEngine implements BrainEngine {
     // SQL required both — docs now match code so users can trust the
     // number. A hub page that links out to many but has no back-references
     // is working as intended, not an orphan.
+    // dead_links omitted (always 0 under ON DELETE CASCADE on link FKs).
+    // stale_pages tracks chunks whose embeddings are missing or older than the page content.
     const [h] = await sql`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
@@ -3931,7 +3933,11 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
-         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
+         WHERE EXISTS (
+           SELECT 1 FROM content_chunks cc
+           WHERE cc.page_id = p.id
+             AND (cc.embedded_at IS NULL OR cc.embedded_at < p.updated_at)
+         )
         ) as stale_pages,
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)

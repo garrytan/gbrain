@@ -34,6 +34,7 @@ describe('CLI structure', () => {
     expect(cliSource).toContain("'export'");
     expect(cliSource).toContain("'embed'");
     expect(cliSource).toContain("'files'");
+    expect(cliSource).toContain("'optimize'");
   });
 
   test('has formatResult function for CLI output', () => {
@@ -191,6 +192,19 @@ describe('CLI dispatch integration', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  test('optimize --help prints usage without DB connection', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'optimize', '--help'], {
+      cwd: new URL('..', import.meta.url).pathname,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    expect(stdout).toContain('Usage: gbrain optimize');
+    expect(stdout).toContain('Rechunk stale or oversized pages');
+    expect(exitCode).toBe(0);
   });
 
   test('--help prints global help', async () => {

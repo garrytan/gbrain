@@ -1280,6 +1280,21 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     const h2 = await engine.getHealth();
     expect(h2.orphan_pages).toBe(1);
   });
+
+  test('stale_pages ignores newly created timeline entries', async () => {
+    await truncateAll();
+    await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' });
+    await engine.upsertChunks('people/alice', [{
+      chunk_index: 0,
+      chunk_text: 'Alice embedded chunk',
+      chunk_source: 'compiled_truth',
+      embedding: new Float32Array(1536).fill(0.1),
+    }]);
+    await engine.addTimelineEntry('people/alice', { date: '2026-01-15', summary: 'Joined' });
+
+    const h = await engine.getHealth();
+    expect(h.stale_pages).toBe(0);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
