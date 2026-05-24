@@ -137,7 +137,20 @@ export function makeSubagentHandler(deps: SubagentDeps) {
   // lives at sdk.messages.create. Assigning sdk.messages directly gets the
   // right object; JS method-call semantics preserve `this` at the call
   // site (subagent.ts invokes client.create(...) with client === sdk.messages).
-  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? null, authToken: process.env.ANTHROPIC_AUTH_TOKEN ?? null }));
+  const makeAnthropic = deps.makeAnthropic ?? (() => {
+    // OAuth subscription token (sk-ant-oat01-*) requires the Claude Code beta
+    // header; without it the API throttles OAuth requests at degraded tiers.
+    // API-key auth (sk-ant-api*) takes the simple path.
+    const oauth = process.env.ANTHROPIC_AUTH_TOKEN ?? null;
+    const apiKey = process.env.ANTHROPIC_API_KEY ?? null;
+    if (oauth) {
+      return new Anthropic({
+        authToken: oauth,
+        defaultHeaders: { 'anthropic-beta': 'oauth-2025-04-20' },
+      });
+    }
+    return new Anthropic({ apiKey });
+  });
   const client: MessagesClient = deps.client ?? makeAnthropic().messages;
   const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
   const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;
