@@ -97,8 +97,12 @@ export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): voi
       // Pre-v77 brain (column missing) falls through silently — the search
       // op already returned, the LSD signal just stays NULL until upgrade.
       if (isUndefinedColumnError(err, 'last_retrieved_at')) return;
-      // Other errors: stderr-warn but don't break the op response.
+      // Connection shutdown after the op result is already serialized is expected
+      // in short-lived CLI/MCP processes. The signal is best-effort; avoid
+      // surfacing harmless stderr noise to users.
       const msg = err instanceof Error ? err.message : String(err);
+      if (/CONNECTION_ENDED|Connection terminated|write ECONNRESET/i.test(msg)) return;
+      // Other errors: stderr-warn but don't break the op response.
       console.warn(`[last-retrieved] write-back failed (best-effort): ${msg}`);
     }
   })();
