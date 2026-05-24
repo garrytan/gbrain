@@ -679,8 +679,10 @@ NOT WORTH PROCESSING (return worth_processing=false):
 Respond as JSON: {"worth_processing": <bool>, "reasons": ["<short>", "<short>"]}.
 Two reasons max, one phrase each.`;
 
+  // Strip gateway provider prefix; Anthropic SDK expects bare model id.
+  const apiVerdictModel = verdictModel.includes(':') ? verdictModel.slice(verdictModel.indexOf(':') + 1) : verdictModel;
   const msg = await client.create({
-    model: verdictModel,
+    model: apiVerdictModel,
     max_tokens: 200,
     system: sys,
     messages: [{ role: 'user', content: `Transcript ${t.basename}:\n\n${trimmed}` }],
