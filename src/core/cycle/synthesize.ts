@@ -393,10 +393,20 @@ export async function runPhaseSynthesize(
       }
 
       const isChunked = chunks.length > 1;
+      // queue.add subagent validator (classifyCapabilities → resolveRecipe)
+      // requires `provider:model`. resolveModel can return a bare id when
+      // TIER_DEFAULTS / DEFAULT_ALIASES carry a bare value; ensure the
+      // anthropic: prefix is present for known claude-* ids before passing
+      // to the queue. Non-anthropic providers must already declare a colon.
+      const subagentModel = config.model.includes(':')
+        ? config.model
+        : config.model.toLowerCase().startsWith('claude-')
+          ? `anthropic:${config.model}`
+          : config.model;
       for (let i = 0; i < chunks.length; i++) {
         const childData: SubagentHandlerData = {
           prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length, priorContradictionsBlock),
-          model: config.model,
+          model: subagentModel,
           max_turns: 30,
           allowed_slug_prefixes: allowedSlugPrefixes,
         };
