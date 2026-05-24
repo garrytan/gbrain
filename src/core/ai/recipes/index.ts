@@ -24,6 +24,7 @@ import { azureOpenAI } from './azure-openai.ts';
 import { zeroentropyai } from './zeroentropyai.ts';
 import { llamaServerReranker } from './llama-server-reranker.ts';
 import { moonshot } from './moonshot.ts';
+import { nvidia } from './nvidia.ts';
 
 const ALL: Recipe[] = [
   openai,
@@ -44,6 +45,7 @@ const ALL: Recipe[] = [
   azureOpenAI,
   zeroentropyai,
   moonshot,
+  nvidia,
 ];
 
 /** Map from `provider:id` key to recipe. */
