@@ -85,3 +85,23 @@ describe('buildGatewayConfig env-baseURL passthrough', () => {
     );
   });
 });
+
+describe('buildGatewayConfig provider API key mapping', () => {
+  test('dashscope_api_key maps into DASHSCOPE_API_KEY when env is unset', async () => {
+    await withEnv({ DASHSCOPE_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        dashscope_api_key: 'sk-dashscope-from-config',
+      } as unknown as GBrainConfig);
+      expect(cfg.env?.DASHSCOPE_API_KEY).toBe('sk-dashscope-from-config');
+    });
+  });
+
+  test('DASHSCOPE_API_KEY env wins over dashscope_api_key config', async () => {
+    await withEnv({ DASHSCOPE_API_KEY: 'sk-dashscope-from-env' }, async () => {
+      const cfg = buildGatewayConfig({
+        dashscope_api_key: 'sk-dashscope-from-config',
+      } as unknown as GBrainConfig);
+      expect(cfg.env?.DASHSCOPE_API_KEY).toBe('sk-dashscope-from-env');
+    });
+  });
+});

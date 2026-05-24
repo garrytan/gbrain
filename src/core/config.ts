@@ -41,6 +41,8 @@ export interface GBrainConfig {
    * merge → buildGatewayConfig env dict → recipe reads ZEROENTROPY_API_KEY.
    */
   zeroentropy_api_key?: string;
+  /** DashScope API key for Alibaba-compatible embeddings/chat recipes. */
+  dashscope_api_key?: string;
   /** AI gateway config (v0.14+). v0.36+ default: "zeroentropyai:zembed-1" / 1280 / "anthropic:claude-haiku-4-5-20251001". */
   embedding_model?: string;
   embedding_dimensions?: number;
@@ -406,6 +408,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'database_path',
   'openai_api_key',
   'anthropic_api_key',
+  'dashscope_api_key',
+  'zeroentropy_api_key',
   'embedding_model',
   'embedding_dimensions',
   'embedding_disabled',

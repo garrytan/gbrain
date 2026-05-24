@@ -177,9 +177,9 @@ export interface PageInput {
   /** v0.29.1: basename without extension captured at import. */
   import_filename?: string | null;
   /**
-   * v0.32.7 CJK wave: bumped to MARKDOWN_CHUNKER_VERSION (2) on import so the
+   * v0.32.7+: bumped to MARKDOWN_CHUNKER_VERSION on import so the
    * post-upgrade `gbrain reindex --markdown` sweep can find pre-bump pages
-   * via `WHERE chunker_version < 2`. Defaults to 1 at the schema level when
+   * via `WHERE chunker_version < current`. Defaults to 1 at the schema level when
    * omitted (existing rows pre-migration inherit 1; new imports overwrite
    * with the current version).
    */

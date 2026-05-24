@@ -81,12 +81,13 @@ export interface EmbedBatchOptions {
 }
 
 /**
- * Embed a batch of texts via the gateway. Sub-batches of 100 so upstream
- * progress callbacks fire incrementally on large imports. The gateway owns
- * adaptive batch splitting and per-recipe token-budget logic; this paginator
- * is purely about progress-callback granularity.
+ * Embed a batch of texts via the gateway. Sub-batches of 25 so OpenAI-compatible
+ * providers with low per-request item ceilings (notably DashScope) never see an
+ * oversized embedMany request before the gateway's token-budget splitter runs.
+ * The gateway still owns adaptive token splitting and provider-specific retries;
+ * this paginator is about item-count safety and progress-callback granularity.
  */
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 25;
 export async function embedBatch(
   texts: string[],
   options: EmbedBatchOptions = {},

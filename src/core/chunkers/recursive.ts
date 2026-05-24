@@ -10,9 +10,8 @@
  *   5. Words (whitespace + CJK char-slice fallback)
  *
  * Config: 300-word chunks with 50-word sentence-aware overlap.
- * v0.32.7: maxChars hard cap (default 6000) sliding-window safety belt
- * guarantees no chunk overflows OpenAI's 8192-token embedding limit even
- * on pathological CJK / whitespace-less text.
+ * maxChars hard cap (default 1500) keeps provider inputs conservative for
+ * embedding models with low per-item ceilings such as DashScope text-embedding-v2.
  *
  * Lossless invariant: non-overlapping portions reassemble to original.
  */
@@ -25,7 +24,7 @@ import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } fr
  * rebuild them on the new shape. Bump on any change that affects chunk
  * boundaries (delimiters, word counting, maxChars cap).
  */
-export const MARKDOWN_CHUNKER_VERSION = 2;
+export const MARKDOWN_CHUNKER_VERSION = 3;
 
 const DELIMITERS: string[][] = [
   ['\n\n'],                          // L0: paragraphs
@@ -38,7 +37,7 @@ const DELIMITERS: string[][] = [
 export interface ChunkOptions {
   chunkSize?: number;    // target words per chunk (default 300)
   chunkOverlap?: number; // overlap words (default 50)
-  maxChars?: number;     // hard cap on any chunk's char length (default 6000)
+  maxChars?: number;     // hard cap on any chunk's char length (default 1500)
 }
 
 export interface TextChunk {
@@ -63,7 +62,7 @@ import { stripFactsFence } from '../facts-fence.ts';
 export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
   const chunkOverlap = opts?.chunkOverlap || 50;
-  const maxChars = opts?.maxChars || 6000;
+  const maxChars = opts?.maxChars || 1500;
 
   if (!text || text.trim().length === 0) return [];
 

@@ -134,10 +134,10 @@ describe('Recursive Text Chunker', () => {
   });
 });
 
-describe('CJK chunking (v0.32.7)', () => {
-  test('MARKDOWN_CHUNKER_VERSION is 2', async () => {
+describe('CJK chunking (v0.32.7+)', () => {
+  test('MARKDOWN_CHUNKER_VERSION is 3', async () => {
     const mod = await import('../../src/core/chunkers/recursive.ts');
-    expect(mod.MARKDOWN_CHUNKER_VERSION).toBe(2);
+    expect(mod.MARKDOWN_CHUNKER_VERSION).toBe(3);
   });
 
   test('long pure-Chinese paragraph splits into multiple chunks', () => {
@@ -201,6 +201,15 @@ describe('CJK chunking (v0.32.7)', () => {
     expect(chunks.length).toBeGreaterThanOrEqual(2);
     for (const c of chunks) {
       expect(c.text.length).toBeLessThanOrEqual(6000);
+    }
+  });
+
+  test('default maxChars caps whitespace-less inputs at 1500 chars', () => {
+    const text = 'a'.repeat(5000);
+    const chunks = chunkText(text, { chunkSize: 100000, chunkOverlap: 0 });
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      expect(c.text.length).toBeLessThanOrEqual(1500);
     }
   });
 
