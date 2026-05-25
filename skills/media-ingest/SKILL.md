@@ -49,12 +49,14 @@ Every mention of a person or company with a brain page MUST create a back-link.
 
 | Format | Action |
 |--------|--------|
-| YouTube/video URL | Fetch transcript (Whisper, transcription service, or captions) |
-| Audio file | Transcribe with available STT service |
+| YouTube/video URL | **Delegate to [[transcribe]]** — YouTube auto-captions fast path, then yt-dlp + mlx-whisper local fallback. Free by default. |
+| Audio file | **Delegate to [[transcribe]]** — same pipeline, skipping the download step. |
 | PDF | Extract text (OCR if needed) |
 | Book PDF | Extract text, identify chapters/sections |
 | Screenshot/image | OCR via vision model, extract text and entities |
 | GitHub repo | Clone, read README + key files, summarize architecture |
+
+> For video and audio, prefer invoking `transcribe` directly. It implements Phases 1–5 for that branch with idempotent caching, file-locking for GPU concurrency, exponential backoff retries, and judgment-driven spoke filing. `media-ingest` should be invoked when the input format is ambiguous or non-video (PDF, book, screenshot, repo).
 
 ### Phase 2: Upload raw source
 

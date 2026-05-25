@@ -65,6 +65,11 @@
       "description": "Ingest video, audio, PDF, book, screenshot, and repo content with entity extraction."
     },
     {
+      "name": "transcribe",
+      "path": "transcribe/SKILL.md",
+      "description": "Concrete video/audio transcription pipeline. Local-first (mlx-whisper on Apple Silicon), free by default. YouTube auto-captions fast path. Judgment-driven hub-and-spoke filing. Implementation of media-ingest's video/audio branch."
+    },
+    {
       "name": "meeting-ingestion",
       "path": "meeting-ingestion/SKILL.md",
       "description": "Ingest meeting transcripts with attendee enrichment, entity propagation, and timeline merge."
