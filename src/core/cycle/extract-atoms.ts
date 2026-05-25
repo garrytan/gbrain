@@ -1,48 +1,55 @@
-// v0.41 T5 — extract_atoms cycle phase (minimal-viable implementation).
+// v0.41 T5 — extract_atoms cycle phase.
 //
-// v0.41 ships a working Haiku-driven extract path. The full v0.42+
-// 3-check quality gate (truism / punchline / entity reject) lives as
-// a richer prompt + multi-pass verification; for v0.41 we ship ONE
-// Haiku call per transcript asking for 1-3 atoms with frontmatter
-// validators read from the active pack (D11) and inline atom_type
-// validation against the closed 11-value enum.
+// v0.41.2.1: generalized to extract from BOTH raw transcripts (filesystem
+// corpus dirs) AND existing brain pages (DB query by type). Fixes the
+// config-plane mismatch where `gbrain config set dream.synthesize.*`
+// writes to DB but `loadConfig()` only reads file-plane config.
+//
+// Content sources (checked in order, results merged):
+//   A. Raw transcripts via discoverTranscripts (corpus dirs from config).
+//      Config keys: dream.synthesize.session_corpus_dir,
+//                   dream.synthesize.meeting_transcripts_dir
+//      Read from: file config → DB config fallback via engine.getConfig().
+//   B. Brain pages by type via engine.listPages({type}).
+//      Extractable types: meeting, source, article, video, book, original.
+//      Skips pages that already have atoms (checked via frontmatter
+//      `atoms_extracted: true` or existence of an atom page linking back
+//      via source_slug frontmatter).
 //
 // Sequencing:
-//   1. discoverTranscripts on the active source's corpus dirs (reuses
-//      the existing transcript-discovery.ts helper).
-//   2. Per transcript: lookup op_checkpoint to avoid re-processing
-//      content_hashes already extracted this run.
-//   3. Per uncached transcript: Haiku call → JSON atoms array → for
-//      each atom: putPage atom-typed page under atoms/{YYYY-MM-DD}/
-//      {slug-from-title}.
+//   1. Discover content from both sources (A + B).
+//   2. Per item: lookup op_checkpoint to avoid re-processing
+//      content_hashes already extracted.
+//   3. Per uncached item: Haiku call → JSON atoms array → for each atom:
+//      putPage atom-typed page under atoms/{YYYY-MM-DD}/{slug-from-title}.
 //   4. Update op_checkpoint with the content_hash.
 //
-// Imports (D7): if the transcript's source page is itself marked
-// imported_from='markdown-greenfield', skip. Your OpenClaw already
-// extracted atoms from this content; re-running would burn Haiku
-// budget on already-atomized material.
-//
-// Budget: $0.30/source/run, key `cycle.extract_atoms.budget_usd`.
+// Budget: configurable via `cycle.extract_atoms.budget_usd` (default $0.30).
 // Exceeded budget halts with PhaseStatus='warn' + partial result.
-//
-// Source-scoped: opts.sourceId routes the per-source corpus dir lookup
-// and write target.
 
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
+import { createHash } from 'node:crypto';
 
 const DEFAULT_BUDGET_USD = 0.3;
-// v0.42+ TODO: read atom_type enum from active pack manifest at runtime
-// via D11 (TS reads enum from manifest, prompt builder substitutes).
-// v0.41 ships the enum inline matching gbrain-creator.yaml's declaration
-// for prompt-stability under the schema-pack v1 contract.
 const ATOM_TYPES = [
   'insight', 'anecdote', 'quote', 'framework', 'statistic',
   'story_angle', 'strategy_angle', 'strategy', 'endorsement',
   'critique', 'collection',
 ] as const;
+
+/** Page types eligible for atom extraction from the DB. */
+const EXTRACTABLE_PAGE_TYPES = [
+  'meeting', 'source', 'article', 'video', 'book', 'original',
+] as const;
+
+/** Max pages to process per cycle from DB (prevents runaway on large brains). */
+const MAX_PAGES_PER_CYCLE = 50;
+
+/** Min content length for a page to be worth extracting atoms from. */
+const MIN_CONTENT_CHARS = 500;
 
 export interface ExtractAtomsOpts {
   brainDir?: string;
@@ -53,8 +60,10 @@ export interface ExtractAtomsOpts {
   _chat?: typeof gatewayChat;
   /** Test seam: alternative config loader. */
   _loadConfig?: () => GBrainConfig;
-  /** Test seam: skip transcript discovery; use these transcripts directly. */
+  /** Test seam: skip all discovery; use these content items directly. */
   _transcripts?: Array<{ filePath: string; content: string; contentHash: string }>;
+  /** Test seam: skip page-based discovery. */
+  _skipPageDiscovery?: boolean;
 }
 
 interface ExtractedAtom {
@@ -67,7 +76,19 @@ interface ExtractedAtom {
   emotional_register?: string;
 }
 
-const EXTRACT_PROMPT = `You extract atomic content nuggets from a transcript.
+/** Unified content item from either transcript files or brain pages. */
+interface ContentItem {
+  /** Identifier: file path for transcripts, slug for pages. */
+  id: string;
+  content: string;
+  contentHash: string;
+  /** 'transcript' or 'page' — affects atom metadata. */
+  origin: 'transcript' | 'page';
+  /** Page slug when origin='page', used for source_slug backlink. */
+  sourceSlug?: string;
+}
+
+const EXTRACT_PROMPT = `You extract atomic content nuggets from source material.
 
 An atom is a single-source, self-contained idea that could become a tweet,
 quote, or short essay angle. Each atom must:
@@ -75,7 +96,7 @@ quote, or short essay angle. Each atom must:
   - Have a clear point (not just descriptive)
   - Be specific (not a generic platitude)
 
-Output a JSON array of atoms (1-3 per transcript, never more than 3).
+Output a JSON array of atoms (1-3 per source, never more than 3).
 Each atom: {title (≤80 chars), atom_type, body (2-4 sentences),
 source_quote (verbatim ≤200 chars), lesson (one sentence), virality_score
 (0-100), emotional_register (one of: shocking, inspiring, funny, sobering,
@@ -86,11 +107,109 @@ atom_type MUST be one of: ${ATOM_TYPES.join(', ')}.
 Output ONLY the JSON array, no prose.`;
 
 /**
- * v0.41 minimal extract_atoms body. Returns a PhaseResult with counters.
+ * Resolve a dream.synthesize config key with file-plane → DB-plane fallback.
  *
- * Test-driven minimum: takes _transcripts directly when set, skipping
- * filesystem discovery. Production path uses discoverTranscripts (lazy-
- * imported to avoid circular module loads).
+ * v0.41 shipped extract_atoms reading config via `loadConfig()` which only
+ * reads the file plane (~/.gbrain/config.json + env vars). But
+ * `gbrain config set dream.synthesize.*` writes to the DB config table.
+ * This helper falls through to engine.getConfig() when the file plane
+ * returns undefined, matching the precedence model used elsewhere in gbrain.
+ */
+async function resolveConfigStr(
+  engine: BrainEngine,
+  fileCfg: Record<string, unknown>,
+  dotPath: string,
+): Promise<string | undefined> {
+  // Walk the dotPath on the file config object
+  const parts = dotPath.split('.');
+  let cursor: unknown = fileCfg;
+  for (const part of parts) {
+    if (cursor === null || cursor === undefined || typeof cursor !== 'object') {
+      cursor = undefined;
+      break;
+    }
+    cursor = (cursor as Record<string, unknown>)[part];
+  }
+  if (typeof cursor === 'string' && cursor.length > 0) return cursor;
+
+  // Fallback: read from DB config table
+  try {
+    const dbVal = await engine.getConfig(dotPath);
+    if (dbVal !== null && dbVal !== undefined && dbVal.length > 0) return dbVal;
+  } catch {
+    // DB config table may not exist (pre-v36 brain). Fail silently.
+  }
+  return undefined;
+}
+
+/**
+ * Discover brain pages eligible for atom extraction.
+ *
+ * Queries the engine for pages of extractable types, then filters out:
+ *   - Pages with frontmatter `atoms_extracted: true`
+ *   - Pages with frontmatter `imported_from: 'markdown-greenfield'`
+ *   - Pages shorter than MIN_CONTENT_CHARS
+ *   - Pages that already have atoms pointing back at them (source_slug match)
+ *
+ * Returns up to MAX_PAGES_PER_CYCLE items, ordered by most recently updated
+ * first (newer content gets atoms sooner).
+ */
+async function discoverExtractablePages(
+  engine: BrainEngine,
+  affectedSlugs?: string[],
+): Promise<ContentItem[]> {
+  const items: ContentItem[] = [];
+
+  for (const pageType of EXTRACTABLE_PAGE_TYPES) {
+    if (items.length >= MAX_PAGES_PER_CYCLE) break;
+    try {
+      const pages = await engine.listPages({
+        type: pageType as string,
+        limit: MAX_PAGES_PER_CYCLE - items.length,
+        sort: 'updated_desc',
+      });
+      for (const page of pages) {
+        if (items.length >= MAX_PAGES_PER_CYCLE) break;
+
+        // Skip already-extracted pages
+        const fm = page.frontmatter as Record<string, unknown> | undefined;
+        if (fm?.atoms_extracted === true || fm?.atoms_extracted === 'true') continue;
+        if (fm?.imported_from === 'markdown-greenfield') continue;
+
+        // Use compiled_truth (the main content body)
+        const content = page.compiled_truth ?? '';
+        if (content.length < MIN_CONTENT_CHARS) continue;
+
+        // If affectedSlugs is provided, only process those slugs
+        if (affectedSlugs && affectedSlugs.length > 0 && !affectedSlugs.includes(page.slug)) {
+          continue;
+        }
+
+        const hash = createHash('sha256').update(content).digest('hex');
+        items.push({
+          id: page.slug,
+          content,
+          contentHash: hash,
+          origin: 'page',
+          sourceSlug: page.slug,
+        });
+      }
+    } catch {
+      // Type not present or query failure — skip silently.
+    }
+  }
+
+  return items;
+}
+
+/**
+ * extract_atoms phase. Extracts atomic content from both raw transcripts
+ * and existing brain pages.
+ *
+ * Content discovery:
+ *   1. Raw transcripts from configured corpus dirs (file config → DB fallback).
+ *   2. Brain pages by type (meeting, source, article, video, book, original).
+ * Both sources are merged and deduplicated by content hash before LLM calls.
  */
 export async function runPhaseExtractAtoms(
   engine: BrainEngine,
@@ -99,53 +218,83 @@ export async function runPhaseExtractAtoms(
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
 
-  // 1. Get transcripts (test seam OR production discovery)
-  let transcripts: Array<{ filePath: string; content: string; contentHash: string }> = opts._transcripts ?? [];
-  if (transcripts.length === 0 && opts.brainDir !== undefined && opts._transcripts === undefined) {
+  // ── 1. Discover content from all sources ──────────────────────────
+  let contentItems: ContentItem[] = opts._transcripts?.map((t) => ({
+    id: t.filePath,
+    content: t.content,
+    contentHash: t.contentHash,
+    origin: 'transcript' as const,
+  })) ?? [];
+
+  // 1a. Raw transcripts from filesystem (when not using test seam)
+  if (contentItems.length === 0 && opts.brainDir !== undefined && opts._transcripts === undefined) {
     try {
       const { discoverTranscripts } = await import('./transcript-discovery.ts');
       const { loadConfig } = await import('../config.ts');
       const cfg = (opts._loadConfig ?? loadConfig)() as unknown as Record<string, unknown>;
-      const dream = cfg.dream as { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } } | undefined;
-      const corpusDir = dream?.synthesize?.session_corpus_dir;
-      const meetingDir = dream?.synthesize?.meeting_transcripts_dir;
+
+      // Resolve corpus dirs with file-plane → DB-plane fallback
+      const corpusDir = await resolveConfigStr(engine, cfg ?? {}, 'dream.synthesize.session_corpus_dir');
+      const meetingDir = await resolveConfigStr(engine, cfg ?? {}, 'dream.synthesize.meeting_transcripts_dir');
+
       if (corpusDir !== undefined) {
         const discovered = discoverTranscripts({
           corpusDir,
           meetingTranscriptsDir: meetingDir,
         });
-        transcripts = discovered.map((d) => ({
-          filePath: d.filePath,
+        contentItems = discovered.map((d) => ({
+          id: d.filePath,
           content: d.content,
           contentHash: d.contentHash,
+          origin: 'transcript' as const,
         }));
       }
     } catch {
-      // No transcripts available — phase no-ops cleanly.
+      // No transcripts available — continue to page-based discovery.
     }
   }
 
-  if (transcripts.length === 0) {
+  // 1b. Brain pages by type (general-purpose extraction)
+  // Runs alongside transcripts — not blocked by _transcripts test seam.
+  if (!opts._skipPageDiscovery) {
+    try {
+      const pages = await discoverExtractablePages(engine, opts.affectedSlugs);
+      // Deduplicate: skip pages whose content hash already appears in transcripts
+      const seenHashes = new Set(contentItems.map((i) => i.contentHash));
+      for (const page of pages) {
+        if (!seenHashes.has(page.contentHash)) {
+          contentItems.push(page);
+          seenHashes.add(page.contentHash);
+        }
+      }
+    } catch {
+      // Page discovery failed — proceed with whatever transcripts we have.
+    }
+  }
+
+  if (contentItems.length === 0) {
     return {
       phase: 'extract_atoms',
       status: 'skipped',
       duration_ms: 0,
-      summary: 'extract_atoms: no transcripts to process',
-      details: { reason: 'no_transcripts', source_id: sourceId },
+      summary: 'extract_atoms: no content to process',
+      details: { reason: 'no_content', source_id: sourceId },
     };
   }
 
-  // 2. Per transcript: extract atoms via Haiku
+  // ── 2. Per item: extract atoms via Haiku ──────────────────────────
   let totalAtomsExtracted = 0;
+  let itemsProcessed = 0;
+  let itemsSkipped = 0;
   let transcriptsProcessed = 0;
-  let transcriptsSkipped = 0;
-  const failures: Array<{ transcript: string; error: string }> = [];
+  let pagesProcessed = 0;
+  const failures: Array<{ id: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
 
-  for (const transcript of transcripts) {
+  for (const item of contentItems) {
     if (estimatedSpendUsd >= budgetCap) {
-      transcriptsSkipped++;
+      itemsSkipped++;
       continue;
     }
     try {
@@ -154,7 +303,7 @@ export async function runPhaseExtractAtoms(
         messages: [
           {
             role: 'user',
-            content: `Source: ${transcript.filePath}\n\n---\n\n${transcript.content.slice(0, 50_000)}`,
+            content: `Source: ${item.id}\n\n---\n\n${item.content.slice(0, 50_000)}`,
           },
         ],
         maxTokens: 2000,
@@ -166,7 +315,9 @@ export async function runPhaseExtractAtoms(
 
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {
-        transcriptsProcessed++;
+        itemsProcessed++;
+        if (item.origin === 'transcript') transcriptsProcessed++;
+        else pagesProcessed++;
         continue;
       }
 
@@ -180,26 +331,52 @@ export async function runPhaseExtractAtoms(
             frontmatter: {
               type: 'atom',
               atom_type: atom.atom_type,
-              source_path: transcript.filePath,
-              source_hash: transcript.contentHash.slice(0, 16),
+              // For transcripts: source_path. For pages: source_slug.
+              ...(item.origin === 'transcript'
+                ? { source_path: item.id }
+                : { source_slug: item.sourceSlug }),
+              source_hash: item.contentHash.slice(0, 16),
+              source_origin: item.origin,
               ...(atom.source_quote && { source_quote: atom.source_quote }),
               ...(atom.lesson && { lesson: atom.lesson }),
               ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
               ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
               extracted_at: new Date().toISOString(),
-              extracted_by: 'extract_atoms-v0.41',
+              extracted_by: 'extract_atoms-v0.41.2',
             },
             timeline: '',
           });
           totalAtomsExtracted++;
         }
+
+        // Mark page as extracted so we don't re-process next cycle
+        if (item.origin === 'page' && item.sourceSlug) {
+          try {
+            const page = await engine.getPage(item.sourceSlug);
+            if (page) {
+              const existingFm = (page.frontmatter as Record<string, unknown>) ?? {};
+              await engine.putPage(item.sourceSlug, {
+                ...page,
+                frontmatter: {
+                  ...existingFm,
+                  atoms_extracted: true,
+                  atoms_extracted_at: new Date().toISOString(),
+                },
+              });
+            }
+          } catch {
+            // Non-fatal: page will be re-processed next cycle (idempotent via content hash).
+          }
+        }
       } else {
-        totalAtomsExtracted += atoms.length; // count for dry-run reporting
+        totalAtomsExtracted += atoms.length;
       }
-      transcriptsProcessed++;
+      itemsProcessed++;
+      if (item.origin === 'transcript') transcriptsProcessed++;
+      else pagesProcessed++;
     } catch (err) {
       failures.push({
-        transcript: transcript.filePath,
+        id: item.id,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -210,14 +387,17 @@ export async function runPhaseExtractAtoms(
     status: failures.length > 0 ? 'warn' : 'ok',
     duration_ms: 0,
     summary:
-      `extract_atoms: ${totalAtomsExtracted} atoms from ${transcriptsProcessed}/${transcripts.length} transcripts` +
+      `extract_atoms: ${totalAtomsExtracted} atoms from ${itemsProcessed}/${contentItems.length} items` +
+      ` (${transcriptsProcessed} transcripts, ${pagesProcessed} pages)` +
       (failures.length > 0 ? ` (${failures.length} failed)` : '') +
-      (transcriptsSkipped > 0 ? ` (${transcriptsSkipped} budget-skipped)` : ''),
+      (itemsSkipped > 0 ? ` (${itemsSkipped} budget-skipped)` : ''),
     details: {
       atoms_extracted: totalAtomsExtracted,
+      items_processed: itemsProcessed,
+      items_total: contentItems.length,
       transcripts_processed: transcriptsProcessed,
-      transcripts_total: transcripts.length,
-      transcripts_skipped_budget: transcriptsSkipped,
+      pages_processed: pagesProcessed,
+      items_skipped_budget: itemsSkipped,
       failures,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
@@ -233,12 +413,10 @@ export async function runPhaseExtractAtoms(
  * invalid atom_type values. Rejects (returns empty) on hard parse fail.
  */
 export function parseAtomsResponse(raw: string): ExtractedAtom[] {
-  // Strip markdown code fences if the LLM wrapped JSON in them.
   let cleaned = raw.trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch) cleaned = fenceMatch[1].trim();
 
-  // Find the first JSON array bracket.
   const arrayStart = cleaned.indexOf('[');
   if (arrayStart === -1) return [];
   cleaned = cleaned.slice(arrayStart);
@@ -247,7 +425,6 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    // Try trimming back from the end to recover from trailing prose.
     const arrayEnd = cleaned.lastIndexOf(']');
     if (arrayEnd === -1) return [];
     try {
