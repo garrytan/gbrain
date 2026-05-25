@@ -21,6 +21,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, uti
 import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
+import type { EngineConfig } from '../core/types.ts';
 import { loadPreferences } from '../core/preferences.ts';
 import { loadConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
@@ -176,6 +177,33 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   } catch { /* best-effort */ }
 
   console.log(`Autopilot starting. Repo: ${repoPath}, interval: ${baseInterval}s`);
+
+  // Switch the autopilot's main engine onto an instance-owned pool so
+  // mid-cycle code paths that null the module-level `db.ts` singleton can't
+  // break later phases. See issue (filed companion) for the full bug class:
+  // `engine.connect(config)` without `poolSize` routes to the module-level
+  // singleton (`postgres-engine.ts:175-189`); the engine's own `_sql` stays
+  // null and `this.sql` falls back to `db.getConnection()`. Once anything
+  // nulls that singleton mid-cycle, every later engine call through the
+  // getter throws "connect() has not been called" — including the silent
+  // batch-error path in `extract.ts:614-628` (which loses rows on swallow)
+  // and the `engine.getHealth()` call later in this loop.
+  //
+  // Re-calling `engine.connect` with `poolSize` set is safe: it overwrites
+  // `_savedConfig`, creates a fresh instance pool, and the getter returns
+  // that pool first (`_sql ? _sql : db.getConnection()`). PGLite engines
+  // are unaffected — `poolSize` is ignored on that engine.
+  if (engine.kind === 'postgres') {
+    const savedCfg = (engine as unknown as { _savedConfig?: EngineConfig })._savedConfig;
+    const hasInstancePool = (engine as unknown as { _sql?: unknown })._sql != null;
+    if (savedCfg && !hasInstancePool) {
+      try {
+        await engine.connect({ ...savedCfg, poolSize: 5 } as EngineConfig & { poolSize: number });
+      } catch (e) {
+        console.error(`[autopilot] could not switch engine to instance pool: ${(e as Error).message}`);
+      }
+    }
+  }
 
   // Mode resolution: Minions dispatch when the user has opted in AND the
   // worker daemon can actually run (Postgres only; PGLite's exclusive file
