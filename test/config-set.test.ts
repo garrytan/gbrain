@@ -29,6 +29,10 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('models.tier.subagent');
   });
 
+  test('contains agent gateway loop flag used by subagent handler/doctor', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('agent.use_gateway_loop');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);

@@ -49,6 +49,7 @@ mock.module('../../src/core/embedding.ts', () => ({
 }));
 
 const { runCycle, ALL_PHASES } = await import('../../src/core/cycle.ts');
+const { runDream } = await import('../../src/commands/dream.ts');
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -158,6 +159,33 @@ describe('E2E full cycle phase order', () => {
         expect(synth?.status).toBe('skipped');
         expect(patterns?.status).toBe('skipped');
       });
+    } finally {
+      await rig.cleanup();
+    }
+  });
+
+  test('gbrain dream resolves registered source and stamps last_full_cycle_at', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+         VALUES ($1, $2, $3, '{}'::jsonb, false, NOW())
+         ON CONFLICT (id) DO UPDATE
+           SET local_path = EXCLUDED.local_path,
+               config = EXCLUDED.config,
+               archived = EXCLUDED.archived`,
+        ['obsidian', 'obsidian', rig.brainDir],
+      );
+
+      await withoutAnthropicKey(async () => {
+        const report = await runDream(rig.engine, ['--phase', 'lint', '--json']);
+        expect(report).toBeDefined();
+      });
+
+      const sources = await rig.engine.listAllSources();
+      const obsidian = sources.find(s => s.id === 'obsidian')!;
+      expect(typeof obsidian.config.last_full_cycle_at).toBe('string');
+      expect(new Date(obsidian.config.last_full_cycle_at as string).toString()).not.toBe('Invalid Date');
     } finally {
       await rig.cleanup();
     }

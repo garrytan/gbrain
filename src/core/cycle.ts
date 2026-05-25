@@ -678,7 +678,7 @@ interface SyncPhaseResult extends PhaseResult {
  * table. Returns undefined when no registered source matches (falls back
  * to pre-v0.18 global config.sync.* keys).
  */
-async function resolveSourceForDir(
+export async function resolveSourceForDir(
   engine: BrainEngine,
   brainDir: string,
 ): Promise<string | undefined> {
