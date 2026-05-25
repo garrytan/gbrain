@@ -409,97 +409,124 @@ async function embedAllStale(
   let totalProcessedPages = 0;
   let afterPageId = 0;
   let afterChunkIndex = -1;
-  let totalChunksLoaded = 0;
   let budgetExitNotified = false;
 
-  try {
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      if (budgetSignal.aborted) {
-        if (!budgetExitNotified) {
-          console.error(`\n  [embed] wall-clock budget (${BUDGET_MS}ms) exceeded; exiting cleanly. Re-run picks up via partial index.`);
-          budgetExitNotified = true;
+  // v0.36 worker-pool refactor: a SINGLE shared queue of page keys with N
+  // persistent workers. The old design (await Promise.all(workers) per
+  // 2000-chunk batch) gang-waited at every batch boundary, so one hung
+  // worker stalled all N. The new design has workers pull continuously;
+  // when the queue runs low, any worker can trigger a refill from the DB,
+  // and other workers keep popping the queue while the fetch is in flight.
+  // Net effect: N workers stay busy until the producer is exhausted.
+  type StaleRow = Awaited<ReturnType<typeof engine.listStaleChunks>>[number];
+  const queue = new Map<string, StaleRow[]>();
+  let producerExhausted = false;
+  let fetchInFlight: Promise<void> | null = null;
+
+  async function fetchMore(): Promise<void> {
+    if (producerExhausted) return;
+    if (fetchInFlight) return fetchInFlight;
+    fetchInFlight = (async () => {
+      try {
+        const batch = await engine.listStaleChunks({
+          batchSize: PAGE_SIZE,
+          afterPageId,
+          afterChunkIndex,
+          ...(sourceId && { sourceId }),
+        });
+        if (batch.length === 0) {
+          producerExhausted = true;
+          return;
         }
-        break;
-      }
-
-      const batch = await engine.listStaleChunks({
-        batchSize: PAGE_SIZE,
-        afterPageId,
-        afterChunkIndex,
-        ...(sourceId && { sourceId }),
-      });
-      if (batch.length === 0) break;
-      totalChunksLoaded += batch.length;
-
-      // Advance cursor to last row in this batch.
-      const last = batch[batch.length - 1];
-      afterPageId = last.page_id;
-      afterChunkIndex = last.chunk_index;
-
-      // Group by composite key (source_id::slug).
-      const byKey = new Map<string, typeof batch>();
-      for (const row of batch) {
-        const key = `${row.source_id}::${row.slug}`;
-        const list = byKey.get(key);
-        if (list) list.push(row);
-        else byKey.set(key, [row]);
-      }
-
-      const keys = Array.from(byKey.keys());
-      result.total_chunks += batch.length;
-
-      let nextIdx = 0;
-      async function embedOneKey(key: string) {
-        const stale = byKey.get(key)!;
-        const keySourceId = stale[0]?.source_id ?? 'default';
-        const slug = stale[0].slug;
-        try {
-          const embeddings = await embedBatchWithBackoff(stale.map(c => c.chunk_text), { abortSignal: budgetSignal });
-          // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
-          const existing = await engine.getChunks(slug, { sourceId: keySourceId });
-          const staleIdxToEmbedding = new Map<number, Float32Array>();
-          for (let j = 0; j < stale.length; j++) {
-            staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
-          }
-          const merged: ChunkInput[] = existing.map(c => ({
-            chunk_index: c.chunk_index,
-            chunk_text: c.chunk_text,
-            chunk_source: c.chunk_source,
-            embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
-            token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
-          }));
-          await engine.upsertChunks(slug, merged, { sourceId: keySourceId });
-          result.embedded += stale.length;
-        } catch (e: unknown) {
-          // Budget-fired aborts are expected on the way out; don't spam
-          // per-page "Error embedding" lines when we're shutting down.
-          if (budgetSignal.aborted) return;
-          console.error(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
+        const last = batch[batch.length - 1];
+        afterPageId = last.page_id;
+        afterChunkIndex = last.chunk_index;
+        for (const row of batch) {
+          const key = `${row.source_id}::${row.slug}`;
+          const list = queue.get(key);
+          if (list) list.push(row);
+          else queue.set(key, [row]);
         }
-        totalProcessedPages++;
-        result.pages_processed++;
-        // Use staleCount as the estimated total for progress (not exact after
-        // pagination starts, but directionally correct).
-        onProgress?.(totalProcessedPages, Math.ceil(staleCount / PAGE_SIZE) * keys.length, result.embedded);
+        result.total_chunks += batch.length;
+        if (batch.length < PAGE_SIZE) producerExhausted = true;
+      } finally {
+        fetchInFlight = null;
       }
+    })();
+    return fetchInFlight;
+  }
 
-      async function worker() {
-        // D3a: workers check the budget before claiming the next key.
-        // A stuck mid-fetch worker also has the abortSignal threaded into
-        // its embedBatch call, so the in-flight HTTP cancels too.
-        while (nextIdx < keys.length && !budgetSignal.aborted) {
-          const idx = nextIdx++;
-          await embedOneKey(keys[idx]);
-        }
-      }
-
-      const numWorkers = Math.min(CONCURRENCY, keys.length);
-      await Promise.all(Array.from({ length: numWorkers }, () => worker()));
-
-      // If we got fewer rows than PAGE_SIZE, we've reached the end.
-      if (batch.length < PAGE_SIZE) break;
+  async function pullNext(): Promise<[string, StaleRow[]] | null> {
+    // Opportunistic refill: if queue is low, kick off a fetch in the
+    // background. Don't await — let other workers keep popping while the
+    // fetch is in flight. The fetchInFlight guard prevents stampeding.
+    if (queue.size < CONCURRENCY * 2 && !producerExhausted && !fetchInFlight) {
+      void fetchMore();
     }
+    // If the queue is genuinely empty, we have to wait for the producer.
+    while (queue.size === 0 && !producerExhausted) {
+      await fetchMore();
+    }
+    // Grab the first available key. The for-loop + delete is synchronous,
+    // so two workers can't pull the same key (JS single-threaded between awaits).
+    for (const [key, rows] of queue) {
+      queue.delete(key);
+      return [key, rows];
+    }
+    return null;
+  }
+
+  async function processKey(key: string, stale: StaleRow[]): Promise<void> {
+    const keySourceId = stale[0]?.source_id ?? 'default';
+    const slug = stale[0].slug;
+    try {
+      const embeddings = await embedBatchWithBackoff(stale.map(c => c.chunk_text), { abortSignal: budgetSignal });
+      // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
+      const existing = await engine.getChunks(slug, { sourceId: keySourceId });
+      const staleIdxToEmbedding = new Map<number, Float32Array>();
+      for (let j = 0; j < stale.length; j++) {
+        staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
+      }
+      const merged: ChunkInput[] = existing.map(c => ({
+        chunk_index: c.chunk_index,
+        chunk_text: c.chunk_text,
+        chunk_source: c.chunk_source,
+        embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
+        token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
+      }));
+      await engine.upsertChunks(slug, merged, { sourceId: keySourceId });
+      result.embedded += stale.length;
+    } catch (e: unknown) {
+      // Budget-fired aborts are expected on the way out; don't spam
+      // per-page "Error embedding" lines when we're shutting down.
+      if (budgetSignal.aborted) return;
+      console.error(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
+    }
+    totalProcessedPages++;
+    result.pages_processed++;
+    // Total is an estimate (we don't know final page count until the
+    // producer finishes), but the ratio is directionally correct.
+    const estTotal = Math.max(totalProcessedPages, Math.ceil(staleCount / 1.5));
+    onProgress?.(totalProcessedPages, estTotal, result.embedded);
+  }
+
+  async function worker(): Promise<void> {
+    while (!budgetSignal.aborted) {
+      const next = await pullNext();
+      if (next === null) return;  // Queue empty AND producer exhausted.
+      await processKey(next[0], next[1]);
+    }
+    if (!budgetExitNotified && budgetSignal.aborted) {
+      console.error(`\n  [embed] wall-clock budget (${BUDGET_MS}ms) exceeded; exiting cleanly. Re-run picks up via partial index.`);
+      budgetExitNotified = true;
+    }
+  }
+
+  try {
+    // Single set of N persistent workers. They share the queue. A slow
+    // worker (hung HTTP, deep retry-backoff) holds only its own slot;
+    // the other N-1 keep draining the queue at full rate.
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
   } finally {
     clearTimeout(budgetTimer);
   }
