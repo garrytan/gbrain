@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -46,6 +46,10 @@ const CLI_ONLY_SELF_HELP = new Set([
   // runCapture saw --help. brainstorm + lsd were already in the set;
   // capture was the holdout.
   'capture',
+  // extract-conversation-facts ships its own --help block describing
+  // segment splitting and checkpointing semantics. Route around the
+  // generic short-circuit so users see the detailed text.
+  'extract-conversation-facts',
   // v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was
   // unreachable via help because the dispatcher's generic CLI-only
   // short-circuit fired before runSync could print its own usage block.
@@ -676,7 +680,7 @@ function formatResult(opName: string, result: unknown): string {
  * `runRemoteDoctor` for thin-client installs.
  */
 const THIN_CLIENT_REFUSED_COMMANDS = new Set([
-  'sync', 'embed', 'extract', 'migrate', 'apply-migrations',
+  'sync', 'embed', 'extract', 'extract-conversation-facts', 'migrate', 'apply-migrations',
   'repair-jsonb', 'orphans', 'integrity', 'serve',
   // v0.31.1 (CDX-2 op coverage matrix): more local-only commands
   'dream', 'transcripts', 'storage',
@@ -710,6 +714,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   sync: 'sync runs on the host. Trigger a remote cycle with `gbrain remote ping` (queues an autopilot-cycle job).',
   embed: 'embed runs on the host as part of the autopilot cycle. `gbrain remote ping` triggers a full cycle including embed.',
   extract: 'extract runs on the host. Use `gbrain remote ping` to trigger a cycle including extract.',
+  'extract-conversation-facts': 'extract-conversation-facts runs on the host (requires local engine + chat gateway).',
   migrate: "migrate runs on the host's local engine. Run on the host machine.",
   'apply-migrations': 'schema migrations run on the host. SSH and run there.',
   'repair-jsonb': 'repair-jsonb operates on the local DB only.',
@@ -1194,6 +1199,11 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'extract': {
         const { runExtract } = await import('./commands/extract.ts');
         await runExtract(engine, args);
+        break;
+      }
+      case 'extract-conversation-facts': {
+        const { runExtractConversationFacts } = await import('./commands/extract-conversation-facts.ts');
+        await runExtractConversationFacts(engine, args);
         break;
       }
       case 'features': {
