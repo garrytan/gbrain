@@ -2,6 +2,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import type {
   BrainEngine,
   LinkBatchInput, TimelineBatchInput,
@@ -127,6 +129,51 @@ export function computeSnapshotSchemaHash(
   return hash.digest('hex');
 }
 
+/**
+ * Detect if another process is currently holding the PGLite data directory.
+ * Returns the conflicting PID + command if detected, or null if safe to open.
+ *
+ * Checks two markers:
+ *   1. postmaster.pid — PGLite/Postgres internal lock (most reliable indicator
+ *      that PGLite is actively initialized in another process).
+ *   2. .gbrain-lock/lock — gbrain advisory lock (set by acquireLock in this file).
+ *
+ * Either marker, if it points to a live process that isn't us, means opening
+ * here would corrupt the database. Stale markers (dead PIDs) are ignored — the
+ * existing acquireLock cleanup path handles those.
+ */
+function detectConcurrentGBrain(dataDir: string): { pid: number; command?: string } | null {
+  const checkAlive = (pid: number): boolean => {
+    if (!pid || pid === process.pid) return false;
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  };
+
+  // Check 1: PGLite's own postmaster.pid (first line is the PID)
+  const postmasterPath = join(dataDir, 'postmaster.pid');
+  if (existsSync(postmasterPath)) {
+    try {
+      const firstLine = readFileSync(postmasterPath, 'utf-8').split('\n')[0].trim();
+      const pid = parseInt(firstLine, 10);
+      if (checkAlive(pid)) {
+        return { pid, command: 'pglite postmaster' };
+      }
+    } catch { /* unreadable / corrupt — skip and let downstream handle */ }
+  }
+
+  // Check 2: gbrain advisory lock (set by acquireLock)
+  const lockPath = join(dataDir, '.gbrain-lock', 'lock');
+  if (existsSync(lockPath)) {
+    try {
+      const lockData = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid?: number; command?: string };
+      if (lockData.pid && checkAlive(lockData.pid)) {
+        return { pid: lockData.pid, command: lockData.command };
+      }
+    } catch { /* corrupt lock file — skip */ }
+  }
+
+  return null;
+}
+
 export class PGLiteEngine implements BrainEngine {
   readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
@@ -144,6 +191,40 @@ export class PGLiteEngine implements BrainEngine {
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
     const dataDir = config.database_path || undefined; // undefined = in-memory
+
+    // PREVENTIVE CHECK: detect concurrent gbrain processes BEFORE attempting
+    // PGlite.create(). PGLite is single-process; if another process has the
+    // database open, calling create() corrupts the on-disk state in a way
+    // that survives process death AND lock-file removal — recovering requires
+    // recreating the database from scratch (and re-paying any embedding costs).
+    // The acquireLock call below would catch this IF the other process used
+    // it, but gbrain serve in some paths doesn't acquire the advisory lock
+    // before holding the DB connection. Postmaster.pid is PGLite's own marker
+    // and is more reliable as a "someone has this open right now" signal.
+    if (dataDir) {
+      const conflict = detectConcurrentGBrain(dataDir);
+      if (conflict) {
+        throw new Error(
+          `Cannot open PGLite database at ${dataDir}: another process has it open.\n` +
+          `  Holding process: PID ${conflict.pid}${conflict.command ? ` (${conflict.command})` : ''}\n` +
+          `  PGLite supports only one process per data directory. Opening from a\n` +
+          `  second process leaves the on-disk state corrupted and unrecoverable.\n` +
+          `\n` +
+          `  Most common cause: a 'gbrain serve' MCP server is running (e.g., inside\n` +
+          `  Claude Code) while you tried to run a 'gbrain' command from the terminal.\n` +
+          `\n` +
+          `  Fix:\n` +
+          `    1. Close Claude Code (or whatever runs gbrain as an MCP server)\n` +
+          `    2. Verify no gbrain processes remain: ps aux | grep gbrain | grep -v grep\n` +
+          `    3. If any remain, kill them: kill <PID>\n` +
+          `    4. Retry your command\n` +
+          `\n` +
+          `  If you're certain no other process is using the database (e.g., the PID\n` +
+          `  is stale), remove the marker files and retry:\n` +
+          `    rm -f ${dataDir}/postmaster.pid && rm -rf ${dataDir}/.gbrain-lock`
+        );
+      }
+    }
 
     // Acquire file lock to prevent concurrent PGLite access (crashes with Aborted())
     this._lock = await acquireLock(dataDir);
