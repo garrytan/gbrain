@@ -106,6 +106,18 @@ gbrain import ~/notes/   # index your markdown
 gbrain query "what themes show up across my notes?"
 ```
 
+Pick your embedding model during `gbrain init`, before the vector schema is created. For example:
+
+```bash
+# OpenAI cloud embeddings (requires OPENAI_API_KEY)
+gbrain init --pglite --embedding-model openai:text-embedding-3-large
+
+# Local-only embeddings via Ollama (no embedding API egress)
+gbrain init --pglite --embedding-model ollama:nomic-embed-text --embedding-dimensions 768
+```
+
+If you need to switch an existing brain's embedding model or dimensions later, follow [`docs/embedding-migrations.md`](docs/embedding-migrations.md); `gbrain config set embedding_model ...` is not enough because the database vector dimension is fixed at init time.
+
 Postgres-at-scale, Supabase, and thin-client setup paths live in [`docs/INSTALL.md`](docs/INSTALL.md).
 
 ### Connect GBrain to your AI client (MCP)
