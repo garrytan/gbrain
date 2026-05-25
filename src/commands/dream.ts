@@ -27,6 +27,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import {
   runCycle,
   ALL_PHASES,
+  resolveSourceForDir,
   type CyclePhase,
   type CycleReport,
 } from '../core/cycle.ts';
@@ -274,12 +275,14 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
 
   const brainDir = await resolveBrainDir(engine, opts.dir);
   const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
+  const sourceId = engine ? await resolveSourceForDir(engine, brainDir) : undefined;
 
   const report = await runCycle(engine, {
     brainDir,
     dryRun: opts.dryRun,
     pull: opts.pull,
     phases,
+    ...(sourceId ? { sourceId } : {}),
     synthInputFile: opts.inputFile ?? undefined,
     synthDate: opts.date ?? undefined,
     synthFrom: opts.from ?? undefined,

@@ -108,7 +108,7 @@ export function parseMarkdown(
   const type = (frontmatter.type as string) || (
     opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
   );
-  const title = (frontmatter.title as string) || inferTitle(filePath);
+  const title = String(frontmatter.title ?? '') || inferTitle(filePath);
   const tags = extractTags(frontmatter);
   const slug = (frontmatter.slug as string) || inferSlug(filePath);
 
