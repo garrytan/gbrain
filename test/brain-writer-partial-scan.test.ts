@@ -153,11 +153,15 @@ describe('scanBrainSources partial-scan state', () => {
   // The post-await deadline re-check should mark the source as 'skipped'.
   test('slow COUNT that exceeds deadline marks source skipped, not partial', async () => {
     const start = Date.now();
+    // CI timing fix (same class as the "hanging COUNT" test below): widened
+    // 50→250ms deadline + 100→500ms simulated query delay. Keeps the 2x
+    // ratio that proves "query exceeds deadline" while giving CI runners
+    // enough headroom to schedule both setTimeout callbacks on-budget.
     const report = await scanBrainSources(engine, {
-      deadline: start + 50, // 50ms budget
+      deadline: start + 250,
       dbPageCountForSource: async () => {
-        // Simulate a hung query: take 100ms (past the deadline).
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Simulate a hung query: take 500ms (past the deadline).
+        await new Promise(resolve => setTimeout(resolve, 500));
         return 42;
       },
     });
@@ -173,18 +177,27 @@ describe('scanBrainSources partial-scan state', () => {
   // Codex adversarial #4 regression: even when dbPageCountForSource itself
   // would hang indefinitely, the Promise.race against the deadline must
   // resolve null and the scan must abort cleanly.
+  //
+  // Boundary fix (CI flake): brain-writer.ts post-await deadline check uses
+  // `>=` not `>`. The Promise.race setTimeout resolves at exactly
+  // `remainingMs` from now, so post-await Date.now() often equals deadline
+  // within integer-ms precision. Strict `>` missed those landings on CI
+  // runners and let scanOneSource run anyway, marking src-a as 'scanned'
+  // instead of 'skipped'. Test budget is generous enough to absorb runner
+  // timer drift; the real fix is the operator change in brain-writer.ts.
   test('hanging COUNT does not exceed deadline — Promise.race timeout fires', async () => {
     const start = Date.now();
+    const DEADLINE_MS = 500;
+    const BOUND_MS = 2500;
     const report = await scanBrainSources(engine, {
-      deadline: start + 100, // 100ms budget
+      deadline: start + DEADLINE_MS,
       dbPageCountForSource: () => {
         // Never resolves — would hang forever without the deadline race.
         return new Promise<number | null>(() => {});
       },
     });
     const elapsed = Date.now() - start;
-    // Generous bound: should complete within 2x the deadline budget (setup overhead).
-    expect(elapsed).toBeLessThan(500);
+    expect(elapsed).toBeLessThan(BOUND_MS);
     expect(report.partial).toBe(true);
     const firstSource = report.per_source.find(r => r.source_id === 'src-a')!;
     expect(firstSource.status).toBe('skipped');

@@ -58,10 +58,27 @@ N="${SHARDS_OVERRIDE:-${SHARDS:-$(detect_cpus)}}"
 if ! printf '%s' "$N" | grep -qE '^[0-9]+$' || [ "$N" -lt 1 ]; then
   echo "ERROR: invalid shard count: $N" >&2; exit 2
 fi
+# v0.40.10 flake-hardening: clamp default to 4 (was 8) to match CI's
+# test-shard.sh fan-out. At 8-shard parallel on Apple Silicon we observed
+# shard 5 SIGKILL during source-health.test.ts's PGLite migration replay —
+# 8 parallel PGLite WASM inits contend severely on the lockfile, and the
+# 92-migration replay × 8 simultaneous can wedge past even 900s. CI uses
+# 4 and is stable. Trade ~2x wallclock for reliability + parity with CI's
+# fan-out. Override via --shards N or SHARDS=N (still capped at 8).
 [ "$N" -gt 8 ] && N=8
+if [ -z "${SHARDS_OVERRIDE:-}" ] && [ -z "${SHARDS:-}" ] && [ "$N" -gt 4 ]; then
+  N=4
+fi
 
 INTRA_CONC="${MAX_CONCURRENCY_OVERRIDE:-${GBRAIN_TEST_MAX_CONCURRENCY:-4}}"
-SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-600}"
+# v0.40.10 flake-hardening: bump per-shard cap 600 → 1500 (was 900). At
+# 4-shard default each shard runs 159 files / ~2420 tests with internal
+# wallclock 960-1020s. The 900s value (sized for 8-shard's ~80 files /
+# 1100 tests at 620-770s) false-killed shard 1 at 900s even though it
+# had completed in 968s. 1500s cap gives ~55% headroom over observed
+# 4-shard wallclock; real hangs still hit it. Override via
+# GBRAIN_TEST_SHARD_TIMEOUT=N.
+SHARD_TIMEOUT="${GBRAIN_TEST_SHARD_TIMEOUT:-1500}"
 
 # ──────────────────────────────────────────────────────────────────────────
 # Output directories. Prefer workspace-local .context/, fall back to /tmp.

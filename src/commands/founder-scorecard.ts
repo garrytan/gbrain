@@ -256,8 +256,12 @@ export async function runFounder(engine: BrainEngine, args: string[]): Promise<v
     // future `takes_list` op. For now thin-client returns a degraded
     // scorecard built from trajectory only (no take outcomes).
     // TODO(v0.35.5): add `takes_list_by_entity` MCP op + thin-client wire-up.
+    // v0.40.2.0: kind:'metric' is explicit clarity (no behavior change —
+    // downstream computeFounderScorecard math already skips NULL-metric
+    // rows; the filter just makes intent legible at the call site).
     const raw = await callRemoteTool(cfg!, 'find_trajectory', {
       entity_slug: parsed.entitySlug,
+      kind: 'metric',
       since: windowSince,
       until: windowUntil,
     }, { timeoutMs: 30_000 });
@@ -266,6 +270,7 @@ export async function runFounder(engine: BrainEngine, args: string[]): Promise<v
         fact_id: number; valid_from: string;
         metric: string | null; value: number | null;
         unit: string | null; period: string | null;
+        event_type: string | null;
         text: string; source_session: string | null; source_markdown_slug: string | null;
       }>;
     }>(raw);
@@ -276,6 +281,8 @@ export async function runFounder(engine: BrainEngine, args: string[]): Promise<v
       value: p.value,
       unit: p.unit,
       period: p.period,
+      // v0.40.2.0: event_type may be absent on pre-v0.40 servers; default null.
+      event_type: (p as { event_type?: string | null }).event_type ?? null,
       text: p.text,
       source_session: p.source_session,
       source_markdown_slug: p.source_markdown_slug,
@@ -290,8 +297,12 @@ export async function runFounder(engine: BrainEngine, args: string[]): Promise<v
     });
   } else {
     // Local: full pipeline. Get the trajectory + the entity's resolved takes.
+    // v0.40.2.0: kind:'metric' is explicit clarity (downstream math already
+    // skips NULL-metric rows so this is a no-op behaviorally; surfaces
+    // intent at the call site).
     const points = await engine.findTrajectory({
       entitySlug: parsed.entitySlug,
+      kind: 'metric',
       since: windowSince,
       until: windowUntil,
     });

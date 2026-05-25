@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'capture']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -40,6 +40,12 @@ const CLI_ONLY_SELF_HELP = new Set([
   'models',
   'cache',
   'brainstorm', 'lsd',
+  // v0.39.3.0 WARN-5: capture's detailed HELP constant
+  // (src/commands/capture.ts:90+) was unreachable because the dispatcher's
+  // generic short-circuit (printCliOnlyHelp at :204-208) fired before
+  // runCapture saw --help. brainstorm + lsd were already in the set;
+  // capture was the holdout.
+  'capture',
   // v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was
   // unreachable via help because the dispatcher's generic CLI-only
   // short-circuit fired before runSync could print its own usage block.
@@ -50,6 +56,10 @@ const CLI_ONLY_SELF_HELP = new Set([
   // the generic short-circuit so the destructive-action warning text
   // reaches the user.
   'reinit-pglite',
+  // v0.40.6.0 Schema Cathedral v3 — `gbrain schema --help` should hit
+  // schema.ts printHelp() with the full 22+ verb taxonomy, not the
+  // generic short-circuit's one-line stub.
+  'schema',
 ]);
 
 async function main() {
@@ -498,7 +508,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
 
   // Read stdin for content params
   if (op.cliHints?.stdin && !params[op.cliHints.stdin] && !process.stdin.isTTY) {
-    const stdinContent = readFileSync('/dev/stdin', 'utf-8');
+    const stdinContent = readFileSync(0, 'utf-8');
     const MAX_STDIN = 5_000_000; // 5MB
     if (Buffer.byteLength(stdinContent, 'utf-8') > MAX_STDIN) {
       console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
@@ -567,6 +577,15 @@ function formatResult(opName: string, result: unknown): string {
     case 'query': {
       const results = result as any[];
       if (results.length === 0) return 'No results.\n';
+      // v0.40.4 — --explain switches to per-stage attribution formatter.
+      // Reads CliOptions.explain via the module-level singleton.
+      const cliOpts = getCliOptions();
+      if (cliOpts.explain) {
+        // Lazy import keeps formatResult's startup hot path narrow for
+        // the common non-explain case.
+        const { formatResultsExplain } = require('./core/search/explain-formatter.ts');
+        return formatResultsExplain(results);
+      }
       return results.map(r =>
         `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,
       ).join('\n') + '\n';
@@ -745,6 +764,11 @@ async function handleCliOnly(command: string, args: string[]) {
   }
 
   // Commands that don't need a database connection
+  if (command === 'schema') {
+    const { runSchema } = await import('./commands/schema.ts');
+    await runSchema(args);
+    return;
+  }
   if (command === 'init') {
     const { runInit } = await import('./commands/init.ts');
     await runInit(args);
@@ -1067,13 +1091,33 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // v0.39.3.0 WARN-5: same pattern for `capture --help`. CLI_ONLY_SELF_HELP
+  // now includes 'capture' so the generic short-circuit at :101 stays out
+  // of the way, but the dispatch case at :1229 still needs an engine. The
+  // pre-engine-bind branch here exposes the HELP constant without requiring
+  // a configured brain (fresh-tmpdir parity with brainstorm/lsd/sync).
+  if (command === 'capture' && (args.includes('--help') || args.includes('-h'))) {
+    const { runCapture } = await import('./commands/capture.ts');
+    await runCapture(null, args);
+    return;
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
     switch (command) {
       case 'import': {
         const { runImport } = await import('./commands/import.ts');
-        await runImport(engine, args);
+        // v0.41 (Codex r2 #3 fix): honor errors counter for exit code.
+        // runImport's per-file catch already records failures, but the
+        // CLI was discarding the result so the process exited 0 even
+        // when files failed (e.g. content-sanity hard-block throws,
+        // size-cap throws, parse errors). Surface non-zero on errors > 0
+        // so wrappers (sync, CI scripts, `&& gbrain doctor`) propagate.
+        const importResult = await runImport(engine, args);
+        if (importResult.errors > 0) {
+          process.exitCode = 1;
+        }
         break;
       }
       case 'export': {
@@ -1459,6 +1503,11 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // OLLAMA_BASE_URL. Caller-provided cfg.provider_base_urls wins.
   const envBaseUrls: Record<string, string> = {};
   if (process.env.LLAMA_SERVER_BASE_URL) envBaseUrls['llama-server'] = process.env.LLAMA_SERVER_BASE_URL;
+  // v0.40.6.1: sibling recipe for llama-server in reranking mode. Separate
+  // env var because --reranking and --embeddings are mutually exclusive at
+  // server launch — users running both will have two llama-server processes
+  // on different ports.
+  if (process.env.LLAMA_SERVER_RERANKER_BASE_URL) envBaseUrls['llama-server-reranker'] = process.env.LLAMA_SERVER_RERANKER_BASE_URL;
   if (process.env.OLLAMA_BASE_URL) envBaseUrls['ollama'] = process.env.OLLAMA_BASE_URL;
   if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
   if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
@@ -1662,6 +1711,15 @@ TOOLS
                                      See also: autopilot --install (continuous daemon).
   check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)
   report --type <name> --content ... Save timestamped report to brain/reports/
+
+BRAIN (capture / ideate / explore — v0.37/v0.38)
+  capture [content] [--file PATH]    Single entrypoint for getting content into the brain
+        [--stdin] [--slug s] [--type t]   Inline content / file / stdin; writes to inbox/ by default
+        [--source ID] [--quiet|--json]    Multi-source brains: route to a non-default source
+  brainstorm <question> [--json]     Bisociation idea generator (hybrid search + far-set + judge)
+        [--save|--no-save] [--limit N]
+  lsd <question> [--json]            Lateral Synaptic Drift: inverted-judge brainstorm
+        [--save|--no-save] [--limit N]    rewarding far-from-obvious + axiomatic inversions
 
 SOURCES (multi-repo / multi-brain)
   sources list                       Show registered sources

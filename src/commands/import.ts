@@ -65,6 +65,22 @@ export async function runImport(
       process.exit(1);
     }
   }
+  // v0.39 T1.5: load active pack ONCE at runImport entry; thread to every
+  // per-file importFile call below. Codex perf finding #7 — never per-file.
+  let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
+  try {
+    const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
+    const { loadConfig } = await import('../core/config.ts');
+    const resolved = await loadActivePack({
+      cfg: loadConfig(),
+      remote: false, // CLI import is trusted
+      sourceId: opts.sourceId,
+    });
+    importActivePack = { page_types: resolved.manifest.page_types };
+  } catch {
+    importActivePack = undefined;
+  }
+
   // v0.30.x follow-up to PR #707: programmatic sourceId support so internal
   // callers (performFullSync, future Step 6 paths) can route to a named
   // source.
@@ -175,7 +191,7 @@ export async function runImport(
       // unreachable when the gate is off; defense-in-depth check anyway.
       const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, relativePath, { noEmbed, sourceId })
-        : await importFile(eng, filePath, relativePath, { noEmbed, sourceId });
+        : await importFile(eng, filePath, relativePath, { noEmbed, sourceId, activePack: importActivePack });
       const _fileMs = Date.now() - _fileT0;
       if (_fileMs > 5000) {
         console.error(`[gbrain phase] import.process_file slow ${_fileMs}ms ${relativePath}`);
@@ -320,6 +336,38 @@ export async function runImport(
     console.log(`  ${imported} pages imported`);
     console.log(`  ${skipped} pages skipped (${skipped - errors} unchanged, ${errors} errors)`);
     console.log(`  ${chunksCreated} chunks created`);
+  }
+
+  // v0.39 T7 — end-of-run schema mismatch warn. Fires ONCE per import,
+  // not per page. Counts untyped pages in the affected source AND
+  // compares to import size; warns at >=10% untyped. The doctor
+  // schema_pack_consistency check (also T7) gives the persistent surface.
+  // Best-effort: query failure is non-fatal.
+  if (imported > 0) {
+    try {
+      const sid = sourceId ?? 'default';
+      const rows = await engine.executeRaw<{ total: string | number; untyped: string | number }>(
+        `SELECT
+           COUNT(*)::text AS total,
+           COUNT(*) FILTER (WHERE type IS NULL OR type = '')::text AS untyped
+         FROM pages
+         WHERE source_id = $1 AND deleted_at IS NULL`,
+        [sid],
+      );
+      const total = Number(rows[0]?.total ?? 0);
+      const untyped = Number(rows[0]?.untyped ?? 0);
+      if (total > 0 && untyped / total >= 0.1) {
+        const pct = ((untyped / total) * 100).toFixed(1);
+        console.error(
+          `\n[schema] ${untyped} of ${total} pages (${pct}%) in source \`${sid}\` ` +
+          `have no \`type\` matching the active schema pack. Run \`gbrain schema detect\` ` +
+          `to propose a pack matching your content shape, or \`gbrain doctor --json\` ` +
+          `for the persistent surface (schema_pack_consistency check).`,
+        );
+      }
+    } catch {
+      // best-effort
+    }
   }
 
   // Log the ingest

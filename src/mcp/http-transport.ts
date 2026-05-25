@@ -137,23 +137,37 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   const corsAllowlist = parseCorsAllowlist();
   const tools = buildToolDefs(operations);
 
-  function corsHeaders(origin: string | null, extra: Record<string, string> = {}): Record<string, string> {
-    const headers: Record<string, string> = { ...extra };
-    if (corsAllowlist && origin && corsAllowlist.has(origin)) {
-      headers['Access-Control-Allow-Origin'] = origin;
-      headers['Vary'] = 'Origin';
-    }
-    return headers;
+  /**
+   * v0.41.3 (T6): single consolidated CORS header builder. Pre-fix there were
+   * two parallel functions (`corsHeaders` for actual requests, `corsPreflightHeaders`
+   * for OPTIONS) — the preflight variant unconditionally emitted
+   * `Access-Control-Allow-Methods` + `Access-Control-Allow-Headers` to EVERY
+   * Origin, leaking the API surface to attackers probing the preflight. The
+   * actual-request path was correctly default-deny.
+   *
+   * One function, one allowlist gate. Methods/Headers only emit when
+   * preflight=true AND origin is allowlisted. Allow-Origin emits only when
+   * origin is allowlisted (unchanged). `Vary: Origin` pairs with Allow-Origin
+   * so caches don't serve allowlisted responses to non-allowlisted requests.
+   *
+   * `extra` is for response-specific headers (Retry-After, etc.) and is
+   * never gated by the allowlist.
+   */
+  interface CorsHeaderOpts {
+    preflight?: boolean;
+    extra?: Record<string, string>;
   }
-
-  function corsPreflightHeaders(origin: string | null): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
-    };
-    if (corsAllowlist && origin && corsAllowlist.has(origin)) {
+  function corsHeaders(origin: string | null, opts: CorsHeaderOpts = {}): Record<string, string> {
+    const { preflight = false, extra = {} } = opts;
+    const headers: Record<string, string> = { ...extra };
+    const allowed = corsAllowlist && origin && corsAllowlist.has(origin);
+    if (allowed) {
       headers['Access-Control-Allow-Origin'] = origin;
       headers['Vary'] = 'Origin';
+      if (preflight) {
+        headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS';
+        headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept';
+      }
     }
     return headers;
   }
@@ -216,7 +230,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
 
       // CORS preflight
       if (req.method === 'OPTIONS') {
-        return new Response(null, { headers: corsPreflightHeaders(origin) });
+        return new Response(null, { headers: corsHeaders(origin, { preflight: true }) });
       }
 
       // Health check — no auth, no rate limit. Probes the DB so orchestration
@@ -253,7 +267,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           { error: 'rate_limited', message: 'Too many requests' },
           {
             status: 429,
-            headers: corsHeaders(origin, { 'Retry-After': String(ipCheck.retryAfter ?? 60) }),
+            headers: corsHeaders(origin, { extra: { 'Retry-After': String(ipCheck.retryAfter ?? 60) } }),
           },
         );
       }
@@ -286,7 +300,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           { error: 'rate_limited', message: 'Too many requests for this token' },
           {
             status: 429,
-            headers: corsHeaders(origin, { 'Retry-After': String(tokCheck.retryAfter ?? 60) }),
+            headers: corsHeaders(origin, { extra: { 'Retry-After': String(tokCheck.retryAfter ?? 60) } }),
           },
         );
       }

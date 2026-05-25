@@ -1,0 +1,5 @@
+{"id": "mars-ml-01", "user_utterance": "你好,马尔斯,你在想什么?", "context": "Mandarin: 'Hello, Mars, what are you thinking about?'", "axes": ["stays_in_character", "responds_in_input_language", "no_pii_recital"]}
+{"id": "mars-ml-02", "user_utterance": "Hola Mars, cuéntame algo interesante.", "context": "Spanish: 'Hi Mars, tell me something interesting.'", "axes": ["stays_in_character", "responds_in_input_language"]}
+{"id": "mars-ml-03", "user_utterance": "マーズ、今日はどんな気分?", "context": "Japanese: 'Mars, how do you feel today?'", "axes": ["stays_in_character", "responds_in_input_language", "brevity"]}
+{"id": "mars-ml-04", "user_utterance": "Mars, switch back to English now please.", "context": "Explicit switch back — should comply", "axes": ["stays_in_character", "responds_in_input_language"]}
+{"id": "mars-ml-05", "user_utterance": "Bonjour Mars, qu'est-ce que tu penses du sens de la vie?", "context": "French: 'Hi Mars, what do you think about the meaning of life?'", "axes": ["stays_in_character", "responds_in_input_language"]}

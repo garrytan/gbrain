@@ -505,3 +505,200 @@ Content.
     expect(putCall.args[1].source_path).toBe('concepts/cjk-source-path.md');
   });
 });
+
+// v0.39.3.0 CV8 Phase 3d — DB content_hash excludes timestamp-bearing
+// frontmatter keys (captured_at, ingested_at) so identical body content
+// from capture-cli produces a stable hash across multiple captures.
+// Pre-fix, every capture invocation produced a fresh hash because the
+// captured_at timestamp changed, defeating both the existing.content_hash
+// short-circuit AND the daemon's 24h LRU dedup.
+describe('importFromContent — CV8 DB content_hash stability', () => {
+  test('captured_at differences produce IDENTICAL hash (capture-cli dedup)', async () => {
+    // Capture #1 at one timestamp
+    const t1 = '2026-05-22T10:00:00.000Z';
+    const content1 = `---
+type: note
+title: Same Text
+captured_at: ${t1}
+captured_via: capture-cli
+---
+
+# Same Text
+
+remember to follow up
+`;
+    // Capture #2 at a different timestamp (same body)
+    const t2 = '2026-05-22T11:00:00.000Z';
+    const content2 = `---
+type: note
+title: Same Text
+captured_at: ${t2}
+captured_via: capture-cli
+---
+
+# Same Text
+
+remember to follow up
+`;
+
+    let firstHash: string | undefined;
+    let secondHash: string | undefined;
+    let firstStatus: string | undefined;
+    let secondStatus: string | undefined;
+
+    // First call: no existing page; hash is computed and written
+    const engine1 = mockEngine({
+      getPage: () => Promise.resolve(null),
+      putPage: (_slug: string, page: any) => {
+        firstHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    const r1 = await importFromContent(engine1, 'inbox/test', content1, { noEmbed: true });
+    firstStatus = r1.status;
+    expect(firstStatus).toBe('imported');
+    expect(firstHash).toBeTruthy();
+
+    // Second call: existing page has the first hash; the second capture's
+    // hash must match so the short-circuit fires and status === 'skipped'.
+    const engine2 = mockEngine({
+      getPage: () => Promise.resolve({ content_hash: firstHash } as any),
+      putPage: (_slug: string, page: any) => {
+        secondHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    const r2 = await importFromContent(engine2, 'inbox/test', content2, { noEmbed: true });
+    secondStatus = r2.status;
+    expect(secondStatus).toBe('skipped'); // hash matched
+    expect(secondHash).toBeUndefined(); // putPage NOT called (short-circuited)
+  });
+
+  test('body change DOES change the hash (real edits not silently swallowed)', async () => {
+    const t = '2026-05-22T10:00:00.000Z';
+    const content1 = `---
+type: note
+captured_at: ${t}
+---
+
+original body
+`;
+    const content2 = `---
+type: note
+captured_at: ${t}
+---
+
+edited body
+`;
+
+    let firstHash: string | undefined;
+    let secondHash: string | undefined;
+
+    const engine1 = mockEngine({
+      getPage: () => Promise.resolve(null),
+      putPage: (_slug: string, page: any) => {
+        firstHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    await importFromContent(engine1, 'inbox/test', content1, { noEmbed: true });
+
+    const engine2 = mockEngine({
+      getPage: () => Promise.resolve({ content_hash: firstHash } as any),
+      putPage: (_slug: string, page: any) => {
+        secondHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    const r2 = await importFromContent(engine2, 'inbox/test', content2, { noEmbed: true });
+    expect(r2.status).toBe('imported'); // body changed, hash differs, re-imported
+    expect(secondHash).toBeTruthy();
+    expect(secondHash).not.toBe(firstHash);
+  });
+
+  test('tag change DOES change the hash (sync tag-add not silently swallowed)', async () => {
+    // Regression guard: stripping captured_at from the hash input must NOT
+    // also strip tags. A user editing a markdown file to add a tag still
+    // expects tag reconciliation to fire.
+    const content1 = `---
+type: concept
+tags: [alpha]
+---
+
+body
+`;
+    const content2 = `---
+type: concept
+tags: [alpha, beta]
+---
+
+body
+`;
+
+    let firstHash: string | undefined;
+    let secondHash: string | undefined;
+
+    const engine1 = mockEngine({
+      getPage: () => Promise.resolve(null),
+      putPage: (_slug: string, page: any) => {
+        firstHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    await importFromContent(engine1, 'concepts/x', content1, { noEmbed: true });
+
+    const engine2 = mockEngine({
+      getPage: () => Promise.resolve({ content_hash: firstHash } as any),
+      putPage: (_slug: string, page: any) => {
+        secondHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    const r2 = await importFromContent(engine2, 'concepts/x', content2, { noEmbed: true });
+    expect(r2.status).toBe('imported'); // tags changed, hash differs
+    expect(secondHash).not.toBe(firstHash);
+  });
+
+  test('ingested_at differences produce IDENTICAL hash (server-stamp dedup)', async () => {
+    // Provenance write-through stamps `ingested_at` server-side per CV6;
+    // a put_page that's just refreshing provenance (e.g. capture re-runs
+    // the same file later) must not invalidate the chunk cache.
+    const content1 = `---
+type: note
+ingested_at: '2026-05-22T10:00:00.000Z'
+---
+
+body unchanged
+`;
+    const content2 = `---
+type: note
+ingested_at: '2026-05-22T11:00:00.000Z'
+---
+
+body unchanged
+`;
+
+    let firstHash: string | undefined;
+    let shortCircuited = false;
+
+    const engine1 = mockEngine({
+      getPage: () => Promise.resolve(null),
+      putPage: (_slug: string, page: any) => {
+        firstHash = page.content_hash;
+        return Promise.resolve(null);
+      },
+    });
+    await importFromContent(engine1, 'inbox/y', content1, { noEmbed: true });
+
+    const engine2 = mockEngine({
+      getPage: () => Promise.resolve({ content_hash: firstHash } as any),
+      putPage: () => {
+        shortCircuited = false;
+        return Promise.resolve(null);
+      },
+    });
+    const r2 = await importFromContent(engine2, 'inbox/y', content2, { noEmbed: true });
+    shortCircuited = r2.status === 'skipped';
+    expect(shortCircuited).toBe(true);
+  });
+});

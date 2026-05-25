@@ -31,25 +31,27 @@ export interface Check {
   name: string;
   status: 'ok' | 'warn' | 'fail';
   message: string;
+  /**
+   * v0.38: optional structured payload for checks that surface data
+   * meant for programmatic consumption (e.g., cycle_phase_scope's
+   * `phase_scope_map`). Mirrors `PhaseResult.details`. Most checks pack
+   * everything into `message`; this is the escape hatch for ones that
+   * shouldn't.
+   */
+  details?: Record<string, unknown>;
   issues?: Array<{ type: string; skill: string; action: string; fix?: any }>;
   /**
    * v0.36+ brain-health-100: structured remediation jobs per check.
-   * Populated by the recommendation generator; consumed by
+   * Populated by the recommendation generator + (v0.40.3.0 T8b) individual
+   * checks (lint, integrity, sync_failures). Consumed by
    * `gbrain doctor --remediation-plan` / `--remediate`. Optional and
    * additive — schema_version stays at 2 (D4).
+   *
+   * v0.40.3.0 (D6): typed to RemediationStep[] from the canonical
+   * src/core/remediation-step.ts so check authors can use
+   * `makeRemediationStep()` factory without hand-rolling the shape.
    */
-  remediation?: Array<{
-    id: string;
-    job: string;
-    params: Record<string, unknown>;
-    idempotency_key: string;
-    severity: 'critical' | 'high' | 'medium' | 'low';
-    est_seconds: number;
-    est_usd_cost?: number;
-    depends_on?: string[];
-    rationale: string;
-    protected?: boolean;
-  }>;
+  remediation?: import('../core/remediation-step.ts').RemediationStep[];
   /** Top-level triage state per D13. */
   remediation_status?: 'remediable' | 'human_only' | 'blocked';
 }
@@ -561,6 +563,9 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
     checks.push({ name: 'queue_health', status: 'ok', message: 'PGLite — no queue to check' });
   }
 
+  // v0.41 Bug 2 / Eng D8 — subagent_health surfaces rate-lease pressure to the operator.
+  checks.push(await checkSubagentHealth(engine));
+
   // v0.31.12 subagent runtime enforcement (Layer 3 of 3 — Codex F13).
   // The subagent loop is Anthropic-only. If models.tier.subagent or
   // models.default is explicitly set to a non-Anthropic provider, warn here
@@ -571,6 +576,14 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
 
   // 6. Sync freshness check
   checks.push(await checkSyncFreshness(engine));
+
+  // v0.39 T7 + T9 — schema-pack health checks (3 checks per v0.38 plan):
+  //   schema_pack_active        — active pack resolves cleanly
+  //   schema_pack_consistency   — % of pages typed against active pack
+  //   schema_pack_source_drift  — per-source pack divergence
+  checks.push(await checkSchemaPackActive(engine));
+  checks.push(await checkSchemaPackConsistency(engine));
+  checks.push(await checkSchemaPackSourceDrift(engine));
 
   // 7. v0.32.3 search-lite mode + per-key drift surface.
   checks.push(await checkSearchMode(engine));
@@ -585,6 +598,12 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // search.reranker.enabled FIRST so absence-of-failures means different
   // things when reranker is on vs off.
   checks.push(await checkRerankerHealth(engine));
+
+  // 9a. v0.40.4 graph_signals_coverage: when graph_signals is enabled
+  // (via mode bundle default or explicit config override), surface
+  // whether link density is high enough for the signal to fire
+  // meaningfully. <10% inbound coverage warns; >=30% ok with metric.
+  checks.push(await checkGraphSignalsCoverage(engine));
 
   // 9b. v0.37.0 brainstorm_health: surfaces three brainstorm/lsd readiness
   // signals: (a) migration v79 applied (last_retrieved_at column exists),
@@ -603,6 +622,18 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   checks.push(await checkGradeConfidenceDrift(engine));
   checks.push(await checkVoiceGateHealth(engine));
 
+  // 11. v0.40.3.0 contextual_retrieval_coverage — surfaces pages with
+  //   - chunker_version drift (pre-v40 pages not yet re-embedded)
+  //   - contextual_retrieval_mode IS NULL (mode never evaluated)
+  //   - synopsis-failures audit JSONL entries from the last 7 days
+  checks.push(await checkContextualRetrievalCoverage(engine));
+
+  // 12. v0.40.5.0 Federated Sync v2 (T12) — federation_health:
+  //   - Per-source lag, embed coverage, failed-job rate.
+  //   - Single-source brain short-circuits to ok.
+  //   - Three-state: ok / warn / fail.
+  checks.push(await checkFederationHealth(engine));
+
   return computeDoctorReport(checks);
 }
 
@@ -614,6 +645,90 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
  * follow-up page. These are commitments the user made and never revisited.
  * Status 'ok' with a count; never warns/fails (this is signal, not error).
  */
+/**
+ * v0.40.3.0 contextual_retrieval_coverage check.
+ *
+ * Surfaces drift between the active CR mode + the per-page
+ * `contextual_retrieval_mode` column. Three signals:
+ *
+ *   1. Pages with chunker_version < current — pre-v40 pages that need
+ *      to be re-embedded for the wrapper to apply. Paste-ready fix:
+ *      `gbrain reindex --markdown`.
+ *   2. Pages with contextual_retrieval_mode IS NULL — never evaluated
+ *      against the CR ladder. Same fix as (1).
+ *   3. Synopsis-failure events in the audit JSONL over the last 7 days
+ *      — surfaces refusals + page-level fallbacks. >5% refusal rate
+ *      warns; otherwise reported as informational.
+ *
+ * Reads `~/.gbrain/audit/synopsis-failures-YYYY-Www.jsonl` via
+ * readRecentSynopsisFailures + summarizeSynopsisFailures from
+ * `src/core/audit-synopsis.ts`. Failure-only audit means low write
+ * volume on healthy brains.
+ */
+export async function checkContextualRetrievalCoverage(engine: BrainEngine): Promise<Check> {
+  try {
+    const { MARKDOWN_CHUNKER_VERSION } = await import('../core/chunkers/recursive.ts');
+    const rows = await engine.executeRaw<{ chunker_drift: number; mode_null: number }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE chunker_version < $1)::int AS chunker_drift,
+         COUNT(*) FILTER (WHERE contextual_retrieval_mode IS NULL)::int AS mode_null
+       FROM pages
+       WHERE page_kind = 'markdown'
+         AND deleted_at IS NULL`,
+      [MARKDOWN_CHUNKER_VERSION],
+    );
+    const chunkerDrift = rows[0]?.chunker_drift ?? 0;
+    const modeNull = rows[0]?.mode_null ?? 0;
+
+    // Synopsis-failures audit summary (best-effort; missing audit file = 0).
+    let failureSummaryLine = '';
+    try {
+      const audit = await import('../core/audit-synopsis.ts');
+      const events = audit.readRecentSynopsisFailures(7);
+      const summary = audit.summarizeSynopsisFailures(events);
+      if (summary && summary.total > 0) {
+        const rate = (summary.page_level_fallback_rate * 100).toFixed(1);
+        failureSummaryLine =
+          ` ${summary.total} synopsis failure(s) in last 7d ` +
+          `(${summary.page_level_fallback_count} triggered page-level fall-back, ${rate}%).`;
+      }
+    } catch {
+      // Audit module unavailable — skip the summary line.
+    }
+
+    if (chunkerDrift === 0 && modeNull === 0 && failureSummaryLine === '') {
+      return {
+        name: 'contextual_retrieval_coverage',
+        status: 'ok',
+        message: 'All markdown pages aligned to current chunker + CR mode.',
+      };
+    }
+
+    const parts: string[] = [];
+    if (chunkerDrift > 0) {
+      parts.push(`${chunkerDrift} page(s) at older chunker_version`);
+    }
+    if (modeNull > 0) {
+      parts.push(`${modeNull} page(s) never evaluated against CR ladder`);
+    }
+    const fixHint =
+      chunkerDrift > 0 || modeNull > 0
+        ? ` Run \`gbrain reindex --markdown\` to align.`
+        : '';
+    return {
+      name: 'contextual_retrieval_coverage',
+      status: chunkerDrift > 0 || modeNull > 0 ? 'warn' : 'ok',
+      message: `${parts.join('; ')}.${fixHint}${failureSummaryLine}`,
+    };
+  } catch (e) {
+    return {
+      name: 'contextual_retrieval_coverage',
+      status: 'warn',
+      message: `Could not check contextual retrieval coverage: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
 export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check> {
   try {
     const rows = await engine.executeRaw<{ count: number }>(
@@ -740,6 +855,77 @@ export async function checkGradeConfidenceDrift(engine: BrainEngine): Promise<Ch
  * isolation (template fallback is fine), but a sustained high rate signals
  * the rubric needs tuning.
  */
+/**
+ * v0.41 Bug 2 / Eng D8 — surfaces rate-lease pressure from
+ * `minion_lease_pressure_log` (populated by the worker's lease-full bypass
+ * path). The operator's primary forensic signal for "is the lease cap too
+ * tight" — without this check, the v0.41 bypass would be invisible (no
+ * dead-letter, but also no operator awareness).
+ *
+ * Thresholds (windowed at 24h):
+ *   0 bounces                                            → ok ("no pressure")
+ *   1-99 bounces                                         → ok ("transient")
+ *   100+ bounces + subagent jobs completed in same window → ok ("healthy backpressure")
+ *   100+ bounces + ZERO completed subagent jobs           → warn (paste-ready cap-raise hint)
+ *   1000+ bounces                                        → fail ("blocking real work")
+ *
+ * Works on both Postgres + PGLite (migration v94 creates the table on both).
+ * Pre-v93 brains (no table) silently skip with an OK message.
+ */
+export async function checkSubagentHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const bounceRows = await engine.executeRaw<{ count: string }>(
+      `SELECT count(*)::text AS count FROM minion_lease_pressure_log
+        WHERE bounced_at > now() - interval '24 hours'`,
+    );
+    const bounces = parseInt(bounceRows[0]?.count ?? '0', 10);
+    if (bounces === 0) {
+      return {
+        name: 'subagent_health',
+        status: 'ok',
+        message: 'No rate-lease pressure in last 24h',
+      };
+    }
+    if (bounces >= 1000) {
+      return {
+        name: 'subagent_health',
+        status: 'fail',
+        message: `${bounces} lease-pressure bounces in last 24h — this is blocking real work. Raise the cap: \`export GBRAIN_ANTHROPIC_MAX_INFLIGHT=64\` (or \`unlimited\` for Azure / Bedrock / self-hosted upstreams with no provider-side rate limit). After raising, restart \`gbrain jobs work\`.`,
+      };
+    }
+    // 1-999 bounces: cross-check forward progress.
+    const completedRows = await engine.executeRaw<{ count: string }>(
+      `SELECT count(*)::text AS count FROM minion_jobs
+        WHERE finished_at > now() - interval '24 hours'
+          AND status = 'completed'
+          AND name = 'subagent'`,
+    ).catch(() => [{ count: '0' }]);
+    const completed = parseInt(completedRows[0]?.count ?? '0', 10);
+    if (bounces >= 100 && completed === 0) {
+      return {
+        name: 'subagent_health',
+        status: 'warn',
+        message: `${bounces} lease-pressure bounces in last 24h with no completed subagent jobs — cap is too tight. Raise via \`export GBRAIN_ANTHROPIC_MAX_INFLIGHT=64\` (or \`unlimited\` for upstreams with no provider-side cap).`,
+      };
+    }
+    return {
+      name: 'subagent_health',
+      status: 'ok',
+      message: `Lease pressure: ${bounces} bounces in last 24h, ${completed} subagent jobs completed — backpressure is binding but throughput is healthy`,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (process.env.GBRAIN_DEBUG === '1') {
+      process.stderr.write(`[doctor] subagent_health skipped: ${msg}\n`);
+    }
+    return {
+      name: 'subagent_health',
+      status: 'ok',
+      message: 'Skipped (minion_lease_pressure_log unavailable — pre-v0.41 brain)',
+    };
+  }
+}
+
 export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> {
   try {
     const rows = await engine.executeRaw<{ total: number; failures: number }>(
@@ -853,6 +1039,112 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       name: 'reranker_health',
       status: 'warn',
       message: `Could not check reranker audit: ${msg}`,
+    };
+  }
+}
+
+/**
+ * v0.40.4 graph_signals_coverage doctor check.
+ *
+ * Surfaces whether the brain's link density is high enough for the
+ * v0.40.4 graph-signals stage to meaningfully fire. Logic:
+ *
+ *   1. Resolve the active graph_signals setting (config override OR
+ *      mode-bundle default). When OFF → silent ok (no metric noise on
+ *      installs that don't use the feature).
+ *
+ *   2. When ON, compute the global density: % of pages with >=1
+ *      inbound link. This is a STRUCTURAL lower bound — top-K
+ *      subgraphs need at least some edges to fire any signal.
+ *      Codex outside-voice #14 noted this is an imperfect proxy
+ *      (T-todo-5 will replace it with actual fire-rate measurement
+ *      from search-stats after 30 days of data).
+ *
+ *   3. >=30% → ok with the percentage.
+ *      <10%  → warn (mismatch: signal enabled but link graph is too
+ *              sparse to fire often; fix: `gbrain extract all` to
+ *              populate the link graph from frontmatter + markdown).
+ *      10-29% → ok with note (signal will fire occasionally).
+ *
+ * Errors during the SQL count → warn with the underlying message.
+ * Best-effort: this check never breaks doctor.
+ */
+export async function checkGraphSignalsCoverage(engine: BrainEngine): Promise<Check> {
+  try {
+    // Resolve the active graph_signals setting. Read the config key
+    // explicitly; when unset, fall through to the mode bundle default.
+    const cfgVal = await engine.getConfig('search.graph_signals');
+    let enabled: boolean;
+    if (cfgVal !== null && cfgVal !== undefined) {
+      // v0.40.4 codex F1 — case-insensitive + trim, parity with
+      // loadOverridesFromConfig in src/core/search/mode.ts. Without
+      // this, `gbrain config set search.graph_signals TRUE` enables
+      // the feature in production but doctor reports "disabled".
+      const v = cfgVal.trim().toLowerCase();
+      enabled = v === 'true' || v === '1';
+    } else {
+      // Mode bundle default. Read search.mode (case-insensitive + trim
+      // parity with isSearchMode + DEFAULT_SEARCH_MODE fallback).
+      const modeRaw = await engine.getConfig('search.mode');
+      const modeVal = typeof modeRaw === 'string' ? modeRaw.trim().toLowerCase() : '';
+      const mode = modeVal === 'conservative' || modeVal === 'tokenmax' ? modeVal : 'balanced';
+      // Hardcoded knowledge of the mode bundle defaults — keeps the
+      // doctor check from pulling in the full search/mode.ts surface.
+      enabled = mode !== 'conservative';
+    }
+
+    if (!enabled) {
+      return {
+        name: 'graph_signals_coverage',
+        status: 'ok',
+        message: 'graph_signals disabled — coverage not checked',
+      };
+    }
+
+    // Compute global inbound-link density. Counts DISTINCT pages with
+    // at least one inbound edge / total pages.
+    const totalRows = await engine.executeRaw(`SELECT COUNT(*)::int AS n FROM pages WHERE deleted_at IS NULL`);
+    const totalPages = Number((totalRows as any)[0]?.n ?? 0);
+
+    if (totalPages === 0) {
+      return {
+        name: 'graph_signals_coverage',
+        status: 'ok',
+        message: 'Empty brain — no pages to compute coverage against',
+      };
+    }
+
+    const linkedRows = await engine.executeRaw(
+      `SELECT COUNT(DISTINCT l.to_page_id)::int AS n
+       FROM links l
+       JOIN pages p ON p.id = l.to_page_id
+       WHERE p.deleted_at IS NULL`
+    );
+    const linkedPages = Number((linkedRows as any)[0]?.n ?? 0);
+    const pct = (linkedPages / totalPages) * 100;
+    const pctStr = pct.toFixed(1);
+
+    if (pct < 10) {
+      return {
+        name: 'graph_signals_coverage',
+        status: 'warn',
+        message: `graph_signals enabled but only ${pctStr}% of pages have inbound links (<10%). Signal will rarely fire. Fix: \`gbrain extract all\` to populate the link graph from frontmatter + markdown.`,
+      };
+    }
+
+    return {
+      name: 'graph_signals_coverage',
+      status: 'ok',
+      message: pct >= 30
+        ? `${pctStr}% of pages have inbound links (>=30% — graph signals fire on most queries)`
+        : `${pctStr}% of pages have inbound links (10-29% — graph signals fire occasionally)`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'graph_signals_coverage',
+      status: 'warn',
+      message: `Could not check graph_signals_coverage: ${msg}`,
     };
   }
 }
@@ -1175,6 +1467,84 @@ export async function checkSourceRoutingHealth(engine: BrainEngine): Promise<Che
 }
 
 /**
+ * v0.40 Federated Sync v2 (T12) — federation_health.
+ *
+ * Per-source dashboard surface for the autopilot/operator.
+ * Three-state per-source (then aggregated to single Check):
+ *
+ *   ok    — all federated sources synced within 1h AND embed coverage >=95%
+ *           (or chunks <100), AND failed_jobs_24h < 3
+ *   warn  — any source has lag > 1h + federated, OR coverage < 95% with
+ *           chunks > 100, OR failed_jobs_24h >= 3
+ *   fail  — any source has lag > 24h, OR coverage < 50% with chunks > 1000
+ *
+ * Single-source brain short-circuits to ok (no federation to check).
+ * Each warning carries a paste-ready remediation hint.
+ */
+export async function checkFederationHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const { loadAllSources } = await import('../core/sources-load.ts');
+    const { computeAllSourceMetrics } = await import('../core/source-health.ts');
+    const sources = await loadAllSources(engine, { includeArchived: false });
+    if (sources.length <= 1) {
+      return {
+        name: 'federation_health',
+        status: 'ok',
+        message: 'Single-source brain (no federation to check)',
+      };
+    }
+    const metrics = await computeAllSourceMetrics(engine, sources);
+
+    const warns: string[] = [];
+    const fails: string[] = [];
+    for (const m of metrics) {
+      // Fail thresholds first (most severe)
+      if (m.lag_seconds !== null && m.lag_seconds > 24 * 3600) {
+        fails.push(`${m.source_id}: stale ${Math.floor(m.lag_seconds / 3600)}h — run \`gbrain sync trigger --source ${m.source_id}\``);
+        continue;
+      }
+      if (m.embed_coverage_pct < 50 && m.total_chunks > 1000) {
+        fails.push(`${m.source_id}: ${m.embed_coverage_pct.toFixed(1)}% embed coverage (${m.total_chunks.toLocaleString()} chunks) — run \`gbrain jobs submit embed-backfill --params '{"sourceId":"${m.source_id}"}'\``);
+        continue;
+      }
+      // Warns
+      if (m.federated && m.lag_seconds !== null && m.lag_seconds > 3600) {
+        warns.push(`${m.source_id}: federated source ${Math.floor(m.lag_seconds / 3600)}h+ stale — run \`gbrain sync trigger --source ${m.source_id}\``);
+      }
+      if (m.embed_coverage_pct < 95 && m.total_chunks > 100) {
+        warns.push(`${m.source_id}: ${m.embed_coverage_pct.toFixed(1)}% embed coverage — run \`gbrain jobs submit embed-backfill --params '{"sourceId":"${m.source_id}"}'\``);
+      }
+      if (m.failed_jobs_24h >= 3) {
+        warns.push(`${m.source_id}: ${m.failed_jobs_24h} failures in 24h — check \`gbrain jobs list --status failed\``);
+      }
+    }
+
+    if (fails.length > 0) {
+      return {
+        name: 'federation_health',
+        status: 'fail',
+        message: `${fails.length} federation failure(s):\n  ${fails.join('\n  ')}`,
+      };
+    }
+    if (warns.length > 0) {
+      return {
+        name: 'federation_health',
+        status: 'warn',
+        message: `${warns.length} federation warning(s):\n  ${warns.join('\n  ')}`,
+      };
+    }
+    return {
+      name: 'federation_health',
+      status: 'ok',
+      message: `${metrics.length} source(s) healthy (parallel sync, async embed)`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name: 'federation_health', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
+/**
  * v0.37.7.0 — Tier 5L oauth_confidential_client_health.
  *
  * Confidential OAuth clients (token_endpoint_auth_method != 'none')
@@ -1259,6 +1629,53 @@ export function checkAutopilotLockScope(): Check {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { name: 'autopilot_lock_scope', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
+/**
+ * v0.38 — cycle_phase_scope check (informational).
+ *
+ * Renders the static `PHASE_SCOPE` taxonomy from `src/core/cycle.ts` so
+ * operators (and future automation) can see at a glance which phases
+ * are safe to parallelize per source vs which serialize brain-wide.
+ *
+ * Always returns 'ok' — this is documentation, not enforcement. The
+ * runtime-enforcement TODO is deferred per plan.
+ */
+export function checkCyclePhaseScope(): Check {
+  try {
+    // Lazy require to avoid pulling cycle.ts into doctor's import graph
+    // for non-cycle-related doctor runs. Same pattern as the existing
+    // dynamic imports elsewhere in this file.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { ALL_PHASES, PHASE_SCOPE } = require('../core/cycle.ts') as {
+      ALL_PHASES: ReadonlyArray<string>;
+      PHASE_SCOPE: Record<string, 'source' | 'global' | 'mixed'>;
+    };
+    const counts: Record<'source' | 'global' | 'mixed', number> = { source: 0, global: 0, mixed: 0 };
+    const breakdown: Record<string, string[]> = { source: [], global: [], mixed: [] };
+    for (const phase of ALL_PHASES) {
+      const scope = PHASE_SCOPE[phase];
+      if (scope) {
+        counts[scope]++;
+        breakdown[scope].push(phase);
+      }
+    }
+    return {
+      name: 'cycle_phase_scope',
+      status: 'ok',
+      message:
+        `Phase taxonomy: ${counts.source} source-scoped, ${counts.global} brain-global, ` +
+        `${counts.mixed} mixed. Source-safe: [${breakdown.source.join(', ')}]. ` +
+        `Brain-global: [${breakdown.global.join(', ')}]. Mixed: [${breakdown.mixed.join(', ')}].`,
+      details: {
+        phase_scope_map: PHASE_SCOPE,
+        counts,
+      },
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name: 'cycle_phase_scope', status: 'warn', message: `Check failed: ${msg}` };
   }
 }
 
@@ -1489,6 +1906,60 @@ function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
  * Failure messages embed `source.id` so the fix command
  * `gbrain sync --source <id>` matches what the user copy-pastes.
  */
+/**
+ * v0.40.1.0 Track D / T7 — pure function form of the nightly_quality_probe_health
+ * check. Extracted from the inline runDoctor block so tests can drive every
+ * branch (disabled / enabled-no-events / enabled-all-pass / enabled-with-failures)
+ * without spinning up the audit JSONL or a real config file.
+ */
+export function computeNightlyQualityProbeHealthCheck(
+  probeEnabled: boolean,
+  events: ReadonlyArray<{ outcome: string; ts: string; detail?: string }>,
+): Check {
+  const name = 'nightly_quality_probe_health';
+  if (!probeEnabled && events.length === 0) {
+    // Quiet skip — surface enable hint only when explicitly asked to.
+    return {
+      name,
+      status: 'ok',
+      message: `disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true`,
+    };
+  }
+  if (events.length === 0) {
+    return {
+      name,
+      status: 'ok',
+      message: `enabled but no probe events in the last 7 days (next run by autopilot).`,
+    };
+  }
+  // v0.40.1.0 Track D (codex CDX-5): any non-PASS outcome is bad signal.
+  // Previously only fail / error / budget_exceeded triggered warn —
+  // no_embedding_key / rate_limited / inconclusive were silently reported
+  // as PASS, hiding real misconfigurations.
+  const bad = events.filter(e => e.outcome !== 'pass');
+  const latest = events[events.length - 1]!;
+  if (bad.length > 0) {
+    const counts =
+      `pass=${events.filter(e => e.outcome === 'pass').length} ` +
+      `fail=${events.filter(e => e.outcome === 'fail').length} ` +
+      `error=${events.filter(e => e.outcome === 'error').length} ` +
+      `inconclusive=${events.filter(e => e.outcome === 'inconclusive').length} ` +
+      `budget=${events.filter(e => e.outcome === 'budget_exceeded').length} ` +
+      `no_embed_key=${events.filter(e => e.outcome === 'no_embedding_key').length} ` +
+      `rate_limited=${events.filter(e => e.outcome === 'rate_limited').length}`;
+    return {
+      name,
+      status: 'warn',
+      message: `${bad.length} non-PASS run${bad.length === 1 ? '' : 's'} in last 7d (${counts}). Latest: ${latest.outcome} at ${latest.ts}${latest.detail ? ` (${latest.detail})` : ''}.`,
+    };
+  }
+  return {
+    name,
+    status: 'ok',
+    message: `${events.length} PASS run${events.length === 1 ? '' : 's'} in last 7d. Latest: ${latest.ts}.`,
+  };
+}
+
 export async function checkSyncFreshness(
   engine: BrainEngine,
   opts?: { nowMs?: number },
@@ -1592,6 +2063,106 @@ export async function checkSyncFreshness(
 }
 
 /**
+ * v0.38 — per-source `last_full_cycle_at` freshness check.
+ *
+ * Sibling to `sync_freshness`. Where sync_freshness reads `last_sync_at`
+ * (one phase of the cycle), this check reads `sources.config->>'last_full_cycle_at'`
+ * which is the canonical "this whole cycle completed" timestamp written
+ * by runCycle's exit hook. Autopilot's per-source fan-out gate (the
+ * v0.38 fan-out wave) reads the same field — so this check surfaces
+ * exactly what autopilot sees when deciding to skip a source.
+ *
+ * Default thresholds: warn at 6h, fail at 24h. Tighter than sync_freshness
+ * because full-cycle staleness compounds (sync stale → extract stale →
+ * embed stale → search stale). Env overrides:
+ *   - GBRAIN_CYCLE_FRESHNESS_WARN_HOURS (default 6)
+ *   - GBRAIN_CYCLE_FRESHNESS_FAIL_HOURS (default 24)
+ */
+export async function checkCycleFreshness(
+  engine: BrainEngine,
+  opts?: { nowMs?: number },
+): Promise<Check> {
+  try {
+    const sources = await engine.listAllSources({ localPathOnly: true });
+    if (sources.length === 0) {
+      return {
+        name: 'cycle_freshness',
+        status: 'ok',
+        message: 'No federated sources to cycle',
+      };
+    }
+
+    const warnHours = _resolveSyncFreshnessHours('GBRAIN_CYCLE_FRESHNESS_WARN_HOURS', 6);
+    const failHours = _resolveSyncFreshnessHours('GBRAIN_CYCLE_FRESHNESS_FAIL_HOURS', 24);
+    const warnMs = warnHours * 60 * 60 * 1000;
+    const failMs = failHours * 60 * 60 * 1000;
+    const now = opts?.nowMs ?? Date.now();
+
+    const issues: string[] = [];
+    let hasWarnings = false;
+    let hasFailures = false;
+
+    for (const source of sources) {
+      const display = source.name && source.name !== source.id
+        ? `'${source.id}' (${source.name})`
+        : `'${source.id}'`;
+      const raw = source.config?.last_full_cycle_at;
+      if (typeof raw !== 'string') {
+        issues.push(`Source ${display} has never completed a full cycle`);
+        hasFailures = true;
+        continue;
+      }
+      const last = new Date(raw).getTime();
+      if (!Number.isFinite(last)) {
+        issues.push(`Source ${display} has unparseable last_full_cycle_at: ${raw}`);
+        hasWarnings = true;
+        continue;
+      }
+      const ageMs = now - last;
+      if (ageMs < 0) {
+        issues.push(`Source ${display} has future last_full_cycle_at — clock skew`);
+        hasWarnings = true;
+        continue;
+      }
+      const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
+      if (ageMs > failMs) {
+        issues.push(`Source ${display} last cycled ${ageHours}h ago`);
+        hasFailures = true;
+      } else if (ageMs > warnMs) {
+        issues.push(`Source ${display} last cycled ${ageHours}h ago`);
+        hasWarnings = true;
+      }
+    }
+
+    if (hasFailures) {
+      return {
+        name: 'cycle_freshness',
+        status: 'fail',
+        message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` for each stale source, or start \`gbrain autopilot\`.`,
+      };
+    }
+    if (hasWarnings) {
+      return {
+        name: 'cycle_freshness',
+        status: 'warn',
+        message: `${issues.join('; ')}.`,
+      };
+    }
+    return {
+      name: 'cycle_freshness',
+      status: 'ok',
+      message: `All ${sources.length} federated source(s) cycled recently`,
+    };
+  } catch (e) {
+    return {
+      name: 'cycle_freshness',
+      status: 'warn',
+      message: `Could not check cycle freshness: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
  * Run doctor with filesystem-first, DB-second architecture.
  * Filesystem checks (resolver, conformance) run without engine.
  * DB checks run only if engine is provided.
@@ -1601,23 +2172,37 @@ export async function checkSyncFreshness(
  * user has no DB configured anywhere; otherwise the caller chose --fast or
  * we failed to connect despite a configured URL.
  */
-export async function runDoctor(engine: BrainEngine | null, args: string[], dbSource?: DbUrlSource) {
+/**
+ * Build the full check list for `gbrain doctor` against an engine + arg vector.
+ *
+ * The check-building seam: takes the same args as `runDoctor` minus the
+ * --locks shortcut (locks-mode is a focused diagnostic the CLI wrapper
+ * handles separately). Returns a `Check[]` array; the caller renders it
+ * via `outputResults` and decides exit code. Early-exit cases (no engine,
+ * connection failure) return a partial check array without calling
+ * `process.exit` directly — the caller still renders + exits.
+ *
+ * v0.39 narrow-seam extract (audit-driven). The 10 `process.exit` sites
+ * in this file all live in CLI wrappers (`runDoctor`, `runLocksCheck`,
+ * the remediation subcommands). Behavioral tests drive `buildChecks`
+ * directly via PGLite; the wrapper-level subprocess smoke in
+ * `test/doctor-cli-smoke.test.ts` covers the render + exit paths that
+ * a unit test can't reach in-process.
+ *
+ * Side effects retained inside buildChecks (kept for "no behavior change"):
+ *   - `printAutoFixReport` on `--fix` non-JSON path
+ *   - `progress` reporter writes to stderr (heartbeats per check)
+ *   - `engine.executeRaw` / handler-leaf calls (the actual probe work)
+ */
+export async function buildChecks(
+  engine: BrainEngine | null,
+  args: string[],
+  dbSource?: DbUrlSource,
+): Promise<Check[]> {
   const jsonOutput = args.includes('--json');
   const fastMode = args.includes('--fast');
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
-  const locksMode = args.includes('--locks');
-
-  // --locks is a focused diagnostic: it runs the same pg_stat_activity
-  // query that `runMigrations` pre-flight uses, prints any idle-in-tx
-  // backends, and exits. Used by a user (or the migrate.ts error 57014
-  // message) who just hit a statement_timeout and needs to find the
-  // blocker. Referenced from migrate.ts's 57014 diagnostic — that
-  // message promised this flag exists.
-  if (locksMode) {
-    await runLocksCheck(engine, jsonOutput);
-    return;
-  }
 
   const checks: Check[] = [];
   let autoFixReport: AutoFixReport | null = null;
@@ -1954,6 +2539,26 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       const codeSummary = summarizeFailuresByCode(unacked);
       const codeBreakdown = codeSummary.map(s => `${s.code}=${s.count}`).join(', ');
       const preview = unacked.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
+      // v0.40.3.0 T8b (D8 + D12 Bug 3): emit a single sync-retry-failed
+      // step. sync-skip-failed is DELIBERATELY NOT emitted as a remediation
+      // — auto-skipping failed syncs hides data loss. Operators can still
+      // run `gbrain sync --skip-failed` manually.
+      const { makeRemediationStep } = await import('../core/remediation-step.ts');
+      const oldestTs = unacked.reduce(
+        (acc, f) => (acc === '' || f.ts < acc ? f.ts : acc),
+        '',
+      );
+      const retryStep = makeRemediationStep({
+        id: 'sync-retry-failed',
+        job: 'sync-retry-failed',
+        // Content-stable per codex D12 Bug 2: count + oldest_ts captures
+        // the relevant state without using a real timestamp.
+        params: { failure_count: unacked.length, oldest_failure: oldestTs },
+        severity: unacked.length >= 10 ? 'high' : 'medium',
+        est_seconds: 30,
+        est_usd_cost: 0,
+        rationale: `Retry ${unacked.length} unacked sync failure(s) (codes: ${codeBreakdown})`,
+      });
       checks.push({
         name: 'sync_failures',
         status: 'warn',
@@ -1961,6 +2566,8 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
           `${unacked.length} unacknowledged sync failure(s) [${codeBreakdown}]. ${preview}` +
           `${unacked.length > 3 ? `, and ${unacked.length - 3} more` : ''}. ` +
           `Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge.`,
+        remediation: [retryStep],
+        remediation_status: 'remediable',
       });
     } else if (all.length > 0) {
       // Acknowledged-only: show code breakdown for visibility.
@@ -1991,6 +2598,27 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         message: `info: ${fallbacks.length} slug fallback${fallbacks.length === 1 ? '' : 's'} in the last 7 days (SLUG_FALLBACK_FRONTMATTER).`,
       });
     }
+  } catch {
+    // Best-effort; audit-log read failure shouldn't stop doctor.
+  }
+
+  // 3d.1 Nightly quality probe (v0.40.1.0 Track D / T7). Reads the last
+  // 7 days of quality-probe-YYYY-Www.jsonl audit events. SKIPPED with
+  // paste-ready enable hint when the feature is opt-in disabled (default).
+  // WARN on any FAIL / ERROR / BUDGET_EXCEEDED row in the window; OK when
+  // all rows are PASS. The probe itself is wired into autopilot, NOT into
+  // doctor — doctor just surfaces what the probe wrote.
+  try {
+    const { readRecentQualityProbeEvents } = await import('../core/audit-quality-probe.ts');
+    const { loadConfig } = await import('../core/config.ts');
+    let probeEnabled = false;
+    try {
+      const cfg = loadConfig();
+      probeEnabled = Boolean((cfg as any)?.autopilot?.nightly_quality_probe?.enabled);
+    } catch { /* config unavailable → treat as disabled */ }
+    const events = readRecentQualityProbeEvents(7);
+    const check = computeNightlyQualityProbeHealthCheck(probeEnabled, events);
+    checks.push(check);
   } catch {
     // Best-effort; audit-log read failure shouldn't stop doctor.
   }
@@ -2176,9 +2804,10 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       }
       checks.push({ name: 'connection', status: 'warn', message: msg });
     }
-    const earlyFail1 = outputResults(checks, jsonOutput);
-    process.exit(earlyFail1 ? 1 : 0);
-    return;
+    // Early return: caller renders the partial check list + decides exit code.
+    // Pre-v0.39 this site called outputResults + process.exit directly; the
+    // narrow-seam extract moved both to the runDoctor CLI wrapper.
+    return checks;
   }
 
   // DB checks phase — start a single reporter phase so agents see which
@@ -2195,9 +2824,10 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     const msg = e instanceof Error ? e.message : String(e);
     checks.push({ name: 'connection', status: 'fail', message: msg });
     progress.finish();
-    const earlyFail2 = outputResults(checks, jsonOutput);
-    process.exit(earlyFail2 ? 1 : 0);
-    return;
+    // Early return: caller renders the partial check list + decides exit code.
+    // Pre-v0.39 this site called outputResults + process.exit directly; the
+    // narrow-seam extract moved both to the runDoctor CLI wrapper.
+    return checks;
   }
 
   // 4. pgvector extension
@@ -2848,10 +3478,29 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         message: `Sampled ${res.pagesScanned} pages; no bare-tweet phrases or external links.`,
       });
     } else if (res.bareHits.length > 0) {
+      // v0.40.3.0 T8b (D8): emit integrity-auto RemediationStep.
+      // Three-bucket repair handled by `gbrain integrity auto` (the
+      // existing CLI). Deterministic — no LLM cost.
+      const { makeRemediationStep } = await import('../core/remediation-step.ts');
+      const integrityStep = makeRemediationStep({
+        id: 'integrity-auto',
+        job: 'integrity-auto',
+        params: {
+          bare_count: res.bareHits.length,
+          external_count: res.externalHits.length,
+          pages_scanned: res.pagesScanned,
+        },
+        severity: res.bareHits.length > 50 ? 'high' : 'medium',
+        est_seconds: 60,
+        est_usd_cost: 0,
+        rationale: `Auto-repair ${res.bareHits.length} bare-tweet phrase(s)`,
+      });
       checks.push({
         name: 'integrity',
         status: 'warn',
         message: `Sampled ${res.pagesScanned} pages; ${res.bareHits.length} bare-tweet phrase(s), ${res.externalHits.length} external link(s). Run: gbrain integrity check (or integrity auto to repair).`,
+        remediation: [integrityStep],
+        remediation_status: 'remediable',
       });
     } else {
       checks.push({
@@ -3092,6 +3741,176 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     checks.push({ name: 'markdown_body_completeness', status: 'ok', message: 'Skipped (raw_data unavailable)' });
   } finally {
     mbcHb();
+  }
+
+  // 11b. Content sanity checks (v0.41).
+  //
+  // Three sibling checks all backed by the shared assessor in
+  // src/core/content-sanity.ts so the surface stays aligned with the
+  // ingest gate at importFromContent and the lint rules at lintContent.
+  //
+  // - oversized_pages: indexed-free table scan (~100ms on 100K-page brains)
+  //   counting pages whose body (compiled_truth + timeline, UTF-8 bytes
+  //   via octet_length per Codex r2 #13) exceeds the block threshold.
+  //   Status warn when 1+ rows; never fail (oversize is now a soft state).
+  // - scraper_junk_pages: capped 1000-most-recent default + --content-audit
+  //   opt-in for full scan (D10 mirrors --index-audit precedent). Applies
+  //   the assessor per-page on title + 2KB head-slice + frontmatter.
+  // - content_sanity_audit_recent: reads ~/.gbrain/audit/content-sanity-*.jsonl
+  //   over the last 7 days, aggregates by event type + source. Caveat
+  //   (Codex r1 #14): JSONL is local-only — multi-host operators should
+  //   share GBRAIN_AUDIT_DIR. Message names this so the limitation is
+  //   visible at the doctor surface.
+  const fullContentAudit = args.includes('--content-audit');
+  progress.heartbeat('oversized_pages');
+  try {
+    const sql = db.getConnection();
+    // Read effective bytes_block from the cached effectiveCfg loaded
+    // earlier in this doctor run if available; otherwise default.
+    // (We re-read here per-check to avoid threading config through
+    // every check — bytes_block is read once per doctor run via
+    // loadConfig which caches in module-level config layer.)
+    const { loadConfig: _loadCfg } = await import('../core/config.ts');
+    const _cfg = _loadCfg();
+    const bytesBlock = _cfg?.content_sanity?.bytes_block ?? 500_000;
+    const rows = await sql`
+      SELECT p.slug, p.source_id,
+             octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) AS bytes
+      FROM pages p
+      WHERE p.deleted_at IS NULL
+        AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) > ${bytesBlock}
+      ORDER BY bytes DESC
+      LIMIT 100
+    `;
+    if (rows.length === 0) {
+      checks.push({
+        name: 'oversized_pages',
+        status: 'ok',
+        message: `No pages exceed ${bytesBlock} bytes`,
+      });
+    } else {
+      const oversizeRows = rows as unknown as Array<{ slug: string; source_id: string; bytes: number }>;
+      const top = oversizeRows.slice(0, 3)
+        .map(r => `${r.slug} (${r.bytes}b, src=${r.source_id})`)
+        .join('; ');
+      checks.push({
+        name: 'oversized_pages',
+        status: 'warn',
+        message: `${rows.length} page(s) exceed ${bytesBlock}-byte block threshold. Top: ${top}. New ingests with the same shape get frontmatter.embed_skip set automatically; existing oversized pages can be split or accepted as non-embeddable.`,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({
+      name: 'oversized_pages',
+      status: 'ok',
+      message: `Skipped (${msg})`,
+    });
+  }
+
+  progress.heartbeat('scraper_junk_pages');
+  try {
+    const sql = db.getConnection();
+    const { assessContentSanity } = await import('../core/content-sanity.ts');
+    const { loadOperatorLiterals } = await import('../core/content-sanity-literals.ts');
+    const literals = loadOperatorLiterals();
+    const scanLimit = fullContentAudit ? null : 1000;
+    const rows = scanLimit
+      ? await sql`
+          SELECT p.slug, p.source_id, p.title,
+                 LEFT(p.compiled_truth, 2048) AS body_head,
+                 LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
+                 p.frontmatter
+            FROM pages p
+           WHERE p.deleted_at IS NULL
+           ORDER BY p.updated_at DESC
+           LIMIT ${scanLimit}
+        `
+      : await sql`
+          SELECT p.slug, p.source_id, p.title,
+                 LEFT(p.compiled_truth, 2048) AS body_head,
+                 LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
+                 p.frontmatter
+            FROM pages p
+           WHERE p.deleted_at IS NULL
+        `;
+    const hits: Array<{ slug: string; matched: string[] }> = [];
+    const scanRows = rows as unknown as Array<{ slug: string; source_id: string; title: string; body_head: string; tl_head: string; frontmatter: Record<string, unknown> | null }>;
+    for (const r of scanRows) {
+      const sanity = assessContentSanity({
+        compiled_truth: r.body_head ?? '',
+        timeline: r.tl_head ?? '',
+        title: r.title ?? '',
+        bytes_warn: Number.MAX_SAFE_INTEGER, // we ONLY care about junk-pattern hits here
+        bytes_block: Number.MAX_SAFE_INTEGER,
+        extra_literals: literals,
+      });
+      if (sanity.shouldHardBlock) {
+        hits.push({
+          slug: r.slug,
+          matched: [...sanity.junk_pattern_matches, ...sanity.literal_substring_matches],
+        });
+      }
+    }
+    if (hits.length === 0) {
+      checks.push({
+        name: 'scraper_junk_pages',
+        status: 'ok',
+        message: scanLimit
+          ? `No junk-pattern hits in ${rows.length} recent page(s) (use --content-audit for full scan)`
+          : `No junk-pattern hits in ${rows.length} page(s) (full audit)`,
+      });
+    } else {
+      const top = hits.slice(0, 3).map(h => `${h.slug} [${h.matched.join(',')}]`).join('; ');
+      checks.push({
+        name: 'scraper_junk_pages',
+        status: 'warn',
+        message: `${hits.length} page(s) match junk patterns. Top: ${top}. ${scanLimit ? '(scanned 1000 most-recent; rerun with --content-audit for full scan)' : '(full audit)'} New ingests with these shapes are now hard-blocked; existing inventory should be cleaned at source.`,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({
+      name: 'scraper_junk_pages',
+      status: 'ok',
+      message: `Skipped (${msg})`,
+    });
+  }
+
+  progress.heartbeat('content_sanity_audit_recent');
+  try {
+    const { readRecentContentSanityEvents, summarizeContentSanityEvents } =
+      await import('../core/audit/content-sanity-audit.ts');
+    const events = readRecentContentSanityEvents(7);
+    if (events.length === 0) {
+      checks.push({
+        name: 'content_sanity_audit_recent',
+        status: 'ok',
+        message: 'No content-sanity events in last 7 days (audit JSONL is local to this host; share GBRAIN_AUDIT_DIR for multi-host visibility)',
+      });
+    } else {
+      const summary = summarizeContentSanityEvents(events);
+      const topPatterns = summary.top_patterns.slice(0, 3).map(p => `${p.name}=${p.count}`).join(', ');
+      const topSources = Object.entries(summary.by_source)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([s, n]) => `${s}=${n}`)
+        .join(', ');
+      const status: 'ok' | 'warn' | 'fail' =
+        events.length >= 100 ? 'fail' : events.length >= 10 ? 'warn' : 'ok';
+      checks.push({
+        name: 'content_sanity_audit_recent',
+        status,
+        message: `${events.length} events (hard=${summary.by_type.hard_block} soft=${summary.by_type.soft_block} warn=${summary.by_type.warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({
+      name: 'content_sanity_audit_recent',
+      status: 'ok',
+      message: `Skipped (${msg})`,
+    });
   }
 
   // 11a. Frontmatter integrity (v0.22.4, hardened in v0.38.2.0).
@@ -3874,6 +4693,11 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   if (engine !== null) {
     progress.heartbeat('sync_freshness');
     checks.push(await checkSyncFreshness(engine));
+    // v0.38 — full-cycle freshness, sibling to sync_freshness. Reads
+    // last_full_cycle_at from sources.config; mirrors what autopilot's
+    // per-source dispatch gate sees.
+    progress.heartbeat('cycle_freshness');
+    checks.push(await checkCycleFreshness(engine));
   }
 
   // v0.32.3 search-lite — mode + eval_drift surfaces. Status stays 'ok' per
@@ -3886,6 +4710,10 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
     progress.heartbeat('reranker_health');
     checks.push(await checkRerankerHealth(engine));
+    // v0.40.4 graph_signals_coverage — global inbound-link density when
+    // graph_signals is enabled in the active mode bundle.
+    progress.heartbeat('graph_signals_coverage');
+    checks.push(await checkGraphSignalsCoverage(engine));
     // v0.37.0 brainstorm_health — migration v79, track_retrieval, calibration cold-start.
     progress.heartbeat('brainstorm_health');
     checks.push(await checkBrainstormHealth(engine));
@@ -3906,10 +4734,49 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     // 5M — autopilot_lock_scope (PID-safe hint per codex CF11)
     progress.heartbeat('autopilot_lock_scope');
     checks.push(checkAutopilotLockScope());
+    // v0.38 — cycle_phase_scope (informational; no DB cost)
+    progress.heartbeat('cycle_phase_scope');
+    checks.push(checkCyclePhaseScope());
   }
 
   progress.finish();
 
+  return checks;
+}
+
+/**
+ * CLI entry point for `gbrain doctor`. Thin wrapper around buildChecks +
+ * computeDoctorReport + render + process.exit.
+ *
+ * Concerns kept here (not pushed into buildChecks):
+ *   - --locks shortcut (focused diagnostic; calls runLocksCheck + returns)
+ *   - outputResults render (stdout)
+ *   - features teaser (non-JSON, non-failing only)
+ *   - process.exit (10 sites total across runDoctor + runLocksCheck +
+ *     runRemediationPlan + runRemediate)
+ *
+ * v0.39 narrow-seam extract — buildChecks is the unit-testable seam, this
+ * wrapper is the wallclock + exit-code concerned function. See
+ * test/doctor-behavioral.test.ts for the in-process seam coverage and
+ * test/doctor-cli-smoke.test.ts for the subprocess wrapper coverage.
+ */
+export async function runDoctor(
+  engine: BrainEngine | null,
+  args: string[],
+  dbSource?: DbUrlSource,
+) {
+  const jsonOutput = args.includes('--json');
+  const locksMode = args.includes('--locks');
+
+  // --locks is a focused diagnostic: it runs the same pg_stat_activity
+  // query that `runMigrations` pre-flight uses, prints any idle-in-tx
+  // backends, and exits. Referenced from migrate.ts's 57014 diagnostic.
+  if (locksMode) {
+    await runLocksCheck(engine, jsonOutput);
+    return;
+  }
+
+  const checks = await buildChecks(engine, args, dbSource);
   const hasFail = outputResults(checks, jsonOutput);
 
   // Features teaser (non-JSON, non-failing only)
@@ -4348,13 +5215,36 @@ export async function runRemediate(
 ): Promise<void> {
   const targetScore = parseIntFlag(args, '--target-score') ?? 90;
   const maxJobs = parseIntFlag(args, '--max-jobs') ?? Infinity;
-  const maxUsd = parseFloatFlag(args, '--max-usd');
+  // A4 amended: --max-cost is an alias for --max-usd. Both spellings are
+  // documented as the cron-safety guard. Either threads through to the
+  // pre-flight estimate refusal AND, via withBudgetTracker, the mid-run
+  // BudgetExhausted hard-throw.
+  const maxUsd = parseFloatFlag(args, '--max-usd') ?? parseFloatFlag(args, '--max-cost');
   const dryRun = args.includes('--dry-run');
   const skipConfirm = args.includes('--yes');
   const jsonOutput = args.includes('--json');
+  // A4 amended: --resume <plan_hash?> loads the checkpoint for the active
+  // (engine,target) and continues from the next step. With no value, the
+  // most recent checkpoint for the active engine is loaded.
+  const resumeFlagIdx = args.indexOf('--resume');
+  const resumeMode = resumeFlagIdx !== -1;
+  const resumeArg = resumeMode ? args[resumeFlagIdx + 1] : undefined;
+  const resumePlanHash = resumeArg && !resumeArg.startsWith('--') ? resumeArg : undefined;
 
   const { computeRecommendations, classifyChecks, maxReachableScore } =
     await import('../core/brain-score-recommendations.ts');
+  const {
+    BudgetTracker,
+    BudgetExhausted,
+  } = await import('../core/budget/budget-tracker.ts');
+  const { withBudgetTracker } = await import('../core/ai/gateway.ts');
+  const {
+    computePlanHash,
+    saveRemediationCheckpoint,
+    loadRemediationCheckpoint,
+    listRemediationCheckpoints,
+    clearRemediationCheckpoint,
+  } = await import('../core/remediation-checkpoint.ts');
 
   const ctx = await loadRecommendationContext(engine);
 
@@ -4382,6 +5272,46 @@ export async function runRemediate(
   if (recs.length === 0) {
     console.log(`Brain at score ${initialHealth.brain_score}/100, target ${targetScore}. Nothing to do.`);
     return;
+  }
+
+  // A4 amended: compute plan_hash off the active recommendation ids so the
+  // checkpoint binds to THIS plan. Resume only fires for matching plans.
+  const planHash = computePlanHash(recs.map((r) => r.id));
+  let completedFromCheckpoint = new Set<string>();
+  if (resumeMode) {
+    const requested = resumePlanHash;
+    let cp = requested ? loadRemediationCheckpoint(requested) : null;
+    if (!cp && !requested) {
+      // No explicit hash: try newest checkpoint that matches the active plan.
+      const recent = listRemediationCheckpoints();
+      for (const e of recent) {
+        const candidate = loadRemediationCheckpoint(e.plan_hash);
+        if (candidate && candidate.plan_hash === planHash) {
+          cp = candidate;
+          break;
+        }
+      }
+    }
+    if (!cp) {
+      console.error(
+        `[remediate --resume] no matching checkpoint found ` +
+          `(plan_hash=${planHash}${requested ? `; requested=${requested}` : ''}). ` +
+          `Run without --resume to start fresh.`,
+      );
+      process.exit(2);
+    }
+    if (cp.plan_hash !== planHash) {
+      console.error(
+        `[remediate --resume] checkpoint plan_hash=${cp.plan_hash} does not match active plan_hash=${planHash}. ` +
+          `The plan has changed (brain state moved). Run without --resume to start fresh.`,
+      );
+      process.exit(2);
+    }
+    completedFromCheckpoint = new Set(cp.completed.map((c) => c.id));
+    console.error(
+      `[remediate --resume] resuming plan_hash=${planHash}: ${completedFromCheckpoint.size} step(s) completed, ` +
+        `${recs.length - completedFromCheckpoint.size} remaining.`,
+    );
   }
 
   const estTotalUsd = recs.reduce((sum, r) => sum + (r.est_usd_cost ?? 0), 0);
@@ -4419,61 +5349,132 @@ export async function runRemediate(
   const { waitForCompletion } = await import('../core/minions/wait-for-completion.ts');
   const queue = new MinionQueue(engine);
 
-  let stepCount = 0;
-  while (recs.length > 0 && stepCount < maxJobs) {
-    const step = recs[0];
-    if (!step) break;
-    stepCount++;
+  // A4 amended: install a BudgetTracker scope around the plan-step loop so
+  // any gateway.chat / embed / rerank inside a Minion handler (synthesize,
+  // patterns, consolidate) auto-enforces the cap. On BudgetExhausted, the
+  // onExhausted callback persists the checkpoint BEFORE the throw propagates;
+  // the catch surfaces the actionable --resume hint.
+  const remediateTracker = new BudgetTracker({
+    label: 'doctor.remediate',
+    maxCostUsd: maxUsd ?? undefined,
+  });
 
-    // D5: if depends_on intersects aborted, skip + cascade
-    if (step.depends_on && step.depends_on.some((d) => abortedIds.has(d))) {
-      submitted.push({ step: stepCount, id: step.id, job_id: null, status: 'skipped_dep_aborted' });
-      abortedIds.add(step.id);
-      recs.shift();
-      continue;
-    }
+  let exhaustionSnapshot: { spent: number; cap: number; reason: string; model_id?: string } | undefined;
+  remediateTracker.onExhausted(() => {
+    // BudgetTracker fires this synchronously from inside reserve()/record()
+    // before the throw bubbles. Persist whatever has been done so far.
+    const cp = {
+      schema_version: 1 as const,
+      plan_hash: planHash,
+      doctor_run_id: doctorRunId,
+      target_score: targetScore,
+      started_at: new Date().toISOString(),
+      completed: submitted
+        .filter((s) => s.status === 'completed')
+        .map((s) => ({ id: s.id, job: '', status: s.status, job_id: s.job_id ?? null })),
+      aborted_at: new Date().toISOString(),
+      abort_reason: 'budget_exhausted' as const,
+      budget_snapshot: exhaustionSnapshot,
+    };
+    saveRemediationCheckpoint(cp);
+  });
 
-    try {
-      const isProtected = !!step.protected;
-      const job = await queue.add(
-        step.job,
-        { ...step.params, doctor_run_id: doctorRunId },
-        {
-          queue: 'default',
-          idempotency_key: step.idempotency_key,
-          max_attempts: 2,
-          maxWaiting: 1,
-        },
-        isProtected ? { allowProtectedSubmit: true } : undefined,
-      );
-      submitted.push({ step: stepCount, id: step.id, job_id: job.id, status: 'submitted' });
+  const runLoop = async (): Promise<void> => {
+    let stepCount = 0;
+    while (recs.length > 0 && stepCount < maxJobs) {
+      const step = recs[0];
+      if (!step) break;
+      stepCount++;
 
-      // Wait for terminal state. PGLite is in-process — short poll.
-      const terminal = await waitForCompletion(queue, job.id, {
-        pollMs: isPGLite ? 250 : 1000,
-        timeoutMs: (step.est_seconds + 60) * 1000,
-      });
-      const lastSub = submitted[submitted.length - 1];
-      if (lastSub) lastSub.status = terminal.status;
+      // Resume: skip steps that the checkpoint already marked completed.
+      if (completedFromCheckpoint.has(step.id)) {
+        submitted.push({ step: stepCount, id: step.id, job_id: null, status: 'completed' });
+        recs.shift();
+        continue;
+      }
 
-      if (terminal.status !== 'completed') {
+      // D5: if depends_on intersects aborted, skip + cascade
+      if (step.depends_on && step.depends_on.some((d) => abortedIds.has(d))) {
+        submitted.push({ step: stepCount, id: step.id, job_id: null, status: 'skipped_dep_aborted' });
+        abortedIds.add(step.id);
+        recs.shift();
+        continue;
+      }
+
+      try {
+        const isProtected = !!step.protected;
+        const job = await queue.add(
+          step.job,
+          { ...step.params, doctor_run_id: doctorRunId },
+          {
+            queue: 'default',
+            idempotency_key: step.idempotency_key,
+            max_attempts: 2,
+            maxWaiting: 1,
+          },
+          isProtected ? { allowProtectedSubmit: true } : undefined,
+        );
+        submitted.push({ step: stepCount, id: step.id, job_id: job.id, status: 'submitted' });
+
+        // Wait for terminal state. PGLite is in-process — short poll.
+        const terminal = await waitForCompletion(queue, job.id, {
+          pollMs: isPGLite ? 250 : 1000,
+          timeoutMs: (step.est_seconds + 60) * 1000,
+        });
+        const lastSub = submitted[submitted.length - 1];
+        if (lastSub) lastSub.status = terminal.status;
+
+        if (terminal.status !== 'completed') {
+          abortedIds.add(step.id);
+        }
+      } catch (e) {
+        if (e instanceof BudgetExhausted) {
+          exhaustionSnapshot = {
+            spent: e.spent,
+            cap: e.cap,
+            reason: e.reason,
+            model_id: e.modelId,
+          };
+          throw e;
+        }
+        submitted.push({
+          step: stepCount, id: step.id, job_id: null,
+          status: `error: ${(e as Error).message.slice(0, 100)}`,
+        });
         abortedIds.add(step.id);
       }
-    } catch (e) {
-      submitted.push({
-        step: stepCount, id: step.id, job_id: null,
-        status: `error: ${(e as Error).message.slice(0, 100)}`,
-      });
-      abortedIds.add(step.id);
-    }
 
-    recs.shift();
-    // D7: scoped recheck — re-compute plan from fresh health snapshot.
-    // The next plan may drop completed steps and re-introduce failed
-    // steps with bumped retry suffix (D1).
-    if (recs.length === 0 || stepCount >= maxJobs) break;
-    const freshHealth = await engine.getHealth();
-    recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
+      recs.shift();
+      // D7: scoped recheck — re-compute plan from fresh health snapshot.
+      // The next plan may drop completed steps and re-introduce failed
+      // steps with bumped retry suffix (D1).
+      if (recs.length === 0 || stepCount >= maxJobs) break;
+      const freshHealth = await engine.getHealth();
+      recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
+    }
+  };
+
+  let budgetExhaustedAt: InstanceType<typeof BudgetExhausted> | null = null;
+  try {
+    await withBudgetTracker(remediateTracker, runLoop);
+  } catch (err) {
+    if (err instanceof BudgetExhausted) {
+      budgetExhaustedAt = err;
+      console.error(
+        `\n[remediate] BudgetExhausted (${err.reason}): spent $${err.spent.toFixed(4)} > cap $${err.cap.toFixed(2)}.\n` +
+          `Checkpoint saved. Resume with:\n` +
+          `  gbrain doctor --remediate --resume ${planHash}\n`,
+      );
+    } else {
+      throw err;
+    }
+  }
+
+  // Clear checkpoint on a clean run (no budget abort). Failed steps in the
+  // submitted set don't disqualify the cleanup — they re-surface on the
+  // next plan with bumped suffixes.
+  if (!budgetExhaustedAt) {
+    clearRemediationCheckpoint(planHash);
   }
 
   const finalHealth = await engine.getHealth();
@@ -4495,7 +5496,7 @@ export async function runRemediate(
   }
 
   const anyFailed = submitted.some((s) => s.status !== 'completed' && s.status !== 'submitted');
-  if (anyFailed) process.exit(1);
+  if (budgetExhaustedAt || anyFailed) process.exit(1);
 }
 
 /**
@@ -4527,31 +5528,27 @@ async function loadRecommendationContext(engine: BrainEngine) {
     embeddingModel = dbModel ?? undefined;
     embeddingDimensions = dbDims ? Number(dbDims) : undefined;
   }
-  // Provider-aware key check. The active embedding provider determines
-  // which key matters. Pre-fix this was OpenAI-only, so a ZE brain with
-  // OPENAI_API_KEY set looked "healthy" even though no key reached ZE.
+  // v0.40.x: recipe-aware provider check, shared with autopilot.ts via
+  // embeddingProviderConfigured(). Local providers (ollama, llama-server —
+  // empty auth_env.required) need no hosted key; hosted providers check
+  // their OWN required key (so a Voyage brain is judged by VOYAGE_API_KEY,
+  // not by whether an OpenAI/ZE key happens to exist — the pre-fix wart).
+  // fileCfg loads synchronously, so the resolveKey closure is sync.
   const { loadConfigFileOnly } = await import('../core/config.ts');
   const fileCfg = loadConfigFileOnly();
-  let hasEmbeddingApiKey = false;
-  if (embeddingModel?.startsWith('openai:')) {
-    hasEmbeddingApiKey = !!(process.env.OPENAI_API_KEY || fileCfg?.openai_api_key);
-  } else if (embeddingModel?.startsWith('zeroentropyai:')) {
-    hasEmbeddingApiKey = !!(process.env.ZEROENTROPY_API_KEY || fileCfg?.zeroentropy_api_key);
-  } else {
-    // Voyage / generic openai-compatible / unknown provider — fall back
-    // to "any key present" as the legacy hint.
-    hasEmbeddingApiKey = !!(
-      process.env.OPENAI_API_KEY ||
-      process.env.ZEROENTROPY_API_KEY ||
-      fileCfg?.openai_api_key ||
-      fileCfg?.zeroentropy_api_key
-    );
-  }
+  const { embeddingProviderConfigured, HOSTED_EMBED_KEY_CONFIG } = await import(
+    '../core/brain-score-recommendations.ts'
+  );
+  const embeddingConfigured = embeddingProviderConfigured(embeddingModel, (envVar) => {
+    const cfgField = HOSTED_EMBED_KEY_CONFIG[envVar];
+    const fromCfg = cfgField ? (fileCfg as Record<string, unknown> | null)?.[cfgField] : undefined;
+    return !!(process.env[envVar] || fromCfg);
+  });
   return {
     repoPath: repoPath ?? undefined,
     embeddingModel,
     embeddingDimensions,
-    hasEmbeddingApiKey,
+    embeddingProviderConfigured: embeddingConfigured,
     hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || fileCfg?.anthropic_api_key),
   };
 }
@@ -4568,4 +5565,116 @@ function parseFloatFlag(args: string[], flag: string): number | null {
   if (i === -1 || i === args.length - 1) return null;
   const v = parseFloat(args[i + 1] ?? '');
   return isNaN(v) ? null : v;
+}
+
+// =================================================================
+// v0.39 T7 + T9 — schema-pack doctor checks
+// =================================================================
+// Three checks per v0.38 CEO plan that never shipped at v0.38 time:
+//   schema_pack_active       — does the active pack resolve cleanly?
+//   schema_pack_consistency  — what % of pages match the active pack?
+//   schema_pack_source_drift — do per-source packs disagree?
+// All three are warn-only; never fail-block.
+
+async function checkSchemaPackActive(engine: BrainEngine): Promise<Check> {
+  try {
+    const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
+    const { loadConfig } = await import('../core/config.ts');
+    const pack = await loadActivePack({ cfg: loadConfig(), remote: false });
+    return {
+      name: 'schema_pack_active',
+      status: 'ok',
+      message: `Active pack: ${pack.manifest.name} v${pack.manifest.version} (${pack.manifest.page_types.length} types, ${pack.manifest.link_types?.length ?? 0} link verbs)`,
+    };
+  } catch (e) {
+    return {
+      name: 'schema_pack_active',
+      status: 'warn',
+      message: `Active pack failed to resolve: ${(e as Error).message}. Run \`gbrain schema active\` to debug.`,
+    };
+  }
+}
+
+async function checkSchemaPackConsistency(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ src: string; total: string | number; untyped: string | number }>(
+      `SELECT
+         source_id AS src,
+         COUNT(*)::text AS total,
+         COUNT(*) FILTER (WHERE type IS NULL OR type = '')::text AS untyped
+       FROM pages
+       WHERE deleted_at IS NULL
+       GROUP BY source_id
+       ORDER BY source_id`,
+    );
+    if (rows.length === 0) {
+      return { name: 'schema_pack_consistency', status: 'ok', message: 'No pages in any source — schema consistency N/A.' };
+    }
+    let worstPct = 0;
+    let worstSrc = '';
+    let worstUntyped = 0;
+    let worstTotal = 0;
+    for (const r of rows) {
+      const total = Number(r.total);
+      const untyped = Number(r.untyped);
+      if (total === 0) continue;
+      const pct = untyped / total;
+      if (pct > worstPct) {
+        worstPct = pct;
+        worstSrc = r.src;
+        worstUntyped = untyped;
+        worstTotal = total;
+      }
+    }
+    if (worstPct === 0) {
+      return { name: 'schema_pack_consistency', status: 'ok', message: 'All pages match the active schema pack across every source.' };
+    }
+    const pctStr = (worstPct * 100).toFixed(1);
+    if (worstPct >= 0.1) {
+      return {
+        name: 'schema_pack_consistency',
+        status: 'warn',
+        message: `Source \`${worstSrc}\`: ${worstUntyped} of ${worstTotal} pages (${pctStr}%) have no type matching the active pack. Run \`gbrain schema detect --source ${worstSrc}\` to propose a pack matching your content shape.`,
+      };
+    }
+    return {
+      name: 'schema_pack_consistency',
+      status: 'ok',
+      message: `${pctStr}% untyped at worst (source \`${worstSrc}\`) — under the 10% warn threshold.`,
+    };
+  } catch (e) {
+    return {
+      name: 'schema_pack_consistency',
+      status: 'ok',
+      message: `Skipped: ${(e as Error).message}`,
+    };
+  }
+}
+
+async function checkSchemaPackSourceDrift(engine: BrainEngine): Promise<Check> {
+  try {
+    // Compare per-source schema_pack overrides (tier 3 DB config) to detect
+    // multi-source brains where different sources point at conflicting packs.
+    const rows = await engine.executeRaw<{ key: string; value: string }>(
+      `SELECT key, value FROM config WHERE key LIKE 'schema_pack.source.%'`,
+    );
+    if (rows.length === 0) {
+      return { name: 'schema_pack_source_drift', status: 'ok', message: 'No per-source pack overrides — drift N/A.' };
+    }
+    const distinctPacks = new Set(rows.map((r) => r.value).filter(Boolean));
+    if (distinctPacks.size <= 1) {
+      return { name: 'schema_pack_source_drift', status: 'ok', message: `${rows.length} per-source overrides; all point at the same pack.` };
+    }
+    return {
+      name: 'schema_pack_source_drift',
+      status: 'warn',
+      message: `Per-source pack divergence detected: ${distinctPacks.size} distinct packs across ${rows.length} sources. Run \`gbrain sources list\` then \`gbrain schema active --source <id>\` per source to audit.`,
+    };
+  } catch (e) {
+    return {
+      name: 'schema_pack_source_drift',
+      status: 'ok',
+      message: `Skipped: ${(e as Error).message}`,
+    };
+  }
 }

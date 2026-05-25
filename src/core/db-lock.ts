@@ -134,10 +134,36 @@ export async function tryAcquireDbLock(
   throw new Error(`Unknown engine kind for db-lock: ${engine.kind}`);
 }
 
-/** Lock id for performSync's writer window. Distinct from gbrain-cycle so the
- * cycle handler can hold gbrain-cycle while performSync (called from inside
- * the cycle) acquires gbrain-sync. */
-export const SYNC_LOCK_ID = 'gbrain-sync';
+/**
+ * v0.40 (Federated Sync v2): per-source sync lock helper.
+ *
+ * Before v0.40: SYNC_LOCK_ID was a bare 'gbrain-sync' constant, taken by
+ * performSync's writer window. That meant only ONE sync could run at a time
+ * across the whole brain — even when two sources are completely independent
+ * (different git repos, different last_commit, different DB row anchors).
+ *
+ * v0.40 namespaces the lock key by sourceId so cross-source sync runs in
+ * parallel. The cycle's broader `gbrain-cycle` lock still serializes inside
+ * a single cycle invocation. Two-source layered semantics:
+ *
+ *   cycle              acquires `gbrain-cycle`
+ *     → performSync(A) acquires `gbrain-sync:A`
+ *     → performSync(B) acquires `gbrain-sync:B`  (in a different process, fine)
+ *
+ * Audit: `SYNC_LOCK_ID` (back-compat alias) resolves to `syncLockId('default')`.
+ * Every consumer in src/ MUST namespace by source. Tracked consumers:
+ *   - src/commands/sync.ts:performSync (per-source)
+ *   - src/core/cycle/phantom-redirect.ts (per-source, D16)
+ */
+export function syncLockId(sourceId: string): string {
+  return `gbrain-sync:${sourceId}`;
+}
+
+/**
+ * Back-compat alias. Resolves to `syncLockId('default')`. New code should call
+ * `syncLockId(sourceId)` directly.
+ */
+export const SYNC_LOCK_ID = syncLockId('default');
 
 /**
  * v0.30.1 (T4 + A4): wrap long-running work in a refreshing TTL lock.
@@ -255,6 +281,48 @@ async function engineSelectOne(engine: BrainEngine): Promise<void> {
     return;
   }
   throw new Error(`Unknown engine kind for heartbeat: ${engine.kind}`);
+}
+
+/**
+ * v0.41 Eng D9 (codex pass-2 #7 + #8) — per-tick election convenience.
+ *
+ * Thin wrapper over `tryAcquireDbLock` for the E5 lease-cap controller
+ * use case: each worker ticks every 30s and tries to acquire the
+ * controller lock; the winner runs `fn` (read fleet signal, write new
+ * lease cap), then releases. Losers no-op for this tick; next tick
+ * re-elects.
+ *
+ * The codex pass-3 #8 + #9 audit confirmed this should reuse the
+ * existing `gbrain_cycle_locks` table (which `tryAcquireDbLock` already
+ * wraps for both engines) rather than build a parallel new primitive.
+ *
+ * Semantics:
+ *   - Returns the result of `fn` on lock acquisition.
+ *   - Returns `null` when another worker holds the lock (not an error;
+ *     just "not my tick").
+ *   - `fn` throws → release lock cleanly + rethrow.
+ *
+ * For long-running work that needs mid-flight TTL refresh, use
+ * `withRefreshingLock` instead. This helper is for sub-second / single-
+ * statement work where the initial TTL covers the whole call.
+ */
+export async function tryWithDbElection<T>(
+  engine: BrainEngine,
+  lockId: string,
+  ttlMinutes: number,
+  fn: () => Promise<T>,
+): Promise<T | null> {
+  const handle = await tryAcquireDbLock(engine, lockId, ttlMinutes);
+  if (!handle) return null;
+  try {
+    return await fn();
+  } finally {
+    try {
+      await handle.release();
+    } catch {
+      /* idempotent — lock will auto-expire under TTL */
+    }
+  }
 }
 
 /**

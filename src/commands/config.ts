@@ -280,11 +280,45 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     }
 
+    // v0.40.3.0 (D3 + Phase 2B): capture the OLD search.mode BEFORE the
+    // setConfig so summarizeTransition() can classify the kind correctly.
+    // Read fails silently → oldMode null → treated as broadening.
+    let oldSearchMode: string | null = null;
+    if (key === 'search.mode') {
+      try {
+        oldSearchMode = await engine.getConfig('search.mode');
+      } catch {
+        // ignore — null is the correct "never seen" semantic.
+      }
+    }
+
     await engine.setConfig(key, value);
     // v0.36.x #892: redact sensitive values in confirmation output. API
     // keys / tokens / passwords are commonly set from terminals with
     // scrollback; echoing the raw value to stderr leaks the secret.
     console.log(`Set ${key} = ${redactConfigValue(key, value)}`);
+
+    // v0.40.3.0 (D3 + Phase 2B): mode-switch UX. Fires only on
+    // search.mode writes. Honors GBRAIN_NO_MODE_SWITCH_UX=1 + non-TTY.
+    // The hook is best-effort — UX failures must NEVER break a config
+    // set that already persisted.
+    if (key === 'search.mode') {
+      try {
+        const { runModeSwitchUx } = await import('../core/search/mode-switch-ux.ts');
+        const { isSearchMode } = await import('../core/search/mode.ts');
+        await runModeSwitchUx({
+          oldMode: oldSearchMode && isSearchMode(oldSearchMode) ? oldSearchMode : null,
+          newMode: value,
+          engine,
+          isTty: Boolean(process.stdout.isTTY && process.stdin.isTTY),
+          // CLI doesn't thread --yes here today; reserved for /ship-style
+          // automation paths that can opt into auto-submit.
+          yesFlag: false,
+        });
+      } catch (err) {
+        console.error(`[mode-switch] UX hook failed (non-fatal): ${(err as Error).message}`);
+      }
+    }
   } else {
     console.error('Usage: gbrain config [show|get|set|unset] <key> [value]');
     console.error('       gbrain config unset --pattern <prefix>');

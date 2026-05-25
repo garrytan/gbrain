@@ -156,12 +156,20 @@ describe('multi-source bug class', () => {
   });
 
   test('validateSourceId rejects path traversal (F6)', () => {
-    // Allowed
+    // v0.38 (codex P1-D + eng E2): regex TIGHTENED from permissive
+    // ^[a-z0-9_-]+$ to strict kebab ^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$.
+    // Underscores no longer allowed at the path-safety gate (matches
+    // what sources-ops always rejected at creation time). 'jarvis_memory'
+    // was a v0.32.8 permissive-regex test case; now lives in the
+    // rejected set. Path-traversal rejection unchanged.
+    //
+    // Allowed (strict kebab):
     expect(() => validateSourceId('default')).not.toThrow();
     expect(() => validateSourceId('media-corpus')).not.toThrow();
-    expect(() => validateSourceId('jarvis_memory')).not.toThrow();
+    expect(() => validateSourceId('jarvis-memory')).not.toThrow();
     expect(() => validateSourceId('abc123')).not.toThrow();
-    // Rejected
+    expect(() => validateSourceId('a')).not.toThrow();
+    // Rejected — path traversal / unsafe chars:
     expect(() => validateSourceId('..')).toThrow();
     expect(() => validateSourceId('../etc')).toThrow();
     expect(() => validateSourceId('foo/bar')).toThrow();
@@ -169,6 +177,13 @@ describe('multi-source bug class', () => {
     expect(() => validateSourceId('Default')).toThrow(); // uppercase
     expect(() => validateSourceId('.hidden')).toThrow();
     expect(() => validateSourceId('')).toThrow();
+    // Rejected — strict regex additions (v0.38):
+    expect(() => validateSourceId('jarvis_memory')).toThrow(); // underscores
+    expect(() => validateSourceId('snake_case')).toThrow();
+    expect(() => validateSourceId('-leading')).toThrow();      // edge hyphen
+    expect(() => validateSourceId('trailing-')).toThrow();
+    const tooLong = 'a' + 'b'.repeat(31) + 'c'; // 33 chars
+    expect(() => validateSourceId(tooLong)).toThrow();
   });
 
   test('reverse-write disk layout uses .sources/<id>/<slug>.md for non-default (F6)', () => {

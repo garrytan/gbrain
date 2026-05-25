@@ -188,6 +188,10 @@ interface CapturedRow {
 /**
  * Parse NDJSON. One object per non-blank line. Single bad line throws — it's
  * a corrupt export and silently dropping rows would mask real bugs.
+ *
+ * v0.41 (codex round-1 #3): SKIPS the `_kind: 'baseline_metadata'` header line
+ * that `gbrain bench publish` writes. The header carries metadata (label,
+ * thresholds, source_hash, etc) that must NOT be counted as a captured row.
  */
 function parseNdjson(content: string): CapturedRow[] {
   const lines = content.split('\n');
@@ -195,12 +199,14 @@ function parseNdjson(content: string): CapturedRow[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!.trim();
     if (!line) continue;
-    let row: CapturedRow;
+    let row: CapturedRow & { _kind?: string };
     try {
       row = JSON.parse(line);
     } catch (err) {
       throw new Error(`NDJSON parse error on line ${i + 1}: ${(err as Error).message}`);
     }
+    // v0.41: drop baseline metadata header before it can pollute counts.
+    if (row._kind === 'baseline_metadata') continue;
     if (typeof row.schema_version !== 'number') {
       throw new Error(`Line ${i + 1} missing schema_version — not from \`gbrain eval export\`?`);
     }
@@ -298,7 +304,7 @@ async function replayRow(engine: BrainEngine, row: CapturedRow, opts: ReplayOpts
   };
 }
 
-interface ReplaySummary {
+export interface ReplaySummary {
   rows_total: number;
   rows_replayed: number;
   rows_skipped: number;
@@ -378,45 +384,32 @@ function printHumanSummary(summary: ReplaySummary, results: RowResult[], topRegr
   }
 }
 
-export async function runEvalReplay(engine: BrainEngine, args: string[]): Promise<void> {
-  const opts = parseArgs(args);
-  if (opts.help) {
-    printHelp();
-    return;
-  }
+/**
+ * Programmatic entrypoint. Throws on error (no process.exit), returns the
+ * computed summary + per-row results.
+ *
+ * v0.41 (codex round-2 #7): exposed so `gbrain eval gate --baseline` can
+ * call replay in-process rather than spawning a subprocess. Subprocess
+ * spawning would run the INSTALLED gbrain (drift risk for source-tree runs).
+ */
+export async function replayCore(
+  engine: BrainEngine,
+  opts: ReplayOpts,
+): Promise<{ summary: ReplaySummary; results: RowResult[] }> {
   if (!opts.against) {
-    console.error('Error: --against FILE.ndjson is required\n');
-    printHelp();
-    process.exit(1);
+    throw new Error('replayCore: opts.against (path to NDJSON) is required');
   }
   if (!existsSync(opts.against)) {
-    console.error(`Error: file not found: ${opts.against}`);
-    process.exit(1);
+    throw new Error(`File not found: ${opts.against}`);
   }
-
-  let rows: CapturedRow[];
-  try {
-    const content = readFileSync(opts.against, 'utf-8');
-    rows = parseNdjson(content);
-  } catch (err) {
-    console.error(`Error: ${(err as Error).message}`);
-    process.exit(1);
-  }
-
+  const content = readFileSync(opts.against, 'utf-8');
+  const rows = parseNdjson(content);
   if (rows.length === 0) {
-    console.error(`Error: ${opts.against} is empty (no NDJSON rows)`);
-    process.exit(1);
+    throw new Error(`${opts.against} is empty (no NDJSON rows)`);
   }
 
   const capped = opts.limit && opts.limit > 0 ? rows.slice(0, opts.limit) : rows;
-  if (!opts.json) {
-    console.error(
-      `Replaying ${capped.length}${capped.length < rows.length ? ` of ${rows.length}` : ''} captured queries${opts.mode ? ` under mode=${opts.mode}` : ''}${opts.compareLimit ? ` (compare-limit=${opts.compareLimit})` : ''}…`,
-    );
-  }
 
-  // v0.32.3: thread --mode into the engine's config so hybridSearch resolves
-  // it through the standard chain. Set once before the replay loop runs.
   if (opts.mode) {
     try { await engine.setConfig('search.mode', opts.mode); } catch { /* swallow */ }
   }
@@ -441,12 +434,47 @@ export async function runEvalReplay(engine: BrainEngine, args: string[]): Promis
     }
     const r = await replayRow(engine, row, opts);
     results.push(r);
-    if (!opts.json && results.length % 25 === 0) {
-      process.stderr.write(`  ...${results.length}/${capped.length}\n`);
-    }
   }
 
-  const summary = summarize(results);
+  return { summary: summarize(results), results };
+}
+
+export async function runEvalReplay(engine: BrainEngine, args: string[]): Promise<void> {
+  const opts = parseArgs(args);
+  if (opts.help) {
+    printHelp();
+    return;
+  }
+  if (!opts.against) {
+    console.error('Error: --against FILE.ndjson is required\n');
+    printHelp();
+    process.exit(1);
+  }
+
+  if (!opts.json) {
+    // Pre-flight: count rows so the "Replaying X of Y" line is accurate.
+    // The programmatic path skips this nicety.
+    try {
+      const content = readFileSync(opts.against!, 'utf-8');
+      const allRows = parseNdjson(content);
+      const cappedCount = opts.limit && opts.limit > 0 ? Math.min(allRows.length, opts.limit) : allRows.length;
+      console.error(
+        `Replaying ${cappedCount}${cappedCount < allRows.length ? ` of ${allRows.length}` : ''} captured queries${opts.mode ? ` under mode=${opts.mode}` : ''}${opts.compareLimit ? ` (compare-limit=${opts.compareLimit})` : ''}…`,
+      );
+    } catch { /* swallow; replayCore will throw with the same message */ }
+  }
+
+  let summary: ReplaySummary;
+  let results: RowResult[];
+  try {
+    const out = await replayCore(engine, opts);
+    summary = out.summary;
+    results = out.results;
+  } catch (err) {
+    console.error(`Error: ${(err as Error).message}`);
+    process.exit(1);
+  }
+
   if (opts.json) {
     console.log(JSON.stringify({
       schema_version: 1,

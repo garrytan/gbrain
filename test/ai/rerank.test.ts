@@ -325,3 +325,87 @@ describe('gateway.rerank() — guard rails', () => {
     }
   });
 });
+
+describe('gateway.rerank() — v0.40.6.1 RerankerTouchpoint.path override', () => {
+  test('honors tp.path when recipe declares one (llama-server-reranker → /v1/rerank)', async () => {
+    configureGateway({
+      reranker_model: 'llama-server-reranker:qwen3-reranker-4b',
+      env: {},
+    });
+    let capturedUrl = '';
+    __setRerankTransportForTests(async (url) => {
+      capturedUrl = url;
+      return mockResp({ results: [{ index: 0, relevance_score: 0.8 }] });
+    });
+    await rerank({ query: 'q', documents: ['d'] });
+    // Recipe `base_url_default` is `http://localhost:8081/v1` and the
+    // touchpoint `path` is the LEAF `/rerank` — gateway must concatenate
+    // them to `http://localhost:8081/v1/rerank` exactly. The codex
+    // diff-review caught a /v1 path-doubling bug here that the prior
+    // `endsWith('/v1/rerank')` assertion silently passed through; the
+    // exact-equality assertion below is the regression guard.
+    expect(capturedUrl).toBe('http://localhost:8081/v1/rerank');
+    expect(capturedUrl).not.toContain('/v1/v1/');
+    expect(capturedUrl).not.toContain('/models/rerank');
+  });
+
+  test('falls through to /models/rerank when recipe omits path (ZE regression)', async () => {
+    configureZE();
+    let capturedUrl = '';
+    __setRerankTransportForTests(async (url) => {
+      capturedUrl = url;
+      return mockResp({ results: [{ index: 0, relevance_score: 0.9 }] });
+    });
+    await rerank({ query: 'q', documents: ['d'] });
+    expect(capturedUrl).toBe('https://api.zeroentropy.dev/v1/models/rerank');
+  });
+});
+
+describe('gateway.rerank() — v0.40.6.1 user-provided models (empty allowlist)', () => {
+  test('empty models[] on the recipe accepts any model id', async () => {
+    // llama-server-reranker declares `models: []` — anything goes.
+    configureGateway({
+      reranker_model: 'llama-server-reranker:some-custom-model-id',
+      env: {},
+    });
+    let called = false;
+    __setRerankTransportForTests(async () => {
+      called = true;
+      return mockResp({ results: [{ index: 0, relevance_score: 0.7 }] });
+    });
+    const out = await rerank({ query: 'q', documents: ['d'] });
+    expect(called).toBe(true);
+    expect(out.length).toBe(1);
+  });
+
+  test('still rejects empty models[] on a different model resolved via input.model', async () => {
+    // Even when caller overrides via input.model, the resolved recipe still
+    // governs the allowlist. Empty allowlist = no restriction.
+    configureGateway({
+      reranker_model: 'zeroentropyai:zerank-2',
+      env: { ZEROENTROPY_API_KEY: 'sk-test' },
+    });
+    __setRerankTransportForTests(async () =>
+      mockResp({ results: [{ index: 0, relevance_score: 0.6 }] }),
+    );
+    const out = await rerank({
+      query: 'q',
+      documents: ['d'],
+      model: 'llama-server-reranker:whatever-id', // recipe with empty allowlist
+    });
+    expect(out.length).toBe(1);
+  });
+});
+
+describe('gateway.rerank() — v0.40.6.1 path regression: zerank-1-small unaffected', () => {
+  test('legacy ZE allowlist members still hit /models/rerank', async () => {
+    configureZE('zeroentropyai:zerank-1-small');
+    let capturedUrl = '';
+    __setRerankTransportForTests(async (url) => {
+      capturedUrl = url;
+      return mockResp({ results: [{ index: 0, relevance_score: 0.5 }] });
+    });
+    await rerank({ query: 'q', documents: ['d'] });
+    expect(capturedUrl.endsWith('/models/rerank')).toBe(true);
+  });
+});

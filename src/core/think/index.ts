@@ -72,6 +72,37 @@ export interface RunThinkOpts {
    * consulted when withCalibration=true.
    */
   calibrationHolder?: string;
+  /**
+   * v0.40.2.0 — when true (default), inject a `<trajectory>` block for
+   * temporal / knowledge_update intents. Bypass via
+   * `think.trajectory_enabled=false` config OR explicit `withTrajectory:false`
+   * caller opt. Kill switch for the rare regression. When set, runThink
+   * runs `classifyIntent` + `extractCandidateEntities` + per-candidate
+   * `findTrajectory` (5s timeout, concurrency cap 3) before prompt assembly.
+   * `other` intent short-circuits the path entirely — no per-candidate
+   * SQL fires.
+   */
+  withTrajectory?: boolean;
+  /**
+   * v0.40.2.0 — scalar projection of `OperationContext.sourceId`. MCP
+   * `think` op handler populates this via `sourceScopeOpts(ctx)` so
+   * trajectory queries inherit the same source scope as page/take
+   * retrieval. CLI callers omit it and get the engine's default source.
+   */
+  sourceId?: string;
+  /**
+   * v0.40.2.0 — scalar projection of `OperationContext.auth.allowedSources`.
+   * Federated-read OAuth clients scoped to multiple sources see their
+   * full federation. Mutually exclusive with `sourceId` (the array wins
+   * when both set, per `sourceScopeOpts` contract).
+   */
+  allowedSources?: string[];
+  /**
+   * v0.40.2.0 — scalar projection of `OperationContext.remote`. When
+   * true, trajectory queries apply `visibility='world'` filter (mirrors
+   * the recall posture for untrusted callers). CLI defaults to false.
+   */
+  remote?: boolean;
 }
 
 /** Structured response from the LLM (matches the schema declared in prompt.ts). */
@@ -250,6 +281,91 @@ export async function runThink(
     }
   }
 
+  // v0.40.2.0 — trajectory injection for temporal / knowledge_update
+  // intents. Default ON (Eng D1). `think.trajectory_enabled` config flag
+  // is the kill switch. `withTrajectory: false` caller opt also bypasses.
+  // `other` intent short-circuits before any SQL fires.
+  let trajectoryBlock = '';
+  let trajectoryPointsCount = 0;
+  const trajectoryEnabledConfig = await readThinkTrajectoryEnabled(engine);
+  const trajectoryEnabledOpt = opts.withTrajectory !== false; // default true
+  if (trajectoryEnabledConfig && trajectoryEnabledOpt) {
+    try {
+      const { classifyIntent } = await import('./intent.ts');
+      const trajIntent = classifyIntent(opts.question);
+      if (trajIntent === 'temporal' || trajIntent === 'knowledge_update') {
+        const { extractCandidateEntities } = await import('./entity-extract.ts');
+        const retrievedSlugs = gather.pages.map(p => p.slug);
+        const candidates = extractCandidateEntities(opts.question, retrievedSlugs);
+        if (candidates.length > 0) {
+          const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
+          const { formatTrajectoryBlock } = await import('../trajectory-format.ts');
+          const sourceIdScalar = opts.sourceId ?? 'default';
+          // Per-candidate trajectory fetch. Concurrency cap = 3; each call
+          // has its own 5s timeout via Promise.race. allSettled prevents
+          // one error from killing the others (Codex Problem 13: timeout
+          // bounds latency, not just failure propagation).
+          const allBlocks: string[] = [];
+          const seenSlugs = new Set<string>();
+          let totalPoints = 0;
+          const candidateQueue = [...candidates];
+          while (candidateQueue.length > 0) {
+            const batch = candidateQueue.splice(0, 3);
+            const settled = await Promise.allSettled(
+              batch.map(async (cand) => {
+                const resolved = await resolveEntitySlugWithSource(engine, sourceIdScalar, cand.raw);
+                if (!resolved) return null;
+                if (resolved.source === 'fallback_slugify') return null;
+                if (seenSlugs.has(resolved.slug)) return null;
+                seenSlugs.add(resolved.slug);
+                // 5s per-candidate timeout. Promise.race resolves with the
+                // first to land; the timeout returns [] (empty trajectory).
+                const points = await Promise.race([
+                  engine.findTrajectory({
+                    entitySlug: resolved.slug,
+                    ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
+                    ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
+                    ...(opts.remote !== undefined ? { remote: opts.remote } : {}),
+                    kind: 'all',
+                    limit: 100,
+                  }),
+                  new Promise<import('../engine.ts').TrajectoryPoint[]>(resolve => {
+                    setTimeout(() => resolve([]), 5000);
+                  }),
+                ]);
+                if (points.length === 0) return null;
+                const fmt = formatTrajectoryBlock(points, resolved.slug, {
+                  intent: trajIntent,
+                });
+                if (fmt.rendered.length === 0) return null;
+                return { rendered: fmt.rendered, points: fmt.emittedPoints };
+              }),
+            );
+            for (const s of settled) {
+              if (s.status !== 'fulfilled' || s.value === null) continue;
+              allBlocks.push(s.value.rendered);
+              totalPoints += s.value.points;
+            }
+          }
+          if (allBlocks.length > 0) {
+            trajectoryBlock = allBlocks.join('\n\n');
+            trajectoryPointsCount = totalPoints;
+          }
+        }
+      }
+    } catch (err) {
+      // Defensive: trajectory injection is best-effort. Any unexpected
+      // error degrades to "no trajectory block" + a warning. The think
+      // call itself never fails because of trajectory wiring.
+      warnings.push(
+        `TRAJECTORY_INJECTION_FAILED: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+  }
+  if (trajectoryPointsCount > 0) {
+    warnings.push(`TRAJECTORY_INJECTED_${trajectoryPointsCount}_POINTS`);
+  }
+
   // SYNTHESIZE
   const intent = inferIntent(opts.question, opts.anchor);
   const systemPrompt = buildThinkSystemPrompt({
@@ -266,6 +382,7 @@ export async function runThink(
     takesBlock,
     ...(graphBlock !== undefined ? { graphBlock } : {}),
     ...(calibrationBlockOpts !== undefined ? { calibration: calibrationBlockOpts } : {}),
+    ...(trajectoryBlock.length > 0 ? { trajectoryBlock } : {}),
   });
 
   let response: ThinkResponse;
@@ -432,6 +549,25 @@ export async function persistSynthesis(
 // `opts.client` injection path is preserved (test seam — see ThinkLLMClient).
 // `opts.stubResponse` path is preserved (pure-test escape).
 // ─────────────────────────────────────────────────────────────────
+
+/**
+ * v0.40.2.0 — read the `think.trajectory_enabled` config key. Default
+ * true. Returns false ONLY when the value is set AND parses to a false
+ * string. Any read error (table missing on pre-v36 brains, etc.) returns
+ * true so users on legacy installs still get the feature. The flag is
+ * the kill switch for the rare prod regression.
+ */
+async function readThinkTrajectoryEnabled(engine: BrainEngine): Promise<boolean> {
+  try {
+    const v = await engine.getConfig('think.trajectory_enabled');
+    if (v === null || v === undefined) return true;
+    const lower = v.trim().toLowerCase();
+    if (lower === 'false' || lower === '0' || lower === 'no' || lower === 'off') return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
 
 /**
  * Try to build a gateway-backed ThinkLLMClient for the given model.

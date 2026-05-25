@@ -74,15 +74,32 @@ function parseArgs(args: string[]): ReindexOpts {
 }
 
 /**
- * Count markdown pages that haven't been re-chunked by the current
- * MARKDOWN_CHUNKER_VERSION. Cheap; uses the partial index from migration v54.
+ * Count markdown pages that need re-embedding. v0.40.3.0: predicate
+ * extends from chunker_version drift alone to ALSO catch contextual
+ * retrieval state drift (D26 P0-1). A page enters the sweep if either:
+ *
+ *   (a) chunker_version is below the current value — pre-v40 pages that
+ *       haven't been touched by the wrapper bump yet
+ *   (b) contextual_retrieval_mode is NULL — pages that have never been
+ *       evaluated against the CR ladder (pre-v40 brains)
+ *
+ * D26 P0-4 IS DISTINCT FROM is used where comparing against a value; for
+ * NULL detection we use IS NULL directly. Page-frontmatter overrides
+ * (D5) are handled at re-import time: importFromFile re-parses the
+ * frontmatter and the resolver picks the right tier for that page.
+ *
+ * Global-mode-vs-stamped-mode drift (e.g. user upgraded balanced→tokenmax,
+ * skipped the post-upgrade prompt, then later ran reindex) is caught by
+ * the IS NULL clause for pre-v81 brains AND by a future T10 mode-switch
+ * hook for post-v81 brains. The simple `chunker_version OR mode IS NULL`
+ * predicate covers the headline upgrade case the wave is shipping.
  */
 async function countPending(engine: BrainEngine): Promise<number> {
   const rows = await engine.executeRaw<{ count: string | number }>(
     `SELECT COUNT(*)::bigint AS count
        FROM pages
       WHERE page_kind = 'markdown'
-        AND chunker_version < $1
+        AND (chunker_version < $1 OR contextual_retrieval_mode IS NULL)
         AND deleted_at IS NULL`,
     [MARKDOWN_CHUNKER_VERSION],
   );
@@ -99,7 +116,7 @@ async function readBatch(engine: BrainEngine, batchSize: number): Promise<Array<
     `SELECT slug, source_path, compiled_truth, source_id
        FROM pages
       WHERE page_kind = 'markdown'
-        AND chunker_version < $1
+        AND (chunker_version < $1 OR contextual_retrieval_mode IS NULL)
         AND deleted_at IS NULL
       ORDER BY id ASC
       LIMIT $2`,

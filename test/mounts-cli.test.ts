@@ -238,3 +238,126 @@ describe('runMounts — end-to-end add/list/remove', () => {
     });
   });
 });
+
+// v0.40.3.0 (D4 + T6): 4 new verbs — enable, disable, trust-frontmatter,
+// untrust-frontmatter. We invoke the public runMounts() dispatcher so the
+// switch table is exercised end-to-end, then read back the mounts.json
+// to assert the flag was persisted.
+
+describe('v0.40.3.0 — mount flag verbs', () => {
+  // Import runMounts lazily so the env-mutating withFakeHome wrapper has
+  // time to redirect HOME before the module reads it.
+  async function seedMount(mountsPath: string, id: string): Promise<void> {
+    const parsed = parseAddArgs([
+      id,
+      '--path', mountsPath,
+      '--engine', 'pglite',
+      '--db-path', `/tmp/${id}/.pg`,
+    ]);
+    const file = readMountsFile(mountsPath);
+    file.mounts.push({
+      id: parsed.id,
+      path: parsed.path,
+      engine: parsed.engine,
+      database_path: parsed.database_path,
+      enabled: true,
+    });
+    writeMountsFile(file, mountsPath);
+  }
+
+  test('enable → disable → enable cycle persists', async () => {
+    const { runMounts } = await import('../src/commands/mounts.ts');
+    await withFakeHomeAsync(async (mountsPath) => {
+      await seedMount(mountsPath, 'm1');
+
+      await runMounts(['disable', 'm1']);
+      let file = readMountsFile(mountsPath);
+      expect(file.mounts[0].enabled).toBe(false);
+
+      await runMounts(['enable', 'm1']);
+      file = readMountsFile(mountsPath);
+      expect(file.mounts[0].enabled).toBe(true);
+    });
+  });
+
+  test('trust-frontmatter → untrust-frontmatter cycle preserves other fields', async () => {
+    const { runMounts } = await import('../src/commands/mounts.ts');
+    await withFakeHomeAsync(async (mountsPath) => {
+      await seedMount(mountsPath, 'm-trust');
+
+      await runMounts(['trust-frontmatter', 'm-trust']);
+      let file = readMountsFile(mountsPath);
+      expect(file.mounts[0].trust_frontmatter_overrides).toBe(true);
+      // Preserve other fields:
+      expect(file.mounts[0].engine).toBe('pglite');
+      expect(file.mounts[0].database_path).toBe('/tmp/m-trust/.pg');
+
+      await runMounts(['untrust-frontmatter', 'm-trust']);
+      file = readMountsFile(mountsPath);
+      expect(file.mounts[0].trust_frontmatter_overrides).toBe(false);
+
+      // Re-trust restores. Trip → untrust → trust → untrust cycle.
+      await runMounts(['trust-frontmatter', 'm-trust']);
+      file = readMountsFile(mountsPath);
+      expect(file.mounts[0].trust_frontmatter_overrides).toBe(true);
+    });
+  });
+
+  test('missing mount id → loud rejection with list-hint', async () => {
+    const { runMounts } = await import('../src/commands/mounts.ts');
+    await withFakeHomeAsync(async (mountsPath) => {
+      await seedMount(mountsPath, 'real-mount');
+      // Use a typo
+      await expect(runMounts(['trust-frontmatter', 'typo-mount'])).rejects.toThrow(
+        /typo-mount/,
+      );
+    });
+  });
+
+  test('host brain rejection: cannot trust-frontmatter "host"', async () => {
+    const { runMounts } = await import('../src/commands/mounts.ts');
+    await withFakeHomeAsync(async (mountsPath) => {
+      await seedMount(mountsPath, 'm-host-test');
+      await expect(runMounts(['trust-frontmatter', 'host'])).rejects.toThrow(
+        /Cannot trust-frontmatter host brain/,
+      );
+    });
+  });
+
+  test('enable on already-enabled mount: no-op (idempotent)', async () => {
+    const { runMounts } = await import('../src/commands/mounts.ts');
+    await withFakeHomeAsync(async (mountsPath) => {
+      await seedMount(mountsPath, 'm-idem');
+      // Mount starts enabled=true. Calling enable again should be a no-op
+      // (no file churn, message indicates already-enabled).
+      await runMounts(['enable', 'm-idem']);
+      const file = readMountsFile(mountsPath);
+      expect(file.mounts[0].enabled).toBe(true);
+    });
+  });
+});
+
+/**
+ * Async variant of withFakeHome for tests that await runMounts().
+ *
+ * v0.40.3.0: ALSO sets GBRAIN_MOUNTS_PATH because libuv caches homedir()
+ * on some platforms, so HOME mutation alone isn't picked up by
+ * runMounts's internal getMountsPath() call.
+ */
+async function withFakeHomeAsync<T>(fn: (mountsPath: string) => Promise<T>): Promise<T> {
+  const home = mktmp('fake-home-');
+  const prev = process.env.HOME;
+  const prevMounts = process.env.GBRAIN_MOUNTS_PATH;
+  process.env.HOME = home;
+  mkdirSync(join(home, '.gbrain'), { recursive: true });
+  const mountsPath = join(home, '.gbrain', 'mounts.json');
+  process.env.GBRAIN_MOUNTS_PATH = mountsPath;
+  try {
+    return await fn(mountsPath);
+  } finally {
+    if (prev !== undefined) process.env.HOME = prev;
+    else delete process.env.HOME;
+    if (prevMounts !== undefined) process.env.GBRAIN_MOUNTS_PATH = prevMounts;
+    else delete process.env.GBRAIN_MOUNTS_PATH;
+  }
+}

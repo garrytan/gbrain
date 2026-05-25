@@ -1,33 +1,40 @@
-// Contract test for PageType exhaustiveness (Eng-2A).
+// Contract test for ALL_PAGE_TYPES seed-list round-trip (v0.38 refresh).
 //
-// Walks every value in `ALL_PAGE_TYPES` through every public surface that
-// consumes a PageType, asserts no error and a sane round-trip. The point is
-// not to verify each surface's full behavior, but to catch the silent
-// fall-through that bit gbrain v0.20 / v0.22 when a PageType was added but
-// some consuming surface didn't get a matching branch.
+// v0.38 opens PageType from a closed 23-element union to `string`. The
+// pre-v0.38 exhaustive-switch contract is gone — switches over types can
+// no longer be enforced by the type system because new types arrive via
+// schema-pack manifests at runtime.
 //
-// When PageType grows (e.g. v0.27.1 adds 'image'), this test fails noisily
-// at the first unhandled site, instead of users discovering the regression
-// in production.
+// What this test still asserts:
+//   1. ALL_PAGE_TYPES (the gbrain-base seed list) is non-empty and well-shaped.
+//   2. Every base type round-trips through serialize/parse markdown without
+//      loss. This is the "byte-for-byte gbrain-base equivalence" contract
+//      from the v0.38 plan — schema-pack codegen consumes this list.
+//   3. assertNever still throws when reached (preserved as a generic helper
+//      for switches over the closed `PackPrimitive` enum from
+//      src/core/schema-pack/primitives.ts).
+//
+// What this test NO LONGER asserts (intentionally removed in v0.38):
+//   - That a switch over PageType is compile-time-exhaustive. PageType is
+//     `string`, so switches cannot be exhaustive at the type level.
+//     Runtime validation against the active schema pack replaces this.
+//   - That ALL_PAGE_TYPES is the only legal page-type set. It is the
+//     seed list for the built-in `gbrain-base` pack; user packs add more.
 
 import { describe, expect, test } from 'bun:test';
-import { ALL_PAGE_TYPES, assertNever, type PageType } from '../src/core/types.ts';
+import { ALL_PAGE_TYPES, assertNever } from '../src/core/types.ts';
 import { parseMarkdown, serializeMarkdown } from '../src/core/markdown.ts';
 
-describe('PageType exhaustiveness contract', () => {
-  test('ALL_PAGE_TYPES covers every literal in the union', () => {
-    // If a PageType is added without updating ALL_PAGE_TYPES, this test
-    // anchors the requirement. The compile-time check is in the union itself;
-    // this is the runtime sanity gate.
+describe('ALL_PAGE_TYPES seed list (v0.38)', () => {
+  test('seed list is non-empty and well-shaped', () => {
     expect(ALL_PAGE_TYPES.length).toBeGreaterThan(0);
-    // Sentinel: every entry is a non-empty string.
     for (const t of ALL_PAGE_TYPES) {
       expect(typeof t).toBe('string');
       expect(t.length).toBeGreaterThan(0);
     }
   });
 
-  test('serializeMarkdown round-trips every PageType', () => {
+  test('serializeMarkdown round-trips every seed type', () => {
     for (const type of ALL_PAGE_TYPES) {
       const md = serializeMarkdown(
         {},
@@ -44,53 +51,30 @@ describe('PageType exhaustiveness contract', () => {
     }
   });
 
-  test('assertNever throws on the unreachable branch', () => {
-    // Force an unreachable call by casting through unknown. This is the
-    // runtime contract: if exhaustive switches ever do reach the default
-    // (e.g. a new PageType was added without a case), assertNever throws
-    // loudly instead of silently no-op'ing.
+  test('serializeMarkdown round-trips arbitrary user-defined types (v0.38)', () => {
+    // Schema packs declare custom types at runtime; the markdown serializer
+    // must NOT reject types outside ALL_PAGE_TYPES. This is the test that
+    // would have caught the v0.38 regression if anyone tried to re-close
+    // PageType in the markdown surface.
+    const userTypes = ['paper', 'researcher', 'therapy-session', 'apple-note', 'tweet-bundle'];
+    for (const type of userTypes) {
+      const md = serializeMarkdown(
+        {},
+        `Body for ${type}`,
+        '',
+        { type, title: `Test ${type}`, tags: [] },
+      );
+      const parsed = parseMarkdown(md, `${type}-fixture.md`);
+      expect(parsed.type).toBe(type);
+    }
+  });
+
+  test('assertNever still throws on the unreachable branch', () => {
+    // Generic helper preserved for switches over the closed PackPrimitive
+    // enum (entity|media|temporal|annotation|concept) declared in
+    // src/core/schema-pack/primitives.ts. Not used on PageType anymore.
     expect(() => assertNever('not-a-real-type' as never)).toThrow(
       /Unhandled discriminant/,
     );
-  });
-
-  test('exhaustive switch on PageType compiles only when complete', () => {
-    // This is the compile-time guard. The function below uses assertNever
-    // in the default branch. If a new PageType is added to the union
-    // without a corresponding case, TypeScript fails to type-check at the
-    // assertNever call (parameter is no longer `never`). Running this
-    // test means the file compiled, which means the switch is exhaustive.
-    function classify(t: PageType): string {
-      switch (t) {
-        case 'person': return 'human';
-        case 'company': return 'org';
-        case 'deal': return 'tx';
-        case 'yc': return 'cohort';
-        case 'civic': return 'org';
-        case 'project': return 'work';
-        case 'concept': return 'idea';
-        case 'source': return 'ref';
-        case 'media': return 'asset';
-        case 'writing': return 'doc';
-        case 'analysis': return 'doc';
-        case 'guide': return 'doc';
-        case 'hardware': return 'spec';
-        case 'architecture': return 'doc';
-        case 'meeting': return 'event';
-        case 'note': return 'jot';
-        case 'email': return 'msg';
-        case 'slack': return 'msg';
-        case 'calendar-event': return 'event';
-        case 'code': return 'code';
-        case 'image': return 'asset';
-        case 'synthesis': return 'doc';
-        default: return assertNever(t);
-      }
-    }
-
-    for (const t of ALL_PAGE_TYPES) {
-      const result = classify(t);
-      expect(result.length).toBeGreaterThan(0);
-    }
   });
 });

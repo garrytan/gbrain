@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Voice Agent</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, Roboto, "Helvetica Neue", sans-serif;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at top, #1a1a25, #0a0a0f);
+      color: #eaeaf0;
+    }
+    .card {
+      width: min(420px, 92vw);
+      padding: 32px;
+      border-radius: 16px;
+      background: rgba(30, 30, 40, 0.6);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .subtitle { color: #9c9caa; font-size: 14px; margin-bottom: 24px; }
+    .status {
+      font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+      font-size: 12px;
+      color: #9c9caa;
+      padding: 12px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.3);
+      margin-bottom: 16px;
+      min-height: 60px;
+      white-space: pre-wrap;
+    }
+    .call-btn {
+      width: 100%;
+      padding: 14px 20px;
+      border-radius: 999px;
+      border: none;
+      background: linear-gradient(180deg, #4f46e5, #4338ca);
+      color: white;
+      font-size: 16px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: transform 0.05s ease, background 0.2s ease;
+    }
+    .call-btn:hover:not(:disabled) { background: linear-gradient(180deg, #5b52ec, #4d42d4); }
+    .call-btn:active:not(:disabled) { transform: scale(0.98); }
+    .call-btn:disabled { background: #2b2b36; cursor: not-allowed; }
+    .call-btn.active { background: linear-gradient(180deg, #dc2626, #b91c1c); }
+    .meta {
+      margin-top: 16px;
+      font-size: 12px;
+      color: #6c6c7a;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .badge {
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.06);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Voice Agent</h1>
+    <div class="subtitle" id="subtitle">Press connect to start a voice session.</div>
+    <div class="status" id="status">idle</div>
+    <button class="call-btn" id="callBtn">Connect</button>
+    <div class="meta">
+      <span class="badge" id="personaBadge">persona: venus</span>
+      <span class="badge" id="testBadge" style="display:none">?test=1 active</span>
+    </div>
+  </div>
+
+  <audio id="remoteAudio" autoplay playsinline></audio>
+
+  <script type="module">
+    // ── Configuration from query params ─────────────────────────
+    const params = new URLSearchParams(location.search);
+    const persona = (params.get('persona') || 'venus').toLowerCase();
+    const TEST_MODE = params.get('test') === '1';
+
+    document.getElementById('personaBadge').textContent = `persona: ${persona}`;
+    if (TEST_MODE) document.getElementById('testBadge').style.display = '';
+
+    // ── D5-A: ?test=1-gated instrumentation namespace ───────────
+    // Production load of /call has ZERO window._gbrainTest. The MediaRecorder
+    // never instantiates. No audio Blob lives in browser memory unless the
+    // test harness explicitly opts in via the query param.
+    if (TEST_MODE) {
+      window._gbrainTest = {
+        setupDone: false,
+        audioSendCount: 0,
+        audioPlayCount: 0,
+        lastResponseBlob: null,
+        log: [],
+      };
+    }
+
+    const callBtn = document.getElementById('callBtn');
+    const statusEl = document.getElementById('status');
+    const remoteAudio = document.getElementById('remoteAudio');
+
+    let pc = null;          // RTCPeerConnection
+    let dc = null;          // RTCDataChannel
+    let localStream = null; // microphone MediaStream
+    let mediaRecorder = null;
+    let recorderChunks = [];
+    let audioContext = null;
+    let teeDestination = null;
+    let callActive = false;
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+      if (TEST_MODE) window._gbrainTest.log.push({ t: Date.now(), text });
+    }
+
+    async function startCall() {
+      callBtn.disabled = true;
+      callBtn.textContent = 'Connecting...';
+      setStatus('requesting microphone...');
+
+      try {
+        // 1. Mic.
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        setStatus('microphone OK; creating peer connection...');
+
+        // 2. RTCPeerConnection.
+        pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        });
+
+        for (const track of localStream.getAudioTracks()) {
+          pc.addTrack(track, localStream);
+        }
+
+        // 3. Data channel for tool calls.
+        dc = pc.createDataChannel('oai-events');
+        dc.onopen = () => {
+          setStatus('data channel open');
+        };
+        dc.onmessage = (ev) => handleDataChannelMessage(ev.data);
+
+        // 4. Remote track handler — D12-A WebAudio-tee for capture in test mode.
+        pc.ontrack = (ev) => {
+          const stream = ev.streams[0];
+          remoteAudio.srcObject = stream;
+          if (TEST_MODE) {
+            try {
+              audioContext = new (window.AudioContext || window.webkitAudioContext)();
+              const src = audioContext.createMediaStreamSource(stream);
+              teeDestination = audioContext.createMediaStreamDestination();
+              // Connect ONLY to the tee destination. The <audio> element
+              // handles playback via its own srcObject above; we don't
+              // double-connect to audioContext.destination (would cause
+              // a 2x playback echo).
+              src.connect(teeDestination);
+              mediaRecorder = new MediaRecorder(teeDestination.stream, {
+                mimeType: 'audio/webm; codecs=opus',
+              });
+              recorderChunks = [];
+              mediaRecorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) recorderChunks.push(e.data);
+              };
+              mediaRecorder.onstop = () => {
+                window._gbrainTest.lastResponseBlob = new Blob(recorderChunks, {
+                  type: 'audio/webm',
+                });
+              };
+              mediaRecorder.start(250);  // 250ms chunks
+            } catch (err) {
+              setStatus(`tee setup failed: ${err.message}`);
+            }
+          }
+          // Hook playback counter.
+          const audio = stream.getAudioTracks()[0];
+          if (audio) {
+            audio.onunmute = () => {
+              if (TEST_MODE) window._gbrainTest.audioPlayCount++;
+            };
+          }
+        };
+
+        // 5. Outbound counter — fires whenever we send audio frames.
+        // RTCPeerConnection doesn't expose a "frame sent" event natively,
+        // but we can poll getStats() on a short interval and count
+        // outbound-rtp packets.
+        if (TEST_MODE) {
+          const statsTimer = setInterval(async () => {
+            if (!pc || pc.connectionState === 'closed') {
+              clearInterval(statsTimer);
+              return;
+            }
+            try {
+              const stats = await pc.getStats();
+              stats.forEach((report) => {
+                if (report.type === 'outbound-rtp' && report.kind === 'audio') {
+                  // Each packetsSent tick is roughly 20ms of audio.
+                  window._gbrainTest.audioSendCount = report.packetsSent || 0;
+                }
+                if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+                  if (report.packetsReceived > 0 && window._gbrainTest.audioPlayCount === 0) {
+                    // Mark playback as starting if we've received any packets,
+                    // since `onunmute` doesn't always fire.
+                    window._gbrainTest.audioPlayCount = report.packetsReceived;
+                  }
+                }
+              });
+            } catch {
+              // ignore
+            }
+          }, 500);
+        }
+
+        // 6. SDP offer.
+        const offer = await pc.createOffer({ offerToReceiveAudio: true });
+        await pc.setLocalDescription(offer);
+
+        setStatus('sending SDP offer to /session...');
+        const sessionUrl = `/session?persona=${encodeURIComponent(persona)}`;
+        const res = await fetch(sessionUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/sdp' },
+          body: offer.sdp,
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`/session ${res.status}: ${text.slice(0, 200)}`);
+        }
+        const answerSdp = await res.text();
+        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+        setStatus('SDP exchanged; waiting for media...');
+
+        callActive = true;
+        callBtn.disabled = false;
+        callBtn.textContent = 'Hang up';
+        callBtn.classList.add('active');
+
+        if (TEST_MODE) window._gbrainTest.setupDone = true;
+      } catch (err) {
+        setStatus(`ERROR: ${err.message}`);
+        callBtn.disabled = false;
+        callBtn.textContent = 'Connect';
+        await endCall();
+        if (TEST_MODE) {
+          window._gbrainTest.error = err.message;
+        }
+      }
+    }
+
+    // Handle tool-call messages from the WebRTC data channel.
+    async function handleDataChannelMessage(raw) {
+      let msg;
+      try { msg = JSON.parse(raw); } catch { return; }
+      // OpenAI Realtime emits various event types. We only act on function calls.
+      if (msg.type === 'response.function_call_arguments.done' ||
+          msg.type === 'conversation.item.input_audio_transcription.completed') {
+        // Function call complete — dispatch to /tool.
+        if (msg.name && msg.call_id) {
+          try {
+            const args = msg.arguments ? JSON.parse(msg.arguments) : {};
+            const res = await fetch('/tool', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: msg.name, arguments: args }),
+            });
+            const result = await res.json();
+            // Return the result via the data channel.
+            dc.send(JSON.stringify({
+              type: 'conversation.item.create',
+              item: {
+                type: 'function_call_output',
+                call_id: msg.call_id,
+                output: JSON.stringify(result),
+              },
+            }));
+            dc.send(JSON.stringify({ type: 'response.create' }));
+          } catch (err) {
+            setStatus(`tool dispatch error: ${err.message}`);
+          }
+        }
+      }
+    }
+
+    async function endCall() {
+      callActive = false;
+      callBtn.textContent = 'Connect';
+      callBtn.classList.remove('active');
+      setStatus('hung up');
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try { mediaRecorder.stop(); } catch {}
+      }
+      if (pc) {
+        try { pc.close(); } catch {}
+        pc = null;
+      }
+      if (localStream) {
+        for (const track of localStream.getTracks()) track.stop();
+        localStream = null;
+      }
+      if (audioContext) {
+        try { await audioContext.close(); } catch {}
+        audioContext = null;
+      }
+    }
+
+    callBtn.addEventListener('click', () => {
+      if (callActive) endCall();
+      else startCall();
+    });
+  </script>
+</body>
+</html>

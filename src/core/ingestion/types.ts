@@ -141,6 +141,27 @@ export interface IngestionSourceHealth {
  * that need richer semantics (transient vs fatal) are a v2 concern; for
  * v1, "throw to fail" is the entire contract.
  */
+/**
+ * Source operating mode (v0.41 T2 — codex outside-voice challenge: bulk
+ * migration semantics differ from trickle ingestion). The daemon branches
+ * on this flag to decide whether to apply the 24h content-hash dedup window
+ * (trickle) or bypass it (migration; the source owns its own permanent
+ * slug-keyed idempotency via op_checkpoint or similar).
+ *
+ * Defaults to 'trickle' when unset — preserves v0.38-shipped source
+ * behavior unchanged. Any source declaring mode: 'migration' opts into
+ * the bulk semantics:
+ *   - Daemon bypasses DedupWindow.mark() so retries beyond 24h still ingest.
+ *   - Source MUST implement permanent idempotency (slug + content_hash
+ *     forever, NOT a windowed dedup) on its own. The greenfield importer
+ *     uses op_checkpoint keyed on the importer's fingerprint.
+ *   - Rate limit + validate + dispatch still apply uniformly.
+ *
+ * Migration-mode sources are one-shot bulk importers. Trickle-mode sources
+ * are file-watcher / inbox-folder / webhook (the v0.38 default shape).
+ */
+export type IngestionSourceMode = 'trickle' | 'migration';
+
 export interface IngestionSource {
   /** Unique source instance id. Two file-watcher sources pointing at
    *  different directories MUST have different ids. The daemon dedups
@@ -150,6 +171,12 @@ export interface IngestionSource {
   /** Source kind taxonomy. The router uses this to look up processors
    *  and the dedup window to scope content-hash keys. */
   readonly kind: string;
+  /**
+   * v0.41 T2 — operating mode discriminator. Defaults to 'trickle' when
+   * unset (preserves v0.38 shipped behavior). 'migration' bypasses the
+   * 24h dedup window; the source owns its own permanent idempotency.
+   */
+  readonly mode?: IngestionSourceMode;
   /**
    * Begin emitting events. MUST resolve when the source is ready to emit;
    * MAY throw on unrecoverable startup failure. The daemon catches throws

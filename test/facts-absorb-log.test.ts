@@ -121,3 +121,136 @@ describe('writeFactsAbsorbLog — ingest_log row shape', () => {
     expect(FACTS_ABSORB_REASONS.length).toBe(6);
   });
 });
+
+// v0.39.3.0 WARN-4 + CQ1 + CV13 — disconnected-engine suppression.
+// Pre-fix: '[facts:absorb] failed to log gateway_error for inbox/...: No
+// database connection' fired loudly after every gbrain capture. Per CQ1
+// suppress via typed access (instanceof GBrainError && .problem) NOT
+// string-match on .message. CV13 prints ONE first-occurrence stack
+// trace so the next user report can diagnose the wiring bug in v0.38.4.
+describe('writeFactsAbsorbLog — WARN-4 disconnected-engine suppression (CQ1 + CV13)', () => {
+  // Mock engine that simulates a disconnected state on logIngest. Uses
+  // the same GBrainError shape src/core/db.ts:151-158 throws.
+  function makeDisconnectedEngine(): {
+    engine: import('../src/core/engine.ts').BrainEngine;
+    callCount: () => number;
+  } {
+    let calls = 0;
+    return {
+      engine: {
+        logIngest: async () => {
+          calls++;
+          // Throw the EXACT shape src/core/db.ts:151-158 throws when
+          // `sql` is null (engine not connected yet).
+          const { GBrainError } = await import('../src/core/types.ts');
+          throw new GBrainError(
+            'No database connection',
+            'connect() has not been called',
+            'Run gbrain init --supabase or gbrain init --url <connection_string>',
+          );
+        },
+      } as unknown as import('../src/core/engine.ts').BrainEngine,
+      callCount: () => calls,
+    };
+  }
+
+  function makeGenericFailureEngine(thrown: unknown): import('../src/core/engine.ts').BrainEngine {
+    return {
+      logIngest: async () => { throw thrown; },
+    } as unknown as import('../src/core/engine.ts').BrainEngine;
+  }
+
+  test('GBrainError problem="No database connection" SUPPRESSED after first occurrence', async () => {
+    const { _resetFactsAbsorbDisconnectedFlagForTests } = await import('../src/core/facts/absorb-log.ts');
+    _resetFactsAbsorbDisconnectedFlagForTests();
+
+    const warnSpy: string[] = [];
+    const orig = console.warn;
+    console.warn = (msg: unknown) => { warnSpy.push(String(msg)); };
+
+    try {
+      const { engine: e1 } = makeDisconnectedEngine();
+      // First call → ONE warn with first-occurrence trace
+      await writeFactsAbsorbLog(e1, 'inbox/p1', 'gateway_error', 'detail-1');
+      expect(warnSpy.length).toBe(1);
+      expect(warnSpy[0]).toContain('WARN-4');
+      expect(warnSpy[0]).toContain('First-occurrence trace');
+
+      // Second call → SILENT (no additional warn)
+      const { engine: e2 } = makeDisconnectedEngine();
+      await writeFactsAbsorbLog(e2, 'inbox/p2', 'gateway_error', 'detail-2');
+      expect(warnSpy.length).toBe(1); // unchanged
+
+      // Third + fourth → still silent
+      const { engine: e3 } = makeDisconnectedEngine();
+      const { engine: e4 } = makeDisconnectedEngine();
+      await writeFactsAbsorbLog(e3, 'inbox/p3', 'parse_failure', 'detail-3');
+      await writeFactsAbsorbLog(e4, 'inbox/p4', 'embed_failure', 'detail-4');
+      expect(warnSpy.length).toBe(1);
+    } finally {
+      console.warn = orig;
+    }
+  });
+
+  test('GBrainError with DIFFERENT problem still warns loudly (not the suppressed class)', async () => {
+    const { _resetFactsAbsorbDisconnectedFlagForTests } = await import('../src/core/facts/absorb-log.ts');
+    _resetFactsAbsorbDisconnectedFlagForTests();
+
+    const warnSpy: string[] = [];
+    const orig = console.warn;
+    console.warn = (msg: unknown) => { warnSpy.push(String(msg)); };
+
+    try {
+      const { GBrainError } = await import('../src/core/types.ts');
+      const otherError = new GBrainError(
+        'Connection pool exhausted',
+        'all connections in use',
+        'Increase pool size or wait',
+      );
+      const engine = makeGenericFailureEngine(otherError);
+      await writeFactsAbsorbLog(engine, 'inbox/p', 'gateway_error', 'd');
+      // Loud warn fires (not the suppressed first-occurrence shape)
+      expect(warnSpy.length).toBe(1);
+      expect(warnSpy[0]).toContain('failed to log gateway_error');
+      expect(warnSpy[0]).not.toContain('First-occurrence');
+    } finally {
+      console.warn = orig;
+    }
+  });
+
+  test('non-GBrainError (plain Error) still warns loudly', async () => {
+    const { _resetFactsAbsorbDisconnectedFlagForTests } = await import('../src/core/facts/absorb-log.ts');
+    _resetFactsAbsorbDisconnectedFlagForTests();
+
+    const warnSpy: string[] = [];
+    const orig = console.warn;
+    console.warn = (msg: unknown) => { warnSpy.push(String(msg)); };
+
+    try {
+      const engine = makeGenericFailureEngine(new Error('something else went wrong'));
+      await writeFactsAbsorbLog(engine, 'inbox/p', 'pipeline_error', 'd');
+      expect(warnSpy.length).toBe(1);
+      expect(warnSpy[0]).toContain('something else went wrong');
+    } finally {
+      console.warn = orig;
+    }
+  });
+
+  test('engine call STILL fires for the suppressed case (writeFactsAbsorbLog tried)', async () => {
+    // The suppression is on the WARN, not on the attempt. logIngest is
+    // still called — we just don't print the failure noise.
+    const { _resetFactsAbsorbDisconnectedFlagForTests } = await import('../src/core/facts/absorb-log.ts');
+    _resetFactsAbsorbDisconnectedFlagForTests();
+
+    const orig = console.warn;
+    console.warn = () => {}; // suppress all warns for this test
+
+    try {
+      const { engine, callCount } = makeDisconnectedEngine();
+      await writeFactsAbsorbLog(engine, 'inbox/p', 'gateway_error', 'd');
+      expect(callCount()).toBe(1);
+    } finally {
+      console.warn = orig;
+    }
+  });
+});

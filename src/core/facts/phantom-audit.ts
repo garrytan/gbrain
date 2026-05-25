@@ -16,11 +16,15 @@
  *
  * Best-effort writes. Failures emit a stderr line but never throw — a
  * disk-full or audit-dir-permission issue must not stall the cycle.
+ *
+ * v0.40.4.0: internals delegate to the shared
+ * `src/core/audit/audit-writer.ts` primitive. Public API preserved
+ * (logPhantomEvent, readRecentPhantomEvents, computePhantomAuditFilename).
+ * The 6-outcome PhantomOutcome union is unchanged; the schema is what every
+ * future doctor check binds to.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { resolveAuditDir } from '../minions/handlers/shell-audit.ts';
+import { createAuditWriter, computeIsoWeekFilename } from '../audit/audit-writer.ts';
 
 export type PhantomOutcome =
   | 'redirected'
@@ -43,17 +47,15 @@ export interface PhantomAuditEvent {
 
 /** ISO-week-rotated filename: `phantoms-YYYY-Www.jsonl`. */
 export function computePhantomAuditFilename(now: Date = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7;
-  d.setUTCDate(d.getUTCDate() - dayNum + 3);
-  const isoYear = d.getUTCFullYear();
-  const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
-  const firstThursdayDayNum = (firstThursday.getUTCDay() + 6) % 7;
-  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstThursdayDayNum + 3);
-  const weekNum = Math.round((d.getTime() - firstThursday.getTime()) / (7 * 86400000)) + 1;
-  const ww = String(weekNum).padStart(2, '0');
-  return `phantoms-${isoYear}-W${ww}.jsonl`;
+  return computeIsoWeekFilename('phantoms', now);
 }
+
+const writer = createAuditWriter<PhantomAuditEvent>({
+  featureName: 'phantoms',
+  errorLabel: 'gbrain',
+  errorMessagePrefix: 'phantom audit ',
+  errorTrailer: '; cycle continues',
+});
 
 /**
  * Append a phantom-redirect event to the current week's audit JSONL.
@@ -62,8 +64,13 @@ export function computePhantomAuditFilename(now: Date = new Date()): string {
  * failure is logged to stderr; the caller's cycle continues either way.
  */
 export function logPhantomEvent(event: Omit<PhantomAuditEvent, 'ts'> & { ts?: string }): void {
-  const record: PhantomAuditEvent = {
-    ts: event.ts ?? new Date().toISOString(),
+  // Strip optional undefined fields to preserve the pre-v0.40.4 wire shape
+  // (the old impl used a spread-with-conditional to omit absent fields,
+  // not surface them as `field: undefined`). JSON.stringify already drops
+  // explicit undefined, so this matters only for in-memory shape — which
+  // doctor + tests do depend on. Pass through verbatim; downstream
+  // JSON.stringify handles the undefined-strip.
+  const cleaned: Omit<PhantomAuditEvent, 'ts'> & { ts?: string } = {
     outcome: event.outcome,
     source_id: event.source_id,
     ...(event.phantom_slug !== undefined ? { phantom_slug: event.phantom_slug } : {}),
@@ -71,16 +78,9 @@ export function logPhantomEvent(event: Omit<PhantomAuditEvent, 'ts'> & { ts?: st
     ...(event.fact_count !== undefined ? { fact_count: event.fact_count } : {}),
     ...(event.reason !== undefined ? { reason: event.reason } : {}),
     ...(event.candidates !== undefined ? { candidates: event.candidates } : {}),
+    ...(event.ts !== undefined ? { ts: event.ts } : {}),
   };
-  const dir = resolveAuditDir();
-  const file = path.join(dir, computePhantomAuditFilename());
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(file, JSON.stringify(record) + '\n', { encoding: 'utf8' });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[gbrain] phantom audit write failed (${msg}); cycle continues\n`);
-  }
+  writer.log(cleaned);
 }
 
 /**
@@ -92,31 +92,5 @@ export function logPhantomEvent(event: Omit<PhantomAuditEvent, 'ts'> & { ts?: st
  * informational and shouldn't block any consumer.
  */
 export function readRecentPhantomEvents(days = 7, now: Date = new Date()): PhantomAuditEvent[] {
-  const dir = resolveAuditDir();
-  const cutoff = now.getTime() - days * 86400000;
-  const out: PhantomAuditEvent[] = [];
-  const filenames = [
-    computePhantomAuditFilename(now),
-    computePhantomAuditFilename(new Date(now.getTime() - 7 * 86400000)),
-  ];
-  for (const filename of filenames) {
-    const file = path.join(dir, filename);
-    let content: string;
-    try {
-      content = fs.readFileSync(file, 'utf8');
-    } catch {
-      continue;
-    }
-    for (const line of content.split('\n')) {
-      if (line.length === 0) continue;
-      try {
-        const ev = JSON.parse(line) as PhantomAuditEvent;
-        const ts = Date.parse(ev.ts);
-        if (Number.isFinite(ts) && ts >= cutoff) out.push(ev);
-      } catch {
-        // Corrupt row — skip.
-      }
-    }
-  }
-  return out;
+  return writer.readRecent(days, now);
 }

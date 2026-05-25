@@ -104,12 +104,18 @@ describe('autopilot-cycle handler contract (v0.20.5)', () => {
       'utf8',
     );
 
-    // The autopilot-cycle handler MUST pass signal to runCycle
-    // This is a source-level regression guard
-    const handlerBlock = jobsSource.slice(
-      jobsSource.indexOf("worker.register('autopilot-cycle'"),
-      jobsSource.indexOf("worker.register('autopilot-cycle'") + 2000,
-    );
+    // The autopilot-cycle handler MUST pass signal to runCycle.
+    // Source-level regression guard.
+    //
+    // The slice window was bumped to 6000 in v0.39 — the v0.38 wave added
+    // source_id validation + archive recheck + pull-flag threading at the
+    // top of the handler, which pushed the runCycle({signal:...}) call past
+    // the original 2000-char ceiling. The intent of the guard is unchanged:
+    // "the autopilot-cycle handler passes job.signal to runCycle." The
+    // window just needs to be wide enough to span any reasonable handler.
+    const handlerStart = jobsSource.indexOf("worker.register('autopilot-cycle'");
+    expect(handlerStart).toBeGreaterThan(-1);
+    const handlerBlock = jobsSource.slice(handlerStart, handlerStart + 6000);
 
     expect(handlerBlock).toContain('signal: job.signal');
   });

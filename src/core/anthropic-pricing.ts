@@ -47,7 +47,16 @@ export function estimateMaxCostUsd(
   estimatedInputTokens: number,
   maxOutputTokens: number,
 ): number | null {
-  const p = ANTHROPIC_PRICING[modelId];
+  // Accept both bare (`claude-opus-4-7`) and provider-prefixed
+  // (`anthropic:claude-opus-4-7`) ids. Required since cebu-v4's
+  // model-config rewrite (commit c4f03a9d) prefixes every default — without
+  // tail fallback, every internal call would hit BUDGET_METER_NO_PRICING and
+  // silently disable the budget gate.
+  let p = ANTHROPIC_PRICING[modelId];
+  if (!p && modelId.includes(':')) {
+    const tail = modelId.split(':', 2)[1];
+    if (tail) p = ANTHROPIC_PRICING[tail];
+  }
   if (!p) return null;
   return (
     (estimatedInputTokens / 1_000_000) * p.input +

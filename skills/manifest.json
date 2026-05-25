@@ -145,6 +145,11 @@
       "description": "Unified Minions skill for deterministic shell jobs and LLM subagent orchestration. Submit, monitor, steer, pause/resume, replay. Replaces the older gbrain-jobs routing intent and sessions_spawn for durable observable background work."
     },
     {
+      "name": "schema-author",
+      "path": "schema-author/SKILL.md",
+      "description": "Evolve the active schema pack. Add page types, propose new types from a corpus scan, backfill page.type via sync. Wraps the 14 gbrain schema CLI verbs + 9 MCP ops shipped in v0.40.7.0."
+    },
+    {
       "name": "skillify",
       "path": "skillify/SKILL.md",
       "description": "Meta skill. Turn any raw feature into a properly-skilled, tested, resolvable, evaled unit. Paired with gbrain check-resolvable gives user-controllable auto-skill-creation."
@@ -223,6 +228,16 @@
       "name": "functional-area-resolver",
       "path": "functional-area-resolver/SKILL.md",
       "description": "Compress an agent's routing file (RESOLVER.md or AGENTS.md) by replacing skill-per-row tables with functional-area dispatcher entries. Two-layer dispatch keeps every sub-skill reachable at ~50% of the file size."
+    },
+    {
+      "name": "brain-taxonomist",
+      "path": "brain-taxonomist/SKILL.md",
+      "description": "Filing gate consulted before every brain page write. Reads the active schema pack via `gbrain schema show --json`; emits a recommended filing path with reasoning."
+    },
+    {
+      "name": "eiirp",
+      "path": "eiirp/SKILL.md",
+      "description": "Everything In Its Right Place — post-work organizer. 7-phase audit: inventory, taxonomy, schema check (via cathedral CLI), file, skill graph audit, verify, report."
     }
   ],
   "dependencies": {

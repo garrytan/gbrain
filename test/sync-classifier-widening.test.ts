@@ -76,6 +76,13 @@ describe('Layer 2 — isCodeFilePath widening', () => {
     expect(isCodeFilePath('Cargo.toml')).toBe(true);
   });
 
+  // v0.41 D2 wave (#1173): SQL via tree-sitter-sql.
+  test('SQL classified as code (#1173)', () => {
+    expect(isCodeFilePath('migrations/001_init.sql')).toBe(true);
+    expect(isCodeFilePath('schema.sql')).toBe(true);
+    expect(isCodeFilePath('Schema.SQL')).toBe(true); // case-insensitive
+  });
+
   test('markdown is NOT classified as code', () => {
     expect(isCodeFilePath('docs/README.md')).toBe(false);
     expect(isCodeFilePath('docs/note.mdx')).toBe(false);

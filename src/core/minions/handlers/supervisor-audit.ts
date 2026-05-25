@@ -7,7 +7,7 @@
  *   `${GBRAIN_AUDIT_DIR:-~/.gbrain/audit}/supervisor-YYYY-Www.jsonl`
  * using ISO-8601 week numbering. `computeAuditFilename(kind, now)` derives
  * the filename; the ISO-week math is shared with `shell-audit.ts` via the
- * `computeIsoWeekName()` helper that both call.
+ * `computeIsoWeekFilename()` helper that both call.
  *
  * Shape: every emission already includes `event` and `ts`; we write it
  * verbatim and let consumers (like `gbrain doctor`) grep for events of
@@ -21,11 +21,15 @@
  *
  * `GBRAIN_AUDIT_DIR` overrides the default `~/.gbrain/audit/` path for
  * container deploys where `$HOME` is read-only.
+ *
+ * v0.40.4.0: internals delegate to the shared `src/core/audit/audit-writer.ts`
+ * primitive. Public API preserved (writeSupervisorEvent, readSupervisorEvents,
+ * computeSupervisorAuditFilename) AND the cross-surface helpers (isCrashExit,
+ * summarizeCrashes, CrashSummary, CLEAN_EXIT_CAUSES) stay here — those are
+ * supervisor-domain logic, not audit-write primitives.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { resolveAuditDir } from './shell-audit.ts';
+import { createAuditWriter, computeIsoWeekFilename } from '../../audit/audit-writer.ts';
 import type { SupervisorEmission } from '../supervisor.ts';
 
 /**
@@ -36,17 +40,20 @@ import type { SupervisorEmission } from '../supervisor.ts';
  * is `supervisor-2026-W53.jsonl`.
  */
 export function computeSupervisorAuditFilename(now: Date = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7; // Mon=0, Sun=6
-  d.setUTCDate(d.getUTCDate() - dayNum + 3); // shift to Thursday (ISO week anchor)
-  const isoYear = d.getUTCFullYear();
-  const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
-  const firstThursdayDayNum = (firstThursday.getUTCDay() + 6) % 7;
-  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstThursdayDayNum + 3);
-  const weekNum = Math.round((d.getTime() - firstThursday.getTime()) / (7 * 86400000)) + 1;
-  const ww = String(weekNum).padStart(2, '0');
-  return `supervisor-${isoYear}-W${ww}.jsonl`;
+  return computeIsoWeekFilename('supervisor', now);
 }
+
+// On-disk shape: SupervisorEmission already carries `event` + `ts`, plus the
+// caller-injected `supervisor_pid`. The audit-writer's T param is
+// {ts:string,...} so we match that contract while allowing arbitrary extra
+// fields from the emission shape.
+type SupervisorRow = SupervisorEmission & { supervisor_pid: number; ts: string };
+
+const writer = createAuditWriter<SupervisorRow>({
+  featureName: 'supervisor',
+  errorLabel: 'supervisor-audit',
+  errorTrailer: '; continuing',
+});
 
 /**
  * Append a single supervisor lifecycle event to the rotated JSONL audit
@@ -55,27 +62,31 @@ export function computeSupervisorAuditFilename(now: Date = new Date()): string {
  * supervisors still produces parseable traces).
  */
 export function writeSupervisorEvent(emission: SupervisorEmission, supervisorPid: number): void {
-  const dir = resolveAuditDir();
-  const filename = computeSupervisorAuditFilename();
-  const fullPath = path.join(dir, filename);
-  const line = JSON.stringify({ ...emission, supervisor_pid: supervisorPid }) + '\n';
-
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(fullPath, line, { encoding: 'utf8' });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[supervisor-audit] write failed (${msg}); continuing\n`);
-  }
+  // SupervisorEmission's `ts` field is already set upstream. The writer
+  // honors caller-supplied ts (won't restamp). Cast through unknown
+  // because SupervisorEmission's type doesn't guarantee `ts: string` at
+  // the TS level (it's a discriminated union over event-shapes).
+  writer.log({ ...emission, supervisor_pid: supervisorPid } as unknown as SupervisorRow);
 }
 
 /**
  * Read back the latest supervisor audit file. Returns events sorted
  * oldest-first. Best-effort: missing file / parse errors return [].
  * Used by `gbrain doctor` (Lane D) to surface supervisor health.
+ *
+ * Pre-v0.40.4 this only walked the CURRENT week's file. v0.40.4 keeps
+ * that semantic (single-file read, no cross-week walk) so doctor's
+ * existing assertions don't shift. Callers wanting cross-week scope
+ * should compute the previous-week filename themselves OR use
+ * `writer.readRecent(days, now)` directly via the unexported writer.
  */
 export function readSupervisorEvents(opts: { sinceMs?: number } = {}): SupervisorEmission[] {
-  const dir = resolveAuditDir();
+  // Replicate the pre-v0.40.4 single-file behavior by reading just the
+  // current-week file directly (the shared writer.readRecent() walks two
+  // files; behavior-preserving here means staying with one).
+  const fs = require('node:fs') as typeof import('node:fs');
+  const path = require('node:path') as typeof import('node:path');
+  const dir = writer.resolveDir();
   const filename = computeSupervisorAuditFilename();
   const fullPath = path.join(dir, filename);
 

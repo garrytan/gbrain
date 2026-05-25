@@ -1,0 +1,157 @@
+# gbrain-recommended — the recommended starter pack.
+#
+# v0.39 T8 — converts the prose taxonomy in docs/GBRAIN_RECOMMENDED_SCHEMA.md
+# into a real, activatable schema pack. Users who like the documented
+# "operational brain" pattern can:
+#
+#   gbrain schema use gbrain-recommended
+#
+# and get the documented behavior in one command instead of inferring it
+# from a 1013-line essay.
+#
+# This pack extends gbrain-base (which reproduces pre-v0.38 hardcoded
+# behavior) and adds the additional types the recommended-schema doc
+# describes: deals, meetings, concepts, projects, sources, daily,
+# personal, civic, originals, places, trips, conversations.
+#
+# Inherits everything else from gbrain-base via `extends:`. Pin the
+# base version so a future gbrain-base change doesn't silently shift
+# this pack's behavior.
+
+api_version: gbrain-schema-pack-v1
+name: gbrain-recommended
+version: 1.0.0
+gbrain_min_version: 0.39.0
+extends: gbrain-base
+description: |
+  The recommended starter pack for an operational personal brain.
+  Based on docs/GBRAIN_RECOMMENDED_SCHEMA.md — Karpathy's LLM wiki
+  pattern extended into a full operational knowledge base. Use this
+  when you want the documented behavior immediately instead of
+  authoring your own pack from scratch.
+
+# Pack-specific page_types (extend gbrain-base's seed types).
+# Each maps a path prefix to a primitive + opt-in flags. Most types
+# inherit from `entity` (person-like surface) except where noted.
+page_types:
+  - name: deal
+    primitive: temporal
+    path_prefixes:
+      - deals/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  - name: meeting
+    primitive: temporal
+    path_prefixes:
+      - meetings/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: concept
+    primitive: concept
+    path_prefixes:
+      - concepts/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: project
+    primitive: entity
+    path_prefixes:
+      - projects/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  - name: source
+    primitive: media
+    path_prefixes:
+      - sources/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  - name: daily
+    primitive: temporal
+    path_prefixes:
+      - daily/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: personal
+    primitive: annotation
+    path_prefixes:
+      - personal/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: civic
+    primitive: entity
+    path_prefixes:
+      - civic/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  - name: original
+    primitive: concept
+    path_prefixes:
+      - originals/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: place
+    primitive: entity
+    path_prefixes:
+      - places/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  - name: trip
+    primitive: temporal
+    path_prefixes:
+      - trips/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  - name: conversation
+    primitive: temporal
+    path_prefixes:
+      - conversations/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: writing
+    primitive: media
+    path_prefixes:
+      - writing/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+# Inherit link_types from gbrain-base — no pack-specific verbs needed.
+link_types: []
+
+# Same takes kinds as base.
+takes_kinds:
+  - fact
+  - take
+  - bet
+  - hunch
+
+borrow_from: []
+
+# No pack-specific frontmatter_links / enrichable_types overrides. The
+# base pack's defaults work for the recommended directories.
+frontmatter_links: []
+enrichable_types: []
+filing_rules: []

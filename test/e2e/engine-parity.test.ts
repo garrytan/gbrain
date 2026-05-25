@@ -224,4 +224,90 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     const pgliteChanged = pgliteDefault.map((r: SearchResult) => r.slug).join(',') !== pgliteHigh.map((r: SearchResult) => r.slug).join(',');
     expect(pgChanged || pgliteChanged).toBe(true);
   });
+
+  // v0.39.3.0 T3 — provenance write+read parity (WARN-8 + CV5).
+  // Both engines must write the same 4 provenance columns (source_kind,
+  // source_uri, ingested_via, ingested_at) on putPage AND surface them
+  // on getPage. A drift here would mean `gbrain migrate --to supabase`
+  // silently loses half a user's provenance audit trail.
+  test('provenance columns: putPage writes + getPage returns identical shape on both engines', async () => {
+    const slug = 'wiki/provenance-parity';
+    const input = {
+      type: 'note' as const,
+      title: 'Provenance Parity Test',
+      compiled_truth: 'body',
+      timeline: '',
+      source_kind: 'capture-cli',
+      source_uri: 'file:///tmp/parity.md',
+      ingested_via: 'put_page',
+    };
+    await pgEngine.putPage(slug, input);
+    await pgliteEngine.putPage(slug, input);
+
+    const pgPage = await pgEngine.getPage(slug);
+    const pglitePage = await pgliteEngine.getPage(slug);
+
+    expect(pgPage).not.toBeNull();
+    expect(pglitePage).not.toBeNull();
+
+    // All 4 provenance fields must match across engines.
+    expect(pgPage!.source_kind).toBe('capture-cli');
+    expect(pglitePage!.source_kind).toBe('capture-cli');
+    expect(pgPage!.source_uri).toBe('file:///tmp/parity.md');
+    expect(pglitePage!.source_uri).toBe('file:///tmp/parity.md');
+    expect(pgPage!.ingested_via).toBe('put_page');
+    expect(pglitePage!.ingested_via).toBe('put_page');
+    // ingested_at is server-stamped; both engines must populate a Date
+    // (not Date drift across engines — the assertion is structural).
+    expect(pgPage!.ingested_at).toBeInstanceOf(Date);
+    expect(pglitePage!.ingested_at).toBeInstanceOf(Date);
+  });
+
+  test('provenance COALESCE-preserve UPDATE: parity on both engines (CV12)', async () => {
+    // First write with provenance.
+    const slug = 'wiki/provenance-preserve-parity';
+    await pgEngine.putPage(slug, {
+      type: 'note',
+      title: 'V1',
+      compiled_truth: 'body v1',
+      timeline: '',
+      source_kind: 'capture-cli',
+      ingested_via: 'put_page',
+    });
+    await pgliteEngine.putPage(slug, {
+      type: 'note',
+      title: 'V1',
+      compiled_truth: 'body v1',
+      timeline: '',
+      source_kind: 'capture-cli',
+      ingested_via: 'put_page',
+    });
+
+    // Second write WITHOUT provenance — both engines must preserve
+    // the first-write audit trail via COALESCE-preserve UPDATE.
+    await pgEngine.putPage(slug, {
+      type: 'note',
+      title: 'V2',
+      compiled_truth: 'body v2',
+      timeline: '',
+    });
+    await pgliteEngine.putPage(slug, {
+      type: 'note',
+      title: 'V2',
+      compiled_truth: 'body v2',
+      timeline: '',
+    });
+
+    const pgPage = await pgEngine.getPage(slug);
+    const pglitePage = await pgliteEngine.getPage(slug);
+
+    // Provenance preserved on BOTH engines (CV12 first-write-wins).
+    expect(pgPage!.source_kind).toBe('capture-cli');
+    expect(pglitePage!.source_kind).toBe('capture-cli');
+    expect(pgPage!.ingested_via).toBe('put_page');
+    expect(pglitePage!.ingested_via).toBe('put_page');
+    // Page title updated (proves the UPDATE actually fired).
+    expect(pgPage!.title).toBe('V2');
+    expect(pglitePage!.title).toBe('V2');
+  });
 });

@@ -36,7 +36,11 @@
  * stay valid forever because no row_num ever shifts.
  */
 
-export type TakeKind = 'fact' | 'take' | 'bet' | 'hunch';
+// v0.38: TakeKind opens from closed 4-element union to string (T3 + T10).
+// See `src/core/engine.ts` TakeKind for full rationale. Runtime validation
+// moves to active schema pack's annotation primitive declarations; the
+// pre-v0.38 {fact|take|bet|hunch} seed lives in `gbrain-base.yaml`.
+export type TakeKind = string;
 
 export type TakeQuality = 'correct' | 'incorrect' | 'partial' | 'unresolvable';
 
@@ -353,7 +357,7 @@ export function parseTakesFence(body: string): ParseResult {
     takes.push({
       rowNum,
       claim: claimText,
-      kind: kind as TakeKind,
+      kind: kind as string,
       holder: holderRaw.trim(),
       weight,
       sinceDate: since,

@@ -66,6 +66,12 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  // 200ms grace period for the previous test's chokidar watchers to fully
+  // release OS-level FSEvents handles on macOS. Without this, the second
+  // test's watcher events queue behind the first test's pending cleanup
+  // and the waitFor(15s) for the first file drop times out. See
+  // ingestion-roundtrip cross-test contamination notes.
+  await new Promise((r) => setTimeout(r, 200));
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-e2e-roundtrip-'));
   inboxDir = path.join(tmpRoot, 'inbox');
   brainDir = path.join(tmpRoot, 'brain');
@@ -117,6 +123,12 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
       },
     });
 
+    // Create the inbox dir BEFORE starting the watcher to eliminate a race
+    // where chokidar hasn't attached yet when the first write fires (the
+    // 6s→15s waitFor flake on the source.) Without this, the test relies on
+    // chokidar's polling fallback to notice the dir, which is timing-dependent.
+    fs.mkdirSync(inboxDir, { recursive: true });
+
     const source = createInboxFolderSource({
       inboxDir,
       debounceMs: 50,
@@ -126,12 +138,11 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
     await daemon.start();
 
     // Drop a file into the inbox.
-    fs.mkdirSync(inboxDir, { recursive: true });
     const captured = path.join(inboxDir, 'roundtrip.md');
     fs.writeFileSync(captured, '---\ntitle: Roundtrip\n---\n\nfull e2e flow');
 
     // Wait for the daemon to pick it up + dispatch + handler to write.
-    await waitFor(() => dispatchedEvents.length === 1, 6000);
+    await waitFor(() => dispatchedEvents.length === 1, 15000);
 
     // Page is in the DB.
     const page = await engine.getPage(dispatchedEvents[0]!.metadata!.slug as string ??
@@ -168,6 +179,9 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
       },
     });
 
+    // mkdirSync BEFORE daemon.start to eliminate chokidar attach race.
+    fs.mkdirSync(inboxDir, { recursive: true });
+
     const source = createInboxFolderSource({
       inboxDir,
       debounceMs: 50,
@@ -176,12 +190,10 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
     daemon.register({ source });
     await daemon.start();
 
-    fs.mkdirSync(inboxDir, { recursive: true });
-
     // Drop file 1
     const drop1 = path.join(inboxDir, 'dup-1.md');
     fs.writeFileSync(drop1, '# duplicate content\n\nidentical body');
-    await waitFor(() => dispatchedEvents.length === 1, 6000);
+    await waitFor(() => dispatchedEvents.length === 1, 15000);
 
     // Drop file 2 with byte-identical content (different filename).
     const drop2 = path.join(inboxDir, 'dup-2.md');
@@ -217,9 +229,13 @@ describe('ingestion roundtrip — multi-source coordination', () => {
       },
     });
 
-    // Two distinct inbox dirs, two sources.
+    // Two distinct inbox dirs, two sources. Create the dirs BEFORE
+    // daemon.start to eliminate the chokidar attach race (same fix as
+    // the single-source tests above).
     const inboxA = path.join(tmpRoot, 'inbox-a');
     const inboxB = path.join(tmpRoot, 'inbox-b');
+    fs.mkdirSync(inboxA, { recursive: true });
+    fs.mkdirSync(inboxB, { recursive: true });
     const sourceA = createInboxFolderSource({
       id: 'inbox-a',
       inboxDir: inboxA,
@@ -239,7 +255,7 @@ describe('ingestion roundtrip — multi-source coordination', () => {
     fs.writeFileSync(path.join(inboxA, 'from-a.md'), 'content from A');
     fs.writeFileSync(path.join(inboxB, 'from-b.md'), 'content from B');
 
-    await waitFor(() => dispatchedEvents.length === 2, 6000);
+    await waitFor(() => dispatchedEvents.length === 2, 15000);
 
     const fromA = dispatchedEvents.find((e) => e.source_id === 'inbox-a');
     const fromB = dispatchedEvents.find((e) => e.source_id === 'inbox-b');

@@ -8,6 +8,112 @@ For the **NDJSON wire format** consumed by gbrain-evals, see
 [`eval-capture.md`](./eval-capture.md). This doc is the human dev loop
 that lives on top of that format.
 
+## v0.41 update — the LOOP is now real
+
+Before v0.41, you could capture eval rows and replay them but nothing
+stitched them into a gate. `gbrain bench publish` + `gbrain eval gate`
+close the loop. Two gates:
+
+- **Regression gate** (`--baseline X.baseline.ndjson`): replays a baseline
+  you captured against your current brain. Catches: "did my refactor break
+  search?" Compares jaccard / top-1 stability / latency multiplier.
+- **Correctness gate** (`--qrels Y.qrels.json`): runs known-right queries
+  against your current brain via bare `hybridSearch`. Catches: "is my
+  retrieval actually any good?" Computes recall@K, first-relevant-hit-rate,
+  expected_top1-hit-rate.
+
+Both can be passed together; both must pass for verdict `pass`. At least
+one is required.
+
+### The full LOOP for your own brain
+
+```bash
+# 1. Capture (one-time; uses queries already in eval_candidates)
+gbrain eval export --limit 200 --tool query > /tmp/captured.ndjson
+
+# 2. Publish a baseline
+mkdir -p ~/.gbrain/baselines
+gbrain bench publish --from /tmp/captured.ndjson --to ~/.gbrain/baselines/personal.baseline.ndjson --label "personal-$(date +%Y%m%d)"
+
+# 3. Gate against it
+gbrain eval gate --baseline ~/.gbrain/baselines/personal.baseline.ndjson
+```
+
+### Privacy posture (D9)
+
+**Public baselines in `gbrain-evals` are hermetic-synthetic ONLY.** Real
+user captures stay local in `~/.gbrain/baselines/`. The boundary is
+enforced at the file source, not by post-hoc scrubbing. If you publish a
+baseline to `gbrain-evals`, generate it from a fixture-seeded test brain
+(placeholder names like `alice-example`, `widget-co-example`) — never
+from a real user's `eval_candidates` table.
+
+### Deterministic-pipeline disclosure
+
+`gbrain eval gate --qrels` uses bare `hybridSearch` (not the production
+`query` op handler). This is deliberate: gates need to be deterministic in
+CI. Production retrieval differs via the query cache, salience freshness,
+expansion, etc. The gate measures retrieval quality with a fixed pipeline;
+your users may see different results when the cache is warm.
+
+### `.qrels.json` shape
+
+Two equivalent representations per entry:
+
+```json
+{
+  "schema_version": 1,
+  "queries": [
+    {
+      "query_id": "q1",
+      "query": "fintech founder",
+      "relevant_slugs": ["people/alice-example"],
+      "first_relevant_slug": "people/alice-example"
+    }
+  ]
+}
+```
+
+For federated / multi-source brains, use the explicit shape (no defaults
+to `source_id='default'`):
+
+```json
+{
+  "query_id": "q2",
+  "query": "anything",
+  "relevant": [
+    {"source_id": "host", "slug": "people/alice"},
+    {"source_id": "team-a", "slug": "people/alice"}
+  ],
+  "expected_top1": {"source_id": "host", "slug": "people/alice"}
+}
+```
+
+Without `source_id`, a hit from the wrong source could false-pass the
+gate. The compare everywhere is `${source_id}::${slug}` strings.
+
+### Example GitHub Actions workflow
+
+```yaml
+name: gbrain-eval-gate
+on: [pull_request]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: |
+          # Run both gates; CI fails on any breach.
+          gbrain eval gate \
+            --baseline gbrain-evals/baselines/v0.41-launch.baseline.ndjson \
+            --qrels gbrain-evals/qrels/v0.41-launch.qrels.json \
+            --json | tee /tmp/gate.json
+```
+
+---
+
 ## Prerequisite: turn on contributor mode
 
 Capture is **off by default** for production users (privacy-positive — no
@@ -328,3 +434,165 @@ commands per high-severity finding.
 - `docs/contradictions.md` — architecture, severity rubric, action criteria.
 - CHANGELOG `## [0.32.6]` — full release notes including the bigger-swing
   decision criteria gated on Wilson CI lower-bound.
+
+## v0.40.1.0 Track D — Eval infrastructure
+
+Three eval surfaces grew non-trivial capabilities in v0.40.1.0. This section
+covers the dev loop that uses them and the gates they enforce.
+
+### `gbrain eval longmemeval --by-type` — per-question-type R@k breakdown
+
+LongMemEval has always computed per-question-type recall internally; v0.40.1.0
+surfaces it in machine-readable form. Two additive changes:
+
+1. Every per-question JSONL row now includes a `question: string` field so the
+   `gbrain eval cross-modal --batch` consumer (below) can read it without
+   joining back against the source dataset.
+2. New `--by-type` flag emits a final aggregate line keyed by `question_type`:
+
+```json
+{"schema_version": 1, "kind": "by_type_summary",
+ "recall_by_type": {"single-session-user": {"hit": 18, "total": 19, "rate": 0.947}},
+ "aggregate": {"hit": 110, "total": 120, "rate": 0.917}}
+```
+
+**Resume-safe.** When `--resume-from` is the same path as `--output`, the
+summary is rebuilt from the file (each per-row includes `question_type` and
+`recall_hit`) so the final aggregate covers all resumed questions, not just
+this run's slice. The prior summary at the file tail is replaced, not
+appended — a brain that resumes 5 times across a 500-question run ends with
+exactly ONE summary at the tail.
+
+**Optional gate.** `--by-type-floor 0.85` exits non-zero when any
+`question_type`'s rate falls below 0.85. Default: informational only.
+
+```bash
+# Diagnose per-type ranking quality after a search-touching change.
+gbrain eval longmemeval ~/datasets/longmemeval_s.jsonl \
+  --by-type --output /tmp/run.jsonl
+tail -1 /tmp/run.jsonl | jq .   # summary line
+
+# Strict gate in a CI script.
+gbrain eval longmemeval test/fixtures/longmemeval-mini.jsonl \
+  --by-type --by-type-floor 0.80 --output /tmp/run.jsonl
+echo "exit=$?"  # 1 if any type fell below 0.80
+```
+
+### Hermetic retrieval gate — `test/eval-replay-gate.test.ts`
+
+The v0.40.1.0 Track D structural fix for "PRs touching `src/core/search/`
+silently regress retrieval." Replaces the original "replay against captured
+eval_candidates" design (which Codex caught as non-functional in CI — see
+the `v0.41+: contributor-mode CI capture` TODO in `TODOS.md` for the deferred
+real-query version).
+
+How it works:
+- Hand-curated qrels fixture at `test/fixtures/eval-baselines/qrels-search.json`
+  with PLACEHOLDER names only (no real people / companies per CLAUDE.md privacy
+  rule).
+- The test seeds a PGLite engine with synthetic pages whose embeddings are
+  basis vectors (the same `basisEmbedding(idx)` pattern as
+  `test/e2e/search-quality.test.ts`). No API keys, no DATABASE_URL.
+- For each qrels query, calls `engine.searchVector(basisEmbedding(dim))` and
+  computes `top1_match_rate` and `recall@10`. Asserts both meet floors
+  (`>= 0.80` and `>= 0.85` by default).
+- Lives in the unit-shard test matrix (`.github/workflows/test.yml`) so it
+  runs on every PR via `bun test`, NOT in the E2E fixed-file workflow.
+
+#### Refreshing the qrels fixture (the `Why:` discipline, D4)
+
+When CI fails because a legitimate ranking change moved expected slugs, the
+fix is to edit `qrels-search.json` directly. **Always include a `Why:` line
+in the commit body** so future maintainers can read the audit trail. Without
+the `Why:`, the gate degrades to a rubber stamp within months. The convention
+is informational (not a commit-hook block), but enforce it in PR review.
+
+Example commit body:
+
+```
+chore(eval): refresh qrels for new source-boost ordering
+
+Why: v0.40.x source-boost now weights originals/ over concepts/, so
+q12 (founder-mode) now correctly surfaces originals/founder-mode-example
+top-1. Manual verification: ran the production query; new ranking is
+clearly better-aligned with the query intent.
+```
+
+#### Env-overrides for floors
+
+```bash
+GBRAIN_REPLAY_GATE_TOP1_FLOOR=0.85 \
+GBRAIN_REPLAY_GATE_RECALL_FLOOR=0.90 \
+  bun test test/eval-replay-gate.test.ts
+```
+
+Use to tighten or loosen the gate as the qrels fixture matures.
+
+### `gbrain eval cross-modal --batch` — batch quality scoring
+
+Single-task cross-modal eval scores one (task, output) pair. Batch mode runs
+the same scoring over an entire LongMemEval JSONL output, with cost guardrails.
+
+```bash
+# Step 1: produce LongMemEval hypotheses (real cost: depends on model + N).
+gbrain eval longmemeval ~/datasets/longmemeval_s.jsonl \
+  --limit 10 --output /tmp/run.jsonl
+
+# Step 2: batch-score those hypotheses (real cost: ~$0.70 for 10 questions,
+# 1 cycle, 3 model slots at default --max-usd 5 budget cap).
+gbrain eval cross-modal --batch /tmp/run.jsonl \
+  --limit 10 --cycles 1 --concurrent 3 --max-usd 5 --json
+echo "exit=$?"  # 0=all-pass, 1=any-fail, 2=any-error-or-inconclusive
+```
+
+**Key behaviors:**
+- Default `--cycles 1` in batch mode (single-task default is 3 in TTY) to bound
+  cost. Pass `--cycles 3` to match single-task strictness.
+- `--concurrent 3` runs up to 3 questions in parallel x 3 model slots each =
+  9 simultaneous API calls. Below tier-1 rate limits for all three providers.
+- `--max-usd FLOAT` refuses to start if the pre-flight cost estimate exceeds
+  the cap, unless `--yes` bypasses (required for non-interactive cron / CI).
+- Filters `kind: "by_type_summary"` rows automatically (the LongMemEval
+  `--by-type` summary line is metadata, not a question).
+- `--batch` is mutually exclusive with `--task`; fail-fast usage error if both
+  are set.
+- Exit precedence (fail-loud): ERROR > FAIL > INCONCLUSIVE > PASS.
+- Per-question receipts land in a tempdir and are deleted at end of batch; the
+  summary inlines per-question verdicts so the audit trail is self-contained.
+
+### Nightly cross-modal quality probe (opt-in, autopilot)
+
+`src/core/cycle/nightly-quality-probe.ts` ships a phase that runs the longmemeval
++ cross-modal pipeline once per 24h. **Disabled by default** to avoid surprise
+API spend. Enable per-host:
+
+```bash
+gbrain config set autopilot.nightly_quality_probe.enabled true
+gbrain config set autopilot.nightly_quality_probe.max_usd 5.00   # optional override
+```
+
+Note: `--phase nightly_quality_probe` wiring into the autopilot scheduler is
+deferred to a v0.41+ follow-up (see TODOS.md). For now the phase is callable
+in isolation; the test harness exercises it via DI stubs.
+
+```bash
+# Manual smoke (exercises the path via DI stubs, no real API spend).
+bun test test/nightly-quality-probe.test.ts
+```
+
+Observability:
+- `~/.gbrain/audit/quality-probe-YYYY-Www.jsonl` — one event per run with
+  outcome (pass / fail / inconclusive / error / budget_exceeded /
+  rate_limited / no_embedding_key), pass/fail/inconclusive/error counts,
+  est_cost_usd, fixture_sha8. ISO-week rotation (mirrors slug-fallback
+  audit).
+- `gbrain doctor` surfaces `nightly_quality_probe_health`:
+  - SKIPPED (disabled) — with paste-ready enable command.
+  - OK (enabled, no events yet) — autopilot hasn't fired its first run.
+  - OK (last 7d all PASS) — with timestamp of latest run.
+  - WARN — any FAIL / ERROR / BUDGET_EXCEEDED in the window, with outcome
+    counts and the latest run's reason.
+
+Real expected cost: ~$0.35 per nightly run (5 questions x 3 slots x 1 cycle
+x ~$0.02/call) ≈ $10.50/month. Worst-case under the default budget cap:
+$150/month. Opt-in default prevents discovering this in your card statement.

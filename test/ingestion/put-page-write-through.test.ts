@@ -15,6 +15,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { operations } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
+import { resetGateway } from '../../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 let tmpRoot: string;
@@ -28,10 +29,23 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  // Don't leak the reset-state to sibling files in the same bun shard
+  // (the v0.40.4.1 gateway state-leak class). beforeEach already reset
+  // for our own tests; this is defense for the next file's siblings.
+  resetGateway();
 });
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  // CI fix: put_page's handler at src/core/operations.ts:622 computes
+  // `noEmbed = !isAvailable('embedding')`. When the gateway has been
+  // configured by a sibling test (or by the cli.ts module-load path
+  // reading .env.testing) with a fake/stale ZEROENTROPY_API_KEY,
+  // isAvailable returns true → put_page tries to embed → the real
+  // ZeroEntropy API returns 401 in CI. This test exercises write-through
+  // behavior, not embedding. Reset the gateway so isAvailable returns
+  // false → noEmbed=true → no network call.
+  resetGateway();
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-wt-'));
   brainDir = path.join(tmpRoot, 'brain');
   fs.mkdirSync(brainDir, { recursive: true });

@@ -16,12 +16,18 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
+import { SOURCE_ID_RE, isValidSourceId } from './source-id.ts';
 
 const DOTFILE = '.gbrain-source';
-// Must start + end with alnum, interior dashes allowed. Max 32 chars.
-// Single-char alnum is also valid. Kebab-case enforced so citation keys
-// like `[wiki:slug]` can't have ugly edges like `[wiki-:slug]`.
-const SOURCE_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+// Canonical SOURCE_ID_RE imported from `source-id.ts` (single source of truth).
+// Re-exported below as `__testing.SOURCE_ID_RE` for legacy test imports.
+// Two validator shapes per codex r2 P1-F:
+//   - `isValidSourceId(s)`: boolean — used by tiers that silently fall through
+//     on invalid input (dotfile tier 3, brain_default tier 5)
+//   - explicit throw — used by tiers that must reject loudly with a tailored
+//     message (explicit `--source` flag tier 1, GBRAIN_SOURCE env tier 2).
+//     Tier-specific messages are clearer than the generic assertValidSourceId
+//     error, so the throws stay inline.
 
 function readDotfileWalk(startDir: string): string | null {
   let dir = resolve(startDir);
@@ -31,7 +37,12 @@ function readDotfileWalk(startDir: string): string | null {
     if (existsSync(candidate)) {
       try {
         const content = readFileSync(candidate, 'utf8').trim().split('\n')[0].trim();
-        if (SOURCE_ID_RE.test(content)) return content;
+        // Silent-fallback tier per codex P1-F: invalid dotfile content
+        // (legacy ids with underscores, hand-edits with whitespace, etc.)
+        // falls through to the next tier instead of throwing. The CLI's
+        // explicit/env tiers throw; dotfiles are operator-edited and the
+        // forgiving behavior preserves the resolver's existing semantics.
+        if (isValidSourceId(content)) return content;
       } catch {
         // Unreadable dotfile — skip and keep walking.
       }
@@ -107,8 +118,11 @@ export async function resolveSourceId(
   if (best) return best.id;
 
   // 5. Brain-level default.
+  // Silent-fallback tier per codex P1-F: an invalid `sources.default` config
+  // value (operator hand-edit gone wrong, legacy underscore id) falls through
+  // to tier 6 rather than throwing. Resolver stays robust to bad config.
   const globalDefault = await engine.getConfig('sources.default');
-  if (globalDefault && SOURCE_ID_RE.test(globalDefault)) {
+  if (globalDefault && isValidSourceId(globalDefault)) {
     await assertSourceExists(engine, globalDefault);
     return globalDefault;
   }
@@ -243,9 +257,9 @@ export async function resolveSourceWithTier(
   }
   if (best) return { source_id: best.id, tier: 'local_path', detail: best.path };
 
-  // 5. Brain-level default.
+  // 5. Brain-level default. Silent-fallback (P1-F) like tier 5 in resolveSourceId.
   const globalDefault = await engine.getConfig('sources.default');
-  if (globalDefault && SOURCE_ID_RE.test(globalDefault)) {
+  if (globalDefault && isValidSourceId(globalDefault)) {
     await assertSourceExists(engine, globalDefault);
     return { source_id: globalDefault, tier: 'brain_default', detail: 'sources.default config' };
   }

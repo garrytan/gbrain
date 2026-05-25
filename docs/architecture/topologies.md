@@ -398,3 +398,6 @@ simultaneously — that's by design.
   vs sources axes).
 - `docs/mcp/CLAUDE_DESKTOP.md` and siblings — per-client MCP setup.
 - `gbrain init --help` and `gbrain auth --help` for command-level details.
+- [`docs/tutorials/`](../tutorials/) — end-to-end walkthroughs that combine
+  these topologies into working setups (company brain, personal brain,
+  agent integration, etc.).

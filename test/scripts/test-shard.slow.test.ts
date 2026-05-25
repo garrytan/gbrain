@@ -40,7 +40,12 @@ function dryRunList(shard: number, total: number): string[] {
 describe('test-shard.sh exclusion symmetry', () => {
   beforeAll(() => {
     for (const shard of [1, 2, 3, 4]) dryRunList(shard, 4);
-  }, 60_000);
+    // v0.40.10 flake-hardening: bump beforeAll budget 60s → 180s. Each
+    // FNV-1a dry-run shells out and computes a hash for every test file
+    // (~4s solo). Under slow-shard concurrency (longmemeval E2E at ~50s
+    // hogging CPU), the 4 sequential shell-outs slip past 60s and time
+    // out even though they'd complete fine solo.
+  }, 180_000);
   it('includes plain *.test.ts files in at least one shard', () => {
     const allFiles = [1, 2, 3, 4].flatMap(s => dryRunList(s, 4));
     expect(allFiles.length).toBeGreaterThan(0);

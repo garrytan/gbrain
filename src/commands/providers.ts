@@ -60,8 +60,16 @@ export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): 
  */
 export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = process.env): string {
   const rows: string[] = [];
-  rows.push('PROVIDER'.padEnd(14) + 'TIER'.padEnd(18) + 'EMBED'.padEnd(8) + 'EXPAND'.padEnd(8) + 'CHAT'.padEnd(8) + 'STATUS');
-  rows.push('-'.repeat(78));
+  // Dynamic column width: longest recipe id + 1 space, floor at 14 (the
+  // historical default). v0.40.6.1 introduced `llama-server-reranker` (21 chars)
+  // which overflowed the static 14-char column and made the row start with the
+  // tier name (no space delimiter), breaking `each recipe appears at most once`
+  // in test/providers.test.ts. Auto-widening keeps the contract — every row's
+  // id is followed by at least one space — without per-recipe column tuning.
+  const idCol = Math.max(14, ...recipes.map(r => r.id.length + 1));
+  const totalWidth = idCol + 18 + 8 + 8 + 8 + 16; // tier+embed+expand+chat+status
+  rows.push('PROVIDER'.padEnd(idCol) + 'TIER'.padEnd(18) + 'EMBED'.padEnd(8) + 'EXPAND'.padEnd(8) + 'CHAT'.padEnd(8) + 'STATUS');
+  rows.push('-'.repeat(totalWidth));
   for (const r of recipes) {
     const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
     const hasExpand = !!r.touchpoints.expansion;
@@ -69,7 +77,7 @@ export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = pr
     const ready = envReady(r, env);
     const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
     rows.push(
-      r.id.padEnd(14) +
+      r.id.padEnd(idCol) +
       r.tier.padEnd(18) +
       (hasEmbed ? 'yes' : '—').padEnd(8) +
       (hasExpand ? 'yes' : '—').padEnd(8) +

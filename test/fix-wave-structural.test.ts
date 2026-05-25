@@ -66,11 +66,32 @@ describe('v0.36.1.x #1090 — admin embed two-tier resolution', () => {
 describe('v0.36.1.x #1077 — admin register-client supports PKCE public clients', () => {
   test('admin endpoint reads grantTypes / redirectUris / tokenEndpointAuthMethod from request body', () => {
     const src = readFileSync('src/commands/serve-http.ts', 'utf8');
-    // Single destructure line includes all three fields
-    expect(src).toMatch(/const\s+\{\s*name,\s*scopes,\s*tokenTtl,\s*grantTypes,\s*redirectUris,\s*tokenEndpointAuthMethod\s*\}\s*=\s*req\.body/);
-    // PKCE branch NULLs client_secret_hash + sets auth method to 'none'
-    expect(src).toMatch(/tokenEndpointAuthMethod\s*===\s*'none'/);
-    expect(src).toMatch(/client_secret_hash\s*=\s*NULL,\s*token_endpoint_auth_method\s*=\s*'none'/);
+    // The destructure must surface name / tokenTtl / grantTypes /
+    // redirectUris / tokenEndpointAuthMethod from req.body. v0.39.3.0
+    // WARN-9 (PR #1308) moved `scopes` to a separate read line that
+    // accepts BOTH `scopes` (admin SPA) AND `scope` (OAuth wire singular)
+    // via `?? `, so this regex no longer requires `scopes` in the inline
+    // destructure — it's separately covered by the scope-source check
+    // below.
+    expect(src).toMatch(/const\s+\{\s*name,\s*(?:[^}]*?,\s*)?tokenTtl,\s*grantTypes,\s*redirectUris,\s*tokenEndpointAuthMethod\s*\}\s*=\s*req\.body/);
+    // v0.39.3.0 WARN-9: the route must still read a `scope`/`scopes` field
+    // (under either name) from req.body. Pin the fallback pattern so the
+    // PKCE-fix regression contract stays load-bearing.
+    expect(src).toMatch(/req\.body[^;]*scopes\s*\?\?\s*[^;]*scope\b/);
+    // v0.41.3 (T4 atomicity fix, codex F4): admin endpoint now validates
+    // tokenEndpointAuthMethod via the shared validator and passes it to
+    // registerClientManual as a positional arg. Pre-v0.41.3 the route did
+    // INSERT (confidential) → UPDATE (NULL out secret_hash) for the 'none'
+    // case, which left a confidential row stranded if the UPDATE failed.
+    // Atomic now: one INSERT writes the correct shape; no post-insert
+    // UPDATE block (the regex deliberately asserts the post-insert UPDATE
+    // is GONE).
+    expect(src).toMatch(/validateTokenEndpointAuthMethod\(tokenEndpointAuthMethod\)/);
+    expect(src).toMatch(/registerClientManual\([^)]*validatedAuthMethod[^)]*\)/);
+    // Regression guard: post-insert UPDATE flipping client_secret_hash to
+    // NULL based on a runtime check is exactly the non-atomic pattern T4
+    // killed. Re-introducing it brings back codex F4.
+    expect(src).not.toMatch(/UPDATE oauth_clients SET client_secret_hash = NULL, token_endpoint_auth_method = 'none'/);
   });
 });
 

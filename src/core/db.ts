@@ -188,6 +188,11 @@ export async function connect(config: EngineConfig): Promise<void> {
         // Register pgvector type
         bigint: postgres.BigInt,
       },
+      // Silence postgres NOTICE-level messages by default ("relation already
+      // exists, skipping" floods stdout under idempotent CREATE statements
+      // during migrations + initSchema, and breaks stdout-parsing callers like
+      // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
+      onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
     };
     if (Object.keys(timeouts).length > 0) {
       opts.connection = timeouts;

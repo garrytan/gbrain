@@ -18,6 +18,7 @@ import { MinionQueue } from '../src/core/minions/queue.ts';
 import {
   makeSubagentHandler,
   RateLeaseUnavailableError,
+  stripProviderPrefix,
   type MessagesClient,
 } from '../src/core/minions/handlers/subagent.ts';
 import type { ToolDef, MinionJobContext } from '../src/core/minions/types.ts';
@@ -466,6 +467,48 @@ describe('subagent handler lease behavior', () => {
       `SELECT count(*)::text AS c FROM subagent_rate_leases`,
     );
     expect(parseInt(rows[0]!.c, 10)).toBe(0);
+  });
+
+  test('v0.41 Bug 3: stripProviderPrefix strips `anthropic:` qualified model', async () => {
+    expect(stripProviderPrefix('anthropic:claude-sonnet-4-6')).toBe('claude-sonnet-4-6');
+  });
+
+  test('v0.41 Bug 3: stripProviderPrefix is idempotent on bare names', async () => {
+    expect(stripProviderPrefix('claude-sonnet-4-6')).toBe('claude-sonnet-4-6');
+  });
+
+  test('v0.41 Bug 3: stripProviderPrefix handles edge inputs', async () => {
+    expect(stripProviderPrefix('')).toBe('');
+    // Leading colon = no valid provider name; pass through unchanged.
+    // The `idx > 0` guard (not `>= 0`) makes this intentional.
+    expect(stripProviderPrefix(':')).toBe(':');
+    expect(stripProviderPrefix('a:b:c')).toBe('b:c'); // only strips first prefix
+  });
+
+  test('v0.41 Bug 3: handler passes bare model id to Anthropic SDK when data.model is qualified', async () => {
+    const calls: Array<Anthropic.MessageCreateParamsNonStreaming> = [];
+    const client: MessagesClient = {
+      async create(params) {
+        calls.push(params);
+        return {
+          content: [{ type: 'text', text: 'ok' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 1, output_tokens: 1 },
+          role: 'assistant',
+        } as unknown as Anthropic.Message;
+      },
+    };
+    const handler = makeSubagentHandler({
+      engine, client, toolRegistry: [], maxConcurrent: 100, rateLeaseKey: 'k_prefix',
+    });
+    const ctx = await makeCtx({
+      prompt: 'hello',
+      model: 'anthropic:claude-sonnet-4-6', // qualified — the field-report bug case
+    });
+    await handler(ctx);
+    expect(calls.length).toBe(1);
+    // The SDK MUST receive the bare model id, not the prefixed one.
+    expect(calls[0]!.model).toBe('claude-sonnet-4-6');
   });
 
   test('throws RateLeaseUnavailableError when cap full', async () => {

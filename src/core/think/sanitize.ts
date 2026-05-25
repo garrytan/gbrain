@@ -32,6 +32,18 @@ export const INJECTION_PATTERNS: Array<{ name: string; rx: RegExp; replacement: 
   { name: 'close-take',       rx: /<\s*\/\s*take\s*>/gi, replacement: '&lt;/take&gt;' },
   { name: 'open-system',      rx: /<\s*system\s*>/gi, replacement: '&lt;system&gt;' },
   { name: 'open-instructions', rx: /<\s*instructions?\s*>/gi, replacement: '&lt;instructions&gt;' },
+  // v0.40.2.0 — close + open coverage for the new <trajectory> wrapper used
+  // by formatTrajectoryBlock. Extracted fact text can be attacker-controlled
+  // (e.g. an LLM-extracted claim from a session containing `</trajectory>` to
+  // break out of the data envelope and inject instructions). Per Codex
+  // Problem 10 the prior pattern set only covered <take>/<system>/<instructions>;
+  // this extension closes the new XML surface.
+  { name: 'close-trajectory', rx: /<\s*\/\s*trajectory\s*>/gi, replacement: '&lt;/trajectory&gt;' },
+  { name: 'open-trajectory',  rx: /<\s*trajectory\b[^>]*>/gi, replacement: '&lt;trajectory&gt;' },
+  // Generic XML attribute-injection inside take/trajectory blocks: an extracted
+  // value containing `entity="evil"` would otherwise inject a new attribute
+  // on the wrapping tag if a naive renderer concatenated raw text.
+  { name: 'xml-attr-inject',  rx: /\s+(entity|metric|event_type|kind)\s*=\s*"[^"]*"/gi, replacement: ' [redacted-attr]' },
   // Output exfiltration
   { name: 'print-system',     rx: /(?:print|output|reveal|show)\s+(?:your\s+)?(?:system\s+prompt|instructions?|hidden)/gi, replacement: '[redacted]' },
   { name: 'verbatim',         rx: /(?:repeat|echo)\s+(?:back|verbatim)/gi, replacement: '[redacted]' },

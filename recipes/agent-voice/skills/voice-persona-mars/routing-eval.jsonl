@@ -1,0 +1,10 @@
+{"intent": "talk to mars about how I'm feeling", "expected_skill": "voice-persona-mars"}
+{"intent": "mars, what's on my mind", "expected_skill": "voice-persona-mars"}
+{"intent": "demo mode mars", "expected_skill": "voice-persona-mars"}
+{"intent": "hey mars, meet my friend", "expected_skill": "voice-persona-mars"}
+{"intent": "I want to talk to my thought partner", "expected_skill": "voice-persona-mars"}
+{"intent": "let's get introspective", "expected_skill": "voice-persona-mars"}
+{"intent": "what am I really thinking about this", "expected_skill": "voice-persona-mars"}
+{"intent": "venus, what's on my calendar", "expected_skill": "voice-persona-venus", "ambiguous_with": "voice-persona-mars"}
+{"intent": "ingest this voice memo", "expected_skill": "voice-note-ingest", "ambiguous_with": "voice-persona-mars"}
+{"intent": "ask the brain about quantum mechanics", "expected_skill": "brain-ops", "ambiguous_with": "voice-persona-mars"}

@@ -1,0 +1,151 @@
+# gbrain-investor — investor/YC lens pack
+#
+# v0.41 lens packs wave. Declares the investor work surface that the user
+# (YC president) already runs every day across the your OpenClaw agent + brain:
+#   - 501 investor profiles at brain/investors/
+#   - 19 deal memos at brain/investing/deals/
+#   - 5.3K companies + 24.6K people + 7.1K YC pages
+#   - 8 investor skills (yc-radar, yc-portfolio-health, sequoia-batch-bangers,
+#     investor-diligence, batch-picks-for-investor, etc.)
+#   - Fences already in use: ## Recommendation, ## Pre-mortem, ## Defensibility
+#     (6-8 moats), ## Founders, ## Product, ## Market / Customers, ## Traction,
+#     ## Team, ## Signals
+#
+# This pack consolidates the EXISTING primitives as pack-owned + adds a
+# bet-resolution lifecycle:
+#
+#   - `thesis` (NEW): investment thesis with thesis_text, key_bets[],
+#     market_view, vintage. Filed at investing/theses/{slug}.
+#
+#   - `bet_resolution_log` (NEW): outcome record for a thesis's bet. Bound
+#     to a take row via take_id, carries resolved_outcome + resolved_at +
+#     learned_pattern. Filed at investing/bets/{YYYY-MM}/{slug}.
+#
+# Calibration: declares 3 domains feeding the v0.41-widened
+# calibration_profile: deal_success (Brier over resolved deal-flagged
+# takes), founder_evaluation (Brier over person-flagged takes), market_call
+# (weighted Brier over thesis-flagged takes, weighted by take.confidence
+# because market calls' high-conviction-but-rare nature wants Brier scaled
+# by stake).
+#
+# Does NOT declare new cycle phases — investor work consumes the existing
+# extract_facts + propose_takes + grade_takes + calibration_profile loop.
+# The propose_takes phase populates take_domain_assignments rows at write
+# time from this pack's page_types → domain mapping (T10 wiring).
+#
+# Cron consolidation: existing your OpenClaw's crons (yc-radar-weekly,
+# yc-portfolio-health monthly, yc-oh-ingest daily) continue running on
+# their own schedules in your OpenClaw — gbrain-investor doesn't displace
+# them, only declares their output types + calibration semantics. v0.42+
+# may migrate those crons too once their phase contracts stabilize.
+
+api_version: gbrain-schema-pack-v1
+name: gbrain-investor
+version: 1.0.0
+description: "Investor / YC president lens. Adds thesis + bet_resolution_log types to the deal/investor/company/person surface that already exists in gbrain-base. Declares deal_success / founder_evaluation / market_call calibration domains feeding the widened calibration_profile."
+gbrain_min_version: 0.41.0
+extends: gbrain-base
+
+# Borrow deal + person + company + yc from gbrain-base — they remain
+# base-owned (other packs may also use them) but this pack's calibration
+# domains reference them. No new declarations needed because borrow_from
+# just signals intent; the registry already merges types from the
+# extends chain.
+borrow_from:
+  - pack: gbrain-base
+    types:
+      - deal
+      - person
+      - company
+      - yc
+
+# Investor work uses the same takes_kinds as base (fact, take, bet, hunch).
+# The `bet` kind is the load-bearing one for this pack — bet_resolution_log
+# tracks outcomes for take rows of kind='bet'.
+# takes_kinds intentionally omitted (inherits from base).
+
+# Pack-specific page types. `deal` already exists in gbrain-base seed.
+# `thesis` and `bet_resolution_log` are net-new for v0.41.
+#
+# `investor` and `founder` (alias for person in deal context) are
+# deferred: investor pages are filed under investors/ but the type is
+# `person` today and changing it requires data migration. v0.42+ can
+# introduce them with proper migration.
+page_types:
+  - name: thesis
+    primitive: concept
+    path_prefixes:
+      - investing/theses/
+      - theses/
+    aliases: []
+    # extractable: true — theses contain claims that the LLM extractor
+    # can mine into facts (the thesis itself is a claim; sub-bets are
+    # claims). extract_facts walks them.
+    extractable: true
+    # expert_routing: false — theses don't surface in find_experts;
+    # founders + companies carry that weight.
+    expert_routing: false
+
+  - name: bet_resolution_log
+    primitive: temporal
+    path_prefixes:
+      - investing/bets/
+      - bets/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+# No new cycle phases. Investor work consumes the existing pipeline.
+phases: []
+
+# v0.41 T3: investor-flavored calibration domains. Each binds the closed
+# aggregator algorithm to the open domain name + page_types whose takes
+# feed this bucket. propose_takes (T10) populates take_domain_assignments
+# rows at write time from this mapping when this pack is active.
+calibration_domains:
+  - name: deal_success
+    # Standard Brier over resolved deal-attached binary takes
+    # (did this deal succeed? = take.resolved_outcome).
+    aggregator: scalar_brier
+    page_types:
+      - deal
+
+  - name: founder_evaluation
+    # Standard Brier over person-attached takes. The "how often I'm
+    # wrong about founders" signal.
+    aggregator: scalar_brier
+    page_types:
+      - person
+
+  - name: market_call
+    # Weighted Brier — market calls are rare-but-high-stakes; weighting
+    # by take.confidence means a misfired strong conviction costs more
+    # than a misfired weak hunch.
+    aggregator: weighted_brier
+    page_types:
+      - thesis
+
+# Filing rules — mirror your OpenClaw's existing layout so the v0.41
+# greenfield migration (T7) lands pages in their canonical locations.
+filing_rules:
+  - kind: deal
+    directory: investing/deals/
+    examples:
+      - investing/deals/widget-co-pre-a-memo
+    description: "Investment memos. Pre-existing fences (## Recommendation, ## Pre-mortem, ## Defensibility, ## Founders, ## Product, ## Market / Customers, ## Traction, ## Team) carry through unchanged."
+  - kind: thesis
+    directory: investing/theses/
+    examples:
+      - investing/theses/ai-agents-2026
+      - investing/theses/hardware-renaissance
+    description: "Investment theses with thesis_text + key_bets[] + market_view + vintage frontmatter. Sub-bets resolve into bet_resolution_log entries via the take_id FK chain."
+  - kind: bet_resolution_log
+    directory: investing/bets/
+    examples:
+      - investing/bets/2026-04/widget-co-arr-trajectory
+    description: "Resolution records for thesis bets. Month-bucketed by resolution date. Frontmatter: bet_id (FK to thesis.key_bets), resolved_outcome (boolean), resolved_at (ISO date), learned_pattern (one-sentence takeaway). Populates the market_call calibration domain."
+  - kind: investor
+    directory: investors/
+    examples:
+      - investors/example-vc-fund
+    description: "Investor profiles (501 already extant). Filed flat under investors/. Page type stays `person` for now (data-migration deferral). v0.42+ may introduce dedicated `investor` page type."

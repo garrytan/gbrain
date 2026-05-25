@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
-import { resolveEntitySlug, slugify } from '../src/core/entities/resolve.ts';
+import {
+  resolveEntitySlug,
+  resolveEntitySlugWithSource,
+  slugify,
+  type ResolutionSource,
+} from '../src/core/entities/resolve.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -162,5 +167,144 @@ describe('slugify', () => {
 
   it('strips accents', () => {
     expect(slugify('José García')).toBe('jose-garcia');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// v0.40.2.0 — resolveEntitySlugWithSource
+// ─────────────────────────────────────────────────────────────────────
+//
+// Same resolution chain as resolveEntitySlug, but returns the source
+// tag (`exact_page` | `fuzzy_match` | `fallback_slugify`) so trajectory
+// routing in `gbrain think` (Commit 2) can gate on
+// `resolution_source !== 'fallback_slugify'` and avoid querying invented
+// slugs in production. The longmemeval harness accepts fallback_slugify
+// because its extractor uses the same slugify fallback (they cohere).
+//
+// These tests pin the source-tag contract per branch.
+
+describe('resolveEntitySlugWithSource — exact_page branch', () => {
+  it('returns exact_page when raw is a full slug that exists', async () => {
+    const result = await resolveEntitySlugWithSource(
+      engine as unknown as BrainEngine,
+      'default',
+      'people/alice-example',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.slug).toBe('people/alice-example');
+    expect(result!.source).toBe<ResolutionSource>('exact_page');
+  });
+
+  it('returns exact_page when raw is a slug-shape match (lowercase, slash)', async () => {
+    // Pre-existing companies/stripe is seeded; raw is exact.
+    const result = await resolveEntitySlugWithSource(
+      engine as unknown as BrainEngine,
+      'default',
+      'companies/stripe',
+    );
+    expect(result!.slug).toBe('companies/stripe');
+    expect(result!.source).toBe<ResolutionSource>('exact_page');
+  });
+});
+
+describe('resolveEntitySlugWithSource — fuzzy_match branch', () => {
+  it('returns fuzzy_match for a Title-cased display name', async () => {
+    const result = await resolveEntitySlugWithSource(
+      engine as unknown as BrainEngine,
+      'default',
+      'Alice Example',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.slug).toBe('people/alice-example');
+    expect(result!.source).toBe<ResolutionSource>('fuzzy_match');
+  });
+
+  it('returns fuzzy_match for prefix-expansion (bare first name "Alice")', async () => {
+    // Bare name "Alice" doesn't exact-match any slug, fuzzy fails the
+    // 0.4 threshold on short trigrams, so prefix expansion fires and
+    // resolves to people/alice-example. We tag this branch as
+    // fuzzy_match (not fallback_slugify) so trajectory routing knows
+    // it's a real-page resolution.
+    const result = await resolveEntitySlugWithSource(
+      engine as unknown as BrainEngine,
+      'default',
+      'Alice',
+    );
+    expect(result!.slug).toBe('people/alice-example');
+    expect(result!.source).toBe<ResolutionSource>('fuzzy_match');
+  });
+});
+
+describe('resolveEntitySlugWithSource — fallback_slugify branch', () => {
+  it('returns fallback_slugify when no page matches', async () => {
+    // "Zelda" isn't seeded; no exact, no fuzzy (no people/zelda-*),
+    // prefix expansion finds nothing, falls through to slugify.
+    const result = await resolveEntitySlugWithSource(
+      engine as unknown as BrainEngine,
+      'default',
+      'Zelda',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.slug).toBe('zelda');
+    expect(result!.source).toBe<ResolutionSource>('fallback_slugify');
+  });
+
+  it('returns fallback_slugify for multi-word non-match phrase', async () => {
+    // "coffee maker" — common-noun phrase the trajectory router may
+    // pull from question text. No page, no fuzzy hit (multi-word but
+    // generic), no prefix expansion (multi-token rejects bare-name
+    // heuristic), so slugify fires.
+    const result = await resolveEntitySlugWithSource(
+      engine as unknown as BrainEngine,
+      'default',
+      'coffee maker',
+    );
+    expect(result!.slug).toBe('coffee-maker');
+    expect(result!.source).toBe<ResolutionSource>('fallback_slugify');
+  });
+
+  it('returns fallback_slugify for accented input (slugify path strips)', async () => {
+    const result = await resolveEntitySlugWithSource(
+      engine as unknown as BrainEngine,
+      'default',
+      'José García',
+    );
+    expect(result!.slug).toBe('jose-garcia');
+    expect(result!.source).toBe<ResolutionSource>('fallback_slugify');
+  });
+});
+
+describe('resolveEntitySlugWithSource — null tail', () => {
+  it('returns null for empty input', async () => {
+    const result = await resolveEntitySlugWithSource(
+      engine as unknown as BrainEngine,
+      'default',
+      '',
+    );
+    expect(result).toBeNull();
+  });
+
+  it('returns null for whitespace-only input', async () => {
+    const result = await resolveEntitySlugWithSource(
+      engine as unknown as BrainEngine,
+      'default',
+      '   ',
+    );
+    expect(result).toBeNull();
+  });
+});
+
+describe('resolveEntitySlugWithSource — back-compat with resolveEntitySlug', () => {
+  it('exact_page branch matches resolveEntitySlug output (same slug, plus source tag)', async () => {
+    const a = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'people/alice-example');
+    const b = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'people/alice-example');
+    expect(b!.slug).toBe(a!);
+  });
+
+  it('fallback_slugify branch matches resolveEntitySlug output (same slug, plus source tag)', async () => {
+    const a = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'Zelda');
+    const b = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'Zelda');
+    expect(b!.slug).toBe(a!);
+    expect(b!.source).toBe<ResolutionSource>('fallback_slugify');
   });
 });

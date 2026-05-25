@@ -78,6 +78,20 @@ export interface FetchFarOpts {
   prefixListOverride?: string[];
   /** Default embedding column for distance calc + getEmbeddingsByChunkIds lookup. */
   embeddingColumn?: string;
+  /**
+   * Hard cap on the number of distinct prefixes we ask the DB to materialize
+   * one-page-per. Defaults to `max(m * 4, 50)`. Without this cap, brains with
+   * thousands of distinct top-level prefixes (e.g. a 13K-page brain with
+   * ~2K prefixes) caused `listPrefixSampledPages` to return ~2K rows instead
+   * of `m`, exploding LLM token spend by 50-100x. See fix/brainstorm-cost-guardrails.
+   */
+  maxFarSet?: number;
+  /**
+   * Optional RNG override for the prefix shuffle (tests only). Defaults to
+   * `Math.random`. The shuffle keeps the prefix-stratified sampling diverse
+   * even when we cap to a small fraction of all available prefixes.
+   */
+  random?: () => number;
 }
 
 /** One far-page result enriched with distance + provenance. */
@@ -348,9 +362,30 @@ export async function fetchFar(
   for (const c of opts.closeSet) {
     if (c.prefix) closePrefixSet.add(c.prefix);
   }
-  const candidatePrefixes = allPrefixes.filter((p) => !closePrefixSet.has(p));
-  const availablePrefixes = candidatePrefixes.length;
+  const allCandidatePrefixes = allPrefixes.filter((p) => !closePrefixSet.has(p));
+  const availablePrefixes = allCandidatePrefixes.length;
   const closeSlugs = opts.closeSet.map((c) => c.slug);
+
+  // ---- Step 2.5: cap the prefix list to `maxFarSet` (cost guardrail) ----
+  //
+  // `listPrefixSampledPages` returns one row per distinct prefix passed in.
+  // On large brains (1000+ prefixes) we were materializing ~1 row per prefix
+  // and then crossing each with the close-set, producing massive token bills.
+  // Cap defaults to max(m * 4, 50): enough headroom for downstream distance
+  // ranking to still pick a diverse `m` final far pages, but bounded.
+  const maxFarSet = opts.maxFarSet ?? Math.max(m * 4, 50);
+  let candidatePrefixes = allCandidatePrefixes;
+  if (candidatePrefixes.length > maxFarSet) {
+    // Shuffle for diversity, then take the first `maxFarSet`. Without the
+    // shuffle a 2K-prefix brain would always pick the same alphabetical head.
+    const rng = opts.random ?? Math.random;
+    const arr = candidatePrefixes.slice();
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    candidatePrefixes = arr.slice(0, maxFarSet);
+  }
 
   // ---- Step 3: primary path — listPrefixSampledPages ----
   let primaryRows: DomainBankRow[] = [];
@@ -408,7 +443,7 @@ export async function fetchFar(
     .filter((e): e is Float32Array => e !== undefined);
 
   // ---- Step 6: build FarPage results with normalized distance ----
-  const pages: FarPage[] = allRows.map(({ row, src }) => {
+  const allPages: FarPage[] = allRows.map(({ row, src }) => {
     const farEmbed = row.representative_chunk_id != null
       ? embeddings.get(row.representative_chunk_id) ?? null
       : null;
@@ -427,11 +462,26 @@ export async function fetchFar(
     };
   });
 
+  // ---- Step 6.5: final trim to `m` ----
+  //
+  // Even after capping prefixes to `maxFarSet`, `listPrefixSampledPages` plus
+  // the fallback can return up to `maxFarSet + need` rows. The orchestrator
+  // crosses every (close × far) so we MUST trim to `m` here or the LLM bill
+  // scales with the cap, not with `m`. Sort by distance_score DESC so we keep
+  // the farthest (most novel) pages first.
+  const pages = allPages
+    .slice()
+    .sort((a, b) => b.distance_score - a.distance_score)
+    .slice(0, m);
+
   return {
     pages,
     available_prefixes: availablePrefixes,
     total_prefixes: totalPrefixes,
     used_fallback: usedFallback,
-    short_of_target: pages.length < m,
+    // short_of_target reflects whether the *pre-trim* candidate pool fell short
+    // of `m`. After the explicit trim to `m` above, `pages.length` would always
+    // equal `min(m, allPages.length)`, masking the sparse-brain signal.
+    short_of_target: allPages.length < m,
   };
 }

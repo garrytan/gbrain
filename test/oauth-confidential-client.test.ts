@@ -44,9 +44,9 @@ describe('verifyConfidentialClientSecret (#1166)', () => {
   test('confidential client_secret_post: returns client on correct secret', async () => {
     const reg = await provider.registerClientManual('test-conf', ['authorization_code'], 'read write', ['https://example.test/cb']);
     expect(reg.clientId).toBeTruthy();
-    expect(reg.clientSecret).toBeTruthy();
+    expect(reg.clientSecret!).toBeTruthy();
 
-    const client = await provider.verifyConfidentialClientSecret(reg.clientId, reg.clientSecret);
+    const client = await provider.verifyConfidentialClientSecret(reg.clientId, reg.clientSecret!);
     expect(client.client_id).toBe(reg.clientId);
   });
 
@@ -86,8 +86,8 @@ describe('verifyConfidentialClientSecret (#1166)', () => {
 
   test('case-insensitive secret? NO — must be exact match', async () => {
     const reg = await provider.registerClientManual('test-case', ['authorization_code'], 'read', ['https://example.test/cb']);
-    const wrongCase = reg.clientSecret.toUpperCase();
-    if (wrongCase !== reg.clientSecret) {
+    const wrongCase = reg.clientSecret!.toUpperCase();
+    if (wrongCase !== reg.clientSecret!) {
       await expect(
         provider.verifyConfidentialClientSecret(reg.clientId, wrongCase),
       ).rejects.toThrow(/Invalid client/);
@@ -101,7 +101,7 @@ describe('verifyConfidentialClientSecret (#1166)', () => {
       [reg.clientId],
     );
     await expect(
-      provider.verifyConfidentialClientSecret(reg.clientId, reg.clientSecret),
+      provider.verifyConfidentialClientSecret(reg.clientId, reg.clientSecret!),
     ).rejects.toThrow(/revoked/);
   });
 });
@@ -116,7 +116,7 @@ describe('confidential-client full flow #1166', () => {
       `UPDATE oauth_clients SET grant_types = $1 WHERE client_id = $2`,
       [['client_credentials', 'refresh_token'], reg.clientId],
     );
-    const initial = await provider.exchangeClientCredentials(reg.clientId, reg.clientSecret, 'read');
+    const initial = await provider.exchangeClientCredentials(reg.clientId, reg.clientSecret!, 'read');
     // client_credentials grants don't issue refresh tokens (RFC 6749
     // 4.4.3), so we manually insert a refresh token to test the
     // verify-then-rotate path.
@@ -129,7 +129,7 @@ describe('confidential-client full flow #1166', () => {
     );
 
     // verify → exchange round-trip with the correct secret
-    const client = await provider.verifyConfidentialClientSecret(reg.clientId, reg.clientSecret);
+    const client = await provider.verifyConfidentialClientSecret(reg.clientId, reg.clientSecret!);
     const rotated = await provider.exchangeRefreshToken(client, refreshToken);
     expect(rotated.access_token).toBeTruthy();
     expect(rotated.refresh_token).toBeTruthy();

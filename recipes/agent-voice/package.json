@@ -1,0 +1,27 @@
+{
+  "name": "agent-voice",
+  "version": "0.1.0",
+  "description": "Voice agent reference (Mars + Venus personas, WebRTC-first browser client, optional Twilio adapter). Copied into the operator's host agent repo via `gbrain integrations install agent-voice`; not a runtime gbrain dependency.",
+  "type": "module",
+  "main": "code/server.mjs",
+  "scripts": {
+    "start": "node code/server.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "vitest run tests/e2e/voice-roundtrip.test.mjs",
+    "test:full-flow": "vitest run tests/e2e/voice-full-flow.test.mjs",
+    "gen:baselines": "node tests/evals/mars-eval.mjs --baseline && node tests/evals/venus-eval.mjs --baseline"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "puppeteer": "^23.11.1",
+    "vitest": "^4.1.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "private": false,
+  "license": "MIT"
+}

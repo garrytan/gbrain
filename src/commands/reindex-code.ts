@@ -31,6 +31,8 @@ import { errorFor, serializeError } from '../core/errors.ts';
 import { createInterface } from 'readline';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
+import { withBudgetTracker } from '../core/ai/gateway.ts';
 
 export interface ReindexCodeOpts {
   sourceId?: string;
@@ -41,6 +43,15 @@ export interface ReindexCodeOpts {
   noEmbed?: boolean;
   /** Page batch size. Default 100 (codex Finding 4.4 OOM protection). */
   batchSize?: number;
+  /**
+   * Cap embedding spend in USD. Default undefined = no cap (legacy behavior).
+   * When set, the reindex body runs inside a `withBudgetTracker` scope so
+   * every `gateway.embed()` call inside `importCodeFile` composes with the
+   * cap. Throws BudgetExhausted (reason='cost') when cumulative exceeds the
+   * cap; partial progress is preserved (already-imported pages stay
+   * imported, the throw aborts the remaining batch).
+   */
+  maxCostUsd?: number;
 }
 
 export interface ReindexCodeResult {
@@ -229,51 +240,99 @@ export async function runReindexCode(
   let failed = 0;
   const failures: Array<{ slug: string; error: string }> = [];
   let offset = 0;
+  let budgetExhausted: BudgetExhausted | null = null;
+
+  // F3: when --max-cost is set, run the body inside withBudgetTracker so
+  // every gateway.embed() call inside importCodeFile composes with the cap.
+  // On BudgetExhausted, we catch + persist what's been imported so far,
+  // then surface the throw as a partial-progress result the caller can
+  // re-run. importCodeFile is idempotent (content_hash short-circuit), so
+  // a re-run picks up where the cap fired.
+  const reindexBody = async (): Promise<void> => {
+    try {
+      while (true) {
+        const batch = await fetchCodePages(engine, opts.sourceId, batchSize, offset);
+        if (batch.length === 0) break;
+
+        for (const row of batch) {
+          const fm = row.frontmatter ?? {};
+          const relPath = typeof fm.file === 'string' ? fm.file : null;
+          if (!relPath) {
+            failed++;
+            failures.push({ slug: row.slug, error: 'missing frontmatter.file' });
+            reporter.tick();
+            continue;
+          }
+          if (!row.compiled_truth) {
+            failed++;
+            failures.push({ slug: row.slug, error: 'missing compiled_truth' });
+            reporter.tick();
+            continue;
+          }
+          try {
+            const result = await importCodeFile(engine, relPath, row.compiled_truth, {
+              noEmbed: opts.noEmbed,
+              force: opts.force,
+              sourceId: opts.sourceId,
+            });
+            if (result.status === 'imported') reindexed++;
+            else if (result.status === 'skipped') skipped++;
+            else {
+              failed++;
+              failures.push({ slug: row.slug, error: result.error ?? result.status });
+            }
+          } catch (e: unknown) {
+            // Budget cap is the one error the per-page catch must NOT swallow.
+            // Caller's outer catch reports partial progress and exits.
+            if (e instanceof BudgetExhausted) throw e;
+            failed++;
+            failures.push({ slug: row.slug, error: e instanceof Error ? e.message : String(e) });
+          }
+          reporter.tick();
+        }
+
+        offset += batch.length;
+        if (batch.length < batchSize) break;
+      }
+    } finally {
+      reporter.finish();
+    }
+  };
 
   try {
-    while (true) {
-      const batch = await fetchCodePages(engine, opts.sourceId, batchSize, offset);
-      if (batch.length === 0) break;
-
-      for (const row of batch) {
-        const fm = row.frontmatter ?? {};
-        const relPath = typeof fm.file === 'string' ? fm.file : null;
-        if (!relPath) {
-          failed++;
-          failures.push({ slug: row.slug, error: 'missing frontmatter.file' });
-          reporter.tick();
-          continue;
-        }
-        if (!row.compiled_truth) {
-          failed++;
-          failures.push({ slug: row.slug, error: 'missing compiled_truth' });
-          reporter.tick();
-          continue;
-        }
-        try {
-          const result = await importCodeFile(engine, relPath, row.compiled_truth, {
-            noEmbed: opts.noEmbed,
-            force: opts.force,
-            sourceId: opts.sourceId,
-          });
-          if (result.status === 'imported') reindexed++;
-          else if (result.status === 'skipped') skipped++;
-          else {
-            failed++;
-            failures.push({ slug: row.slug, error: result.error ?? result.status });
-          }
-        } catch (e: unknown) {
-          failed++;
-          failures.push({ slug: row.slug, error: e instanceof Error ? e.message : String(e) });
-        }
-        reporter.tick();
-      }
-
-      offset += batch.length;
-      if (batch.length < batchSize) break;
+    if (typeof opts.maxCostUsd === 'number' && opts.maxCostUsd > 0) {
+      const tracker = new BudgetTracker({ maxCostUsd: opts.maxCostUsd, label: 'reindex-code' });
+      await withBudgetTracker(tracker, reindexBody);
+    } else {
+      await reindexBody();
     }
-  } finally {
-    reporter.finish();
+  } catch (e) {
+    if (e instanceof BudgetExhausted) {
+      budgetExhausted = e;
+    } else {
+      throw e;
+    }
+  }
+
+  if (budgetExhausted) {
+    // Partial-progress result: surfaces what got reindexed before the cap
+    // fired. The CLI wrapper translates this into a clear user-facing
+    // message + non-zero exit; the library result lets agent callers see
+    // what happened without grep'ing stderr.
+    return {
+      status: 'ok',
+      codePages: totalPages,
+      reindexed,
+      skipped,
+      failed,
+      totalTokens,
+      costUsd: budgetExhausted.spent,
+      model: getEmbeddingModelName(),
+      failures: [
+        { slug: '(budget)', error: budgetExhausted.message },
+        ...(failures.length > 0 ? failures : []),
+      ],
+    };
   }
 
   return {
@@ -303,8 +362,24 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
   const force = args.includes('--force');
   const noEmbed = args.includes('--no-embed');
 
+  // F3: --max-cost / --max-cost-usd both accepted for symmetry with brainstorm.
+  let maxCostUsd: number | undefined;
+  for (const flag of ['--max-cost', '--max-cost-usd']) {
+    const idx = args.indexOf(flag);
+    if (idx >= 0) {
+      const v = args[idx + 1];
+      const n = v ? parseFloat(v) : NaN;
+      if (!Number.isFinite(n) || n <= 0) {
+        console.error(`gbrain reindex --code: ${flag} requires a positive number in USD (got ${v ?? '(missing)'})`);
+        process.exit(2);
+      }
+      maxCostUsd = n;
+      break;
+    }
+  }
+
   if (dryRun) {
-    const result = await runReindexCode(engine, { sourceId, dryRun: true, yes, json, force, noEmbed });
+    const result = await runReindexCode(engine, { sourceId, dryRun: true, yes, json, force, noEmbed, maxCostUsd });
     if (json) {
       console.log(JSON.stringify(result));
     } else {
@@ -357,7 +432,7 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
     }
   }
 
-  const result = await runReindexCode(engine, { sourceId, yes, json, force, noEmbed });
+  const result = await runReindexCode(engine, { sourceId, yes, json, force, noEmbed, maxCostUsd });
   if (json) {
     console.log(JSON.stringify(result));
   } else {

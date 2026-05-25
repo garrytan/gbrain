@@ -371,6 +371,66 @@ describe('http-transport: CORS', () => {
       expect(r.headers.get('access-control-allow-origin')).toBeNull();
     } finally { srv.stop(); }
   });
+
+  // v0.41.3 (T6 IRON RULE regression): pre-fix corsPreflightHeaders emitted
+  // Access-Control-Allow-Methods + Access-Control-Allow-Headers to every
+  // Origin unconditionally, leaking the API surface to attackers probing
+  // OPTIONS. The fix consolidates corsHeaders + corsPreflightHeaders into
+  // one function gated on the allowlist. These 4 cases pin the matrix.
+  describe('CORS preflight (T6 — consolidated corsHeaders)', () => {
+    test('preflight + no allowlist + any Origin → NO Allow-Methods/Headers', async () => {
+      const srv = await startTest({});
+      try {
+        const r = await fetch(`${srv.url}/mcp`, {
+          method: 'OPTIONS',
+          headers: { 'Origin': 'https://evil.example', 'Access-Control-Request-Method': 'POST' },
+        });
+        expect(r.headers.get('access-control-allow-origin')).toBeNull();
+        expect(r.headers.get('access-control-allow-methods')).toBeNull();
+        expect(r.headers.get('access-control-allow-headers')).toBeNull();
+      } finally { srv.stop(); }
+    });
+
+    test('preflight + allowlist set + matching Origin → echoes ACAO + Methods + Headers', async () => {
+      const srv = await startTest({ corsOrigin: 'https://claude.ai' });
+      try {
+        const r = await fetch(`${srv.url}/mcp`, {
+          method: 'OPTIONS',
+          headers: { 'Origin': 'https://claude.ai', 'Access-Control-Request-Method': 'POST' },
+        });
+        expect(r.headers.get('access-control-allow-origin')).toBe('https://claude.ai');
+        expect(r.headers.get('access-control-allow-methods')).toContain('POST');
+        expect(r.headers.get('access-control-allow-headers')).toContain('Authorization');
+        expect(r.headers.get('vary')).toBe('Origin');
+      } finally { srv.stop(); }
+    });
+
+    test('preflight + allowlist set + NON-matching Origin → NO Allow-Methods/Headers (the regression)', async () => {
+      const srv = await startTest({ corsOrigin: 'https://claude.ai' });
+      try {
+        const r = await fetch(`${srv.url}/mcp`, {
+          method: 'OPTIONS',
+          headers: { 'Origin': 'https://evil.example', 'Access-Control-Request-Method': 'POST' },
+        });
+        expect(r.headers.get('access-control-allow-origin')).toBeNull();
+        // THE BUG: pre-fix these two headers leaked unconditionally
+        expect(r.headers.get('access-control-allow-methods')).toBeNull();
+        expect(r.headers.get('access-control-allow-headers')).toBeNull();
+      } finally { srv.stop(); }
+    });
+
+    test('actual POST + allowlist set + NON-matching Origin → NO ACAO (browser blocks downstream)', async () => {
+      const srv = await startTest({ corsOrigin: 'https://claude.ai' });
+      try {
+        const r = await fetch(`${srv.url}/mcp`, {
+          method: 'POST',
+          headers: { 'Origin': 'https://evil.example', 'Authorization': 'Bearer x', 'Content-Type': 'application/json' },
+          body: '{}',
+        });
+        expect(r.headers.get('access-control-allow-origin')).toBeNull();
+      } finally { srv.stop(); }
+    });
+  });
 });
 
 // --------------------------------------------------------------------------

@@ -38,7 +38,14 @@ import { writeMountsCache, clearMountsCache } from '../core/mounts-cache.ts';
 import { GBrainError } from '../core/types.ts';
 
 function getMountsDir(): string { return join(homedir(), '.gbrain'); }
-function getMountsPath(): string { return join(getMountsDir(), 'mounts.json'); }
+// v0.40.3.0: GBRAIN_MOUNTS_PATH override exists for tests (libuv caches
+// homedir() at startup on some platforms; HOME mutation alone isn't
+// reliably picked up). Production callers don't set this.
+function getMountsPath(): string {
+  const override = process.env.GBRAIN_MOUNTS_PATH;
+  if (override) return override;
+  return join(getMountsDir(), 'mounts.json');
+}
 
 /**
  * Read mounts.json and return the parsed MountsFile, or a fresh empty file
@@ -371,13 +378,85 @@ export async function runMounts(args: string[]): Promise<void> {
     case 'rm':
       runRemove(rest);
       return;
+    case 'enable':
+      runSetMountFlag(rest, 'enabled', true, 'enable');
+      return;
+    case 'disable':
+      runSetMountFlag(rest, 'enabled', false, 'disable');
+      return;
+    case 'trust-frontmatter':
+      runSetMountFlag(rest, 'trust_frontmatter_overrides', true, 'trust-frontmatter');
+      return;
+    case 'untrust-frontmatter':
+      runSetMountFlag(rest, 'trust_frontmatter_overrides', false, 'untrust-frontmatter');
+      return;
     default:
       throw new GBrainError(
         `Unknown subcommand: gbrain mounts ${sub}`,
-        `Supported: add, list, remove`,
+        `Supported: add, list, remove, enable, disable, trust-frontmatter, untrust-frontmatter`,
         `Run 'gbrain mounts --help' for usage`,
       );
   }
+}
+
+/**
+ * Shared writer for boolean-flag verbs (enable/disable/trust-frontmatter/
+ * untrust-frontmatter). v0.40.3.0 D4 picked separate verbs over a single
+ * `set <flag> <value>` mutator because validation actually matters per-flag
+ * (e.g., trust_frontmatter_overrides is security-relevant; future flags may
+ * need bespoke prompts).
+ *
+ * Trust→untrust→trust cycle preserves other fields (test pinned).
+ */
+function runSetMountFlag(
+  args: string[],
+  field: 'enabled' | 'trust_frontmatter_overrides',
+  value: boolean,
+  verb: string,
+): void {
+  if (args.length === 0) {
+    throw new GBrainError(
+      `Missing mount id`,
+      `gbrain mounts ${verb} <id>`,
+      `Run 'gbrain mounts list' to see registered mounts`,
+    );
+  }
+  const id = args[0];
+  if (id === HOST_BRAIN_ID) {
+    throw new GBrainError(
+      `Cannot ${verb} host brain`,
+      `"host" is not a mount — it is the default brain from ~/.gbrain/config.json`,
+      verb === 'trust-frontmatter' || verb === 'untrust-frontmatter'
+        ? `Host frontmatter is always trusted; this verb applies only to mounted brains.`
+        : `Use 'gbrain init' to reconfigure the host brain`,
+    );
+  }
+
+  const file = readMountsFile();
+  const mount = file.mounts.find((m) => m.id === id);
+  if (!mount) {
+    throw new GBrainError(
+      `Mount "${id}" not found`,
+      `No mount with id "${id}" is registered`,
+      `Run 'gbrain mounts list' to see registered mounts`,
+    );
+  }
+
+  // No-op check so the cache refresh + write don't churn when state matches.
+  // For `enabled` field, default is true when unset — coerce for comparison.
+  const currentValue = field === 'enabled' ? (mount.enabled ?? true) : (mount[field] ?? false);
+  if (currentValue === value) {
+    process.stdout.write(`Mount "${id}" already has ${field}=${value}; no change\n`);
+    return;
+  }
+
+  mount[field] = value;
+  writeMountsFile(file);
+  process.stdout.write(`Mount "${id}" ${verb}d (${field}=${value})\n`);
+
+  // Refresh the aggregated mounts cache so host agents see the new flag
+  // immediately. Same best-effort pattern as runRemove.
+  refreshMountsCache();
 }
 
 function printHelp(): void {
@@ -400,10 +479,20 @@ EXAMPLES
   # Remove a mount
   gbrain mounts remove yc-media
 
+v0.40.3.0 ADDITIONS
+  gbrain mounts enable <id>             — re-enable a disabled mount
+  gbrain mounts disable <id>            — toggle a mount off without removing
+  gbrain mounts trust-frontmatter <id>  — let this mount's per-page
+                                          contextual_retrieval_mode
+                                          frontmatter override the source
+                                          default. Off by default for
+                                          mounted brains; host is always
+                                          trusted.
+  gbrain mounts untrust-frontmatter <id> — clear the trust flag.
+
 NOT YET IMPLEMENTED (coming in PR 1/2)
   gbrain mounts pin <id> <sha>          — freeze a mount at a tested version
   gbrain mounts sync [--id <id>]        — git pull + refresh attestation
-  gbrain mounts enable|disable <id>     — toggle without removing
   gbrain mounts add --mcp-url <url>     — HTTP MCP transport + OAuth
 `);
 }

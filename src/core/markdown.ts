@@ -24,6 +24,17 @@ export interface ParseOpts {
   /** When validate is true and frontmatter has a `slug:` field that doesn't
    *  match expectedSlug, emits SLUG_MISMATCH. */
   expectedSlug?: string;
+  /**
+   * v0.39 T1.5 — active schema pack to drive type inference. When set,
+   * `inferType` uses the pack's `page_types[].path_prefixes` instead of
+   * the hardcoded gbrain-base table. When unset, falls back to the
+   * pre-v0.39 hardcoded behavior (preserves byte-for-byte parity gate
+   * `test/regressions/gbrain-base-equivalence.test.ts`).
+   *
+   * Callers thread this from `loadActivePack(ctx)` once per command —
+   * NEVER per file inside sync, per codex perf finding #7.
+   */
+  activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
 }
 
 export interface ParsedMarkdown {
@@ -94,7 +105,9 @@ export function parseMarkdown(
 
   const { compiled_truth, timeline } = splitBody(body);
 
-  const type = (frontmatter.type as PageType) || inferType(filePath);
+  const type = (frontmatter.type as string) || (
+    opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
+  );
   const title = (frontmatter.title as string) || inferTitle(filePath);
   const tags = extractTags(frontmatter);
   const slug = (frontmatter.slug as string) || inferSlug(filePath);
@@ -361,36 +374,109 @@ export function serializeMarkdown(
   return yamlContent + '\n\n' + body + '\n';
 }
 
-function inferType(filePath?: string): PageType {
-  if (!filePath) return 'concept';
+// v0.38 T7a (Phase B): inferType is now pack-aware.
+//
+// The original hardcoded behavior is preserved IDENTICALLY when the
+// pack is gbrain-base (or when no pack is provided — back-compat
+// callers). Schema packs can extend the path → type mapping by
+// declaring `page_types[].path_prefixes` in their manifest; users
+// who add `paper: { path_prefixes: [papers/, literature/] }` get
+// papers/foo.md → type 'paper' without forking the engine.
+//
+// inferType (legacy sync wrapper) → calls inferTypeWithPrefixes with
+//   the GBRAIN_BASE_PATH_PREFIXES table below, which reproduces the
+//   pre-v0.38 hardcoded behavior byte-for-byte (parity-pinned by
+//   test/regressions/gbrain-base-equivalence.test.ts).
+// inferTypeFromPack(filePath, manifest) → new primitive that walks
+//   the active pack's page_types[].path_prefixes. Priority: pack
+//   declarations are scanned in order they appear in the manifest;
+//   first match wins. Empty/unset prefixes do NOT match.
+//
+// Callers in async paths (import-file.ts, sync.ts, cycle phases) can
+// adopt inferTypeFromPack(path, pack) to honor user-defined types.
+// The bare inferType(path) call site remains for sync legacy paths
+// and matches gbrain-base by construction.
 
-  // Normalize: add leading / for consistent matching.
-  // Wiki subtypes and /writing/ check FIRST — they're stronger signals than
-  // ancestor directories. e.g. `projects/blog/writing/essay.md` is a piece of
-  // writing, not a project page; `tech/wiki/analysis/foo.md` is analysis,
-  // not a hit on the broader `tech/` ancestor.
+/**
+ * Hardcoded path-prefix table mirroring pre-v0.38 inferType behavior.
+ * MUST stay in lockstep with the gbrain-base.yaml `path_prefixes` field
+ * (parity-pinned by test/regressions/gbrain-base-equivalence.test.ts).
+ * Order matters: wiki subtypes + writing scan first (stronger signal
+ * than ancestor directories).
+ */
+const GBRAIN_BASE_PATH_PREFIXES: ReadonlyArray<{ prefixes: string[]; type: PageType }> = [
+  { prefixes: ['/writing/'], type: 'writing' },
+  { prefixes: ['/wiki/analysis/'], type: 'analysis' },
+  { prefixes: ['/wiki/guides/', '/wiki/guide/'], type: 'guide' },
+  { prefixes: ['/wiki/hardware/'], type: 'hardware' },
+  { prefixes: ['/wiki/architecture/'], type: 'architecture' },
+  { prefixes: ['/wiki/concepts/', '/wiki/concept/'], type: 'concept' },
+  { prefixes: ['/people/', '/person/'], type: 'person' },
+  { prefixes: ['/companies/', '/company/'], type: 'company' },
+  { prefixes: ['/deals/', '/deal/'], type: 'deal' },
+  { prefixes: ['/yc/'], type: 'yc' },
+  { prefixes: ['/civic/'], type: 'civic' },
+  { prefixes: ['/projects/', '/project/'], type: 'project' },
+  { prefixes: ['/sources/', '/source/'], type: 'source' },
+  { prefixes: ['/media/'], type: 'media' },
+  { prefixes: ['/emails/', '/email/'], type: 'email' },
+  { prefixes: ['/slack/'], type: 'slack' },
+  { prefixes: ['/cal/', '/calendar/'], type: 'calendar-event' },
+  { prefixes: ['/notes/', '/note/'], type: 'note' },
+  { prefixes: ['/meetings/', '/meeting/'], type: 'meeting' },
+];
+
+function inferType(filePath?: string): PageType {
+  return inferTypeWithPrefixes(filePath, GBRAIN_BASE_PATH_PREFIXES);
+}
+
+/**
+ * Pack-aware variant. Callers with access to the active pack pass it
+ * here to honor user-declared types. Empty `page_types` array (no
+ * `extends: null` pack) falls back to gbrain-base defaults.
+ *
+ * Algorithm: each pack page_type contributes its `path_prefixes` array
+ * in declaration order. First prefix that matches wins. Default
+ * 'concept' applies when nothing matches.
+ *
+ * Note on prefix shape: gbrain-base stores prefixes WITHOUT the
+ * leading `/` (e.g. `people/`). For matching, we lower-case the path
+ * with a leading `/` prepended (matches the original behavior) and
+ * test against `'/' + prefix` so `people/` matches `/people/` inside
+ * the full path.
+ */
+export function inferTypeFromPack(
+  filePath: string | undefined,
+  pack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> },
+): PageType {
+  if (!filePath) return 'concept';
+  // Empty pack → fall back to gbrain-base hardcoded defaults.
+  if (pack.page_types.length === 0) {
+    return inferTypeWithPrefixes(filePath, GBRAIN_BASE_PATH_PREFIXES);
+  }
   const lower = ('/' + filePath).toLowerCase();
-  if (lower.includes('/writing/')) return 'writing';
-  if (lower.includes('/wiki/analysis/')) return 'analysis';
-  if (lower.includes('/wiki/guides/') || lower.includes('/wiki/guide/')) return 'guide';
-  if (lower.includes('/wiki/hardware/')) return 'hardware';
-  if (lower.includes('/wiki/architecture/')) return 'architecture';
-  if (lower.includes('/wiki/concepts/') || lower.includes('/wiki/concept/')) return 'concept';
-  if (lower.includes('/people/') || lower.includes('/person/')) return 'person';
-  if (lower.includes('/companies/') || lower.includes('/company/')) return 'company';
-  if (lower.includes('/deals/') || lower.includes('/deal/')) return 'deal';
-  if (lower.includes('/yc/')) return 'yc';
-  if (lower.includes('/civic/')) return 'civic';
-  if (lower.includes('/projects/') || lower.includes('/project/')) return 'project';
-  if (lower.includes('/sources/') || lower.includes('/source/')) return 'source';
-  if (lower.includes('/media/')) return 'media';
-  // BrainBench v1 amara-life-v1 corpus directories. One-slash slug convention
-  // means source paths look like `emails/em-0001.md`, `slack/sl-0037.md`, etc.
-  if (lower.includes('/emails/') || lower.includes('/email/')) return 'email';
-  if (lower.includes('/slack/')) return 'slack';
-  if (lower.includes('/cal/') || lower.includes('/calendar/')) return 'calendar-event';
-  if (lower.includes('/notes/') || lower.includes('/note/')) return 'note';
-  if (lower.includes('/meetings/') || lower.includes('/meeting/')) return 'meeting';
+  for (const pt of pack.page_types) {
+    for (const prefix of pt.path_prefixes) {
+      const needle = prefix.startsWith('/') ? prefix.toLowerCase() : '/' + prefix.toLowerCase();
+      if (lower.includes(needle)) {
+        return pt.name;
+      }
+    }
+  }
+  return 'concept';
+}
+
+function inferTypeWithPrefixes(
+  filePath: string | undefined,
+  table: ReadonlyArray<{ prefixes: ReadonlyArray<string>; type: PageType }>,
+): PageType {
+  if (!filePath) return 'concept';
+  const lower = ('/' + filePath).toLowerCase();
+  for (const row of table) {
+    for (const p of row.prefixes) {
+      if (lower.includes(p)) return row.type;
+    }
+  }
   return 'concept';
 }
 

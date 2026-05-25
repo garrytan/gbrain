@@ -394,11 +394,23 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
     if (Array.isArray(tp.models) && tp.models.length > 0) {
       const model = tp.models[0];
       const fullModel = `${r.id}:${model}`;
+      // When the resolved provider matches the canonical default model
+      // (DEFAULT_EMBEDDING_MODEL), use the gateway's
+      // DEFAULT_EMBEDDING_DIMENSIONS instead of the recipe's `default_dims`
+      // (which is the recipe's "largest sensible" tier). This keeps
+      // fresh-install schema width aligned with the v0.37.11.0 system
+      // default — for ZE that means 1280 (the Matryoshka step closest to
+      // legacy OpenAI 1536), not the recipe's 2560.
+      const { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } =
+        await import('../core/ai/defaults.ts');
+      const dims = fullModel === DEFAULT_EMBEDDING_MODEL
+        ? DEFAULT_EMBEDDING_DIMENSIONS
+        : tp.default_dims;
       out.embedding_model = fullModel;
-      out.embedding_dimensions = tp.default_dims;
+      out.embedding_dimensions = dims;
       console.error(
         `Detected ${r.auth_env?.required?.[0] ?? r.id} env var. ` +
-        `Using ${fullModel} (${tp.default_dims}d). ` +
+        `Using ${fullModel} (${dims}d). ` +
         `Override with --embedding-model.`,
       );
       return;

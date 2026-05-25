@@ -15,7 +15,8 @@ import type { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { randomBytes, createHash, timingSafeEqual } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
+import { safeHexEqual } from '../core/timing-safe.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -24,9 +25,9 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
-import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
+import { GBrainOAuthProvider, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
-import { hasScope, ALLOWED_SCOPES_LIST } from '../core/scope.ts';
+import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
 import { paramDefToSchema } from '../mcp/tool-defs.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
@@ -184,6 +185,74 @@ export async function probeLiveness(
   } finally {
     if (timer !== null) clearTimeout(timer);
   }
+}
+
+/**
+ * Resolve `GBRAIN_HTTP_TRUST_PROXY` into a value Express's `app.set('trust
+ * proxy', ...)` accepts. Pure function so the test surface is one place,
+ * not the whole Express stack.
+ *
+ * Mapping:
+ *   - unset / empty → 'loopback' (pre-v0.41.3 default; trusts only
+ *     127.0.0.1, ::1, ::ffff:127.0.0.1, fc00::/7)
+ *   - '0' / 'false' → false (trust nothing; req.ip is socket peer regardless
+ *     of X-Forwarded-For)
+ *   - '1' / 'true' → 1 (trust exactly one hop; safe for Fly.io / Render /
+ *     single-layer reverse proxy; matches the legacy transport's '==1' check)
+ *   - other numeric → parseInt (trust N hops)
+ *   - any other string → pass through verbatim (Express accepts named modes
+ *     like 'uniquelocal', 'linklocal', and CIDR/IP lists)
+ *
+ * SECURITY: only set GBRAIN_HTTP_TRUST_PROXY when BOTH (a) gbrain is
+ * reachable only via a trusted reverse proxy, AND (b) the proxy strips
+ * client-supplied X-Forwarded-For headers before re-emitting its own.
+ * Otherwise clients can spoof their IP and defeat the pre-auth IP rate
+ * limit. See SECURITY.md "Reverse-proxy trust" for the full contract.
+ */
+export function resolveTrustProxy(env: string | undefined): string | number | boolean {
+  if (env === undefined || env === '') return 'loopback';
+  if (env === '0' || env === 'false') return false;
+  if (env === '1' || env === 'true') return 1;
+  if (/^\d+$/.test(env)) return parseInt(env, 10);
+  return env;
+}
+
+/**
+ * Parse `GBRAIN_HTTP_CORS_ORIGIN` into a Set of allowed origins for OAuth
+ * endpoints. Mirrors `src/mcp/http-transport.ts:parseCorsAllowlist`. Single
+ * env var so operators don't need to maintain two allowlists.
+ *
+ * Returns null when unset, empty, or whitespace-only — caller MUST treat
+ * null as "deny all cross-origin" (the same posture the legacy transport
+ * already takes).
+ */
+export function parseCorsAllowlistOAuth(): Set<string> | null {
+  const v = process.env.GBRAIN_HTTP_CORS_ORIGIN;
+  if (!v) return null;
+  const origins = v.split(',').map(s => s.trim()).filter(Boolean);
+  return origins.length === 0 ? null : new Set(origins);
+}
+
+/**
+ * Build a `cors.CorsOptions['origin']` value from the allowlist. The cors
+ * package accepts:
+ *   - `false` → reject everything (no Allow-Origin header sent)
+ *   - `(origin, cb) => cb(null, boolean)` → dynamic per-request check
+ * We use the function form when an allowlist is set so the value of the
+ * Allow-Origin header echoes the request Origin (RFC 6454) instead of a
+ * hardcoded string, and so the same options object covers all listed
+ * origins without enumeration in the response.
+ *
+ * Same-origin requests (no Origin header) get `cb(null, true)` which the
+ * cors package translates to "no CORS headers needed" — they're not
+ * cross-origin so they don't trigger the gate.
+ */
+export function resolveCorsOrigin(allowlist: Set<string> | null): cors.CorsOptions['origin'] {
+  if (allowlist === null) return false;
+  return (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin) return cb(null, true);
+    cb(null, allowlist.has(origin));
+  };
 }
 
 interface ServeHttpOptions {
@@ -386,7 +455,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Express 5 app
   const app = express();
-  app.set('trust proxy', 'loopback'); // Caddy/Tailscale reverse proxy on localhost
+  // v0.41.3 (T8): configurable trust-proxy via GBRAIN_HTTP_TRUST_PROXY env.
+  // Default 'loopback' (trust Caddy/Tailscale on the same host) preserves
+  // pre-v0.41.3 behavior. Operators behind Fly.io / Render / Vercel / nginx
+  // set GBRAIN_HTTP_TRUST_PROXY=1 (one hop) so X-Forwarded-For lands as the
+  // real client IP for rate-limiting and req.secure detection. The legacy
+  // transport already reads this env var (src/mcp/http-transport.ts:111)
+  // for the same purpose; T8 makes the Express path agree.
+  app.set('trust proxy', resolveTrustProxy(process.env.GBRAIN_HTTP_TRUST_PROXY));
 
   // ---------------------------------------------------------------------------
   // Cookie parsing — required for /admin auth (express 5 has no built-in)
@@ -394,13 +470,37 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.use(cookieParser());
 
   // ---------------------------------------------------------------------------
-  // CORS
+  // CORS (v0.41.3, T7 — default-deny on every OAuth endpoint)
   // ---------------------------------------------------------------------------
-  app.use('/mcp', cors());
-  app.use('/token', cors());
-  app.use('/authorize', cors());
-  app.use('/register', cors());
-  app.use('/revoke', cors());
+  // Pre-v0.41.3 every OAuth endpoint used bare `cors()` which defaults to
+  // `Access-Control-Allow-Origin: *` — any web origin could complete a token
+  // exchange from a logged-in operator's browser. The fix parses
+  // GBRAIN_HTTP_CORS_ORIGIN the same way the legacy transport already does
+  // (src/mcp/http-transport.ts:parseCorsAllowlist) and gates every OAuth
+  // surface behind the allowlist. When the env var is unset the OAuth
+  // endpoints reject all cross-origin requests (default deny). Same-origin
+  // requests are unaffected because browsers send no Origin header for them.
+  //
+  // The /admin SPA is the one cross-origin caller we expect on a personal
+  // laptop install; it ships co-located with the brain and uses
+  // same-origin XHR, so the lockdown doesn't break it.
+  const corsAllowlistOAuth = parseCorsAllowlistOAuth();
+  if (!corsAllowlistOAuth && bind === '0.0.0.0') {
+    console.error(
+      '[serve-http] WARNING: --bind 0.0.0.0 is set but GBRAIN_HTTP_CORS_ORIGIN is unset. OAuth endpoints will reject ALL cross-origin requests until you set the env var (comma-separated origins).',
+    );
+  }
+  const corsOAuthOptions: cors.CorsOptions = {
+    origin: resolveCorsOrigin(corsAllowlistOAuth),
+    credentials: false,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  };
+  app.use('/mcp', cors(corsOAuthOptions));
+  app.use('/token', cors(corsOAuthOptions));
+  app.use('/authorize', cors(corsOAuthOptions));
+  app.use('/register', cors(corsOAuthOptions));
+  app.use('/revoke', cors(corsOAuthOptions));
 
   // ---------------------------------------------------------------------------
   // Custom client_credentials handler (before mcpAuthRouter)
@@ -592,17 +692,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // Admin authentication (cookie-based)
   // ---------------------------------------------------------------------------
+  // v0.40 D15.5: safeHexEqual extracted to src/core/timing-safe.ts so the new
+  // /webhooks/github HMAC verifier reuses the same constant-time compare.
   // POST /admin/login — JSON body with token (for programmatic/UI login)
-  // Constant-time hex compare. Both inputs are sha256 hex (64 chars),
-  // so they're always equal length. timingSafeEqual throws on length
-  // mismatch — we already short-circuit on non-string above. Catches
-  // would-be timing oracles even though the inputs are pre-hashed
-  // (defense-in-depth on the hash bits).
-  function safeHexEqual(a: string, b: string): boolean {
-    if (a.length !== b.length) return false;
-    return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
-  }
-
   app.post('/admin/login', express.json(), (req, res) => {
     const token = req.body?.token;
     if (!token || typeof token !== 'string') {
@@ -851,6 +943,19 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(result.status).json(result.body);
   });
 
+  // v0.41 D2 — live jobs dashboard data. Shares readSnapshot() with the
+  // TTY `gbrain jobs watch` command so the two surfaces stay 1:1.
+  app.get('/admin/api/jobs/watch', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { readSnapshot } = await import('./jobs-watch.ts');
+      const snap = await readSnapshot(engine);
+      res.json(snap);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // v0.36.1.0 (T15 / E6 / D23) — Calibration tab data endpoints.
   // Server-rendered SVG charts; admin SPA renders via TrustedSVG wrapper.
   // v0.36.1.0 (TD3) — pattern drill-down. Returns the source takes that
@@ -1090,22 +1195,51 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { name, scopes, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
+      // v0.39.3.0 WARN-9 + CV12: accept BOTH `scopes` (admin SPA convention)
+      // AND `scope` (OAuth wire-format convention, singular). The pre-fix
+      // code destructured only `scopes` and used `scopes || 'read'` which:
+      //   - Silently ignored `scope` requests (always defaulted to 'read')
+      //   - Threw on array input because registerClientManual's parseScopeString
+      //     calls .split(' ') which arrays don't have
+      //   - Accepted `['read write']` (space-in-element bug shape codex flagged)
+      //     and other malformed inputs
+      // normalizeScopesInput handles all four valid shapes (string, string[],
+      // missing, empty) and rejects the rest with a structured 400.
+      const { name, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
+      const rawScopes = (req.body as Record<string, unknown>).scopes ?? (req.body as Record<string, unknown>).scope;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      let scopeString: string;
+      try {
+        scopeString = normalizeScopesInput(rawScopes);
+      } catch (e) {
+        res.status(400).json({
+          error: 'invalid_scopes',
+          message: e instanceof Error ? e.message : String(e),
+        });
+        return;
+      }
       const grants = Array.isArray(grantTypes) && grantTypes.length > 0 ? grantTypes : ['client_credentials'];
       const uris = Array.isArray(redirectUris) ? redirectUris : [];
-      const result = await oauthProvider.registerClientManual(
-        name, grants, scopes || 'read', uris,
-      );
-      // Public client (PKCE-only, no secret): NULL out client_secret_hash and
-      // set auth method so the SDK's clientAuth middleware skips the hash-vs-
-      // plaintext comparison that would otherwise reject the request. This is
-      // the supported pattern for browser-based OAuth (e.g. claude.ai's
-      // Custom Connector flow, which uses authorization_code + PKCE).
-      if (tokenEndpointAuthMethod === 'none') {
-        await sql`UPDATE oauth_clients SET client_secret_hash = NULL, token_endpoint_auth_method = 'none' WHERE client_id = ${result.clientId}`;
-        delete (result as any).clientSecret;
+      // v0.41.3 (T1+T4): validate token_endpoint_auth_method via shared
+      // ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS before reaching the provider.
+      // Pre-v0.41.3 this endpoint did INSERT (confidential) → UPDATE (NULL
+      // out secret_hash) for the 'none' case, which left a confidential
+      // row stranded if the UPDATE failed (codex F4). Atomic now: pass the
+      // method to registerClientManual and let it INSERT the correct row
+      // in a single statement.
+      let validatedAuthMethod: string | undefined;
+      try {
+        validatedAuthMethod = validateTokenEndpointAuthMethod(tokenEndpointAuthMethod);
+      } catch (e) {
+        res.status(400).json({
+          error: 'invalid_token_endpoint_auth_method',
+          message: e instanceof Error ? e.message : String(e),
+        });
+        return;
       }
+      const result = await oauthProvider.registerClientManual(
+        name, grants, scopeString, uris, 'default', undefined, validatedAuthMethod,
+      );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
         await sql`UPDATE oauth_clients SET token_ttl = ${Number(tokenTtl)} WHERE client_id = ${result.clientId}`;
@@ -1584,6 +1718,30 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const authInfo = (req as Request & { auth?: AuthInfo }).auth as AuthInfo;
       const agentName = authInfo.clientName ?? authInfo.clientId;
 
+      // v0.39.3.0 BUG-2: outer try/catch ensures any unexpected throw
+      // returns a JSON envelope instead of leaking express's default HTML
+      // error page. Mirrors the MCP handler's F14 pattern (serve-http.ts
+      // F14 envelope around transport.handleRequest). The `!res.headersSent`
+      // guard (codex F#16) prevents a second-response attempt if the throw
+      // happens after the inner queue.add try/catch already responded.
+      try {
+
+      // v0.39.3.0 BUG-2: explicit null/undefined guard BEFORE body coercion.
+      // When the request has no body at all (no Content-Length header, no
+      // body-parser fed us anything), `req.body` is `undefined`. The pre-fix
+      // code's `else` branch called `Buffer.from(JSON.stringify(undefined),
+      // 'utf8')` — and `JSON.stringify(undefined) === undefined` (the
+      // literal, not the string), which makes `Buffer.from(undefined, 'utf8')`
+      // throw TypeError. Express's default error handler then served an HTML
+      // 500 page. Guard fires first to keep the response shape JSON.
+      if (req.body == null) {
+        res.status(400).json({
+          error: 'empty_body',
+          message: 'POST /ingest requires a non-empty body',
+        });
+        return;
+      }
+
       // Express raw() returns a Buffer. Decode as UTF-8; reject non-UTF-8
       // bytes loudly so callers know their payload was garbled.
       let body: Buffer;
@@ -1593,7 +1751,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         body = Buffer.from(req.body, 'utf8');
       } else {
         // express.json or urlencoded fired earlier in the chain and parsed
-        // for us. Re-serialize so we can hash and forward.
+        // for us. Re-serialize so we can hash and forward. The null/undefined
+        // case is already guarded above so JSON.stringify produces a real
+        // string here (objects round-trip, primitives become their JSON form).
         body = Buffer.from(JSON.stringify(req.body), 'utf8');
       }
 
@@ -1720,6 +1880,174 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           error: 'queue_submission_failed',
           message: msg,
         });
+      }
+
+      // v0.39.3.0 BUG-2: outer try/catch close — anything that throws BEFORE
+      // the inner queue.add try/catch lands here. The headersSent guard
+      // (codex F#16) skips the second-response attempt if the inner block
+      // already wrote a response and then threw on a downstream line (e.g.
+      // a logging side-effect after `res.status(202).json(...)`).
+      } catch (outerErr) {
+        const msg = outerErr instanceof Error ? outerErr.message : String(outerErr);
+        console.error('POST /ingest unexpected handler error:', msg);
+        if (!res.headersSent) {
+          res.status(500).json({
+            error: 'internal_error',
+            message: msg,
+          });
+        }
+      }
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // POST /webhooks/github — push-triggered sync (v0.40 Federated Sync v2)
+  // ---------------------------------------------------------------------------
+  // Anonymous endpoint by necessity (GitHub doesn't carry an OAuth token).
+  // Auth is via per-source HMAC-SHA256 in the X-Hub-Signature-256 header.
+  //
+  // D3: 60 req/min/IP rate limit + pre-DB short-circuit on missing
+  //     signature, so probe traffic doesn't even touch the source-lookup
+  //     query.
+  // D5: event=push AND ref-match against sources.config.tracked_branch.
+  //     Other event types (ping, pull_request, etc.) return 202 'ignored'
+  //     so GitHub doesn't retry.
+  // D15.5: HMAC compare uses the shared safeHexEqual helper.
+  // D18: submits 'sync' job with auto_embed_backfill=true and priority -10
+  //     (above autopilot's 0).
+  // ---------------------------------------------------------------------------
+  const githubWebhookLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'rate_limit_exceeded', message: 'too many GitHub webhook requests' },
+  });
+
+  app.post(
+    '/webhooks/github',
+    githubWebhookLimiter,
+    express.raw({ type: '*/*', limit: '1mb' }),
+    async (req: Request, res: Response) => {
+      // D3 pre-DB short-circuit: missing signature → 401 without any
+      // source lookup. Bot probe traffic ends here.
+      const sigHeader = req.header('X-Hub-Signature-256');
+      if (!sigHeader) {
+        res.status(401).json({ error: 'missing_signature', message: 'X-Hub-Signature-256 header is required' });
+        return;
+      }
+
+      // D5: filter by event header. GitHub fires webhooks for every event
+      // type. Anything other than 'push' is acknowledged with 202 + reason
+      // so GitHub doesn't retry — but no source lookup or job submission.
+      const event = req.header('X-GitHub-Event') ?? '';
+      if (event !== 'push') {
+        res.status(202).json({ status: 'ignored', reason: `event=${event || '(missing)'}` });
+        return;
+      }
+
+      const payload = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body), 'utf8');
+      if (payload.length === 0) {
+        res.status(400).json({ error: 'empty_body' });
+        return;
+      }
+
+      let parsed: { repository?: { full_name?: string }; ref?: string };
+      try {
+        parsed = JSON.parse(payload.toString('utf8'));
+      } catch {
+        res.status(400).json({ error: 'malformed_json' });
+        return;
+      }
+
+      const fullName = parsed.repository?.full_name;
+      const ref = parsed.ref;
+      if (!fullName || !ref) {
+        res.status(400).json({ error: 'missing_fields', message: 'repository.full_name and ref are required' });
+        return;
+      }
+
+      // Source lookup via the v87 partial expression index on
+      // config->>'github_repo'. fast even on large brains.
+      let source: { id: string; config: Record<string, unknown> | string } | null = null;
+      try {
+        const rows = await engine.executeRaw<{ id: string; config: Record<string, unknown> | string }>(
+          `SELECT id, config FROM sources WHERE config->>'github_repo' = $1 LIMIT 1`,
+          [fullName],
+        );
+        source = rows[0] ?? null;
+      } catch (err) {
+        console.error('webhook: source lookup error:', err);
+        res.status(500).json({ error: 'lookup_failed' });
+        return;
+      }
+      if (!source) {
+        res.status(404).json({ error: 'unknown_repo', repo: fullName });
+        return;
+      }
+
+      const cfg = (typeof source.config === 'string' ? JSON.parse(source.config) : source.config) as {
+        webhook_secret?: string;
+        tracked_branch?: string;
+      };
+
+      // D5: ref must match the configured tracked branch (default 'main').
+      const trackedBranch = cfg.tracked_branch ?? 'main';
+      const expectedRef = `refs/heads/${trackedBranch}`;
+      if (ref !== expectedRef) {
+        res.status(202).json({
+          status: 'ignored',
+          reason: `ref_mismatch`,
+          received_ref: ref,
+          tracked_branch: trackedBranch,
+        });
+        return;
+      }
+
+      const secret = cfg.webhook_secret;
+      if (!secret || typeof secret !== 'string') {
+        res.status(401).json({ error: 'webhook_not_configured', message: 'Run: gbrain sources webhook set ' + source.id });
+        return;
+      }
+
+      // HMAC verify. GitHub sends "sha256=<hex>" — strip the prefix BEFORE
+      // safeHexEqual because Buffer.from('sha256=...', 'hex') silently
+      // truncates at the first non-hex char (the 's'), leaving both
+      // operands as 0-byte buffers and making every signature "match".
+      // Pinned by test/sources-webhook.test.ts tamper assertions.
+      const { createHmac } = await import('node:crypto');
+      const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
+      const prefix = 'sha256=';
+      if (!sigHeader.startsWith(prefix)) {
+        res.status(401).json({ error: 'signature_mismatch', message: 'expected sha256= prefix' });
+        return;
+      }
+      if (!safeHexEqual(sigHeader.slice(prefix.length), computedHex)) {
+        res.status(401).json({ error: 'signature_mismatch' });
+        return;
+      }
+
+      // Submit sync job with priority -10 (above autopilot's 0).
+      try {
+        const queue = new MinionQueue(engine);
+        const job = await queue.add(
+          'sync',
+          {
+            sourceId: source.id,
+            auto_embed_backfill: true,
+            embed_reason: 'webhook',
+          },
+          {
+            priority: -10,
+            idempotency_key: `webhook:sync:${source.id}:${Math.floor(Date.now() / 30_000)}`,
+            maxWaiting: 1,
+          },
+        );
+        res.status(202).json({ job_id: job.id, source_id: source.id });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('webhook: queue submission error:', msg);
+        res.status(500).json({ error: 'queue_submission_failed', message: msg });
       }
     },
   );

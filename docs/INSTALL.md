@@ -37,6 +37,8 @@ gbrain migrate --to supabase     # PGLite → Postgres
 gbrain migrate --to pglite       # Postgres → PGLite (rare)
 ```
 
+For shared / large / multi-machine deployments (a team or company brain with multiple users hitting one server over HTTP MCP with OAuth scoping per user), follow the dedicated walkthrough: **[Tutorial: set up GBrain as your company brain](tutorials/company-brain.md)**.
+
 API keys live in `~/.gbrain/config.json` (file plane) or env vars (`OPENAI_API_KEY`, `ZEROENTROPY_API_KEY`, `VOYAGE_API_KEY`, `ANTHROPIC_API_KEY`). Set via CLI:
 
 ```bash

@@ -18,11 +18,14 @@
  * disabled = no failures expected).
  *
  * Best-effort writes. Write failures go to stderr but search continues.
+ *
+ * v0.40.4.0: internals delegate to the shared `src/core/audit/audit-writer.ts`
+ * primitive. Public API (logRerankFailure, readRecentRerankFailures,
+ * computeRerankAuditFilename) preserved bit-for-bit for the existing test
+ * suite at `test/rerank-audit.test.ts`.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { resolveAuditDir } from './minions/handlers/shell-audit.ts';
+import { createAuditWriter, computeIsoWeekFilename } from './audit/audit-writer.ts';
 
 /** Stable error-classification union; matches RerankError.reason. */
 export type RerankFailureReason =
@@ -56,16 +59,7 @@ export interface RerankFailureEvent {
 
 /** ISO-week-rotated filename: `rerank-failures-YYYY-Www.jsonl`. */
 export function computeRerankAuditFilename(now: Date = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7;
-  d.setUTCDate(d.getUTCDate() - dayNum + 3);
-  const isoYear = d.getUTCFullYear();
-  const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
-  const firstThursdayDayNum = (firstThursday.getUTCDay() + 6) % 7;
-  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstThursdayDayNum + 3);
-  const weekNum = Math.round((d.getTime() - firstThursday.getTime()) / (7 * 86400000)) + 1;
-  const ww = String(weekNum).padStart(2, '0');
-  return `rerank-failures-${isoYear}-W${ww}.jsonl`;
+  return computeIsoWeekFilename('rerank-failures', now);
 }
 
 /**
@@ -77,26 +71,23 @@ function truncateErrorSummary(msg: string, max = 200): string {
   return msg.slice(0, max - 1) + '…';
 }
 
+const writer = createAuditWriter<RerankFailureEvent>({
+  featureName: 'rerank-failures',
+  errorLabel: 'gbrain',
+  errorMessagePrefix: 'rerank-failure audit ',
+  errorTrailer: '; search continues',
+});
+
 /**
  * Append a rerank-failure event. Best-effort: write failure logs to stderr
  * but never throws.
  */
 export function logRerankFailure(event: Omit<RerankFailureEvent, 'ts' | 'severity'>): void {
-  const row: RerankFailureEvent = {
-    ts: new Date().toISOString(),
+  writer.log({
     severity: 'warn',
     ...event,
     error_summary: truncateErrorSummary(event.error_summary),
-  };
-  const dir = resolveAuditDir();
-  const file = path.join(dir, computeRerankAuditFilename());
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(file, JSON.stringify(row) + '\n', { encoding: 'utf8' });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[gbrain] rerank-failure audit write failed (${msg}); search continues\n`);
-  }
+  } as Omit<RerankFailureEvent, 'ts'>);
 }
 
 /**
@@ -105,33 +96,14 @@ export function logRerankFailure(event: Omit<RerankFailureEvent, 'ts' | 'severit
  * are skipped silently — the audit trail is informational.
  */
 export function readRecentRerankFailures(days = 7, now: Date = new Date()): RerankFailureEvent[] {
-  const dir = resolveAuditDir();
-  const cutoff = now.getTime() - days * 86400000;
-  const out: RerankFailureEvent[] = [];
-  // Walk the current + previous ISO week so a 7-day window straddling
-  // Monday-midnight stays covered.
-  const filenames = [
-    computeRerankAuditFilename(now),
-    computeRerankAuditFilename(new Date(now.getTime() - 7 * 86400000)),
-  ];
-  for (const filename of filenames) {
-    const file = path.join(dir, filename);
-    let content: string;
-    try {
-      content = fs.readFileSync(file, 'utf8');
-    } catch {
-      continue;
-    }
-    for (const line of content.split('\n')) {
-      if (line.length === 0) continue;
-      try {
-        const ev = JSON.parse(line) as RerankFailureEvent;
-        const ts = Date.parse(ev.ts);
-        if (Number.isFinite(ts) && ts >= cutoff) out.push(ev);
-      } catch {
-        // Corrupt row — skip.
-      }
-    }
-  }
-  return out;
+  return writer.readRecent(days, now);
 }
+
+// stderr label "gbrain" + qualifier "rerank-failure audit " preserve the
+// pre-v0.40.4 message byte-for-byte:
+//
+//   `[gbrain] rerank-failure audit write failed (${msg}); search continues`
+//
+// The `errorMessagePrefix` option on createAuditWriter restores the
+// qualifier that would otherwise be dropped by the refactor. Operators
+// grepping logs for "rerank-failure audit write failed" keep working.

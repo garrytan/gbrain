@@ -186,6 +186,20 @@ export interface RerankerTouchpoint {
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string;
   max_payload_bytes: number;
+  /**
+   * Override the rerank URL path. Defaults to '/models/rerank' (ZeroEntropy's
+   * legacy path; ZE-compatible-wire-shape providers like llama.cpp set
+   * '/v1/rerank').
+   */
+  path?: string;
+  /**
+   * Recipe-level timeout fallback for `gateway.rerank()` and search-mode
+   * resolution. Caller's `input.timeoutMs` and `search.reranker.timeout_ms`
+   * config still win when set. Used to give CPU-only local rerankers (e.g.
+   * llama.cpp serving Qwen3-Reranker-4B) headroom for first-call warmup
+   * without forcing every user to discover the config key.
+   */
+  default_timeout_ms?: number;
 }
 
 export interface ChatTouchpoint {
