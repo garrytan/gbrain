@@ -1506,11 +1506,21 @@ export async function runCycle(
         progress.start('cycle.extract_atoms');
         const { runPhaseExtractAtoms } = await import('./cycle/extract-atoms.ts');
         const xaSourceId = (await resolveSourceForDir(engine, opts.brainDir)) ?? 'default';
+        // v0.41.2.1 (D9 #5): union sync + synthesize affected slugs so the
+        // incremental discovery path doesn't miss pages just-written by the
+        // synthesize phase that ran earlier in the same cycle.
+        const xaAffectedSlugs =
+          syncPagesAffected || synthesizeWrittenSlugs
+            ? [
+                ...(syncPagesAffected ?? []),
+                ...(synthesizeWrittenSlugs ?? []),
+              ]
+            : undefined;
         const { result, duration_ms } = await timePhase(() => runPhaseExtractAtoms(engine, {
           brainDir: opts.brainDir,
           sourceId: xaSourceId,
           dryRun,
-          affectedSlugs: syncPagesAffected,
+          affectedSlugs: xaAffectedSlugs,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);

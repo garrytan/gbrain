@@ -64,6 +64,26 @@ export async function runImport(
       console.error('Tip: run `gbrain import <dir> --no-embed` to import without embedding now.');
       process.exit(1);
     }
+
+    // v0.41.6.0 D1: preflight embedding credentials. Closes the bug class
+    // where `gbrain import` per-file embed writes N identical
+    // "missing OPENAI_API_KEY" failures into sync-failures.jsonl.
+    const { validateEmbeddingCreds, EmbeddingCredentialError } = await import('../core/embed-preflight.ts');
+    try {
+      validateEmbeddingCreds();
+    } catch (e) {
+      if (e instanceof EmbeddingCredentialError) {
+        if (jsonOutput) {
+          console.log(JSON.stringify({ status: 'embedding_credentials_missing', diagnosis: e.diagnosis }));
+        } else {
+          console.error('');
+          console.error(e.userMessage);
+          console.error('');
+        }
+        process.exit(1);
+      }
+      throw e;
+    }
   }
   // v0.39 T1.5: load active pack ONCE at runImport entry; thread to every
   // per-file importFile call below. Codex perf finding #7 — never per-file.

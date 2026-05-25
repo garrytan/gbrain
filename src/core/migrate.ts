@@ -4412,6 +4412,35 @@ export const MIGRATIONS: Migration[] = [
       `,
     },
   },
+  {
+    version: 95,
+    name: 'links_link_source_check_includes_mentions',
+    // v0.42.0.0 Part B (migration #1 of #1409): widen the link_source
+    // CHECK constraint to admit 'mentions' for auto-linked body-text
+    // mentions from `gbrain extract links --by-mention`. Backlink-count
+    // SQL in postgres-engine.ts + pglite-engine.ts excludes link_source =
+    // 'mentions' so mention-derived edges don't pollute search ranking
+    // (D12 from /plan-eng-review). Mentions still count toward
+    // orphan-ratio and graph traversal — distinct semantics from
+    // markdown / frontmatter / manual provenance.
+    //
+    // Postgres auto-names the inline CHECK as `links_link_source_check`.
+    // PGLite mirrors that naming. Both branches DROP-IF-EXISTS for
+    // re-runnability. No data backfill needed (existing rows have
+    // link_source IN current allow-list ∪ NULL).
+    sql: `
+      ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
+      ALTER TABLE links ADD CONSTRAINT links_link_source_check
+        CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions'));
+    `,
+    sqlFor: {
+      pglite: `
+        ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
+        ALTER TABLE links ADD CONSTRAINT links_link_source_check
+          CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions'));
+      `,
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -4612,6 +4641,131 @@ export async function hasPendingMigrations(engine: BrainEngine): Promise<boolean
   } catch {
     return true;
   }
+}
+
+/**
+ * v0.41.6.0 D4 — race-tolerant CLI-side migration runner.
+ *
+ * Wraps `engine.initSchema()` with a deadlock-aware retry + poll loop so
+ * the common "two CLIs probe schema simultaneously" race doesn't surface
+ * an alarming `Schema probe/migrate failed: deadlock detected` warning
+ * on every sync.
+ *
+ * Flow:
+ *  1. Try `engine.initSchema()`.
+ *  2. On SQLSTATE 40P01 (deadlock_detected) from Postgres: wait 250ms,
+ *     retry once.
+ *  3. If second attempt still 40P01 (or any persistent lock-busy signal):
+ *     poll `hasPendingMigrations()` every 250ms for up to 5s. If poll
+ *     flips to `false` mid-window, return `{ status: 'race_resolved' }`
+ *     silently (another runner finished — common case the user
+ *     complained about).
+ *  4. If still pending at deadline: return `{ status: 'persistent', error }`.
+ *     Caller surfaces the revised warning.
+ *  5. Non-40P01 errors propagate normally (real failures).
+ *
+ * The deeper root cause (codex F12 in plan-eng-review: initSchema
+ * already holds pg_advisory_lock(42), so the deadlock graph likely
+ * involves OTHER locks like DDL vs application-query contention or
+ * PgBouncer pool artifacts) is filed as a P2 follow-up TODO. The
+ * symptom fix here quiets the warning on the COMMON case where the race
+ * resolves itself, while loud-failing when migration is genuinely stuck.
+ *
+ * `deadlineMs` defaults to 5000 (5s polling window). Test-only callers
+ * pass smaller values for hermeticity; production paths use the default.
+ *
+ * `pollIntervalMs` defaults to 250ms — matches the retry-backoff delay
+ * for a symmetric design (eng-review D11). ~20 polls per deadline window;
+ * trivial DB load even on a stressed PgBouncer pool.
+ */
+export type TryRunPendingMigrationsResult =
+  | { status: 'ok'; attempts: number }
+  | { status: 'not_needed' }
+  | { status: 'race_resolved'; attempts: number; pollIterations: number }
+  | { status: 'persistent'; attempts: number; pollIterations: number; error: Error }
+  | { status: 'error'; error: Error };
+
+export interface TryRunPendingMigrationsOpts {
+  deadlineMs?: number;
+  pollIntervalMs?: number;
+  retryBackoffMs?: number;
+  /** Test seam: inject a custom hasPendingMigrations / initSchema pair. */
+  _hooks?: {
+    initSchema?: () => Promise<void>;
+    hasPending?: () => Promise<boolean>;
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
+  };
+}
+
+export async function tryRunPendingMigrations(
+  engine: BrainEngine,
+  opts: TryRunPendingMigrationsOpts = {},
+): Promise<TryRunPendingMigrationsResult> {
+  const deadlineMs = opts.deadlineMs ?? 5000;
+  const pollIntervalMs = opts.pollIntervalMs ?? 250;
+  const retryBackoffMs = opts.retryBackoffMs ?? 250;
+  const initSchema = opts._hooks?.initSchema ?? (() => engine.initSchema());
+  const hasPending = opts._hooks?.hasPending ?? (() => hasPendingMigrations(engine));
+  const sleep = opts._hooks?.sleep ?? ((ms: number) => new Promise(r => setTimeout(r, ms)));
+  const now = opts._hooks?.now ?? (() => Date.now());
+
+  // Quick early-exit: if no migrations are actually pending, skip entirely.
+  if (!await hasPending()) return { status: 'not_needed' };
+
+  let attempts = 0;
+  let lastErr: Error | null = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    attempts++;
+    try {
+      await initSchema();
+      return { status: 'ok', attempts };
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (!isDeadlockError(lastErr)) {
+        // Real failure: propagate to caller's catch.
+        return { status: 'error', error: lastErr };
+      }
+      // Deadlock — backoff before retry.
+      if (attempt === 0) await sleep(retryBackoffMs);
+    }
+  }
+
+  // Both attempts deadlocked. Poll hasPendingMigrations until deadline.
+  const deadline = now() + deadlineMs;
+  let pollIterations = 0;
+  while (now() < deadline) {
+    pollIterations++;
+    await sleep(pollIntervalMs);
+    try {
+      if (!await hasPending()) return { status: 'race_resolved', attempts, pollIterations };
+    } catch {
+      // hasPending throws → treat as pending (defensive; matches its own catch).
+    }
+  }
+
+  return {
+    status: 'persistent',
+    attempts,
+    pollIterations,
+    error: lastErr ?? new Error('deadlock_persistent'),
+  };
+}
+
+/**
+ * Detect Postgres SQLSTATE 40P01 (deadlock_detected) from arbitrary
+ * thrown values. Pattern-matches on:
+ *   - postgres.js `.code === '40P01'`
+ *   - error message containing `40P01` or `deadlock detected`
+ * The text-fallback covers cases where the driver doesn't expose `.code`.
+ */
+export function isDeadlockError(err: unknown): boolean {
+  if (!err) return false;
+  const maybe = err as { code?: string; sqlState?: string; message?: string };
+  if (maybe.code === '40P01' || maybe.sqlState === '40P01') return true;
+  const msg = String(maybe.message ?? err);
+  return /40P01|deadlock detected/i.test(msg);
 }
 
 export async function runMigrations(engine: BrainEngine): Promise<{ applied: number; current: number }> {

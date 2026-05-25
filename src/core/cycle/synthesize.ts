@@ -32,7 +32,7 @@ import { chat as gatewayChat, type ChatResult } from '../ai/gateway.ts';
 import { resolveRecipe } from '../ai/model-resolver.ts';
 import { AIConfigError } from '../ai/errors.ts';
 import { loadConfig } from '../config.ts';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { MinionQueue } from '../minions/queue.ts';
@@ -42,6 +42,7 @@ import { discoverTranscripts, type DiscoveredTranscript } from './transcript-dis
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
+import { safeSplitIndex } from '../text-safe.ts';
 
 // Slug regex from validatePageSlug — kept in sync.
 // Used for the orchestrator-written summary index slug.
@@ -183,7 +184,12 @@ function findBoundary(text: string, maxChars: number, searchStart: number): numb
   const nlIdx = window.lastIndexOf('\n');
   if (nlIdx >= 0) return searchStart + nlIdx;
   // No boundary fits; hard-split at maxChars (deterministic).
-  return maxChars;
+  // v0.42.0.0: route through safeSplitIndex so a hard-split that lands
+  // between a UTF-16 surrogate pair (emoji / non-BMP CJK / mathematical
+  // alphanumerics) doesn't orphan the high surrogate — that would change
+  // chunk byte-content vs the source and break the D9 stable-chunk-identity
+  // invariant on the next retry.
+  return safeSplitIndex(text, maxChars);
 }
 
 /**
@@ -243,6 +249,23 @@ export async function runPhaseSynthesize(
   opts: SynthesizePhaseOpts,
 ): Promise<PhaseResult> {
   const start = Date.now();
+  // Normalize brainDir to an absolute path BEFORE any reverse-write. Without
+  // this, a relative or empty brainDir flows down to writeReversePages →
+  // `join(brainDir, '${slug}.md')` → relative path → resolves against cwd at
+  // writeFileSync time, spilling synthesize output into whatever directory
+  // the cycle ran from (e.g., `companies/novamind.md` at the repo root).
+  // Surfaced by the warm-narwhal wave when E2E test cleanup found orphan
+  // synthesize pages at repo root from a `runCycle({brainDir: '.'})` call
+  // chain. Throw on empty (silent cwd-resolution is worse than a loud
+  // failure); resolve if relative (`.` / `./brain` / `../sibling` all valid
+  // inputs but must canonicalize before the write).
+  if (!opts.brainDir || opts.brainDir.trim() === '') {
+    return failed(makeError('InternalError', 'BRAINDIR_EMPTY',
+      'opts.brainDir is empty; refusing to run synthesize. Pass an absolute path.'));
+  }
+  if (!isAbsolute(opts.brainDir)) {
+    opts.brainDir = resolve(opts.brainDir);
+  }
   try {
     const config = await loadSynthConfig(engine);
 
@@ -425,10 +448,20 @@ export async function runPhaseSynthesize(
       }
 
       const isChunked = chunks.length > 1;
+      // queue.add subagent validator (classifyCapabilities → resolveRecipe)
+      // requires `provider:model`. resolveModel can return a bare id when
+      // TIER_DEFAULTS / DEFAULT_ALIASES carry a bare value; ensure the
+      // anthropic: prefix is present for known claude-* ids before passing
+      // to the queue. Non-anthropic providers must already declare a colon.
+      const subagentModel = config.model.includes(':')
+        ? config.model
+        : config.model.toLowerCase().startsWith('claude-')
+          ? `anthropic:${config.model}`
+          : config.model;
       for (let i = 0; i < chunks.length; i++) {
         const childData: SubagentHandlerData = {
           prompt: buildSynthesisPrompt(t, chunks[i], i, chunks.length, priorContradictionsBlock),
-          model: config.model,
+          model: subagentModel,
           max_turns: 30,
           allowed_slug_prefixes: allowedSlugPrefixes,
         };

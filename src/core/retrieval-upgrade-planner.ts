@@ -132,6 +132,10 @@ export type ZeSwitchSnapshot = {
 /**
  * Tagged-union return (D15) so callers can dispatch on `status` without
  * parsing the `reason` string. `failed` carries a reason; all others omit it.
+ *
+ * v0.41.2.1 D9 #8 — `refused` is the new pre-apply gate variant when
+ * GBRAIN_EMBEDDING_* env vars would override the target at runtime.
+ * CLI renders the warning box; planner stays data-pure.
  */
 export type ApplyResult =
   | { status: 'applied'; plan: RetrievalUpgradeState }
@@ -139,7 +143,88 @@ export type ApplyResult =
   | { status: 'skipped_no_work'; plan: RetrievalUpgradeState }
   | { status: 'declined'; plan: RetrievalUpgradeState }
   | { status: 'planned'; plan: RetrievalUpgradeState }
+  | { status: 'refused'; plan: RetrievalUpgradeState; reason: 'env_override'; warning: EnvOverrideWarning }
   | { status: 'failed'; plan: RetrievalUpgradeState; reason: string };
+
+/**
+ * v0.41.2.1 — env-override safety gate.
+ *
+ * `process.env.GBRAIN_EMBEDDING_MODEL` and `GBRAIN_EMBEDDING_DIMENSIONS`
+ * win over DB+file config in `loadConfig()`. The 716K-chunk damage
+ * incident (PR #1421) shipped because ze-switch wrote DB config but
+ * the env override silently kept the old model active at embed time —
+ * schema migrated to 2560d while embeds still produced 1536d vectors.
+ *
+ * detectEnvOverride is a pure read of process.env (or an injected env
+ * for tests). triggered:true means refusal is required unless the
+ * caller passes ignoreEnvOverride:true (mirrors --ignore-missing-key).
+ */
+export interface EnvOverrideWarning {
+  triggered: boolean;
+  vars: Array<{ name: string; current: string; target: string }>;
+}
+
+export function detectEnvOverride(
+  targetModel: string,
+  targetDim: number,
+  env: NodeJS.ProcessEnv = process.env,
+): EnvOverrideWarning {
+  const vars: EnvOverrideWarning['vars'] = [];
+  const envModel = env.GBRAIN_EMBEDDING_MODEL?.trim();
+  if (envModel && envModel !== targetModel) {
+    vars.push({ name: 'GBRAIN_EMBEDDING_MODEL', current: envModel, target: targetModel });
+  }
+  const envDimRaw = env.GBRAIN_EMBEDDING_DIMENSIONS?.trim();
+  if (envDimRaw) {
+    const envDim = Number(envDimRaw);
+    if (!Number.isFinite(envDim) || envDim !== targetDim) {
+      vars.push({
+        name: 'GBRAIN_EMBEDDING_DIMENSIONS',
+        current: envDimRaw,
+        target: String(targetDim),
+      });
+    }
+  }
+  return { triggered: vars.length > 0, vars };
+}
+
+/**
+ * ASCII box rendering (repo convention D10 v0.22.11 — no Unicode box
+ * drawing). Pure function; CLI calls this and writes to stderr.
+ * Line width <= 78 cols for safe rendering in any terminal or log
+ * aggregator.
+ */
+export function formatEnvOverrideWarning(w: EnvOverrideWarning): string {
+  const lines: string[] = [];
+  lines.push('+----------------------------------------------------------------------------+');
+  lines.push('| ENV OVERRIDE DETECTED - ACTION REQUIRED                                    |');
+  lines.push('+----------------------------------------------------------------------------+');
+  for (const v of w.vars) {
+    lines.push(`| ${v.name} is set in your environment:`.padEnd(77) + '|');
+    lines.push(`|   Current env: ${v.current}`.padEnd(77) + '|');
+    lines.push(`|   Switch target: ${v.target}`.padEnd(77) + '|');
+    lines.push('|                                                                            |');
+  }
+  lines.push('| The env var takes HIGHEST PRECEDENCE and will override this switch.        |');
+  lines.push('| Update your .env file or shell environment before retrying:                |');
+  lines.push('|                                                                            |');
+  const unsetCmd = `   unset ${w.vars.map(v => v.name).join(' ')}`;
+  // Match the other content-line pattern: `|` + 76 chars + `|` = 78 total.
+  lines.push(`|${unsetCmd.padEnd(76)}|`);
+  lines.push('|                                                                            |');
+  lines.push('| Without this change, the switch has NO EFFECT at runtime.                  |');
+  lines.push('| Pass --ignore-env-override to apply anyway (advanced; you know why).       |');
+  lines.push('+----------------------------------------------------------------------------+');
+  return lines.join('\n');
+}
+
+/**
+ * v0.41.2.1 — Apply/resume opts. ignoreEnvOverride mirrors the existing
+ * --ignore-missing-key precedent in the same command surface.
+ */
+export interface ApplyOpts {
+  ignoreEnvOverride?: boolean;
+}
 
 // ============================================================================
 // Public API
@@ -266,6 +351,7 @@ export async function planRetrievalUpgrade(engine: BrainEngine): Promise<Retriev
 export async function applyRetrievalUpgrade(
   engine: BrainEngine,
   plan: RetrievalUpgradeState,
+  opts: ApplyOpts = {},
 ): Promise<ApplyResult> {
   // Idempotency.
   if ((await engine.getConfig(KEY_APPLIED)) === 'true') {
@@ -281,6 +367,20 @@ export async function applyRetrievalUpgrade(
   // applier; chunker-only re-embed continues through the legacy v0.32.7 path.
   if (!plan.ze_switch_offered) {
     return { status: 'skipped_no_work', plan };
+  }
+
+  // v0.41.2.1 D9 #7 — env-override gate fires FIRST, before any mutation.
+  // Schema transition (line ~304) AND the snapshot/intent writes below
+  // (lines ~294 and ~297) are all skipped if env override would defeat the
+  // switch at runtime. Pre-fix, the planner wrote KEY_PREVIOUS_SNAPSHOT
+  // and KEY_REQUESTED before checking — which left the brain in a
+  // half-applied state when the warning fired post-mutation. The new
+  // contract is: refused = zero side effects.
+  const targetModel = plan.target_embedding_model ?? ZE_TARGET_EMBEDDING_MODEL;
+  const targetDim0 = plan.target_dim ?? ZE_TARGET_EMBEDDING_DIM;
+  const envWarning = detectEnvOverride(targetModel, targetDim0);
+  if (envWarning.triggered && !opts.ignoreEnvOverride) {
+    return { status: 'refused', plan, reason: 'env_override', warning: envWarning };
   }
 
   try {
@@ -338,7 +438,10 @@ export async function recordDeclinedForever(engine: BrainEngine): Promise<void> 
  * Crash recovery (D5 superseded). Reads the (requested, applied) pair and
  * finishes whichever step is incomplete. Idempotent.
  */
-export async function resumeRetrievalUpgrade(engine: BrainEngine): Promise<ApplyResult> {
+export async function resumeRetrievalUpgrade(
+  engine: BrainEngine,
+  opts: ApplyOpts = {},
+): Promise<ApplyResult> {
   const requested = (await engine.getConfig(KEY_REQUESTED)) === 'true';
   const applied = (await engine.getConfig(KEY_APPLIED)) === 'true';
   const plan = await planRetrievalUpgrade(engine);
@@ -351,12 +454,22 @@ export async function resumeRetrievalUpgrade(engine: BrainEngine): Promise<Apply
     return { status: 'skipped_no_work', plan };
   }
 
+  // v0.41.2.1 D9 #6 — env-override gate fires FIRST on resume too.
+  // Pre-fix, resume was a bypass path: it called runSchemaTransition at
+  // line ~360 with no env check, so a user could refuse apply (env triggered)
+  // then run --resume to silently apply with the same broken env still set.
+  // Now both paths share identical gate semantics.
+  const targetDim = ZE_TARGET_EMBEDDING_DIM;
+  const envWarning = detectEnvOverride(ZE_TARGET_EMBEDDING_MODEL, targetDim);
+  if (envWarning.triggered && !opts.ignoreEnvOverride) {
+    return { status: 'refused', plan, reason: 'env_override', warning: envWarning };
+  }
+
   // requested=true, applied=false. Either schema is at target and config
   // still says source, or schema crashed mid-DDL. Re-run schema transition
   // (idempotent via CREATE INDEX IF NOT EXISTS + ALTER COLUMN no-op semantics)
   // then write config + mark applied.
   try {
-    const targetDim = ZE_TARGET_EMBEDDING_DIM;
     await runSchemaTransition(engine, targetDim);
     await engine.setConfig('embedding_model', ZE_TARGET_EMBEDDING_MODEL);
     await engine.setConfig('embedding_dimensions', String(targetDim));

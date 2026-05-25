@@ -134,6 +134,19 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     assertEmbeddingEnabled(loadConfig());
   }
 
+  // v0.41.6.0 D1: preflight embedding credentials. Skipped in dryRun mode
+  // so plan-mode introspection still works (no provider calls needed).
+  //
+  // runEmbedCore is a LIBRARY function called from both the CLI (runEmbed)
+  // and the cycle (runCycle's embed phase + autopilot-cycle handler). THROW
+  // EmbeddingCredentialError so the cycle's per-phase try/catch can
+  // gracefully fail-the-phase without killing the worker process. The CLI
+  // wrapper at src/commands/embed.ts:runEmbed catches and exits.
+  if (!opts.dryRun) {
+    const { validateEmbeddingCreds } = await import('../core/embed-preflight.ts');
+    validateEmbeddingCreds();
+  }
+
   // v0.37.11.0 (Lane D.2): pre-flight dim-mismatch check. Catches the headline
   // fresh-install bug class before the worker pool spends 20 parallel calls
   // hitting raw Postgres dimension errors.
@@ -236,9 +249,16 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
     return result;
   } catch (e) {
     if (progressStarted) progress.finish();
-    // D.2: surface dim-mismatch failures with the paste-ready recipe
-    // instead of the raw Postgres error message.
-    if (e instanceof EmbeddingDimMismatchError) {
+    // v0.41.6.0 D1: preflight throws EmbeddingCredentialError; surface the
+    // paste-ready userMessage instead of the bare exception text.
+    const { EmbeddingCredentialError } = await import('../core/embed-preflight.ts');
+    if (e instanceof EmbeddingCredentialError) {
+      serr('');
+      serr(e.userMessage);
+      serr('');
+    } else if (e instanceof EmbeddingDimMismatchError) {
+      // D.2: surface dim-mismatch failures with the paste-ready recipe
+      // instead of the raw Postgres error message.
       serr('\n' + e.recipeMessage + '\n');
     } else {
       serr(e instanceof Error ? e.message : String(e));

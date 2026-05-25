@@ -114,7 +114,32 @@ interface ResolverEntry {
   section: string;         // e.g., 'Brain operations'
 }
 
-/** Parse RESOLVER.md markdown tables into structured entries. */
+/**
+ * Parse RESOLVER.md / AGENTS.md into structured entries. Supports two formats
+ * that can mix in one file:
+ *
+ *   Format 1 (table) — original gbrain shape:
+ *     | trigger phrase | `skills/<name>/SKILL.md` |
+ *
+ *   Format 2 (compact list, v0.41.7.0) — OpenClaw-native shape:
+ *     - **skill-name**: trigger1 | trigger2 | trigger3
+ *     - skill-name: trigger1 | trigger2
+ *
+ * List-format constraints (v0.41.7.0):
+ *   - Skill name MUST be kebab-lowercase (`[a-z][a-z0-9-]+`). Bold names
+ *     like `**Note**`, `**Convention**`, `**TODO**` are deliberately
+ *     skipped so prose bullets in real-world AGENTS.md files don't get
+ *     mis-parsed as skill rows.
+ *   - `skillPath` is ALWAYS derived as `skills/<name>/SKILL.md`. An
+ *     optional `→ \`skills/path\`` (or ASCII `->`) suffix is stripped from
+ *     the trigger string but NOT honored as the path: downstream consumers
+ *     (`routing-eval.ts:skillSlugFromPath`, the manifest lookup at this
+ *     file's :367) both assume the convention. For non-conventional paths,
+ *     use the table format.
+ *   - Multiple triggers fan out to one entry per trigger, all sharing the
+ *     same `skillPath`. `checkResolvable` dedupes by `skillPath` downstream,
+ *     so the integration reachability count counts each skill once.
+ */
 export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
   const entries: ResolverEntry[] = [];
   let currentSection = '';
@@ -127,29 +152,55 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
       continue;
     }
 
-    // Skip non-table rows
-    if (!line.startsWith('|') || line.includes('---')) continue;
+    // ── Format 1: Markdown table rows ──
+    if (line.startsWith('|') && !line.includes('---')) {
+      const cols = line.split('|').map(c => c.trim()).filter(Boolean);
+      if (cols.length < 2) continue;
 
-    // Split table columns
-    const cols = line.split('|').map(c => c.trim()).filter(Boolean);
-    if (cols.length < 2) continue;
+      const trigger = cols[0];
+      const skillCol = cols[1];
 
-    const trigger = cols[0];
-    const skillCol = cols[1];
+      // Skip header rows
+      if (trigger.toLowerCase() === 'trigger' || trigger.toLowerCase() === 'skill') continue;
 
-    // Skip header rows
-    if (trigger.toLowerCase() === 'trigger' || trigger.toLowerCase() === 'skill') continue;
+      // GStack / external references (Check `ACCESS_POLICY.md`, Read X, GStack: Y)
+      if (skillCol.startsWith('GStack:') || skillCol.startsWith('Check ') || skillCol.startsWith('Read ')) {
+        entries.push({ trigger, skillPath: skillCol, isGStack: true, section: currentSection });
+        continue;
+      }
 
-    // Check for GStack entries
-    if (skillCol.startsWith('GStack:') || skillCol.startsWith('Check ') || skillCol.startsWith('Read ')) {
-      entries.push({ trigger, skillPath: skillCol, isGStack: true, section: currentSection });
+      // Backtick-wrapped skill path
+      const pathMatch = skillCol.match(/`(skills\/[^`]+\/SKILL\.md)`/);
+      if (pathMatch) {
+        entries.push({ trigger, skillPath: pathMatch[1], isGStack: false, section: currentSection });
+      }
       continue;
     }
 
-    // Extract skill path from backtick-wrapped references
-    const pathMatch = skillCol.match(/`(skills\/[^`]+\/SKILL\.md)`/);
-    if (pathMatch) {
-      entries.push({ trigger, skillPath: pathMatch[1], isGStack: false, section: currentSection });
+    // ── Format 2: Compact list rows (v0.41.7.0) ──
+    // Bold form preferred: `- **skill-name**: trigger1 | trigger2`
+    // Plain fallback:     `- skill-name: trigger1 | trigger2`
+    // Name regex is kebab-lowercase only so prose bullets like `- **Note**: …`
+    // don't false-match as skill rows (codex F2 / D4).
+    const listBold = line.match(/^-\s+\*\*([a-z][a-z0-9-]+)\*\*\s*:\s*(.+)$/);
+    const listPlain = listBold ? null : line.match(/^-\s+([a-z][a-z0-9-]+)\s*:\s*(.+)$/);
+    const listMatch = listBold ?? listPlain;
+    if (listMatch) {
+      const skillName = listMatch[1];
+      const triggersRaw = listMatch[2].trim();
+      // Strip optional explicit path suffix (D3: stripped, NOT captured).
+      // Both Unicode → and ASCII -> accepted; skillPath is always derived.
+      const cleaned = triggersRaw.replace(/\s*(?:→|->)\s*`skills\/[^`]+`\s*$/, '');
+      // Split on |, drop empty pieces and the literal `...` placeholder.
+      const triggers = cleaned
+        .split('|')
+        .map(t => t.trim())
+        .filter(t => t.length > 0 && t !== '...');
+      const skillPath = `skills/${skillName}/SKILL.md`;
+      // Multiple entries share skillPath; checkResolvable dedupes downstream.
+      for (const trigger of triggers) {
+        entries.push({ trigger, skillPath, isGStack: false, section: currentSection });
+      }
     }
   }
 

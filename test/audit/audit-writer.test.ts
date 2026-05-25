@@ -212,7 +212,12 @@ describe('createAuditWriter — log()', () => {
 describe('createAuditWriter — readRecent()', () => {
   it('returns events from current week, filtered by ts cutoff', async () => {
     const dir = makeDir();
-    const now = new Date('2026-05-22T12:00:00Z');
+    // v0.41.6.0: use real `now` (not a hardcoded UTC date) so the writer
+    // (which uses real Date.now() to pick the per-week filename) lands
+    // events in the same ISO-week file that readRecent walks. The
+    // pre-existing hardcoded `2026-05-22T12:00:00Z` fixture broke when
+    // the machine clock moved past that week.
+    const now = new Date();
     await withEnv({ GBRAIN_AUDIT_DIR: dir }, async () => {
       const writer = createAuditWriter<TestEvent>({ featureName: 'read-current' });
 

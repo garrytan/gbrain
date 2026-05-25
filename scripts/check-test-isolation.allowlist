@@ -63,7 +63,6 @@ test/resolvers.test.ts
 test/scenarios.test.ts
 test/schema-bootstrap-coverage.test.ts
 test/search-limit.test.ts
-test/seed-pglite.test.ts
 test/skillpack-check.test.ts
 test/source-resolver.test.ts
 test/storage-sync.test.ts

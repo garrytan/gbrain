@@ -169,6 +169,35 @@ export interface GBrainConfig {
   };
 
   /**
+   * v0.41.2.1 — dream cycle config (synthesize + patterns phases).
+   * Read-precedence per key: file > DB > defaults. There are no
+   * `GBRAIN_DREAM_*` env vars; do not add an env layer without first
+   * extending `loadConfig()` to read them.
+   *
+   * Existing consumers (synthesize.ts, patterns.ts) read these keys
+   * directly via `engine.getConfig()`, so they already see DB-plane
+   * values. The structured shape here exists so consumers that read
+   * the merged config object (e.g. extract-atoms.ts) see the values
+   * uniformly without per-call-site `engine.getConfig()` fallbacks.
+   *
+   * Closes PR #1416's "silent dream.* config misses on DB-plane writes"
+   * for the merged-config code path.
+   */
+  dream?: {
+    synthesize?: {
+      session_corpus_dir?: string;
+      meeting_transcripts_dir?: string;
+      verdict_model?: string;
+      max_prompt_tokens?: number;
+      max_chunks_per_transcript?: number;
+    };
+    patterns?: {
+      lookback_days?: number;
+      min_evidence?: number;
+    };
+  };
+
+  /**
    * Thin-client mode (multi-topology v1). When set, this install does NOT
    * have a local DB; it talks to a remote `gbrain serve --http` over MCP.
    * The CLI dispatch guard in `src/cli.ts` checks for this field BEFORE
@@ -489,6 +518,57 @@ export async function loadConfigWithEngine(
   }
   if (Object.keys(mergedCS).length > 0) {
     merged.content_sanity = mergedCS;
+  }
+
+  // v0.41.2.1 — dream.* DB-plane merge. Precedence is file > DB > defaults
+  // per key (NO env layer; see GBrainConfig.dream JSDoc). Without this,
+  // `extract-atoms.ts` and any other consumer that reads the merged config
+  // (vs calling `engine.getConfig()` directly) silently misses dream.*
+  // config set via `gbrain config set`.
+  const dbSessionCorpusDir = await dbStr('dream.synthesize.session_corpus_dir');
+  const dbMeetingTranscriptsDir = await dbStr('dream.synthesize.meeting_transcripts_dir');
+  const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
+  const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
+  const dbMaxChunksPerTranscript = await dbInt('dream.synthesize.max_chunks_per_transcript');
+  const dbLookbackDays = await dbInt('dream.patterns.lookback_days');
+  const dbMinEvidence = await dbInt('dream.patterns.min_evidence');
+
+  const existingDream = merged.dream ?? {};
+  const existingSynth = existingDream.synthesize ?? {};
+  const existingPatterns = existingDream.patterns ?? {};
+  const mergedSynth: NonNullable<NonNullable<GBrainConfig['dream']>['synthesize']> = { ...existingSynth };
+  const mergedPatterns: NonNullable<NonNullable<GBrainConfig['dream']>['patterns']> = { ...existingPatterns };
+
+  if (mergedSynth.session_corpus_dir === undefined && dbSessionCorpusDir !== undefined) {
+    mergedSynth.session_corpus_dir = dbSessionCorpusDir;
+  }
+  if (mergedSynth.meeting_transcripts_dir === undefined && dbMeetingTranscriptsDir !== undefined) {
+    mergedSynth.meeting_transcripts_dir = dbMeetingTranscriptsDir;
+  }
+  if (mergedSynth.verdict_model === undefined && dbVerdictModel !== undefined) {
+    mergedSynth.verdict_model = dbVerdictModel;
+  }
+  if (mergedSynth.max_prompt_tokens === undefined && dbMaxPromptTokens !== undefined) {
+    mergedSynth.max_prompt_tokens = dbMaxPromptTokens;
+  }
+  if (mergedSynth.max_chunks_per_transcript === undefined && dbMaxChunksPerTranscript !== undefined) {
+    mergedSynth.max_chunks_per_transcript = dbMaxChunksPerTranscript;
+  }
+  if (mergedPatterns.lookback_days === undefined && dbLookbackDays !== undefined) {
+    mergedPatterns.lookback_days = dbLookbackDays;
+  }
+  if (mergedPatterns.min_evidence === undefined && dbMinEvidence !== undefined) {
+    mergedPatterns.min_evidence = dbMinEvidence;
+  }
+
+  // Only construct the dream container when at least one leaf was populated
+  // — mirrors the content_sanity pattern so empty brains keep `cfg.dream`
+  // undefined.
+  if (Object.keys(mergedSynth).length > 0 || Object.keys(mergedPatterns).length > 0) {
+    const mergedDream: NonNullable<GBrainConfig['dream']> = {};
+    if (Object.keys(mergedSynth).length > 0) mergedDream.synthesize = mergedSynth;
+    if (Object.keys(mergedPatterns).length > 0) mergedDream.patterns = mergedPatterns;
+    merged.dream = mergedDream;
   }
 
   return merged;

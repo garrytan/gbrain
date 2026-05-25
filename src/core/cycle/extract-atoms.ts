@@ -1,32 +1,48 @@
-// v0.41 T5 — extract_atoms cycle phase (minimal-viable implementation).
+// v0.41.2.1 — extract_atoms cycle phase, post-fix-wave rebuild.
 //
-// v0.41 ships a working Haiku-driven extract path. The full v0.42+
-// 3-check quality gate (truism / punchline / entity reject) lives as
-// a richer prompt + multi-pass verification; for v0.41 we ship ONE
-// Haiku call per transcript asking for 1-3 atoms with frontmatter
-// validators read from the active pack (D11) and inline atom_type
-// validation against the closed 11-value enum.
+// Sequencing per cycle:
+//   1. Discover transcripts via discoverTranscripts() AND brain pages
+//      via a single raw SQL query (NOT EXISTS subquery filters out
+//      pages already extracted by content hash — see "Idempotency" below).
+//   2. Dedup by content_hash; transcripts win on collision.
+//   3. Per work-item, ask Haiku for 1-3 atoms.
+//   4. Write each atom via engine.putPage(slug, page, {sourceId})
+//      with sourceId threaded so federated brains route correctly.
 //
-// Sequencing:
-//   1. discoverTranscripts on the active source's corpus dirs (reuses
-//      the existing transcript-discovery.ts helper).
-//   2. Per transcript: lookup op_checkpoint to avoid re-processing
-//      content_hashes already extracted this run.
-//   3. Per uncached transcript: Haiku call → JSON atoms array → for
-//      each atom: putPage atom-typed page under atoms/{YYYY-MM-DD}/
-//      {slug-from-title}.
-//   4. Update op_checkpoint with the content_hash.
+// Idempotency (D1 from /plan-eng-review):
+//   Each atom carries frontmatter.source_hash (16-char sha256 prefix).
+//   Before processing a transcript/page, query "any atom with this
+//   source_hash exists in this source?". If yes, skip. Closes both:
+//     - PR #1414's primary concern (page-side re-extraction)
+//     - Pre-existing v0.41.2.0 transcript-side date-stamp duplicate bug
+//       (atom slugs are `atoms/YYYY-MM-DD/<title>`, so re-discovered
+//       transcripts on day N+1 used to write second atoms; now skipped).
 //
-// Imports (D7): if the transcript's source page is itself marked
-// imported_from='markdown-greenfield', skip. Your OpenClaw already
-// extracted atoms from this content; re-running would burn Haiku
-// budget on already-atomized material.
+// Known limitation (D9 #2 — documented, not blocking):
+//   If extraction writes atom 1 of 3 then atom 2 throws, source_hash
+//   filter sees atom 1 exists and skips on next discovery. Atoms 2+3
+//   stay missing until content_hash changes. Acceptable for v0.41.2.1:
+//     - Haiku call failure is rare; network/budget failures rarer.
+//     - Content edits trigger natural re-extract via new content_hash.
+//     - The original incident (duplicate atoms) is fully closed.
+//   Per-atom idempotency via deterministic slug is v0.42+ TODO
+//   (see TODOS.md).
+//
+// Config:
+//   Reads dream.synthesize.session_corpus_dir + meeting_transcripts_dir
+//   via loadConfigWithEngine() (D9 #10: precedence is file > DB > defaults;
+//   no GBRAIN_DREAM_* env vars exist). Closes PR #1416's silent-config bug
+//   for this caller.
 //
 // Budget: $0.30/source/run, key `cycle.extract_atoms.budget_usd`.
 // Exceeded budget halts with PhaseStatus='warn' + partial result.
 //
-// Source-scoped: opts.sourceId routes the per-source corpus dir lookup
-// and write target.
+// Source-scoped: opts.sourceId routes the per-source corpus dir lookup,
+// the discovery SQL (source_id = $1), the NOT EXISTS idempotency
+// subquery (atom.source_id = $1), AND every putPage write
+// ({sourceId} third arg). Pre-fix the putPage call was missing the
+// sourceId arg — atoms always wrote to 'default' regardless of source,
+// which made the NOT EXISTS guard ineffective on federated brains.
 
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
@@ -34,15 +50,23 @@ import type { GBrainConfig } from '../config.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
-// v0.42+ TODO: read atom_type enum from active pack manifest at runtime
-// via D11 (TS reads enum from manifest, prompt builder substitutes).
-// v0.41 ships the enum inline matching gbrain-creator.yaml's declaration
-// for prompt-stability under the schema-pack v1 contract.
+
+// v0.42+ TODO: read atom_type enum from active pack manifest at runtime.
 const ATOM_TYPES = [
   'insight', 'anecdote', 'quote', 'framework', 'statistic',
   'story_angle', 'strategy_angle', 'strategy', 'endorsement',
   'critique', 'collection',
 ] as const;
+
+// v0.41.2.1 (D2): brain-page discovery constants. Hardcoded for now;
+// future pack-aware refactor is a one-line change to pull from the
+// active pack manifest (symmetric with the existing
+// src/core/facts/eligibility.ts:49 TODO).
+const EXTRACTABLE_PAGE_TYPES = [
+  'meeting', 'source', 'article', 'video', 'book', 'original',
+] as const;
+const PAGE_DISCOVERY_BUDGET = 50;
+const MIN_PAGE_CHARS_FOR_EXTRACTION = 500;
 
 export interface ExtractAtomsOpts {
   brainDir?: string;
@@ -51,10 +75,19 @@ export interface ExtractAtomsOpts {
   affectedSlugs?: string[];
   /** Test seam: alternative chat function (bypasses real LLM calls). */
   _chat?: typeof gatewayChat;
-  /** Test seam: alternative config loader. */
-  _loadConfig?: () => GBrainConfig;
+  /**
+   * Test seam: alternative config loader. Sync OR async — extended in
+   * v0.41.2.1 to allow loadConfigWithEngine() (async) to be the default.
+   */
+  _loadConfig?: () => GBrainConfig | Promise<GBrainConfig | null> | null;
   /** Test seam: skip transcript discovery; use these transcripts directly. */
   _transcripts?: Array<{ filePath: string; content: string; contentHash: string }>;
+  /**
+   * Test seam (v0.41.2.1): skip page discovery; use these pages directly.
+   * Mirrors _transcripts shape. `undefined` triggers discovery; `[]`
+   * explicitly suppresses page discovery (for transcript-only tests).
+   */
+  _pages?: Array<{ slug: string; content: string; contentHash: string }>;
 }
 
 interface ExtractedAtom {
@@ -85,12 +118,126 @@ atom_type MUST be one of: ${ATOM_TYPES.join(', ')}.
 
 Output ONLY the JSON array, no prose.`;
 
+interface DiscoveredPage {
+  slug: string;
+  content: string;
+  contentHash: string;
+}
+
 /**
- * v0.41 minimal extract_atoms body. Returns a PhaseResult with counters.
+ * v0.41.2.1 (D2) — single-SQL discovery + idempotency filter for brain
+ * pages. Discovers extractable pages whose content_hash has no
+ * corresponding atom row yet. One round-trip; replaces the
+ * 6-listPages + per-candidate atom-existence-check pattern from PR #1414.
  *
- * Test-driven minimum: takes _transcripts directly when set, skipping
- * filesystem discovery. Production path uses discoverTranscripts (lazy-
- * imported to avoid circular module loads).
+ * Fails soft: any executeRaw error is logged to stderr and returns [].
+ * The transcript path still proceeds.
+ *
+ * D9 fixes incorporated:
+ *   #1 sourceId threading on putPage — happens at the caller (this
+ *      function returns DiscoveredPage; caller does the writes).
+ *   #3 content_hash IS NOT NULL filter — pages without a hash can't
+ *      participate in the NOT EXISTS check anyway.
+ *   #4 dream_generated exclusion — prevents the phase from chewing
+ *      its own output (e.g. dream-generated originals).
+ */
+export async function discoverExtractablePages(
+  engine: BrainEngine,
+  sourceId: string,
+  affectedSlugs?: string[],
+): Promise<DiscoveredPage[]> {
+  const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
+  const sql = `
+    SELECT p.slug,
+           p.compiled_truth,
+           p.content_hash
+    FROM pages p
+    WHERE p.source_id = $1
+      AND p.type = ANY($2::text[])
+      AND p.deleted_at IS NULL
+      AND p.content_hash IS NOT NULL
+      AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
+      AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+      AND length(COALESCE(p.compiled_truth, '')) >= $3
+      ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM pages atom
+        WHERE atom.type = 'atom'
+          AND atom.source_id = $1
+          AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+          AND atom.deleted_at IS NULL
+      )
+    ORDER BY p.updated_at DESC
+    LIMIT $4
+  `;
+  const params: unknown[] = [
+    sourceId,
+    EXTRACTABLE_PAGE_TYPES as unknown as string[],
+    MIN_PAGE_CHARS_FOR_EXTRACTION,
+    PAGE_DISCOVERY_BUDGET,
+  ];
+  if (hasFilter) params.push(affectedSlugs);
+
+  try {
+    const rows = await engine.executeRaw<{
+      slug: string;
+      compiled_truth: string;
+      content_hash: string;
+    }>(sql, params);
+    return rows.map((r) => ({
+      slug: r.slug,
+      content: r.compiled_truth,
+      contentHash: r.content_hash,
+    }));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[extract_atoms] page-discovery query failed: ${msg}`);
+    return []; // fail-soft: transcript path still proceeds
+  }
+}
+
+/**
+ * v0.41.2.1 — Source-hash idempotency check (D1). Returns true if ANY
+ * atom row exists for the (sourceId, contentHash16) pair.
+ *
+ * Used by the transcript path to close the pre-existing date-stamp
+ * duplicate bug. Page-side idempotency is folded into the discovery
+ * SQL's NOT EXISTS subquery — this helper is just for transcripts
+ * which don't go through that query.
+ */
+async function atomsExistForHash(
+  engine: BrainEngine,
+  sourceId: string,
+  contentHash16: string,
+): Promise<boolean> {
+  try {
+    const rows = await engine.executeRaw<{ existing: number }>(
+      `SELECT 1 AS existing FROM pages
+        WHERE type = 'atom'
+          AND source_id = $1
+          AND frontmatter->>'source_hash' = $2
+          AND deleted_at IS NULL
+        LIMIT 1`,
+      [sourceId, contentHash16],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    // Fail-open: if the check breaks, prefer re-extraction over silent skip.
+    // Cost is bounded by the daily budget cap; correctness wins over LLM cost.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[extract_atoms] idempotency check failed (assuming not extracted): ${msg}`);
+    return false;
+  }
+}
+
+/**
+ * v0.41 minimal extract_atoms body, rebuilt for v0.41.2.1.
+ *
+ * Test-driven minimum: takes _transcripts AND _pages directly when set,
+ * skipping filesystem + DB discovery. Production path uses
+ * discoverTranscripts + discoverExtractablePages (both lazy-imported
+ * to avoid circular module loads and to keep PGLite-only tests fast).
  */
 export async function runPhaseExtractAtoms(
   engine: BrainEngine,
@@ -99,14 +246,21 @@ export async function runPhaseExtractAtoms(
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
 
-  // 1. Get transcripts (test seam OR production discovery)
+  // 1a. Get transcripts (test seam OR production discovery).
+  //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
+  //     dream.* DB-plane merge from Phase 1 reaches this phase.
   let transcripts: Array<{ filePath: string; content: string; contentHash: string }> = opts._transcripts ?? [];
   if (transcripts.length === 0 && opts.brainDir !== undefined && opts._transcripts === undefined) {
     try {
       const { discoverTranscripts } = await import('./transcript-discovery.ts');
-      const { loadConfig } = await import('../config.ts');
-      const cfg = (opts._loadConfig ?? loadConfig)() as unknown as Record<string, unknown>;
-      const dream = cfg.dream as { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } } | undefined;
+      const { loadConfigWithEngine } = await import('../config.ts');
+      const cfgRaw = opts._loadConfig
+        ? await opts._loadConfig()
+        : await loadConfigWithEngine(engine);
+      const cfg = (cfgRaw ?? {}) as unknown as Record<string, unknown>;
+      const dream = cfg.dream as
+        | { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } }
+        | undefined;
       const corpusDir = dream?.synthesize?.session_corpus_dir;
       const meetingDir = dream?.synthesize?.meeting_transcripts_dir;
       if (corpusDir !== undefined) {
@@ -125,36 +279,100 @@ export async function runPhaseExtractAtoms(
     }
   }
 
-  if (transcripts.length === 0) {
+  // 1b. Get pages (test seam OR production discovery).
+  //     _pages === undefined triggers discovery; _pages: [] suppresses it
+  //     deliberately (transcript-only regression tests).
+  let pages: Array<{ slug: string; content: string; contentHash: string }>;
+  if (opts._pages !== undefined) {
+    pages = opts._pages;
+  } else {
+    pages = await discoverExtractablePages(engine, sourceId, opts.affectedSlugs);
+  }
+
+  // 2. Apply transcript-side source-hash idempotency (D1 — closes the
+  //    pre-existing date-stamp duplicate bug). Page-side idempotency
+  //    lives in the discovery SQL's NOT EXISTS subquery.
+  const transcriptsLive: typeof transcripts = [];
+  let duplicatesSkipped = 0;
+  for (const t of transcripts) {
+    if (await atomsExistForHash(engine, sourceId, t.contentHash.slice(0, 16))) {
+      duplicatesSkipped++;
+      continue;
+    }
+    transcriptsLive.push(t);
+  }
+
+  // 3. Dual-source merge: transcripts + pages, dedup by contentHash.
+  //    Transcripts win on collision (origin attribution stays with the
+  //    raw transcript file even if the same content was later imported
+  //    as a brain page).
+  type WorkItem =
+    | { kind: 'transcript'; filePath: string; content: string; contentHash: string }
+    | { kind: 'page'; slug: string; content: string; contentHash: string };
+
+  const seenHashes = new Set<string>();
+  const work: WorkItem[] = [];
+  for (const t of transcriptsLive) {
+    if (seenHashes.has(t.contentHash)) { duplicatesSkipped++; continue; }
+    seenHashes.add(t.contentHash);
+    work.push({ kind: 'transcript', ...t });
+  }
+  for (const p of pages) {
+    if (seenHashes.has(p.contentHash)) { duplicatesSkipped++; continue; }
+    seenHashes.add(p.contentHash);
+    work.push({ kind: 'page', ...p });
+  }
+
+  // Phase-level no-op: nothing to extract today.
+  if (work.length === 0 && transcripts.length === 0 && pages.length === 0) {
     return {
       phase: 'extract_atoms',
       status: 'skipped',
       duration_ms: 0,
-      summary: 'extract_atoms: no transcripts to process',
-      details: { reason: 'no_transcripts', source_id: sourceId },
+      summary: 'extract_atoms: no transcripts or pages to process',
+      details: {
+        reason: 'no_work',
+        source_id: sourceId,
+        atoms_extracted: 0,
+        transcripts_processed: 0,
+        transcripts_total: 0,
+        transcripts_skipped_budget: 0,
+        pages_processed: 0,
+        pages_total: 0,
+        duplicates_skipped: 0,
+        failures: [],
+        estimated_spend_usd: 0,
+        budget_usd: DEFAULT_BUDGET_USD,
+        dry_run: opts.dryRun ?? false,
+      },
     };
   }
 
-  // 2. Per transcript: extract atoms via Haiku
+  // 4. Per work-item: extract atoms via Haiku
   let totalAtomsExtracted = 0;
   let transcriptsProcessed = 0;
+  let pagesProcessed = 0;
   let transcriptsSkipped = 0;
-  const failures: Array<{ transcript: string; error: string }> = [];
+  let pagesSkipped = 0;
+  const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
 
-  for (const transcript of transcripts) {
+  for (const item of work) {
     if (estimatedSpendUsd >= budgetCap) {
-      transcriptsSkipped++;
+      if (item.kind === 'transcript') transcriptsSkipped++;
+      else pagesSkipped++;
       continue;
     }
+
+    const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
     try {
       const result = await chat({
         system: EXTRACT_PROMPT,
         messages: [
           {
             role: 'user',
-            content: `Source: ${transcript.filePath}\n\n---\n\n${transcript.content.slice(0, 50_000)}`,
+            content: `Source: ${originLabel}\n\n---\n\n${item.content.slice(0, 50_000)}`,
           },
         ],
         maxTokens: 2000,
@@ -166,40 +384,53 @@ export async function runPhaseExtractAtoms(
 
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {
-        transcriptsProcessed++;
+        if (item.kind === 'transcript') transcriptsProcessed++;
+        else pagesProcessed++;
         continue;
       }
 
       if (!opts.dryRun) {
         for (const atom of atoms) {
           const slug = `atoms/${todayDate()}/${slugify(atom.title)}`;
-          await engine.putPage(slug, {
-            title: atom.title,
-            type: 'atom',
-            compiled_truth: atom.body,
-            frontmatter: {
+          const originFrontmatter =
+            item.kind === 'transcript'
+              ? { source_path: item.filePath }
+              : { source_slug: item.slug };
+          // v0.41.2.1 D9 #1 — thread sourceId through every putPage so
+          // atoms land in the source we discovered them from. Pre-fix
+          // the third arg was missing and atoms always wrote to 'default'.
+          await engine.putPage(
+            slug,
+            {
+              title: atom.title,
               type: 'atom',
-              atom_type: atom.atom_type,
-              source_path: transcript.filePath,
-              source_hash: transcript.contentHash.slice(0, 16),
-              ...(atom.source_quote && { source_quote: atom.source_quote }),
-              ...(atom.lesson && { lesson: atom.lesson }),
-              ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
-              ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
-              extracted_at: new Date().toISOString(),
-              extracted_by: 'extract_atoms-v0.41',
+              compiled_truth: atom.body,
+              frontmatter: {
+                type: 'atom',
+                atom_type: atom.atom_type,
+                ...originFrontmatter,
+                source_hash: item.contentHash.slice(0, 16),
+                ...(atom.source_quote && { source_quote: atom.source_quote }),
+                ...(atom.lesson && { lesson: atom.lesson }),
+                ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
+                ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
+                extracted_at: new Date().toISOString(),
+                extracted_by: 'extract_atoms-v0.41.2.1',
+              },
+              timeline: '',
             },
-            timeline: '',
-          });
+            { sourceId },
+          );
           totalAtomsExtracted++;
         }
       } else {
         totalAtomsExtracted += atoms.length; // count for dry-run reporting
       }
-      transcriptsProcessed++;
+      if (item.kind === 'transcript') transcriptsProcessed++;
+      else pagesProcessed++;
     } catch (err) {
       failures.push({
-        transcript: transcript.filePath,
+        source: originLabel,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -210,14 +441,22 @@ export async function runPhaseExtractAtoms(
     status: failures.length > 0 ? 'warn' : 'ok',
     duration_ms: 0,
     summary:
-      `extract_atoms: ${totalAtomsExtracted} atoms from ${transcriptsProcessed}/${transcripts.length} transcripts` +
+      `extract_atoms: ${totalAtomsExtracted} atoms from ` +
+      `${transcriptsProcessed}/${transcripts.length} transcripts + ` +
+      `${pagesProcessed}/${pages.length} pages` +
       (failures.length > 0 ? ` (${failures.length} failed)` : '') +
-      (transcriptsSkipped > 0 ? ` (${transcriptsSkipped} budget-skipped)` : ''),
+      (transcriptsSkipped + pagesSkipped > 0
+        ? ` (${transcriptsSkipped + pagesSkipped} budget-skipped)`
+        : ''),
     details: {
       atoms_extracted: totalAtomsExtracted,
       transcripts_processed: transcriptsProcessed,
       transcripts_total: transcripts.length,
       transcripts_skipped_budget: transcriptsSkipped,
+      pages_processed: pagesProcessed,
+      pages_total: pages.length,
+      pages_skipped_budget: pagesSkipped,
+      duplicates_skipped: duplicatesSkipped,
       failures,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,

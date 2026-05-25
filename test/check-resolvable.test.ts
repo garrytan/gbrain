@@ -66,6 +66,133 @@ describe("parseResolverEntries", () => {
     expect(entries[0].section).toBe("Always-on");
     expect(entries[1].section).toBe("Brain operations");
   });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // v0.41.7.0 — Compact list-format support (OpenClaw-native shape)
+  //
+  // The list branch was added so `gbrain doctor` no longer reports every
+  // skill as unreachable on agents that write the compact `- **name**: t1 | t2`
+  // shape instead of the markdown table. The OpenClaw 306-skill regression
+  // was 238 FAIL errors → 0 errors after this fix.
+  // ──────────────────────────────────────────────────────────────────────
+
+  test("[list] bold-name single trigger", () => {
+    const content = `## Personal
+- **gift-advisor**: gift idea`;
+    const entries = parseResolverEntries(content);
+    expect(entries.length).toBe(1);
+    expect(entries[0].trigger).toBe("gift idea");
+    expect(entries[0].skillPath).toBe("skills/gift-advisor/SKILL.md");
+    expect(entries[0].isGStack).toBe(false);
+    expect(entries[0].section).toBe("Personal");
+  });
+
+  test("[list] bold-name multi-trigger fan-out", () => {
+    const content = `- **flight-tracker**: track my flight | flight status | when does my flight land`;
+    const entries = parseResolverEntries(content);
+    expect(entries.length).toBe(3);
+    expect(entries.map(e => e.trigger)).toEqual([
+      "track my flight",
+      "flight status",
+      "when does my flight land",
+    ]);
+    expect(entries.every(e => e.skillPath === "skills/flight-tracker/SKILL.md")).toBe(true);
+  });
+
+  test("[list] plain-name fallback (no bold markers)", () => {
+    const content = `- gift-advisor: gift idea | birthday gift`;
+    const entries = parseResolverEntries(content);
+    expect(entries.length).toBe(2);
+    expect(entries[0].skillPath).toBe("skills/gift-advisor/SKILL.md");
+    expect(entries[1].trigger).toBe("birthday gift");
+  });
+
+  test("[list] D3: path suffix with Unicode → is stripped, not captured", () => {
+    // D3 walkback: downstream consumers (routing-eval.ts skillSlugFromPath
+    // and check-resolvable.ts:367 manifest derivation) assume the
+    // skills/<name>/SKILL.md shape. Capturing the explicit path would
+    // produce silent orphan_trigger warnings + routing-eval coverage
+    // gaps for that skill. So the suffix is stripped and the path is
+    // always derived from the name.
+    const content = "- **quality**: lint the page → `skills/conventions/quality.md`";
+    const entries = parseResolverEntries(content);
+    expect(entries.length).toBe(1);
+    expect(entries[0].trigger).toBe("lint the page");
+    expect(entries[0].skillPath).toBe("skills/quality/SKILL.md"); // derived, NOT the captured path
+  });
+
+  test("[list] F4: path suffix with ASCII -> is also stripped", () => {
+    const content = "- **quality**: lint the page -> `skills/conventions/quality.md`";
+    const entries = parseResolverEntries(content);
+    expect(entries.length).toBe(1);
+    expect(entries[0].trigger).toBe("lint the page");
+    expect(entries[0].skillPath).toBe("skills/quality/SKILL.md");
+  });
+
+  test("[list] ellipsis placeholder is dropped", () => {
+    const content = `- **foo-skill**: bar | ... | baz`;
+    const entries = parseResolverEntries(content);
+    expect(entries.length).toBe(2);
+    expect(entries.map(e => e.trigger)).toEqual(["bar", "baz"]);
+  });
+
+  test("[list] empty pipe segments are dropped", () => {
+    const content = `- **foo-skill**: bar | | baz`;
+    const entries = parseResolverEntries(content);
+    expect(entries.length).toBe(2);
+    expect(entries.map(e => e.trigger)).toEqual(["bar", "baz"]);
+  });
+
+  test("[mixed] table and list rows in the same file", () => {
+    const content = `## Always-on
+| Trigger | Skill |
+|---------|-------|
+| Every message | \`skills/signal-detector/SKILL.md\` |
+
+## Personal
+- **gift-advisor**: gift idea | what should I bring`;
+    const entries = parseResolverEntries(content);
+    expect(entries.length).toBe(3);
+    expect(entries[0].skillPath).toBe("skills/signal-detector/SKILL.md");
+    expect(entries[0].section).toBe("Always-on");
+    expect(entries[1].skillPath).toBe("skills/gift-advisor/SKILL.md");
+    expect(entries[1].section).toBe("Personal");
+    expect(entries[2].section).toBe("Personal");
+  });
+
+  test("[list] section tracking across list entries", () => {
+    const content = `## Personal
+- **gift-advisor**: gift idea
+
+## Travel
+- **flight-tracker**: track my flight`;
+    const entries = parseResolverEntries(content);
+    expect(entries[0].section).toBe("Personal");
+    expect(entries[1].section).toBe("Travel");
+  });
+
+  test("[list] D4 REGRESSION: prose bullets do not match as skill rows", () => {
+    // The kebab-lowercase name regex deliberately rejects bold names
+    // starting with an uppercase letter. This kills the noise class where
+    // real AGENTS.md files have prose bullets like `- **Note**: …` that
+    // would otherwise be parsed as fake skill rows pointing at
+    // `skills/Note/SKILL.md`. Codex F2; D4 decision.
+    const content = `- **Note**: this is a prose bullet
+- **Convention**: see [some convention link]
+- **TODO**: fix this later
+- **Important**: read this carefully`;
+    const entries = parseResolverEntries(content);
+    expect(entries.length).toBe(0);
+  });
+
+  test("[list] D4 negative: convention-violating uppercase names are silently skipped", () => {
+    // Documents the trade: a real skill named `MyTool` would not parse.
+    // The user would notice on the first `gbrain doctor` run and lowercase it.
+    const content = `- **MyTool**: this trigger silently disappears
+- **camelCase**: also silently dropped`;
+    const entries = parseResolverEntries(content);
+    expect(entries.length).toBe(0);
+  });
 });
 
 describe("checkResolvable — real skills directory", () => {

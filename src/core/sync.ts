@@ -503,6 +503,39 @@ export function classifyErrorCode(errorMsg: string): string {
   }
   if (/TAKES_HOLDER_INVALID/i.test(errorMsg)) return 'TAKES_HOLDER_INVALID';
 
+  // v0.41.6.0 D2: embedding error classification. Per-recipe verbatim shapes:
+  //   native-openai  → "OpenAI embedding requires OPENAI_API_KEY."
+  //   native-google  → "Google embedding requires GOOGLE_GENERATIVE_AI_API_KEY."
+  //   openai-compat  → "${recipe.name} embedding requires ${REQUIRED_ENV}."
+  //                    (Voyage AI / ZeroEntropy / DeepSeek / Together AI /
+  //                    DashScope / MiniMax / Zhipu AI all use this shape via
+  //                    defaultResolveAuth at src/core/ai/gateway.ts:250)
+  // EMBEDDING_NO_CREDS catches the missing-env case for every provider. The
+  // anthropic-no-touchpoint case ("Anthropic has no embedding model") is a
+  // misconfig, not a creds issue — bucketed separately so users don't get
+  // pointed at setting a key for a provider that doesn't offer embeddings.
+  if (/embedding requires [A-Z][A-Z0-9_]+_API_KEY|EMBEDDING_NO_CREDS/i.test(errorMsg)) {
+    return 'EMBEDDING_NO_CREDS';
+  }
+  if (/Anthropic has no embedding model|EMBEDDING_NO_TOUCHPOINT/i.test(errorMsg)) {
+    return 'EMBEDDING_NO_TOUCHPOINT';
+  }
+  // 429 status + textual rate-limit signals. AI SDK normalizes provider 429s
+  // into messages containing "rate limit" / "rate_limited" / "429".
+  if (/\brate.?limit|\b429\b|too many requests|rate_limited|RateLimit/i.test(errorMsg)) {
+    return 'EMBEDDING_RATE_LIMIT';
+  }
+  // OpenAI: insufficient_quota / "exceeded your current quota". Anthropic:
+  // "credit balance is too low". Catch-all token: EMBEDDING_QUOTA.
+  if (/insufficient_quota|quota exceeded|exceeded.*quota|credit balance is too low|billing|EMBEDDING_QUOTA/i.test(errorMsg)) {
+    return 'EMBEDDING_QUOTA';
+  }
+  // OpenAI: "maximum context length" / "too many tokens in request". Voyage:
+  // "input length exceeds". General: "max_tokens" / "context length".
+  if (/maximum context length|max_tokens|context length|input too long|input length exceeds|tokens? exceed|too many tokens|EMBEDDING_OVERSIZE/i.test(errorMsg)) {
+    return 'EMBEDDING_OVERSIZE';
+  }
+
   // v0.41 content-sanity gate. Hard-blocks at importFromContent throw
   // ContentSanityBlockError whose toString() embeds `PAGE_JUNK_PATTERN:`
   // (see src/core/content-sanity.ts PAGE_JUNK_PATTERN_CODE). Soft-blocks
