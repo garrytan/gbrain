@@ -200,7 +200,8 @@ export interface ReembedPageArgs {
   releaseSynopsisLease?: () => Promise<void>;
 }
 
-const DEFAULT_HAIKU_MODEL = 'anthropic:claude-haiku-4-5-20251001';
+const DEFAULT_HAIKU_MODEL =
+  process.env.GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL ?? 'anthropic:claude-haiku-4-5-20251001';
 
 /**
  * Re-embed one page through the active CR mode. Implements the D26 P0-2
