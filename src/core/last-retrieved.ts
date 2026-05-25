@@ -38,6 +38,7 @@ import { isUndefinedColumnError } from './utils.ts';
 
 let _trackRetrievalCache: { ts: number; enabled: boolean } | null = null;
 const TRACK_RETRIEVAL_CACHE_TTL_MS = 30_000;
+const pendingWrites = new Set<Promise<void>>();
 
 /**
  * Resolve `search.track_retrieval` config with a 30s in-process cache so
@@ -67,6 +68,12 @@ export function _resetTrackRetrievalCacheForTests(): void {
   _trackRetrievalCache = null;
 }
 
+/** Test/CLI seam: wait for best-effort write-backs that were already started. */
+export async function awaitPendingLastRetrievedWrites(): Promise<void> {
+  if (pendingWrites.size === 0) return;
+  await Promise.allSettled(Array.from(pendingWrites));
+}
+
 /**
  * Bump `last_retrieved_at` on the given page_ids. Fire-and-forget — caller
  * MUST NOT await this for the op response. Empty ids list is a no-op.
@@ -78,7 +85,7 @@ export function _resetTrackRetrievalCacheForTests(): void {
 export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): void {
   if (pageIds.length === 0) return;
   // Fire-and-forget on purpose. We deliberately do NOT return the promise.
-  void (async () => {
+  const write = (async () => {
     try {
       const enabled = await isTrackingEnabled(engine);
       if (!enabled) return;
@@ -101,5 +108,8 @@ export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): voi
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[last-retrieved] write-back failed (best-effort): ${msg}`);
     }
-  })();
+  })().finally(() => {
+    pendingWrites.delete(write);
+  });
+  pendingWrites.add(write);
 }

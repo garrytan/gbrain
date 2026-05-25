@@ -15,6 +15,7 @@ import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-optio
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from './core/mcp-client.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
+import { awaitPendingLastRetrievedWrites } from './core/last-retrieved.ts';
 import { VERSION } from './version.ts';
 
 // Build CLI name -> operation lookup
@@ -190,6 +191,7 @@ async function main() {
     const result = JSON.parse(JSON.stringify(rawResult));
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
+    await awaitPendingLastRetrievedWrites();
     if (op.name === 'query') {
       const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
       await awaitPendingSearchCacheWrites();
