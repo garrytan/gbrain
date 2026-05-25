@@ -20,7 +20,7 @@
  *      processor-skillpack hint
  *   4. Happy path: text/markdown → 200/202 with job_id in response
  *   5. Header overrides: X-Gbrain-Slug is forwarded; X-Gbrain-Source-Id
- *      tags the event
+ *      is accepted only when it matches the OAuth client's bound source
  *   6. Idempotency: same content + same client → job_id returned twice
  *      should match (queue dedup on (client_id, content_hash))
  *
@@ -332,7 +332,7 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     // test/ingestion/ingest-capture.test.ts).
   });
 
-  test('X-Gbrain-Source-Id header is accepted', async () => {
+  test('X-Gbrain-Source-Id header cannot override the OAuth client source', async () => {
     const token = await mintToken('read write');
     const res = await postIngest(
       token,
@@ -340,7 +340,10 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
       '# source-id header test',
       { 'X-Gbrain-Source-Id': 'zapier-webhook' },
     );
-    expect([200, 202]).toContain(res.status);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error?: string; message?: string };
+    expect(body.error).toBe('permission_denied');
+    expect(body.message).toContain('outside caller write scope');
   });
 
   test('X-Gbrain-Source-Uri header is accepted', async () => {

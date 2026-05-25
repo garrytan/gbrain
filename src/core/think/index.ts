@@ -239,6 +239,9 @@ export async function runThink(
     anchor: opts.anchor,
     questionEmbedding,
     takesHoldersAllowList: opts.takesHoldersAllowList,
+    sourceId: opts.sourceId,
+    allowedSources: opts.allowedSources,
+    remote: opts.remote,
   });
 
   // Render evidence blocks for the prompt

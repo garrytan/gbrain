@@ -421,6 +421,48 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
   return {};
 }
 
+export function sourceScopeOptsForRequest(
+  ctx: OperationContext,
+  requestedSourceId?: string,
+  opts: { allowAll?: boolean } = {},
+): { sourceId?: string; sourceIds?: string[] } {
+  if (!requestedSourceId) return sourceScopeOpts(ctx);
+
+  const allowAll = opts.allowAll !== false;
+
+  if (ctx.remote === true) {
+    const allowed = ctx.auth?.allowedSources && ctx.auth.allowedSources.length > 0
+      ? ctx.auth.allowedSources
+      : ctx.sourceId
+        ? [ctx.sourceId]
+        : [];
+
+    if (requestedSourceId === '__all__') {
+      if (!allowAll) {
+        throw new OperationError('permission_denied', 'Requested source is outside caller read scope');
+      }
+      if (allowed.length === 0) {
+        throw new OperationError('permission_denied', 'Requested source is outside caller read scope');
+      }
+      return { sourceIds: allowed };
+    }
+
+    if (!allowed.includes(requestedSourceId)) {
+      throw new OperationError('permission_denied', 'Requested source is outside caller read scope');
+    }
+
+    return { sourceId: requestedSourceId };
+  }
+
+  if (requestedSourceId === '__all__') {
+    if (!allowAll) {
+      throw new OperationError('invalid_params', "source_id='__all__' is not supported for this operation");
+    }
+    return {};
+  }
+  return { sourceId: requestedSourceId };
+}
+
 export interface Operation {
   name: string;
   description: string;
@@ -456,17 +498,16 @@ const get_page: Operation = {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
     include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
+    source_id: { type: 'string', description: "Read from a specific source within caller read scope. '__all__' is rejected because slug resolution is ambiguous across sources." },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
-    // v0.31.8 (D20): thread ctx.sourceId through read-side ops. Only pass
-    // sourceId when it's set on ctx — when unset (local CLI default chain
-    // resolves to no source), the engine two-branch query falls through to
-    // the cross-source view, preserving pre-v0.31.8 behavior. MCP callers
-    // (stdio + HTTP) populate ctx.sourceId via the transport layer.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const sourceOpts = sourceIdParam
+      ? sourceScopeOptsForRequest(ctx, sourceIdParam, { allowAll: false })
+      : (ctx.sourceId ? { sourceId: ctx.sourceId } : {});
 
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
     let resolved_slug: string | undefined;
@@ -1340,15 +1381,11 @@ const query: Operation = {
       typeof p.embedding_column === 'string' && p.embedding_column.length > 0
         ? (p.embedding_column as string)
         : undefined;
-    // Explicit per-call source_id must win over ctx.sourceId. The special
-    // __all__ value opts out of source filtering for local cross-source search.
+    // Explicit per-call source_id is allowed only inside the caller's read
+    // scope for remote OAuth clients. For local CLI callers, preserve the
+    // historical override semantics including `__all__`.
     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
-    const querySourceScope =
-      sourceIdParam !== undefined
-        ? sourceIdParam === '__all__'
-          ? {}
-          : { sourceId: sourceIdParam }
-        : sourceScopeOpts(ctx);
+    const querySourceScope = sourceScopeOptsForRequest(ctx, sourceIdParam, { allowAll: true });
 
     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
     // text-only); embeds the image via embedMultimodal and runs a direct

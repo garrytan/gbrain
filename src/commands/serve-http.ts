@@ -52,6 +52,86 @@ import {
  */
 export const HEALTH_TIMEOUT_MS = 3000;
 
+type SourceScopeAuditOutcome =
+  | 'default_allowed_scope'
+  | 'default_caller_source'
+  | 'explicit_allowed'
+  | 'clamped_to_allowed_sources'
+  | 'rejected_unauthorized'
+  | 'rejected_ambiguous_all';
+
+interface SourceScopeAudit {
+  caller_source_id: string;
+  requested_source_id: string | null;
+  allowed_sources: string[];
+  effective_source_ids: string[];
+  outcome: SourceScopeAuditOutcome;
+}
+
+export function resolveIngestSourceId(authInfo: AuthInfo, requestedSourceId?: string | null): string {
+  const tokenSourceId = authInfo.sourceId || 'default';
+  const requested = requestedSourceId?.trim();
+  if (!requested) return tokenSourceId;
+  if (requested === tokenSourceId) return tokenSourceId;
+  throw new Error('Requested ingest source is outside caller write scope');
+}
+
+function buildSourceScopeAudit(
+  operation: string,
+  params: unknown,
+  authInfo: AuthInfo,
+  tokenSourceId: string,
+): SourceScopeAudit | null {
+  const sourceScopedOps = new Set(['query', 'search', 'list_pages', 'get_page', 'think']);
+  if (!sourceScopedOps.has(operation)) return null;
+
+  const allowedSources = authInfo.allowedSources?.length
+    ? authInfo.allowedSources
+    : [tokenSourceId];
+  const requested = params && typeof params === 'object' && !Array.isArray(params)
+    ? (params as Record<string, unknown>).source_id
+    : undefined;
+  const requestedSourceId = typeof requested === 'string' ? requested : null;
+
+  if (!requestedSourceId) {
+    const effective = operation === 'get_page' ? [tokenSourceId] : allowedSources;
+    return {
+      caller_source_id: tokenSourceId,
+      requested_source_id: null,
+      allowed_sources: allowedSources,
+      effective_source_ids: effective,
+      outcome: operation === 'get_page' ? 'default_caller_source' : 'default_allowed_scope',
+    };
+  }
+
+  if (requestedSourceId === '__all__') {
+    return {
+      caller_source_id: tokenSourceId,
+      requested_source_id: requestedSourceId,
+      allowed_sources: allowedSources,
+      effective_source_ids: operation === 'get_page' ? [] : allowedSources,
+      outcome: operation === 'get_page' ? 'rejected_ambiguous_all' : 'clamped_to_allowed_sources',
+    };
+  }
+
+  const allowed = allowedSources.includes(requestedSourceId);
+  return {
+    caller_source_id: tokenSourceId,
+    requested_source_id: requestedSourceId,
+    allowed_sources: allowedSources,
+    effective_source_ids: allowed ? [requestedSourceId] : [],
+    outcome: allowed ? 'explicit_allowed' : 'rejected_unauthorized',
+  };
+}
+
+function attachSourceScopeAudit(paramsSummary: unknown, audit: SourceScopeAudit | null): unknown {
+  if (!audit) return paramsSummary;
+  if (paramsSummary && typeof paramsSummary === 'object' && !Array.isArray(paramsSummary)) {
+    return { ...(paramsSummary as Record<string, unknown>), source_scope: audit };
+  }
+  return { source_scope: audit };
+}
+
 /**
  * v0.36.1.x #1024: bootstrap token resolution.
  *
@@ -1400,12 +1480,6 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // cast, so reads return real objects and `params->>'op'` returns
       // 'tools/list'. Pre-existing string-shaped rows are normalized by
       // migration v41 in src/core/migrate.ts.
-      const safeParamsSummary = summarizeMcpParams(name, params);
-      const logParamsObj: unknown = logFullParams
-        ? (params || null)
-        : (safeParamsSummary || null);
-      const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
-
       // v0.31 (D12 / eE1): refactor the inlined op.handler call to go through
       // src/mcp/dispatch.ts so HTTP MCP shares the same dispatch path as
       // stdio MCP. The dispatcher does param validation, OperationContext
@@ -1423,6 +1497,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // has source_id set; legacy bearer tokens default to 'default' in
       // verifyAccessToken. The env-fallback is gone.
       const tokenSourceId = authInfo.sourceId ?? 'default';
+      const sourceScopeAudit = buildSourceScopeAudit(name, params, authInfo, tokenSourceId);
+      const safeParamsSummary = summarizeMcpParams(name, params);
+      const logParamsObj: unknown = logFullParams
+        ? attachSourceScopeAudit(params || null, sourceScopeAudit)
+        : attachSourceScopeAudit(safeParamsSummary || null, sourceScopeAudit);
+      const broadcastParams = logFullParams
+        ? attachSourceScopeAudit(params || {}, sourceScopeAudit)
+        : attachSourceScopeAudit(safeParamsSummary, sourceScopeAudit);
 
       let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {
@@ -1556,9 +1638,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // (file-watcher, inbox-folder, cron-scheduler) while serve --http hosts
   // the network surface and submits Minion jobs directly.
   //
-  // Auth: existing OAuth `write` scope. Rate limit: 100 events / 10s per
-  // IP (reuses the IP-keyed pattern from ccRateLimiter; a future tweak
-  // could key on authInfo.clientId for fairer per-agent fairness).
+  // Auth: existing OAuth `write` scope. Events are bound to the OAuth
+  // client's source_id; X-Gbrain-Source-Id may only repeat that value and
+  // cannot widen write authority. Rate limit: 100 events / 10s per IP
+  // (reuses the IP-keyed pattern from ccRateLimiter; a future tweak could
+  // key on authInfo.clientId for fairer per-agent fairness).
   // Payload cap: 1 MB default. Content-type allowlist: markdown, plain,
   // HTML, JSON. Binary content is REJECTED with HTTP 415 in v1 — the
   // binary-upload flow ships as a separate route in a later wave when
@@ -1692,7 +1776,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const content = body.toString('utf8');
       const contentHash = computeContentHash(content);
       const sourceUri = (req.header('x-gbrain-source-uri') || `mcp-webhook:${authInfo.clientId}:${Date.now()}`).slice(0, 1024);
-      const sourceId = (req.header('x-gbrain-source-id') || `webhook-${authInfo.clientId}`).slice(0, 256);
+      let sourceId: string;
+      try {
+        sourceId = resolveIngestSourceId(authInfo, req.header('x-gbrain-source-id')).slice(0, 256);
+      } catch (err) {
+        res.status(403).json({
+          error: 'permission_denied',
+          message: err instanceof Error ? err.message : 'Requested ingest source is outside caller write scope',
+        });
+        return;
+      }
       const callerSlug = req.header('x-gbrain-slug');
 
       const event: IngestionEvent = {
