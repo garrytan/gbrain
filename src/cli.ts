@@ -475,6 +475,15 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
+const MAX_STDIN_CONTENT_BYTES = 5_000_000; // 5MB
+
+function assertCliContentSize(content: string, source: string): void {
+  if (Buffer.byteLength(content, 'utf-8') > MAX_STDIN_CONTENT_BYTES) {
+    console.error(`Error: ${source} content exceeds ${MAX_STDIN_CONTENT_BYTES} bytes. Split into smaller inputs.`);
+    process.exit(1);
+  }
+}
+
 export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
@@ -506,15 +515,26 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
     }
   }
 
-  // Read stdin for content params
-  if (op.cliHints?.stdin && !params[op.cliHints.stdin] && !process.stdin.isTTY) {
-    const stdinContent = readFileSync('/dev/stdin', 'utf-8');
-    const MAX_STDIN = 5_000_000; // 5MB
-    if (Buffer.byteLength(stdinContent, 'utf-8') > MAX_STDIN) {
-      console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
-      process.exit(1);
+  // Read file/stdin for content params. `--file` / `--input-file` is a CLI-only
+  // convenience for stdin-backed ops (not part of the MCP operation schema) and
+  // bypasses Windows' small pipe buffer for large page writes. Stdin is read via
+  // fd 0 instead of Unix-only `/dev/stdin` so `gbrain put <slug>` works on
+  // Windows too (#1362/#1363).
+  const stdinParam = op.cliHints?.stdin;
+  if (stdinParam) {
+    const filePath = params.file ?? params.input_file;
+    if (!params[stdinParam] && typeof filePath === 'string') {
+      const fileContent = readFileSync(filePath, 'utf-8');
+      assertCliContentSize(fileContent, `file ${filePath}`);
+      params[stdinParam] = fileContent;
+      delete params.file;
+      delete params.input_file;
     }
-    params[op.cliHints.stdin] = stdinContent;
+    if (!params[stdinParam] && !process.stdin.isTTY) {
+      const stdinContent = readFileSync(0, 'utf-8');
+      assertCliContentSize(stdinContent, 'stdin');
+      params[stdinParam] = stdinContent;
+    }
   }
 
   return params;
@@ -1644,6 +1664,7 @@ SETUP
 PAGES
   get <slug>                         Read a page
   put <slug> [< file.md]             Write/update a page
+        [--file PATH|--input-file P] Read content directly from a file
   delete <slug>                      Delete a page
   list [--type T] [--tag T] [-n N]   List pages
 
