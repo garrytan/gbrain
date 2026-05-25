@@ -625,6 +625,10 @@ export const FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
   // Meeting pages
   { fields: ['attendees'], pageType: 'meeting', type: 'attended', direction: 'incoming', dirHint: 'people' },
   // Any page type
+  // participants: thread/correspondence/meeting -> person. Outgoing so the
+  // PERSON receives the inbound edge (de-orphans them), matching the body
+  // wikilink pattern telegram-thread pages already emit. WS-A 2026-05-25.
+  { fields: ['participants'], type: 'mentions', direction: 'outgoing', dirHint: 'people' },
   { fields: ['sources'], type: 'discussed_in', direction: 'incoming', dirHint: ['source', 'media'] },
   { fields: ['source'], type: 'source', direction: 'outgoing', dirHint: '' /* already slug-shaped */ },
   { fields: ['related', 'see_also'], type: 'related_to', direction: 'outgoing', dirHint: '' },
