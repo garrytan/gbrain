@@ -203,6 +203,12 @@ async function main() {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   } finally {
+    try {
+      const { awaitPendingLastRetrievedWrites } = await import('./core/last-retrieved.ts');
+      await awaitPendingLastRetrievedWrites();
+    } catch {
+      // Best-effort shutdown drain only. Never mask the original command result.
+    }
     await engine.disconnect();
   }
 }
