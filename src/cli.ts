@@ -1768,7 +1768,9 @@ Run gbrain <command> --help for command-specific help.
 `);
 }
 
-main().catch(e => {
+main().then(() => {
+  process.exit(0);
+}).catch(e => {
   console.error(e.message || e);
   process.exit(1);
 });

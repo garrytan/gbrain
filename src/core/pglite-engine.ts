@@ -197,7 +197,14 @@ export class PGLiteEngine implements BrainEngine {
 
   async disconnect(): Promise<void> {
     if (this._db) {
-      await this._db.close();
+      // PGLite's close() can deadlock on persistent data dirs after some read
+      // queries (observed after FTS/vector search). For CLI/local persistent
+      // brains the important cleanup is releasing gbrain's interprocess lock;
+      // the process exit will reclaim the embedded WASM runtime. Keep close()
+      // for in-memory engines/tests where no file lock exists.
+      if (!this._lock?.acquired) {
+        await this._db.close();
+      }
       this._db = null;
     }
     if (this._lock?.acquired) {
