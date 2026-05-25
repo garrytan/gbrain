@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { startMcpServer } from '../mcp/server.ts';
+import { startMultiplexer, serveSocketPath, type MultiplexerHandle } from '../mcp/multiplexer.ts';
 
 // Maximum time the stdio path will wait for engine.disconnect() (PGLite
 // close + advisory lock release) before forcing exit. Keeps a wedged
@@ -125,7 +126,13 @@ export async function runServe(
   // and is intentionally NOT wired into this stdio plumbing.
   console.error('Starting GBrain MCP server (stdio)...');
 
-  installStdioLifecycle(engine, args, opts);
+  // The multiplexer (created below, after startMcpServer) is fed to the
+  // lifecycle via a getter so beginShutdown can close it BEFORE
+  // engine.disconnect() rm-rf's the lock dir (which contains the socket
+  // file). Without the close-first order, in-flight proxy clients would
+  // see their socket disappear under them mid-write and emit ENOENT.
+  let multiplexer: MultiplexerHandle | null = null;
+  installStdioLifecycle(engine, args, opts, () => multiplexer);
 
   const start = opts.startMcpServer ?? startMcpServer;
   await start(engine);
@@ -134,6 +141,26 @@ export async function runServe(
   // event loop alive. We deliberately do NOT add `await new Promise(() =>
   // {})` here — it would block this async frame and stop the lifecycle
   // hooks from being able to call process.exit() cleanly.
+
+  // Start the Unix-socket multiplexer so secondary `gbrain serve`
+  // invocations (e.g., claude-code-spawn child sessions whose
+  // --mcp-config also points to `gbrain serve`) can proxy through us
+  // instead of dying on PGLite lock contention. Only applies to PGLite
+  // (single-process); Postgres engines support multi-client natively.
+  // Failure to start the multiplexer is non-fatal: primary stdio keeps
+  // working, only multi-client proxying is unavailable.
+  if (engine.kind === 'pglite') {
+    const dataDir = (engine as { dataDir?: string }).dataDir;
+    if (dataDir) {
+      try {
+        multiplexer = await startMultiplexer(engine, serveSocketPath(dataDir));
+        console.error(`[gbrain serve] multi-client socket: ${multiplexer.socketPath}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[gbrain serve] multi-client socket disabled: ${msg}`);
+      }
+    }
+  }
 }
 
 interface StdioLifecycleDeps {
@@ -151,6 +178,7 @@ function installStdioLifecycle(
   engine: BrainEngine,
   args: string[],
   opts: ServeOptions,
+  getMultiplexer?: () => MultiplexerHandle | null,
 ): void {
   const deps: StdioLifecycleDeps = {
     stdin: opts.stdin ?? process.stdin,
@@ -193,7 +221,18 @@ function installStdioLifecycle(
     }, CLEANUP_DEADLINE_MS);
     deadline.unref?.();
 
+    // Cleanup order matters: close the multiplexer FIRST so its listener
+    // stops accepting new proxies and active per-client sockets get a
+    // clean socket.close() (which their proxy peers detect as EOF). THEN
+    // disconnect the engine, which rm-rf's the lock dir (containing the
+    // socket file). Reversing the order would leave proxies writing into
+    // a soon-to-be-deleted socket.
     Promise.resolve()
+      .then(() => getMultiplexer?.()?.close())
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        deps.log(`GBrain MCP server: multiplexer close error: ${msg}`);
+      })
       .then(() => engine.disconnect())
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);

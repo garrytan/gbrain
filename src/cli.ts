@@ -1102,6 +1102,47 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // Pre-connect proxy fallback for `gbrain serve` (stdio path only).
+  //
+  // Problem: PGLite is single-process-per-data-dir. When Claude.app spawns
+  // `gbrain serve` from claude_desktop_config.json AND its claude-code-spawn
+  // child sessions ALSO pass `--mcp-config '...gbrain serve...'`, every
+  // child invocation tries to acquire the same PGLite lock and dies. The
+  // child sessions end up with no `mcp__gbrain__*` tools.
+  //
+  // Fix: if another live `gbrain serve` already holds the lock, become a
+  // stdio proxy to its multiplexer (src/mcp/multiplexer.ts) instead of
+  // failing on the lock. The owner sees us as a new MCP client on a
+  // socket transport; our parent (the client that spawned us) sees a
+  // working `gbrain serve` over stdio.
+  //
+  // Only triggers when: command === 'serve', not --http, PGLite engine
+  // with a configured data_dir, lock present, lock command contains
+  // 'serve', and the holder PID is still alive. Any miss falls through
+  // to the normal acquire path, which will surface a clean error or
+  // reclaim a stale lock as before.
+  if (command === 'serve' && !args.includes('--http')) {
+    const cfgForProxy = loadConfig();
+    const dataDir = cfgForProxy?.database_path;
+    if (dataDir) {
+      const { readLockInfo } = await import('./core/pglite-lock.ts');
+      const lockInfo = readLockInfo(dataDir);
+      if (lockInfo?.command?.includes('serve')) {
+        let holderAlive = false;
+        try { process.kill(lockInfo.pid, 0); holderAlive = true; } catch { /* dead */ }
+        if (holderAlive) {
+          const { runProxy } = await import('./mcp/proxy.ts');
+          const { serveSocketPath } = await import('./mcp/multiplexer.ts');
+          console.error(
+            `[gbrain serve] another serve (pid ${lockInfo.pid}) holds the PGLite lock — running as stdio proxy`,
+          );
+          await runProxy(serveSocketPath(dataDir));
+          return;
+        }
+      }
+    }
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
