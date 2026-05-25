@@ -457,23 +457,36 @@ async function embedAllStale(
   }
 
   async function pullNext(): Promise<[string, StaleRow[]] | null> {
-    // Opportunistic refill: if queue is low, kick off a fetch in the
-    // background. Don't await — let other workers keep popping while the
-    // fetch is in flight. The fetchInFlight guard prevents stampeding.
-    if (queue.size < CONCURRENCY * 2 && !producerExhausted && !fetchInFlight) {
-      void fetchMore();
-    }
-    // If the queue is genuinely empty, we have to wait for the producer.
-    while (queue.size === 0 && !producerExhausted) {
+    // Retry-in-loop so workers that lose the synchronous race for the
+    // current queue don't die. Before this loop, the original design
+    // returned null whenever the for-loop iteration found nothing — which
+    // meant: if N workers all woke up to a queue with M < N items, the
+    // (N - M) losers exited and the pool shrunk silently. Each refill
+    // round shrunk the pool further until throughput collapsed.
+    while (true) {
+      if (budgetSignal.aborted) return null;
+
+      // Opportunistic refill: kick off a background fetch if the queue
+      // is getting low. Don't await — let other workers keep popping.
+      // The fetchInFlight guard prevents stampedes.
+      if (queue.size < CONCURRENCY * 2 && !producerExhausted && !fetchInFlight) {
+        void fetchMore();
+      }
+
+      // Try to grab synchronously. The for-loop + delete is atomic in JS
+      // (no await between them), so two workers can't pull the same key.
+      for (const [key, rows] of queue) {
+        queue.delete(key);
+        return [key, rows];
+      }
+
+      // Queue empty. If producer is exhausted, there's no more work.
+      if (producerExhausted) return null;
+
+      // Producer has more — await a fetch and try again. The fetchInFlight
+      // guard means all waiting workers share the same fetch promise.
       await fetchMore();
     }
-    // Grab the first available key. The for-loop + delete is synchronous,
-    // so two workers can't pull the same key (JS single-threaded between awaits).
-    for (const [key, rows] of queue) {
-      queue.delete(key);
-      return [key, rows];
-    }
-    return null;
   }
 
   async function processKey(key: string, stale: StaleRow[]): Promise<void> {
