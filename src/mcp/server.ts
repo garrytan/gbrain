@@ -1,5 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations } from '../core/operations.ts';
@@ -8,7 +9,23 @@ import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 
-export async function startMcpServer(engine: BrainEngine) {
+/**
+ * Wire a new MCP `Server` to the given transport, registering tool defs +
+ * dispatch handlers against the shared engine. Pure construction — does NOT
+ * install process-wide stdio shutdown hooks (the caller decides whether
+ * those apply: yes for the primary stdio path in `startMcpServer`, no for
+ * per-connection socket transports created by the multiplexer).
+ *
+ * Trust boundary: handler always dispatches with `remote: true` — see
+ * AGENTS.md trust-boundary section. The multiplexer reuses this verbatim,
+ * so a client coming in via Unix socket gets the same untrusted treatment
+ * as a stdio client (which is correct: Claude Code's child claude-code-spawn
+ * sessions are the same trust class as the parent Claude.app session).
+ */
+export async function startMcpServerWithTransport(
+  engine: BrainEngine,
+  transport: Transport,
+): Promise<Server> {
   const server = new Server(
     { name: 'gbrain', version: VERSION },
     { capabilities: { tools: {} } },
@@ -47,35 +64,22 @@ export async function startMcpServer(engine: BrainEngine) {
     });
   });
 
-  const transport = new StdioServerTransport();
   await server.connect(transport);
+  return server;
+}
 
-  // Exit cleanly when MCP client disconnects (stdin EOF) or on signals.
-  // Without this, orphaned serve processes accumulate and contend for the
-  // PGLite write lock, causing ingest jobs (email-sync) to time out.
-  let shuttingDown = false;
-  const shutdown = (reason: string, code = 0) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    process.stderr.write(`[gbrain-serve] shutdown: ${reason}\n`);
-    Promise.resolve(engine.disconnect?.())
-      .catch(() => {})
-      .finally(() => process.exit(code));
-  };
-  // v0.34.1 (#870): when MCP_STDIO=1, the wrapping gateway (OpenClaw's
-  // bundle-mcp layer, others) often pipes the JSON-RPC handshake then
-  // closes its stdin half. Treating that as a permanent disconnect kills
-  // the server before the first tool call arrives. Signal handlers and
-  // transport.onclose still cover the legitimate shutdown paths.
-  if (process.env.MCP_STDIO !== '1') {
-    process.stdin.on('end', () => shutdown('stdin end'));
-    process.stdin.on('close', () => shutdown('stdin close'));
-  }
-  // @ts-ignore — SDK exposes onclose on transport
-  transport.onclose = () => shutdown('transport close');
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGHUP', () => shutdown('SIGHUP'));
+export async function startMcpServer(engine: BrainEngine) {
+  const transport = new StdioServerTransport();
+  await startMcpServerWithTransport(engine, transport);
+  // Process-wide shutdown handling (SIGTERM/SIGINT/SIGHUP, stdin EOF,
+  // parent-process watchdog, cleanup deadline) is installed by the caller
+  // via installStdioLifecycle() in src/commands/serve.ts. That lifecycle
+  // is strictly a superset of the per-server hooks that used to live here
+  // — and crucially, it also closes the multiplexer (src/mcp/multiplexer.ts)
+  // before engine.disconnect(), which the inline version did not. Keeping
+  // both led to two concurrent shutdown chains racing on engine.disconnect()
+  // and surfacing "PGlite is closing" cleanup errors when shutdown was
+  // triggered by stdin-end (bash background, stdin-half-close gateways).
 }
 
 // Backward compat: used by `gbrain call` command (trusted local path).
