@@ -37,6 +37,37 @@ import { pathToSlug, pruneDir, isSyncable } from '../core/sync.ts';
 // small (a malformed row aborts at most 100, not thousands).
 const BATCH_SIZE = 100;
 
+/**
+ * Retry a batch operation once after a short delay. PgBouncer transaction-mode
+ * poolers can recycle backend connections between queries, which surfaces as
+ * "No database connection: connect() has not been called" when the postgres.js
+ * client's internal slot was returned to the pool mid-batch. A single retry
+ * after 500ms lets the pool recover a fresh backend.
+ *
+ * v0.41.2.1: added after observing ~30% batch loss during heavy extract cycles
+ * on production brains with Supabase PgBouncer (port 6543).
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  jsonMode: boolean,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (firstErr) {
+    const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+    // Only retry on connection-class errors, not constraint violations etc.
+    if (!msg.includes('No database connection') && !msg.includes('connect()') && !msg.includes('Connection terminated')) {
+      throw firstErr;
+    }
+    if (!jsonMode) {
+      process.stderr.write(`  ${label}: connection lost, retrying in 500ms...\n`);
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    return await fn(); // second attempt — if this throws, caller catches it
+  }
+}
+
 // --- Types ---
 
 export interface ExtractedLink {
@@ -518,25 +549,31 @@ async function extractForSlugs(
 
   async function flushLinks() {
     if (linkBatch.length === 0) return;
+    const snapshot = [...linkBatch];
+    linkBatch.length = 0;
     try {
-      linksCreated += await engine.addLinksBatch(linkBatch); // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
+      linksCreated += await withRetry(
+        () => engine.addLinksBatch(snapshot),
+        'link batch', jsonMode,
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (!jsonMode) console.error(`  link batch error (${linkBatch.length} rows lost): ${msg}`);
-    } finally {
-      linkBatch.length = 0;
+      if (!jsonMode) console.error(`  link batch error (${snapshot.length} rows lost): ${msg}`);
     }
   }
 
   async function flushTimeline() {
     if (timelineBatch.length === 0) return;
+    const snapshot = [...timelineBatch];
+    timelineBatch.length = 0;
     try {
-      timelineCreated += await engine.addTimelineEntriesBatch(timelineBatch);
+      timelineCreated += await withRetry(
+        () => engine.addTimelineEntriesBatch(snapshot),
+        'timeline batch', jsonMode,
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (!jsonMode) console.error(`  timeline batch error (${timelineBatch.length} rows lost): ${msg}`);
-    } finally {
-      timelineBatch.length = 0;
+      if (!jsonMode) console.error(`  timeline batch error (${snapshot.length} rows lost): ${msg}`);
     }
   }
 
@@ -613,17 +650,20 @@ async function extractLinksFromDir(
   const batch: LinkBatchInput[] = [];
   async function flush() {
     if (batch.length === 0) return;
+    const snapshot = [...batch];
+    batch.length = 0;
     try {
-      created += await engine.addLinksBatch(batch); // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
+      created += await withRetry(
+        () => engine.addLinksBatch(snapshot),
+        'link batch', jsonMode,
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
-        process.stderr.write(JSON.stringify({ event: 'batch_error', size: batch.length, error: msg }) + '\n');
+        process.stderr.write(JSON.stringify({ event: 'batch_error', size: snapshot.length, error: msg }) + '\n');
       } else {
-        console.error(`  batch error (${batch.length} link rows lost): ${msg}`);
+        console.error(`  batch error (${snapshot.length} link rows lost): ${msg}`);
       }
-    } finally {
-      batch.length = 0;
     }
   }
 
@@ -671,17 +711,20 @@ async function extractTimelineFromDir(
   const batch: TimelineBatchInput[] = [];
   async function flush() {
     if (batch.length === 0) return;
+    const snapshot = [...batch];
+    batch.length = 0;
     try {
-      created += await engine.addTimelineEntriesBatch(batch);
+      created += await withRetry(
+        () => engine.addTimelineEntriesBatch(snapshot),
+        'timeline batch', jsonMode,
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
-        process.stderr.write(JSON.stringify({ event: 'batch_error', size: batch.length, error: msg }) + '\n');
+        process.stderr.write(JSON.stringify({ event: 'batch_error', size: snapshot.length, error: msg }) + '\n');
       } else {
-        console.error(`  batch error (${batch.length} timeline rows lost): ${msg}`);
+        console.error(`  batch error (${snapshot.length} timeline rows lost): ${msg}`);
       }
-    } finally {
-      batch.length = 0;
     }
   }
 
@@ -839,17 +882,20 @@ async function extractLinksFromDB(
   const batch: LinkBatchInput[] = [];
   async function flush() {
     if (batch.length === 0) return;
+    const snapshot = [...batch];
+    batch.length = 0;
     try {
-      created += await engine.addLinksBatch(batch); // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
+      created += await withRetry(
+        () => engine.addLinksBatch(snapshot),
+        'link batch', jsonMode,
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
-        process.stderr.write(JSON.stringify({ event: 'batch_error', size: batch.length, error: msg }) + '\n');
+        process.stderr.write(JSON.stringify({ event: 'batch_error', size: snapshot.length, error: msg }) + '\n');
       } else {
-        console.error(`  batch error (${batch.length} link rows lost): ${msg}`);
+        console.error(`  batch error (${snapshot.length} link rows lost): ${msg}`);
       }
-    } finally {
-      batch.length = 0;
     }
   }
 
@@ -993,17 +1039,20 @@ async function extractTimelineFromDB(
   const batch: TimelineBatchInput[] = [];
   async function flush() {
     if (batch.length === 0) return;
+    const snapshot = [...batch];
+    batch.length = 0;
     try {
-      created += await engine.addTimelineEntriesBatch(batch);
+      created += await withRetry(
+        () => engine.addTimelineEntriesBatch(snapshot),
+        'timeline batch', jsonMode,
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
-        process.stderr.write(JSON.stringify({ event: 'batch_error', size: batch.length, error: msg }) + '\n');
+        process.stderr.write(JSON.stringify({ event: 'batch_error', size: snapshot.length, error: msg }) + '\n');
       } else {
-        console.error(`  batch error (${batch.length} timeline rows lost): ${msg}`);
+        console.error(`  batch error (${snapshot.length} timeline rows lost): ${msg}`);
       }
-    } finally {
-      batch.length = 0;
     }
   }
 

@@ -491,6 +491,59 @@ export async function loadConfigWithEngine(
     merged.content_sanity = mergedCS;
   }
 
+  // v0.41.2.1 — dream.synthesize.* DB-plane merge. `gbrain config set
+  // dream.synthesize.session_corpus_dir <path>` writes to DB, but
+  // loadConfig() only reads file-plane. Without this merge, cycle phases
+  // (extract_atoms, synthesize) silently skip when corpus dirs are DB-only.
+  const dbCorpusDir = await dbStr('dream.synthesize.session_corpus_dir');
+  const dbMeetingDir = await dbStr('dream.synthesize.meeting_transcripts_dir');
+  const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
+  const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
+  const dbMaxChunks = await dbInt('dream.synthesize.max_chunks_per_transcript');
+  const dbPatLookback = await dbInt('dream.patterns.lookback_days');
+  const dbPatMinEvidence = await dbInt('dream.patterns.min_evidence');
+
+  type DreamConfig = NonNullable<GBrainConfig['dream']>;
+  type SynthConfig = NonNullable<DreamConfig['synthesize']>;
+  type PatConfig = NonNullable<DreamConfig['patterns']>;
+  const existingDream = (merged.dream ?? {}) as DreamConfig;
+  const existingSynth = (existingDream.synthesize ?? {}) as SynthConfig;
+  const existingPat = (existingDream.patterns ?? {}) as PatConfig;
+  const mergedSynth = { ...existingSynth } as Record<string, unknown>;
+  const mergedPat = { ...existingPat } as Record<string, unknown>;
+
+  if (mergedSynth.session_corpus_dir === undefined && dbCorpusDir !== undefined) {
+    mergedSynth.session_corpus_dir = dbCorpusDir;
+  }
+  if (mergedSynth.meeting_transcripts_dir === undefined && dbMeetingDir !== undefined) {
+    mergedSynth.meeting_transcripts_dir = dbMeetingDir;
+  }
+  if (mergedSynth.verdict_model === undefined && dbVerdictModel !== undefined) {
+    mergedSynth.verdict_model = dbVerdictModel;
+  }
+  if (mergedSynth.max_prompt_tokens === undefined && dbMaxPromptTokens !== undefined) {
+    mergedSynth.max_prompt_tokens = dbMaxPromptTokens;
+  }
+  if (mergedSynth.max_chunks_per_transcript === undefined && dbMaxChunks !== undefined) {
+    mergedSynth.max_chunks_per_transcript = dbMaxChunks;
+  }
+  if (mergedPat.lookback_days === undefined && dbPatLookback !== undefined) {
+    mergedPat.lookback_days = dbPatLookback;
+  }
+  if (mergedPat.min_evidence === undefined && dbPatMinEvidence !== undefined) {
+    mergedPat.min_evidence = dbPatMinEvidence;
+  }
+
+  const hasSynth = Object.keys(mergedSynth).length > 0;
+  const hasPat = Object.keys(mergedPat).length > 0;
+  if (hasSynth || hasPat) {
+    merged.dream = {
+      ...existingDream,
+      ...(hasSynth ? { synthesize: mergedSynth as SynthConfig } : {}),
+      ...(hasPat ? { patterns: mergedPat as PatConfig } : {}),
+    };
+  }
+
   return merged;
 }
 
