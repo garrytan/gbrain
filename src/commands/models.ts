@@ -425,7 +425,12 @@ function shouldSkipProvider(modelStr: string, skip: string[]): boolean {
 
 export async function runModels(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
-  const sub = args[1] === 'doctor' ? 'doctor' : args[1] === 'help' || args.includes('--help') || args.includes('-h') ? 'help' : 'read';
+  // args is `subArgs` from cli.ts `handleCliOnly` — the leading 'models'
+  // token has already been stripped. The subcommand is at args[0], NOT
+  // args[1]. Pre-fix this check was `args[1]`, so `gbrain models doctor`
+  // silently fell through to the read view. The doctor probe path was
+  // unreachable from the CLI.
+  const sub = args[0] === 'doctor' ? 'doctor' : args[0] === 'help' || args.includes('--help') || args.includes('-h') ? 'help' : 'read';
 
   if (sub === 'help') {
     process.stdout.write(
