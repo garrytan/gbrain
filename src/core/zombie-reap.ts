@@ -31,6 +31,8 @@ export function installSigchldHandler(): void {
  * process don't observe a pre-installed listener. Call from `afterAll` in
  * `test/zombie-reap.test.ts`.
  */
-export function _uninstallSigchldHandlerForTests(): void {
+export function uninstallSigchldHandler(): void {
   process.removeListener('SIGCHLD', reapHandler);
 }
+
+export const _uninstallSigchldHandlerForTests = uninstallSigchldHandler;

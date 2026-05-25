@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { installSigchldHandler } from './core/zombie-reap.ts';
+import { installSigchldHandler, uninstallSigchldHandler } from './core/zombie-reap.ts';
 installSigchldHandler();
 
 import { readFileSync } from 'fs';
@@ -203,6 +203,8 @@ async function main() {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   } finally {
+    const { awaitPendingLastRetrievedWrites } = await import('./core/last-retrieved.ts');
+    await awaitPendingLastRetrievedWrites();
     await engine.disconnect();
   }
 }
@@ -1775,5 +1777,7 @@ Run gbrain <command> --help for command-specific help.
 
 main().catch(e => {
   console.error(e.message || e);
-  process.exit(1);
+  process.exitCode = 1;
+}).finally(() => {
+  uninstallSigchldHandler();
 });

@@ -38,6 +38,7 @@ import { isUndefinedColumnError } from './utils.ts';
 
 let _trackRetrievalCache: { ts: number; enabled: boolean } | null = null;
 const TRACK_RETRIEVAL_CACHE_TTL_MS = 30_000;
+const _pendingWriteBacks = new Set<Promise<void>>();
 
 /**
  * Resolve `search.track_retrieval` config with a 30s in-process cache so
@@ -68,6 +69,20 @@ export function _resetTrackRetrievalCacheForTests(): void {
 }
 
 /**
+ * Await currently scheduled retrieval write-backs.
+ *
+ * The op handler keeps these fire-and-forget so user-visible rendering is not
+ * blocked. Short-lived CLI processes still need a drain point before closing
+ * PGLite/Postgres, otherwise a background UPDATE can race engine.disconnect()
+ * and leave the process waiting on a half-closed database handle.
+ */
+export async function awaitPendingLastRetrievedWrites(): Promise<void> {
+  while (_pendingWriteBacks.size > 0) {
+    await Promise.allSettled(Array.from(_pendingWriteBacks));
+  }
+}
+
+/**
  * Bump `last_retrieved_at` on the given page_ids. Fire-and-forget — caller
  * MUST NOT await this for the op response. Empty ids list is a no-op.
  *
@@ -78,7 +93,7 @@ export function _resetTrackRetrievalCacheForTests(): void {
 export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): void {
   if (pageIds.length === 0) return;
   // Fire-and-forget on purpose. We deliberately do NOT return the promise.
-  void (async () => {
+  const task = (async () => {
     try {
       const enabled = await isTrackingEnabled(engine);
       if (!enabled) return;
@@ -102,4 +117,6 @@ export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): voi
       console.warn(`[last-retrieved] write-back failed (best-effort): ${msg}`);
     }
   })();
+  _pendingWriteBacks.add(task);
+  task.finally(() => _pendingWriteBacks.delete(task));
 }
