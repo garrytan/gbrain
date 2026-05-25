@@ -100,6 +100,11 @@ export class PostgresEngine implements BrainEngine {
    * db.disconnect() and clobber the unrelated module-level connection.
    */
   private _connectionStyle: 'instance' | 'module' | null = null;
+  // True only when this engine opened the module-level connection rather than
+  // attached to an already-open one. Gates whether disconnect() ends it, so a
+  // transient module-style engine can't clobber the shared connection a
+  // still-running holder depends on.
+  private _ownsModuleConnection = false;
 
   /**
    * v0.30.1 (Fix 1 + X1 + T5): instance-owned ConnectionManager.
@@ -174,8 +179,12 @@ export class PostgresEngine implements BrainEngine {
       this.connectionManager.setReadPool(this._sql);
     } else {
       // Module-level singleton (backward compat for CLI main engine)
+      // Capture ownership before connect: if the module connection is already
+      // open, we are only attaching and must not end it on our own disconnect.
+      const ownedModuleConnection = !db.isConnected();
       await db.connect(config);
       this._connectionStyle = 'module';
+      this._ownsModuleConnection = ownedModuleConnection;
 
       // v0.30.1: connection-manager wraps the module singleton.
       if (url) {
@@ -204,8 +213,14 @@ export class PostgresEngine implements BrainEngine {
       return;
     }
     if (this._connectionStyle === 'module') {
-      await db.disconnect();
+      // Only end the shared module connection if this engine opened it.
+      // Attaching engines just detach, preserving the connection for the
+      // holder that opened it.
+      if (this._ownsModuleConnection) {
+        await db.disconnect();
+      }
       this._connectionStyle = null;
+      this._ownsModuleConnection = false;
     }
     // else: nothing to disconnect (already done or never connected)
   }

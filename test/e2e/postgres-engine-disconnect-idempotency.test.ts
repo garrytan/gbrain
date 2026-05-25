@@ -84,4 +84,35 @@ describe.skipIf(skip)('PostgresEngine.disconnect idempotency', () => {
     // _connectionStyle was reset to null.
     await expect(engine.disconnect()).resolves.toBeUndefined();
   });
+
+  // Regression: a transient module-style engine (such as the lint
+  // content-sanity config probe) can attach to an already-open shared module
+  // connection, then disconnect in a finally block. Pre-fix that disconnect()
+  // called db.disconnect() and ended the shared connection out from under the
+  // still-running holder; the next getConnection() threw "connect() has not
+  // been called". This pins the module-connection ownership contract on real
+  // Postgres.
+  test('attaching module engine does NOT clobber a connection opened by another holder', async () => {
+    // Holder A: the module connection is open (from beforeAll). This stands in
+    // for the inline worker's engine that's mid-job.
+    await db.connect({ database_url: DATABASE_URL! });
+    expect(db.isConnected()).toBe(true);
+
+    // Holder B: a transient probe (the content-sanity engine) ATTACHES to the
+    // already-open module connection, then disconnects when done.
+    const probe = new PostgresEngine();
+    await probe.connect({ database_url: DATABASE_URL! }); // module-style; attaches
+    await probe.disconnect();
+
+    // Pre-fix this getConnection() threw "connect() has not been called".
+    // Post-fix the attaching engine only detached; the holder's connection lives.
+    expect(db.isConnected()).toBe(true);
+    const alive = await db.getConnection().unsafe('SELECT 1 as ok');
+    expect((alive[0] as unknown as { ok: number }).ok).toBe(1);
+
+    // Balanced release / no PgBouncer slot leak: the opener can still close it,
+    // and after the last holder ends, the connection is gone (not stranded).
+    await db.disconnect();
+    expect(db.isConnected()).toBe(false);
+  });
 });

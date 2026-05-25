@@ -232,6 +232,16 @@ export async function disconnect(): Promise<void> {
   }
 }
 
+/**
+ * Is the module-level connection currently open? Lets a PostgresEngine tell
+ * whether it opened the shared connection or merely attached to an already-open
+ * one, so a transient attaching engine doesn't end the connection out from
+ * under the holder that opened it.
+ */
+export function isConnected(): boolean {
+  return sql !== null;
+}
+
 export async function initSchema(): Promise<void> {
   const conn = getConnection();
   // Advisory lock prevents concurrent initSchema() calls from deadlocking
