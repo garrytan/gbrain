@@ -37,6 +37,14 @@ interface SyncableOptions {
   strategy?: SyncStrategy;
   include?: string[];
   exclude?: string[];
+  /**
+   * Skip meta-pages (`index.md`, `log.md`, `README.md`, `schema.md`) by basename.
+   * Default `true` to preserve historical behavior — sync to remote shouldn't push
+   * project boilerplate. Pass `false` from local-only walkers (extract, link
+   * reconciliation, frontmatter) where these files ARE legitimate pages and their
+   * outbound wikilinks must be captured.
+   */
+  skipMetaFiles?: boolean;
 }
 
 // v0.19.0 shipped a 9-extension allowlist (ts/tsx/js/jsx/mjs/cjs/py/rb/go). The
@@ -301,10 +309,14 @@ export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
   const segments = path.split('/');
   if (segments.some(p => !pruneDir(p))) return false;
 
-  // Skip meta files that aren't pages
-  const skipFiles = ['schema.md', 'index.md', 'log.md', 'README.md'];
-  const basename = segments[segments.length - 1] || '';
-  if (skipFiles.includes(basename)) return false;
+  // Skip meta files that aren't pages (opt-in via skipMetaFiles, default true).
+  // Local walkers that treat these as real pages (extract, link reconciliation)
+  // should pass skipMetaFiles: false so their outbound wikilinks get harvested.
+  if (opts.skipMetaFiles !== false) {
+    const skipFiles = ['schema.md', 'index.md', 'log.md', 'README.md'];
+    const basename = segments[segments.length - 1] || '';
+    if (skipFiles.includes(basename)) return false;
+  }
 
   if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return false;
   if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return false;

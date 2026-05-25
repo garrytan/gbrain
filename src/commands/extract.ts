@@ -83,7 +83,10 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
           walk(full);
         } else if (entry.endsWith('.md') && !entry.startsWith('_')) {
           const rel = relative(dir, full);
-          if (!isSyncable(rel, { strategy: 'markdown' })) continue;
+          // skipMetaFiles: false — extract treats index.md / log.md / README.md / schema.md
+          // as real pages so their outbound wikilinks get harvested. The default-true
+          // exclusion still applies to remote sync (push), which has its own callers.
+          if (!isSyncable(rel, { strategy: 'markdown', skipMetaFiles: false })) continue;
           files.push({ path: full, relPath: rel });
         }
       } catch { /* skip unreadable */ }
