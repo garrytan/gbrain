@@ -58,6 +58,49 @@ const LLM_PREAMBLES = [
   /^Absolutely\.?\s*Here[^.\n]*\.?\s*\n*/gim,
 ];
 
+// ── Whole-page code-fence wrap (LLM artifact) ───────────────────────
+//
+// An LLM sometimes returns an ENTIRE page wrapped in a ```markdown fence.
+// Strip that wrap — but ONLY when the whole body is wrapped, never when a note
+// merely *contains* a ```markdown block mid-document (e.g. a Notion export that
+// fences a config snippet). The earlier code detected the wrap with /m regexes
+// (a fence anywhere) but stripped the closing fence with a string-anchored
+// regex, so a mid-document block lost only its trailing ``` and was left with
+// an open fence — re-corrupted on every autopilot lint cycle. Detection and fix
+// now share this single check so they can't drift apart again.
+
+function frontmatterLength(content: string): number {
+  const m = /^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/.exec(content);
+  return m ? m[0].length : 0;
+}
+
+/**
+ * Treat a page as fence-wrapped only when the entire body (after any YAML
+ * frontmatter) is a single ```markdown fence: the first non-blank body line
+ * opens it, the last non-blank body line closes it, and no bare ``` appears
+ * between them (which would mean the fence closed early — not a whole-page
+ * wrap). Returns the unwrapped content (frontmatter preserved) when wrapped.
+ */
+function analyzeMarkdownWrap(content: string): { wrapped: boolean; unwrapped: string } {
+  const fmLen = frontmatterLength(content);
+  const head = content.slice(0, fmLen);
+  const lines = content.slice(fmLen).split('\n');
+
+  let first = 0;
+  while (first < lines.length && lines[first].trim() === '') first++;
+  let last = lines.length - 1;
+  while (last >= 0 && lines[last].trim() === '') last--;
+
+  if (first >= last) return { wrapped: false, unwrapped: content };
+  if (!/^```(?:markdown|md)\s*$/.test(lines[first].trim())) return { wrapped: false, unwrapped: content };
+  if (lines[last].trim() !== '```') return { wrapped: false, unwrapped: content };
+  for (let i = first + 1; i < last; i++) {
+    if (lines[i].trim().startsWith('```')) return { wrapped: false, unwrapped: content };
+  }
+
+  return { wrapped: true, unwrapped: head + lines.slice(first + 1, last).join('\n') };
+}
+
 // ── Rules ──────────────────────────────────────────────────────────
 
 export function lintContent(content: string, filePath: string): LintIssue[] {
@@ -95,8 +138,10 @@ export function lintContent(content: string, filePath: string): LintIssue[] {
     }
   }
 
-  // Rule: Wrapping code fences (```markdown ... ```)
-  if (content.match(/^```(?:markdown|md)\s*\n/m) && content.match(/\n```\s*$/m)) {
+  // Rule: Wrapping code fences — the WHOLE page body wrapped in ```markdown …
+  // ``` (an LLM artifact). A ```markdown block mid-document is legitimate and
+  // must NOT trigger this (see analyzeMarkdownWrap).
+  if (analyzeMarkdownWrap(content).wrapped) {
     issues.push({
       file: filePath, line: 1, rule: 'code-fence-wrap',
       message: 'Page wrapped in ```markdown code fences (LLM artifact)',
@@ -195,9 +240,10 @@ export function fixContent(content: string): string {
     fixed = fixed.replace(pattern, '');
   }
 
-  // Fix wrapping code fences
-  fixed = fixed.replace(/^```(?:markdown|md)\s*\n/, '');
-  fixed = fixed.replace(/\n```\s*$/, '');
+  // Fix wrapping code fences — only a genuine whole-page wrap (see
+  // analyzeMarkdownWrap); never strip the closing fence of a mid-note block.
+  const wrap = analyzeMarkdownWrap(fixed);
+  if (wrap.wrapped) fixed = wrap.unwrapped;
 
   // Clean up excessive blank lines left by fixes
   fixed = fixed.replace(/\n{3,}/g, '\n\n');
