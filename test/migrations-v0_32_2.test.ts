@@ -14,6 +14,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { v0_32_2, __setTestEngineOverride, __testing } from '../src/commands/migrations/v0_32_2.ts';
@@ -235,6 +236,26 @@ describe('phaseBFenceFacts — happy path backfill', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query('SELECT row_num FROM facts');
     expect(rows.rows[0].row_num).toBeNull();
+  });
+
+  test('does not block on dirty unrelated source with no legacy rows to fence', async () => {
+    const dirtyDir = mkdtempSync(join(tmpdir(), 'mig-v0_32_2-dirty-source-'));
+    execFileSync('git', ['init'], { cwd: dirtyDir, stdio: 'ignore' });
+    writeFileSync(join(dirtyDir, 'scratch.md'), 'uncommitted note\n', 'utf-8');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO sources (id, name, local_path, config) VALUES ('dirty-unused', 'dirty-unused', $1, '{}'::jsonb)
+       ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+      [dirtyDir],
+    );
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Fenceable from default source' });
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r.status).toBe('complete');
+    expect(r.detail).toContain('fenced=1');
+
+    rmSync(dirtyDir, { recursive: true, force: true });
   });
 });
 
