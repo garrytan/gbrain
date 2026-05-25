@@ -430,7 +430,15 @@ export async function runModels(engine: BrainEngine, args: string[]): Promise<vo
   // args[1]. Pre-fix this check was `args[1]`, so `gbrain models doctor`
   // silently fell through to the read view. The doctor probe path was
   // unreachable from the CLI.
-  const sub = args[0] === 'doctor' ? 'doctor' : args[0] === 'help' || args.includes('--help') || args.includes('-h') ? 'help' : 'read';
+  //
+  // --help honored FIRST so `gbrain models doctor --help` shows usage
+  // instead of running network probes (which would spend tokens or
+  // exit nonzero when the user only asked for help). Pre-fix the
+  // args[1] ternary happened to dodge this by always falling through
+  // to the args.includes('--help') branch; the args[0] rewrite needs
+  // explicit ordering to preserve that behavior.
+  const hasHelp = args.includes('--help') || args.includes('-h') || args[0] === 'help';
+  const sub = hasHelp ? 'help' : args[0] === 'doctor' ? 'doctor' : 'read';
 
   if (sub === 'help') {
     process.stdout.write(
