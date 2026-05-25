@@ -37,6 +37,7 @@ import {
   type ResolutionSource,
 } from '../../core/entities/resolve.ts';
 import type { BrainEngine, NewFact } from '../../core/engine.ts';
+import { stripProviderPrefix } from '../../core/model-config.ts';
 
 /**
  * Parse a JSON array from LLM output. The cross-modal `parseModelJSON`
@@ -254,8 +255,10 @@ async function callExtractor(
 ): Promise<ExtractedClaim[] | null> {
   let response;
   try {
+    // Strip the provider prefix before passing to the Anthropic SDK — see
+    // eval-longmemeval.ts's answer-gen call site for the same rationale.
     response = await client.create({
-      model,
+      model: stripProviderPrefix(model),
       max_tokens: 2000,
       system: EXTRACTOR_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: body }],

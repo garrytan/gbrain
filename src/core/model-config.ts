@@ -87,6 +87,31 @@ export const TIER_DEFAULTS: Record<ModelTier, string> = {
  * breaks. When `tier === 'subagent'` resolves to a non-Anthropic provider,
  * we log a stderr warn AND fall back to `TIER_DEFAULTS.subagent`.
  */
+/**
+ * Strip the `provider:` prefix from a `provider:model` string for passing to
+ * a provider-specific SDK that doesn't recognize the prefix. resolveModel()
+ * returns qualified strings like `anthropic:claude-sonnet-4-6`, but the
+ * Anthropic SDK only accepts bare model ids (`claude-sonnet-4-6`); same
+ * pattern for OpenAI / Voyage / etc when the call bypasses the gbrain
+ * gateway and goes through the vendor SDK directly.
+ *
+ *   stripProviderPrefix('anthropic:claude-sonnet-4-6') === 'claude-sonnet-4-6'
+ *   stripProviderPrefix('claude-sonnet-4-6')           === 'claude-sonnet-4-6'
+ *   stripProviderPrefix('openai:gpt-4o')               === 'gpt-4o'
+ *
+ * Originated at subagent.ts during the v0.41 Bug 3 fix; lifted here so other
+ * direct-SDK call sites (longmemeval, future synthesize-via-Anthropic, etc.)
+ * import from one canonical home instead of reaching into minions/handlers.
+ *
+ * Used ONLY at SDK call sites. The wider `model` variable stays qualified
+ * everywhere else (persistence, recipe lookup, capability gate) because
+ * those readers want the provider info.
+ */
+export function stripProviderPrefix(modelString: string): string {
+  const idx = modelString.indexOf(':');
+  return idx > 0 ? modelString.slice(idx + 1) : modelString;
+}
+
 export function isAnthropicProvider(modelString: string): boolean {
   if (!modelString) return false;
   const trimmed = modelString.trim();

@@ -17,7 +17,7 @@ import { renderChatBlock, type ChatSessionForPrompt } from '../eval/longmemeval/
 import { importFromContent } from '../core/import-file.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { expandQuery } from '../core/search/expansion.ts';
-import { resolveModel } from '../core/model-config.ts';
+import { resolveModel, stripProviderPrefix } from '../core/model-config.ts';
 import type { ThinkLLMClient } from '../core/think/index.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -351,8 +351,12 @@ async function generateAnswer(
   const userText =
     `Question:\n${question}\n\n${trajectorySection}Retrieved sessions:\n${rendered}`;
 
+  // resolveModel() returns 'anthropic:claude-sonnet-4-6' with the provider
+  // prefix, but the Anthropic SDK only accepts bare model ids. Without
+  // this strip, every answer-gen call HTTP 404s. Mirrored at the
+  // trajectory-extractor SDK call site in extract.ts.
   const response = await client.create({
-    model,
+    model: stripProviderPrefix(model),
     max_tokens: 512,
     system: systemText,
     messages: [{ role: 'user', content: userText }],

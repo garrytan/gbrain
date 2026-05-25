@@ -47,7 +47,7 @@ import {
   logSubagentSubmission,
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
-import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import { resolveModel, isAnthropicProvider, TIER_DEFAULTS, stripProviderPrefix } from '../../model-config.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
 import { toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
@@ -939,27 +939,13 @@ function recipeIdFromModel(modelString: string): string {
   return idx > 0 ? modelString.slice(0, idx) : 'anthropic';
 }
 
-/**
- * Strip the `provider:` prefix from a model string. Returns the bare
- * model id the Anthropic Messages API expects. Idempotent on already-bare
- * strings.
- *
- *   stripProviderPrefix('anthropic:claude-sonnet-4-6') === 'claude-sonnet-4-6'
- *   stripProviderPrefix('claude-sonnet-4-6') === 'claude-sonnet-4-6'
- *
- * v0.41 Bug 3 — pre-fix, `gbrain agent run --model anthropic:claude-sonnet-4-6`
- * sent the prefixed string straight into `client.messages.create()`, which
- * Anthropic rejects with "model not found." Omitting `--model` worked because
- * `resolveModel()` returns the bare id; explicit-model users hit the bug.
- *
- * Used ONLY at the SDK call site. The wider `model` variable stays
- * qualified everywhere else (persistence, recipe lookup, capability gate)
- * because those readers want the provider info.
- */
-export function stripProviderPrefix(modelString: string): string {
-  const idx = modelString.indexOf(':');
-  return idx > 0 ? modelString.slice(idx + 1) : modelString;
-}
+// stripProviderPrefix moved to src/core/model-config.ts so the helper has one
+// canonical home. Originated here during the v0.41 Bug 3 fix; lifted out
+// when longmemeval needed the same strip (eval-longmemeval.ts answer-gen +
+// extract.ts trajectory extractor) and inline-duplication felt wrong.
+// Re-exported for back-compat with any external callers that imported from
+// here pre-refactor.
+export { stripProviderPrefix };
 
 /**
  * D5 — adapt v1 Anthropic content blocks to v2 ChatBlock shape on read.
