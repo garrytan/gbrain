@@ -456,6 +456,7 @@ const get_page: Operation = {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
     include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
+    source_id: { type: 'string', description: "Scope to a single source (overrides OperationContext.sourceId, consistent with query-tool's --source-id flag)." },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
@@ -466,7 +467,15 @@ const get_page: Operation = {
     // resolves to no source), the engine two-branch query falls through to
     // the cross-source view, preserving pre-v0.31.8 behavior. MCP callers
     // (stdio + HTTP) populate ctx.sourceId via the transport layer.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    //
+    // Per-call source_id parameter overrides ctx.sourceId, consistent with
+    // how query-tool resolves source (--source-id flag). Without this, MCP
+    // clients with a default-source bearer (e.g. a write-scoped client with
+    // source_id=default) could never get_page against pages in non-default
+    // sources, even with federated_read access. Symmetry with query-tool.
+    const explicitSourceId = p.source_id as string | undefined;
+    const effectiveSourceId = explicitSourceId ?? ctx.sourceId;
+    const sourceOpts = effectiveSourceId ? { sourceId: effectiveSourceId } : {};
 
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
     let resolved_slug: string | undefined;
