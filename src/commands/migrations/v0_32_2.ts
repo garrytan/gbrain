@@ -138,6 +138,7 @@ function isLocalPathDirty(localPath: string): boolean {
     const out = execFileSync('git', ['-C', localPath, 'status', '--porcelain'], {
       encoding: 'utf-8',
       timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
     return out.trim().length > 0;
   } catch {
