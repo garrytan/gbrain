@@ -137,6 +137,8 @@ async function runTest(args: string[]): Promise<void> {
 
   const tpIdx = args.indexOf('--touchpoint');
   const tpArg = (tpIdx >= 0 ? args[tpIdx + 1] : 'embedding') as TouchpointFilter;
+  let configuredModel: string | undefined;
+  let configuredEmbeddingDimensions: number | undefined;
 
   if (tpArg !== 'embedding' && tpArg !== 'chat') {
     console.error(`--touchpoint must be 'embedding' or 'chat' (got: ${tpArg}).`);
@@ -157,7 +159,8 @@ async function runTest(args: string[]): Promise<void> {
     // broken" trap.
     try {
       const cfg = loadConfig();
-      const configuredModel = tpArg === 'embedding' ? cfg?.embedding_model : cfg?.chat_model;
+      configuredModel = tpArg === 'embedding' ? cfg?.embedding_model : cfg?.chat_model;
+      configuredEmbeddingDimensions = cfg?.embedding_dimensions;
       if (!configuredModel) {
         console.error(
           `Note: tested ${modelArg} in isolation; this brain has no configured ${tpArg}_model yet. ` +
@@ -173,7 +176,10 @@ async function runTest(args: string[]): Promise<void> {
     } catch { /* loadConfig throws when no brain configured — first-time install path; the no-config branch above handles it. */ }
 
     if (tpArg === 'embedding') {
-      const dims = recipe?.touchpoints.embedding?.default_dims ?? 1536;
+      const dims =
+        configuredModel === modelArg && typeof configuredEmbeddingDimensions === 'number'
+          ? configuredEmbeddingDimensions
+          : (recipe?.touchpoints.embedding?.default_dims ?? 1536);
       configureGateway({
         embedding_model: modelArg,
         embedding_dimensions: dims,
