@@ -27,6 +27,17 @@ import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 
+/**
+ * Safely coerce a getConfig() return value to a lowercase trimmed string.
+ * getConfig() is typed as `string | null` but can return non-string values
+ * (boolean, number) when config was stored via JSON / `--force`. Calling
+ * `.trim()` on a boolean crashes with "undefined is not an object".
+ */
+function cfgToString(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  return typeof val === 'string' ? val.trim().toLowerCase() : String(val).toLowerCase();
+}
+
 export interface Check {
   name: string;
   status: 'ok' | 'warn' | 'fail';
@@ -985,7 +996,7 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
 export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
   try {
     const { readRecentRerankFailures } = await import('../core/rerank-audit.ts');
-    const cfg = await engine.getConfig('search.reranker.enabled');
+    const cfg = cfgToString(await engine.getConfig('search.reranker.enabled'));
     const rerankerEnabled = cfg === 'true' || cfg === '1';
 
     const failures = readRecentRerankFailures(7);
@@ -1080,7 +1091,7 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine): Promise<Ch
       // loadOverridesFromConfig in src/core/search/mode.ts. Without
       // this, `gbrain config set search.graph_signals TRUE` enables
       // the feature in production but doctor reports "disabled".
-      const v = cfgVal.trim().toLowerCase();
+      const v = cfgToString(cfgVal);
       enabled = v === 'true' || v === '1';
     } else {
       // Mode bundle default. Read search.mode (case-insensitive + trim
@@ -1203,7 +1214,7 @@ export async function checkBrainstormHealth(engine: BrainEngine): Promise<Check>
 
   // (2) search.track_retrieval — explicit-off surfaces as a warning.
   try {
-    const trackCfg = await engine.getConfig('search.track_retrieval');
+    const trackCfg = cfgToString(await engine.getConfig('search.track_retrieval'));
     if (trackCfg === 'false' || trackCfg === '0' || trackCfg === 'off' || trackCfg === 'no') {
       return {
         name: 'brainstorm_health',
@@ -3632,8 +3643,8 @@ export async function buildChecks(
   // Source-aware: a global 95% can hide 0% coverage for a specific source.
   progress.heartbeat('unified_multimodal_coverage');
   try {
-    const unifiedFlag = await engine.getConfig('search.unified_multimodal').catch(() => null);
-    const unifiedOnlyFlag = await engine.getConfig('search.unified_multimodal_only').catch(() => null);
+    const unifiedFlag = cfgToString(await engine.getConfig('search.unified_multimodal').catch(() => null));
+    const unifiedOnlyFlag = cfgToString(await engine.getConfig('search.unified_multimodal_only').catch(() => null));
     const unifiedOn = unifiedFlag === 'true' || unifiedFlag === '1';
     const unifiedOnlyOn = unifiedOnlyFlag === 'true' || unifiedOnlyFlag === '1';
 
