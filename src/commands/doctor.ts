@@ -3212,6 +3212,38 @@ export async function buildChecks(
     });
   }
 
+  // 8b+. Env-vs-DB embedding config mismatch detector (v0.41 env-override guard).
+  //       If GBRAIN_EMBEDDING_MODEL env var is set and disagrees with the DB config,
+  //       the user likely ran ze-switch but forgot to update their .env / shell env.
+  //       This is the #1 cause of "doctor says wrong model" confusion.
+  try {
+    const envEmbedModel = process.env.GBRAIN_EMBEDDING_MODEL;
+    if (envEmbedModel) {
+      const dbEmbedModel = await engine.getConfig('embedding_model');
+      if (dbEmbedModel && envEmbedModel !== dbEmbedModel) {
+        checks.push({
+          name: 'embedding_env_override',
+          status: 'warn',
+          message:
+            `GBRAIN_EMBEDDING_MODEL env var (${envEmbedModel}) overrides DB config (${dbEmbedModel}). ` +
+            `Env vars take highest precedence in loadConfig(). ` +
+            `Update your .env or shell environment to match: GBRAIN_EMBEDDING_MODEL=${dbEmbedModel}`,
+        });
+      }
+      const envDims = process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+      const dbDims = await engine.getConfig('embedding_dimensions');
+      if (envDims && dbDims && envDims !== dbDims) {
+        checks.push({
+          name: 'embedding_env_override',
+          status: 'warn',
+          message:
+            `GBRAIN_EMBEDDING_DIMENSIONS env var (${envDims}) overrides DB config (${dbDims}). ` +
+            `Update your .env: GBRAIN_EMBEDDING_DIMENSIONS=${dbDims}`,
+        });
+      }
+    }
+  } catch { /* config table may not exist yet */ }
+
   // 8c. Alternative provider advisory (v0.32 D11=C / Codex finding #2 wire-through).
   // Walks listRecipes() and surfaces any recipe whose required env vars are ALL
   // set in the process env but is not the currently configured provider. Helps

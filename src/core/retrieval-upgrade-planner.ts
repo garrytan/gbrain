@@ -313,6 +313,37 @@ export async function applyRetrievalUpgrade(
     await engine.setConfig(KEY_APPLIED, 'true');
     await engine.setConfig(KEY_PROMPT_SHOWN, 'true');
 
+    // 6. Warn if env vars will override the switch (v0.41 env-override guard).
+    //    process.env takes highest precedence in loadConfig(). If the user has
+    //    GBRAIN_EMBEDDING_MODEL baked into their environment (e.g. .env file
+    //    loaded at shell/gateway startup), the switch silently does nothing
+    //    at runtime because env wins over DB + file config.
+    const envModel = process.env.GBRAIN_EMBEDDING_MODEL;
+    const envDims = process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+    const targetModel = plan.target_embedding_model ?? ZE_TARGET_EMBEDDING_MODEL;
+    if (envModel && envModel !== targetModel) {
+      const stderr = process.stderr;
+      stderr.write('\n');
+      stderr.write('╔══════════════════════════════════════════════════════════════╗\n');
+      stderr.write('║  ⚠️  ENV OVERRIDE DETECTED — ACTION REQUIRED                ║\n');
+      stderr.write('╠══════════════════════════════════════════════════════════════╣\n');
+      stderr.write(`║  GBRAIN_EMBEDDING_MODEL is set in your environment:         ║\n`);
+      stderr.write(`║    Current env: ${(envModel || '').padEnd(42)}║\n`);
+      stderr.write(`║    Switch target: ${(targetModel).padEnd(40)}║\n`);
+      stderr.write('║                                                              ║\n');
+      stderr.write('║  The env var takes HIGHEST PRECEDENCE and will override      ║\n');
+      stderr.write('║  this switch. Update your .env file or shell environment:    ║\n');
+      stderr.write(`║                                                              ║\n`);
+      stderr.write(`║    GBRAIN_EMBEDDING_MODEL=${targetModel.padEnd(33)}║\n`);
+      stderr.write(`║    GBRAIN_EMBEDDING_DIMENSIONS=${String(targetDim).padEnd(28)}║\n`);
+      stderr.write('║                                                              ║\n');
+      stderr.write('║  Without this change, the switch has NO EFFECT at runtime.   ║\n');
+      stderr.write('╚══════════════════════════════════════════════════════════════╝\n');
+      stderr.write('\n');
+    } else if (envDims && parseInt(envDims, 10) !== targetDim) {
+      process.stderr.write(`\n⚠️  GBRAIN_EMBEDDING_DIMENSIONS=${envDims} in env does not match target ${targetDim}. Update your .env.\n\n`);
+    }
+
     return { status: 'applied', plan };
   } catch (err) {
     return {
