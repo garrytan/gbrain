@@ -62,7 +62,7 @@ const DEFAULT_SYNOPSIS_MODEL = 'anthropic:claude-haiku-4-5-20251001';
  * Anthropic Haiku is unaffected at this cap; bump higher when running
  * frontier models if you want richer document anchoring.
  */
-const SYNOPSIS_DOC_MAX_CHARS = (() => {
+export const SYNOPSIS_DOC_MAX_CHARS = (() => {
   const env = process.env.GBRAIN_SYNOPSIS_DOC_MAX_CHARS;
   if (env && /^\d+$/.test(env)) {
     const n = parseInt(env, 10);

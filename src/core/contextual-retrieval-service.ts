@@ -54,6 +54,7 @@ import {
 import {
   generatePerChunkSynopsis,
   SYNOPSIS_PROMPT_VERSION,
+  SYNOPSIS_DOC_MAX_CHARS,
   type GeneratePerChunkSynopsisResult,
 } from './page-summary.ts';
 import {
@@ -103,8 +104,17 @@ function getEmbeddingModelTag(): string {
 export function computeCorpusGeneration(args: {
   crMode: CRMode;
   haikuModel: string;
+  /**
+   * Resolved `SYNOPSIS_DOC_MAX_CHARS` for per_chunk_synopsis runs. When
+   * present, folded into the hash so changes to
+   * `GBRAIN_SYNOPSIS_DOC_MAX_CHARS` invalidate the prior cache cleanly.
+   * Omit for `crMode !== 'per_chunk_synopsis'` — title / none modes
+   * don't consult the cap and the field stays out of the hash for
+   * back-compat with pre-cap embeddings.
+   */
+  synopsisDocMaxChars?: number;
 }): string {
-  return createHash('sha256')
+  const h = createHash('sha256')
     .update(args.crMode)
     .update('|')
     .update(String(SYNOPSIS_PROMPT_VERSION))
@@ -113,9 +123,11 @@ export function computeCorpusGeneration(args: {
     .update('|')
     .update(String(TITLE_WRAPPER_VERSION))
     .update('|')
-    .update(getEmbeddingModelTag())
-    .digest('hex')
-    .slice(0, 16);
+    .update(getEmbeddingModelTag());
+  if (args.synopsisDocMaxChars !== undefined) {
+    h.update('|doc_cap=').update(String(args.synopsisDocMaxChars));
+  }
+  return h.digest('hex').slice(0, 16);
 }
 
 /**
@@ -253,7 +265,11 @@ export async function reembedPageWithContextualRetrieval(
       args.pageSlug,
       args.sourceId,
       resolution.mode,
-      computeCorpusGeneration({ crMode: resolution.mode, haikuModel: args.haikuModel ?? DEFAULT_HAIKU_MODEL }),
+      computeCorpusGeneration({
+        crMode: resolution.mode,
+        haikuModel: args.haikuModel ?? DEFAULT_HAIKU_MODEL,
+        synopsisDocMaxChars: resolution.mode === 'per_chunk_synopsis' ? SYNOPSIS_DOC_MAX_CHARS : undefined,
+      }),
     );
     return { kind: 'skipped', reason: 'no_chunks' };
   }
@@ -282,6 +298,7 @@ export async function reembedPageWithContextualRetrieval(
       const corpus_generation = computeCorpusGeneration({
         crMode: attemptMode,
         haikuModel,
+        synopsisDocMaxChars: attemptMode === 'per_chunk_synopsis' ? SYNOPSIS_DOC_MAX_CHARS : undefined,
       });
 
       // ── PHASE 2: single DB transaction ───────────────────────────
