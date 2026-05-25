@@ -182,10 +182,23 @@ export class PGLiteEngine implements BrainEngine {
   // PGlite.create(loadDataDir), initSchema is a no-op (schema is already
   // present + migrations already applied). Saves ~1-3s per fresh test PGLite.
   private _snapshotLoaded = false;
+  // Resolved persistent data directory (undefined for in-memory engines).
+  // Captured at connect() so downstream consumers like the MCP multiplexer
+  // (src/mcp/multiplexer.ts) can locate the per-data-dir Unix socket
+  // without having to re-thread EngineConfig everywhere.
+  private _dataDir: string | undefined = undefined;
 
   get db(): PGLiteDB {
     if (!this._db) throw new Error('PGLite not connected. Call connect() first.');
     return this._db;
+  }
+
+  /**
+   * Persistent data dir this engine was connected to, or undefined for an
+   * in-memory engine. Stable for the lifetime of the connection.
+   */
+  get dataDir(): string | undefined {
+    return this._dataDir;
   }
 
   // Lifecycle
@@ -232,6 +245,11 @@ export class PGLiteEngine implements BrainEngine {
     if (!this._lock.acquired) {
       throw new Error('Could not acquire PGLite lock. Another gbrain process is using the database.');
     }
+
+    // Capture dataDir so the MCP multiplexer can locate the per-brain Unix
+    // socket without re-threading EngineConfig. Mirrors the lock lifecycle:
+    // populated when the lock is held, cleared on disconnect().
+    this._dataDir = dataDir;
 
     // Tier 3: optional snapshot fast-restore. Only applies to in-memory
     // engines (no persistent dataDir). The snapshot was built from a fresh
@@ -285,6 +303,7 @@ export class PGLiteEngine implements BrainEngine {
       await releaseLock(this._lock);
       this._lock = null;
     }
+    this._dataDir = undefined;
   }
 
   async initSchema(): Promise<void> {

@@ -146,3 +146,42 @@ export async function releaseLock(lock: LockHandle): Promise<void> {
     // Lock file already removed (e.g., by stale cleanup) — that's fine
   }
 }
+
+export interface LockInfo {
+  pid: number;
+  acquired_at: number;
+  command?: string;
+}
+
+/**
+ * Pure read of the current lock file. Does NOT check process liveness, does
+ * NOT touch the lock, does NOT block. Returns null if no lock dir / file
+ * present, or if the file is unreadable / corrupt.
+ *
+ * Used by callers that need to decide pre-connect whether to attempt an
+ * acquire or fall back to a different strategy. In particular, `gbrain
+ * serve` uses this to detect "another serve is already running" and become
+ * a stdio proxy to that existing server instead of failing on the lock —
+ * PGLite is single-process, so two serves would otherwise collide.
+ *
+ * Callers that care about staleness should pair this with a process.kill(pid, 0)
+ * liveness check; this function intentionally doesn't do that so it stays
+ * a pure read and reusable by tooling that just wants to inspect the lock.
+ */
+export function readLockInfo(dataDir: string | undefined): LockInfo | null {
+  if (!dataDir) return null;
+  const lockPath = join(dataDir, LOCK_DIR_NAME, LOCK_FILE);
+  if (!existsSync(lockPath)) return null;
+  try {
+    const raw = readFileSync(lockPath, 'utf-8');
+    const data = JSON.parse(raw) as { pid?: unknown; acquired_at?: unknown; command?: unknown };
+    if (typeof data.pid !== 'number' || typeof data.acquired_at !== 'number') return null;
+    return {
+      pid: data.pid,
+      acquired_at: data.acquired_at,
+      command: typeof data.command === 'string' ? data.command : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
