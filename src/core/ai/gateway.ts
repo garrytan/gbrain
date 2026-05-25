@@ -342,6 +342,10 @@ export function applyOpenAICompatConfig(
       recipe.setup_hint,
     );
   }
+  if (recipe.id === 'ollama') {
+    const normalized = normalizeOllamaOpenAIBaseURL(baseURL);
+    return { baseURL: normalized, fetch: makeOllamaNativeChatCompatFetch(normalized) };
+  }
   return { baseURL };
 }
 
@@ -951,6 +955,208 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
     return resp;
   }
 }) as unknown as typeof fetch;
+
+/**
+ * Ollama exposes embeddings through the OpenAI-compatible `/v1/embeddings`
+ * route, but thinking controls for local chat models live on native
+ * `/api/chat`. The OpenAI-compatible `/v1/chat/completions` endpoint cannot
+ * reliably carry `think:false`, so chat/expansion calls are translated to the
+ * native endpoint while every other path passes through unchanged.
+ */
+function normalizeOllamaOpenAIBaseURL(baseURL: string): string {
+  const trimmed = baseURL.replace(/\/+$/, '');
+  return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`;
+}
+
+function ollamaNativeChatURL(openAIBaseURL: string): string {
+  const u = new URL(openAIBaseURL);
+  const prefix = u.pathname.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
+  u.pathname = prefix ? `${prefix}/api/chat` : '/api/chat';
+  u.search = '';
+  return u.toString();
+}
+
+function requestURLString(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function isOpenAIChatCompletionsURL(input: RequestInfo | URL): boolean {
+  try {
+    const u = new URL(requestURLString(input));
+    return u.pathname.replace(/\/+$/, '').endsWith('/chat/completions');
+  } catch {
+    return false;
+  }
+}
+
+async function requestBodyText(input: RequestInfo | URL, init?: RequestInit): Promise<string | undefined> {
+  const body = init?.body;
+  if (typeof body === 'string') return body;
+  if (body instanceof URLSearchParams) return body.toString();
+  if (body instanceof Blob) return body.text();
+  if (body instanceof ArrayBuffer) return Buffer.from(body).toString('utf8');
+  if (ArrayBuffer.isView(body)) {
+    return Buffer.from(body.buffer, body.byteOffset, body.byteLength).toString('utf8');
+  }
+  if (input instanceof Request) {
+    return input.clone().text();
+  }
+  return undefined;
+}
+
+function openAIContentToOllamaContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (content == null) return '';
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const block of content) {
+      if (!block || typeof block !== 'object') continue;
+      const b = block as Record<string, unknown>;
+      if (b.type === 'text' && typeof b.text === 'string') {
+        parts.push(b.text);
+      }
+    }
+    return parts.join('\n');
+  }
+  return String(content);
+}
+
+function ollamaFormatFromResponseFormat(responseFormat: unknown): unknown | undefined {
+  if (!responseFormat || typeof responseFormat !== 'object') return undefined;
+  const rf = responseFormat as Record<string, any>;
+  if (rf.type === 'json_object') return 'json';
+  if (rf.type === 'json_schema') {
+    return rf.json_schema?.schema && typeof rf.json_schema.schema === 'object'
+      ? rf.json_schema.schema
+      : 'json';
+  }
+  return undefined;
+}
+
+function buildOllamaChatBody(openaiBody: Record<string, any>): Record<string, any> {
+  const messages = Array.isArray(openaiBody.messages)
+    ? openaiBody.messages.map((m: any) => {
+        const mapped: Record<string, any> = {
+          role: typeof m?.role === 'string' ? m.role : 'user',
+          content: openAIContentToOllamaContent(m?.content),
+        };
+        if (Array.isArray(m?.tool_calls)) mapped.tool_calls = m.tool_calls;
+        if (typeof m?.tool_call_id === 'string') mapped.tool_call_id = m.tool_call_id;
+        return mapped;
+      })
+    : [];
+
+  const options: Record<string, any> = {};
+  if (typeof openaiBody.temperature === 'number') options.temperature = openaiBody.temperature;
+  if (typeof openaiBody.top_p === 'number') options.top_p = openaiBody.top_p;
+  const maxTokens = openaiBody.max_tokens ?? openaiBody.max_completion_tokens;
+  if (typeof maxTokens === 'number') options.num_predict = maxTokens;
+  if (openaiBody.stop !== undefined) options.stop = openaiBody.stop;
+  if (typeof openaiBody.seed === 'number') options.seed = openaiBody.seed;
+
+  const nativeBody: Record<string, any> = {
+    model: openaiBody.model,
+    messages,
+    stream: false,
+    think: false,
+  };
+  const format = ollamaFormatFromResponseFormat(openaiBody.response_format);
+  if (format !== undefined) nativeBody.format = format;
+  if (Array.isArray(openaiBody.tools)) nativeBody.tools = openaiBody.tools;
+  if (Object.keys(options).length > 0) nativeBody.options = options;
+  return nativeBody;
+}
+
+function ollamaFinishReason(doneReason: unknown, done: unknown): string {
+  if (doneReason === 'length') return 'length';
+  if (doneReason === 'stop') return 'stop';
+  return done === true ? 'stop' : 'stop';
+}
+
+function rewriteOllamaChatResponse(resp: Response, nativeJson: any, requestedModel: string): Response {
+  const promptTokens = typeof nativeJson?.prompt_eval_count === 'number' ? nativeJson.prompt_eval_count : 0;
+  const completionTokens = typeof nativeJson?.eval_count === 'number' ? nativeJson.eval_count : 0;
+  const createdAt = Date.parse(nativeJson?.created_at ?? '');
+  const message: Record<string, any> = {
+    role: nativeJson?.message?.role ?? 'assistant',
+    content: nativeJson?.message?.content ?? '',
+  };
+  if (Array.isArray(nativeJson?.message?.tool_calls)) {
+    message.tool_calls = nativeJson.message.tool_calls;
+  }
+
+  const json = {
+    id: `chatcmpl-ollama-${Date.now()}`,
+    object: 'chat.completion',
+    created: Number.isFinite(createdAt) ? Math.floor(createdAt / 1000) : Math.floor(Date.now() / 1000),
+    model: nativeJson?.model ?? requestedModel,
+    choices: [
+      {
+        index: 0,
+        message,
+        finish_reason: ollamaFinishReason(nativeJson?.done_reason, nativeJson?.done),
+      },
+    ],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    },
+  };
+
+  const headers = new Headers(resp.headers);
+  headers.set('content-type', 'application/json');
+  headers.delete('content-length');
+  return new Response(JSON.stringify(json), {
+    status: resp.status,
+    statusText: resp.statusText,
+    headers,
+  });
+}
+
+function makeOllamaNativeChatCompatFetch(openAIBaseURL: string): typeof fetch {
+  const chatURL = ollamaNativeChatURL(openAIBaseURL);
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (!isOpenAIChatCompletionsURL(input)) {
+      return fetch(input, init);
+    }
+
+    const bodyText = await requestBodyText(input, init);
+    if (!bodyText) return fetch(input, init);
+
+    let openaiBody: Record<string, any>;
+    try {
+      openaiBody = JSON.parse(bodyText);
+    } catch {
+      return fetch(input, init);
+    }
+
+    // Streaming requires an SSE rewriter; gbrain's generateText/generateObject
+    // paths are non-streaming, so leave streaming callers on Ollama's /v1 path.
+    if (openaiBody.stream === true) return fetch(input, init);
+
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    headers.delete('content-length');
+    headers.set('content-type', 'application/json');
+
+    const resp = await fetch(chatURL, {
+      ...(init ?? {}),
+      method: 'POST',
+      headers,
+      body: JSON.stringify(buildOllamaChatBody(openaiBody)),
+    });
+    if (!resp.ok) return resp;
+
+    try {
+      const nativeJson = await resp.clone().json();
+      return rewriteOllamaChatResponse(resp, nativeJson, String(openaiBody.model ?? ''));
+    } catch {
+      return resp;
+    }
+  }) as unknown as typeof fetch;
+}
 
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
@@ -1892,6 +2098,7 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         name: recipe.id,
         baseURL: compat.baseURL,
         ...(compat.fetch ? { fetch: compat.fetch } : {}),
+        ...(recipe.id === 'ollama' ? { supportsStructuredOutputs: true } : {}),
         ...auth,
       }).languageModel(modelId);
     }
@@ -1918,7 +2125,9 @@ export async function expand(query: string): Promise<string[]> {
       schema: ExpansionSchema,
       prompt: [
         'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
-        'Return ONLY the JSON object. Do NOT include the original query in the result.',
+        'Return ONLY a JSON object with exactly one key named "queries".',
+        'The value of "queries" MUST be an array of strings. Do NOT use any other key name.',
+        'Do NOT include the original query in the result.',
         'Each rewrite should emphasize different aspects, synonyms, or framings.',
         '',
         `Query: ${query}`,
@@ -2137,6 +2346,7 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
         name: recipe.id,
         baseURL: compat.baseURL,
         ...(compat.fetch ? { fetch: compat.fetch } : {}),
+        ...(recipe.id === 'ollama' ? { supportsStructuredOutputs: true } : {}),
         ...auth,
       }).languageModel(modelId);
     }

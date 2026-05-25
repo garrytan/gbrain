@@ -29,7 +29,7 @@ import { AIConfigError } from '../../src/core/ai/errors.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 
 describe('chat touchpoint — recipe registry', () => {
-  test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
+  test('core subagent-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
     const expected = ['anthropic', 'openai', 'google', 'deepseek', 'groq', 'together'];
     for (const id of expected) {
       const r = getRecipe(id);
@@ -51,9 +51,15 @@ describe('chat touchpoint — recipe registry', () => {
     }
   });
 
-  test('embedding-only providers (voyage, ollama) do NOT declare chat', () => {
+  test('embedding-only provider Voyage does NOT declare chat', () => {
     expect(getRecipe('voyage')!.touchpoints.chat).toBeUndefined();
-    expect(getRecipe('ollama')!.touchpoints.chat).toBeUndefined();
+  });
+
+  test('Ollama declares local chat without subagent-loop support', () => {
+    const ollama = getRecipe('ollama')!;
+    expect(ollama.touchpoints.chat).toBeDefined();
+    expect(ollama.touchpoints.chat!.models).toContain('qwen3.6:27b');
+    expect(ollama.touchpoints.chat!.supports_subagent_loop).toBe(false);
   });
 
   test('openai-compat chat recipes have base_url_default', () => {
@@ -109,8 +115,6 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
 
   test('assertTouchpoint rejects chat on embedding-only providers with a fix hint', () => {
     expect(() => assertTouchpoint(getRecipe('voyage')!, 'chat', 'voyage-3'))
-      .toThrow(AIConfigError);
-    expect(() => assertTouchpoint(getRecipe('ollama')!, 'chat', 'nomic-embed-text'))
       .toThrow(AIConfigError);
   });
 
