@@ -27,7 +27,10 @@ import { chooseSlug, renderStub, writeStub, type StubInput, type Tier } from "./
 const BRAIN = process.env.GBRAIN_HOME ?? join(homedir(), "brain");
 const REPORT_DIR = join(BRAIN, ".agent", "reports");
 const LOCK_PATH = join(homedir(), ".cache", "kos-jarvis", "enrich-sweep.lock");
-const SHIM_HEALTH = process.env.KOS_EMBED_SHIM ?? "http://127.0.0.1:7222/health";
+// NOTE: pre-M3 (2026-05-10), this skill checked an embed-shim health endpoint
+// at :7222. Shim was retired in M3 (§6.23) — embedding now goes through the
+// native Vercel AI SDK gateway inside `gbrain` itself. The `gbrain list`
+// pre-flight check below covers DB+gateway connectivity transitively.
 
 type Flags = {
   dry: boolean;
@@ -72,19 +75,10 @@ Flags:
 async function preflight(flags: Flags): Promise<string[]> {
   const errors: string[] = [];
 
-  // Shim reachable (unless --dry)
-  if (!flags.dry) {
-    try {
-      const r = await fetch(SHIM_HEALTH, {
-        signal: AbortSignal.timeout(3000),
-      });
-      if (!r.ok) errors.push(`embed shim returned HTTP ${r.status} at ${SHIM_HEALTH}`);
-    } catch (e) {
-      errors.push(`embed shim unreachable at ${SHIM_HEALTH}: ${e instanceof Error ? e.message : e}`);
-    }
-  }
-
-  // gbrain CLI
+  // gbrain CLI (also transitively proves DB engine + native embedding gateway
+  // are wired — `list` reads the active source registry and needs a working
+  // connection; M3 cutover removed the standalone embed-shim health check
+  // that used to live here, see header comment).
   const r = spawnSync("gbrain", ["list", "--limit", "1"], { encoding: "utf-8" });
   if (r.status !== 0) errors.push(`gbrain list failed: ${r.stderr}`);
 

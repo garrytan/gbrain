@@ -101,7 +101,7 @@ the canonical name + known aliases):
    `source_of_truth: brain-synthesis` or `tavily+brain`, `aliases`, `id`
 4. Timeline: first mention timestamp (from source page `updated`)
 5. Links: reverse mentions from every source that referenced the entity
-6. `gbrain put <slug> --content <md>` → auto-embeds via Gemini shim
+6. `gbrain put <slug> --content <md>` → auto-embeds via native Vercel AI SDK gateway (Google `gemini-embedding-001`, 1536d; M3 cutover 2026-05-10 retired the standalone shim, §6.23)
 
 ### Phase E — Report
 
@@ -131,16 +131,17 @@ Write `~/brain/agent/reports/enrich-sweep-<YYYY-MM-DD>.md` (mkdir -p):
 ## Exit codes
 
 - `0` — clean, report written, at least one stub created or plan printed
-- `1` — fatal (shim down, ANTHROPIC_API_KEY missing, gbrain unreachable)
+- `1` — fatal (ANTHROPIC_API_KEY missing, gbrain unreachable, or DB connection failure surfaced via `gbrain list`)
 - `2` — partial (some Haiku calls failed, some stubs rejected by gbrain)
 
 ## Pre-flight checks (run.ts asserts)
 
-1. `curl -s http://127.0.0.1:7222/health` OK → else exit 1
-2. `gbrain list --limit 1` succeeds → else exit 1
-3. `ANTHROPIC_API_KEY` set → else exit 1
-4. `TAVILY_API_KEY` set OR `--tier3-only` flag → else warn
-5. Idempotency lock `~/.cache/kos-jarvis/enrich-sweep.lock` absent
+1. `gbrain list --limit 1` succeeds → else exit 1 (transitively covers DB
+   engine + native embedding gateway; replaces the pre-M3 shim health check
+   at :7222 that used to live here)
+2. `ANTHROPIC_API_KEY` set → else exit 1
+3. `TAVILY_API_KEY` set OR `--tier3-only` flag → else warn
+4. Idempotency lock `~/.cache/kos-jarvis/enrich-sweep.lock` absent
    → else exit 1 (another sweep running)
 
 ## Cost envelope (full 86-page sweep)
