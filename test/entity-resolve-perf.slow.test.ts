@@ -157,7 +157,11 @@ const OLD_SQL = `
   LIMIT 5
 `;
 
-// The T12 query shape — what tryPrefixExpansion now uses.
+// The T12 query shape — derived-table aggregation pattern introduced in
+// v0.35.5. Note: production now uses `LIKE ANY($2::text[])` for multi-
+// pattern matching, but this perf guard targets the correlated-subquery
+// vs derived-table shape difference (which dominates the >>5x speedup),
+// so the single-pattern `LIKE $2` form is fine for the benchmark.
 const NEW_SQL = `
   SELECT p.slug,
          ((SELECT COUNT(*)::int FROM links WHERE to_page_id = p.id)

@@ -241,12 +241,14 @@ export async function findPrefixCandidates(
 }
 
 /**
- * Look up pages whose slug starts with `<dir>/<token>-` for each known
- * entity directory. When multiple candidates match within a directory,
- * pick the one with the highest connection count (links_in + links_out +
- * chunk count) — the most-mentioned entity is the most likely canonical
- * target for a bare-name reference. When no candidates match in any
- * directory, returns null and the caller falls through to slugify.
+ * Look up pages whose slug matches `<dir>/<token>` (exact bare child)
+ * OR `<dir>/<token>-*` (suffixed child) for each known entity directory.
+ * When multiple candidates match within a directory, pick the one with
+ * the highest connection count (links_in + links_out + chunk count) —
+ * the most-mentioned entity is the most likely canonical target for a
+ * bare-name reference. When no candidates match in any directory,
+ * returns null and the caller falls through to slugify. Pattern set
+ * mirrors `findPrefixCandidates` above.
  */
 async function tryPrefixExpansion(
   engine: BrainEngine,
@@ -254,7 +256,18 @@ async function tryPrefixExpansion(
   token: string,
 ): Promise<string | null> {
   for (const dir of PREFIX_EXPANSION_DIRS) {
-    const pattern = `${dir}/${token}-%`;
+    // Two patterns per dir:
+    //   `<dir>/<token>`     — exact bare child (covers `people/alice`)
+    //   `<dir>/<token>-%`   — suffixed child  (covers `people/alice-example`)
+    // Mirrors the pattern set used by `findPrefixCandidates` above
+    // (lines 211-214) — that function got both forms in v0.35.5; this
+    // hot-path was missed during the same refactor. In the common case
+    // fuzzy match catches a bare `<dir>/<token>` slug before prefix
+    // expansion runs, so this is primarily a consistency / defensive
+    // fix: it guards against thin-band cases where multiple similar-name
+    // pages compete for fuzzy's LIMIT cutoff, or future threshold tuning
+    // pushes a bare slug below the fuzzy gate.
+    const patterns = [`${dir}/${token}`, `${dir}/${token}-%`];
     try {
       const rows = await engine.executeRaw<{
         slug: string;
@@ -285,10 +298,10 @@ async function tryPrefixExpansion(
          FROM pages p
          WHERE p.source_id = $1
            AND p.deleted_at IS NULL
-           AND p.slug LIKE $2
+           AND p.slug LIKE ANY($2::text[])
          ORDER BY connection_count DESC, p.slug ASC
          LIMIT 5`,
-        [source_id, pattern],
+        [source_id, patterns],
       );
       if (rows.length === 0) continue;
       // Single unambiguous match: return it.

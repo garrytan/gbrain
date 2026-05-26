@@ -177,6 +177,20 @@ describe('resolvePhantomCanonical (codex #1 — bypasses exact-self-match)', () 
     expect(resolved).not.toBe('alice');
     expect(resolved).toBeNull();
   });
+
+  test('resolves a bare <dir>/<token> canonical via prefix expansion', async () => {
+    // Regression guard for this PR: tryPrefixExpansion must match the bare
+    // `people/grace` slug (no `-suffix`). resolvePhantomCanonical skips the
+    // exact-self path and only returns a prefix hit when it differs from the
+    // phantom and contains a slash — so reaching `people/grace` here proves
+    // tryPrefixExpansion's `<dir>/<token>` pattern fired. Before this fix the
+    // sole pattern was `people/grace-%`, which does not match the bare slug,
+    // so this returned null. Mirrors the findPrefixCandidates bare-prefix test.
+    await putPage('people/grace', '# grace\n', { type: 'person' });
+    await putPage('grace', STUB_BODY); // the phantom itself exists as exact slug
+    const resolved = await resolvePhantomCanonical(engine, 'default', 'grace');
+    expect(resolved).toBe('people/grace');
+  });
 });
 
 // ─── findPrefixCandidates (codex #11) ──────────────────────────────
