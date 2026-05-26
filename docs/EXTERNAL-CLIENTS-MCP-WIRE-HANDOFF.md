@@ -483,46 +483,28 @@ operation requires `admin` scope and adds latency.
 
 ## 7. Per-client notes
 
-### 7.1 mailagent (`ChenyqThu/MailAgent`, GitHub issue #1)
+### 7.1 mailagent (`ChenyqThu/MailAgent`)
 
-**Status**: spec-only as of 2026-05-17. Brain-side has no fork code waiting;
-when mailagent implements `mailagent kos push <internal_id>`, it should
-call MCP `put_page` directly per §5.2 (TypeScript) or §5.1 (Python).
+**Status**: handed off 2026-05-26. **Brain-side spec for mailagent is now in
+its own dedicated doc** — slug/source/frontmatter shapes have evolved since
+this section was first written (2026-05-17), and mailagent has two distinct
+ingest paths (curated chat-save + bulk email) which need different
+conventions.
 
-**Payload shape** (replaces the old `POST /ingest markdown` shape from
-§6.27 of `docs/JARVIS-ARCHITECTURE.md`):
+**See**: [`docs/MAILAGENT-INGEST-HANDOFF.md`](MAILAGENT-INGEST-HANDOFF.md)
+— self-contained ingest contract for MailAgent's ClaudeCode covering OAuth
+setup, the two ingest scenarios, TypeScript code patterns, smoke validation,
+and known gotchas. That doc supersedes the spec sketch that used to live
+here (which referenced a `sources/mailagent-{id}` slug shape predating
+the `chat-history/<source>/...` namespace convention land in
+[`kos-namespace-conventions.md`](kos-namespace-conventions.md) and the
+new `mailagent-emails` source).
 
-```python
-slug = f"sources/mailagent-{message_id_normalized}"  # message_id → lowercase + non-alphanum→hyphen
-content = f"""---
-type: source
-kind: source
-title: '{subject_yaml_escaped}'
-status: draft
-created: '{date_iso}'
-updated: '{date_iso}'
-source_of_truth: mailagent-sqlite
-source_refs:
-  - mailagent:{message_id}
-  - {notion_url_if_mirrored}
-tags: [mailagent-ingest, email]
-date_received: '{date_received}'
-sender: '{sender_yaml_escaped}'
-mailbox: '{mailbox}'
----
+**Lucien-side prerequisites** (before mailagent can begin):
 
-# {subject}
-
-> Ingested via mailagent kos push on {date_iso}.
-
-{body_markdown}
-"""
-mcp_call("put_page", {"slug": slug, "content": content})
-```
-
-Lucien's mailagent OAuth client is reserved at registration time but
-secret not issued until mailagent is ready to wire it. When ready, ping
-Lucien: `bin/gbrain auth register-client "mailagent" --grant-types client_credentials --scopes "read write"`.
+1. Run `bin/gbrain auth register-client "mailagent" --grant-types client_credentials --scopes "read write"` if secret hasn't been issued, transmit credentials via Signal/1Password.
+2. Run `bin/gbrain sources add mailagent-emails --local-path /Users/chenyuanquan/mailagent-emails/ --description "MailAgent inbox bulk import + incremental"` to create the new source for bulk ingest.
+3. Ping mailagent that both are ready.
 
 ### 7.2 OpenClaw feishu jarvis (cross-repo)
 
