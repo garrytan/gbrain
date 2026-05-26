@@ -995,6 +995,105 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
  * Errors during the SQL count → warn with the underlying message.
  * Best-effort: this check never breaks doctor.
  */
+
+/**
+ * v0.40.9.0: surface the state of each source's `.gbrainignore` file. Loud
+ * silent footgun before this check existed — a user could drop a malformed
+ * dotfile, get zero-files-synced for every cycle, and never know why.
+ *
+ * Per-source rollup (one Check row, message lists each problem source):
+ *   - dotfile absent everywhere → ok silent ("no .gbrainignore — all files allowed")
+ *   - dotfile present + parses → ok with pattern counts per source
+ *   - dotfile present + over the 1000-line cap → warn (truncation lost lines)
+ *   - dotfile present + unreadable (perms / encoding) → warn
+ *
+ * NOT a real ignore-lib compile check — `ignore` accepts almost any string
+ * shape, so "the matcher built fine" is true 99.9% of the time. We surface
+ * the structural facts (existence, line count, readability) and trust
+ * the resolveExclusions fail-open posture for the rare lib-rejection edge.
+ *
+ * Source enumeration uses loadAllSources which the existing doctor checks
+ * already use (no new query shape). Skips archived sources to match
+ * federation_health's posture.
+ */
+export async function checkGbrainignoreHealth(engine: BrainEngine): Promise<Check> {
+  try {
+    const { loadAllSources } = await import('../core/sources-load.ts');
+    const sources = await loadAllSources(engine);
+    const dotfileSources: Array<{ id: string; path: string; lines: number; truncated: boolean }> = [];
+    const problemSources: Array<{ id: string; path: string; reason: string }> = [];
+
+    for (const src of sources) {
+      if (!src.local_path) continue;
+      const dotfilePath = join(src.local_path, '.gbrainignore');
+      if (!existsSync(dotfilePath)) continue;
+      try {
+        const raw = readFileSync(dotfilePath, 'utf-8');
+        const rawLines = raw.split(/\r?\n/);
+        const effectiveLines = rawLines.filter((l) => {
+          const t = l.trim();
+          return t !== '' && !t.startsWith('#');
+        }).length;
+        const truncated = rawLines.length > 1000;
+        dotfileSources.push({
+          id: src.id,
+          path: dotfilePath,
+          lines: effectiveLines,
+          truncated,
+        });
+        if (truncated) {
+          problemSources.push({
+            id: src.id,
+            path: dotfilePath,
+            reason: `>1000 lines — sync truncates after 1000`,
+          });
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        problemSources.push({
+          id: src.id,
+          path: dotfilePath,
+          reason: `unreadable (${msg.slice(0, 60)})`,
+        });
+      }
+    }
+
+    if (dotfileSources.length === 0) {
+      return {
+        name: 'gbrainignore_health',
+        status: 'ok',
+        message: `no .gbrainignore configured on any registered source — all files in repos eligible for sync`,
+      };
+    }
+
+    if (problemSources.length === 0) {
+      const summary = dotfileSources
+        .map((s) => `${s.id}=${s.lines} pattern(s)`)
+        .join(', ');
+      return {
+        name: 'gbrainignore_health',
+        status: 'ok',
+        message: `${dotfileSources.length} source(s) have .gbrainignore: ${summary}`,
+      };
+    }
+
+    return {
+      name: 'gbrainignore_health',
+      status: 'warn',
+      message:
+        `${problemSources.length} .gbrainignore file(s) need attention: ` +
+        problemSources.map((p) => `${p.id} (${p.reason})`).join('; '),
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'gbrainignore_health',
+      status: 'warn',
+      message: `could not enumerate sources for .gbrainignore check: ${msg.slice(0, 80)}`,
+    };
+  }
+}
+
 export async function checkGraphSignalsCoverage(engine: BrainEngine): Promise<Check> {
   try {
     // Resolve the active graph_signals setting. Read the config key
@@ -4484,6 +4583,9 @@ export async function buildChecks(
     // 5K — source_routing_health (D5 lock: 200-page total cap)
     progress.heartbeat('source_routing_health');
     checks.push(await checkSourceRoutingHealth(engine));
+    // v0.40.9.0 — gbrainignore_health (warn on malformed / over-cap dotfiles)
+    progress.heartbeat('gbrainignore_health');
+    checks.push(await checkGbrainignoreHealth(engine));
     // 5L — oauth_confidential_client_health (success-path probe per codex CF8)
     progress.heartbeat('oauth_confidential_client_health');
     checks.push(await checkOauthConfidentialHealth(engine));

@@ -20,14 +20,19 @@
  * exports 20+ check helpers (whoknowsHealthCheck, takesWeightGridCheck, …)
  * that warrant their own parameterized test file.
  */
-import { describe, expect, test, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, expect, test, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import {
   buildChecks,
+  checkGbrainignoreHealth,
   computeDoctorReport,
   type Check,
 } from '../src/commands/doctor.ts';
+import { addSource as opsAddSource } from '../src/core/sources-ops.ts';
 
 let engine: PGLiteEngine;
 
@@ -223,5 +228,63 @@ describe('buildChecks — orchestrator against PGLite', () => {
     expect(r.health_score).toBe(75);
     expect(r.checks).toHaveLength(3);
     expect(r.checks.map(c => c.status)).toEqual(['ok', 'warn', 'fail']);
+  });
+});
+
+// v0.40.9.0 — gbrainignore_health check
+describe('checkGbrainignoreHealth', () => {
+  let tmpDirs: string[] = [];
+
+  beforeEach(() => {
+    tmpDirs = [];
+  });
+
+  afterEach(() => {
+    for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
+  });
+
+  function freshTmp(): string {
+    const d = mkdtempSync(join(tmpdir(), 'gbrainignore-doctor-'));
+    tmpDirs.push(d);
+    return d;
+  }
+
+  test('no .gbrainignore on any source → ok with silent message', async () => {
+    await resetPgliteState(engine);
+    const tmp = freshTmp();
+    await opsAddSource(engine, { id: 'dh-a', localPath: tmp });
+    const result = await checkGbrainignoreHealth(engine);
+    expect(result.name).toBe('gbrainignore_health');
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('no .gbrainignore');
+  });
+
+  test('dotfile present + parses → ok with pattern count in message', async () => {
+    await resetPgliteState(engine);
+    const tmp = freshTmp();
+    writeFileSync(join(tmp, '.gbrainignore'), 'data/\n*.parquet\n# comment\nfixtures/\n');
+    await opsAddSource(engine, { id: 'dh-b', localPath: tmp });
+    const result = await checkGbrainignoreHealth(engine);
+    expect(result.status).toBe('ok');
+    expect(result.message).toContain('dh-b');
+    expect(result.message).toContain('3'); // 3 patterns (comment stripped)
+  });
+
+  test('dotfile over 1000-line cap → warn with truncation note', async () => {
+    await resetPgliteState(engine);
+    const tmp = freshTmp();
+    // Construct a >1000 line dotfile (mostly comments to keep effective
+    // pattern count small, but raw line count over the cap).
+    const lines: string[] = [];
+    for (let i = 0; i < 1200; i++) {
+      lines.push(`# ignore pattern ${i}`);
+    }
+    lines.push('data/');
+    writeFileSync(join(tmp, '.gbrainignore'), lines.join('\n'));
+    await opsAddSource(engine, { id: 'dh-c', localPath: tmp });
+    const result = await checkGbrainignoreHealth(engine);
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('dh-c');
+    expect(result.message.toLowerCase()).toContain('1000');
   });
 });

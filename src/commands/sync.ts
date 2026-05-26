@@ -42,6 +42,7 @@ import {
 import { loadStorageConfig } from '../core/storage-config.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
+import { resolveExclusions, type GbrainIgnoreMatcher } from '../core/gbrainignore.ts';
 
 export interface SyncResult {
   status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures';
@@ -82,7 +83,11 @@ function estimateSyncAllCost(sources: Array<{ local_path: string | null; config:
 
   for (const src of sources) {
     if (!src.local_path) continue;
-    const cfg = (src.config || {}) as { syncEnabled?: boolean; strategy?: 'markdown' | 'code' | 'auto' };
+    const cfg = (src.config || {}) as {
+      syncEnabled?: boolean;
+      strategy?: 'markdown' | 'code' | 'auto';
+      excludePatterns?: string[];
+    };
     if (cfg.syncEnabled === false) continue;
     activeSources++;
     let sourceTokens = 0;
@@ -93,7 +98,19 @@ function estimateSyncAllCost(sources: Array<{ local_path: string | null; config:
       // walkSyncableFiles used statSync (followed symlinks). New walker
       // uses lstat + inode-cycle + max-depth so the preview matches
       // what the real sync will actually walk.
-      const files = collectSyncableFiles(src.local_path, { strategy: cfg.strategy ?? 'markdown' });
+      //
+      // v0.40.9.0: thread the per-source exclusion matcher so the preview
+      // honors `.gbrainignore` + sources.config.excludePatterns. Otherwise
+      // the user sees a cost preview that overestimates because it counts
+      // files that the actual sync will skip.
+      const previewMatcher = resolveExclusions({
+        repoPath: src.local_path,
+        sourceConfig: src.config as Record<string, unknown>,
+      });
+      const files = collectSyncableFiles(src.local_path, {
+        strategy: cfg.strategy ?? 'markdown',
+        ignoreMatcher: previewMatcher,
+      });
       for (const fullPath of files) {
         try {
           const stat = statSync(fullPath);
@@ -152,6 +169,23 @@ export interface SyncOpts {
   sourceId?: string;
   /** Multi-repo: sync strategy override (markdown, code, auto). */
   strategy?: 'markdown' | 'code' | 'auto';
+  /**
+   * v0.40.9.0: layer-2 CLI override. Merged with .gbrainignore (layer 1)
+   * and sources.config.excludePatterns (layer 3). Merge order is
+   * dotfile → source.config → cli (cli wins per gitignore last-match-wins).
+   *
+   * Each entry is a gitignore-style pattern. Validated client-side
+   * (non-empty strings, sanity-capped at 200 patterns).
+   */
+  excludePatterns?: string[];
+  /**
+   * v0.40.9.0 A2 escape hatch: when true, the reconciliation pass that
+   * deletes orphaned pages (whose paths now match exclusions) bypasses
+   * the 50%-deletion / 1000-row safety guards. CLI --reconcile-excludes
+   * --yes sets this. Without --yes the safety guard aborts before any
+   * deletion.
+   */
+  forceReconcile?: boolean;
   /**
    * Number of parallel workers for the import phase. When > 1, each worker
    * gets its own small Postgres connection pool and files are dispatched via
@@ -403,6 +437,195 @@ async function writeChunkerVersion(
 }
 
 /**
+ * v0.40.9.0 A2: orphan-page reconciliation when `.gbrainignore` /
+ * sources.config.excludePatterns / --exclude patterns change.
+ *
+ * The incremental diff path at performSyncInner only touches files that
+ * appear in `git diff`. A user who adds `data/` to `.gbrainignore` without
+ * editing the underlying files would leave `data/*.md` pages alive in the
+ * DB forever. This pass closes that loop:
+ *
+ *   1. Compare `matcher.patternsHash` (computed from current merged
+ *      patterns) against `sources.config.excludePatternsHash` (last value
+ *      we reconciled against). Equal → skip (fast path; happens on every
+ *      subsequent sync until patterns change again).
+ *   2. Page-stream this source's rows in 1000-row batches (P1 — mirrors
+ *      reindex.ts's id-ordered pagination so resume-on-failure stays clean).
+ *   3. For each page with a non-null source_path, check the matcher. Mark
+ *      excluded paths for deletion. Stream-count total + matched.
+ *   4. Safety guard (mandatory regression test): refuse to delete when
+ *      either matched > 50% of total OR matched > 1000 absolute, unless
+ *      forceReconcile=true. Hash is NOT updated on abort so the next sync
+ *      retries (gives the user a chance to fix .gbrainignore).
+ *   5. Delete in batches of 500 via DELETE ... WHERE slug = ANY($1).
+ *   6. Persist new hash to sources.config.excludePatternsHash.
+ *
+ * Source-scoped (the source's pages only) and source-id-required: legacy
+ * pre-v0.18 single-default-source brains use a different code path and
+ * don't gain this auto-cleanup. They can run
+ * `gbrain sync --reconcile-excludes --yes` manually if needed.
+ *
+ * Best-effort: catches per-batch failures, logs, continues. Never throws
+ * back to performSyncInner — the primary sync result stays authoritative.
+ *
+ * Returns the number of pages actually deleted (0 on fast-path skip or
+ * safety-guard abort).
+ */
+async function reconcileExcludesIfNeeded(
+  engine: BrainEngine,
+  opts: SyncOpts,
+  sourceConfig: Record<string, unknown>,
+  matcher: { ignores(p: string): boolean; patternsHash: string; patterns: readonly string[] },
+): Promise<number> {
+  // Legacy single-source brain — no source id, no config row to compare hash
+  // against. Skip cleanly; this is the same posture other source-config
+  // features take.
+  if (!opts.sourceId) return 0;
+
+  const storedHash =
+    typeof sourceConfig.excludePatternsHash === 'string'
+      ? (sourceConfig.excludePatternsHash as string)
+      : null;
+  const currentHash = matcher.patternsHash;
+
+  // Fast path: hash unchanged AND no patterns → nothing to do.
+  // If patterns are empty and stored hash is empty-sentinel (or unset),
+  // we never had exclusions and have nothing to clean up.
+  if (storedHash === currentHash && matcher.patterns.length > 0) {
+    return 0;
+  }
+  if (matcher.patterns.length === 0 && (storedHash === null || storedHash === currentHash)) {
+    return 0;
+  }
+
+  // Stream pages with non-null source_path for this source, in id-ordered
+  // batches of 1000 (P1: mirrors reindex.ts pagination).
+  const BATCH_SIZE = 1000;
+  let lastId = 0;
+  let totalScanned = 0;
+  const toDelete: string[] = [];
+
+  while (true) {
+    let rows: Array<{ id: number; slug: string; source_path: string | null }>;
+    try {
+      rows = await engine.executeRaw<{ id: number; slug: string; source_path: string | null }>(
+        `SELECT id, slug, source_path FROM pages
+           WHERE source_id = $1
+             AND id > $2
+             AND source_path IS NOT NULL
+           ORDER BY id ASC
+           LIMIT $3`,
+        [opts.sourceId, lastId, BATCH_SIZE],
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      serr(`[reconcile-excludes] page enumeration failed: ${msg.slice(0, 120)}; aborting reconciliation`);
+      return 0;
+    }
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      totalScanned++;
+      lastId = row.id;
+      if (!row.source_path) continue;
+      // Normalize backslashes; matcher already does this but defensive.
+      const rel = row.source_path.replace(/\\/g, '/').replace(/^\/+/, '');
+      if (matcher.ignores(rel)) {
+        toDelete.push(row.slug);
+      }
+    }
+    if (rows.length < BATCH_SIZE) break;
+  }
+
+  // Safety guard: aborts the cleanup if it would delete a suspiciously
+  // large fraction of the source's pages. A user with a typo'd
+  // `.gbrainignore` ('**' instead of '**/*.parquet') could wipe everything
+  // — this gate stops that silent disaster.
+  if (toDelete.length === 0) {
+    // Patterns changed but nothing matched — still update the hash so the
+    // fast path kicks in on the next sync.
+    await persistExcludesHash(engine, opts.sourceId, sourceConfig, currentHash);
+    return 0;
+  }
+
+  const ABSOLUTE_GUARD = 1000;
+  const RATIO_GUARD = 0.5;
+  const ratio = totalScanned === 0 ? 0 : toDelete.length / totalScanned;
+  const tripped =
+    !opts.forceReconcile &&
+    (toDelete.length > ABSOLUTE_GUARD || ratio > RATIO_GUARD);
+
+  if (tripped) {
+    serr(
+      `\n[reconcile-excludes] SAFETY GUARD TRIPPED:\n` +
+        `  source: ${opts.sourceId}\n` +
+        `  scanned: ${totalScanned} page(s)\n` +
+        `  would delete: ${toDelete.length} (${(ratio * 100).toFixed(1)}%)\n` +
+        `  thresholds: >${ABSOLUTE_GUARD} absolute OR >${(RATIO_GUARD * 100).toFixed(0)}% ratio\n\n` +
+        `  Patterns changed since last sync, but the proposed cleanup looks\n` +
+        `  destructive. Inspect your .gbrainignore + sources.config.excludePatterns\n` +
+        `  + any --exclude flags. To force the cleanup anyway, re-run with:\n` +
+        `    gbrain sync --reconcile-excludes --yes --source ${opts.sourceId}\n\n` +
+        `  Hash is NOT advanced; this check fires again next sync until resolved.\n`,
+    );
+    return 0;
+  }
+
+  // Batched deletion (500 rows / DELETE to stay well under Postgres's
+  // parameter cap and to keep transactions short).
+  const DELETE_BATCH = 500;
+  const pageOpts = { sourceId: opts.sourceId };
+  let actuallyDeleted = 0;
+  for (let i = 0; i < toDelete.length; i += DELETE_BATCH) {
+    const batch = toDelete.slice(i, i + DELETE_BATCH);
+    for (const slug of batch) {
+      try {
+        const existing = await engine.getPage(slug, pageOpts);
+        if (existing) {
+          await engine.deletePage(slug, pageOpts);
+          actuallyDeleted++;
+        }
+      } catch {
+        // Best-effort per page; skip stragglers.
+      }
+    }
+  }
+  slog(
+    `[reconcile-excludes] cleaned up ${actuallyDeleted} orphan page(s) ` +
+      `(patterns changed since last sync; source=${opts.sourceId})`,
+  );
+
+  await persistExcludesHash(engine, opts.sourceId, sourceConfig, currentHash);
+  return actuallyDeleted;
+}
+
+/**
+ * Persist the new excludePatternsHash to sources.config. Uses the same
+ * JSONB merge pattern as other source-config writers (matches what the
+ * `strategy` field writes look like elsewhere).
+ *
+ * Best-effort: log + continue on failure. The hash is purely a cache key
+ * for the fast path; a missed write just means the next sync re-runs the
+ * reconciliation pass (no correctness impact).
+ */
+async function persistExcludesHash(
+  engine: BrainEngine,
+  sourceId: string,
+  currentConfig: Record<string, unknown>,
+  newHash: string,
+): Promise<void> {
+  try {
+    const merged = { ...currentConfig, excludePatternsHash: newHash };
+    await engine.executeRaw(
+      `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(merged), sourceId],
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    serr(`[reconcile-excludes] could not persist new hash for ${sourceId}: ${msg.slice(0, 80)}`);
+  }
+}
+
+/**
  * v0.40 Federated Sync v2: `gbrain sync trigger --source <id> [--priority high|normal|low]`
  *
  * Push-trigger entry point. Wraps `queue.add('sync', ...)` with priority -10
@@ -547,6 +770,39 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     throw new Error(hint);
   }
 
+  // v0.40.9.0: load source config ONCE so the matcher build + remote_url
+  // branch + reconciliation hash compare share a single read. Falls back to
+  // an empty object when there's no sourceId (legacy single-default-source
+  // brains; resolveExclusions just gets {} which evaluates to no
+  // source-config exclusions — dotfile + cli still apply).
+  let sourceConfig: Record<string, unknown> = {};
+  if (opts.sourceId) {
+    try {
+      const cfgRows = await engine.executeRaw<{ config: unknown }>(
+        `SELECT config FROM sources WHERE id = $1`,
+        [opts.sourceId],
+      );
+      const raw = cfgRows[0]?.config;
+      sourceConfig =
+        typeof raw === 'string'
+          ? (JSON.parse(raw) as Record<string, unknown>)
+          : ((raw ?? {}) as Record<string, unknown>);
+    } catch {
+      // Source row missing or config malformed — fall through with empty.
+      // Downstream code handles missing-source separately.
+      sourceConfig = {};
+    }
+  }
+
+  // v0.40.9.0: build the merged exclusion matcher (.gbrainignore +
+  // sources.config.excludePatterns + --exclude). Pure compute; no IO except
+  // statSync on the dotfile (~10μs, cached by mtime per C2).
+  const ignoreMatcher = resolveExclusions({
+    repoPath,
+    sourceConfig,
+    cliExcludes: opts.excludePatterns,
+  });
+
   // v0.39 T1.5: load active pack ONCE at sync entry; pass to every per-file
   // importFile call below. Codex perf finding #7: per-file loadActivePack adds
   // disk/YAML/hash overhead × thousands of files. Best-effort: pack load
@@ -573,15 +829,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   if (opts.sourceId) {
     const { validateRepoState } = await import('../core/git-remote.ts');
     const { recloneIfMissing } = await import('../core/sources-ops.ts');
-    const cfgRows = await engine.executeRaw<{ config: unknown }>(
-      `SELECT config FROM sources WHERE id = $1`,
-      [opts.sourceId],
-    );
-    const cfg =
-      typeof cfgRows[0]?.config === 'string'
-        ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
-        : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
-    const remoteUrl = typeof cfg.remote_url === 'string' ? cfg.remote_url : null;
+    // v0.40.9.0: reuse the source config we already loaded at the top of this
+    // function for the matcher; saves a duplicate SELECT.
+    const remoteUrl = typeof sourceConfig.remote_url === 'string' ? sourceConfig.remote_url : null;
     if (remoteUrl) {
       const state = validateRepoState(repoPath, remoteUrl);
       switch (state) {
@@ -708,11 +958,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    // v0.40.9.0 A2: even when git-HEAD is unchanged, exclusion patterns
+    // may have shifted since last sync. Run reconciliation to clean up
+    // any newly-orphaned pages. Hash gate inside the helper makes this a
+    // fast no-op when patterns haven't changed.
+    const reconciledOnUpToDate = await reconcileExcludesIfNeeded(
+      engine,
+      opts,
+      sourceConfig,
+      ignoreMatcher,
+    );
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
       toCommit: headCommit,
-      added: 0, modified: 0, deleted: 0, renamed: 0,
+      added: 0, modified: 0, deleted: reconciledOnUpToDate, renamed: 0,
       chunksCreated: 0,
       embedded: 0,
       pagesAffected: [],
@@ -739,13 +999,24 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     manifest.renamed = [...manifest.renamed, ...detachedWorkingTreeManifest.renamed];
   }
 
-  // Filter to syncable files (strategy-aware)
+  // Filter to syncable files (strategy-aware) + v0.40.9.0 exclude matcher.
+  // We keep isSyncable's contract narrow (strategy + pruneDir + skipFiles +
+  // optional glob exclude) and apply the gitignore-style matcher as a
+  // separate post-filter. The matcher uses the `ignore` lib's gitignore
+  // semantics which differ from isSyncable's existing `exclude` glob impl
+  // (e.g. `data/` matches `data/foo.md` in gitignore but not in the simpler
+  // glob-to-regex compiler that backs isSyncable.exclude).
   const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
+  const isAllowed = (p: string): boolean => {
+    if (!isSyncable(p, syncOpts)) return false;
+    if (ignoreMatcher.patterns.length > 0 && ignoreMatcher.ignores(p)) return false;
+    return true;
+  };
   const filtered: SyncManifest = {
-    added: manifest.added.filter(p => isSyncable(p, syncOpts)),
-    modified: manifest.modified.filter(p => isSyncable(p, syncOpts)),
-    deleted: manifest.deleted.filter(p => isSyncable(p, syncOpts)),
-    renamed: manifest.renamed.filter(r => isSyncable(r.to, syncOpts)),
+    added: manifest.added.filter(isAllowed),
+    modified: manifest.modified.filter(isAllowed),
+    deleted: manifest.deleted.filter(isAllowed),
+    renamed: manifest.renamed.filter(r => isAllowed(r.to)),
   };
 
   // Delete pages that became un-syncable (modified but filtered out).
@@ -754,7 +1025,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // became un-syncable (e.g., moved under `.gitignore` or filtered by
   // strategy=markdown) deletes the actual code-slug page, not a ghost
   // markdown-slug that never existed.
-  const unsyncableModified = manifest.modified.filter(p => !isSyncable(p, syncOpts));
+  //
+  // v0.40.9.0: same gate. A file that was previously syncable but now matches
+  // an exclude pattern (user added `data/` to .gbrainignore + edited the file)
+  // gets its page reaped here. Pages that don't appear in the diff manifest
+  // are handled by the reconciliation pass below.
+  const unsyncableModified = manifest.modified.filter(p => !isAllowed(p));
   // v0.18.0+ multi-source: scope getPage + deletePage to opts.sourceId so
   // unsyncable cleanup in source A doesn't accidentally sweep same-slug
   // pages in sources B/C/D.
@@ -800,11 +1076,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    // v0.40.9.0 A2: git advanced but no syncable file changes. Still
+    // run reconciliation in case patterns changed (e.g. user pushed an
+    // updated .gbrainignore alongside non-syncable changes in the same
+    // commit, or the dotfile is uncommitted but the user re-ran sync).
+    const reconciledNoChanges = await reconcileExcludesIfNeeded(
+      engine,
+      opts,
+      sourceConfig,
+      ignoreMatcher,
+    );
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
       toCommit: headCommit,
-      added: 0, modified: 0, deleted: 0, renamed: 0,
+      added: 0, modified: 0, deleted: reconciledNoChanges, renamed: 0,
       chunksCreated: 0,
       embedded: 0,
       pagesAffected: [],
@@ -1185,13 +1471,23 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     slog(`Text imported. Run 'gbrain embed --stale' to generate embeddings.`);
   }
 
+  // v0.40.9.0 A2: run orphan-page reconciliation if patterns changed since
+  // the last sync. Best-effort, no-op fast path when hash matches stored.
+  // Counts deletions into the final result so callers see honest numbers.
+  const reconciledDeletes = await reconcileExcludesIfNeeded(
+    engine,
+    opts,
+    sourceConfig,
+    ignoreMatcher,
+  );
+
   return {
     status: 'synced',
     fromCommit: lastCommit,
     toCommit: headCommit,
     added: filtered.added.length,
     modified: filtered.modified.length,
-    deleted: filtered.deleted.length,
+    deleted: filtered.deleted.length + reconciledDeletes,
     renamed: filtered.renamed.length,
     chunksCreated,
     embedded,
@@ -1205,6 +1501,33 @@ async function performFullSync(
   headCommit: string,
   opts: SyncOpts,
 ): Promise<SyncResult> {
+  // v0.40.9.0: re-resolve the matcher here too. performFullSync is reached
+  // by three paths: first sync (no last_commit), force-full via --full, and
+  // anchor-corruption recovery. None of them inherit the matcher built in
+  // performSyncInner, so we rebuild from the same inputs. Cheap — the
+  // dotfile is mtime-cached.
+  let fullSyncSourceConfig: Record<string, unknown> = {};
+  if (opts.sourceId) {
+    try {
+      const cfgRows = await engine.executeRaw<{ config: unknown }>(
+        `SELECT config FROM sources WHERE id = $1`,
+        [opts.sourceId],
+      );
+      const raw = cfgRows[0]?.config;
+      fullSyncSourceConfig =
+        typeof raw === 'string'
+          ? (JSON.parse(raw) as Record<string, unknown>)
+          : ((raw ?? {}) as Record<string, unknown>);
+    } catch {
+      fullSyncSourceConfig = {};
+    }
+  }
+  const fullSyncMatcher = resolveExclusions({
+    repoPath,
+    sourceConfig: fullSyncSourceConfig,
+    cliExcludes: opts.excludePatterns,
+  });
+
   // Dry-run: walk the repo, count syncable files, return without writing.
   // Fixes the silent-write-on-dry-run bug where performFullSync called
   // runImport unconditionally regardless of opts.dryRun.
@@ -1215,7 +1538,10 @@ async function performFullSync(
   // code --dry-run` always reported zero files even when ~1500 code
   // files were waiting.
   if (opts.dryRun) {
-    const allFiles = collectSyncableFiles(repoPath, { strategy: opts.strategy ?? 'markdown' });
+    const allFiles = collectSyncableFiles(repoPath, {
+      strategy: opts.strategy ?? 'markdown',
+      ignoreMatcher: fullSyncMatcher,
+    });
     slog(
       `Full-sync dry run (strategy=${opts.strategy ?? 'markdown'}): ` +
       `${allFiles.length} file(s) would be imported ` +
@@ -1257,6 +1583,11 @@ async function performFullSync(
     commit: headCommit,
     strategy: opts.strategy,
     sourceId: opts.sourceId,
+    // v0.40.9.0: thread the matcher through so the import walker prunes
+    // excluded dirs at descent and skips excluded files at emit time. The
+    // matcher carries safeForDescentPrune (A3) so negation patterns force
+    // the slow path correctly.
+    ignoreMatcher: fullSyncMatcher,
   });
   serr(
     `[gbrain phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
@@ -1307,6 +1638,31 @@ async function performFullSync(
   // v0.20.0 Cathedral II Layer 12: persist chunker version for the gate.
   await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
 
+  // v0.40.9.0 A2: reconciliation after full sync. While the walker did
+  // honor the matcher, pre-existing pages (from a prior policy or from
+  // direct DB inserts) might be orphaned now. The reconciliation pass
+  // catches them via hash compare + per-page matcher check. Same safety
+  // guard (>50% / >1000) applies. Best-effort — failure here doesn't
+  // unwind the full sync's primary work.
+  let reconciledDeletes = 0;
+  try {
+    reconciledDeletes = await reconcileExcludesIfNeeded(
+      engine,
+      opts,
+      fullSyncSourceConfig,
+      fullSyncMatcher,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    serr(`[reconcile-excludes] post-full-sync pass failed: ${msg.slice(0, 80)}`);
+  }
+  // Final hash persistence guards the fast path on the next sync. The
+  // reconciliation helper writes the hash itself in normal paths
+  // (no-orphans, force-reconcile-deletion). Only when the safety guard
+  // tripped does the hash stay unset (intentional — re-runs until the
+  // user fixes the policy). For the simple "fresh source, no orphans"
+  // case, reconciliation also writes the hash before this point.
+
   // Full sync doesn't track pagesAffected, so fall back to embed --stale.
   // v0.37 fix wave (Lane D.3 + CDX2-8): switched to runEmbedCore for the
   // same reason as the incremental path — surface dim-mismatch via hint
@@ -1334,7 +1690,7 @@ async function performFullSync(
     toCommit: headCommit,
     added: result.imported,
     modified: 0,
-    deleted: 0,
+    deleted: reconciledDeletes,
     renamed: 0,
     chunksCreated: result.chunksCreated,
     embedded,
@@ -1430,6 +1786,26 @@ See also:
   const strategyArg = args.find((a, i) => args[i - 1] === '--strategy') as SyncOpts['strategy'] | undefined;
   const concurrencyStr = args.find((a, i) => args[i - 1] === '--concurrency' || args[i - 1] === '--workers');
   const parallelStr = args.find((a, i) => args[i - 1] === '--parallel');
+
+  // v0.40.9.0: --exclude <glob> is repeatable. Collect every occurrence so
+  // `gbrain sync --exclude 'data/**' --exclude 'tmp/**'` lands a 2-element
+  // array on SyncOpts.excludePatterns. Merge order: dotfile → source.config
+  // → cli (A4) — the matcher in resolveExclusions handles ordering.
+  const excludePatterns: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--exclude' && i + 1 < args.length) {
+      const v = args[i + 1];
+      if (typeof v === 'string' && v.trim() !== '') {
+        excludePatterns.push(v);
+      }
+    }
+  }
+  // --reconcile-excludes --yes bypasses the safety guard (A2). Without --yes
+  // we still let the user request reconciliation explicitly (e.g. after
+  // running `sources update --clear-excludes` to wipe a bad config), it's
+  // the guard that requires the explicit yes.
+  const reconcileExcludes = args.includes('--reconcile-excludes');
+  const forceReconcile = reconcileExcludes && yesFlag;
   // v0.22.13 (PR #490 Q2): parseWorkers throws on '0', '-3', 'foo', '1.5' instead
   // of silently falling through to auto-concurrency or NaN. Loud failure beats
   // a 4-worker spawn from a typo. v0.40.3.0: same validation applies to --parallel.
@@ -1593,7 +1969,16 @@ See also:
     const perSourceResults: PerSourceResult[] = [];
 
     const runOne = async (src: typeof sources[number]): Promise<SyncResult> => {
-      const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
+      const cfg = (src.config || {}) as {
+        strategy?: 'markdown' | 'code' | 'auto';
+        // v0.40.9.0: read persistent per-source excludes alongside strategy.
+        // performSync also reads this via its own SELECT for the matcher,
+        // but threading the CLI excludes through opts.excludePatterns covers
+        // the case where the user ran `gbrain sync --all --exclude 'tmp/'`
+        // and expects that flag to apply across sources (it does, on top of
+        // each source's persistent config).
+        excludePatterns?: string[];
+      };
       // D18: parallel path defers embed; auto-enqueue embed-backfill after.
       const effectiveNoEmbed = v2Enabled && !serialFlag && !noEmbed ? true : noEmbed;
       const repoOpts: SyncOpts = {
@@ -1604,6 +1989,11 @@ See also:
         sourceId: src.id,
         strategy: cfg.strategy,
         concurrency,
+        // v0.40.9.0: cli-level --exclude flags apply across all sources in
+        // the --all fan-out. Per-source persistent excludes layer on top
+        // (read by performSync from sources.config — not duplicated here).
+        excludePatterns: excludePatterns.length > 0 ? excludePatterns : undefined,
+        forceReconcile: forceReconcile ? true : undefined,
       };
       // v0.40.6.0 (D6): wrap performSync in withSourcePrefix so every slog /
       // serr line emitted from inside the sync code path gets prefixed with
@@ -1770,7 +2160,13 @@ See also:
     return;
   }
 
-  const opts: SyncOpts = { repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, sourceId, strategy: strategyArg, concurrency };
+  const opts: SyncOpts = {
+    repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, sourceId,
+    strategy: strategyArg, concurrency,
+    // v0.40.9.0 — exclude flag passthrough.
+    excludePatterns: excludePatterns.length > 0 ? excludePatterns : undefined,
+    forceReconcile: forceReconcile ? true : undefined,
+  };
 
   // Bug 9 — --retry-failed: before running normal sync, clear acknowledgment
   // flags so the sync picks them up as fresh work. The actual re-attempt

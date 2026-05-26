@@ -39,6 +39,7 @@ import {
 } from '../core/destructive-guard.ts';
 import {
   addSource as opsAddSource,
+  updateSource as opsUpdateSource,
   recloneIfMissing,
   SourceOpError,
   type SourceRow as OpsSourceRow,
@@ -119,7 +120,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   if (!id) {
     console.error(
       'Usage: gbrain sources add <id> [--path <path> | --url <https-url>] ' +
-        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>]',
+        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] ' +
+        '[--exclude <glob> ...]',
     );
     process.exit(2);
   }
@@ -129,6 +131,9 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let displayName: string | undefined;
   let federated: boolean | null = null;
   let cloneDir: string | undefined;
+  // v0.40.9.0: --exclude is repeatable; collect every occurrence so users can
+  // pin a few directories at source-creation time without an immediate update.
+  const excludePatterns: string[] = [];
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -138,6 +143,13 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--federated') { federated = true; continue; }
     if (a === '--no-federated') { federated = false; continue; }
     if (a === '--clone-dir') { cloneDir = args[++i]; continue; }
+    if (a === '--exclude') {
+      const v = args[++i];
+      if (typeof v === 'string' && v.trim() !== '') {
+        excludePatterns.push(v);
+      }
+      continue;
+    }
     console.error(`Unknown flag: ${a}`);
     process.exit(2);
   }
@@ -157,6 +169,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     remoteUrl,
     federated,
     cloneDir,
+    // v0.40.9.0 — persistent per-source exclusions; sanitized by opsAddSource.
+    excludePatterns: excludePatterns.length > 0 ? excludePatterns : undefined,
   });
 
   const fed = isFederated(created.config);
@@ -175,6 +189,106 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   console.log(
     `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
   );
+}
+
+// ── Subcommand: update (v0.40.9.0) ──────────────────────────
+
+/**
+ * Edit an existing source's mutable config. v0.40.9.0 ships with three
+ * editable fields: name, strategy, excludePatterns. Federated toggle has
+ * its own dedicated `federate` / `unfederate` subcommand and isn't
+ * duplicated here.
+ *
+ * Usage:
+ *   gbrain sources update <id> [--name <n>] [--strategy <markdown|code|auto>]
+ *                              [--exclude <glob> ...] [--clear-excludes]
+ *
+ * --exclude is repeatable and APPENDS (dedup) to existing config.excludePatterns.
+ * --clear-excludes resets the list to empty. Passing both is rejected.
+ * When excludePatterns is touched, the reconciliation hash is invalidated
+ * so the next sync re-evaluates orphan pages against the new pattern set.
+ */
+async function runUpdate(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  if (!id) {
+    console.error(
+      'Usage: gbrain sources update <id> [--name <display>] ' +
+        '[--strategy <markdown|code|auto>] [--exclude <glob> ...] [--clear-excludes]',
+    );
+    process.exit(2);
+  }
+
+  let displayName: string | undefined;
+  let strategy: 'markdown' | 'code' | 'auto' | undefined;
+  const excludePatterns: string[] = [];
+  let clearExcludes = false;
+
+  for (let i = 1; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--name') { displayName = args[++i]; continue; }
+    if (a === '--strategy') {
+      const v = args[++i];
+      if (v !== 'markdown' && v !== 'code' && v !== 'auto') {
+        console.error(`Invalid --strategy value: "${v}". Must be markdown | code | auto.`);
+        process.exit(2);
+      }
+      strategy = v;
+      continue;
+    }
+    if (a === '--exclude') {
+      const v = args[++i];
+      if (typeof v === 'string' && v.trim() !== '') {
+        excludePatterns.push(v);
+      }
+      continue;
+    }
+    if (a === '--clear-excludes') { clearExcludes = true; continue; }
+    console.error(`Unknown flag: ${a}`);
+    process.exit(2);
+  }
+
+  if (clearExcludes && excludePatterns.length > 0) {
+    console.error(
+      'Error: --clear-excludes and --exclude are mutually exclusive. ' +
+        'Run --clear-excludes first, then --exclude in a separate command if you want to replace.',
+    );
+    process.exit(2);
+  }
+
+  if (
+    displayName === undefined &&
+    strategy === undefined &&
+    excludePatterns.length === 0 &&
+    !clearExcludes
+  ) {
+    console.error('Nothing to update. Pass --name, --strategy, --exclude, or --clear-excludes.');
+    process.exit(2);
+  }
+
+  const updated = await opsUpdateSource(engine, {
+    id,
+    name: displayName,
+    strategy,
+    excludePatterns: excludePatterns.length > 0 ? excludePatterns : undefined,
+    clearExcludes: clearExcludes || undefined,
+  });
+
+  // Report the post-update config so the user sees exactly what landed.
+  const cfg = updated.config as Record<string, unknown>;
+  const finalExcludes = Array.isArray(cfg.excludePatterns) ? cfg.excludePatterns : [];
+  console.log(
+    `Updated source "${id}"` +
+      (displayName ? ` (name: ${displayName})` : '') +
+      (strategy ? ` (strategy: ${strategy})` : '') +
+      (clearExcludes ? ' (excludes cleared)' : '') +
+      (excludePatterns.length > 0 ? ` (added ${excludePatterns.length} exclude pattern(s))` : ''),
+  );
+  if (finalExcludes.length > 0) {
+    console.log(`  excludePatterns (${finalExcludes.length}):`);
+    for (const p of finalExcludes) {
+      console.log(`    - ${p}`);
+    }
+  }
 }
 
 // ── Subcommand: list ────────────────────────────────────────
@@ -893,6 +1007,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
 
   switch (sub) {
     case 'add':        return runAdd(engine, rest);
+    case 'update':     return runUpdate(engine, rest);
     case 'list':       return runList(engine, rest);
     case 'remove':     return runRemove(engine, rest);
     case 'rename':     return runRename(engine, rest);
@@ -934,7 +1049,14 @@ function printHelp(): void {
 
 Subcommands:
   add <id> --path <p> [--name <n>] [--federated|--no-federated]
-                                    Register a new source.
+            [--exclude <glob> ...]
+                                    Register a new source. --exclude is
+                                    repeatable; persisted to config.excludePatterns.
+  update <id> [--name <n>] [--strategy <markdown|code|auto>]
+            [--exclude <glob> ...] [--clear-excludes]
+                                    Edit a source's name / strategy / excludes.
+                                    --exclude APPENDS (dedup); --clear-excludes
+                                    resets the list. Mutually exclusive.
   list [--json]                     List registered sources with page counts.
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.

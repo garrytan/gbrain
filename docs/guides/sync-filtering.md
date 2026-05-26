@@ -107,6 +107,102 @@ This is a deliberate trade-off, not an oversight. The gbrain authors picked the 
 
 This list is less controversial — these are obvious "not source content" directories. If your code lives under one of these paths, that's a deeper convention mismatch and renaming the path is the right answer.
 
+## User-configurable exclusion (v0.40.9.0)
+
+Three layers of per-repo exclusion gate every walker pass and incremental diff filter. Each layer takes gitignore-style patterns (via the [`ignore`](https://www.npmjs.com/package/ignore) npm lib — same parser ESLint, Prettier, and Husky use, so muscle memory transfers).
+
+### Layer 1 — `.gbrainignore` at the repo root
+
+Drop a `.gbrainignore` file alongside `.gitignore`. Same syntax. Commits with the repo; every contributor and machine respects the same policy.
+
+```
+# .gbrainignore
+data/
+fixtures/large/
+notebooks/scratch/
+*.parquet
+*.bin
+```
+
+Patterns parse on every sync (mtime-cached so the autopilot daemon picks up edits within one cycle). Comments (`#`) and blank lines are skipped. Up to 1000 lines per file.
+
+### Layer 2 — `--exclude` CLI flag
+
+Repeatable, one-shot. Merges on top of `.gbrainignore`:
+
+```bash
+gbrain sync --strategy auto --source my-repo --exclude 'tmp/**' --exclude '!data/keep.md'
+```
+
+The `--exclude` patterns win against the dotfile (last-match-wins per gitignore). Use this for ad-hoc rescues or to add exclusions without editing the committed dotfile.
+
+### Layer 3 — per-source persistent config
+
+Set on the source row itself; survives across syncs without a checked-in dotfile or a CLI flag:
+
+```bash
+# Set at source creation:
+gbrain sources add my-repo --path /path/to/repo --exclude 'data/' --exclude '*.parquet'
+
+# Or update an existing source:
+gbrain sources update my-repo --exclude 'fixtures/' --exclude 'cache/'
+
+# Reset to empty:
+gbrain sources update my-repo --clear-excludes
+```
+
+The `--exclude` flag on `update` is additive (appends to the existing list, deduplicates). To replace the whole list, run `--clear-excludes` first, then `--exclude` in a second command.
+
+### Merge order (gitignore last-match-wins)
+
+```
+[.gbrainignore patterns]
+  ++ [sources.config.excludePatterns]
+  ++ [--exclude CLI flags]
+```
+
+The CLI flag is appended last, so `--exclude '!data/keep.md'` can rescue a single file from a dotfile exclusion. **Important gitignore gotcha:** once a directory is excluded via `data/`, children cannot be re-included with `!data/keep.md`. The rescue pattern requires excluding contents instead:
+
+```
+data/*
+!data/keep.md
+```
+
+This is documented gitignore behavior (`git-scm.com/docs/gitignore`), not a gbrain quirk.
+
+### Auto-cleanup when patterns change
+
+When `.gbrainignore` / `sources.config.excludePatterns` / `--exclude` flags change since the last sync, gbrain runs a reconciliation pass: walks existing pages for the source, deletes any whose path now matches an exclusion.
+
+The pass is gated by a **safety guard**: if the proposed cleanup would delete more than 50% of the source's pages OR more than 1000 pages absolute, gbrain refuses and asks you to confirm:
+
+```bash
+[reconcile-excludes] SAFETY GUARD TRIPPED:
+  source: my-repo
+  scanned: 12000 page(s)
+  would delete: 8000 (66.7%)
+  thresholds: >1000 absolute OR >50% ratio
+
+  Patterns changed since last sync, but the proposed cleanup looks
+  destructive. Inspect your .gbrainignore + sources.config.excludePatterns
+  + any --exclude flags. To force the cleanup anyway, re-run with:
+    gbrain sync --reconcile-excludes --yes --source my-repo
+```
+
+Without `--yes` the reconciliation hash isn't advanced — the same warning fires on every sync until you either fix your patterns or confirm the cleanup. This is the regression that catches a typo'd `**` from wiping a whole source by accident.
+
+### Storage tier vs. exclusion
+
+`gbrain.yml` `storage.db_only` and `.gbrainignore` are orthogonal:
+- `storage.db_only` says "write this directory's pages to the DB but not to the git tree" (tier routing — the pages exist, just not on disk).
+- `.gbrainignore` says "don't index this directory at all" (skip entirely — the pages never exist).
+
+They can both list `data/` and the semantics compose: `data/` is skipped entirely by the dotfile, so `db_only` has nothing to route.
+
+### Autopilot daemon respects all three layers
+
+The autopilot daemon (`gbrain autopilot --install`) reads `cfg.strategy` and `cfg.excludePatterns` from each source's config at the start of every cycle. Per-source policy that `sync --all` honored before v0.40.9.0 now applies under autopilot too. `.gbrainignore` and CLI `--exclude` continue to apply by their normal mechanisms (the dotfile is loaded at walker entry; CLI flags only apply when the daemon invokes sync with them, which it doesn't by default — daemon-side `--exclude` would require a wrapper script).
+
 ## How to index code + markdown from one repo
 
 Three approaches, ranked by maintainability:

@@ -13,6 +13,7 @@ import {
   isImageFilePath as isImageFilePathFromSync,
   type SyncStrategy,
 } from '../core/sync.ts';
+import type { GbrainIgnoreMatcher } from '../core/gbrainignore.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
 import {
   loadCheckpoint,
@@ -44,7 +45,18 @@ export interface RunImportResult {
 export async function runImport(
   engine: BrainEngine,
   args: string[],
-  opts: { commit?: string; strategy?: SyncStrategy; sourceId?: string } = {},
+  opts: {
+    commit?: string;
+    strategy?: SyncStrategy;
+    sourceId?: string;
+    /**
+     * v0.40.9.0: optional exclusion matcher threaded by performFullSync.
+     * When set, the walker prunes excluded dirs at descent (when safe) and
+     * skips excluded files at emit time. Independent of `--source-id` so
+     * direct `gbrain import <dir>` callers stay unchanged.
+     */
+    ignoreMatcher?: GbrainIgnoreMatcher;
+  } = {},
 ): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
@@ -125,10 +137,18 @@ export async function runImport(
   // collectMarkdownFiles unconditionally — code-strategy first sync
   // silently no-op'd because no code file ever made it through walker
   // enumeration (codex C11 confirms dispatch was correct; bug was here).
+  //
+  // v0.40.9.0: opts.ignoreMatcher (threaded by performFullSync) prunes
+  // excluded dirs at descent and skips excluded files at emit. Direct
+  // `gbrain import <dir>` callers without an opts.ignoreMatcher get the
+  // pre-v0.40.9.0 behavior (no path-based exclusion).
   const strategy: SyncStrategy = opts.strategy ?? 'markdown';
   const _walkT0 = Date.now();
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
-  const allFiles = collectSyncableFiles(dir, { strategy });
+  const allFiles = collectSyncableFiles(dir, {
+    strategy,
+    ignoreMatcher: opts.ignoreMatcher,
+  });
   console.error(
     `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
@@ -433,6 +453,17 @@ function resolveMaxWalkDepth(): number {
 
 interface CollectOpts {
   strategy?: SyncStrategy;
+  /**
+   * v0.40.9.0: per-repo exclusion matcher. When set, the walker:
+   *   - short-circuits descent into a directory iff
+   *     `ignoreMatcher.ignores(relPath + '/')` AND `safeForDescentPrune`
+   *   - skips emit on any file matching `ignoreMatcher.ignores(relPath)`
+   *
+   * `safeForDescentPrune` is false when any negation pattern (`!`) exists in
+   * the matcher's merged patterns (A3 — protects against silently skipping
+   * a file that a `!path/inside.md` rescue would have re-included).
+   */
+  ignoreMatcher?: GbrainIgnoreMatcher;
 }
 
 /**
@@ -484,6 +515,11 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
   const maxDepth = resolveMaxWalkDepth();
   const visitedInodes = new Map<string, true>();
   const files: string[] = [];
+  const matcher = opts.ignoreMatcher;
+  // A3: only short-circuit descent on dir matches when no `!` negation
+  // pattern could rescue a child file. Without this guard, `data/ +
+  // !data/keep.md` would silently skip keep.md.
+  const descentPruneSafe = matcher?.safeForDescentPrune ?? true;
 
   function walk(d: string, depth: number): void {
     if (depth >= maxDepth) {
@@ -523,10 +559,31 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
           console.warn(`[gbrain] walker cycle detected at ${full}; skipping`);
           continue;
         }
+        // v0.40.9.0 A3: descent-time prune. Compute the relative path from
+        // the walk root and ask the matcher whether the dir is excluded. Skip
+        // recursion entirely when:
+        //   - matcher exists
+        //   - matcher claims dir is ignored (with trailing slash, gitignore
+        //     dir-form)
+        //   - safeForDescentPrune is true (no `!` patterns in the merged set)
+        // Otherwise fall through and recurse — per-file checks in the leaf
+        // branch will still exclude individual files.
+        if (matcher && descentPruneSafe) {
+          const relPath = relative(dir, full).replace(/\\/g, '/');
+          if (relPath !== '' && matcher.ignores(relPath + '/')) {
+            continue;
+          }
+        }
         visitedInodes.set(inodeKey, true);
         walk(full, depth + 1);
       } else if (stat.isFile()) {
         if (!isCollectibleForWalker(entry, strategy, multimodalOn)) continue;
+        // Per-file matcher check. Runs even when descentPruneSafe is false
+        // (mixed dirs with `!` negations) and is the correctness backstop.
+        if (matcher) {
+          const relPath = relative(dir, full).replace(/\\/g, '/');
+          if (matcher.ignores(relPath)) continue;
+        }
         files.push(full);
       }
     }

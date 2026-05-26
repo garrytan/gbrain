@@ -65,7 +65,9 @@ export type SourceOpErrorCode =
   | 'not_found'
   | 'protected_id'
   | 'clone_dir_outside_gbrain'
-  | 'symlink_escape';
+  | 'symlink_escape'
+  // v0.40.9.0: updateSource validation — caller passed mutually-exclusive flags.
+  | 'invalid_update_combination';
 
 export class SourceOpError extends Error {
   constructor(
@@ -143,6 +145,33 @@ export interface AddSourceOpts {
    * Only honored when remoteUrl is set.
    */
   cloneDir?: string;
+  /**
+   * v0.40.9.0: persistent per-source exclusion patterns stored in
+   * `sources.config.excludePatterns`. Gitignore-style strings. Merge order
+   * with `.gbrainignore` and `--exclude` CLI flag is documented in
+   * docs/guides/sync-filtering.md (dotfile → source.config → cli).
+   *
+   * Sanity-capped at 200 entries; entries that aren't non-empty strings
+   * are dropped at parse time. Same cap and validation as the runtime
+   * matcher in src/core/gbrainignore.ts.
+   */
+  excludePatterns?: string[];
+}
+
+/**
+ * v0.40.9.0: options for `gbrain sources update`. All fields optional; only
+ * provided fields are written. `clearExcludes` is a separate flag because
+ * passing `excludePatterns: []` could otherwise be misread as "set to empty".
+ */
+export interface UpdateSourceOpts {
+  id: string;
+  name?: string;
+  federated?: boolean | null;
+  strategy?: 'markdown' | 'code' | 'auto';
+  /** When set, APPENDS to existing config.excludePatterns. Use with clearExcludes:false. */
+  excludePatterns?: string[];
+  /** When true, resets config.excludePatterns to []. Cannot combine with excludePatterns. */
+  clearExcludes?: boolean;
 }
 
 export interface RemoveSourceOpts {
@@ -330,6 +359,12 @@ export async function addSource(
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
     }
+    // v0.40.9.0: persistent per-source exclude patterns. Sanitize here so
+    // garbage from a bad call site never lands in the DB.
+    const sanitizedExcludes = sanitizeExcludePatterns(opts.excludePatterns);
+    if (sanitizedExcludes.length > 0) {
+      config.excludePatterns = sanitizedExcludes;
+    }
     const displayName = opts.name ?? opts.id;
 
     try {
@@ -378,6 +413,13 @@ export async function addSource(
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
     }
+    // v0.40.9.0: persistent per-source exclude patterns on the local-path
+    // branch too. Mirrors the URL-clone branch above so behavior is
+    // path-source vs url-source symmetric.
+    const sanitizedExcludes = sanitizeExcludePatterns(opts.excludePatterns);
+    if (sanitizedExcludes.length > 0) {
+      config.excludePatterns = sanitizedExcludes;
+    }
     const displayName = opts.name ?? opts.id;
     await engine.executeRaw(
       `INSERT INTO sources (id, name, local_path, config)
@@ -394,6 +436,111 @@ export async function addSource(
     );
   }
   return created;
+}
+
+// ── updateSource (v0.40.9.0) ────────────────────────────────────────────────
+
+/**
+ * v0.40.9.0: edit an existing source's mutable config fields. Reads the
+ * current row, merges the requested changes, writes back. Atomic per-row
+ * (single UPDATE statement).
+ *
+ * Field semantics:
+ *   - `name` — replaces the display name
+ *   - `federated` — replaces config.federated
+ *   - `strategy` — replaces config.strategy (or removes when undefined-set)
+ *   - `excludePatterns` — APPENDS to existing list (so a user can run
+ *     `update --exclude X` then `update --exclude Y` without typing both
+ *     each time). Deduplicates on append.
+ *   - `clearExcludes: true` — resets config.excludePatterns to []. Mutually
+ *     exclusive with excludePatterns (caller pre-checks this).
+ *
+ * Throws SourceOpError on missing source id (caller pre-validates IDs).
+ */
+export async function updateSource(
+  engine: BrainEngine,
+  opts: UpdateSourceOpts,
+): Promise<SourceRow> {
+  validateSourceId(opts.id);
+
+  if (opts.clearExcludes && opts.excludePatterns && opts.excludePatterns.length > 0) {
+    throw new SourceOpError(
+      'invalid_update_combination',
+      `Cannot combine --clear-excludes with --exclude. Pass one or the other.`,
+    );
+  }
+
+  const existing = await fetchSourceRow(engine, opts.id);
+  if (!existing) {
+    throw new SourceOpError(
+      'not_found',
+      `Source "${opts.id}" not found. List with: gbrain sources list`,
+    );
+  }
+
+  const currentConfig = parseConfig(existing.config);
+  const newConfig: Record<string, unknown> = { ...currentConfig };
+
+  if (opts.federated !== undefined && opts.federated !== null) {
+    newConfig.federated = opts.federated;
+  }
+
+  if (opts.strategy !== undefined) {
+    newConfig.strategy = opts.strategy;
+  }
+
+  if (opts.clearExcludes) {
+    delete newConfig.excludePatterns;
+    // Also invalidate the reconciliation hash so the next sync re-runs the
+    // orphan-page check against the fresh (now empty) pattern set.
+    delete newConfig.excludePatternsHash;
+  } else if (opts.excludePatterns && opts.excludePatterns.length > 0) {
+    const sanitized = sanitizeExcludePatterns(opts.excludePatterns);
+    const existingExcludes = Array.isArray(currentConfig.excludePatterns)
+      ? (currentConfig.excludePatterns as unknown[]).filter(
+          (p): p is string => typeof p === 'string',
+        )
+      : [];
+    // Append + dedupe.
+    const dedupSet = new Set<string>([...existingExcludes, ...sanitized]);
+    newConfig.excludePatterns = Array.from(dedupSet);
+    delete newConfig.excludePatternsHash; // invalidate, reconciliation re-runs
+  }
+
+  const newName = opts.name ?? existing.name;
+
+  await engine.executeRaw(
+    `UPDATE sources SET name = $1, config = $2::jsonb WHERE id = $3`,
+    [newName, JSON.stringify(newConfig), opts.id],
+  );
+
+  const updated = await fetchSourceRow(engine, opts.id);
+  if (!updated) {
+    throw new SourceOpError(
+      'not_found',
+      `Source "${opts.id}" disappeared mid-update (concurrent delete?).`,
+    );
+  }
+  return updated;
+}
+
+/**
+ * Filter + cap an excludePatterns input array. Drops non-strings, empties,
+ * and entries past the 200-pattern sanity cap. Matches the runtime matcher's
+ * filter in src/core/gbrainignore.ts so what gets stored is exactly what
+ * gets matched.
+ */
+function sanitizeExcludePatterns(input: string[] | undefined | null): string[] {
+  if (!input || input.length === 0) return [];
+  const out: string[] = [];
+  for (const p of input) {
+    if (typeof p !== 'string') continue;
+    const trimmed = p.trim();
+    if (trimmed === '') continue;
+    out.push(trimmed);
+    if (out.length >= 200) break;
+  }
+  return out;
 }
 
 // ── resolveDefaultSource ────────────────────────────────────────────────────

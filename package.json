@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.40.8.1",
+  "version": "0.40.9.0",
   "description": "Postgres-native personal knowledge brain with hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",
@@ -107,6 +107,7 @@
     "express-rate-limit": "^7.5.0",
     "gray-matter": "^4.0.3",
     "heic-decode": "^2.1.0",
+    "ignore": "^7.0.5",
     "js-yaml": "^3.14.2",
     "marked": "^18.0.0",
     "openai": "^4.0.0",
