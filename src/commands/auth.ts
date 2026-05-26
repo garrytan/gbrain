@@ -469,7 +469,8 @@ export async function runAuth(args: string[]): Promise<void> {
       const takesHolders = takesIdx >= 0 && rest[takesIdx + 1]
         ? rest[takesIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
         : undefined;
-      const positional = rest.find(a => !a.startsWith('--') && a !== rest[takesIdx + 1]);
+      const takesValue = takesIdx >= 0 ? rest[takesIdx + 1] : undefined;
+      const positional = rest.find(a => !a.startsWith('--') && a !== takesValue);
       await create(positional || '', { takesHolders });
       return;
     }
