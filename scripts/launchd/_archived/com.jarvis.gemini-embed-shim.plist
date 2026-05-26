@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarvis.gemini-embed-shim</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/chenyuanquan/.bun/bin/bun</string>
+        <string>run</string>
+        <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/skills/kos-jarvis/gemini-embed-shim/server.ts</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/chenyuanquan/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>NANO_BANANA_API_KEY</key>
+        <string>AIzaSyBKtP2hi4PP4AgtNcmRZj50RnDdIPlZZhg</string>
+        <key>OPENAI_SHIM_PORT</key>
+        <string>7222</string>
+        <key>GEMINI_EMBED_MODEL</key>
+        <string>gemini-embedding-2-preview</string>
+    </dict>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/skills/kos-jarvis/gemini-embed-shim/shim.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/skills/kos-jarvis/gemini-embed-shim/shim.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2</string>
+</dict>
+</plist>

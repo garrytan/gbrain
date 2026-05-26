@@ -37,39 +37,45 @@ GBrain 的核心哲学是 Thin Harness, Fat Skills。其原生能力覆盖实体
 | 批量 86 页实体抽取 + stub 自动生成(G1 主收益) | `enrich/` 是单实体交互式 | `enrich-sweep/` |
 | ~~飞书消息通道 / 实体捕获队列~~ | ~~无~~ | ~~`feishu-bridge/` + `pending-enrich/`~~ → 归档 2026-05-05 |
 
-## 目录结构（计划）
+## 目录结构（current,post-§6.31 / 2026-05-26）
 
 ```
 skills/kos-jarvis/
 ├── README.md                       # 本文件
 ├── PLAN-ADJUSTMENTS.md             # 迁移期间发现的计划偏差记录
+├── TODO.md                         # 当前 outstanding work (P0/P1/P2/P3),按 sync 分段
 ├── type-mapping.md                 # KOS 9 types ↔ GBrain 20 dirs 映射
-├── templates/                      # 9 种 KOS 页面模板（Week 1 搬运）+ 专用变体
-│   ├── source-page.md
-│   ├── entity-page.md
-│   ├── concept-page.md
-│   ├── project-page.md
-│   ├── decision-page.md
-│   ├── synthesis-page.md
-│   ├── comparison-page.md
-│   ├── protocol-page.md
-│   ├── timeline-page.md
+├── _lib/                           # shared lib (config / helpers consumed by skills)
+├── templates/                      # 9 种 KOS 页面模板 + 专用变体
+│   ├── source-page.md / entity-page.md / concept-page.md / project-page.md
+│   ├── decision-page.md / synthesis-page.md / comparison-page.md
+│   ├── protocol-page.md / timeline-page.md
 │   └── oh-transcript-page.md       # OH/founder transcript w/ typed-claim fence (v0.35.7.0)
-├── kos-patrol/                     # Week 2(phase 2 lint 已 noop,kos-lint archived 2026-05-10)
-├── digest-to-memory/               # Week 3(保留澄清点)
-├── notion-ingest-delta/            # 2026-05-17 RETIRED — workers/notion-poller/ → _archived/ (death by 0 net ingest, §6.27); replaced by planned mailagent kos push (方案 B, GitHub issue #TBD)
-├── enrich-sweep/                   # Phase 3 (2026-04-17) — G1 主收益
-└── _archived/                      # 退役 dirs(只读冷备)
+├── kos-patrol/                     # daily cron: brain health dashboard + staleness/gap detection + MEMORY digest
+├── dream-wrap/                     # nightly: wrap `gbrain dream` + archived JSON CycleReports (Step 2.3 filesystem-canonical, smart exit-code)
+├── digest-to-memory/               # weekly: MEMORY push → OpenClaw 近期层 (Sun 22:00)
+├── enrich-sweep/                   # bulk wrap of upstream `enrich/` (Phase 3 G1 payoff, 2026-04-17)
+├── image-ingest/                   # daily: scan IMAGE_SOURCE_DIR → Voyage multimodal-3 (scaffold; awaits VOYAGE_API_KEY + IMAGE_SOURCE_DIR)
+├── orphan-reducer/                 # one-shot: Haiku 4.5 vector-classify orphan pile (LLM-based, complementary to upstream v0.41.10 mention-based --by-mention)
+├── url-fetcher/                    # Tavily Extract → FireCrawl → native fetch 三层 fetcher (consumed by workers/kos-worker)
+└── _archived/                      # 退役 dirs(只读冷备,10 个)
+    ├── confidence-score/           # 2026-05-10 (M2-A) — production dead code (template-hardcoded values, not script-computed)
+    ├── dikw-compile/               # 2026-05-10 (M2-A) — 0/2477 pages set dikw_layer; replaced by upstream gbrain dream + concept-synthesis
+    ├── evidence-gate/              # 2026-05-10 (M2-A) — 1/2477 pages set evidence_level
     ├── feishu-bridge/              # 2026-05-05 — OpenClaw 飞书 command-mapping
-    ├── pending-enrich/             # 2026-05-05 — Phase 2↔3 Feishu 队列 schema
+    ├── frontmatter-ref-fix/        # 2026-05-10 (M1) — one-shot 已用完(2026-04-27, ERRORs 4→0)
+    ├── gemini-embed-shim/          # 2026-05-10 (M3) — replaced by v0.27 native Vercel AI SDK gateway; 2718 pages re-embedded into native vector space
     ├── kos-lint/                   # 2026-05-10 (M1) — 4/6 check 已被 frontmatter-guard + gbrain doctor + BrainWriter linkValidator + gbrain orphans 覆盖
-    ├── frontmatter-ref-fix/        # 2026-05-10 (M1) — one-shot 已用完(2026-04-27 v1+v2,ERRORs 4→0)
-    ├── slug-normalize/             # 2026-05-10 (M1) — one-shot 已用完(2026-04-23,7 strays renamed)
-    ├── dikw-compile/               # 2026-05-10 (M2-A) — production dead code(0/2477 pages set dikw_layer);上游 `gbrain dream` + concept-synthesis 替代
-    ├── evidence-gate/              # 2026-05-10 (M2-A) — production dead code(1/2477 pages set evidence_level)
-    ├── confidence-score/           # 2026-05-10 (M2-A) — confidence 字段被 kos-compat-api.ts 硬编码模板,不是脚本算的
-    └── gemini-embed-shim/          # 2026-05-10 (M3) — v0.27 native Vercel AI SDK gateway 替代;production cutover + 2718 pages re-embedded into native vector space
+    ├── notion-ingest-delta/        # 2026-05-17 (§6.27) RETIRED — 0 net ingest 24h+; full archival 2026-05-26 (§6.31 P3 follow-up,replaced by planned mailagent push 方案 B)
+    ├── pending-enrich/             # 2026-05-05 — Phase 2↔3 Feishu 队列 schema
+    └── slug-normalize/             # 2026-05-10 (M1) — one-shot 已用完(2026-04-23, 7 strays renamed)
 ```
+
+**Active**: 7 skills (kos-patrol / dream-wrap / digest-to-memory / enrich-sweep /
+image-ingest scaffold / orphan-reducer / url-fetcher) + 2 helpers (_lib, templates).
+**Archived**: 10 dirs (post-§6.31 cleanup). **Production cron**: 3 active plists
+(`com.jarvis.dream-cycle`, `kos-patrol`, `enrich-sweep`) + `gbrain-serve-http`
++ `gbrain-backup` template. Stale plists archived in `scripts/launchd/_archived/`.
 
 ## 与 GBrain 原生 skills 的关系
 
@@ -86,8 +92,20 @@ skills/kos-jarvis/
 3. 每月对 upstream CHANGELOG.md 做一次 review，评估是否有 upstream 新能力
    可以替代本 pack 某一项扩展（扩展应随时间自愿退场，而非永久膨胀）
 
-## 当前状态(2026-05-17 更新)
+## 当前状态(2026-05-26 更新)
 
+- [x] **2026-05-26 v0.41.14.0 sync (§6.31) + P2 cleanup wave**: 上游 sync 20 个版本
+      (v0.38.2.0 → v0.41.14.0, 34 commits / 818 files, 详 §6.31)。check:resolver
+      新 strict gate 触发 2 个 fork 适配:image-ingest 加 RESOLVER row;
+      notion-ingest-delta 加 minimal frontmatter triggers(P3 expediency,本同 day
+      P2 cleanup 一并完整归档到 `_archived/`)。同 day 跑 fork cleanup pass:
+      3 个 stale plists(kos-compat-api / gemini-embed-shim / notion-poller)
+      物理 mv 到 `scripts/launchd/_archived/`;notion-ingest-delta skill
+      `git mv` 到 `_archived/`(关闭 §6.31 P3 #1);10 个 stale docs
+      (JARVIS-NEXT-STEPS / KOS-COMPAT-API-MIGRATION-PLAN / KOS-JARVIS-CONSOLIDATION-PLAN /
+      NOTION-AGENT-UPDATE-CHECKLIST / 6× SESSION-HANDOFF-*)归档到
+      `docs/_archived/`。RESOLVER.md + manifest.json + 本 README 同步刷新。
+      Active 8 → **7 skills** + 2 helpers,_archived 9 → **10 dirs**。
 - [x] **2026-05-17 kos-compat-api retire (Complete-A) + MCP-over-HTTP cutover**:
       fork-side `server/kos-compat-api.ts` (661 LoC, KOS-v1 Bearer wire on
       `kos.chenge.ink :7225`) retired in favor of upstream native

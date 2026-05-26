@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarvis.notion-poller</string>
+    <!--
+      Polls configured Notion DBs every 5 minutes and pushes new/updated
+      pages into kos-compat-api /ingest. Auto-loads NOTION_TOKEN +
+      NOTION_DATABASE_IDS + KOS_API_TOKEN from .env.local (bun reads
+      WorkingDirectory). Safe to load before NOTION_TOKEN is filled;
+      the script exits cleanly with a log message.
+
+      Manual invocation:
+        bun run workers/notion-poller/run.ts --dry     # preview
+        bun run workers/notion-poller/run.ts --backfill # full re-scan
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/chenyuanquan/.bun/bin/bun</string>
+        <string>run</string>
+        <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/workers/notion-poller/run.ts</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/chenyuanquan/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>GBRAIN_HOME</key>
+        <string>/Users/chenyuanquan/brain</string>
+        <key>KOS_API_BASE</key>
+        <string>http://127.0.0.1:7225</string>
+    </dict>
+    <!-- Every 5 minutes -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/workers/notion-poller/poller.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/workers/notion-poller/poller.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2</string>
+</dict>
+</plist>
