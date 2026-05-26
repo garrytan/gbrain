@@ -22,12 +22,19 @@
  */
 
 import { embed as aiEmbed, embedMany, generateObject, generateText } from 'ai';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
+
+import {
+  BudgetTracker,
+  extractUsageFromError as _extractUsageFromError,
+  type BudgetKind,
+} from '../budget/budget-tracker.ts';
 
 import type {
   AIGatewayConfig,
@@ -121,6 +128,11 @@ function getExtendedModelsForProvider(providerId: string): ReadonlySet<string> |
  */
 type EmbedManyFn = typeof embedMany;
 let _embedTransport: EmbedManyFn = embedMany;
+// v0.41.6.0 D1: tests that install a transport stub also pass the
+// embedding-creds preflight, matching the chat-transport fast-path
+// pattern. Set when __setEmbedTransportForTests is called with a
+// non-null fn; cleared when called with null or on resetGateway().
+let _embedTransportInstalled = false;
 // Test-only seam for chat(). When set, chat() skips provider resolution and
 // returns this function's result directly. See __setChatTransportForTests.
 let _chatTransport: ((opts: ChatOpts) => Promise<ChatResult>) | null = null;
@@ -494,6 +506,7 @@ export function resetGateway(): void {
   _modelCache.clear();
   _shrinkState.clear();
   _embedTransport = embedMany;
+  _embedTransportInstalled = false;
   _chatTransport = null;
   _warnedRecipes.clear();
   _extendedModels.clear();
@@ -510,6 +523,7 @@ export function resetGateway(): void {
  */
 export function __setEmbedTransportForTests(fn: EmbedManyFn | null): void {
   _embedTransport = fn ?? embedMany;
+  _embedTransportInstalled = fn !== null;
 }
 
 /**
@@ -582,6 +596,113 @@ export function getRerankerModel(): string | undefined {
 }
 
 /**
+ * v0.41.6.0 — structured diagnosis for the embedding touchpoint. Returns
+ * a tagged union naming exactly why the gateway can't serve embeddings.
+ * The old `isAvailable('embedding')` collapsed 5 distinct conditions
+ * (no gateway config, no model configured, unknown provider, no
+ * embedding touchpoint on the recipe, missing env vars) into one
+ * boolean — useful for hot-path branching but useless for surfacing a
+ * paste-ready error message to the user.
+ *
+ * D1 preflight in `src/core/embed-preflight.ts` consumes this to produce
+ * `EmbeddingCredentialError` with the exact env var name + recipe id +
+ * model. CLI catch sites format the error with a `--no-embed` hint.
+ *
+ * `isAvailable('embedding', ...)` delegates here so existing callers
+ * (search hybrid path, etc.) keep their boolean contract.
+ */
+export type EmbeddingDiagnosis =
+  | { ok: true; model: string; provider: string; recipeId: string }
+  | { ok: false; reason: 'no_gateway_config' }
+  | { ok: false; reason: 'no_model_configured' }
+  | { ok: false; reason: 'unknown_provider'; model: string; provider: string; message: string }
+  | { ok: false; reason: 'no_touchpoint'; model: string; provider: string; recipeId: string }
+  | { ok: false; reason: 'user_provided_model_unset'; model: string; provider: string; recipeId: string }
+  | { ok: false; reason: 'missing_env'; model: string; provider: string; recipeId: string; missingEnvVars: string[] };
+
+export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
+  // Test-transport fast path: matches the `if (touchpoint === 'chat' &&
+  // _chatTransport) return true` shortcut in isAvailable() so tests that
+  // install an embed transport stub also pass the preflight without
+  // having to configure real provider env vars.
+  if (_embedTransportInstalled) {
+    const modelStr = modelOverride ?? _config?.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+    return { ok: true, model: modelStr, provider: '<test-transport>', recipeId: '<test-transport>' };
+  }
+
+  if (!_config) return { ok: false, reason: 'no_gateway_config' };
+
+  const modelStr = modelOverride ?? _config.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+  if (!modelStr) return { ok: false, reason: 'no_model_configured' };
+
+  let parsed;
+  let recipe;
+  try {
+    const resolved = resolveRecipe(modelStr);
+    parsed = resolved.parsed;
+    recipe = resolved.recipe;
+  } catch (err) {
+    const { providerId = 'unknown' } = (() => {
+      try { return parseModelId(modelStr); } catch { return { providerId: 'unknown' }; }
+    })();
+    return {
+      ok: false,
+      reason: 'unknown_provider',
+      model: modelStr,
+      provider: providerId,
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const tp = recipe.touchpoints.embedding;
+  if (!tp) {
+    return {
+      ok: false,
+      reason: 'no_touchpoint',
+      model: modelStr,
+      provider: parsed.providerId,
+      recipeId: recipe.id,
+    };
+  }
+
+  // Openai-compat recipes with empty models list require a user-provided model.
+  const isUserProvided = (tp as any).user_provided_models === true;
+  if (
+    Array.isArray(tp.models) &&
+    tp.models.length === 0 &&
+    (recipe.id === 'litellm' || isUserProvided)
+  ) {
+    return {
+      ok: false,
+      reason: 'user_provided_model_unset',
+      model: modelStr,
+      provider: parsed.providerId,
+      recipeId: recipe.id,
+    };
+  }
+
+  const required = recipe.auth_env?.required ?? [];
+  const missing = required.filter(k => !_config!.env[k]);
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      reason: 'missing_env',
+      model: modelStr,
+      provider: parsed.providerId,
+      recipeId: recipe.id,
+      missingEnvVars: missing,
+    };
+  }
+
+  return {
+    ok: true,
+    model: modelStr,
+    provider: parsed.providerId,
+    recipeId: recipe.id,
+  };
+}
+
+/**
  * Check whether a touchpoint can be served given the current config.
  * Replaces scattered `!process.env.OPENAI_API_KEY` checks (Codex C3).
  *
@@ -591,6 +712,10 @@ export function getRerankerModel(): string | undefined {
  * provider reachable?" rather than "is the global default reachable?" —
  * otherwise an unreachable global default disables vector search even
  * when the active column's provider works fine.
+ *
+ * v0.41.6.0: the 'embedding' branch delegates to diagnoseEmbedding() so
+ * the predicate and the diagnostic stay in sync. Other touchpoints keep
+ * their inline logic for now.
  */
 export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string): boolean {
   // Test seam: when a transport stub is installed for this touchpoint, the
@@ -599,13 +724,13 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
   // __setEmbedTransportForTests.
   if (touchpoint === 'chat' && _chatTransport) return true;
 
+  if (touchpoint === 'embedding') return diagnoseEmbedding(modelOverride).ok;
+
   if (!_config) return false;
   try {
     const modelStr =
       modelOverride
         ? modelOverride
-        : touchpoint === 'embedding'
-        ? getEmbeddingModel()
         : touchpoint === 'expansion'
         ? getExpansionModel()
         : touchpoint === 'chat'
@@ -619,21 +744,8 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
     // Recipe must actually support the requested touchpoint.
     // Anthropic declares only expansion + chat (no embedding model); requesting
     // embedding from an anthropic-configured brain is unavailable regardless of auth.
-    const touchpointConfig = recipe.touchpoints[touchpoint as 'embedding' | 'expansion' | 'chat' | 'reranker'];
+    const touchpointConfig = recipe.touchpoints[touchpoint as 'expansion' | 'chat' | 'reranker'];
     if (!touchpointConfig) return false;
-    // Openai-compat recipes with empty models list require a user-provided
-    // model. Either the recipe explicitly opts in via
-    // EmbeddingTouchpoint.user_provided_models (D8=A), or the legacy
-    // `recipe.id === 'litellm'` heuristic (back-compat for pre-v0.32 builds
-    // where the field hadn't been declared yet).
-    const isUserProvided =
-      touchpoint === 'embedding' &&
-      (touchpointConfig as any).user_provided_models === true;
-    if (
-      Array.isArray(touchpointConfig.models) &&
-      touchpointConfig.models.length === 0 &&
-      (recipe.id === 'litellm' || isUserProvided)
-    ) return false;
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
     const required = recipe.auth_env?.required ?? [];
@@ -1125,8 +1237,25 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   // global default. resolveEmbeddingProvider validates the override at the
   // recipe layer — bad model strings throw AIConfigError with a clear hint.
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
+  const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
   const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
+
+  // Reserve up front for the worst-case batch token count. Embeddings have
+  // no output rate, so maxOutputTokens=0. record() at the end uses the
+  // actual total reported by the SDK across all sub-batches.
+  if (tracker) {
+    const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
+    const totalChars = truncated.reduce((s, t) => s + t.length, 0);
+    const estimatedInputTokens = Math.ceil(totalChars / Math.max(charsPerToken, 1));
+    tracker.reserve({
+      modelId: `${recipe.id}:${modelId}`,
+      estimatedInputTokens,
+      maxOutputTokens: 0,
+      kind: 'embed',
+      label: 'gateway.embed',
+    });
+  }
   // Dim override (D10) — when caller passes `dimensions`, use it. Otherwise
   // fall back to the global cfg default. dimsProviderOptions throws a
   // clear AIConfigError when a Voyage flexible-dim model gets an
@@ -1151,13 +1280,40 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
     : [truncated];
 
   const allEmbeddings: Float32Array[] = [];
-
-  for (const batch of batches) {
-    const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
-    allEmbeddings.push(...result);
+  let _embedThrew = false;
+  try {
+    for (const batch of batches) {
+      const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
+      allEmbeddings.push(...result);
+    }
+    return allEmbeddings;
+  } catch (err) {
+    _embedThrew = true;
+    throw err;
+  } finally {
+    if (tracker) {
+      // Embed token usage is not surfaced by the AI SDK shape we use; charge
+      // based on the truncated input character count using the recipe's
+      // chars-per-token. On failure, A3 amended says charge the pessimistic
+      // estimate too — embed has no output side, so the input estimate IS
+      // the worst case.
+      const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
+      const totalChars = truncated.reduce((s, t) => s + t.length, 0);
+      const inputTokens = Math.ceil(totalChars / Math.max(charsPerToken, 1));
+      try {
+        tracker.record({
+          modelId: `${recipe.id}:${modelId}`,
+          inputTokens,
+          outputTokens: 0,
+          embeddingDims: expected,
+          kind: 'embed',
+          label: _embedThrew ? 'gateway.embed.failed' : 'gateway.embed',
+        });
+      } catch {
+        // BudgetExhausted (TX1) — original throw (if any) wins.
+      }
+    }
   }
-
-  return allEmbeddings;
 }
 
 /**
@@ -1208,7 +1364,10 @@ export function isTokenLimitError(err: unknown): boolean {
   return (
     /max.*allowed.*tokens.*batch/i.test(msg) ||
     /batch.*too.*many.*tokens/i.test(msg) ||
-    /token.*limit.*exceeded/i.test(msg)
+    /token.*limit.*exceeded/i.test(msg) ||
+    // OpenAI embeddings: "Invalid 'input': maximum request size is 300000 tokens per request."
+    /maximum request size.*tokens/i.test(msg) ||
+    /max.*tokens.*per.*request/i.test(msg)
   );
 }
 
@@ -1940,6 +2099,48 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
   return (result.text ?? '').trim();
 }
 
+// ---- BudgetTracker scope (TX5) ----
+//
+// withBudgetTracker(tracker, fn) installs `tracker` on a module-internal
+// AsyncLocalStorage for the duration of `fn`. Every gateway.chat / embed /
+// rerank call inside the scope auto-composes — no per-call injection seam
+// needed, no flag plumbing through command bodies.
+//
+// Outside the scope, the gateway functions are budget no-ops (current
+// behavior preserved). Nested scopes replace the active tracker for the
+// inner closure and restore the outer tracker on exit.
+//
+// IMPORTANT (A1): for the subagent path, reserve() runs implicitly via the
+// gateway BEFORE acquireLease() in src/core/minions/handlers/subagent.ts —
+// budget throw → no lease attempted, no rate-lease window held.
+
+const __budgetStore = new AsyncLocalStorage<BudgetTracker>();
+
+export function withBudgetTracker<T>(tracker: BudgetTracker, fn: () => Promise<T>): Promise<T> {
+  return __budgetStore.run(tracker, fn);
+}
+
+export function getCurrentBudgetTracker(): BudgetTracker | null {
+  return __budgetStore.getStore() ?? null;
+}
+
+/** Internal helper: estimate input tokens from messages + system. Heuristic only
+ * (~4 chars/token); cap math is best-effort because we pre-flight reservation
+ * before the SDK has counted anything. */
+function estimateChatInputTokens(opts: { system?: string; messages?: Array<{ content?: unknown }> }): number {
+  let chars = (opts.system ?? '').length;
+  for (const m of opts.messages ?? []) {
+    if (typeof m.content === 'string') chars += m.content.length;
+    else if (Array.isArray(m.content)) {
+      for (const block of m.content) {
+        const t = (block as { text?: unknown }).text;
+        if (typeof t === 'string') chars += t.length;
+      }
+    }
+  }
+  return Math.ceil(chars / 4);
+}
+
 // ---- Chat (commit 1) ----
 
 /**
@@ -2081,14 +2282,70 @@ function mapStopReason(
  * blocks via the provider-neutral schema landing in commit 2a).
  */
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
+  const tracker = __budgetStore.getStore() ?? null;
+  const modelStrEarly = opts.model ?? getChatModel();
+  const estimatedInputTokens = estimateChatInputTokens(opts);
+  const maxOutputTokens = opts.maxTokens ?? 4096;
+
+  // TX5: reserve BEFORE the provider call. Throws BudgetExhausted on cost,
+  // runtime, or no_pricing (when cap is set). Pre-resolution model id is
+  // fine here — resolveChatProvider would map aliases the same way for the
+  // cost lookup. record() below uses the real result.model.
+  if (tracker) {
+    tracker.reserve({
+      modelId: modelStrEarly,
+      estimatedInputTokens,
+      maxOutputTokens,
+      kind: 'chat' as BudgetKind,
+      label: 'gateway.chat',
+    });
+  }
+
   // Test seam: when a test transport is installed, route through it without
   // touching provider resolution, AI SDK, or any network. See
   // __setChatTransportForTests. Production paths see _chatTransport === null.
   if (_chatTransport) {
-    return _chatTransport(opts);
+    let res: ChatResult | null = null;
+    let threw: unknown = null;
+    try {
+      res = await _chatTransport(opts);
+      return res;
+    } catch (err) {
+      threw = err;
+      throw err;
+    } finally {
+      if (tracker) {
+        try {
+          if (res) {
+            tracker.record({
+              modelId: res.model ?? modelStrEarly,
+              inputTokens: res.usage.input_tokens,
+              outputTokens: res.usage.output_tokens,
+              label: 'gateway.chat',
+            });
+          } else {
+            const usage = _extractUsageFromError(threw, {
+              inputTokens: estimatedInputTokens,
+              outputTokens: maxOutputTokens,
+            });
+            tracker.record({
+              modelId: modelStrEarly,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              label: 'gateway.chat',
+            });
+          }
+        } catch {
+          // record() can throw BudgetExhausted (TX1) — suppress here so the
+          // original error (if any) wins; the BudgetExhausted is surfaced
+          // on the NEXT call via reserve(). For test transport this branch
+          // is rare in practice.
+        }
+      }
+    }
   }
 
-  const modelStr = opts.model ?? getChatModel();
+  const modelStr = modelStrEarly;
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
 
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
@@ -2109,6 +2366,22 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   if (useCache) {
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
   }
+
+  let _budgetRecorded = false;
+  const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
+    if (!tracker || _budgetRecorded) return;
+    _budgetRecorded = true;
+    try {
+      tracker.record({
+        modelId: modelLabel,
+        inputTokens,
+        outputTokens,
+        label: 'gateway.chat',
+      });
+    } catch {
+      // BudgetExhausted (TX1) raised here; surface via next reserve()
+    }
+  };
 
   try {
     const result = await generateText({
@@ -2156,13 +2429,17 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const providerMetadata = (result as any).providerMetadata as Record<string, any> | undefined;
     const anthropicCache = providerMetadata?.anthropic ?? {};
 
+    const inTok = Number(usage.inputTokens ?? usage.promptTokens ?? 0);
+    const outTok = Number(usage.outputTokens ?? usage.completionTokens ?? 0);
+    _recordBudget(`${recipe.id}:${modelId}`, inTok, outTok);
+
     return {
       text: blocks.filter(b => b.type === 'text').map(b => (b as { type: 'text'; text: string }).text).join(''),
       blocks,
       stopReason: mapStopReason((result as any).finishReason, providerMetadata),
       usage: {
-        input_tokens: Number(usage.inputTokens ?? usage.promptTokens ?? 0),
-        output_tokens: Number(usage.outputTokens ?? usage.completionTokens ?? 0),
+        input_tokens: inTok,
+        output_tokens: outTok,
         cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? 0),
         cache_creation_tokens: Number(anthropicCache.cacheCreationInputTokens ?? anthropicCache.cache_creation_input_tokens ?? 0),
       },
@@ -2171,6 +2448,13 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       providerMetadata,
     };
   } catch (err) {
+    // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
+    // the worst-case ceiling — better to overcount on failure than under.
+    const fallback = _extractUsageFromError(err, {
+      inputTokens: estimatedInputTokens,
+      outputTokens: maxOutputTokens,
+    });
+    _recordBudget(`${recipe.id}:${modelId}`, fallback.inputTokens, fallback.outputTokens);
     throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
   }
 }
@@ -2557,6 +2841,21 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     input.model ??
     getRerankerModel() ??
     DEFAULT_RERANKER_MODEL;
+
+  const tracker = __budgetStore.getStore() ?? null;
+  if (tracker) {
+    // Reranker pricing isn't in the canonical pricing map today — when no
+    // cap is set this fires the warn-once path; when a cap IS set TX2 hard-
+    // fails. record() below logs the actual size after success.
+    const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
+    tracker.reserve({
+      modelId: modelStr,
+      estimatedInputTokens: Math.ceil(totalChars / 4),
+      maxOutputTokens: 0,
+      kind: 'rerank',
+      label: 'gateway.rerank',
+    });
+  }
   const { parsed, recipe } = resolveRecipe(modelStr);
   const tp = recipe.touchpoints.reranker;
   if (!tp) {
@@ -2576,7 +2875,12 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
   const cfg = requireConfig();
   const compat = applyOpenAICompatConfig(recipe, cfg);
-  const url = `${compat.baseURL.replace(/\/$/, '')}/models/rerank`;
+  // v0.40.6.1: rerank URL path is recipe-pluggable. Defaults to ZeroEntropy's
+  // legacy `/models/rerank`; openai-style providers like llama.cpp's
+  // llama-server set `/v1/rerank`. Wire shape is unchanged — any provider
+  // whose request/response shape differs from ZE/llama.cpp (e.g. Voyage with
+  // `top_k` / `data[]`) needs separate adapter hooks in a follow-up plan.
+  const url = `${compat.baseURL.replace(/\/$/, '')}${tp.path ?? '/models/rerank'}`;
   const auth = applyResolveAuth(recipe, cfg, 'reranker');
   // applyResolveAuth returns { apiKey } for Bearer-style auth (SDK's native
   // path) or { headers } for custom-header providers (Azure). v0.37.6.0:
@@ -2620,6 +2924,23 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     else input.signal.addEventListener('abort', () => ctrl.abort(input.signal!.reason), { once: true });
   }
 
+  let _rerankRecorded = false;
+  const _rerankRecord = (): void => {
+    if (!tracker || _rerankRecorded) return;
+    _rerankRecorded = true;
+    try {
+      const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
+      tracker.record({
+        modelId: modelStr,
+        inputTokens: Math.ceil(totalChars / 4),
+        outputTokens: 0,
+        kind: 'rerank',
+        label: 'gateway.rerank',
+      });
+    } catch {
+      // BudgetExhausted (TX1) suppressed; surfaces on next reserve().
+    }
+  };
   try {
     const transport: RerankTransport = _rerankTransport ?? ((u, init) => fetch(u, init));
     const resp = await transport(url, {
@@ -2650,11 +2971,14 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     if (!json || !Array.isArray(json.results)) {
       throw new RerankError('rerank: malformed response (no results array)', 'unknown');
     }
-    return json.results.map((r: any) => ({
+    const mapped = json.results.map((r: any) => ({
       index: typeof r.index === 'number' ? r.index : 0,
       relevanceScore: typeof r.relevance_score === 'number' ? r.relevance_score : 0,
     }));
+    _rerankRecord();
+    return mapped;
   } catch (err) {
+    _rerankRecord();
     if (err instanceof RerankError) throw err;
     // AbortError on timeout — classify cleanly.
     if (err && typeof err === 'object' && (err as any).name === 'AbortError') {

@@ -172,4 +172,130 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
       expect(merged?.embedding_multimodal_model).toBeUndefined();
     });
   });
+
+  // v0.41.2.1 — dream.* DB-plane merge (closes PR #1416's silent-config bug).
+  // Precedence is file > DB > defaults per key. There is NO env layer for
+  // dream.* — adding env shadows is a separate PR (out of scope for the
+  // fix wave). These tests pin that contract.
+  describe('dream.* DB-plane merge (v0.41.2.1)', () => {
+    test('DB value fills in for all 5 dream.synthesize.* keys when base unset', async () => {
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine = makeEngine({
+        'dream.synthesize.session_corpus_dir': '/tmp/sessions',
+        'dream.synthesize.meeting_transcripts_dir': '/tmp/meetings',
+        'dream.synthesize.verdict_model': 'anthropic:claude-haiku-4-5',
+        'dream.synthesize.max_prompt_tokens': '180000',
+        'dream.synthesize.max_chunks_per_transcript': '32',
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.dream?.synthesize?.session_corpus_dir).toBe('/tmp/sessions');
+      expect(merged?.dream?.synthesize?.meeting_transcripts_dir).toBe('/tmp/meetings');
+      expect(merged?.dream?.synthesize?.verdict_model).toBe('anthropic:claude-haiku-4-5');
+      expect(merged?.dream?.synthesize?.max_prompt_tokens).toBe(180000);
+      expect(merged?.dream?.synthesize?.max_chunks_per_transcript).toBe(32);
+    });
+
+    test('DB value fills in for both dream.patterns.* keys when base unset', async () => {
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine = makeEngine({
+        'dream.patterns.lookback_days': '45',
+        'dream.patterns.min_evidence': '4',
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.dream?.patterns?.lookback_days).toBe(45);
+      expect(merged?.dream?.patterns?.min_evidence).toBe(4);
+    });
+
+    test('file value wins over DB value (per-key precedence)', async () => {
+      const base: GBrainConfig = {
+        engine: 'pglite',
+        dream: {
+          synthesize: { session_corpus_dir: '/from-file' },
+          patterns: { lookback_days: 7 },
+        },
+      };
+      const engine = makeEngine({
+        'dream.synthesize.session_corpus_dir': '/from-db',
+        'dream.synthesize.meeting_transcripts_dir': '/db-meetings',
+        'dream.patterns.lookback_days': '30',
+        'dream.patterns.min_evidence': '5',
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.dream?.synthesize?.session_corpus_dir).toBe('/from-file');
+      expect(merged?.dream?.synthesize?.meeting_transcripts_dir).toBe('/db-meetings');
+      expect(merged?.dream?.patterns?.lookback_days).toBe(7);
+      expect(merged?.dream?.patterns?.min_evidence).toBe(5);
+    });
+
+    test('parent objects (cfg.dream, cfg.dream.synthesize, cfg.dream.patterns) are allocated even when file plane has none', async () => {
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine = makeEngine({
+        'dream.synthesize.session_corpus_dir': '/just-this-one',
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.dream).toBeDefined();
+      expect(merged?.dream?.synthesize).toBeDefined();
+      expect(merged?.dream?.synthesize?.session_corpus_dir).toBe('/just-this-one');
+      // patterns parent NOT allocated when no patterns key is set
+      expect(merged?.dream?.patterns).toBeUndefined();
+    });
+
+    test('invalid DB int values fall back to undefined (do not throw)', async () => {
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine = makeEngine({
+        'dream.synthesize.max_prompt_tokens': 'abc',
+        'dream.patterns.min_evidence': 'not-a-number',
+        'dream.patterns.lookback_days': '-5', // negative; existing dbInt() rejects
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.dream?.synthesize?.max_prompt_tokens).toBeUndefined();
+      expect(merged?.dream?.patterns?.min_evidence).toBeUndefined();
+      expect(merged?.dream?.patterns?.lookback_days).toBeUndefined();
+      // cfg.dream stays undefined since no leaf populated
+      expect(merged?.dream).toBeUndefined();
+    });
+
+    test('empty DB values do not clobber unset file plane', async () => {
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine = makeEngine({
+        'dream.synthesize.session_corpus_dir': '',
+        'dream.synthesize.meeting_transcripts_dir': undefined,
+        'dream.synthesize.verdict_model': null,
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.dream).toBeUndefined();
+    });
+
+    test('cfg.dream stays undefined when neither plane sets anything', async () => {
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine = makeEngine({});
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.dream).toBeUndefined();
+    });
+
+    test('mixed: file sets synthesize.session_corpus_dir; DB sets patterns.lookback_days', async () => {
+      const base: GBrainConfig = {
+        engine: 'pglite',
+        dream: { synthesize: { session_corpus_dir: '/file-only' } },
+      };
+      const engine = makeEngine({
+        'dream.patterns.lookback_days': '14',
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.dream?.synthesize?.session_corpus_dir).toBe('/file-only');
+      expect(merged?.dream?.patterns?.lookback_days).toBe(14);
+    });
+
+    test('engine.getConfig throwing leaves dream.* unset (non-fatal, mirrors content_sanity)', async () => {
+      const base: GBrainConfig = { engine: 'pglite' };
+      const engine: FakeEngine = {
+        async getConfig() {
+          throw new Error('config table missing');
+        },
+      };
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.dream).toBeUndefined();
+      expect(merged?.engine).toBe('pglite');
+    });
+  });
 });

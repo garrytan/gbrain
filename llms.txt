@@ -16,11 +16,19 @@ Repo: https://github.com/garrytan/gbrain
 
 - [docs/ENGINES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ENGINES.md): PGLite vs Postgres trade-off and when to migrate.
 - [docs/GBRAIN_RECOMMENDED_SCHEMA.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md): MECE directory structure (people/, companies/, concepts/).
+- [docs/what-schemas-unlock.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/what-schemas-unlock.md): Why schemas matter: 7 killer use cases (4000 invisible meetings, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator) + the structural argument for typed page kinds. Read this before pitching schema authoring (v0.40.7.0).
+- [docs/schema-author-tutorial.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/schema-author-tutorial.md): 5-minute walkthrough: fork the bundled pack, add a custom `researcher` type, backfill existing pages via `gbrain schema sync --apply`, prove the T1.5 wiring via `gbrain whoknows` (v0.40.7.0).
 - [docs/guides/live-sync.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/live-sync.md): Incremental markdown sync setup.
 - [docs/guides/cron-schedule.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/cron-schedule.md): Recurring job scheduling.
 - [docs/guides/minions-deployment.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-deployment.md): Deploying the gbrain jobs worker: crontab + watchdog, inline --follow, systemd/Procfile/fly.toml, upgrade checklist.
 - [docs/guides/quiet-hours.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/quiet-hours.md): Notification hold + timezone-aware delivery.
+- [docs/guides/scaling-skills.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/scaling-skills.md): Three-tier architecture for agents with 300+ skills: always-loaded, resolver-routed, and dormant. Per-turn token math, the v0.41.7.0 compact list-format resolver, and the `gbrain doctor` safety net. 306 skills, ~21K tokens freed per turn, zero capability loss.
 - [docs/mcp/DEPLOY.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY.md): MCP server deployment.
+
+## AI providers
+
+- [docs/ai-providers/zeroentropy.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ai-providers/zeroentropy.md): ZeroEntropy zembed-1 embedding + zerank-2 reranker (hosted): API key, embedding switch, reranker config.
+- [docs/ai-providers/llama-server-reranker.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ai-providers/llama-server-reranker.md): Local reranker via llama.cpp --reranking: Qwen3-Reranker or self-hosted ZE weights, --alias setup, gbrain config keys, cold-start timeout, budget-cap interaction.
 
 ## Debugging
 

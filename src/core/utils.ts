@@ -44,21 +44,23 @@ export function contentHash(page: PageInput): string {
 }
 
 /**
- * v0.32.8: validate a `source_id` is safe for use as a filesystem path
- * segment AND as a SQL identifier value. Used by the per-source disk-layout
- * fix in patterns.ts/synthesize.ts before any `join(brainDir, source_id, ...)`
+ * Validate a `source_id` is safe for use as a filesystem path segment AND
+ * as a SQL identifier value. Used by the per-source disk-layout code in
+ * patterns.ts/synthesize.ts before any `join(brainDir, source_id, ...)`
  * call, and at `putSource()` time so invalid ids never make it into the DB.
  *
- * Allows lowercase ASCII letters, digits, underscore, and hyphen. Rejects
- * `..`, `/`, spaces, dots, and any non-ASCII character. Path-traversal and
- * SQL-injection safe by construction.
+ * **v0.38 (codex r2 P1-C, P1-D):** consolidated to import from
+ * `src/core/source-id.ts` (dependency-free canonical module). The regex
+ * TIGHTENED from the permissive `^[a-z0-9_-]+$` to the strict kebab-case
+ * `^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$` — same regex `sources-ops` has
+ * always enforced at creation time. Closes the drift between path-safety
+ * and creation-time validation; no production source IDs break (none had
+ * underscores, since `sources-ops` always rejected them).
+ *
+ * Re-exported here for back-compat with the pre-v0.38 `validateSourceId`
+ * import. New code should import directly from `source-id.ts`.
  */
-const SOURCE_ID_RE = /^[a-z0-9_-]+$/;
-export function validateSourceId(id: string): void {
-  if (!SOURCE_ID_RE.test(id)) {
-    throw new Error(`Invalid source_id "${id}" — must match ${SOURCE_ID_RE}`);
-  }
-}
+export { assertValidSourceId as validateSourceId } from './source-id.ts';
 
 function readOptionalDate(raw: unknown): Date | null | undefined {
   // Three-state read for columns that may or may not be in the SELECT
@@ -75,10 +77,18 @@ export function rowToPage(row: Record<string, unknown>): Page {
   const salienceTouchedAt = readOptionalDate(row.salience_touched_at);
   const effectiveDateSource = row.effective_date_source as Page['effective_date_source'] | undefined;
   const importFilename = row.import_filename as string | null | undefined;
+  // v0.39.3.0 CV5 — three-state read for provenance columns. Matches the
+  // v0.26.5 deleted_at pattern: undefined when the SELECT projection didn't
+  // include the column (older code paths); null when the column is NULL
+  // (historical pre-v0.38 row); populated when v0.38+ ingestion stamped it.
+  const sourceKind = row.source_kind === undefined ? undefined : (row.source_kind as string | null);
+  const sourceUri = row.source_uri === undefined ? undefined : (row.source_uri as string | null);
+  const ingestedVia = row.ingested_via === undefined ? undefined : (row.ingested_via as string | null);
+  const ingestedAt = readOptionalDate(row.ingested_at);
   return {
     id: row.id as number,
     slug: row.slug as string,
-    type: row.type as PageType,
+    type: row.type as string,
     title: row.title as string,
     compiled_truth: row.compiled_truth as string,
     timeline: row.timeline as string,
@@ -94,6 +104,12 @@ export function rowToPage(row: Record<string, unknown>): Page {
     ...(effectiveDateSource !== undefined && { effective_date_source: effectiveDateSource }),
     ...(importFilename !== undefined && { import_filename: importFilename }),
     ...(salienceTouchedAt !== undefined && { salience_touched_at: salienceTouchedAt }),
+    // v0.39.3.0 (columns added in migration v81 — WARN-8 + CV5). Three-state
+    // optional read; absent SELECT projections compile unchanged.
+    ...(sourceKind !== undefined && { source_kind: sourceKind }),
+    ...(sourceUri !== undefined && { source_uri: sourceUri }),
+    ...(ingestedVia !== undefined && { ingested_via: ingestedVia }),
+    ...(ingestedAt !== undefined && { ingested_at: ingestedAt }),
     // v0.31.12: propagate source_id so downstream callers (embed, reconcile-links)
     // can thread it through getChunks / upsertChunks without defaulting to 'default'.
     // v0.32.8: Page.source_id is required. Every SELECT feeding rowToPage now
@@ -228,7 +244,7 @@ export function rowToSearchResult(row: Record<string, unknown>): SearchResult {
     slug: row.slug as string,
     page_id: row.page_id as number,
     title: row.title as string,
-    type: row.type as PageType,
+    type: row.type as string,
     chunk_text: row.chunk_text as string,
     chunk_source: row.chunk_source as 'compiled_truth' | 'timeline',
     chunk_id: row.chunk_id as number,
@@ -297,7 +313,7 @@ export function takeRowToTake(row: Record<string, unknown>): Take {
     page_slug: String(row.page_slug ?? ''),
     row_num: Number(row.row_num),
     claim: String(row.claim),
-    kind: row.kind as TakeKind,
+    kind: row.kind as string,
     holder: String(row.holder),
     weight: Number(row.weight),
     since_date: dateOrNull(row.since_date),

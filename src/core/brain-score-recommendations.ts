@@ -2,6 +2,67 @@ import { createHash } from 'crypto';
 import type { BrainHealth } from './types.ts';
 import { ANTHROPIC_PRICING } from './anthropic-pricing.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from './embedding-pricing.ts';
+import { getRecipe } from './ai/recipes/index.ts';
+import { parseModelId } from './ai/model-resolver.ts';
+
+/**
+ * v0.40.x: env-var name → file/DB config field, for hosted embedding providers
+ * whose config-plane key is actually propagated to the AI gateway. Producers of
+ * RecommendationContext (doctor + autopilot) use this to build a sync
+ * `resolveKey` closure without re-parsing recipes.
+ *
+ * Only OPENAI_API_KEY and ZEROENTROPY_API_KEY appear here because those are the
+ * only embedding keys `buildGatewayConfig` (src/cli.ts) folds from config into
+ * the gateway env. VOYAGE_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY are deliberately
+ * absent: their config fields are NOT threaded to the gateway today, so the
+ * producer closures fall through to checking `process.env` ONLY for them. That
+ * matches what the gateway can actually use (the recipes read those keys from
+ * env). Counting a config-plane voyage_api_key/google_api_key here would be a
+ * false positive: doctor/autopilot would call the provider "configured" and
+ * dispatch an embed.stale job that then fails auth at the gateway. When a future
+ * change threads voyage_api_key/google_api_key into buildGatewayConfig (the open
+ * voyage-config-mapping work), re-add the matching entry here in the same change.
+ */
+export const HOSTED_EMBED_KEY_CONFIG: Record<string, string> = {
+  OPENAI_API_KEY: 'openai_api_key',
+  ZEROENTROPY_API_KEY: 'zeroentropy_api_key',
+};
+
+/**
+ * v0.40.x: is the configured embedding provider usable for the remediation
+ * planner? Recipe-aware:
+ *   - empty `auth_env.required` (ollama, llama-server, ...) ⇒ local, no hosted
+ *     key needed ⇒ true.
+ *   - hosted (openai, zeroentropyai, voyage, google, ...) ⇒ true iff every
+ *     required key resolves.
+ *
+ * `resolveKey(envVar)` is supplied by the caller so each producer reads config
+ * from its own source (doctor → file plane; autopilot → engine.getConfig).
+ * Only the recipe logic is shared, not the config lookup.
+ *
+ * NOTE: deliberately NOT the same as `gateway.isAvailable('embedding')`.
+ * isAvailable returns false for user_provided_models recipes (llama-server,
+ * models: []) because it can't validate the model id. For a remediation
+ * verdict we WANT true there — local embeddings work. Do not "align" them.
+ * Uses the recipe registry (pure data), not the gateway runtime, so this
+ * module stays free of AI-SDK coupling and works before engine.connect().
+ */
+export function embeddingProviderConfigured(
+  embeddingModel: string | undefined,
+  resolveKey: (envVar: string) => boolean,
+): boolean {
+  if (!embeddingModel) return false;
+  let providerId: string;
+  try {
+    ({ providerId } = parseModelId(embeddingModel));
+  } catch {
+    return false; // malformed model id — mirror gateway.isAvailable's catch
+  }
+  const recipe = getRecipe(providerId);
+  if (!recipe?.touchpoints?.embedding) return false;
+  const required = recipe.auth_env?.required ?? [];
+  return required.length === 0 ? true : required.every(resolveKey);
+}
 
 /** Minimal Check shape consumed by classifyChecks. Subset of doctor.ts's
  *  Check; we intentionally don't import from doctor.ts (would create a
@@ -38,48 +99,32 @@ export interface Check {
  */
 
 /**
- * Severity buckets — drive ordering (critical first) and operator UX
- * (in the human-readable plan output, critical items get a louder prefix).
+ * v0.40.3.0: RemediationStep + RemediationSeverity + RemediationStatus
+ * lifted to src/core/remediation-step.ts so other doctor checks (lint,
+ * integrity, sync_failures) can emit RemediationStep without circular
+ * importing brain-score code. Re-exported here for back-compat AND to
+ * avoid forcing every importer to update the path in one PR.
+ *
+ * The `Remediation` name is deprecated as of v0.40.3.0; use
+ * `RemediationStep` going forward. Same shape; rename was for clarity.
  */
-export type RemediationSeverity = 'critical' | 'high' | 'medium' | 'low';
-
-/** Status of an individual check's autofix path. */
-export type RemediationStatus = 'remediable' | 'human_only' | 'blocked';
-
-export interface Remediation {
-  /** Stable id (e.g. 'sync.repo', 'embed.stale', 'embed.code'). Survives
-   *  check renames; referenced by `depends_on`. */
-  id: string;
-  /** Minion handler name (must match a registered handler). */
-  job: string;
-  /** Params passed to the handler. */
-  params: Record<string, unknown>;
-  /** Content-hash idempotency key: `<source>:<job>:sha8(canonical-JSON(params))`.
-   *  Per D9: NO time-slot. Retry suffix `:r<N>` appended by --remediate when
-   *  prior key's job is in `failed`/`dead` state. */
-  idempotency_key: string;
-  severity: RemediationSeverity;
-  /** Upper-bound runtime estimate for ordering + --target-score budgeting. */
-  est_seconds: number;
-  /** USD cost estimate when applicable (embed by chunk count × $/MTok;
-   *  synthesize / patterns / consolidate by est Sonnet calls × $/MTok).
-   *  Sum across plan steps is the gate for --max-usd. */
-  est_usd_cost?: number;
-  /** Other Remediation.id values that MUST complete first. References ids,
-   *  NOT check names (D14 — closes codex #22 fan-out ambiguity). */
-  depends_on?: string[];
-  /** One-line "what this fixes" for human output. */
-  rationale: string;
-  /** True if `job` is in PROTECTED_JOB_NAMES (D11). Mirrors trust-gate state
-   *  so callers don't have to re-derive it. */
-  protected?: boolean;
-  /** Always 'remediable' when this struct is in the plan. The doctor surface
-   *  also produces blocked-entries (with `blocked_reason`) but those don't
-   *  enter the executable plan. */
-  status: RemediationStatus;
-  /** Populated when status === 'blocked'. E.g. 'missing OPENAI_API_KEY'. */
-  blocked_reason?: string;
-}
+export {
+  type RemediationStep,
+  type RemediationStep as Remediation,
+  type RemediationSeverity,
+  type RemediationStatus,
+  makeRemediationStep,
+  idempotencyKey as makeRemediationIdempotencyKey,
+  canonicalJson,
+} from './remediation-step.ts';
+import type {
+  RemediationStep,
+  RemediationStatus,
+  RemediationSeverity,
+} from './remediation-step.ts';
+// Internal alias so the existing implementation below keeps compiling
+// without a sed pass. New code should reference RemediationStep directly.
+type Remediation = RemediationStep;
 
 export interface RecommendationContext {
   /** Source id this remediation is scoped to (multi-source brains). */
@@ -90,8 +135,13 @@ export interface RecommendationContext {
   embeddingModel?: string;
   /** Configured embedding dimension (3072 / 1536 / 1024 / etc.). */
   embeddingDimensions?: number;
-  /** Whether the embedding provider has a usable API key. */
-  hasEmbeddingApiKey?: boolean;
+  /**
+   * Whether the configured embedding provider is usable. For hosted providers
+   * this means the required API key resolves; for local providers (ollama,
+   * llama-server — empty auth_env.required) it's true once configured, no key
+   * needed. Compute via `embeddingProviderConfigured()`.
+   */
+  embeddingProviderConfigured?: boolean;
   /** Configured chat / synthesis model id. */
   chatModel?: string;
   /** Whether the chat provider has a usable API key. */
@@ -146,7 +196,7 @@ export function computeRecommendations(
   // ---------------------------------------------------------------------
   // embed.stale — missing embeddings. Critical: invisible to vector search
   // ---------------------------------------------------------------------
-  if (health.missing_embeddings > 0 && ctx.hasEmbeddingApiKey !== false) {
+  if (health.missing_embeddings > 0 && ctx.embeddingProviderConfigured !== false) {
     const params = { stale: true, sourceId: ctx.sourceId };
     const embedModel = ctx.embeddingModel ?? 'openai:text-embedding-3-large';
     const embedDims = ctx.embeddingDimensions ?? 3072;
@@ -258,8 +308,8 @@ function classifyOne(check: Check, ctx: RecommendationContext): CheckClassificat
       }
       return { check: check.name, status: 'remediable' };
     case 'missing_embeddings':
-      if (ctx.hasEmbeddingApiKey === false) {
-        return { check: check.name, status: 'blocked', reason: 'missing embedding API key' };
+      if (ctx.embeddingProviderConfigured === false) {
+        return { check: check.name, status: 'blocked', reason: 'embedding provider not configured' };
       }
       return { check: check.name, status: 'remediable' };
     case 'dead_links':

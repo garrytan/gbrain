@@ -206,6 +206,36 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     expect(body.message?.toLowerCase()).toContain('non-empty');
   });
 
+  // v0.39.3.0 BUG-2 regression: when express.raw() doesn't populate req.body
+  // (no Content-Length / no body / specific middleware-chain conditions),
+  // req.body is `undefined`. The pre-fix code's `else` branch fell through
+  // to `Buffer.from(JSON.stringify(undefined), 'utf8')` — and
+  // `JSON.stringify(undefined) === undefined` (literal), so Buffer.from
+  // threw TypeError and the route returned an HTML 500 page instead of a
+  // JSON envelope. The null-guard at the top of the handler now catches
+  // this case and returns 400 `empty_body` like the empty-Buffer case.
+  test('BUG-2: POST with no body (undefined req.body) → 400 JSON envelope (not 500 HTML)', async () => {
+    const token = await mintToken('read write');
+    // fetch with no `body:` field sends a request with no body bytes.
+    // Combined with no Content-Length, this is the exact shape that
+    // triggered the v0.38.0.0 TypeError.
+    const res = await fetch(`${BASE}/ingest`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'text/markdown',
+      },
+    });
+    // Must NOT be 500 (the pre-fix behavior).
+    expect(res.status).not.toBe(500);
+    // Must be a JSON 400 with the documented error shape.
+    expect(res.status).toBe(400);
+    const ct = res.headers.get('content-type') ?? '';
+    expect(ct).toContain('application/json');
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBe('empty_body');
+  });
+
   // =========================================================================
   // Content-type allowlist (the v0.38 webhook taxonomy)
   // =========================================================================

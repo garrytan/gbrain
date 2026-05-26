@@ -328,46 +328,125 @@ async function revokeClient(clientId: string) {
   }
 }
 
+/**
+ * Parse `gbrain auth register-client` argv. Walks the array once instead of
+ * the prior `indexOf`-based pattern which (a) silently took only the FIRST
+ * occurrence of a repeatable flag (defeated `--redirect-uri https://a
+ * --redirect-uri https://b` — only `https://a` made it through), and (b)
+ * accepted bare values via lookahead even when adjacent to another flag.
+ *
+ * v0.41.3 (T3): proper loop-based parser so `--redirect-uri` is repeatable,
+ * and `--token-endpoint-auth-method` is recognized. Repeatable flags
+ * accumulate into arrays. Unknown flags throw a usage error.
+ */
+interface RegisterClientArgs {
+  grantTypes: string[];
+  scopes: string;
+  sourceId: string;
+  federatedRead: string[] | undefined;
+  redirectUris: string[];
+  tokenEndpointAuthMethod: string | undefined;
+}
+
+export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
+  const out: RegisterClientArgs = {
+    grantTypes: ['client_credentials'],
+    scopes: 'read',
+    sourceId: 'default',
+    federatedRead: undefined,
+    redirectUris: [],
+    tokenEndpointAuthMethod: undefined,
+  };
+  let i = 0;
+  let grantTypesSet = false;
+  while (i < args.length) {
+    const flag = args[i];
+    const value = args[i + 1];
+    const requireValue = () => {
+      if (value === undefined || value.startsWith('--')) {
+        throw new Error(`${flag} requires a value`);
+      }
+      return value;
+    };
+    switch (flag) {
+      case '--grant-types': {
+        const v = requireValue();
+        out.grantTypes = v.split(',').map(s => s.trim()).filter(Boolean);
+        grantTypesSet = out.grantTypes.length > 0;
+        i += 2;
+        break;
+      }
+      case '--scopes': out.scopes = requireValue(); i += 2; break;
+      case '--source': out.sourceId = requireValue(); i += 2; break;
+      case '--federated-read': {
+        const v = requireValue();
+        out.federatedRead = v.split(',').map(s => s.trim()).filter(Boolean);
+        i += 2; break;
+      }
+      case '--redirect-uri':
+        out.redirectUris.push(requireValue());
+        i += 2; break;
+      case '--token-endpoint-auth-method':
+        out.tokenEndpointAuthMethod = requireValue();
+        i += 2; break;
+      default:
+        throw new Error(`Unknown flag: ${flag}`);
+    }
+  }
+  // v0.41.3: if --grant-types not explicitly set and any --redirect-uri was
+  // passed, infer authorization_code + refresh_token. The single-flag path
+  // (just --redirect-uri ...) is the SECURITY.md-recommended pre-registration
+  // pattern; making operators redundantly pass `--grant-types` is footgun.
+  if (!grantTypesSet && out.redirectUris.length > 0) {
+    out.grantTypes = ['authorization_code', 'refresh_token'];
+  }
+  return out;
+}
+
 async function registerClient(name: string, args: string[]) {
   if (!name) {
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
     process.exit(1);
   }
-  const grantsIdx = args.indexOf('--grant-types');
-  const scopesIdx = args.indexOf('--scopes');
-  const sourceIdx = args.indexOf('--source');
-  const federatedIdx = args.indexOf('--federated-read');
-  const grantTypes = grantsIdx >= 0 && args[grantsIdx + 1]
-    ? args[grantsIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
-    : ['client_credentials'];
-  const scopes = scopesIdx >= 0 && args[scopesIdx + 1] ? args[scopesIdx + 1] : 'read';
-  // v0.34.1 (#861, D2): --source flag scopes the OAuth client to a single
-  // source. Defaults to 'default' to match migration v60's backfill so
-  // operators upgrading without changing flags see no behavior change.
-  const sourceId = sourceIdx >= 0 && args[sourceIdx + 1] ? args[sourceIdx + 1] : 'default';
-  // v0.34.1 (#876): --federated-read accepts a comma-separated source list
-  // for federated read scope. When omitted, federated_read defaults to
-  // [sourceId] (read scope == write scope, the v0.33 default).
-  const federatedRead = federatedIdx >= 0 && args[federatedIdx + 1]
-    ? args[federatedIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
-    : undefined;
+  let parsed: RegisterClientArgs;
+  try {
+    parsed = parseRegisterClientArgs(args);
+  } catch (e: any) {
+    console.error(`Error: ${e.message}`);
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none]');
+    process.exit(1);
+  }
+  const { grantTypes, scopes, sourceId, federatedRead, redirectUris, tokenEndpointAuthMethod } = parsed;
 
   try {
     await withConfiguredSql(async (sql) => {
       const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
       const provider = new GBrainOAuthProvider({ sql });
       const { clientId, clientSecret } = await provider.registerClientManual(
-        name, grantTypes, scopes, [], sourceId, federatedRead,
+        name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod,
       );
       const effectiveFederated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
+      const effectiveAuthMethod = tokenEndpointAuthMethod || 'client_secret_post';
       console.log(`OAuth client registered: "${name}"\n`);
-      console.log(`  Client ID:        ${clientId}`);
-      console.log(`  Client Secret:    ${clientSecret}\n`);
-      console.log(`  Grant types:      ${grantTypes.join(', ')}`);
-      console.log(`  Scopes:           ${scopes}`);
-      console.log(`  Write source:     ${sourceId}`);
-      console.log(`  Federated reads:  ${effectiveFederated.join(', ')}\n`);
-      console.log('Save the client secret — it will not be shown again.');
+      console.log(`  Client ID:           ${clientId}`);
+      if (clientSecret) {
+        console.log(`  Client Secret:       ${clientSecret}\n`);
+      } else {
+        console.log(`  Client Secret:       <public client — none issued>\n`);
+      }
+      console.log(`  Grant types:         ${grantTypes.join(', ')}`);
+      console.log(`  Scopes:              ${scopes}`);
+      console.log(`  Token auth method:   ${effectiveAuthMethod}`);
+      if (redirectUris.length > 0) {
+        console.log(`  Redirect URIs:       ${redirectUris.join(', ')}`);
+      }
+      console.log(`  Write source:        ${sourceId}`);
+      console.log(`  Federated reads:     ${effectiveFederated.join(', ')}\n`);
+      if (clientSecret) {
+        console.log('Save the client secret — it will not be shown again.');
+      } else {
+        console.log('Public client (PKCE-only) — no secret needed.');
+      }
       console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
     });
   } catch (e: any) {
@@ -424,8 +503,15 @@ Usage:
   gbrain auth permissions <name> set-takes-holders <h1,h2,h3>
                                                           Update visibility for an existing token
   gbrain auth register-client <name> [options]             Register an OAuth 2.1 client (v0.26+)
-     --grant-types <client_credentials,authorization_code> (default: client_credentials)
+     --grant-types <client_credentials,authorization_code>  (default: client_credentials;
+                                                            auto-set to authorization_code,refresh_token
+                                                            when --redirect-uri is passed)
      --scopes "<read write admin>"                         (default: read)
+     --source <id>                                         (default: default)
+     --federated-read <id1,id2,...>                        (default: [source])
+     --redirect-uri <https://...>                          (v0.41.3+; repeatable; required for authorization_code)
+     --token-endpoint-auth-method <method>                 (v0.41.3+; client_secret_post | client_secret_basic | none;
+                                                            'none' = public PKCE-only client, no secret minted)
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);

@@ -75,6 +75,11 @@ import G_RUST from '../../assets/wasm/grammars/tree-sitter-rust.wasm' with { typ
 import G_SCALA from '../../assets/wasm/grammars/tree-sitter-scala.wasm' with { type: 'file' };
 // @ts-ignore
 import G_SOLIDITY from '../../assets/wasm/grammars/tree-sitter-solidity.wasm' with { type: 'file' };
+// @ts-ignore — DerekStride/tree-sitter-sql @ c2e1e08db1ea20dc23bdb8d228a81a8756e9c450,
+// built with tree-sitter-cli@v0.26.3 --abi 14 (matches web-tree-sitter 0.22.6).
+// 11 MB; substantially larger than peers because the grammar covers
+// PostgreSQL + MySQL + SQLite + T-SQL basics. See CHANGELOG for size notes.
+import G_SQL from '../../assets/wasm/grammars/tree-sitter-sql.wasm' with { type: 'file' };
 // @ts-ignore
 import G_SWIFT from '../../assets/wasm/grammars/tree-sitter-swift.wasm' with { type: 'file' };
 // @ts-ignore
@@ -122,7 +127,7 @@ export type SupportedCodeLanguage =
   | 'typescript' | 'tsx' | 'javascript' | 'python' | 'ruby' | 'go'
   | 'rust' | 'java' | 'c_sharp' | 'cpp' | 'c' | 'php' | 'swift' | 'kotlin'
   | 'scala' | 'lua' | 'elixir' | 'elm' | 'ocaml' | 'dart' | 'zig' | 'solidity'
-  | 'bash' | 'css' | 'html' | 'vue' | 'json' | 'yaml' | 'toml';
+  | 'bash' | 'css' | 'html' | 'vue' | 'json' | 'yaml' | 'toml' | 'sql';
 
 export interface CodeChunkMetadata {
   symbolName: string | null;
@@ -226,6 +231,7 @@ const LANGUAGE_MANIFEST: Record<SupportedCodeLanguage, LanguageEntry> = {
   json:       { displayName: 'JSON',       embeddedPath: G_JSON },
   yaml:       { displayName: 'YAML',       embeddedPath: G_YAML },
   toml:       { displayName: 'TOML',       embeddedPath: G_TOML },
+  sql:        { displayName: 'SQL',        embeddedPath: G_SQL },
 };
 
 /**
@@ -322,6 +328,12 @@ const TOP_LEVEL_TYPES: Partial<Record<SupportedCodeLanguage, Set<string>>> = {
   elixir: new Set(['call']),
   bash: new Set(['function_definition', 'variable_assignment']),
   solidity: new Set(['contract_declaration', 'function_definition', 'modifier_definition', 'event_definition']),
+  // SQL (DerekStride): every top-level node is `statement`, wrapping a single
+  // child whose type is the actual kind (create_table, create_function, etc).
+  // Catch-all `statement` here; extractSymbolName dives into the inner child
+  // to extract the schema target name (Step 0 inspection 2026-05-24 found
+  // all 9 fixtures produced `program > statement > <kind>` shape).
+  sql: new Set(['statement']),
 };
 
 const BODY_NODE_TYPES = new Set([
@@ -439,6 +451,7 @@ export function detectCodeLanguage(filePath: string, content?: string): Supporte
   if (lower.endsWith('.json')) return 'json';
   if (lower.endsWith('.yaml') || lower.endsWith('.yml')) return 'yaml';
   if (lower.endsWith('.toml')) return 'toml';
+  if (lower.endsWith('.sql')) return 'sql';
   // v0.20.0 Cathedral II Layer 1a fallback hook. Layer 9 (B2 Magika) wires
   // this in to detect extensionless files (Dockerfile, Makefile, shell
   // shebangs). try/catch because the fallback may itself fail on first-run
@@ -623,7 +636,13 @@ export async function chunkCodeTextFull(
       // so the header shows the `export` keyword for completeness.
       const nestableNode = findNestableParent(node, nestedConfig);
       const symbolName = extractSymbolName(nestableNode ?? node);
-      const symbolType = normalizeSymbolType((nestableNode ?? node).type);
+      // For SQL `statement` wrappers, the meaningful type lives on the inner
+      // child. extractSymbolName already dives in for the name; mirror that
+      // here so chunk headers say "table users" not "statement users".
+      const typeNode = (nestableNode ?? node);
+      const symbolType = (typeNode.type === 'statement' && typeNode.namedChildCount === 1)
+        ? normalizeSymbolType(typeNode.namedChild(0).type)
+        : normalizeSymbolType(typeNode.type);
 
       if (nestableNode && symbolName && nestedConfig) {
         const before = chunks.length;
@@ -1023,6 +1042,17 @@ function splitLargeNode(node: any, source: string, chunkTarget: number): SplitRa
 }
 
 function extractSymbolName(node: any): string | null {
+  // SQL (DerekStride): the chunk node is `statement` wrapping a single inner
+  // child whose type is the actual statement kind. Dive in to find the target
+  // identifier. DML statements (select/insert/update/delete) deliberately
+  // return null so their chunks emit unnamed — code-def is a DDL signal.
+  // The `statement` wrapper is unique to SQL among gbrain's 37 grammars
+  // (Step 0 inspection 2026-05-24); checking by node.type is safe.
+  if (node.type === 'statement' && node.namedChildCount === 1) {
+    const sqlName = extractSqlSymbolName(node.namedChild(0));
+    if (sqlName !== undefined) return sqlName;
+  }
+
   const directName = node.childForFieldName('name');
   if (directName?.text?.trim()) return sanitize(directName.text);
 
@@ -1041,6 +1071,45 @@ function extractSymbolName(node: any): string | null {
   return null;
 }
 
+// SQL-specific symbol extractor. Returns:
+//   string — DDL statement: extracted target name (table/function/view/index/etc).
+//   null   — DDL statement type, but name extraction failed (edge fixture).
+//   undefined — fall through to generic extractor (not a recognized SQL kind).
+//
+// DerekStride/tree-sitter-sql exposes the target identifier via the `name`
+// field on most create_* nodes; `alter_table` puts it in a separate field.
+// DML kinds (select/insert/update/delete) deliberately return null —
+// gbrain's code-def is a DDL retrieval signal, not a DML one.
+function extractSqlSymbolName(inner: any): string | null | undefined {
+  const t = inner.type;
+  // DDL: extract identifier name. Tried `name` field first (most common shape),
+  // then any `object_reference` / `identifier` child.
+  const DDL_KINDS = new Set([
+    'create_table', 'create_view', 'create_index', 'create_function',
+    'create_procedure', 'create_type', 'create_schema', 'create_database',
+    'create_trigger', 'alter_table', 'alter_view',
+  ]);
+  if (DDL_KINDS.has(t)) {
+    const nameField = inner.childForFieldName?.('name');
+    if (nameField?.text?.trim()) return sanitize(nameField.text);
+    // Fallback: first identifier-like named child.
+    for (let i = 0; i < (inner.namedChildCount || 0); i++) {
+      const c = inner.namedChild(i);
+      if (c.type === 'object_reference' || c.type === 'identifier' || c.type.endsWith('_identifier')) {
+        const v = sanitize(c.text);
+        if (v) return v;
+      }
+    }
+    return null;
+  }
+  // DML: explicitly null (chunk emits unnamed; code-def doesn't fire).
+  if (t === 'select' || t === 'insert' || t === 'update' || t === 'delete' ||
+      t === 'merge' || t === 'with') {
+    return null;
+  }
+  return undefined;
+}
+
 function normalizeSymbolType(type: string): string {
   if (type.includes('function') || type === 'method' || type === 'singleton_method') return 'function';
   if (type.includes('class')) return 'class';
@@ -1049,6 +1118,14 @@ function normalizeSymbolType(type: string): string {
   if (type.includes('enum')) return 'enum';
   if (type.includes('module')) return 'module';
   if (type.includes('import')) return 'import';
+  if (type === 'create_table' || type === 'alter_table') return 'table';
+  if (type === 'create_view' || type === 'alter_view') return 'view';
+  if (type === 'create_index') return 'index';
+  if (type === 'create_procedure') return 'procedure';
+  if (type === 'create_type') return 'type';
+  if (type === 'create_schema') return 'schema';
+  if (type === 'create_database') return 'database';
+  if (type === 'create_trigger') return 'trigger';
   return type.replace(/_/g, ' ');
 }
 

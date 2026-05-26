@@ -85,6 +85,12 @@ const CODE_EXTENSIONS = new Set<string>([
   // recursive chunker (no tree-sitter grammar), which is the correct
   // fallback — same path as toml / yaml without language-specific AST.
   '.tf', '.tfvars', '.hcl',
+  // v0.41 D2 wave (#1173): SQL via tree-sitter-sql. DerekStride grammar
+  // chunks DDL (CREATE TABLE/FUNCTION/VIEW/INDEX) and DML (SELECT/INSERT/
+  // UPDATE/DELETE) as one chunk per statement. DDL chunks carry
+  // symbol_name + symbol_type populated for code-def; DML chunks emit
+  // unnamed so they don't pollute symbol search.
+  '.sql',
 ]);
 
 /**
@@ -281,29 +287,85 @@ export function pruneDir(name: string, parentDir?: string): boolean {
 }
 
 /**
- * Filter a file path to determine if it should be synced to GBrain.
- * Strategy-aware: 'markdown' (default) = .md/.mdx only, 'code' = code files only, 'auto' = both.
+ * Discriminator for WHY a path is not syncable. Returned by `unsyncableReason`
+ * so the sync cleanup loop in `commands/sync.ts` can distinguish "metafile we
+ * intentionally exclude" from "user removed this file from the strategy".
+ *
+ * v0.41.13 (#1433): pre-fix, the cleanup loop in performSync treated all
+ * unsyncable-modified paths the same and DELETED any pre-existing page for
+ * them. That silently dropped `log.md` / `schema.md` / `README.md` pages
+ * that had been indexed by older gbrain versions (or via direct put_page).
+ * The fix guards that loop on `unsyncableReason(...) === 'metafile'` and
+ * preserves those rows.
  */
-export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
+export type SyncableReason =
+  | 'metafile'
+  | 'strategy'
+  | 'pruned-dir'
+  | 'include-glob-miss'
+  | 'exclude-glob-hit';
+
+/**
+ * Canonical metafile basenames the markdown sync strategy intentionally
+ * skips. Exported so the cleanup-loop guard in `commands/sync.ts` can
+ * surface them in user-facing logs / docs without re-declaring the list.
+ *
+ * These files are append-only domain logs / index pages / boilerplate
+ * READMEs — not typed brain pages — by convention. A user who genuinely
+ * wants to index one of these basenames as a page should rename it.
+ */
+export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md'] as const;
+
+/**
+ * Internal classifier. Returns null when the path IS syncable, or a tagged
+ * SyncableReason explaining why it isn't. The single source of truth that
+ * both `isSyncable` (boolean) and `unsyncableReason` (tagged) call.
+ *
+ * Codex review caught the drift risk if `unsyncableReason` were an independent
+ * re-implementation. Funnelling both public APIs through `classifySync` means
+ * TypeScript enforces consistency at the compiler level.
+ */
+function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason | null {
   const strategy = opts.strategy || 'markdown';
 
-  if (!isAllowedByStrategy(path, strategy)) return false;
+  if (!isAllowedByStrategy(path, strategy)) return 'strategy';
 
   // Skip every path segment that pruneDir would block walkers from descending
   // into. Catches hidden dirs (`.git`, `.obsidian`), `.raw/` sidecars,
   // `node_modules/` (latent bug fix), and `ops/` at any depth.
   const segments = path.split('/');
-  if (segments.some(p => !pruneDir(p))) return false;
+  if (segments.some(p => !pruneDir(p))) return 'pruned-dir';
 
   // Skip meta files that aren't pages
-  const skipFiles = ['schema.md', 'index.md', 'log.md', 'README.md'];
   const basename = segments[segments.length - 1] || '';
-  if (skipFiles.includes(basename)) return false;
+  if ((SYNC_SKIP_FILES as readonly string[]).includes(basename)) return 'metafile';
 
-  if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return false;
-  if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return false;
+  if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return 'include-glob-miss';
+  if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return 'exclude-glob-hit';
 
-  return true;
+  return null;
+}
+
+/**
+ * Filter a file path to determine if it should be synced to GBrain.
+ * Strategy-aware: 'markdown' (default) = .md/.mdx only, 'code' = code files only, 'auto' = both.
+ */
+export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
+  return classifySync(path, opts) === null;
+}
+
+/**
+ * Companion to `isSyncable`. Returns null when the path IS syncable, or a
+ * tagged `SyncableReason` explaining why it isn't. Used by the v0.41.13
+ * #1433 cleanup guard in `commands/sync.ts` to distinguish metafile
+ * exclusions (preserve any pre-existing page) from genuine "file removed
+ * from the strategy" cases (delete the now-stale page).
+ *
+ * Routes through the same `classifySync` as `isSyncable` so the two cannot
+ * drift. Identical opts contract — callers pass whatever they pass `isSyncable`.
+ */
+export function unsyncableReason(path: string, opts: SyncableOptions = {}): SyncableReason | null {
+  return classifySync(path, opts);
 }
 
 /**
@@ -496,6 +558,46 @@ export function classifyErrorCode(errorMsg: string): string {
     return 'TAKES_TABLE_MALFORMED';
   }
   if (/TAKES_HOLDER_INVALID/i.test(errorMsg)) return 'TAKES_HOLDER_INVALID';
+
+  // v0.41.6.0 D2: embedding error classification. Per-recipe verbatim shapes:
+  //   native-openai  → "OpenAI embedding requires OPENAI_API_KEY."
+  //   native-google  → "Google embedding requires GOOGLE_GENERATIVE_AI_API_KEY."
+  //   openai-compat  → "${recipe.name} embedding requires ${REQUIRED_ENV}."
+  //                    (Voyage AI / ZeroEntropy / DeepSeek / Together AI /
+  //                    DashScope / MiniMax / Zhipu AI all use this shape via
+  //                    defaultResolveAuth at src/core/ai/gateway.ts:250)
+  // EMBEDDING_NO_CREDS catches the missing-env case for every provider. The
+  // anthropic-no-touchpoint case ("Anthropic has no embedding model") is a
+  // misconfig, not a creds issue — bucketed separately so users don't get
+  // pointed at setting a key for a provider that doesn't offer embeddings.
+  if (/embedding requires [A-Z][A-Z0-9_]+_API_KEY|EMBEDDING_NO_CREDS/i.test(errorMsg)) {
+    return 'EMBEDDING_NO_CREDS';
+  }
+  if (/Anthropic has no embedding model|EMBEDDING_NO_TOUCHPOINT/i.test(errorMsg)) {
+    return 'EMBEDDING_NO_TOUCHPOINT';
+  }
+  // 429 status + textual rate-limit signals. AI SDK normalizes provider 429s
+  // into messages containing "rate limit" / "rate_limited" / "429".
+  if (/\brate.?limit|\b429\b|too many requests|rate_limited|RateLimit/i.test(errorMsg)) {
+    return 'EMBEDDING_RATE_LIMIT';
+  }
+  // OpenAI: insufficient_quota / "exceeded your current quota". Anthropic:
+  // "credit balance is too low". Catch-all token: EMBEDDING_QUOTA.
+  if (/insufficient_quota|quota exceeded|exceeded.*quota|credit balance is too low|billing|EMBEDDING_QUOTA/i.test(errorMsg)) {
+    return 'EMBEDDING_QUOTA';
+  }
+  // OpenAI: "maximum context length" / "too many tokens in request". Voyage:
+  // "input length exceeds". General: "max_tokens" / "context length".
+  if (/maximum context length|max_tokens|context length|input too long|input length exceeds|tokens? exceed|too many tokens|EMBEDDING_OVERSIZE/i.test(errorMsg)) {
+    return 'EMBEDDING_OVERSIZE';
+  }
+
+  // v0.41 content-sanity gate. Hard-blocks at importFromContent throw
+  // ContentSanityBlockError whose toString() embeds `PAGE_JUNK_PATTERN:`
+  // (see src/core/content-sanity.ts PAGE_JUNK_PATTERN_CODE). Soft-blocks
+  // (oversize alone) don't fail — the page lands with frontmatter.embed_skip
+  // set and never enters this classifier.
+  if (/PAGE_JUNK_PATTERN/i.test(errorMsg)) return 'PAGE_JUNK_PATTERN';
 
   return 'UNKNOWN';
 }

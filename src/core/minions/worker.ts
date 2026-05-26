@@ -19,6 +19,8 @@ import type {
 import { UnrecoverableError } from './types.ts';
 import { MinionQueue } from './queue.ts';
 import { calculateBackoff } from './backoff.ts';
+import { RateLeaseUnavailableError } from './handlers/subagent.ts';
+import { logLeasePressure } from './lease-pressure-audit.ts';
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
@@ -756,6 +758,57 @@ export class MinionWorker extends EventEmitter {
         errorText = `aborted: ${reason}`;
       } else {
         errorText = err instanceof Error ? err.message : String(err);
+      }
+
+      // v0.41 Bug 2: lease-full bounces don't burn attempts.
+      //
+      // Pre-v0.41 every non-`UnrecoverableError` routed to `delayed` with
+      // exponential backoff BUT still incremented `attempts_made`. After 3
+      // lease-full bounces the job hit `max_attempts` and dead-lettered
+      // with message `rate lease "..." full (N/M)` — operators saw a
+      // "dead" job and assumed real failure. The field-report dead-letter
+      // loop is exactly this path.
+      //
+      // Detect `RateLeaseUnavailableError` BEFORE the attempts-exhaustion
+      // gate and route through `queue.releaseLeaseFullJob` which mirrors
+      // `failJob` minus the `attempts_made` increment. Audit row to
+      // `minion_lease_pressure_log` so operators see pressure live in
+      // `gbrain doctor` + `gbrain jobs stats lease_pressure`.
+      const isLeaseFull = err instanceof RateLeaseUnavailableError;
+      if (isLeaseFull) {
+        const leaseErr = err as RateLeaseUnavailableError;
+        // 1-3s jittered backoff. Not the exponential curve — this is "yield
+        // the slot, try again soon", not "give up after a few tries."
+        const leaseBackoffMs = 1000 + Math.floor(Math.random() * 2000);
+        const released = await this.queue.releaseLeaseFullJob(
+          job.id, lockToken, errorText, leaseBackoffMs,
+        );
+        if (!released) {
+          console.warn(`Job ${job.id} lease-full release dropped (lock token mismatch)`);
+          return;
+        }
+        // Audit row write is best-effort — never blocks the bypass path.
+        // Denormalized columns persist past `gbrain jobs prune` so post-NULL
+        // forensic queries still see context (Eng D8 / codex pass-3 #7).
+        await logLeasePressure(this.engine, {
+          job_id: job.id,
+          lease_key: leaseErr.key,
+          active_at_bounce: leaseErr.active,
+          max_concurrent: Number.isFinite(leaseErr.max) ? leaseErr.max : -1,
+          queue_name: job.queue,
+          job_name: job.name,
+          // Best-effort context — populated when we can. The worker doesn't
+          // always know the model at catch time (model is resolved inside
+          // the handler), so leave NULL when unavailable. The doctor check's
+          // aggregate queries handle NULL gracefully.
+          model: null,
+          provider: null,
+          root_owner_id: job.parent_job_id ?? null,
+        });
+        console.log(
+          `Job ${job.id} (${job.name}) lease-full, re-queuing in ${Math.round(leaseBackoffMs)}ms (no attempt burned)`,
+        );
+        return;
       }
 
       const isUnrecoverable = err instanceof UnrecoverableError;

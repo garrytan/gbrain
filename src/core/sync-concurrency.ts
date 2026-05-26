@@ -22,8 +22,29 @@ export const AUTO_CONCURRENCY_FILE_THRESHOLD = 100;
  * auto path; explicit `--workers N` bypasses this. */
 export const PARALLEL_FILE_FLOOR = 50;
 
-/** Default worker count when auto-concurrency fires. */
+/** Default per-file worker count inside a single source's import phase. */
 export const DEFAULT_PARALLEL_WORKERS = 4;
+
+/**
+ * v0.40.3.0 — default number of sources synced concurrently under
+ * `gbrain sync --all`. Sibling of `DEFAULT_PARALLEL_WORKERS`; the two
+ * are deliberately separate constants because they cover different axes:
+ *
+ *   total live Postgres connections per fan-out wave
+ *     ≈  DEFAULT_PARALLEL_SOURCES  ×  DEFAULT_PARALLEL_WORKERS  ×  2
+ *           (per-source fan-out)    (per-file workers)        (per-worker pool)
+ *
+ * Default `4 × 4 × 2 = 32` connections per wave + parent pool. Tuned for
+ * a Postgres+pgbouncer setup sized at 40-50 connections. Operators on
+ * smaller pools should lower either knob; sync.ts emits a stderr warning
+ * when the product exceeds 16 so the operator can size pgbouncer / Postgres
+ * `max_connections` accordingly.
+ *
+ * Conflating these two as one constant was a v0.40.2 footgun that Codex
+ * flagged during the v0.40.3.0 plan review. Keeping them separate makes
+ * the multiplication visible to future contributors.
+ */
+export const DEFAULT_PARALLEL_SOURCES = 4;
 
 /**
  * Resolve effective worker count for a sync/import operation.

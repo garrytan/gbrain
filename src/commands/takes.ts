@@ -115,7 +115,7 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
   }
   const json = flagPresent(args, '--json');
   const holder = flagValue(args, '--who');
-  const kind = flagValue(args, '--kind') as TakeKind | undefined;
+  const kind = flagValue(args, '--kind') as string | undefined;
   const sort = flagValue(args, '--sort') as 'weight' | 'since_date' | 'created_at' | undefined;
   const expired = flagPresent(args, '--expired');
 

@@ -47,6 +47,12 @@ import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
 } from '../core/source-resolver.ts';
+import {
+  loadAllSources,
+  parseSourceConfig,
+  isSourceFederated,
+  type SourceRow as LoadedSourceRow,
+} from '../core/sources-load.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -84,18 +90,10 @@ interface SourceListEntry {
 
 // ── Helpers ─────────────────────────────────────────────────
 
-function parseConfig(config: unknown): Record<string, unknown> {
-  if (typeof config === 'string') {
-    try { return JSON.parse(config) as Record<string, unknown>; } catch { return {}; }
-  }
-  if (typeof config === 'object' && config !== null) return config as Record<string, unknown>;
-  return {};
-}
-
-function isFederated(config: unknown): boolean {
-  const parsed = parseConfig(config);
-  return parsed.federated === true;
-}
+// v0.40 (D7): shared helpers — re-exported as local names for back-compat
+// with existing call sites that import `parseConfig`/`isFederated` by intent.
+const parseConfig = parseSourceConfig;
+const isFederated = isSourceFederated;
 
 async function fetchSource(engine: BrainEngine, id: string): Promise<SourceRow | null> {
   const rows = await engine.executeRaw<SourceRow>(
@@ -184,10 +182,10 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
 async function runList(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
 
-  const rows = await engine.executeRaw<SourceRow>(
-    `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
-       FROM sources ORDER BY (id = 'default') DESC, id`,
-  );
+  // v0.40 (D7): loadAllSources is the single source of truth for source enum.
+  // Pass includeArchived=true to preserve the legacy `runList` behavior of
+  // surfacing archived rows (they get the ⚠ marker below).
+  const rows: LoadedSourceRow[] = await loadAllSources(engine, { includeArchived: true });
 
   const entries: SourceListEntry[] = [];
   for (const r of rows) {
@@ -274,6 +272,70 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
 }
 
 // ── Subcommand: archive (soft-delete) ───────────────────────
+
+// ── Subcommand: set-cr-mode (v0.40.3.0 — D5) ────────────────
+//
+// `gbrain sources set-cr-mode <id> <none|title|per_chunk_synopsis>`
+// writes sources.contextual_retrieval_mode for the per-source override
+// resolver. Empty value / "unset" / "default" clears the column (NULL
+// falls through to the global mode).
+//
+// Loud rejection on:
+//   - missing id
+//   - missing mode
+//   - invalid mode (lists valid options)
+//   - non-existent source id (lists registered sources via paste-ready hint)
+//
+// D5 picked the narrow verb over a generic `sources set <key> <value>`
+// because per-field validation actually matters (CRMode validation must
+// run; future fields may need bespoke prompts). The generic mutator is
+// filed as a v0.41+ TODO when 3+ writable fields exist.
+
+async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> {
+  const { isCRMode, CR_MODES } = await import('../core/types.ts');
+  const id = args[0];
+  const mode = args[1];
+
+  if (!id || !mode) {
+    console.error('Usage: gbrain sources set-cr-mode <id> <none|title|per_chunk_synopsis>');
+    console.error('  Pass "unset" or "default" to clear the override (NULL falls through).');
+    process.exit(2);
+  }
+
+  // Clear path: empty / "unset" / "default" → NULL.
+  const clearing = mode === 'unset' || mode === 'default' || mode === '';
+  if (!clearing && !isCRMode(mode)) {
+    console.error(`Error: invalid CR mode "${mode}".`);
+    console.error(`Valid options: ${CR_MODES.join(' | ')}`);
+    console.error(`  Or pass "unset" / "default" to clear the override.`);
+    process.exit(2);
+  }
+
+  // Loud-rejection on missing source. Closes the idempotent-pebble Failure
+  // Modes "critical gap": pre-v0.40.3.0 there was no surface that wrote to
+  // sources.contextual_retrieval_mode, so the silent-no-op via SQL UPDATE
+  // matching 0 rows was the failure mode the gap warning called out.
+  const exists = await engine.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE id = $1 LIMIT 1`,
+    [id],
+  );
+  if (exists.length === 0) {
+    console.error(`Error: source "${id}" not found.`);
+    console.error(`  Run 'gbrain sources list' to see registered sources.`);
+    process.exit(4);
+  }
+
+  const newValue = clearing ? null : mode;
+  await engine.executeRaw(
+    `UPDATE sources SET contextual_retrieval_mode = $1 WHERE id = $2`,
+    [newValue, id],
+  );
+  if (clearing) {
+    console.log(`Cleared contextual_retrieval_mode for source "${id}" (NULL falls through to global mode).`);
+  } else {
+    console.log(`Set source "${id}" contextual_retrieval_mode = ${mode}.`);
+  }
+}
 
 async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
@@ -483,6 +545,290 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
     [JSON.stringify(config), id],
   );
   console.log(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
+
+  // v0.40 D19: auto-submit embed-backfill when coverage < 100%. Federation
+  // flip is a moment when the user explicitly opted into seeing this source
+  // in default search; un-embedded chunks would hide content from the very
+  // moment they wanted visibility. Best-effort — submission failure does NOT
+  // fail the flip.
+  try {
+    const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
+    if (!(await isFederatedV2Enabled(engine))) return;
+
+    const { loadAllSources } = await import('../core/sources-load.ts');
+    const { computeAllSourceMetrics } = await import('../core/source-health.ts');
+    const sources = await loadAllSources(engine, { includeArchived: false });
+    const metrics = await computeAllSourceMetrics(engine, sources);
+    const m = metrics.find((x) => x.source_id === id);
+    if (!m || m.total_chunks === 0 || m.embed_coverage_pct >= 100) return;
+
+    const { submitEmbedBackfill } = await import('../core/embed-backfill-submit.ts');
+    const sub = await submitEmbedBackfill(engine, id, { reason: 'federation_flip' });
+    if (sub.status === 'submitted') {
+      const missing = m.total_chunks - m.embedded_chunks;
+      console.log(`  → embed-backfill job ${sub.jobId} queued for missing ${missing} chunks.`);
+    } else if (sub.status === 'cooldown') {
+      console.log(`  → embed-backfill skipped (cooldown). Manually trigger with: gbrain jobs submit embed-backfill --params '{"sourceId":"${id}"}'`);
+    } else if (sub.status === 'spend_capped') {
+      console.log(`  → embed-backfill skipped (24h spend cap $${sub.spendCapUsd} reached for this source).`);
+    }
+  } catch (err) {
+    // Federation flip already succeeded; embed-backfill is a follow-up nicety.
+    console.error(`  → embed-backfill submission failed (flip succeeded): ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+// ── v0.40 sources status (D12) ──────────────────────────────
+async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = args.includes('--json');
+  const { loadAllSources } = await import('../core/sources-load.ts');
+  const { computeAllSourceMetrics } = await import('../core/source-health.ts');
+  const sources = await loadAllSources(engine, { includeArchived: false });
+  if (sources.length === 0) {
+    if (json) {
+      console.log(JSON.stringify({ schema_version: 1, sources: [] }, null, 2));
+    } else {
+      console.log('No sources registered. Use `gbrain sources add <id> --path <path>` first.');
+    }
+    return;
+  }
+  const metrics = await computeAllSourceMetrics(engine, sources);
+
+  if (json) {
+    console.log(JSON.stringify({ schema_version: 1, sources: metrics }, null, 2));
+    return;
+  }
+
+  // Human-readable table: SOURCE | LAG | EMBED | FAILS | QUEUE | PAGES | LAST SYNC
+  console.log('SOURCES — health');
+  console.log('────────────────');
+  console.log(
+    `  ${'SOURCE'.padEnd(20)}  ${'LAG'.padEnd(8)}  ${'EMBED'.padEnd(7)}  ${'FAILS'.padEnd(6)}  ${'QUEUE'.padEnd(6)}  ${'PAGES'.padStart(8)}  LAST SYNC`,
+  );
+  for (const m of metrics) {
+    const lag = m.lag_seconds === null
+      ? 'never'
+      : formatLag(m.lag_seconds);
+    const embed = `${m.embed_coverage_pct.toFixed(0)}%`;
+    const fails = String(m.failed_jobs_24h);
+    const queue = String(m.queue_depth);
+    const pages = m.total_pages.toLocaleString();
+    const sync = m.last_sync_at ? new Date(m.last_sync_at).toISOString().slice(0, 19).replace('T', ' ') : 'never';
+    console.log(`  ${m.source_id.padEnd(20)}  ${lag.padEnd(8)}  ${embed.padEnd(7)}  ${fails.padEnd(6)}  ${queue.padEnd(6)}  ${pages.padStart(8)}  ${sync}`);
+  }
+  console.log('');
+  for (const m of metrics) {
+    const warns: string[] = [];
+    if (!m.local_path) warns.push('no local_path');
+    if (m.lag_seconds === null) warns.push(`never synced — run \`gbrain sync --source ${m.source_id}\``);
+    if (m.embed_coverage_pct < 95 && m.total_chunks > 100) {
+      warns.push(`${(100 - m.embed_coverage_pct).toFixed(1)}% un-embedded — run \`gbrain embed --stale --source ${m.source_id}\``);
+    }
+    if (m.failed_jobs_24h >= 3) {
+      warns.push(`${m.failed_jobs_24h} failures in 24h — check \`gbrain jobs list --status failed\``);
+    }
+    if (warns.length > 0) {
+      console.log(`  ⚠ ${m.source_id}: ${warns.join('; ')}`);
+    }
+  }
+}
+
+function formatLag(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+// ── v0.40 sources webhook (D8) ──────────────────────────────
+async function runWebhook(engine: BrainEngine, args: string[]): Promise<void> {
+  const sub = args[0];
+  const rest = args.slice(1);
+  switch (sub) {
+    case 'set':    return runWebhookSet(engine, rest);
+    case 'show':   return runWebhookShow(engine, rest);
+    case 'rotate': return runWebhookRotate(engine, rest);
+    case 'clear':  return runWebhookClear(engine, rest);
+    case undefined:
+    case '--help':
+    case '-h':
+      console.log(`Usage: gbrain sources webhook <subcommand> <source-id> [options]
+
+Subcommands:
+  set <id>    [--secret VAL] [--github-repo owner/name]   One-time reveal
+  show <id>                                                Metadata only
+  rotate <id>                                              New secret, reveal
+  clear <id>                                               Remove webhook config`);
+      return;
+    default:
+      console.error(`Unknown webhook subcommand: ${sub}`);
+      process.exit(2);
+  }
+}
+
+async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  if (!id) {
+    console.error('Usage: gbrain sources webhook set <id> [--secret VAL] [--github-repo owner/name]');
+    process.exit(2);
+  }
+  const src = await fetchSource(engine, id);
+  if (!src) {
+    console.error(`Source "${id}" not found.`);
+    process.exit(1);
+  }
+  const explicitSecret = args.find((a, i) => args[i - 1] === '--secret');
+  const githubRepo = args.find((a, i) => args[i - 1] === '--github-repo');
+  if (!githubRepo) {
+    console.error('--github-repo owner/name is required (e.g. "Garry-s-List/zion-brain")');
+    process.exit(2);
+  }
+  if (!/^[\w.-]+\/[\w.-]+$/.test(githubRepo)) {
+    console.error(`Invalid --github-repo format: "${githubRepo}". Expected "owner/name".`);
+    process.exit(2);
+  }
+
+  const { randomBytes } = await import('node:crypto');
+  const secret = explicitSecret ?? randomBytes(32).toString('hex');
+  const cfg = parseConfig(src.config);
+  cfg.webhook_secret = secret;
+  cfg.github_repo = githubRepo;
+  await engine.executeRaw(
+    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    [JSON.stringify(cfg), id],
+  );
+
+  console.log(`Webhook configured for source "${id}":`);
+  console.log(`  github_repo:    ${githubRepo}`);
+  console.log(`  webhook_secret: ${secret}`);
+  console.log('');
+  console.log('--- Paste this into GitHub repo settings → Webhooks → Add webhook ---');
+  console.log('  Payload URL:  <your gbrain serve --http URL>/webhooks/github');
+  console.log('  Content type: application/json');
+  console.log(`  Secret:       ${secret}`);
+  console.log('  Events:       Just the push event');
+  console.log('  Active:       checked');
+  console.log('');
+  console.log('⚠ This secret is shown ONCE. Save it now; subsequent `gbrain sources webhook show` will NOT display it.');
+}
+
+async function runWebhookShow(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  if (!id) {
+    console.error('Usage: gbrain sources webhook show <id>');
+    process.exit(2);
+  }
+  const src = await fetchSource(engine, id);
+  if (!src) {
+    console.error(`Source "${id}" not found.`);
+    process.exit(1);
+  }
+  const cfg = parseConfig(src.config);
+  const githubRepo = typeof cfg.github_repo === 'string' ? cfg.github_repo : '(not set)';
+  const secretSet = typeof cfg.webhook_secret === 'string' && cfg.webhook_secret.length > 0;
+  const trackedBranch = typeof cfg.tracked_branch === 'string' ? cfg.tracked_branch : '(auto-detected on next sync, default main)';
+
+  console.log(`Webhook configuration for source "${id}":`);
+  console.log(`  github_repo:    ${githubRepo}`);
+  console.log(`  webhook_secret: ${secretSet ? '<set — use `webhook rotate` to reveal a new one>' : '(not set)'}`);
+  console.log(`  tracked_branch: ${trackedBranch}`);
+}
+
+async function runWebhookRotate(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  if (!id) {
+    console.error('Usage: gbrain sources webhook rotate <id>');
+    process.exit(2);
+  }
+  const src = await fetchSource(engine, id);
+  if (!src) {
+    console.error(`Source "${id}" not found.`);
+    process.exit(1);
+  }
+  const { randomBytes } = await import('node:crypto');
+  const secret = randomBytes(32).toString('hex');
+  const cfg = parseConfig(src.config);
+  cfg.webhook_secret = secret;
+  await engine.executeRaw(
+    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    [JSON.stringify(cfg), id],
+  );
+  console.log(`New webhook secret for source "${id}":`);
+  console.log(`  ${secret}`);
+  console.log('');
+  console.log('⚠ Update the GitHub webhook config to use this new secret. The old one is invalidated immediately.');
+}
+
+async function runWebhookClear(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  if (!id) {
+    console.error('Usage: gbrain sources webhook clear <id>');
+    process.exit(2);
+  }
+  const src = await fetchSource(engine, id);
+  if (!src) {
+    console.error(`Source "${id}" not found.`);
+    process.exit(1);
+  }
+  const cfg = parseConfig(src.config);
+  delete cfg.webhook_secret;
+  delete cfg.github_repo;
+  await engine.executeRaw(
+    `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+    [JSON.stringify(cfg), id],
+  );
+  console.log(`Webhook configuration cleared for source "${id}".`);
+}
+
+// ── v0.40 sources tracked-branch (D20) ──────────────────────
+async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  if (!id) {
+    console.error('Usage: gbrain sources tracked-branch <id> [--set <branch>] [--detect]');
+    process.exit(2);
+  }
+  const src = await fetchSource(engine, id);
+  if (!src) {
+    console.error(`Source "${id}" not found.`);
+    process.exit(1);
+  }
+  const setArg = args.find((a, i) => args[i - 1] === '--set');
+  const detect = args.includes('--detect');
+  const cfg = parseConfig(src.config);
+
+  if (setArg) {
+    cfg.tracked_branch = setArg;
+    await engine.executeRaw(
+      `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(cfg), id],
+    );
+    console.log(`Tracked branch for source "${id}" set to "${setArg}".`);
+    return;
+  }
+  if (detect) {
+    if (!src.local_path) {
+      console.error(`Source "${id}" has no local_path; cannot auto-detect branch.`);
+      process.exit(1);
+    }
+    try {
+      const { execFileSync } = await import('node:child_process');
+      const branch = execFileSync('git', ['-C', src.local_path, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
+      cfg.tracked_branch = branch;
+      await engine.executeRaw(
+        `UPDATE sources SET config = $1::jsonb WHERE id = $2`,
+        [JSON.stringify(cfg), id],
+      );
+      console.log(`Detected branch "${branch}" for source "${id}"; persisted to config.tracked_branch.`);
+    } catch (e) {
+      console.error(`git rev-parse failed: ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Read mode: just print
+  const tracked = typeof cfg.tracked_branch === 'string' ? cfg.tracked_branch : '(unset — defaults to main)';
+  console.log(`Source "${id}" tracked_branch: ${tracked}`);
 }
 
 // ── `sources current` (v0.37.7.0) ──────────────────────────
@@ -530,7 +876,225 @@ async function runCurrent(engine: BrainEngine, args: string[]): Promise<void> {
   console.log(`  tier: ${result.tier}${result.detail ? ` (${result.detail})` : ''}`);
 }
 
+/**
+ * v0.41 — `gbrain sources audit <id>` dry-run scan.
+ *
+ * Walks the source's `local_path` on disk, runs `assessContentSanity`
+ * per `.md` file, and reports:
+ *   - file count + size distribution (p50 / p99 / max)
+ *   - would-hard-blocks (junk-pattern matches; new ingests would refuse)
+ *   - would-soft-blocks (oversize-only; new ingests would set embed_skip)
+ *   - junk-pattern hit counts grouped by pattern name
+ *
+ * Read-only: NO DB writes, NO file mutations. Intended for operators to
+ * inspect a source repo BEFORE syncing (catches junk early) or AFTER
+ * the new gate ships (audit existing inventory against the new rules
+ * without touching state).
+ *
+ * Uses `pruneDir` from sync.ts so node_modules / .git / .obsidian are
+ * skipped at descent — same walker semantics as the actual sync path.
+ */
+async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
+  const sourceId = args.find((a) => !a.startsWith('--'));
+  const json = args.includes('--json');
+  const includeWarns = args.includes('--include-warns');
+
+  if (!sourceId) {
+    console.error('Usage: gbrain sources audit <source-id> [--json] [--include-warns]');
+    process.exit(2);
+  }
+
+  const { fetchSource } = await import('../core/sources-load.ts');
+  const src = await fetchSource(engine, sourceId);
+  if (!src) {
+    console.error(`Source not found: ${sourceId} (run \`gbrain sources list\` to see registered sources)`);
+    process.exit(1);
+  }
+  if (!src.local_path) {
+    console.error(`Source ${sourceId} has no local_path — cannot audit on disk`);
+    process.exit(1);
+  }
+
+  // Lazy-load FS + walker bits so the command stays import-cheap when
+  // not invoked (every subcommand pays the import cost on dispatch).
+  const { readFileSync, readdirSync, lstatSync, existsSync: _exists } =
+    await import('fs');
+  const { join: pathJoin } = await import('path');
+  const { pruneDir } = await import('../core/sync.ts');
+  const { assessContentSanity } = await import('../core/content-sanity.ts');
+  const { loadOperatorLiterals } = await import('../core/content-sanity-literals.ts');
+  const { parseMarkdown } = await import('../core/markdown.ts');
+
+  if (!_exists(src.local_path)) {
+    console.error(`local_path does not exist on disk: ${src.local_path}`);
+    process.exit(1);
+  }
+
+  // Walk recursively. Mirror gbrain sync's descent rules so the file set
+  // we audit matches the file set that would actually be ingested.
+  const files: string[] = [];
+  function walk(dir: string): void {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return; // permission denied; skip silently
+    }
+    for (const entry of entries) {
+      const full = pathJoin(dir, entry);
+      let stat;
+      try {
+        stat = lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        if (pruneDir(entry, dir)) continue;
+        walk(full);
+      } else if (entry.endsWith('.md')) {
+        files.push(full);
+      }
+    }
+  }
+  walk(src.local_path);
+
+  const literals = loadOperatorLiterals();
+  const sizes: number[] = [];
+  const wouldHardBlock: Array<{ file: string; matched: string[]; bytes: number }> = [];
+  const wouldSoftBlock: Array<{ file: string; bytes: number }> = [];
+  const wouldWarn: Array<{ file: string; bytes: number }> = [];
+  const patternHits: Record<string, number> = {};
+  // v0.41.11.0 — facts-backfill estimator (E4). Walks the same files
+  // already loaded for sanity scanning; counts eligible pages by
+  // frontmatter.type and estimates per-page segment count from body
+  // bytes. Estimated per-segment Sonnet cost is a rough heuristic
+  // (~2000 in + 500 out tokens at $3/MTok in + $15/MTok out ≈ $0.013).
+  const FACTS_BACKFILL_ALLOWED = ['conversation', 'meeting', 'slack', 'email'];
+  const FACTS_BACKFILL_CHARS_PER_SEGMENT = 6500; // matches SEGMENT_TEXT_CHAR_LIMIT
+  const FACTS_BACKFILL_USD_PER_SEGMENT = 0.013;
+  let factsBackfillPages = 0;
+  let factsBackfillSegments = 0;
+
+  for (const file of files) {
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf-8');
+    } catch {
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = parseMarkdown(content, file);
+    } catch {
+      continue; // malformed page; not our concern in audit
+    }
+    const sanity = assessContentSanity({
+      compiled_truth: parsed.compiled_truth,
+      timeline: parsed.timeline ?? '',
+      title: parsed.title,
+      extra_literals: literals,
+    });
+    sizes.push(sanity.bytes);
+    if (sanity.shouldHardBlock) {
+      const matched = [...sanity.junk_pattern_matches, ...sanity.literal_substring_matches];
+      for (const name of matched) {
+        patternHits[name] = (patternHits[name] ?? 0) + 1;
+      }
+      wouldHardBlock.push({ file, matched, bytes: sanity.bytes });
+    } else if (sanity.shouldSkipEmbed) {
+      wouldSoftBlock.push({ file, bytes: sanity.bytes });
+    } else if (sanity.reasons.includes('oversize_warn')) {
+      wouldWarn.push({ file, bytes: sanity.bytes });
+    }
+    // Facts-backfill estimator: counts pages matching allowed types.
+    const fmType = (parsed.frontmatter?.type as string | undefined) ?? null;
+    if (fmType && FACTS_BACKFILL_ALLOWED.includes(fmType)) {
+      factsBackfillPages++;
+      const totalBytes = sanity.bytes;
+      const segmentsEstimate = Math.max(
+        1,
+        Math.ceil(totalBytes / FACTS_BACKFILL_CHARS_PER_SEGMENT),
+      );
+      factsBackfillSegments += segmentsEstimate;
+    }
+  }
+
+  const factsBackfillEstimate = {
+    pages: factsBackfillPages,
+    est_segments: factsBackfillSegments,
+    est_cost_usd: Number((factsBackfillSegments * FACTS_BACKFILL_USD_PER_SEGMENT).toFixed(2)),
+    types: FACTS_BACKFILL_ALLOWED,
+  };
+
+  // Size distribution stats.
+  sizes.sort((a, b) => a - b);
+  const p = (q: number) =>
+    sizes.length === 0 ? 0 : sizes[Math.min(sizes.length - 1, Math.floor(q * sizes.length))];
+
+  if (json) {
+    console.log(JSON.stringify({
+      schema_version: 1,
+      source_id: sourceId,
+      local_path: src.local_path,
+      total_files: files.length,
+      distribution: { p50: p(0.5), p99: p(0.99), max: sizes[sizes.length - 1] ?? 0 },
+      hard_block_count: wouldHardBlock.length,
+      soft_block_count: wouldSoftBlock.length,
+      warn_count: wouldWarn.length,
+      pattern_hits: patternHits,
+      facts_backfill_estimate: factsBackfillEstimate,
+      hard_blocks: wouldHardBlock.slice(0, 20),
+      soft_blocks: wouldSoftBlock.slice(0, 20),
+      ...(includeWarns ? { warns: wouldWarn.slice(0, 20) } : {}),
+    }, null, 2));
+    return;
+  }
+
+  console.log(`Source: ${sourceId} (${src.local_path})`);
+  console.log(`Files scanned: ${files.length} markdown files`);
+  if (sizes.length > 0) {
+    console.log(`Size distribution: p50=${p(0.5)} bytes, p99=${p(0.99)} bytes, max=${sizes[sizes.length - 1]} bytes`);
+  }
+  console.log(`Would-hard-block: ${wouldHardBlock.length}`);
+  console.log(`Would-soft-block: ${wouldSoftBlock.length}`);
+  if (includeWarns) {
+    console.log(`Would-warn: ${wouldWarn.length}`);
+  }
+  if (Object.keys(patternHits).length > 0) {
+    const sorted = Object.entries(patternHits).sort((a, b) => b[1] - a[1]);
+    console.log(`Junk-pattern hits: ${sorted.map(([n, c]) => `${n} ×${c}`).join(', ')}`);
+  }
+  if (factsBackfillEstimate.pages > 0) {
+    console.log(
+      `Facts backfill estimate: ${factsBackfillEstimate.pages} eligible page(s), ` +
+      `~${factsBackfillEstimate.est_segments} segments, ~$${factsBackfillEstimate.est_cost_usd}. ` +
+      `Run: gbrain extract-conversation-facts --source-id ${sourceId} --max-cost-usd ${Math.max(factsBackfillEstimate.est_cost_usd, 1)}`,
+    );
+  }
+  if (wouldHardBlock.length > 0) {
+    console.log('\nTop hard-blocks:');
+    for (const h of wouldHardBlock.slice(0, 10)) {
+      console.log(`  ${h.file} [${h.matched.join(', ')}] (${h.bytes}b)`);
+    }
+  }
+  if (wouldSoftBlock.length > 0) {
+    console.log('\nTop soft-blocks (would write but skip embedding):');
+    for (const s of wouldSoftBlock.slice(0, 10)) {
+      console.log(`  ${s.file} (${s.bytes}b)`);
+    }
+  }
+}
+
 // ── Dispatcher ──────────────────────────────────────────────
+
+// v0.40.6.0: my duplicate `runStatus` (line ~895 pre-resolution) was
+// removed during the v0.40.5 merge. Master's source-health.ts-backed
+// runStatus at line ~582 is a strict superset (adds lag / embed coverage
+// / failed-job count / queue depth columns). The `buildSyncStatusReport`
+// + `printSyncStatusReport` exports from src/commands/sync.ts remain
+// available as a library API for callers who want the v0.40.6.0-specific
+// shape (used by test/e2e/sync-status-pglite.test.ts as the IRON RULE
+// regression).
 
 export async function runSources(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
@@ -551,6 +1115,18 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'purge':      return runPurge(engine, rest);
     case 'archived':   return runListArchived(engine, rest);
     case 'current':    return runCurrent(engine, rest);
+    // v0.40.5.0 Federated Sync v2 (master) + v0.40.6.0 status dashboard
+    // The status function lives at the line-582 declaration (master's
+    // source-health.ts-backed version). My duplicate runStatus (line ~895
+    // in the post-merge file, the buildSyncStatusReport-backed one) is
+    // removed below since master's federation_health metrics dashboard is
+    // a superset.
+    case 'status':     return runStatus(engine, rest);
+    case 'webhook':    return runWebhook(engine, rest);
+    case 'tracked-branch': return runTrackedBranch(engine, rest);
+    // v0.40.3.0 contextual retrieval (from master)
+    case 'set-cr-mode': return runSetCrMode(engine, rest);
+    case 'audit':      return runAudit(engine, rest);
     case undefined:
     case '--help':
     case '-h':
@@ -576,6 +1152,11 @@ Subcommands:
                                     when the source has data (pages/chunks/embeddings).
   archive <id>                      Soft-delete: hide from search, preserve data for ${SOFT_DELETE_TTL_HOURS}h.
   restore <id> [--no-federate]      Un-archive a soft-deleted source.
+  status [--json]                   v0.40.3.0 — read-only per-source dashboard:
+                                    last sync, staleness, page count,
+                                    embedding coverage, unacked failures.
+                                    --json emits {schema_version:1, ...} on
+                                    stdout for monitoring pipelines.
   archived [--json]                 List soft-deleted sources and their expiry.
   purge [<id>] [--confirm-destructive]
                                     Permanently delete archived sources.
@@ -592,6 +1173,11 @@ Subcommands:
                                     targeting the brain you think you are.
   federate <id>                     Make source appear in cross-source default search.
   unfederate <id>                   Isolate source from default search.
+  set-cr-mode <id> <none|title|per_chunk_synopsis>
+                                    Per-source contextual retrieval mode
+                                    override (v0.40.3.0). Pass "unset" or
+                                    "default" to clear (NULL falls through
+                                    to the global search.mode bundle).
 
 Source id: [a-z0-9-]{1,32}. Immutable citation key.
 

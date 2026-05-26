@@ -1231,6 +1231,14 @@ describeE2E('E2E: Doctor Command', () => {
     // migration entries from in-flight workspaces — and surfaces them as the
     // 'minions_migration' [FAIL] check, exiting with code 1.
     gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-doctor-e2e-'));
+    // Cross-file isolation: prior E2E files can leave non-default `sources`
+    // rows (e.g. 'delta' from autopilot/sources tests). Doctor's
+    // sync_freshness + cycle_freshness checks then FAIL on those orphans,
+    // exit 1, breaking 'doctor exits 0 on healthy DB'. setupDB TRUNCATEs
+    // sources but schema.sql re-seeds 'default' via initSchema; clean any
+    // other rows so the doctor sees a clean single-source brain.
+    const conn = getConn();
+    await conn`DELETE FROM sources WHERE id != 'default'`;
   }, 30_000);
   afterAll(async () => {
     await teardownDB();
@@ -1246,9 +1254,15 @@ describeE2E('E2E: Doctor Command', () => {
   });
 
   test('gbrain doctor exits 0 on healthy DB', () => {
-    // Init first so config exists for CLI
+    // Init first so config exists for CLI. Pin --embedding-model explicitly
+    // so the spawned doctor doesn't pick a different default (e.g. ZE-1280d
+    // when ZEROENTROPY_API_KEY is in env) that mismatches the 1536d schema
+    // setupDB initialized, producing a WARN-status embedding_width_consistency
+    // check and exit 1. Mirrors the same pattern in 'Setup Journey'.
     Bun.spawnSync({
-      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
+      cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive',
+            '--url', process.env.DATABASE_URL!,
+            '--embedding-model', 'openai:text-embedding-3-large'],
       cwd: cliCwd, env: cliEnv(), timeout: 15_000,
     });
     const result = Bun.spawnSync({

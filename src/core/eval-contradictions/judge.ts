@@ -71,39 +71,12 @@ export function parseJudgeJSON(text: string): unknown {
 /** Default per-pair text budget (UTF-8-safe truncation). C4 default. */
 export const DEFAULT_MAX_PAIR_CHARS = 1500;
 
-/**
- * UTF-8-safe truncation: cap at maxChars but never split a multi-byte
- * character. Returns the text unchanged if already under the limit.
- *
- * Pattern reused from src/core/minions/handlers/subagent-audit.ts which
- * faces the same multi-byte concern.
- */
-export function truncateUtf8(text: string, maxChars: number): string {
-  if (!text) return '';
-  if (text.length <= maxChars) return text;
-  // Walk back from maxChars to land at a complete code-point boundary.
-  // UTF-16 surrogate pairs occupy two code units; if maxChars lands inside
-  // one, drop both halves so we don't keep half an emoji.
-  let end = maxChars;
-  if (end > 0 && end < text.length) {
-    const unitAtEnd = text.charCodeAt(end);
-    const unitBefore = text.charCodeAt(end - 1);
-    const isHighSurrogate = (c: number) => c >= 0xd800 && c <= 0xdbff;
-    const isLowSurrogate = (c: number) => c >= 0xdc00 && c <= 0xdfff;
-    // Case 1: about to split between high(end-1) and low(end) — drop both.
-    if (isHighSurrogate(unitBefore) && isLowSurrogate(unitAtEnd)) {
-      end -= 1;
-    } else if (isHighSurrogate(unitBefore)) {
-      // Stray high surrogate at end — drop it.
-      end -= 1;
-    } else if (isLowSurrogate(unitBefore)) {
-      // We're inside an emoji and end-1 is the low surrogate; back up to
-      // BEFORE the high surrogate (drop both halves).
-      end -= 2;
-    }
-  }
-  return text.slice(0, Math.max(0, end));
-}
+// v0.42.0.0: truncateUtf8 lives in src/core/text-safe.ts (shared with the
+// dream-cycle chunker's safeSplitIndex). Imported here for the local
+// `buildJudgePrompt` use AND re-exported for back-compat with anything
+// importing it from this module.
+import { truncateUtf8 } from '../text-safe.ts';
+export { truncateUtf8 };
 
 export interface JudgeInput {
   /** The user's query for the search that retrieved both members. */

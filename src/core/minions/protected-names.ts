@@ -31,6 +31,12 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   'synthesize',
   'patterns',
   'consolidate',
+  // v0.40.3.0 — per-chunk Haiku contextual retrieval backfill. Each job
+  // potentially calls Haiku 1-50 times per page; an MCP/OAuth-scoped
+  // caller submitting this in bulk could drain the user's Anthropic
+  // budget. Only trusted local callers (the mode-switch hook in
+  // commands/config.ts, reindex sweep, doctor --remediate) can submit.
+  'contextual_reindex_per_chunk',
 ]);
 
 /** Check a job name against the protected set. Normalizes whitespace first. */
