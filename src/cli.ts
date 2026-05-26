@@ -35,7 +35,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'microsoft-drives']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -47,6 +47,7 @@ const CLI_ONLY_SELF_HELP = new Set([
   'frontmatter', 'check-resolvable',
   'models',
   'cache',
+  'microsoft-drives',
   'brainstorm', 'lsd',
   // v0.39.3.0 WARN-5: capture's detailed HELP constant
   // (src/commands/capture.ts:90+) was unreachable because the dispatcher's
@@ -746,7 +747,7 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   // edit local .md files). v0.31.1 refuses both at the top level with a
   // hint pointing at the routable MCP tools; per-subcommand splits are
   // a v0.31.x follow-up TODO.
-  'takes', 'sources',
+  'takes', 'sources', 'microsoft-drives',
   // v0.32 thin-client routing audit (Codex round 2 findings #2, #4):
   // - `pages` purge-deleted is admin+localOnly (operations.ts:856-864)
   // - `files` list / file_url MCP ops are localOnly (operations.ts:1769-1879)
@@ -782,6 +783,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   storage: 'storage operates on the local repo on disk. Run on the host.',
   takes: 'takes mutate subcommands edit local .md files; routing the read subcommands lands in v0.31.x. For now: use `takes_list` and `takes_search` MCP tools from your agent, or run on the host.',
   sources: 'sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.',
+  'microsoft-drives': 'microsoft-drives imports external OneDrive/SharePoint files into the host DB. Run it on the host machine.',
   // v0.32 audit additions
   pages: '`pages purge-deleted` is admin+localOnly (hard-deletes from the local DB). Run on the host.',
   files: '`files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `gbrain files` on the host machine.',
@@ -933,6 +935,11 @@ async function handleCliOnly(command: string, args: string[]) {
     // own engine connection.
     const { runCache } = await import('./commands/cache.ts');
     await runCache(args);
+    return;
+  }
+  if (command === 'microsoft-drives' && (args.length === 0 || hasHelpFlag(args))) {
+    const { printMicrosoftDrivesHelp } = await import('./commands/microsoft-drives.ts');
+    printMicrosoftDrivesHelp();
     return;
   }
   if (command === 'routing-eval') {
@@ -1306,6 +1313,11 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'sync': {
         const { runSync } = await import('./commands/sync.ts');
         await runSync(engine, args);
+        break;
+      }
+      case 'microsoft-drives': {
+        const { runMicrosoftDrives } = await import('./commands/microsoft-drives.ts');
+        await runMicrosoftDrives(engine, args);
         break;
       }
       case 'extract': {
@@ -1884,6 +1896,10 @@ BRAIN (capture / ideate / explore — v0.37/v0.38)
 SOURCES (multi-repo / multi-brain)
   sources list                       Show registered sources
   sources add <id> --path <p>        Register a source (id = short name, e.g. 'wiki')
+  microsoft-drives add-onedrive <id> Register OneDrive as a source
+  microsoft-drives add-sharepoint <id>
+                                     Register SharePoint library as a source
+  microsoft-drives sync <id>         Delta-sync OneDrive/SharePoint files
   sources remove <id>                Remove a source + its pages
   sync --all                         Sync all sources with a local_path
   sync --source <id>                 Sync one specific source

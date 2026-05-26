@@ -43,6 +43,7 @@ These require manual setup (no self-installing recipe yet):
 | Guide | What It Does |
 |-------|-------------|
 | [Credential Gateway](credential-gateway.md) | Set up ClawVisor or Hermes for Gmail, Calendar, Contacts access |
+| [Microsoft Graph Drives](microsoft-graph-drives.md) | OneDrive and SharePoint document libraries as source-scoped GBrain inputs |
 | [Meeting & Call Webhooks](meeting-webhooks.md) | Circleback meeting transcripts + Quo/OpenPhone SMS/calls |
 
 ## How to Read a Recipe
