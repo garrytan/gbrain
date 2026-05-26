@@ -151,6 +151,8 @@ async function runTest(args: string[]): Promise<void> {
     process.exit(1);
   }
 
+  let cfg: ReturnType<typeof loadConfig> | undefined;
+
   // If --model passed, override gateway for this test (touchpoint-aware).
   if (modelArg) {
     const [providerId, ...modelParts] = modelArg.split(':');
@@ -164,7 +166,7 @@ async function runTest(args: string[]): Promise<void> {
     // doesn't repeat the bug-reporter's "providers test ✓ but import still
     // broken" trap.
     try {
-      const cfg = loadConfig();
+      cfg = loadConfig();
       const configuredModel = tpArg === 'embedding' ? cfg?.embedding_model : cfg?.chat_model;
       if (!configuredModel) {
         console.error(
@@ -185,11 +187,13 @@ async function runTest(args: string[]): Promise<void> {
       configureGateway({
         embedding_model: modelArg,
         embedding_dimensions: dims,
+        base_urls: cfg?.provider_base_urls,
         env: { ...process.env },
       });
     } else {
       configureGateway({
         chat_model: modelArg,
+        base_urls: cfg?.provider_base_urls,
         env: { ...process.env },
       });
     }
