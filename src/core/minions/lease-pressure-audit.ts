@@ -2,7 +2,7 @@
  * v0.41 Bug 2 + Eng D3+D8 — lease-pressure audit writer.
  *
  * Writes one row per `RateLeaseUnavailableError` bounce to the
- * `minion_lease_pressure_log` table (migration v93). The doctor check
+ * `minion_lease_pressure_log` table (migration v94). The doctor check
  * `subagent_health` and `gbrain jobs stats lease_pressure` read this
  * table to surface pressure to operators.
  *

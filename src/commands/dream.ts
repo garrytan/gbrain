@@ -31,6 +31,7 @@ import {
   type CycleReport,
 } from '../core/cycle.ts';
 import { existsSync } from 'fs';
+import { resolve } from 'node:path';
 
 interface DreamArgs {
   json: boolean;
@@ -144,13 +145,15 @@ async function resolveBrainDir(
       console.error(`--dir path does not exist: ${explicit}`);
       process.exit(1);
     }
-    return explicit;
+    // Resolve to absolute so downstream writeFileSync(join(brainDir, slug))
+    // can't silently land at cwd when explicit is `.` / `./brain` / etc.
+    return resolve(explicit);
   }
 
   if (engine) {
     const configured = await engine.getConfig('sync.repo_path');
     if (configured && existsSync(configured)) {
-      return configured;
+      return resolve(configured);
     }
   }
 

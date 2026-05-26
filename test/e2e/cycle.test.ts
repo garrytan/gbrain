@@ -107,7 +107,7 @@ describeE2E('E2E: runCycle against real Postgres', () => {
     //   v0.33.3   = 13 (added `resolve_symbol_edges` between extract_facts and patterns)
     //   v0.36.1.0 = 16 (added propose_takes + grade_takes + calibration_profile — hindsight calibration wave)
     //   v0.39.0.0 = 17 (added `schema-suggest` between orphans and purge — T12 schema cathedral)
-    expect(report.phases.length).toBe(17);
+    expect(report.phases.length).toBe(19); // v0.41: +extract_atoms, +synthesize_concepts
 
     // Nothing got written.
     const afterPages = await conn.unsafe(`SELECT count(*)::int AS n FROM pages`);

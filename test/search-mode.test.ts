@@ -233,6 +233,64 @@ describe('resolveSearchMode resolution chain', () => {
   });
 });
 
+describe('v0.40.6.1 — reranker_timeout_ms threads recipe default through resolution', () => {
+  // The dead-default-timeout-ms class of bugs: hybridSearch always passes
+  // resolvedMode.reranker_timeout_ms to gateway.rerank(). Pre-v0.40.6.1 the
+  // mode bundle's 5000ms hardcoded value always won, so recipe-level
+  // default_timeout_ms was dead. These tests pin the new precedence chain:
+  //   per-call > config override > recipe touchpoint default > bundle.
+
+  test('llama-server-reranker resolves to 30000ms recipe default (no override)', () => {
+    const r = resolveSearchMode({
+      mode: 'balanced',
+      overrides: { reranker_model: 'llama-server-reranker:qwen3-reranker-4b' },
+    });
+    expect(r.reranker_model).toBe('llama-server-reranker:qwen3-reranker-4b');
+    expect(r.reranker_timeout_ms).toBe(30_000);
+  });
+
+  test('config override beats recipe default', () => {
+    const r = resolveSearchMode({
+      mode: 'balanced',
+      overrides: {
+        reranker_model: 'llama-server-reranker:qwen3-reranker-4b',
+        reranker_timeout_ms: 90_000,
+      },
+    });
+    expect(r.reranker_timeout_ms).toBe(90_000);
+  });
+
+  test('per-call override beats config override AND recipe default', () => {
+    const r = resolveSearchMode({
+      mode: 'balanced',
+      overrides: {
+        reranker_model: 'llama-server-reranker:qwen3-reranker-4b',
+        reranker_timeout_ms: 90_000,
+      },
+      perCall: { reranker_timeout_ms: 100 },
+    });
+    expect(r.reranker_timeout_ms).toBe(100);
+  });
+
+  test('ZE (no recipe default) regression: still gets bundle default of 5000ms', () => {
+    // ZeroEntropy's recipe does not declare default_timeout_ms — its hosted
+    // path is fast enough that the bundle default suffices.
+    const r = resolveSearchMode({
+      mode: 'balanced',
+      overrides: { reranker_model: 'zeroentropyai:zerank-2' },
+    });
+    expect(r.reranker_timeout_ms).toBe(5000);
+  });
+
+  test('unknown provider id falls through to bundle default', () => {
+    const r = resolveSearchMode({
+      mode: 'balanced',
+      overrides: { reranker_model: 'made-up-provider:fake-model' },
+    });
+    expect(r.reranker_timeout_ms).toBe(5000);
+  });
+});
+
 describe('attributeKnob source attribution', () => {
   test('per-call source labeled correctly', () => {
     const input = { mode: 'conservative', perCall: { tokenBudget: 999 } };

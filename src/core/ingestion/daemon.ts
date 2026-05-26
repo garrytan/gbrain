@@ -432,12 +432,23 @@ export class IngestionDaemon {
     // is lying about its identity. Trust source.kind over event.source_kind.
     const effectiveEvent: IngestionEvent = { ...event, source_kind: sourceKind, source_id: sourceId };
 
-    // 2. Dedup.
-    const isNew = this.dedup.mark(sourceKind, effectiveEvent.content_hash);
-    if (!isNew) {
-      // Silent dedup hit. dedup.hits counter already incremented.
-      return;
+    // 2. Dedup — TRICKLE MODE ONLY (v0.41 T2). Migration-mode sources own
+    // their own permanent slug-keyed idempotency (via op_checkpoint); the
+    // 24h DedupWindow is wrong for bulk historical replay where retries
+    // happen days apart and content_hash collisions across the import
+    // window are expected. Default-undefined source.mode treats as
+    // 'trickle' for v0.38 back-compat.
+    const sourceMode = state.registration.source.mode ?? 'trickle';
+    if (sourceMode === 'trickle') {
+      const isNew = this.dedup.mark(sourceKind, effectiveEvent.content_hash);
+      if (!isNew) {
+        // Silent dedup hit. dedup.hits counter already incremented.
+        return;
+      }
     }
+    // Migration mode: skip the dedup window entirely. The source's own
+    // idempotency layer is the authoritative duplicate gate; reaching here
+    // means the source already decided this event should land.
 
     // 3. Rate limit (token-bucket-ish: count events in trailing window).
     const nowMs = this.now();

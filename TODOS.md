@@ -1,5 +1,182 @@
 # TODOS
 
+## v0.41.14.0 #1451 drift-fix follow-ups (v0.42+)
+
+- [ ] **v0.42+: refactor `runRoutingEval` to take `ResolverEntry[]` directly** instead of `resolverContent: string`. Cleaner shape than synthesizing markdown then re-parsing it. Cascades through 9+ test files that depend on the string-content API. Defer until the next big refactor of the routing-eval module so the test-file churn lands with that wave.
+- [ ] **v0.42+: replace regex-based `parseSkillFrontmatter` with a real YAML parser** (js-yaml is already a transitive dep via gray-matter). Codex finding #4 from /plan-eng-review: the regex in `src/core/skill-frontmatter.ts` assumes YAML semantics it can't enforce (e.g. multi-line scalars, escaped quotes). For our current uniform-shape skills (all use `- "quoted"` block form), it works. Swap when a skill ships a YAML construct the regex misparses, or proactively for defense-in-depth.
+- [ ] **v0.42+: unify `parseSkillFrontmatter` (skill-frontmatter.ts) and MECE's `extractTriggers` (check-resolvable.ts:216)** into a single parser. Codex finding #5: two parsers, drift surface. Both extract `triggers:` arrays the same way today, so the drift is bounded — but every future change to one needs to be mirrored in the other. Consolidate when either needs to diverge.
+- [ ] **v0.42+: `bun run ci:local` should run `bun run verify`** (codex finding #10 from /plan-eng-review). Today ci:local runs guards + typecheck + unit + E2E but NOT verify, so the new `check:resolver` gate (and others added to verify) don't fire in local pre-push. Bigger conversation about local vs CI scope — defer as a separate UX decision after measuring how often verify-only failures land in CI.
+- [ ] **v0.42+: remove the deprecated `install/` skill directory entirely.** It has no SKILL.md (just a deprecation note pointing at setup/) and is correctly skipped by `loadSkillTriggerIndex`. Removing the directory cleans up the bundled skill tree. Orthogonal to #1451; small follow-up.
+- [ ] **v0.42+: extend `entriesToResolverContent` to escape backticks in trigger strings.** Today only pipes are escaped, because no real bundled trigger contains a backtick. If a future skill ships a trigger like ``` `code` ``` the markdown-table row would mangle. Add a single regex replace if a real case appears.
+
+## v0.41.10.1 fix-wave follow-ups (v0.42+)
+
+- [ ] **v0.42+: per-atom idempotency via deterministic atom slug.** The
+  v0.41.10.1 fix wave closed the duplicate-atoms bug class via source-hash
+  existence check at the SOURCE level (skip the whole transcript/page if
+  any atom row exists for `frontmatter.source_hash`). Known limitation
+  surfaced by codex review (D9 #2): if the first Haiku call writes atom
+  1 of 3 then atom 2 throws, the source_hash filter sees atom 1 exists
+  and skips on next discovery — atoms 2 + 3 stay missing until
+  `content_hash` changes. The cleaner solution is per-atom idempotency:
+  switch atom slugs from date-stamped (`atoms/2026-05-25/<title-slug>`)
+  to content-hash-stamped (`atoms/<source_hash16>/<sha8-of-title-body>`)
+  so `engine.putPage` upserts naturally on retry. Bounded scope; needs
+  a migration to consolidate existing duplicate atoms (filed separately
+  below as the v0.42+ consolidation TODO). Priority: P2. References:
+  `src/core/cycle/extract-atoms.ts:atomsExistForHash`, the documented
+  known-limitation comment in the file header.
+
+- [ ] **v0.42+: atom-slug consolidation migration.** The v0.41.10.1 fix
+  wave stops NEW duplicates from being written but doesn't migrate
+  existing duplicate atoms from prior v0.41.2.0 runs. Brains that ran
+  the cycle across multiple days carry duplicate atoms forever (or until
+  manual cleanup): `atoms/2026-05-15/title-X` AND `atoms/2026-05-25/title-X`
+  for the same content_hash. Migration writes a one-shot CLI flow:
+  `gbrain atoms consolidate [--dry-run] [--yes]` that groups atoms by
+  `frontmatter.source_hash`, keeps the oldest atom row, soft-deletes
+  newer copies (uses the existing `softDeletePage` path so 72h restore
+  window applies). Operator opt-in via the same `--confirm-destructive`
+  gate from the destructive-guard. Priority: P3. Filed via /plan-eng-review
+  D6. References: `src/core/cycle/extract-atoms.ts`, the v0.26.5
+  soft-delete + restore infrastructure.
+## v0.41.10.0 follow-ups (orphan-reduction + surrogate fix wave)
+
+- [ ] **TODO-1 (P2) — Pack-aware `--by-mention` gazetteer.** Add `linkable: boolean` per-type field to the schema-pack manifest (`src/core/schema-pack/manifest-v1.ts`, currently has `extractable` + `expert_routing`). New accessor `linkableTypesFromPack(pack: ResolvedPack)` in a new `schema-pack/linkable-types.ts` module mirroring `expert-types.ts`. `src/core/by-mention.ts:buildGazetteer` consults the pack-aware filter first via `loadActivePackBestEffort(ctx)`, falls back to the hardcoded `LINKABLE_ENTITY_TYPES` const for non-pack brains. Respects the D4 fail-empty contract (pack-load failure → empty filter, NOT hardcoded defaults). User-defined types like `researcher` get auto-linked. Requires: pack-schema bump, rubric/registry updates, regression test that pack-aware + non-pack brains produce expected gazetteer shapes.
+
+- [ ] **TODO-2 (P2) — Cycle integration for `--by-mention`.** v0.41.10.0 ships CLI-only. Wire the mention pass into the dream-cycle extract phase so brains running autopilot get incremental auto-link without manual cron. Two paths: (a) refactor `runExtractCore` (currently FS-only at `extract.ts:320`) to support DB-source, then cycle calls it as before; (b) add a dedicated `extractMentionsFromDbForCycle()` callable directly from `runPhaseExtract` at `core/cycle.ts:810` so `runExtractCore` stays focused. Add `auto_link_mentions` config gate (default OFF for safety — opt-in). Also resolve the `sourceScopeOpts(ctx)` issue: cycle context doesn't have an `OperationContext`; need a new helper that produces equivalent scoping for the trusted-workspace cycle write context.
+
+- [ ] **TODO-3 (P3) — MCP op `extract_links_by_mention` for remote brain-server callers.** v0.41.10.0 CLI-only because the API shape was new. Once the CLI is proven (post-ship measurement window), expose as MCP op with `scope: write`, NOT `localOnly` (remote OpenClaw agents should be able to trigger). Trust gate via `op-trust-gate.ts`. Params: optional `source_id`, optional `since`, `dry_run`. Returns `{created, pages}`. Add to `src/core/operations.ts` operation list; wire MCP definitions.
+
+- [ ] **TODO-4 (P1) — Measure actual orphan-ratio reduction on representative brain post-merge.** v0.41.10.0 CHANGELOG softens the design-doc claim from "88% → <30%" to "material reduction, exact figure TBD" per codex CK13 (strict-exact + min-length≥4 + no-aliases + no-fuzzy will under-deliver on 3-char real entities like "YC", first-name mentions like "Bob", and abbreviations). After v0.41.10.0 lands, run `gbrain extract links --by-mention` against the production OpenClaw deployment (~165K pages) and capture before/after orphan_ratio from `gbrain doctor --json`. Update `docs/designs/GBRAIN_ONBOARD.md` (in PR #1409 if still open, or as follow-up edit if merged) with the measured number. Update CHANGELOG retroactively only if the measurement is material to user expectations.
+
+## v0.41.6.0 follow-ups (v0.41.7+)
+
+- [ ] **v0.41.7+: investigate v0.40+ schema-probe deadlock ROOT cause.**
+  v0.41.6.0 D4 ships the symptom fix (retry+poll silently when the race
+  resolves itself; warn with revised wording when truly stuck). Codex
+  outside-voice F12 caught the load-bearing finding: `initSchema()`
+  already takes `pg_advisory_lock(42)` so the SQLSTATE 40P01 race must
+  involve OTHER locks. Hypothesis: DDL locks acquired by initSchema's
+  ALTER / CREATE statements deadlock against application queries
+  (long-running SELECTs on `pages`, PgBouncer pool artifacts). Reproduce
+  on real PgBouncer setup with concurrent reads + simulated migration.
+  Expected outcome: either connection-pool isolation fix or DDL-lock
+  NOWAIT pattern. Effort: human ~4-6h / CC ~1h once repro is in hand.
+  Depends on: nothing; v0.41.6.0 D4 already quiets the alarming warning
+  for the common case, so this investigation is unblocked.
+
+- [ ] **v0.41.7+: wire inline auto-embed errors at sync.ts:1173-1186
+  through `recordSyncFailures`.** v0.41.6.0 D1 closes the headline
+  missing-creds case (preflight short-circuits before any embed call).
+  D2's classifier patterns cover rate-limit / quota / oversize errors
+  for per-file embeds inside `runImport` (which already records
+  failures correctly). But the inline post-import auto-embed catch at
+  `src/commands/sync.ts:1173-1186` swallows errors to stderr only and
+  never reaches `recordSyncFailures`. Wire it through with deduplication
+  guard (some errors may also be recorded by per-file `runImport` —
+  avoid double-recording). Effort: human ~1d / CC ~30min including
+  dedup test surface.
+
+- [ ] **v0.41.7+: true end-to-end cancellation in search via AbortSignal.**
+  v0.41.6.0 D3 `withTimeout` bounds USER wait via Promise.race + process
+  exit. The underlying DB / API socket keeps running until the kernel
+  reaps the process or the server times out the abandoned query. For
+  long-running subagent loops or rerank pipelines, threading AbortSignal
+  end-to-end would save server-side resources. Touches `hybridSearch` +
+  engine + `cosineReScore` + `reranker` signatures. Effort: human ~1d /
+  CC ~3h. Tradeoff: large surface fan-out for marginal benefit on the
+  CLI exit-on-timeout path. Only ship when a non-CLI consumer
+  (HTTP MCP, future autopilot health checks) wants true cancellation.
+## community-pr-wave follow-ups (filed during ship)
+
+- [ ] **`FREE_LOCAL_*_PROVIDERS` zero-pricing bypassable via redirected
+  BASE_URL env vars.** An operator who sets `LLAMA_SERVER_BASE_URL=https://paid-api.com/v1`
+  routes `llama-server:foo` requests to a paid proxy, but the budget
+  tracker still zero-prices them because the provider-prefix match in
+  `FREE_LOCAL_EMBED_PROVIDERS` / `FREE_LOCAL_RERANK_PROVIDERS` doesn't
+  see the resolved URL. The bypass is real but requires operator
+  misconfiguration (paid-API behind a "local" recipe alias) — same
+  trust posture as the rest of the BASE_URL env vars.
+
+  Fix shape (couples with the unification TODO already filed for v0.41+):
+  move the freeness decision from provider-prefix lookup to the gateway's
+  embed/rerank call sites where the resolved URL is known, or detect
+  non-loopback `provider_base_urls` and refuse zero-pricing in that case.
+
+  Surfaced by codex Pass-9 adversarial review; pre-existing for the rerank
+  case in v0.40.7.1, broadened to embed by v0.40.8.0. Tracked here so the
+  unification PR closes both at once.
+
+- [ ] **`probeEmbeddingReachability` should honor recipe `default_timeout_ms`
+  for embed touchpoint.** The reranker probe was just fixed in PR #1326 to
+  read `recipe.touchpoints.reranker.default_timeout_ms` so Qwen3-Reranker-4B
+  has CPU cold-start headroom. The embedding probe hardcodes 5000ms
+  (`src/commands/models.ts:467`) and the JSDoc admits "the 5s timeout may
+  trip on the very first probe — re-run if so." A local llama-server embed
+  endpoint hits the identical CPU cold-start curve.
+
+  Fix: add optional `default_timeout_ms?: number` to `EmbeddingTouchpoint`
+  in `src/core/ai/types.ts` (sibling to the rerank field), thread through
+  `probeEmbeddingReachability` using the same `recipe.touchpoints.embedding.default_timeout_ms ?? 5000`
+  pattern that the reranker probe uses. Add a regression test in
+  `test/models-doctor-embed.test.ts` pinning the precedence chain.
+
+  Surfaced by the community-PR-wave pre-landing review (informational, no
+  blocker on the wave itself — workaround is "re-run the probe").
+## v0.41.3 security/MCP fix wave follow-ups (filed during ship of `garrytan/security-mcp-fix-wave`)
+
+Source: codex outside-voice review on the v0.41.3 wave (D7) identified
+three real wins in PR #1316 (`chipoto69` — "Phase 4 multi-agent hardening")
+that did NOT land in v0.41.3. PR #1316 was bundled with RLS posture
+changes that conflict with v0.26.7's auto-RLS event trigger; the v0.41.3
+plan unbundled #1316 deliberately so its RLS posture rewrite gets its own
+architectural review. These three are the deferred standalone wins —
+each can ship as its own wave without touching RLS.
+
+- [ ] **T13a (P1) — Extract deny-by-default fine-grained scope wiring
+  from #1316.** Today the OAuth scope string (e.g. `read write`) is
+  validated at registration via `ALLOWED_SCOPES_LIST` but does NOT
+  constrain which MCP operations a token can call at dispatch time.
+  Every op currently runs if the bearer is valid. #1316 adds per-op
+  `requiredScope` metadata and a dispatch-time gate that returns 403
+  when the bearer's scope set doesn't satisfy the op's requirement.
+  Real security win: a `read`-scoped token can't call `put_page` or
+  `submit_job`. Requires per-op annotation review (which ops need
+  `write` vs `admin`) + scope-grammar decision (is `read` a strict
+  subset of `write`, or are they orthogonal categories?). NOT in
+  v0.41.3 because the per-op review is its own design exercise.
+  Cherry-pick starter: PR #1316 diff against `src/core/operations.ts`
+  and `src/mcp/dispatch.ts`. Effort: human ~2 days / CC ~3 hours.
+
+- [ ] **T13b (P2) — Extract real operation names in mcp_request_log
+  from #1316.** Pre-fix audit log records generic `tools/call` for
+  every MCP request. #1316 carries the real op name (`get_page`,
+  `put_page`, `submit_job`, etc.) into the `operation` column.
+  Standalone win — no architectural risk, no schema change (column
+  already exists), just dispatch-time wiring. Candidate for next
+  minor (v0.41.4 or v0.42.x). Cherry-pick starter: #1316 diff
+  against `src/mcp/dispatch.ts` audit-log insertion site.
+  Effort: human ~1h / CC ~10min.
+
+- [ ] **T13c (P2) — Extract `access_tokens.last_used_at` LRU debounce
+  from #1316.** Today `last_used_at` is updated on every bearer
+  request via the legacy transport's SQL-level WHERE-clause throttle
+  (60s minimum gap). On high-traffic deployments the hot-row writes
+  still hit Postgres for every request. #1316 adds an in-process LRU
+  cache so the SQL UPDATE only fires once per token per cooldown
+  window. Useful on multi-agent fleets sharing tokens at high rate;
+  no value for personal-laptop installs. NOT a blocker. Cherry-pick
+  starter: #1316's `src/core/token-last-used.ts` + the wiring in
+  `src/mcp/http-transport.ts:validateToken`. Effort: human ~2h /
+  CC ~20min.
+
+**NOT filed:** the RLS posture rewrite from #1316. That changes the
+v0.26.7 auto-RLS event trigger that `gbrain doctor`'s
+`rls_event_trigger` check treats as load-bearing; it deserves its own
+plan-eng-review + doctor-check rewrite + breaking-change CHANGELOG
+note. Filing it as a TODO would imply it's ready to pull; it isn't.
+
 ## v0.41.0.0 follow-ups (v0.41.1+)
 
 - [ ] **v0.41+: per-key rate-lease caps (`openai:responses`, `google:gemini`, etc.).**
@@ -12,7 +189,7 @@
   + `src/core/minions/handlers/subagent.ts:GBRAIN_ANTHROPIC_MAX_INFLIGHT`.
 
 - [ ] **v0.41+: `minion_lease_pressure_log` + budget/self-fix audit retention sweep.**
-  v0.41 migration v93 promoted `ON DELETE SET NULL` on audit FKs so rows
+  v0.41 migration v94 promoted `ON DELETE SET NULL` on audit FKs so rows
   survive `gbrain jobs prune`. Codex pass-3 #5 caught the corollary: without
   retention, audit tables grow unbounded. On a steady-pressure install
   (heavy daily batches), `minion_lease_pressure_log` is millions of rows by
@@ -53,6 +230,50 @@
   current behavior (truncate-then-fail) is safe — no infinite loops,
   depth-cap prevents chains — but full semantic reduction unlocks higher
   self-fix success rates on legitimately-long prompts.
+## v0.41.7.0 resolver-parser follow-ups (filed during ship of `garrytan/pr1370-production-ready`)
+
+Source: Codex outside-voice review on the PR #1370 production-rebuild plan.
+The wave shipped with the primary parser fix + 11 unit tests + 2 integration
+fixtures + scaling-skills tutorial. Two findings deferred:
+
+- [ ] **F8 P3 — Path-traversal hardening for the existing table-format
+  parser.** Both the existing table parser and the new list parser accept
+  inputs like `skills/../x/SKILL.md`; downstream `join(skillsDir, relPath)`
+  can escape `skillsDir`. The v0.41.7.0 list branch is structurally closed
+  (the kebab-lowercase `[a-z][a-z0-9-]+` name regex rejects `.` in names so
+  `..` is blocked at the name layer). The table branch surface is
+  pre-existing and out of scope for v0.41.7.0. Move: at the file-existence
+  check in `src/core/check-resolvable.ts` (around line 352), add a
+  `relPath.split('/').includes('..')` guard that surfaces as an
+  `unreachable` issue with a "path traversal not allowed" message. Low
+  severity: requires malicious/buggy RESOLVER.md content to fire.
+
+- [ ] **F9 P3 — Document the fan-out/dedup interaction in the resolver
+  guide.** `checkResolvable` dedupes by `skillPath`, so the v0.41.7.0
+  list-format multi-trigger fan-out (`- **foo**: t1 | t2 | t3` produces 3
+  entries) doesn't change the integration reachability count. This is
+  desired behavior (one skill counted once) but surprising for readers who
+  count parser entries. Move: add a one-paragraph "how fan-out interacts
+  with reachability" note to `docs/guides/scaling-skills.md` after we have
+  reader feedback indicating the confusion is real. Codex noted that unit
+  tests prove parser output, integration tests prove reachability, and the
+  current docs don't bridge the two cleanly. Doc-only follow-up.
+
+- [ ] **P1 flake — audit-writer.test.ts week-boundary failure.** Caught
+  during ship of v0.41.7.0. Test at `test/audit/audit-writer.test.ts:229`
+  ("returns events from current week, filtered by ts cutoff") fails when
+  real UTC date is in a different ISO week than the test's hardcoded
+  `now=2026-05-22`. `writer.log()` uses real `new Date()` to pick the
+  week-file; `readRecent(now)` uses the fake `now`. When the two land in
+  different ISO weeks (specifically: any time the real UTC clock is in
+  the week AFTER 2026-W21), `log()` writes to the wrong file and
+  readRecent finds 0 events. Fires deterministically once a week, at the
+  UTC Monday rollover. Move: refactor `createAuditWriter.log()` to accept
+  an optional injected `now` (or read it from the entry's own `ts` field).
+  Affected surface: `src/core/audit/audit-writer.ts`. Pre-existing on
+  master; not caused by this branch's parser changes. Reproducible by
+  setting system clock to any Monday after the test's `2026-05-22` date.
+
 ## v0.41 content-sanity follow-ups (filed during ship of `garrytan/lint-page-size-gate`)
 
 Source: CEO + Eng review on the content-sanity defense plan. Both reviews
@@ -170,12 +391,17 @@ signal. Plan file: `~/.claude/plans/system-instruction-you-are-working-dazzling-
 Three strategic decisions landed and the 7 verified-absent items the
 analysis surfaced were approved for filing.
 
-### D1 — v0.41 Eval-loop wave (NEXT, P0)
+### D1 — v0.41 Eval-loop wave (LANDED v0.41.0.0, scope reshaped)
 
-The eval/quality-gate cluster has all the substrate (eval_candidates table,
-`eval export/replay`, cross-modal runner, nightly probe, audit JSONL) but
-the LOOP is barely live. Three blocking moves turn "gbrain has eval infra"
-into "gbrain is self-improving."
+**Status:** Shipped in v0.41.0.0 (2026-05-24). CEO+Eng review reshaped the
+original 3-item slice: items 1 + 3 (autopilot wiring + `gbrain eval gate`)
+shipped as planned + EXPANDED with a correctness gate (qrels-based recall@K
++ first-relevant-hit-rate) and a `gbrain bench publish` verb that closes the
+LOOP by giving captured data a destination. Item 2 (capture-default flip)
+deferred to v0.42 because the flip is a one-way door and shouldn't ship
+before the destination exists.
+
+The original 3 items as filed (kept for traceability):
 
 - [ ] **P0 — `gbrain eval gate <baseline.ndjson>` for CI.** The single most
   load-bearing missing item across all 12 clusters. Fails the build on
@@ -319,6 +545,128 @@ cleanup can move each into the relevant area section.
   doesn't. (Embedding cluster.)
 
 ---
+## v0.41.8.0 PGLite hang follow-ups (v0.41+)
+
+These were filed when v0.41.8.0 shipped the search/query/get hang fix
+(#1247/#1269/#1290) + WASM init classifier (#1340) + sync breadcrumbs.
+Three items deferred:
+
+- [ ] **Investigate #1342 — `gbrain sync` hangs after schema v89→v92
+  migration (PGLite, single reporter).** Repro shape: ~99% CPU in pure-JS
+  JIT loop per `sample <pid>`, zero stderr output, reproduces with
+  `--dry-run --no-pull`. Triggered after migrations 89→92 landed (v89
+  facts_event_type_column, v90 contextual_retrieval_columns, v91
+  pages_generation_trigger_and_bookmark, v92 sources_github_repo_index).
+  Stale lock recovery from a `brain.pglite.broken-20260523-120636`
+  rename suggests half-applied schema state.
+
+  **Ruled out** (per v0.41.8.0 plan-eng-review): NOT the
+  `withRefreshingLock` heartbeat (user takes the legacy global-lock
+  path — no setInterval); NOT the v91 trigger function (only fires on
+  writes, user repros with `--dry-run`); NOT the two `while (true)`
+  loops in `src/commands/sync.ts` (parallel worker pool + watch mode,
+  neither in the user's invocation path).
+
+  **Next diagnostic steps**:
+  1. Seed a fresh PGLite brain at schema v88 (snapshot the embedded
+     schema blob at that version into a test fixture), apply migrations
+     v89→v92, then run `performSync` with the user's exact flags and
+     an 8s timeout. Repeat with a partial-v91 state (column landed,
+     index didn't) to match the `brain.pglite.broken-...` clue.
+  2. Run the reproducer under `bun --inspect-brk` and grab the V8
+     stack at the spin point.
+  3. Scan for `contextual_retrieval_mode IS NULL` paths in sync /
+     `src/core/import-file.ts` — the v90 column may have an unbounded
+     iteration somewhere when the per-source backfill kicks in.
+
+  **Reporter's config**: PGLite, `~/.gbrain/brain.pglite`,
+  `ollama:nomic-embed-text` @ 768d, macOS 15.5, single 'default'
+  source.
+
+  **Mitigation in v0.41.8.0**: phase breadcrumbs added to
+  `performSyncInner` so the next #1342-shaped report names WHICH phase
+  spun (resolve_repo / load_active_pack / validate_repo_state /
+  detect_head). Doesn't fix; makes reports actionable.
+
+- [ ] **Concurrent disconnect-during-connect race on `PGLiteEngine`
+  (adversarial-review C6, v0.41.8.0).** The v0.41.8.0 snapshot+early-null
+  pattern in `disconnect()` improves the partial-state race for the
+  common case (single instance, sequential lifecycle), but a concurrent
+  `connect()` and `disconnect()` on the same engine instance can still
+  strand: `disconnect()` snapshots+nulls the lock and releases it while
+  `connect()` is still in-flight (lock already acquired, awaiting
+  `PGlite.create()`). When `connect()` resolves, `this._db` is assigned
+  to a fresh handle but `this._lock` is null — engine is "connected"
+  but holds no file lock; another process can acquire it concurrently.
+  Unusual caller pattern in production (one instance per process,
+  sequential lifecycle), but tests sometimes do this and the contract
+  is undefined. Fix: serialize connect/disconnect with an instance-level
+  mutex, or document the constraint and assert single-flight at the
+  call site.
+
+- [ ] **Retrofit `awaitPendingSearchCacheWrites` with the same bounded
+  timeout v0.41.8.0 added to `awaitPendingLastRetrievedWrites`.** The
+  v0.36.1.x #1090 fix at `src/core/search/hybrid.ts:36-45` shipped the
+  drain pattern without a timeout; v0.41.8.0 added the timeout + warn
+  pattern to the new `awaitPendingLastRetrievedWrites` helper. For
+  symmetry (and to close the same future-failure mode in the cache
+  drain), apply the same `Promise.race` + stderr warn pattern. ~15 LOC
+  + 2 unit cases. Pair this with the drain-helper extraction below.
+
+- [ ] **Extract a shared `createDrainHelper<T>()` factory when a third
+  fire-and-forget surface appears.** Per D4 in the v0.41.8.0 eng
+  review: two surfaces is the threshold for noticing, three for
+  extracting. `src/core/search/hybrid.ts:awaitPendingSearchCacheWrites`
+  + `src/core/last-retrieved.ts:awaitPendingLastRetrievedWrites` are
+  the two surfaces today. When a third surface is added (or when the
+  timeout-symmetry retrofit above lands and the duplication becomes
+  load-bearing), extract a `src/core/drain-helper.ts` factory consumed
+  by both call sites. Pair with the symmetry retrofit so they fire
+  together as one focused refactor.
+
+---
+## v0.41 Eval-loop wave follow-ups (v0.42+)
+
+Filed during v0.41 CEO + Eng review (D11-D13). All three landed via codex
+outside-voice triage on the reshaped plan.
+
+- [ ] **v0.42 P1: capture-default flip + scrubber hardening.** Flip
+  `eval.capture` default from OFF to ON. Harden `src/core/eval-capture-scrub.ts`
+  with AWS access key (`AKIA[0-9A-Z]{16}`), GitHub PAT (`ghp_[A-Za-z0-9]{36}`),
+  and generic API-key-suffix patterns. Add first-run stderr banner with
+  `gbrain eval capture off` opt-out hint and persistent
+  `eval.capture_acknowledged` config flag (banner fires once per acked-false).
+  Two new CLI verbs: `gbrain eval capture on|off|status` + `acknowledge`.
+  Dependency: v0.41 LOOP (this wave) has shipped + been used for at least
+  a month so the destination story is real. Filed during v0.41 CEO review
+  per D11 after the original wave plan was reshaped by codex outside-voice
+  to defer this item.
+
+- [ ] **v0.42-v0.43 P2: `gbrain bench publish --suggest-thresholds`.**
+  Reads the last 30 days of `eval gate` JSON outputs (from gbrain-evals
+  CI artifacts or `~/.gbrain/audit/bench-publish-*.jsonl`), computes p10
+  of each metric across passes, suggests those as thresholds. Starting-
+  guess thresholds in v0.41 (regression: jaccard 0.85 / top1 0.80 /
+  latency_multiplier 2.0; correctness: recall@10 0.70 /
+  first_relevant_hit_rate 0.60 / expected_top1 0.50) are either too tight
+  or too loose; data informs the heuristic. Dependency: 30+ days of gate
+  runs accumulating. Filed during v0.41 CEO review per D12.
+
+- [ ] **v0.42+ P3: `gbrain bench diff` + `gbrain bench list`.**
+  `bench diff <a.baseline.ndjson> <b.baseline.ndjson>` — visual diff of
+  two baselines showing which queries changed top-1 retrieval, which
+  lost relevant_slugs, which gained. `bench list [--dir <path>]` — lists
+  baselines with metadata (label, published_at, row_count, source_hash);
+  defaults to `~/.gbrain/baselines/` + `gbrain-evals/baselines/` if both
+  exist. Trivial; ship when there's >1 baseline to look at. Filed during
+  v0.41 CEO review per D13.
+
+- [ ] **v0.42+: ship the coordinated `gbrain-evals/baselines/v0.41-launch.baseline.ndjson`
+  + `gbrain-evals/qrels/v0.41-launch.qrels.json` (hermetic-synthetic per D9).**
+  Generate locally via `gbrain bench publish --from <hermetic-test-corpus>` then
+  commit to the sibling gbrain-evals repo. Gives `gbrain eval gate` a canonical
+  baseline target so users don't have to bootstrap their own immediately.
+
 ## v0.40.7.0 Schema Cathedral v3 follow-ups (v0.40.7+)
 
 These were filed when v0.40.7.0 closed PR #1321's design as a production
@@ -413,6 +761,60 @@ at plan time and got carved out:
   alongside the staleness number so doctor surfaces the coverage gap inline.
   Implementation: reuse `buildSyncStatusReport` from `src/commands/sync.ts`,
 
+## v0.40.6.1 llama-server-reranker follow-ups (v0.40.7+)
+
+Filed from the /ship Claude adversarial subagent review against this PR. None are
+exploitable today; they harden the new local-reranker surface against future
+contributor traps.
+
+- [ ] **P1: SSRF scheme validation sweep for all 6 openai-compat `_BASE_URL` env vars.**
+  `src/cli.ts:1483-1487` accepts `LLAMA_SERVER_BASE_URL`, `LLAMA_SERVER_RERANKER_BASE_URL`,
+  `OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL`, `LITELLM_BASE_URL`, `OPENROUTER_BASE_URL` with
+  zero scheme validation. A `file://` or `gopher://` value silently becomes the
+  recipe's base URL. Pre-existing pattern; this wave adds one more env var to the gap
+  without expanding the class. Fix: add a `validateOpenAICompatBaseURL(url)` helper
+  (assert `http(s):` scheme + reuse `src/core/ssrf-validate.ts` private-IP checks
+  for the non-localhost case), apply to all 6 envs at the `buildGatewayConfig` site.
+  ~20 LOC + 6 test cases. Should be its own focused PR.
+
+- [ ] **P2: Document `FREE_LOCAL_RERANK_PROVIDERS` invariant.** `src/core/budget/budget-tracker.ts:lookupPricing`
+  returns `{input:0, output:0}` for any model id under the `llama-server-reranker:`
+  provider on the rerank kind. The contract relies on all callers going through
+  `gateway.rerank()`'s `assertTouchpoint`-with-extended-models check (which validates
+  the model exists before pricing fires). Theoretical bypass: a future caller that
+  reserves directly against BudgetTracker with `kind: 'rerank'` and an arbitrary
+  `llama-server-reranker:<anything>` model id gets free pricing. Fix: code comment
+  documenting the invariant, OR move the freeness check to gateway.rerank() where
+  the validation already runs.
+
+- [ ] **P2: Recipe path-concat sanity check at gateway-init.** `src/core/ai/gateway.ts:rerank()`
+  concatenates `${compat.baseURL.replace(/\/$/, '')}${tp.path ?? '/models/rerank'}`.
+  A future recipe with `path: 'rerank'` (no leading slash) produces `…/v1rerank`;
+  a future recipe with `path: '/v1/rerank'` when `base_url_default` already ends
+  in `/v1` reintroduces the codex-caught doubling bug. Fix: at `configureGateway`
+  time, assert `tp.path` (when set) starts with `/` and warn-log when the recipe
+  pattern looks doubling-prone. Surface at init, not first-rerank.
+
+- [ ] **P3: Debug-log on malformed `search.reranker.model`.** `src/core/search/mode.ts:lookupRerankerRecipeDefaultTimeout`
+  silently returns undefined when `getRecipe(providerId)` misses (typos, malformed
+  strings). Fail-open is correct for timeouts (5000ms is a safe bundle default),
+  but the user-facing UX is "config was set, nothing changed" with no signal.
+  Fix: stderr-log once when `modelStr` is non-empty but the provider id doesn't
+  resolve, gated by `GBRAIN_DEBUG=1`.
+
+- [ ] **P3: Narrow `resolveLiveRerankerModel` catch.** `src/commands/models.ts:resolveLiveRerankerModel`
+  has a blanket `try/catch` around `loadSearchModeConfig` + `resolveSearchMode`
+  that falls back to `getRerankerModel()`. Real errors (schema-version mismatch,
+  malformed config JSON, engine connectivity blip) get hidden behind a misleading
+  "not configured" doctor verdict. Fix: narrow the catch to specific shapes OR
+  emit `GBRAIN_DEBUG=1` stderr warning before falling back.
+
+- [ ] **P3: Validate `modelStr` shape before allocating probe timeout.**
+  `src/commands/models.ts:probeRerankerReachability` resolves the recipe + sets
+  `probeTimeoutMs = 30000` before checking that `modelStr` has a non-empty model
+  half. Result: `llama-server-reranker:` (trailing colon, empty model) waits 30s
+  before failing at `assertTouchpoint`. Fix: regex-validate `modelStr` shape
+  (`^[a-z][a-z0-9-]*:[a-zA-Z0-9_.-]+$`) before timeout allocation.
 
 ## v0.40.1.0 Track D follow-ups (v0.41+)
 

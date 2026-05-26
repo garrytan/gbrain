@@ -2,6 +2,12 @@
 
 import { installSigchldHandler } from './core/zombie-reap.ts';
 installSigchldHandler();
+// v0.41.6.0 D5: cleanup registry + signal handlers for SIGTERM/SIGHUP/SIGPIPE/
+// uncaughtException. NOT SIGINT (the existing AbortController path at :254
+// owns SIGINT). Installed at module load so locks acquired during boot
+// (e.g. during connectEngine's schema-probe path) are covered too.
+import { installSignalHandlers as installCleanupSignalHandlers } from './core/process-cleanup.ts';
+installCleanupSignalHandlers();
 
 import { readFileSync } from 'fs';
 import { loadConfig, loadConfigWithEngine, toEngineConfig, isThinClient } from './core/config.ts';
@@ -10,6 +16,8 @@ import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
+import { awaitPendingLastRetrievedWrites, type DrainOutcome } from './core/last-retrieved.ts';
+import { shouldForceExitAfterMain } from './core/cli-force-exit.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import type { CliOptions } from './core/cli-options.ts';
@@ -27,7 +35,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -60,6 +68,10 @@ const CLI_ONLY_SELF_HELP = new Set([
   // schema.ts printHelp() with the full 22+ verb taxonomy, not the
   // generic short-circuit's one-line stub.
   'schema',
+  // v0.41.11.0 — extract-conversation-facts ships its own detailed HELP
+  // describing segment splitting + checkpointing + budget caps + the
+  // unified types config story. Route around the generic short-circuit.
+  'extract-conversation-facts',
 ]);
 
 async function main() {
@@ -180,6 +192,35 @@ async function main() {
 
   // Local engine path (unchanged behavior for local installs).
   const engine = await connectEngine();
+  // v0.41.8.0 (#1247, #1269, #1290): the search / query / get_page
+  // op handlers fire-and-forget `bumpLastRetrievedAt` after returning
+  // results. On PGLite that IIFE keeps Bun's event loop alive past
+  // engine.disconnect(), hanging the CLI at ~95-98% CPU until SIGKILL.
+  // Drain the fire-and-forget set BEFORE disconnect; force-exit only
+  // if the drain itself times out (preserves stderr diagnostic signal
+  // AND guarantees the CLI doesn't re-hang at the disconnect layer).
+  //
+  // Defense-in-depth (adversarial-review C13): `engine.disconnect()` itself
+  // can hang on PGLite (db.close() or releaseLock racing OS-level FS state).
+  // Install an unref'd setTimeout hard-exit fallback BEFORE entering the
+  // try/catch/finally so a hung disconnect cannot defeat the force-exit
+  // contract. Daemons (`serve`) are excluded so they stay alive.
+  const DISCONNECT_HARD_DEADLINE_MS = 10_000;
+  let forceExitTimer: ReturnType<typeof setTimeout> | undefined;
+  if (shouldForceExitAfterMain()) {
+    forceExitTimer = setTimeout(() => {
+      console.warn(
+        `[cli] engine.disconnect() did not return within ${DISCONNECT_HARD_DEADLINE_MS}ms — force-exiting`,
+      );
+      process.exit(0);
+    }, DISCONNECT_HARD_DEADLINE_MS);
+    // unref so the timer itself doesn't keep the event loop alive — only
+    // the actual pending work (PGLite WASM handle) does. Without unref,
+    // we'd block a clean exit by 10s on every successful CLI run.
+    forceExitTimer.unref?.();
+  }
+
+  let drainResult: DrainOutcome = { outcome: 'drained', pending: 0 };
   try {
     const ctx = await makeContext(engine, params);
     const rawResult = await op.handler(ctx, params);
@@ -194,7 +235,16 @@ async function main() {
       const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
       await awaitPendingSearchCacheWrites();
     }
+    // Drain unconditionally for every op — empty-set fast-path is a
+    // few microseconds. Not per-op-name gated: that was the original
+    // PR #1259 mistake that left search and get_page exposed.
+    drainResult = await awaitPendingLastRetrievedWrites();
   } catch (e: unknown) {
+    // C9 fix: drain BEFORE process.exit so a successful op that throws
+    // during stdout/format still gets its bumpLastRetrievedAt UPDATE
+    // a chance to commit. Bounded by the drain's own 5s timeout; the
+    // outer hard-exit timer above bounds the disconnect path.
+    try { await awaitPendingLastRetrievedWrites(); } catch { /* best-effort */ }
     if (e instanceof OperationError) {
       console.error(`Error [${e.code}]: ${e.message}`);
       if (e.suggestion) console.error(`  Fix: ${e.suggestion}`);
@@ -204,8 +254,18 @@ async function main() {
     process.exit(1);
   } finally {
     await engine.disconnect();
+    if (forceExitTimer) clearTimeout(forceExitTimer);
+    // Narrow force-exit: only when the drain timed out AND we are NOT
+    // running a daemon. The drain helper already stderr-warned with the
+    // pending count, so the diagnostic signal is preserved. Without
+    // this guard a hung underlying promise can still keep Bun's loop
+    // alive past disconnect — Codex outside-voice finding #1.
+    if (drainResult.outcome === 'timeout' && shouldForceExitAfterMain()) {
+      process.exit(0);
+    }
   }
 }
+
 
 function hasHelpFlag(args: string[]): boolean {
   return args.includes('--help') || args.includes('-h');
@@ -508,7 +568,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
 
   // Read stdin for content params
   if (op.cliHints?.stdin && !params[op.cliHints.stdin] && !process.stdin.isTTY) {
-    const stdinContent = readFileSync('/dev/stdin', 'utf-8');
+    const stdinContent = readFileSync(0, 'utf-8');
     const MAX_STDIN = 5_000_000; // 5MB
     if (Buffer.byteLength(stdinContent, 'utf-8') > MAX_STDIN) {
       console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
@@ -676,7 +736,7 @@ function formatResult(opName: string, result: unknown): string {
  * `runRemoteDoctor` for thin-client installs.
  */
 const THIN_CLIENT_REFUSED_COMMANDS = new Set([
-  'sync', 'embed', 'extract', 'migrate', 'apply-migrations',
+  'sync', 'embed', 'extract', 'extract-conversation-facts', 'migrate', 'apply-migrations',
   'repair-jsonb', 'orphans', 'integrity', 'serve',
   // v0.31.1 (CDX-2 op coverage matrix): more local-only commands
   'dream', 'transcripts', 'storage',
@@ -710,6 +770,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   sync: 'sync runs on the host. Trigger a remote cycle with `gbrain remote ping` (queues an autopilot-cycle job).',
   embed: 'embed runs on the host as part of the autopilot cycle. `gbrain remote ping` triggers a full cycle including embed.',
   extract: 'extract runs on the host. Use `gbrain remote ping` to trigger a cycle including extract.',
+  'extract-conversation-facts': 'extract-conversation-facts runs on the host (requires local engine + chat gateway). Run on the host machine.',
   migrate: "migrate runs on the host's local engine. Run on the host machine.",
   'apply-migrations': 'schema migrations run on the host. SSH and run there.',
   'repair-jsonb': 'repair-jsonb operates on the local DB only.',
@@ -1007,13 +1068,22 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'dream') {
     // Dream mirrors doctor's pattern: filesystem phases run without a DB,
     // so an engine connection failure is non-fatal. runCycle honestly
-    // reports DB phases as skipped when engine is null.
+    // reports DB phases as skipped when engine is null. v0.41.13 (#1422):
+    // bind + surface the error on stderr so the user knows WHY DB phases
+    // were skipped instead of seeing a silent "lint + backlinks done"
+    // and assuming the cycle actually ran. Pre-fix, foxhoundinc reported
+    // the cycle exiting 0 on PostgreSQL with every DB phase silently no-op.
     const { runDream } = await import('./commands/dream.ts');
     let eng: BrainEngine | null = null;
     try {
       eng = await connectEngine();
-    } catch {
-      // DB unavailable — lint + backlinks still run against the brain dir.
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `[dream] WARNING: could not connect to DB (${msg}). ` +
+        `Running filesystem-only phases (lint, backlinks, extract). ` +
+        `DB-dependent phases (sync, embed, synthesize, etc.) will report as skipped.\n`
+      );
     }
     try {
       await runDream(eng, args);
@@ -1099,6 +1169,53 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'capture' && (args.includes('--help') || args.includes('-h'))) {
     const { runCapture } = await import('./commands/capture.ts');
     await runCapture(null, args);
+    return;
+  }
+
+  // v0.41.6.0 D3 (per outside-voice F1): connect-time + dispatch-time wallclock
+  // timeouts for read-only commands whose hang would otherwise spin at 100% CPU
+  // (the production "10-day zombie gbrain search ping" bug class). The wrap
+  // covers connectEngine (so a hung schema probe / PgBouncer freeze actually
+  // surfaces a timeout) AND the dispatch body (so a wedged runSearch /
+  // runList honors the same deadline).
+  // Per-command default: search 30s, sources list 10s. User --timeout=Ns wins.
+  // Other commands (import, embed, doctor, etc.) keep their existing
+  // unbounded connect — destructive / long-running commands shouldn't get
+  // a default kill switch.
+  const readOnlyDefaultTimeoutMs =
+    command === 'search' ? 30_000 :
+    command === 'sources' && (args[0] === 'list' || args[0] === undefined) ? 10_000 :
+    null;
+  const cliOptsResolved = getCliOptions();
+  const userTimeoutMs = cliOptsResolved.timeoutMs;
+  const readOnlyTimeoutMs = userTimeoutMs ?? readOnlyDefaultTimeoutMs;
+
+  if (readOnlyTimeoutMs !== null) {
+    const { withTimeout, OperationTimeoutError } = await import('./core/timeout.ts');
+    const label = `gbrain ${command}`;
+    let engine: BrainEngine;
+    try {
+      engine = await withTimeout(connectEngine(), readOnlyTimeoutMs, `${label}: connect`);
+    } catch (e) {
+      if (e instanceof OperationTimeoutError) {
+        const hint = userTimeoutMs ? '' : ` (default ${e.ms}ms; pass --timeout=Ns to override)`;
+        console.error(`${e.label} timed out${hint}.`);
+        process.exit(124);
+      }
+      throw e;
+    }
+    try {
+      await withTimeout(dispatchReadOnlyCommand(engine, command, args), readOnlyTimeoutMs, label);
+    } catch (e) {
+      if (e instanceof OperationTimeoutError) {
+        const hint = userTimeoutMs ? '' : ` (default ${e.ms}ms; pass --timeout=Ns to override)`;
+        console.error(`${e.label} timed out${hint}.`);
+        process.exit(124);
+      }
+      throw e;
+    } finally {
+      try { await engine.disconnect(); } catch { /* best-effort */ }
+    }
     return;
   }
 
@@ -1194,6 +1311,11 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'extract': {
         const { runExtract } = await import('./commands/extract.ts');
         await runExtract(engine, args);
+        break;
+      }
+      case 'extract-conversation-facts': {
+        const { runExtractConversationFacts } = await import('./commands/extract-conversation-facts.ts');
+        await runExtractConversationFacts(engine, args);
         break;
       }
       case 'features': {
@@ -1472,6 +1594,30 @@ async function handleCliOnly(command: string, args: string[]) {
   }
 }
 
+/**
+ * v0.41.6.0 D3: dispatch helper for the read-only commands that take a
+ * default wallclock timeout (`gbrain search`, `gbrain sources list`).
+ * Keeps the timeout-wrap site in main() small and the per-command
+ * dispatch logic colocated for easy extension. Pure dispatcher; no engine
+ * lifecycle (caller owns connect/disconnect).
+ */
+async function dispatchReadOnlyCommand(engine: BrainEngine, command: string, args: string[]): Promise<void> {
+  switch (command) {
+    case 'search': {
+      const { runSearch } = await import('./commands/search.ts');
+      await runSearch(engine, args);
+      return;
+    }
+    case 'sources': {
+      const { runSources } = await import('./commands/sources.ts');
+      await runSources(engine, args);
+      return;
+    }
+    default:
+      throw new Error(`dispatchReadOnlyCommand: unsupported command "${command}"`);
+  }
+}
+
 // Build the AIGatewayConfig payload from a GBrainConfig. Both configureGateway
 // sites in connectEngine() pass through this helper so adding a new field
 // touches one place. Adding a field to one site but not the other previously
@@ -1503,6 +1649,11 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // OLLAMA_BASE_URL. Caller-provided cfg.provider_base_urls wins.
   const envBaseUrls: Record<string, string> = {};
   if (process.env.LLAMA_SERVER_BASE_URL) envBaseUrls['llama-server'] = process.env.LLAMA_SERVER_BASE_URL;
+  // v0.40.6.1: sibling recipe for llama-server in reranking mode. Separate
+  // env var because --reranking and --embeddings are mutually exclusive at
+  // server launch — users running both will have two llama-server processes
+  // on different ports.
+  if (process.env.LLAMA_SERVER_RERANKER_BASE_URL) envBaseUrls['llama-server-reranker'] = process.env.LLAMA_SERVER_RERANKER_BASE_URL;
   if (process.env.OLLAMA_BASE_URL) envBaseUrls['ollama'] = process.env.OLLAMA_BASE_URL;
   if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
   if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
@@ -1547,22 +1698,36 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
     return engine;
   }
 
-  // Auto-apply pending schema migrations on connect (#651). Cheap probe
-  // first so already-migrated brains don't pay the bootstrap-probe +
-  // SCHEMA_SQL replay + ledger-check cost on every short-lived CLI call.
-  // This is the conditional version of #652 (oyi77's investigation):
-  // same correctness, no perf regression on the hot path.
+  // v0.41.6.0 D4: race-tolerant CLI-side migration runner. Replaces the
+  // pre-v0.41.6.0 `try { hasPendingMigrations && initSchema() } catch warn`
+  // block that fired the alarming "Schema probe/migrate failed: deadlock
+  // detected" warning on EVERY sync when two CLIs raced on schema probe.
+  // The retry+poll loop quiets the warning when the race resolves
+  // itself (the common case); the revised wording fires only when
+  // migrations are genuinely stuck.
   try {
-    const { hasPendingMigrations } = await import('./core/migrate.ts');
-    if (await hasPendingMigrations(engine)) {
-      await engine.initSchema();
+    const { tryRunPendingMigrations } = await import('./core/migrate.ts');
+    const result = await tryRunPendingMigrations(engine);
+    if (result.status === 'persistent') {
+      console.warn(
+        '  Schema migrations are pending. Another process attempted to apply them ' +
+        'but the migration didn\'t complete within the retry window. This is usually transient.',
+      );
+      console.warn('  If it persists:');
+      console.warn('    1. Check `gbrain doctor` for stale locks or stuck advisory locks.');
+      console.warn('    2. Check `gbrain jobs supervisor status` for crashed migration workers.');
+      console.warn('    3. Re-run: `gbrain apply-migrations --yes`');
+    } else if (result.status === 'error') {
+      // Non-deadlock error during initSchema. Surface the message and continue;
+      // subsequent operations will resurface the real schema error in context.
+      console.warn(`  Schema probe failed: ${result.error.message}`);
+      console.warn('  Re-run: `gbrain apply-migrations --yes`');
     }
+    // 'ok', 'not_needed', 'race_resolved' → silent (the common-case outcomes).
   } catch (err) {
-    // Non-fatal: if probe or initSchema fails, surface a hint and continue
-    // with the connected engine. Subsequent operations will surface the
-    // real schema error in context.
-    console.warn(`  Schema probe/migrate failed: ${(err as Error).message}`);
-    console.warn('  Try: gbrain init --migrate-only');
+    // Last-resort defense in case the helper itself throws unexpectedly.
+    console.warn(`  Schema probe failed (unexpected): ${(err as Error).message}`);
+    console.warn('  Re-run: `gbrain apply-migrations --yes`');
   }
 
   // v0.27.1 (F3 fix): re-merge DB-plane config now that the engine is up.

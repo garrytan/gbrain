@@ -4344,6 +4344,221 @@ export const MIGRATIONS: Migration[] = [
         WHERE budget_root_owner_id IS NOT NULL;
     `,
   },
+  {
+    version: 94,
+    name: 'take_domain_assignments',
+    // v0.41.2 lens packs (Section 1 D9/T1 — codex outside-voice challenge
+    // to scalar `takes.domain` column). One take can legitimately belong to
+    // multiple calibration domains (a take about "Sequoia's investment in
+    // Anthropic" lands in deal_success AND market_call). A scalar column
+    // forces single-bucket attribution AND bakes today's pack→domain mapping
+    // into permanent fact. The JOIN table separates assignment from the take
+    // itself: history preserved when packs/mappings change, multi-domain
+    // attribution honest, third-party packs add domains without schema migration.
+    //
+    // Originally planned as v93; master shipped v93 (minions cathedral
+    // `minions_v0_41_audit_and_budget`) so this slot moved to v94 during
+    // post-merge resolution. Renumber-only — table shape and content
+    // unchanged from the original v0.41 plan.
+    //
+    // Composite PK `(take_id, domain)` prevents duplicate assignment of the
+    // same take to the same domain (idempotent re-assignment from
+    // propose_takes). Domain index covers the aggregator JOIN direction
+    // (calibration_profile widens to "for each domain in active pack's
+    // calibration_domains, JOIN take_domain_assignments WHERE domain = $1
+    // JOIN takes ON id = take_id WHERE active AND resolved").
+    //
+    // FK ON DELETE CASCADE because assignments are derived data — if the
+    // underlying take is hard-deleted (rare; takes are usually soft-resolved),
+    // assignments go with it. NULL `source` permits manual operator
+    // assignments without a synthetic source string.
+    sql: `
+      CREATE TABLE IF NOT EXISTS take_domain_assignments (
+        take_id     BIGINT      NOT NULL REFERENCES takes(id) ON DELETE CASCADE,
+        domain      TEXT        NOT NULL,
+        pack        TEXT        NOT NULL,
+        source      TEXT,
+        confidence  REAL        NOT NULL DEFAULT 1.0 CHECK (confidence >= 0 AND confidence <= 1),
+        assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (take_id, domain)
+      );
+      CREATE INDEX IF NOT EXISTS idx_take_domain_assignments_domain
+        ON take_domain_assignments (domain, take_id);
+
+      DO $$
+      DECLARE
+        has_bypass BOOLEAN;
+      BEGIN
+        SELECT rolbypassrls INTO has_bypass FROM pg_roles WHERE rolname = current_user;
+        IF has_bypass THEN
+          ALTER TABLE take_domain_assignments ENABLE ROW LEVEL SECURITY;
+        END IF;
+      END $$;
+    `,
+    sqlFor: {
+      // PGLite: same DDL minus the RLS DO-block (no rolbypassrls).
+      pglite: `
+        CREATE TABLE IF NOT EXISTS take_domain_assignments (
+          take_id     BIGINT      NOT NULL REFERENCES takes(id) ON DELETE CASCADE,
+          domain      TEXT        NOT NULL,
+          pack        TEXT        NOT NULL,
+          source      TEXT,
+          confidence  REAL        NOT NULL DEFAULT 1.0 CHECK (confidence >= 0 AND confidence <= 1),
+          assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (take_id, domain)
+        );
+        CREATE INDEX IF NOT EXISTS idx_take_domain_assignments_domain
+          ON take_domain_assignments (domain, take_id);
+      `,
+    },
+  },
+  {
+    version: 95,
+    name: 'links_link_source_check_includes_mentions',
+    // v0.42.0.0 Part B (migration #1 of #1409): widen the link_source
+    // CHECK constraint to admit 'mentions' for auto-linked body-text
+    // mentions from `gbrain extract links --by-mention`. Backlink-count
+    // SQL in postgres-engine.ts + pglite-engine.ts excludes link_source =
+    // 'mentions' so mention-derived edges don't pollute search ranking
+    // (D12 from /plan-eng-review). Mentions still count toward
+    // orphan-ratio and graph traversal — distinct semantics from
+    // markdown / frontmatter / manual provenance.
+    //
+    // Postgres auto-names the inline CHECK as `links_link_source_check`.
+    // PGLite mirrors that naming. Both branches DROP-IF-EXISTS for
+    // re-runnability. No data backfill needed (existing rows have
+    // link_source IN current allow-list ∪ NULL).
+    sql: `
+      ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
+      ALTER TABLE links ADD CONSTRAINT links_link_source_check
+        CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions'));
+    `,
+    sqlFor: {
+      pglite: `
+        ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
+        ALTER TABLE links ADD CONSTRAINT links_link_source_check
+          CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions'));
+      `,
+    },
+  },
+  {
+    version: 96,
+    name: 'facts_extract_conversation_session_index',
+    // v0.41.11.0 — partial index supporting the doctor query for
+    // conversation_facts_backlog (Codex round-1 T2 + round-2 C2).
+    // The doctor check runs:
+    //   SELECT COUNT(*) FROM pages p WHERE p.type = ANY($1::text[])
+    //     AND p.deleted_at IS NULL
+    //     AND NOT EXISTS (SELECT 1 FROM facts f
+    //                     WHERE f.source = 'cli:extract-conversation-facts:terminal'
+    //                       AND f.source_session = 'cli:extract-conversation-facts:terminal:' || p.slug
+    //                       AND f.source_id = p.source_id)
+    //
+    // Without this index, the NOT EXISTS subquery seq-scans facts on
+    // every doctor invocation including autopilot. The partial index
+    // is tiny — only rows written by this command are indexed
+    // (per-segment facts + the page-level terminal row).
+    //
+    // Engine-aware via handler (not SQL): Postgres uses CREATE INDEX
+    // CONCURRENTLY (avoid SHARE lock on facts) + pre-drops any invalid
+    // remnant from a prior failed run (mirrors migration v14 precedent).
+    // PGLite has no concurrent writers, so plain CREATE is safe.
+    //
+    // Slot history: originally planned as v94 (master shipped v94
+    // take_domain_assignments); bumped to v95 (master then shipped v95
+    // links_link_source_check_includes_mentions); now at v96 after
+    // post-merge resolution. The index shape itself is unchanged
+    // across all renumbers.
+    transaction: false,
+    sql: '',
+    handler: async (engine) => {
+      if (engine.kind === 'postgres') {
+        await engine.runMigration(
+          96,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'idx_facts_extract_conversation_session' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS idx_facts_extract_conversation_session';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          96,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_facts_extract_conversation_session
+             ON facts (source_id, source_session)
+             WHERE source LIKE 'cli:extract-conversation-facts%';`
+        );
+      } else {
+        await engine.runMigration(
+          96,
+          `CREATE INDEX IF NOT EXISTS idx_facts_extract_conversation_session
+             ON facts (source_id, source_session)
+             WHERE source LIKE 'cli:extract-conversation-facts%';`
+        );
+      }
+    },
+  },
+  {
+    version: 97,
+    name: 'pages_dedup_partial_index',
+    // v0.41.13 (#1309) — partial index for findDuplicatePage's hot path.
+    //
+    // Codex review of the original plan caught "no new index is hand-wavy":
+    // findDuplicatePage runs once per imported file. On a 100K-page brain
+    // syncing thousands of files, an unindexed sequential scan per
+    // invocation is O(n²) on import wallclock.
+    //
+    // Partial index excludes soft-deleted rows so the same-source dedup
+    // path (which already filters `deleted_at IS NULL`) gets an index-only
+    // scan. Composite key matches the WHERE clause shape.
+    //
+    // Postgres-only: PGLite has no concurrent writers, so the engine-wide
+    // SHARE lock that motivates CONCURRENTLY doesn't apply. PGLite
+    // re-uses plain CREATE INDEX via the `sqlFor.pglite` branch.
+    //
+    // The Postgres path uses CREATE INDEX CONCURRENTLY (with `transaction:
+    // false` so postgres.js doesn't wrap an implicit BEGIN) and pre-drops
+    // any invalid remnant from a prior failed CONCURRENTLY attempt.
+    //
+    // Slot history: originally v95, bumped to v96 after master's #1442
+    // landed (links CHECK widening), then bumped to v97 after master's
+    // v0.41.11.0 (#1446) claimed v96 for the facts conversation index.
+    // Migration content unchanged across renumbers.
+    sql: '',
+    transaction: false,
+    handler: async (engine) => {
+      if (engine.kind === 'postgres') {
+        await engine.runMigration(
+          97,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'pages_dedup_idx' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS pages_dedup_idx';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          97,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS pages_dedup_idx
+             ON pages (source_id, content_hash)
+             WHERE deleted_at IS NULL;`
+        );
+      } else {
+        await engine.runMigration(
+          97,
+          `CREATE INDEX IF NOT EXISTS pages_dedup_idx
+             ON pages (source_id, content_hash)
+             WHERE deleted_at IS NULL;`
+        );
+      }
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -4544,6 +4759,131 @@ export async function hasPendingMigrations(engine: BrainEngine): Promise<boolean
   } catch {
     return true;
   }
+}
+
+/**
+ * v0.41.6.0 D4 — race-tolerant CLI-side migration runner.
+ *
+ * Wraps `engine.initSchema()` with a deadlock-aware retry + poll loop so
+ * the common "two CLIs probe schema simultaneously" race doesn't surface
+ * an alarming `Schema probe/migrate failed: deadlock detected` warning
+ * on every sync.
+ *
+ * Flow:
+ *  1. Try `engine.initSchema()`.
+ *  2. On SQLSTATE 40P01 (deadlock_detected) from Postgres: wait 250ms,
+ *     retry once.
+ *  3. If second attempt still 40P01 (or any persistent lock-busy signal):
+ *     poll `hasPendingMigrations()` every 250ms for up to 5s. If poll
+ *     flips to `false` mid-window, return `{ status: 'race_resolved' }`
+ *     silently (another runner finished — common case the user
+ *     complained about).
+ *  4. If still pending at deadline: return `{ status: 'persistent', error }`.
+ *     Caller surfaces the revised warning.
+ *  5. Non-40P01 errors propagate normally (real failures).
+ *
+ * The deeper root cause (codex F12 in plan-eng-review: initSchema
+ * already holds pg_advisory_lock(42), so the deadlock graph likely
+ * involves OTHER locks like DDL vs application-query contention or
+ * PgBouncer pool artifacts) is filed as a P2 follow-up TODO. The
+ * symptom fix here quiets the warning on the COMMON case where the race
+ * resolves itself, while loud-failing when migration is genuinely stuck.
+ *
+ * `deadlineMs` defaults to 5000 (5s polling window). Test-only callers
+ * pass smaller values for hermeticity; production paths use the default.
+ *
+ * `pollIntervalMs` defaults to 250ms — matches the retry-backoff delay
+ * for a symmetric design (eng-review D11). ~20 polls per deadline window;
+ * trivial DB load even on a stressed PgBouncer pool.
+ */
+export type TryRunPendingMigrationsResult =
+  | { status: 'ok'; attempts: number }
+  | { status: 'not_needed' }
+  | { status: 'race_resolved'; attempts: number; pollIterations: number }
+  | { status: 'persistent'; attempts: number; pollIterations: number; error: Error }
+  | { status: 'error'; error: Error };
+
+export interface TryRunPendingMigrationsOpts {
+  deadlineMs?: number;
+  pollIntervalMs?: number;
+  retryBackoffMs?: number;
+  /** Test seam: inject a custom hasPendingMigrations / initSchema pair. */
+  _hooks?: {
+    initSchema?: () => Promise<void>;
+    hasPending?: () => Promise<boolean>;
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
+  };
+}
+
+export async function tryRunPendingMigrations(
+  engine: BrainEngine,
+  opts: TryRunPendingMigrationsOpts = {},
+): Promise<TryRunPendingMigrationsResult> {
+  const deadlineMs = opts.deadlineMs ?? 5000;
+  const pollIntervalMs = opts.pollIntervalMs ?? 250;
+  const retryBackoffMs = opts.retryBackoffMs ?? 250;
+  const initSchema = opts._hooks?.initSchema ?? (() => engine.initSchema());
+  const hasPending = opts._hooks?.hasPending ?? (() => hasPendingMigrations(engine));
+  const sleep = opts._hooks?.sleep ?? ((ms: number) => new Promise(r => setTimeout(r, ms)));
+  const now = opts._hooks?.now ?? (() => Date.now());
+
+  // Quick early-exit: if no migrations are actually pending, skip entirely.
+  if (!await hasPending()) return { status: 'not_needed' };
+
+  let attempts = 0;
+  let lastErr: Error | null = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    attempts++;
+    try {
+      await initSchema();
+      return { status: 'ok', attempts };
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (!isDeadlockError(lastErr)) {
+        // Real failure: propagate to caller's catch.
+        return { status: 'error', error: lastErr };
+      }
+      // Deadlock — backoff before retry.
+      if (attempt === 0) await sleep(retryBackoffMs);
+    }
+  }
+
+  // Both attempts deadlocked. Poll hasPendingMigrations until deadline.
+  const deadline = now() + deadlineMs;
+  let pollIterations = 0;
+  while (now() < deadline) {
+    pollIterations++;
+    await sleep(pollIntervalMs);
+    try {
+      if (!await hasPending()) return { status: 'race_resolved', attempts, pollIterations };
+    } catch {
+      // hasPending throws → treat as pending (defensive; matches its own catch).
+    }
+  }
+
+  return {
+    status: 'persistent',
+    attempts,
+    pollIterations,
+    error: lastErr ?? new Error('deadlock_persistent'),
+  };
+}
+
+/**
+ * Detect Postgres SQLSTATE 40P01 (deadlock_detected) from arbitrary
+ * thrown values. Pattern-matches on:
+ *   - postgres.js `.code === '40P01'`
+ *   - error message containing `40P01` or `deadlock detected`
+ * The text-fallback covers cases where the driver doesn't expose `.code`.
+ */
+export function isDeadlockError(err: unknown): boolean {
+  if (!err) return false;
+  const maybe = err as { code?: string; sqlState?: string; message?: string };
+  if (maybe.code === '40P01' || maybe.sqlState === '40P01') return true;
+  const msg = String(maybe.message ?? err);
+  return /40P01|deadlock detected/i.test(msg);
 }
 
 export async function runMigrations(engine: BrainEngine): Promise<{ applied: number; current: number }> {

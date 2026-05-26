@@ -2,6 +2,67 @@ import { createHash } from 'crypto';
 import type { BrainHealth } from './types.ts';
 import { ANTHROPIC_PRICING } from './anthropic-pricing.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from './embedding-pricing.ts';
+import { getRecipe } from './ai/recipes/index.ts';
+import { parseModelId } from './ai/model-resolver.ts';
+
+/**
+ * v0.40.x: env-var name → file/DB config field, for hosted embedding providers
+ * whose config-plane key is actually propagated to the AI gateway. Producers of
+ * RecommendationContext (doctor + autopilot) use this to build a sync
+ * `resolveKey` closure without re-parsing recipes.
+ *
+ * Only OPENAI_API_KEY and ZEROENTROPY_API_KEY appear here because those are the
+ * only embedding keys `buildGatewayConfig` (src/cli.ts) folds from config into
+ * the gateway env. VOYAGE_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY are deliberately
+ * absent: their config fields are NOT threaded to the gateway today, so the
+ * producer closures fall through to checking `process.env` ONLY for them. That
+ * matches what the gateway can actually use (the recipes read those keys from
+ * env). Counting a config-plane voyage_api_key/google_api_key here would be a
+ * false positive: doctor/autopilot would call the provider "configured" and
+ * dispatch an embed.stale job that then fails auth at the gateway. When a future
+ * change threads voyage_api_key/google_api_key into buildGatewayConfig (the open
+ * voyage-config-mapping work), re-add the matching entry here in the same change.
+ */
+export const HOSTED_EMBED_KEY_CONFIG: Record<string, string> = {
+  OPENAI_API_KEY: 'openai_api_key',
+  ZEROENTROPY_API_KEY: 'zeroentropy_api_key',
+};
+
+/**
+ * v0.40.x: is the configured embedding provider usable for the remediation
+ * planner? Recipe-aware:
+ *   - empty `auth_env.required` (ollama, llama-server, ...) ⇒ local, no hosted
+ *     key needed ⇒ true.
+ *   - hosted (openai, zeroentropyai, voyage, google, ...) ⇒ true iff every
+ *     required key resolves.
+ *
+ * `resolveKey(envVar)` is supplied by the caller so each producer reads config
+ * from its own source (doctor → file plane; autopilot → engine.getConfig).
+ * Only the recipe logic is shared, not the config lookup.
+ *
+ * NOTE: deliberately NOT the same as `gateway.isAvailable('embedding')`.
+ * isAvailable returns false for user_provided_models recipes (llama-server,
+ * models: []) because it can't validate the model id. For a remediation
+ * verdict we WANT true there — local embeddings work. Do not "align" them.
+ * Uses the recipe registry (pure data), not the gateway runtime, so this
+ * module stays free of AI-SDK coupling and works before engine.connect().
+ */
+export function embeddingProviderConfigured(
+  embeddingModel: string | undefined,
+  resolveKey: (envVar: string) => boolean,
+): boolean {
+  if (!embeddingModel) return false;
+  let providerId: string;
+  try {
+    ({ providerId } = parseModelId(embeddingModel));
+  } catch {
+    return false; // malformed model id — mirror gateway.isAvailable's catch
+  }
+  const recipe = getRecipe(providerId);
+  if (!recipe?.touchpoints?.embedding) return false;
+  const required = recipe.auth_env?.required ?? [];
+  return required.length === 0 ? true : required.every(resolveKey);
+}
 
 /** Minimal Check shape consumed by classifyChecks. Subset of doctor.ts's
  *  Check; we intentionally don't import from doctor.ts (would create a
@@ -74,8 +135,13 @@ export interface RecommendationContext {
   embeddingModel?: string;
   /** Configured embedding dimension (3072 / 1536 / 1024 / etc.). */
   embeddingDimensions?: number;
-  /** Whether the embedding provider has a usable API key. */
-  hasEmbeddingApiKey?: boolean;
+  /**
+   * Whether the configured embedding provider is usable. For hosted providers
+   * this means the required API key resolves; for local providers (ollama,
+   * llama-server — empty auth_env.required) it's true once configured, no key
+   * needed. Compute via `embeddingProviderConfigured()`.
+   */
+  embeddingProviderConfigured?: boolean;
   /** Configured chat / synthesis model id. */
   chatModel?: string;
   /** Whether the chat provider has a usable API key. */
@@ -130,7 +196,7 @@ export function computeRecommendations(
   // ---------------------------------------------------------------------
   // embed.stale — missing embeddings. Critical: invisible to vector search
   // ---------------------------------------------------------------------
-  if (health.missing_embeddings > 0 && ctx.hasEmbeddingApiKey !== false) {
+  if (health.missing_embeddings > 0 && ctx.embeddingProviderConfigured !== false) {
     const params = { stale: true, sourceId: ctx.sourceId };
     const embedModel = ctx.embeddingModel ?? 'openai:text-embedding-3-large';
     const embedDims = ctx.embeddingDimensions ?? 3072;
@@ -242,8 +308,8 @@ function classifyOne(check: Check, ctx: RecommendationContext): CheckClassificat
       }
       return { check: check.name, status: 'remediable' };
     case 'missing_embeddings':
-      if (ctx.hasEmbeddingApiKey === false) {
-        return { check: check.name, status: 'blocked', reason: 'missing embedding API key' };
+      if (ctx.embeddingProviderConfigured === false) {
+        return { check: check.name, status: 'blocked', reason: 'embedding provider not configured' };
       }
       return { check: check.name, status: 'remediable' };
     case 'dead_links':

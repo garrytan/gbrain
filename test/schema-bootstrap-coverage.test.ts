@@ -719,7 +719,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // only via the eval-replay CLI, not via SQL filters that would force a
   // bootstrap probe.
   'eval_candidates.schema_pack_per_source',
-  // v0.41 (migration v93) — minions cathedral budget columns. Same precedent
+  // v0.41 (migration v94) — minions cathedral budget columns. Same precedent
   // as facts.claim_metric and friends: column-only additions on `minion_jobs`,
   // no forward-reference index in PGLITE_SCHEMA_SQL (the partial indexes
   // `minion_jobs_budget_owner_idx` + `minion_jobs_budget_root_owner_idx`

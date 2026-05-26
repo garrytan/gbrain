@@ -80,6 +80,23 @@ export interface GBrainConfig {
    * those are different stores). Edit `~/.gbrain/config.json` directly.
    * All fields default to ON — capture and scrubbing both opt-out.
    */
+  /**
+   * v0.41 — autopilot daemon configuration. Currently houses the nightly
+   * quality probe feature flag (default OFF — opt-in to protect API spend
+   * on fresh installs). Flag is gated INSIDE the autopilot tick body;
+   * absence means "do not run nightly probe."
+   */
+  autopilot?: {
+    nightly_quality_probe?: {
+      /** Enable the nightly probe in the autopilot loop. Defaults to false. */
+      enabled?: boolean;
+      /**
+       * Cost cap (USD) per probe invocation. Defaults to 5.
+       * Worst case: 5 × 30 nights ≈ $150/month per brain.
+       */
+      max_usd?: number;
+    };
+  };
   eval?: {
     /** false disables capture entirely. Defaults to true. */
     capture?: boolean;
@@ -149,6 +166,35 @@ export interface GBrainConfig {
      *  loud stderr per page but lets everything through. Default: false.
      *  Env override: `GBRAIN_NO_SANITY=1` flips to true. */
     disabled?: boolean;
+  };
+
+  /**
+   * v0.41.2.1 — dream cycle config (synthesize + patterns phases).
+   * Read-precedence per key: file > DB > defaults. There are no
+   * `GBRAIN_DREAM_*` env vars; do not add an env layer without first
+   * extending `loadConfig()` to read them.
+   *
+   * Existing consumers (synthesize.ts, patterns.ts) read these keys
+   * directly via `engine.getConfig()`, so they already see DB-plane
+   * values. The structured shape here exists so consumers that read
+   * the merged config object (e.g. extract-atoms.ts) see the values
+   * uniformly without per-call-site `engine.getConfig()` fallbacks.
+   *
+   * Closes PR #1416's "silent dream.* config misses on DB-plane writes"
+   * for the merged-config code path.
+   */
+  dream?: {
+    synthesize?: {
+      session_corpus_dir?: string;
+      meeting_transcripts_dir?: string;
+      verdict_model?: string;
+      max_prompt_tokens?: number;
+      max_chunks_per_transcript?: number;
+    };
+    patterns?: {
+      lookback_days?: number;
+      min_evidence?: number;
+    };
   };
 
   /**
@@ -472,6 +518,57 @@ export async function loadConfigWithEngine(
   }
   if (Object.keys(mergedCS).length > 0) {
     merged.content_sanity = mergedCS;
+  }
+
+  // v0.41.2.1 — dream.* DB-plane merge. Precedence is file > DB > defaults
+  // per key (NO env layer; see GBrainConfig.dream JSDoc). Without this,
+  // `extract-atoms.ts` and any other consumer that reads the merged config
+  // (vs calling `engine.getConfig()` directly) silently misses dream.*
+  // config set via `gbrain config set`.
+  const dbSessionCorpusDir = await dbStr('dream.synthesize.session_corpus_dir');
+  const dbMeetingTranscriptsDir = await dbStr('dream.synthesize.meeting_transcripts_dir');
+  const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
+  const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
+  const dbMaxChunksPerTranscript = await dbInt('dream.synthesize.max_chunks_per_transcript');
+  const dbLookbackDays = await dbInt('dream.patterns.lookback_days');
+  const dbMinEvidence = await dbInt('dream.patterns.min_evidence');
+
+  const existingDream = merged.dream ?? {};
+  const existingSynth = existingDream.synthesize ?? {};
+  const existingPatterns = existingDream.patterns ?? {};
+  const mergedSynth: NonNullable<NonNullable<GBrainConfig['dream']>['synthesize']> = { ...existingSynth };
+  const mergedPatterns: NonNullable<NonNullable<GBrainConfig['dream']>['patterns']> = { ...existingPatterns };
+
+  if (mergedSynth.session_corpus_dir === undefined && dbSessionCorpusDir !== undefined) {
+    mergedSynth.session_corpus_dir = dbSessionCorpusDir;
+  }
+  if (mergedSynth.meeting_transcripts_dir === undefined && dbMeetingTranscriptsDir !== undefined) {
+    mergedSynth.meeting_transcripts_dir = dbMeetingTranscriptsDir;
+  }
+  if (mergedSynth.verdict_model === undefined && dbVerdictModel !== undefined) {
+    mergedSynth.verdict_model = dbVerdictModel;
+  }
+  if (mergedSynth.max_prompt_tokens === undefined && dbMaxPromptTokens !== undefined) {
+    mergedSynth.max_prompt_tokens = dbMaxPromptTokens;
+  }
+  if (mergedSynth.max_chunks_per_transcript === undefined && dbMaxChunksPerTranscript !== undefined) {
+    mergedSynth.max_chunks_per_transcript = dbMaxChunksPerTranscript;
+  }
+  if (mergedPatterns.lookback_days === undefined && dbLookbackDays !== undefined) {
+    mergedPatterns.lookback_days = dbLookbackDays;
+  }
+  if (mergedPatterns.min_evidence === undefined && dbMinEvidence !== undefined) {
+    mergedPatterns.min_evidence = dbMinEvidence;
+  }
+
+  // Only construct the dream container when at least one leaf was populated
+  // — mirrors the content_sanity pattern so empty brains keep `cfg.dream`
+  // undefined.
+  if (Object.keys(mergedSynth).length > 0 || Object.keys(mergedPatterns).length > 0) {
+    const mergedDream: NonNullable<GBrainConfig['dream']> = {};
+    if (Object.keys(mergedSynth).length > 0) mergedDream.synthesize = mergedSynth;
+    if (Object.keys(mergedPatterns).length > 0) mergedDream.patterns = mergedPatterns;
+    merged.dream = mergedDream;
   }
 
   return merged;

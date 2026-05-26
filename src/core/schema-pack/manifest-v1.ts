@@ -90,6 +90,68 @@ const FilingRuleSchema = z.object({
 }).strict();
 
 /**
+ * v0.41 T3 — closed registry of calibration aggregator algorithms.
+ *
+ * Codex outside-voice refinement of D6: domain NAMES stay open (any pack
+ * can declare `pricing_judgment` or `hiring_quality` without a gbrain
+ * release), but the AGGREGATOR — the actual SQL/code that computes a
+ * scorecard for that domain — must be a closed enum. New aggregator
+ * algorithms ship via gbrain release; new domain names ship via pack
+ * manifest. This splits the "what" (open) from the "how" (closed),
+ * preserving extensibility without SQL injection surface.
+ *
+ * v1 aggregators:
+ *   - `scalar_brier`     — standard Brier score over resolved binary takes
+ *                          (sum((p - outcome)^2) / n). Default for most
+ *                          predictive domains.
+ *   - `weighted_brier`   — Brier weighted by take.confidence. Use when
+ *                          calibration cares more about high-conviction
+ *                          predictions than low-stakes ones.
+ *   - `count_based`      — simple accuracy ratio (correct / resolved).
+ *                          Use when binary outcomes don't have natural
+ *                          probability semantics (e.g. did/didn't happen).
+ *   - `cluster_summary`  — descriptive rollup (tier counts, dominant
+ *                          topics, time span) instead of Brier. Used by
+ *                          the creator pack's concept_themes domain where
+ *                          there is no "right answer" to score against.
+ *
+ * Expand this enum in v0.42+ as real lens-pack usage surfaces new
+ * aggregation needs. Each addition is a versioned gbrain release.
+ */
+export const AGGREGATOR_KINDS = [
+  'scalar_brier',
+  'weighted_brier',
+  'count_based',
+  'cluster_summary',
+] as const;
+export type AggregatorKind = typeof AGGREGATOR_KINDS[number];
+
+const AggregatorKindSchema = z.enum(AGGREGATOR_KINDS);
+
+/**
+ * v0.41 T3 — per-pack calibration domain declaration. The calibration_profile
+ * cycle phase widens at v0.41 from a placeholder `{}` JSONB to an aggregator
+ * pass over each active pack's declared domains. Each entry binds:
+ *   - `name`         — open string label visible in scorecards
+ *                      (`deal_success`, `architecture_calls`, etc.)
+ *   - `aggregator`   — closed-enum algorithm to compute the scorecard
+ *   - `page_types`   — page types whose takes feed this domain (the
+ *                      propose_takes phase populates take_domain_assignments
+ *                      at write time from this mapping)
+ *
+ * Loaded by the registry at pack-load; validated against AggregatorKindSchema
+ * before any aggregator code runs. Unknown aggregator values fail the pack
+ * load with a paste-ready `gbrain models doctor`-style hint.
+ */
+const CalibrationDomainSchema = z.object({
+  name: z.string().min(1).regex(/^[a-z][a-z0-9_]*$/, 'domain name must be lowercase snake_case'),
+  aggregator: AggregatorKindSchema,
+  page_types: z.array(z.string().min(1)).min(1),
+}).strict();
+
+export type CalibrationDomain = z.infer<typeof CalibrationDomainSchema>;
+
+/**
  * SchemaPackManifest v1 — the parsed + validated pack file shape.
  * `extends` resolution + closure expansion are done by registry.ts, not at
  * parse time.
@@ -118,6 +180,34 @@ export const SchemaPackManifestSchema = z.object({
   takes_kinds: z.array(z.string()).default(['fact', 'take', 'bet', 'hunch']),
   enrichable_types: z.array(EnrichableSchema).default([]),
   filing_rules: z.array(FilingRuleSchema).default([]),
+  /**
+   * v0.41 T3/D4 — phase participation declaration. The runCycle orchestrator
+   * consults active pack's `phases:` to decide which pack-flavored cycle
+   * phases run (extract_atoms, synthesize_concepts, future pack phases).
+   * Pre-existing 17 core phases (lint, sync, extract, extract_facts,
+   * propose_takes, etc.) ALWAYS run regardless of this declaration —
+   * `phases:` is additive, not subtractive. `borrow_from` does NOT borrow
+   * phases; each pack declares its own participation explicitly.
+   *
+   * Phase names are validated as strings at parse time and against the
+   * runtime CyclePhase union at pack-load by the registry (kept as string[]
+   * here to avoid a circular import from src/core/cycle.ts).
+   *
+   * Optional rather than .default([]) so existing v0.38 manifest casts in
+   * test fixtures don't need to be re-typed; consumers apply `?? []` at
+   * the read site.
+   */
+  phases: z.array(z.string().min(1)).optional(),
+  /**
+   * v0.41 T3 — per-pack calibration domain declarations. The
+   * calibration_profile cycle phase widens at v0.41 from `{}` placeholder
+   * JSONB to a real aggregator pass over each declared domain. See
+   * CalibrationDomainSchema for the per-entry shape.
+   *
+   * Optional for the same reason as `phases` — preserves cast-compatibility
+   * with pre-v0.41 fixtures.
+   */
+  calibration_domains: z.array(CalibrationDomainSchema).optional(),
 }).strict();
 
 export type SchemaPackManifest = z.infer<typeof SchemaPackManifestSchema>;

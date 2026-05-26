@@ -467,12 +467,19 @@ const get_page: Operation = {
     // the cross-source view, preserving pre-v0.31.8 behavior. MCP callers
     // (stdio + HTTP) populate ctx.sourceId via the transport layer.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // v0.41.13 #1436: fuzzy resolveSlugs ALSO needs source scope — pre-fix
+    // it was unscoped, so a remote `get_page` with `fuzzy: true` could
+    // return candidates from sources outside ctx.auth.allowedSources /
+    // ctx.sourceId. sourceScopeOpts(ctx) is the canonical precedence
+    // ladder (federated array > scalar > nothing) shared with every other
+    // read-side handler.
+    const fuzzyScope = sourceScopeOpts(ctx);
 
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
-      const candidates = await ctx.engine.resolveSlugs(slug);
+      const candidates = await ctx.engine.resolveSlugs(slug, fuzzyScope);
       if (candidates.length === 1) {
         page = await ctx.engine.getPage(candidates[0], { includeDeleted, ...sourceOpts });
         resolved_slug = candidates[0];
@@ -534,7 +541,7 @@ const get_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries.',
+  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },

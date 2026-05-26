@@ -16,6 +16,10 @@ export {
   parseSchemaPackManifest,
   computeManifestSha8,
   packIdentity,
+  // v0.41 T3 — calibration domain registry
+  AGGREGATOR_KINDS,
+  type AggregatorKind,
+  type CalibrationDomain,
 } from './manifest-v1.ts';
 
 export {

@@ -809,6 +809,29 @@ export class PostgresEngine implements BrainEngine {
     return rowToPage(rows[0]);
   }
 
+  /**
+   * v0.41.13 (#1309) — identity-based dedup pre-check.
+   * See `BrainEngine.findDuplicatePage` for the contract.
+   */
+  async findDuplicatePage(
+    sourceId: string,
+    opts: { hash: string; frontmatterId?: string | null },
+  ): Promise<{ slug: string; id: number } | null> {
+    const sql = this.sql;
+    const fmId = opts.frontmatterId ?? null;
+    const rows = await sql`
+      SELECT id, slug FROM pages
+      WHERE source_id = ${sourceId}
+        AND deleted_at IS NULL
+        AND (content_hash = ${opts.hash} OR (frontmatter->>'id' = ${fmId} AND ${fmId}::text IS NOT NULL))
+      ORDER BY id
+      LIMIT 1
+    `;
+    if (rows.length === 0) return null;
+    const r = rows[0] as { id: number | string; slug: string };
+    return { slug: r.slug, id: Number(r.id) };
+  }
+
   async putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page> {
     slug = validateSlug(slug);
     const sql = this.sql;
@@ -1275,18 +1298,31 @@ export class PostgresEngine implements BrainEngine {
     }));
   }
 
-  async resolveSlugs(partial: string): Promise<string[]> {
+  async resolveSlugs(partial: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]> {
     const sql = this.sql;
 
+    // v0.41.13 #1436: source scope via postgres.js tagged-template
+    // fragments. When neither opt is set the resolver stays unscoped
+    // for back-compat with internal callers. The `deleted_at IS NULL`
+    // filter excludes soft-deleted rows (v0.26.5) from fuzzy candidates
+    // — they're not legitimate match targets for a remote `get_page`.
+    const sources = opts?.sourceIds ?? null;
+    const scalar = opts?.sourceId ?? null;
+    const scopeFragment = sources
+      ? sql` AND source_id = ANY(${sources}::text[])`
+      : scalar
+        ? sql` AND source_id = ${scalar}`
+        : sql``;
+
     // Try exact match first
-    const exact = await sql`SELECT slug FROM pages WHERE slug = ${partial}`;
+    const exact = await sql`SELECT slug FROM pages WHERE slug = ${partial} AND deleted_at IS NULL${scopeFragment}`;
     if (exact.length > 0) return [exact[0].slug];
 
     // Fuzzy match via pg_trgm
     const fuzzy = await sql`
       SELECT slug, similarity(title, ${partial}) AS sim
       FROM pages
-      WHERE title % ${partial} OR slug ILIKE ${'%' + partial + '%'}
+      WHERE deleted_at IS NULL AND (title % ${partial} OR slug ILIKE ${'%' + partial + '%'})${scopeFragment}
       ORDER BY sim DESC
       LIMIT 5
     `;
@@ -1722,7 +1758,9 @@ export class PostgresEngine implements BrainEngine {
         raw_score * ${sourceFactorCaseOnSlug} AS score,
         false AS stale
       FROM hnsw_candidates
-      ORDER BY score DESC
+      -- v0.41.13: stable tiebreaker for tied scores. See pglite-engine for
+      -- rationale (basis-vector test fixtures, planner-dependent ordering).
+      ORDER BY score DESC, page_id ASC, chunk_id ASC
       LIMIT ${limitParam}
       OFFSET ${offsetParam}
     `;
@@ -2455,11 +2493,20 @@ export class PostgresEngine implements BrainEngine {
     if (slugs.length === 0) return result;
     for (const s of slugs) result.set(s, 0);
 
+    // v0.42.0.0 D12: filter mentions OUT of backlink-count for search
+    // ranking. `link_source='mentions'` rows are auto-linked body-text
+    // mentions from `gbrain extract links --by-mention`; they're
+    // graph-completeness signal, NOT human-intent signal. Counting them
+    // toward backlinks would shift search ranking globally on first
+    // --by-mention run, boosting popular-mention pages over intentional-
+    // backlink pages. `IS DISTINCT FROM` is NULL-safe so legacy rows with
+    // NULL link_source still count (NULL != 'mentions' → row included).
     const sql = this.sql;
     const rows = await sql`
       SELECT p.slug as slug, COUNT(l.id)::int as cnt
       FROM pages p
       LEFT JOIN links l ON l.to_page_id = p.id
+        AND l.link_source IS DISTINCT FROM 'mentions'
       WHERE p.slug = ANY(${slugs}::text[])
       GROUP BY p.slug
     `;

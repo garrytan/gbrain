@@ -425,6 +425,68 @@ export async function importFromContent(
     return { slug, status: 'skipped', chunks: 0, parsedPage };
   }
 
+  // v0.41.13 (#1309) — identity-based cross-slug dedup pre-check.
+  //
+  // Catches the overlapping-ingest-roots bug class: when a user runs
+  // `gbrain import /vault/Subdir/` then later `gbrain import /vault/`,
+  // the same file is ingested under two different slugs (e.g.
+  // `vault/subdir/note` and `vault/note`). The slug-only check above
+  // misses it because the slugs differ; this check identifies the true
+  // duplicate by content_hash OR external frontmatter.id (granola UUID,
+  // ULID, etc.).
+  //
+  // Posture (codex review):
+  //   - SKIP only when frontmatter.id matches (true external duplicate).
+  //   - WARN-ALWAYS when content_hash matches but identity differs (two
+  //     intentional pages that happen to share text — templates, daily
+  //     logs). User decides whether to investigate.
+  //   - FAIL CLOSED on lookup error: a DB throw means we cannot verify
+  //     uniqueness, so throw rather than silently allow a duplicate.
+  //
+  // Soft-deleted rows are excluded at the engine layer (`deleted_at IS NULL`)
+  // so a tombstoned page doesn't block a legitimate re-import.
+  // Test doubles that don't implement `findDuplicatePage` fall through
+  // via the `?.` shape — no failure mode for fake engines.
+  const fmId = (parsed.frontmatter as Record<string, unknown> | undefined)?.id;
+  const fmIdStr = typeof fmId === 'string' && fmId.length > 0 ? fmId : null;
+  if (!opts.forceRechunk && engine.findDuplicatePage) {
+    let dup: { slug: string; id: number } | null = null;
+    try {
+      dup = await engine.findDuplicatePage(sourceId ?? 'default', {
+        hash,
+        frontmatterId: fmIdStr,
+      });
+    } catch (err) {
+      throw new Error(
+        `[import] dedup pre-check failed for ${opts.sourcePath ?? slug}: ` +
+        `${(err as Error).message}. Re-run import after DB recovery.`
+      );
+    }
+    if (dup && dup.slug !== slug) {
+      // Look up the duplicate page so we can compare frontmatter.id.
+      const dupPage = await engine.getPage(dup.slug, sourceId ? { sourceId } : undefined);
+      const dupFmId = (dupPage?.frontmatter as Record<string, unknown> | undefined)?.id;
+      const dupFmIdStr = typeof dupFmId === 'string' && dupFmId.length > 0 ? dupFmId : null;
+      const sameExternalId = fmIdStr !== null && dupFmIdStr === fmIdStr;
+      if (sameExternalId) {
+        // True duplicate (same external ID). Skip + log to stderr.
+        process.stderr.write(
+          `[import] skipping ${opts.sourcePath ?? slug}: identical to ${dup.slug} ` +
+          `(frontmatter.id=${fmIdStr}) in source ${sourceId ?? 'default'}. ` +
+          `Pass --force-rechunk to override.\n`
+        );
+        return { slug: dup.slug, status: 'skipped', chunks: 0, parsedPage };
+      }
+      // Same content_hash, different (or missing) frontmatter.id.
+      // Surface a warning but proceed with the insert — they may be
+      // legitimate independent pages that happen to share text.
+      process.stderr.write(
+        `[import] WARNING: ${opts.sourcePath ?? slug} shares content_hash with ${dup.slug} ` +
+        `(${hash.slice(0, 8)}) but has different frontmatter.id. Indexing both.\n`
+      );
+    }
+  }
+
   // Chunk compiled_truth and timeline.
   // v0.41 content-sanity soft-block: if the gate marked this page as
   // embed-skipped (oversize without junk-pattern), skip chunking

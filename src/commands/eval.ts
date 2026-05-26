@@ -37,6 +37,13 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalReplay } = await import('./eval-replay.ts');
     return runEvalReplay(engine, args.slice(1));
   }
+  if (sub === 'gate') {
+    // v0.41 — eval gate. Two paths (regression via --baseline, correctness
+    // via --qrels). Needs an engine: correctness gate runs live retrieval;
+    // regression gate calls replayCore in-process (codex round-2 #7).
+    const { runEvalGate } = await import('./eval-gate.ts');
+    return runEvalGate(engine, args.slice(1));
+  }
   if (sub === 'cross-modal') {
     // No-DB sub-subcommand. The cli.ts dispatcher routes the user-facing
     // path before connectEngine, so this branch only fires when callers

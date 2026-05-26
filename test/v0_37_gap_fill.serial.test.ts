@@ -326,17 +326,20 @@ describe('Lane E.4 — loadRecommendationContext is provider-aware', () => {
   // behavior via a public surface (the recommendation context the
   // `doctor --remediation-plan` output uses) is brittle. Use a
   // source-text assertion instead.
-  test('source-text grep: loadRecommendationContext recognizes ZE alongside OpenAI', () => {
+  test('source-text grep: loadRecommendationContext is provider-aware via the shared helper', () => {
     const src = readFileSync(join(__dirname, '..', 'src', 'commands', 'doctor.ts'), 'utf-8');
-    // Pre-fix this function read DB config + OpenAI-only key check.
-    // Post-fix it reads gateway + branches on provider for the key.
+    // Pre-v0.37 this was OpenAI-only; the Lane E.4 fix made it branch on
+    // provider for the key. v0.40.x replaced the inline prefix ladder with the
+    // shared recipe-aware helper `embeddingProviderConfigured` (so doctor +
+    // autopilot can't drift) — assert that shape rather than the old inline
+    // ZE strings.
     const fnIdx = src.indexOf('async function loadRecommendationContext');
     expect(fnIdx).toBeGreaterThan(0);
     const slice = src.slice(fnIdx, fnIdx + 3000);
-    expect(slice).toContain('ZEROENTROPY_API_KEY');
-    expect(slice).toContain('zeroentropy_api_key');
-    expect(slice).toContain('zeroentropyai:');
-    // Reads from gateway, not DB.
+    // Delegates to the shared helper + the env→config key map.
+    expect(slice).toContain('embeddingProviderConfigured');
+    expect(slice).toContain('HOSTED_EMBED_KEY_CONFIG');
+    // Still reads the model from the gateway (not DB-only).
     expect(slice).toContain('gateway');
   });
 });

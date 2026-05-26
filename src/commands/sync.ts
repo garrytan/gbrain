@@ -8,6 +8,7 @@ import { createInterface } from 'readline';
 import {
   buildSyncManifest,
   isSyncable,
+  unsyncableReason,
   resolveSlugForPath,
   recordSyncFailures,
   unacknowledgedSyncFailures,
@@ -513,10 +514,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       return await withRefreshingLock(engine, lockKey, () => performSyncInner(engine, opts));
     } catch (err) {
       if (err instanceof LockUnavailableError) {
-        throw new Error(
-          `Another sync is in progress (lock ${lockKey} held). ` +
-            `Wait for it to finish, or run 'gbrain doctor' if it has been more than 30 minutes.`,
-        );
+        throw new Error(await formatLockBusyMessage(engine, lockKey));
       }
       throw err;
     }
@@ -525,10 +523,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // Legacy global-lock path (single-default-source brains).
   const lockHandle = await tryAcquireDbLock(engine, lockKey);
   if (!lockHandle) {
-    throw new Error(
-      `Another sync is in progress (lock ${lockKey} held). ` +
-        `Wait for it to finish, or run 'gbrain doctor' if it has been more than 30 minutes.`,
-    );
+    throw new Error(await formatLockBusyMessage(engine, lockKey));
   }
   try {
     return await performSyncInner(engine, opts);
@@ -537,7 +532,188 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   }
 }
 
+/**
+ * v0.41.6.0 D3: rich "Another sync is in progress" message that names the
+ * holder PID, hostname, age, and the right --break-lock invocation to
+ * recover. Falls back to the legacy message when inspectLock can't read
+ * the row (best-effort — the lock itself was still busy).
+ */
+async function formatLockBusyMessage(engine: BrainEngine, lockKey: string): Promise<string> {
+  const { inspectLock } = await import('../core/db-lock.ts');
+  let snap;
+  try { snap = await inspectLock(engine, lockKey); }
+  catch { snap = null; }
+
+  if (!snap) {
+    return (
+      `Another sync is in progress (lock ${lockKey} held). ` +
+      `Wait for it to finish, or run 'gbrain doctor' if it has been more than 30 minutes.`
+    );
+  }
+
+  const ageHuman = formatAgeHuman(snap.age_ms);
+  const breakHint = lockKey.startsWith('gbrain-sync:')
+    ? `gbrain sync --break-lock --source ${lockKey.slice('gbrain-sync:'.length)}`
+    : `gbrain sync --break-lock`;
+  const ttlNote = snap.ttl_expired ? ' [TTL expired]' : '';
+  return (
+    `Another sync is in progress (lock ${lockKey} held by pid ${snap.holder_pid} on ${snap.holder_host}, ` +
+    `started ${ageHuman} ago${ttlNote}).\n` +
+    `If pid ${snap.holder_pid} is dead, re-run with --break-lock to clear it:\n` +
+    `  ${breakHint}\n` +
+    `Or wait for the holder to finish.`
+  );
+}
+
+/**
+ * v0.41.6.0 D3: `gbrain sync --break-lock` / `--force-break-lock` worker.
+ * Returns the process exit code (0 = lock cleared or absent; 1 = refused).
+ *
+ * Safe path (`force=false`): refuses unless the holder is on this host
+ * AND either (a) TTL has expired (the lock is structurally available
+ * already) OR (b) the holder PID is dead AND the lock is older than 60s
+ * (the age guard defeats PID-reuse coincidence — Linux PID space wraps
+ * at 32768 so a 10-day-old lock with pid=12345 may be falsely
+ * refused-to-clear because an unrelated process now owns pid 12345; 60s
+ * is the codex F7-amended minimum age that makes coincidence unlikely).
+ *
+ * Force path (`force=true`): skips liveness check, deletes the row,
+ * warns loudly that the holder may still be writing.
+ *
+ * Both paths use the same atomic `DELETE ... RETURNING id` so a race
+ * with another break-lock or with TTL-eviction can't produce confusing
+ * post-conditions.
+ */
+async function runBreakLock(
+  engine: BrainEngine,
+  lockKey: string,
+  sourceId: string,
+  opts: { force: boolean; json: boolean },
+): Promise<number> {
+  const { inspectLock, deleteLockRow } = await import('../core/db-lock.ts');
+  const { hostname } = await import('os');
+  const localHost = hostname();
+  let snap;
+  try { snap = await inspectLock(engine, lockKey); }
+  catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (opts.json) console.log(JSON.stringify({ status: 'error', error: msg, lock: lockKey }));
+    else console.error(`Failed to inspect lock ${lockKey}: ${msg}`);
+    return 1;
+  }
+
+  if (!snap) {
+    if (opts.json) console.log(JSON.stringify({ status: 'absent', lock: lockKey, source_id: sourceId }));
+    else console.log(`Lock ${lockKey} is not held (nothing to break).`);
+    return 0;
+  }
+
+  // Force path: skip all guards, atomic DELETE, warn.
+  if (opts.force) {
+    const { deleted } = await deleteLockRow(engine, lockKey, snap.holder_pid);
+    if (opts.json) {
+      console.log(JSON.stringify({
+        status: deleted ? 'force_broken' : 'race_already_cleared',
+        lock: lockKey, source_id: sourceId, snapshot: snap,
+      }));
+    } else if (deleted) {
+      console.log(`Force-broke lock ${lockKey} (was held by pid ${snap.holder_pid} on ${snap.holder_host}, age ${formatAgeHuman(snap.age_ms)}).`);
+      console.log('WARNING: the holder may still be writing. Verify with `gbrain doctor` before re-running.');
+    } else {
+      console.log(`Lock ${lockKey} was already cleared by another process between our check and DELETE (race-safe).`);
+    }
+    return 0;
+  }
+
+  // Safe path: must be local host AND (TTL-expired OR (PID-dead AND age >= 60s)).
+  if (snap.holder_host !== localHost) {
+    if (opts.json) {
+      console.log(JSON.stringify({
+        status: 'refused',
+        reason: 'cross_host',
+        lock: lockKey, source_id: sourceId, snapshot: snap, local_host: localHost,
+      }));
+    } else {
+      console.error(`Lock ${lockKey} is held on a different host (${snap.holder_host}, this host is ${localHost}).`);
+      console.error('Cross-host PID liveness is unsound. To break anyway, use --force-break-lock');
+      console.error('(only safe when you KNOW the holder is dead — verify before forcing).');
+    }
+    return 1;
+  }
+
+  let safe = false;
+  let reason: string;
+  if (snap.ttl_expired) {
+    safe = true;
+    reason = 'ttl_expired';
+  } else {
+    // PID liveness check on local host. process.kill(pid, 0) throws ESRCH
+    // when the PID is dead. Combined with 60s age guard (per outside-voice F7).
+    let alive = true;
+    try { process.kill(snap.holder_pid, 0); }
+    catch { alive = false; }
+    const oldEnough = snap.age_ms >= 60_000;
+    if (!alive && oldEnough) {
+      safe = true;
+      reason = 'pid_dead_age_60s';
+    } else if (!alive && !oldEnough) {
+      reason = 'pid_dead_but_lock_too_young';
+    } else {
+      reason = 'pid_alive';
+    }
+  }
+
+  if (!safe) {
+    if (opts.json) {
+      console.log(JSON.stringify({
+        status: 'refused', reason, lock: lockKey, source_id: sourceId, snapshot: snap,
+      }));
+    } else {
+      console.error(`Refusing to break lock ${lockKey}: holder pid ${snap.holder_pid} appears alive on ${snap.holder_host} (age ${formatAgeHuman(snap.age_ms)}).`);
+      if (reason === 'pid_dead_but_lock_too_young') {
+        console.error('(PID is dead but the lock is younger than 60s — the PID may have been reused. Wait or use --force-break-lock if you are certain.)');
+      } else {
+        console.error('If the holder is wedged, kill it first then re-run --break-lock,');
+        console.error('OR use --force-break-lock to clear regardless (the holder may still write afterwards).');
+      }
+    }
+    return 1;
+  }
+
+  const { deleted } = await deleteLockRow(engine, lockKey, snap.holder_pid);
+  if (opts.json) {
+    console.log(JSON.stringify({
+      status: deleted ? 'broken' : 'race_already_cleared',
+      reason, lock: lockKey, source_id: sourceId, snapshot: snap,
+    }));
+  } else if (deleted) {
+    console.log(`Broke lock ${lockKey} (was held by pid ${snap.holder_pid} on ${snap.holder_host}, age ${formatAgeHuman(snap.age_ms)}; reason: ${reason}).`);
+  } else {
+    console.log(`Lock ${lockKey} was already cleared by another process between our check and DELETE (race-safe).`);
+  }
+  return 0;
+}
+
+function formatAgeHuman(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m${s % 60}s`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d${h % 24}h`;
+}
+
 async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
+  // v0.41.8.0 (D9 / #1342): phase breadcrumbs. The #1342 reporter saw
+  // ZERO stderr output before their sync hang, which made the bug
+  // impossible to triage. Mirror the existing `[gbrain phase] sync.git_pull`
+  // pattern at the major phase boundaries so the next #1342-shaped
+  // report names WHICH phase spun. Doesn't fix #1342 but converts
+  // "hung with no output" into actionable diagnostic data.
+  serr(`[gbrain phase] sync.resolve_repo`);
   // Resolve repo path
   const repoPath = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (!repoPath) {
@@ -547,6 +723,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     throw new Error(hint);
   }
 
+  serr(`[gbrain phase] sync.load_active_pack`);
   // v0.39 T1.5: load active pack ONCE at sync entry; pass to every per-file
   // importFile call below. Codex perf finding #7: per-file loadActivePack adds
   // disk/YAML/hash overhead × thousands of files. Best-effort: pack load
@@ -571,6 +748,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // we recover from missing/no-git/not-a-dir by re-cloning, refuse on
   // url-drift or corruption with structured hints.
   if (opts.sourceId) {
+    serr(`[gbrain phase] sync.validate_repo_state`);
     const { validateRepoState } = await import('../core/git-remote.ts');
     const { recloneIfMissing } = await import('../core/sources-ops.ts');
     const cfgRows = await engine.executeRaw<{ config: unknown }>(
@@ -618,6 +796,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     throw new Error(`Not a git repository: ${repoPath}. GBrain sync requires a git-initialized repo.`);
   }
 
+  serr(`[gbrain phase] sync.detect_head`);
   // Detect detached HEAD up front so the working-tree fallback fires for both
   // the default sync and `--no-pull` callers. Only the actual git pull is
   // gated on opts.noPull.
@@ -754,12 +933,31 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // became un-syncable (e.g., moved under `.gitignore` or filtered by
   // strategy=markdown) deletes the actual code-slug page, not a ghost
   // markdown-slug that never existed.
+  //
+  // v0.41.13 (#1433): the original cleanup loop deleted EVERY pre-existing
+  // page for unsyncable-modified paths, including `log.md`, `schema.md`,
+  // `index.md`, `README.md` — files that fail `isSyncable` precisely
+  // because they're metafiles by convention, not because the user
+  // "removed" them from the strategy. infiniteGameExp's domain `log.md`
+  // pages had been indexed by an older gbrain version (or via direct
+  // put_page) and were silently dropped on every subsequent sync. The
+  // fix uses `unsyncableReason` (factored from `isSyncable` so they
+  // cannot drift) to skip the delete when the reason is `'metafile'`.
+  //
+  // Honest scope: this guard only fixes the `manifest.modified` case.
+  // `manifest.deleted` is filtered upstream at sync.ts:757 via the same
+  // `isSyncable` call, so `rm log.md` followed by sync also doesn't
+  // delete the page. That's the same pre-fix behavior — removing the
+  // page requires `gbrain pages purge-deleted` or a direct MCP delete.
+  // Filed as v0.42+ follow-up for a `gbrain pages remove <slug>` surface.
   const unsyncableModified = manifest.modified.filter(p => !isSyncable(p, syncOpts));
   // v0.18.0+ multi-source: scope getPage + deletePage to opts.sourceId so
   // unsyncable cleanup in source A doesn't accidentally sweep same-slug
   // pages in sources B/C/D.
   const pageOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   for (const path of unsyncableModified) {
+    // v0.41.13 #1433: never delete on metafile classification.
+    if (unsyncableReason(path, syncOpts) === 'metafile') continue;
     const slug = await resolveSlugByPathOrSourcePath(engine, path, opts.sourceId);
     try {
       const existing = await engine.getPage(slug, pageOpts);
@@ -1416,6 +1614,56 @@ See also:
   const syncAll = args.includes('--all');
   const jsonOut = args.includes('--json');
   const yesFlag = args.includes('--yes');
+  // v0.41.6.0 D3: lock-recovery flags. --break-lock (safe) verifies the
+  // holder is local-host + (TTL-expired OR PID-dead+60s-old) before
+  // deleting the row. --force-break-lock skips the liveness check. Both
+  // are refused when combined with --all (per-source invocation required;
+  // v0.40 lock keys are gbrain-sync:<sourceId>).
+  const breakLock = args.includes('--break-lock');
+  const forceBreakLock = args.includes('--force-break-lock');
+
+  // v0.41.6.0 D3: handle --break-lock / --force-break-lock BEFORE the
+  // sync would otherwise contend on the lock. Resolves the active source,
+  // inspects the lock, decides break/refuse, exits without running sync.
+  if (breakLock || forceBreakLock) {
+    if (syncAll) {
+      console.error('--break-lock / --force-break-lock cannot be combined with --all.');
+      console.error('Per-source lock keys (gbrain-sync:<sourceId>) require per-source invocation.');
+      console.error('');
+      console.error('To recover stale locks across all sources, shell-loop:');
+      console.error(`  for src in $(gbrain sources list --json | jq -r '.[].id'); do gbrain sync --break-lock --source "$src"; done`);
+      process.exit(1);
+    }
+    const sourceArg = args.find((a, i) => args[i - 1] === '--source');
+    const sourceId = sourceArg ?? 'default';
+    const lockKey = `gbrain-sync:${sourceId}`;
+    const exit = await runBreakLock(engine, lockKey, sourceId, { force: forceBreakLock, json: jsonOut });
+    process.exit(exit);
+  }
+
+  // v0.41.6.0 D1: preflight embedding credentials BEFORE the import phase
+  // so a missing OPENAI_API_KEY exits with one clean line instead of
+  // writing N identical entries to sync-failures.jsonl. Skipped when
+  // --no-embed (the canonical opt-out) or --dry-run (no provider calls
+  // happen in dry-run anyway).
+  if (!noEmbed && !dryRun) {
+    const { validateEmbeddingCreds, EmbeddingCredentialError } = await import('../core/embed-preflight.ts');
+    try {
+      validateEmbeddingCreds();
+    } catch (e) {
+      if (e instanceof EmbeddingCredentialError) {
+        if (jsonOut) {
+          console.log(JSON.stringify({ status: 'embedding_credentials_missing', diagnosis: e.diagnosis }));
+        } else {
+          console.error('');
+          console.error(e.userMessage);
+          console.error('');
+        }
+        process.exit(1);
+      }
+      throw e;
+    }
+  }
   // v0.40 D4+D18: parallel `sync --all` by default; --serial opts back to v1.
   // --no-auto-embed skips the per-source embed-backfill auto-enqueue.
   // --max-sources N caps fan-out (default min(sources.length, 8)).
@@ -1467,11 +1715,25 @@ See also:
   // v0.18.0 Step 5: --source resolves to a sources(id) row. Falls back
   // to pre-v0.17 global config (sync.repo_path + sync.last_commit) when
   // no flag, no env, no dotfile is present.
+  //
+  // v0.41.13 (#1434): always call the resolver, not just when explicit/env
+  // is set. Pre-fix, `gbrain sync` without --source skipped resolution and
+  // left sourceId undefined — which the engine treated as the seeded
+  // 'default' source. Users with a single non-default registered source
+  // (studiovault, etc.) silently routed every write to a source holding
+  // 0 pages, then createVersion threw on the slug lookup.
+  //
+  // The resolver's new `sole_non_default` tier (5.5) routes those
+  // single-source brains to the right place automatically; the nudge
+  // surfaces the auto-route to stderr so the user knows what happened
+  // and can pass --source to override if needed.
   const explicitSource = args.find((a, i) => args[i - 1] === '--source') || null;
-  let sourceId: string | undefined = undefined;
-  if (explicitSource || process.env.GBRAIN_SOURCE) {
-    const { resolveSourceId } = await import('../core/source-resolver.ts');
-    sourceId = await resolveSourceId(engine, explicitSource);
+  const { resolveSourceWithTier, formatSoleNonDefaultNudge } = await import('../core/source-resolver.ts');
+  const resolved = await resolveSourceWithTier(engine, explicitSource);
+  const sourceId: string = resolved.source_id;
+  if (resolved.tier === 'sole_non_default') {
+    const nudge = formatSoleNonDefaultNudge(sourceId);
+    if (nudge) process.stderr.write(nudge + '\n');
   }
 
   // v0.19.0 — `sync --all` iterates all registered sources with a
