@@ -8,6 +8,16 @@
 > - 2026-04-25 (v0.20.4 sync, commit `8665afb`): upstream
 >   `src/core/pglite-engine.ts:75` still calls bare `await this._db.close()`
 >   in `disconnect()` with no WAL flush. Patch retained.
+> - 2026-05-26 (v0.41.14.0 sync, §6.31): upstream v0.41.8.0 refactored
+>   `disconnect()` into snapshot-and-early-null + try/finally pattern
+>   (closes partial-state race PR #1337) but still does NOT flush the
+>   WAL. Fork patch **folded INTO** the new upstream structure — the
+>   `pg_switch_wal()` call now lives inside the `try { if (db) { ... } }`
+>   block before `db.close()`, gaining upstream's lock-release try/finally
+>   guarantee while preserving the WAL flush. Patch sites both alive:
+>   `src/core/pglite-engine.ts:283` + `skills/kos-jarvis/_lib/brain-db.ts:164`.
+>   Upstream PR opportunity is BETTER now (less merge surface), but
+>   bug-class hypothesis still untested on Linux CI.
 
 ## What was wrong
 

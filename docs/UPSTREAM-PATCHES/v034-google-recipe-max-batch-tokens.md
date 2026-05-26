@@ -3,6 +3,7 @@
 **Status**: fork-local in `master`. Upstream PR pending (`upstream-fix/google-recipe-max-batch-tokens` branch). Drop this doc once upstream merges.
 
 **Filed**: 2026-05-15
+**Last status check**: 2026-05-26 (post v0.41.14.0 sync §6.31) — upstream `src/core/ai/recipes/google.ts` still missing `max_batch_tokens` / `chars_per_token` on the embedding touchpoint despite 20 minor releases since filing. Patch auto-merges through every sync; cost to upstream the PR is one line of friction. The motivation is unchanged: CJK-dense corpora hit Gemini 429s without pre-split.
 **Affected file**: `src/core/ai/recipes/google.ts`
 **Scope**: +7 / -0, embedding touchpoint only, no logic change.
 
@@ -14,7 +15,7 @@ Since v0.32 (`types.ts` `no_batch_cap` opt-out) the gateway emits a once-per-pro
 [ai.gateway] recipe "google" declares an embedding touchpoint without max_batch_tokens; recursion is the only safety net for batch caps.
 ```
 
-`google` is the only first-party recipe still missing the field (voyage, zhipu, dashscope, minimax, azure-openai all declare it). For fork operators routing through `google:gemini-embedding-001` (M3 cutover), the warning shows up in every `kos-compat-api /ingest` response output, every cron `gbrain` invocation, and every interactive query — it's load-bearing noise.
+`google` is the only first-party recipe still missing the field (voyage, zhipu, dashscope, minimax, azure-openai all declare it). For fork operators routing through `google:gemini-embedding-001` (M3 cutover), the warning shows up in every cron `gbrain` invocation, every `gbrain serve --http` MCP `put_page` response output, and every interactive query — it's load-bearing noise. (Pre-§6.28 it also surfaced on `kos-compat-api /ingest`; that surface is retired but the upstream wiring still affects every fork-routed embedding call.)
 
 The recursive-halving fallback path works, but it's reactive — a CJK-dense batch that exceeds Gemini's effective per-request token cap will burn one failed request before halving. Pre-splitting avoids that round-trip entirely.
 
