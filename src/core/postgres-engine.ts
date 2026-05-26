@@ -4554,7 +4554,8 @@ export class PostgresEngine implements BrainEngine {
                AS score
         FROM pages p
         LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
-       WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= ${boundaryIso}::timestamptz
+       WHERE p.deleted_at IS NULL
+         AND GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= ${boundaryIso}::timestamptz
          ${prefixCondition}
        GROUP BY p.id
        ORDER BY score DESC
