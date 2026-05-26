@@ -41,6 +41,7 @@ export type VoiceGateJudge = (input: {
   candidate: string;
   mode: VoiceGateMode;
   rubric: string;
+  modelHint?: string;
 }) => Promise<VoiceGateJudgeVerdict>;
 
 export interface VoiceGateResult<T = unknown> {
@@ -153,13 +154,14 @@ export async function defaultJudge(input: {
   candidate: string;
   mode: VoiceGateMode;
   rubric: string;
+  modelHint?: string;
 }): Promise<VoiceGateJudgeVerdict> {
   const prompt = HAIKU_GATE_PROMPT
     .replace('{RUBRIC}', input.rubric)
     .replace('{CANDIDATE}', input.candidate);
   const result = await gatewayChat({
     messages: [{ role: 'user', content: prompt }],
-    model: 'claude-haiku-4-5',
+    model: input.modelHint ?? 'claude-haiku-4-5',
     maxTokens: 100,
   });
   return parseJudgeOutput(result.text);

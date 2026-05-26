@@ -18,7 +18,7 @@ import {
   isDreamOutput,
   DREAM_OUTPUT_MARKER_RE,
 } from '../src/core/cycle/transcript-discovery.ts';
-import { judgeSignificance, renderPageToMarkdown, type JudgeClient } from '../src/core/cycle/synthesize.ts';
+import { judgeSignificance, renderPageToMarkdown, type SignificanceJudge } from '../src/core/cycle/synthesize.ts';
 
 let tmpDir: string;
 
@@ -305,32 +305,26 @@ describe('judgeSignificance', () => {
     };
   }
 
-  function mockClient(captured: { model?: string }): JudgeClient {
-    return {
-      create: async (p: any) => {
-        captured.model = p.model;
-        return { content: [{ type: 'text', text: '{"worth_processing": true, "reasons": ["test"]}' }] } as any;
-      },
-    };
-  }
+  const mockJudge = (captured: { model?: string }): SignificanceJudge => async (input) => {
+    captured.model = input.model;
+    return '{"worth_processing": true, "reasons": ["test"]}';
+  };
 
   test('passes verdict_model override to client.create', async () => {
     const captured: { model?: string } = {};
-    await judgeSignificance(mockClient(captured), makeTranscript(), 'claude-sonnet-4-6');
-    expect(captured.model).toBe('claude-sonnet-4-6');
+    await judgeSignificance(makeTranscript(), 'claude-sonnet-4-6', mockJudge(captured));
+    expect(captured.model).toBe('anthropic:claude-sonnet-4-6');
   });
 
   test('defaults to claude-haiku-4-5-20251001 when model omitted', async () => {
     const captured: { model?: string } = {};
-    await judgeSignificance(mockClient(captured), makeTranscript());
-    expect(captured.model).toBe('claude-haiku-4-5-20251001');
+    await judgeSignificance(makeTranscript(), undefined, mockJudge(captured));
+    expect(captured.model).toBe('anthropic:claude-haiku-4-5-20251001');
   });
 
   test('returns worth_processing=false when judge returns unparseable text', async () => {
-    const client: JudgeClient = {
-      create: async () => ({ content: [{ type: 'text', text: 'no json here' }] } as any),
-    };
-    const r = await judgeSignificance(client, makeTranscript());
+    const judge: SignificanceJudge = async () => 'no json here';
+    const r = await judgeSignificance(makeTranscript(), undefined, judge);
     expect(r.worth_processing).toBe(false);
     expect(r.reasons[0]).toContain('unparseable');
   });
