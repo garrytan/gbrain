@@ -273,6 +273,49 @@ describe('resolveSchemaEmbeddingDim', () => {
       expect(got.model).toBe('openai:text-embedding-3-large');
     }
   });
+
+  // user_provided_models recipes (llama-server, litellm): default_dims=0 is a
+  // sentinel meaning "user must supply". Any positive integer dim is valid
+  // because the model emits whatever size it was launched with. Bug: the
+  // Matryoshka allow-list check ran even when defaultDims===0, rejecting any
+  // dim that wasn't in the (empty) declared dims_options list.
+  test('llama-server accepts any positive dim (user_provided_models sentinel fix)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:mlx-community/Qwen3-Embedding-8B-4bit-DWQ',
+      embedding_dimensions: 2048,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.dim).toBe(2048);
+      expect(got.provider).toBe('llama-server');
+    }
+  });
+
+  test('llama-server also accepts native output dims (e.g. 4096)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:some-local-model',
+      embedding_dimensions: 4096,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(4096);
+  });
+
+  test('llama-server still rejects non-positive dims', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:some-local-model',
+      embedding_dimensions: 0,
+    });
+    expect(got.ok).toBe(false);
+  });
+
+  test('llama-server without explicit dimensions rejects (default_dims=0 means no implicit default)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:some-local-model',
+    });
+    // default_dims=0 fails the positive-integer check — user must supply dims
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/positive integer/);
+  });
 });
 
 describe('resolveSchemaMultimodalDim', () => {
