@@ -29,16 +29,20 @@ import {
   ALL_PHASES,
   type CyclePhase,
   type CycleReport,
+  type PhaseResult,
 } from '../core/cycle.ts';
+import { runDreamReview } from '../core/cycle/synthesize.ts';
 import { existsSync } from 'fs';
 import { resolve } from 'node:path';
 
 interface DreamArgs {
+  mode: 'cycle' | 'review';
   json: boolean;
   dryRun: boolean;
   pull: boolean;
   phase: CyclePhase | null;
   dir: string | null;
+  model: string | null;
   help: boolean;
   /** v0.21: ad-hoc transcript file path; implies --phase synthesize. */
   inputFile: string | null;
@@ -59,6 +63,7 @@ interface DreamArgs {
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function parseArgs(args: string[]): DreamArgs {
+  const mode: DreamArgs['mode'] = args[0] === 'review' ? 'review' : 'cycle';
   const phaseIdx = args.indexOf('--phase');
   const rawPhase = phaseIdx !== -1 ? args[phaseIdx + 1] : null;
   let phase = rawPhase && (ALL_PHASES as string[]).includes(rawPhase)
@@ -71,6 +76,9 @@ function parseArgs(args: string[]): DreamArgs {
 
   const dirIdx = args.indexOf('--dir');
   const dir = dirIdx !== -1 ? args[dirIdx + 1] : null;
+
+  const modelIdx = args.indexOf('--model');
+  const model = modelIdx !== -1 ? args[modelIdx + 1] ?? null : null;
 
   const inputIdx = args.indexOf('--input');
   const inputFile = inputIdx !== -1 ? args[inputIdx + 1] ?? null : null;
@@ -100,6 +108,29 @@ function parseArgs(args: string[]): DreamArgs {
     process.exit(2);
   }
 
+  if (mode === 'review') {
+    if (!inputFile) {
+      console.error('dream review requires --input <file>');
+      process.exit(2);
+    }
+    if (args.includes('--dry-run')) {
+      console.error('review mode is already no-write; remove --dry-run');
+      process.exit(2);
+    }
+    if (args.includes('--pull')) {
+      console.error('dream review does not support --pull');
+      process.exit(2);
+    }
+    if (rawPhase) {
+      console.error('dream review does not support --phase');
+      process.exit(2);
+    }
+    if (date || from || to) {
+      console.error('dream review accepts one --input file; remove --date / --from / --to');
+      process.exit(2);
+    }
+  }
+
   // --input + --date / --from / --to is incoherent: --input is a single
   // file, the date filters scan a directory.
   if (inputFile && (date || from || to)) {
@@ -111,11 +142,13 @@ function parseArgs(args: string[]): DreamArgs {
   if (inputFile && !phase) phase = 'synthesize';
 
   return {
+    mode,
     json: args.includes('--json'),
     dryRun: args.includes('--dry-run'),
     pull: args.includes('--pull'),
     phase,
     dir,
+    model,
     help: args.includes('--help') || args.includes('-h'),
     inputFile,
     date,
@@ -179,6 +212,7 @@ Options:
                       verdicts), but skips the Sonnet synthesis pass.
                       "--dry-run" does NOT mean "zero LLM calls."
   --json              Emit the CycleReport as JSON (agent-readable)
+  review              Propose memory pages for one transcript without writing
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
   --pull              git pull the brain repo before syncing (default: no pull)
   --dir <path>        Brain directory (default: configured brain)
@@ -188,6 +222,8 @@ Options:
   --date YYYY-MM-DD   Synthesize transcripts dated for one specific day.
   --from YYYY-MM-DD   Backfill range start (use with --to).
   --to   YYYY-MM-DD   Backfill range end.
+  --model <provider:model>
+                      Review-mode one-run model override. Does not persist config.
 
   --unsafe-bypass-dream-guard
                       Disable the self-consumption guard. Use only when you
@@ -202,6 +238,7 @@ Examples:
   gbrain dream --dry-run --json
   gbrain dream --phase lint
   gbrain dream --phase synthesize --input ~/transcripts/2026-04-25.txt
+  gbrain dream review --input ~/transcripts/2026-04-25.txt --model anthropic:claude-sonnet-4-6 --json
   gbrain dream --phase synthesize --from 2026-04-01 --to 2026-04-25
   0 2 * * * gbrain dream --json         # nightly via cron
 
@@ -265,6 +302,17 @@ function printHuman(report: CycleReport) {
   }
 }
 
+function printReviewHuman(result: PhaseResult) {
+  const proposals = Array.isArray(result.details.proposals) ? result.details.proposals.length : 0;
+  const source = typeof result.details.source_path === 'string' ? result.details.source_path : 'unknown source';
+  console.log(`Dream review: ${proposals} proposal(s), no writes.`);
+  console.log(`Source: ${source}`);
+  if (result.error) {
+    const hint = result.error.hint ? ` (${result.error.hint})` : '';
+    console.log(`[${result.error.class}/${result.error.code}] ${result.error.message}${hint}`);
+  }
+}
+
 // ─── CLI entry ─────────────────────────────────────────────────────
 
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
@@ -276,6 +324,28 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   }
 
   const brainDir = await resolveBrainDir(engine, opts.dir);
+
+  if (opts.mode === 'review') {
+    if (!engine) {
+      console.error('dream review requires a configured brain engine.');
+      process.exit(1);
+    }
+    const result = await runDreamReview(engine, {
+      brainDir,
+      inputFile: opts.inputFile!,
+      model: opts.model ?? undefined,
+    });
+    if (opts.json) {
+      console.log(JSON.stringify(result));
+    } else {
+      printReviewHuman(result);
+    }
+    if (result.status === 'fail') {
+      process.exit(1);
+    }
+    return;
+  }
+
   const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
 
   const report = await runCycle(engine, {
