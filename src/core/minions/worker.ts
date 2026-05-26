@@ -165,6 +165,7 @@ export class MinionWorker extends EventEmitter {
       stallExitAfterMs: opts?.stallExitAfterMs ?? 10 * 60_000,
       dbFailExitAfter: opts?.dbFailExitAfter ?? 3,
       dbProbeTimeoutMs: opts?.dbProbeTimeoutMs ?? 10_000,
+      lowPriRateCap: opts?.lowPriRateCap ?? 0,
     };
     // Stall thresholds contract: exit MUST be strictly greater than warn.
     // If exit <= warn, the warn-then-exit semantics break: a single tick at
@@ -444,6 +445,7 @@ export class MinionWorker extends EventEmitter {
             this.opts.lockDuration,
             this.opts.queue,
             this.registeredNames,
+            this.opts.lowPriRateCap > 0 ? this.opts.lowPriRateCap : undefined,
           );
 
           if (job) {
