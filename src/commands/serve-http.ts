@@ -552,15 +552,33 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
       // Unified view: OAuth clients + legacy API keys
-      const oauthClients = await sql`
-        SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
-          c.grant_types, c.scope, c.created_at, c.token_ttl,
-          CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
-          (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
-        FROM oauth_clients c ORDER BY c.created_at DESC
-      `;
+      let oauthClients: Record<string, unknown>[];
+      try {
+        oauthClients = await sql`
+          SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
+            c.grant_types, c.scope, c.created_at, c.token_ttl,
+            CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
+            m.group_id as memory_group_id,
+            g.name as memory_group_name,
+            (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
+          FROM oauth_clients c
+          LEFT JOIN oauth_client_memory_groups m ON m.client_id = c.client_id
+          LEFT JOIN memory_groups g ON g.id = m.group_id
+          ORDER BY c.created_at DESC
+        `;
+      } catch {
+        oauthClients = await sql`
+          SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
+            c.grant_types, c.scope, c.created_at, c.token_ttl,
+            CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
+            (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
+            (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
+          FROM oauth_clients c ORDER BY c.created_at DESC
+        `;
+      }
       const legacyKeys = await sql`
         SELECT a.id, a.name, 'api_key' as auth_type,
           '{"bearer"}' as grant_types, 'read write admin' as scope, a.created_at, null as token_ttl,
@@ -712,12 +730,117 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   });
 
   // Register client from admin dashboard
+  app.get('/admin/api/memory-groups', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { listMemoryGroups } = await import('../core/memory-groups.ts');
+      const groups = await listMemoryGroups(sql);
+      res.json(groups);
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'service_unavailable' });
+    }
+  });
+
+  app.post('/admin/api/memory-groups', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { createMemoryGroup } = await import('../core/memory-groups.ts');
+      const { randomUUID } = await import('crypto');
+      const body = req.body ?? {};
+      if (!body.name) { res.status(400).json({ error: 'name required' }); return; }
+      const group = await createMemoryGroup(sql, `mg_${randomUUID().replace(/-/g, '').slice(0, 12)}`, {
+        name: body.name,
+        description: body.description,
+        readAudiences: body.readAudiences ?? body.read_audiences ?? [],
+        writeAudiences: body.writeAudiences ?? body.write_audiences ?? [],
+        readSlugPrefixes: body.readSlugPrefixes ?? body.read_slug_prefixes ?? [],
+        writeSlugPrefixes: body.writeSlugPrefixes ?? body.write_slug_prefixes ?? [],
+        deniedAudiences: body.deniedAudiences ?? body.denied_audiences ?? [],
+        bypassPolicy: body.bypassPolicy === true || body.bypass_policy === true,
+      });
+      res.json(group);
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to create group' });
+    }
+  });
+
+  app.put('/admin/api/memory-groups/:id', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { updateMemoryGroup } = await import('../core/memory-groups.ts');
+      const id = req.params.id;
+      const body = req.body ?? {};
+      if (!body.name) { res.status(400).json({ error: 'name required' }); return; }
+      const group = await updateMemoryGroup(sql, id, {
+        name: body.name,
+        description: body.description,
+        readAudiences: body.readAudiences ?? body.read_audiences ?? [],
+        writeAudiences: body.writeAudiences ?? body.write_audiences ?? [],
+        readSlugPrefixes: body.readSlugPrefixes ?? body.read_slug_prefixes ?? [],
+        writeSlugPrefixes: body.writeSlugPrefixes ?? body.write_slug_prefixes ?? [],
+        deniedAudiences: body.deniedAudiences ?? body.denied_audiences ?? [],
+        bypassPolicy: body.bypassPolicy === true || body.bypass_policy === true,
+      });
+      if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+      res.json(group);
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to update group' });
+    }
+  });
+
+  app.delete('/admin/api/memory-groups/:id', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { deleteMemoryGroup } = await import('../core/memory-groups.ts');
+      const result = await deleteMemoryGroup(sql, req.params.id);
+      if (!result.deleted) {
+        res.status(409).json({ error: result.reason ?? 'cannot_delete' });
+        return;
+      }
+      res.json({ deleted: true });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to delete group' });
+    }
+  });
+
+  app.put('/admin/api/agents/:clientId/group', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { assignClientToMemoryGroup, getMemoryGroupById } = await import('../core/memory-groups.ts');
+      const clientId = req.params.clientId;
+      const groupId = req.body?.groupId ?? req.body?.group_id;
+      if (!groupId) { res.status(400).json({ error: 'groupId required' }); return; }
+      const group = await getMemoryGroupById(sql, groupId);
+      if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
+      await assignClientToMemoryGroup(sql, clientId, groupId);
+      res.json({ clientId, groupId, memory_group_name: group.name });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to assign group' });
+    }
+  });
+
+  app.put('/admin/api/agents/:clientId/name', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const clientId = req.params.clientId;
+      const raw = req.body?.name ?? req.body?.client_name;
+      const name = typeof raw === 'string' ? raw.trim() : '';
+      if (!name) { res.status(400).json({ error: 'name required' }); return; }
+      if (name.length > 200) { res.status(400).json({ error: 'name too long (max 200)' }); return; }
+      const rows = await sql`
+        UPDATE oauth_clients
+        SET client_name = ${name}
+        WHERE client_id = ${clientId} AND deleted_at IS NULL
+        RETURNING client_id, client_name
+      `;
+      if (!rows.length) { res.status(404).json({ error: 'Client not found' }); return; }
+      res.json({ clientId: rows[0].client_id, name: rows[0].client_name });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to rename client' });
+    }
+  });
+
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { name, scopes, tokenTtl } = req.body;
+      const { name, scopes, tokenTtl, memoryGroupName, memory_group_name } = req.body;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
       const result = await oauthProvider.registerClientManual(
-        name, ['client_credentials'], scopes || 'read', [],
+        name, ['client_credentials'], scopes || 'read', [], 'default', undefined,
+        memoryGroupName ?? memory_group_name,
       );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {

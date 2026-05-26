@@ -266,6 +266,10 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       client_id_issued_at: now,
     };
     if (clientSecret) response.client_secret = clientSecret;
+
+    const { tryAutoAssignClientGroup } = await import('./memory-groups.ts');
+    await tryAutoAssignClientGroup(this.sql, clientId, client.client_name || 'unnamed');
+
     return response;
   }
 }
@@ -549,6 +553,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       const allowedSources = Array.isArray(federatedRaw)
         ? (federatedRaw as string[])
         : undefined;
+      const { loadMemoryGroupForClient } = await import('./memory-groups.ts');
+      const memoryGroup = await loadMemoryGroupForClient(this.sql, row.client_id as string);
       return {
         token,
         clientId: row.client_id as string,
@@ -564,6 +570,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // operations.ts prefers this array over scalar sourceId when set
         // and non-empty.
         allowedSources,
+        memoryGroup,
       } as AuthInfo;
     }
 
@@ -587,6 +594,16 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         clientName: name,
         scopes: ['read', 'write', 'admin'],
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
+        memoryGroup: {
+          id: 'legacy',
+          name: 'Legacy',
+          readAudiences: ['*'],
+          writeAudiences: ['*'],
+          readSlugPrefixes: [],
+          writeSlugPrefixes: [],
+          deniedAudiences: [],
+          bypassPolicy: true,
+        },
         // v0.34.1 (#861, D13): legacy bearer tokens default to 'default'
         // source — matches the pre-v0.34 effective behavior where the
         // serve-http transport fell back to GBRAIN_SOURCE/'default' for
@@ -713,6 +730,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     redirectUris: string[] = [],
     sourceId: string = 'default',
     federatedRead?: string[],
+    memoryGroupName?: string,
   ): Promise<{ clientId: string; clientSecret: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
@@ -774,6 +792,30 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       } else {
         throw err;
       }
+    }
+
+    try {
+      const {
+        getMemoryGroupByName,
+        assignClientToMemoryGroup,
+        DEFAULT_GROUP_IDS,
+        tryAutoAssignClientGroup,
+      } = await import('./memory-groups.ts');
+      if (memoryGroupName) {
+        const group = await getMemoryGroupByName(this.sql, memoryGroupName);
+        if (group) {
+          await assignClientToMemoryGroup(this.sql, clientId, group.id);
+        } else if (memoryGroupName === 'Admin') {
+          await assignClientToMemoryGroup(this.sql, clientId, DEFAULT_GROUP_IDS.admin);
+        } else if (memoryGroupName === 'Coding') {
+          await assignClientToMemoryGroup(this.sql, clientId, DEFAULT_GROUP_IDS.coding);
+        }
+      } else {
+        await tryAutoAssignClientGroup(this.sql, clientId, name);
+      }
+    } catch (err) {
+      const { isMemoryGroupsSchemaMissing } = await import('./memory-groups.ts');
+      if (!isMemoryGroupsSchemaMissing(err)) throw err;
     }
 
     return { clientId, clientSecret };

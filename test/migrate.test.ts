@@ -1508,3 +1508,15 @@ describe('resolveSessionTimeouts — env var overrides', () => {
     expect(Object.keys(t)).toHaveLength(0);
   });
 });
+
+describe('migrate v93 — memory_groups_v0_35', () => {
+  const v93 = MIGRATIONS.find((m) => m.version === 93);
+
+  test('v93 exists with memory group tables', () => {
+    expect(v93).toBeDefined();
+    expect(v93!.name).toBe('memory_groups_v0_35');
+    expect(v93!.sql).toContain('CREATE TABLE IF NOT EXISTS memory_groups');
+    expect(v93!.sql).toContain('oauth_client_memory_groups');
+    expect(v93!.handler).toBeDefined();
+  });
+});

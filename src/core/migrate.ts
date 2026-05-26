@@ -3210,6 +3210,38 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 93,
+    name: 'memory_groups_v0_35',
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS memory_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        read_audiences JSONB NOT NULL DEFAULT '[]',
+        write_audiences JSONB NOT NULL DEFAULT '[]',
+        read_slug_prefixes JSONB NOT NULL DEFAULT '[]',
+        write_slug_prefixes JSONB NOT NULL DEFAULT '[]',
+        denied_audiences JSONB NOT NULL DEFAULT '[]',
+        bypass_policy BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS oauth_client_memory_groups (
+        client_id TEXT PRIMARY KEY REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+        group_id TEXT NOT NULL REFERENCES memory_groups(id) ON DELETE RESTRICT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_oauth_client_memory_groups_group
+        ON oauth_client_memory_groups(group_id);
+    `,
+    handler: async (engine) => {
+      const { seedAndBackfillMemoryGroups } = await import('./memory-groups-migrate.ts');
+      await seedAndBackfillMemoryGroups(engine);
+      console.log('  [93] Seeded memory groups and backfilled OAuth client assignments');
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

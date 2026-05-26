@@ -36,6 +36,13 @@ import {
   CODE_DEF_DESCRIPTION,
   CODE_REFS_DESCRIPTION,
 } from './operations-descriptions.ts';
+import {
+  canReadPage,
+  canWritePage,
+  normalizePageAudiences,
+  parseAudiencesFromMarkdown,
+  type MemoryGroupPolicy,
+} from './memory-policy.ts';
 
 // --- Types ---
 
@@ -263,6 +270,13 @@ export interface AuthInfo {
    * case (back-compat).
    */
   allowedSources?: string[];
+  /**
+   * v0.35 memory ACL: audience policy for this OAuth client.
+   * - undefined: schema not migrated yet — skip enforcement (backward compat)
+   * - null: client has no group assignment — deny reads (fail closed)
+   * - object: enforce read/write audience rules
+   */
+  memoryGroup?: import('./memory-policy.ts').MemoryGroupPolicy | null;
 }
 
 export interface OperationContext {
@@ -405,6 +419,47 @@ export interface OperationContext {
  * Helper rather than inline so every read-side handler routes through the
  * same precedence ladder — drift between sites is the bug class.
  */
+
+/** Resolve memory group for enforcement. Local CLI bypasses; undefined schema bypasses. */
+function memoryGroupForCtx(ctx: OperationContext): MemoryGroupPolicy | null | undefined {
+  if (ctx.remote === false) return undefined;
+  return ctx.auth?.memoryGroup;
+}
+
+function assertMemoryRead(
+  ctx: OperationContext,
+  slug: string,
+  frontmatter: Record<string, unknown> | undefined | null,
+): void {
+  const group = memoryGroupForCtx(ctx);
+  if (group === undefined) return;
+  const audiences = normalizePageAudiences(frontmatter ?? undefined);
+  if (!canReadPage(group, audiences, slug)) {
+    const name = group?.name ?? 'unassigned';
+    throw new OperationError(
+      'permission_denied',
+      `Memory group "${name}" cannot read this page (audiences: ${audiences.join(', ')})`,
+    );
+  }
+}
+
+function assertMemoryWrite(
+  ctx: OperationContext,
+  slug: string,
+  content: string,
+): void {
+  const group = memoryGroupForCtx(ctx);
+  if (group === undefined) return;
+  const audiences = parseAudiencesFromMarkdown(content);
+  if (!canWritePage(group, audiences, slug)) {
+    const name = group?.name ?? 'unassigned';
+    throw new OperationError(
+      'permission_denied',
+      `Memory group "${name}" cannot write this page (audiences: ${audiences.join(', ')})`,
+    );
+  }
+}
+
 export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
   const allowed = ctx.auth?.allowedSources;
   // Treat an empty `allowedSources: []` as "no federated read scope" — the
@@ -479,6 +534,8 @@ const get_page: Operation = {
     if (!page) {
       throw new OperationError('page_not_found', `Page not found: ${slug}`, includeDeleted ? 'Check the slug or use fuzzy: true' : 'Page may be soft-deleted; pass include_deleted: true to verify');
     }
+
+    assertMemoryRead(ctx, page.slug, page.frontmatter);
 
     const tags = await ctx.engine.getTags(page.slug, sourceOpts);
     // Privacy boundary for the per-token allow-list (v0.28.6 for takes,
@@ -566,6 +623,9 @@ const put_page: Operation = {
     }
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
+
+    assertMemoryWrite(ctx, slug, p.content as string);
+
     // Skip embedding when the AI gateway has no embedding provider configured.
     // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
     // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
@@ -905,9 +965,23 @@ const delete_page: Operation = {
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     if (ctx.dryRun) return { dry_run: true, action: 'soft_delete_page', slug };
+    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    const existingForPolicy = await ctx.engine.getPage(slug, { includeDeleted: true, ...sourceOpts });
+    if (existingForPolicy) {
+      assertMemoryRead(ctx, slug, existingForPolicy.frontmatter);
+      const group = memoryGroupForCtx(ctx);
+      if (group !== undefined) {
+        const aud = normalizePageAudiences(existingForPolicy.frontmatter);
+        if (!canWritePage(group, aud, slug)) {
+          throw new OperationError(
+            'permission_denied',
+            `Memory group "${group?.name ?? 'unassigned'}" cannot delete this page`,
+          );
+        }
+      }
+    }
     // v0.31.8 (D7): thread ctx.sourceId so multi-source brains soft-delete the
     // intended row instead of always targeting (default, slug).
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
     // v0.26.5: rewired from hard-delete to soft-delete. The hard-delete primitive
     // (engine.deletePage) is now reserved for purgeDeletedPages and explicit
     // tests. softDeletePage returns null when the slug is unknown OR already
@@ -1011,17 +1085,23 @@ const list_pages: Operation = {
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
-      limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
+      limit: clampSearchLimit(p.limit as number | undefined, 50, 200),
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
       ...scope,
     });
-    return pages.map(pg => ({
+    const group = memoryGroupForCtx(ctx);
+    const filtered = group === undefined
+      ? pages
+      : pages.filter((pg) => canReadPage(group, normalizePageAudiences(pg.frontmatter), pg.slug));
+    const limit = clampSearchLimit(p.limit as number | undefined, 50, 100);
+    return filtered.slice(0, limit).map(pg => ({
       slug: pg.slug,
       type: pg.type,
       title: pg.title,
       updated_at: pg.updated_at,
+      audiences: normalizePageAudiences(pg.frontmatter),
       ...(pg.deleted_at ? { deleted_at: pg.deleted_at } : {}),
     }));
   },
@@ -1045,12 +1125,24 @@ const search: Operation = {
     // v0.34.1 (#861 — P0 leak seal): thread caller's source scope into
     // searchKeyword. Pre-fix this op silently returned cross-source hits
     // for any auth'd OAuth client.
+    const scope = sourceScopeOpts(ctx);
     const raw = await ctx.engine.searchKeyword(queryText, {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
-      ...sourceScopeOpts(ctx),
+      ...scope,
     });
-    const results = dedupResults(raw);
+    let results = dedupResults(raw);
+    const group = memoryGroupForCtx(ctx);
+    if (group !== undefined) {
+      const kept = [];
+      for (const r of results) {
+        const page = await ctx.engine.getPage(r.slug, scope);
+        if (page && canReadPage(group, normalizePageAudiences(page.frontmatter), r.slug)) {
+          kept.push(r);
+        }
+      }
+      results = kept;
+    }
     const latency_ms = Date.now() - startedAt;
 
     // Op-layer capture (v0.25.0). Fire-and-forget — no await on the
@@ -2517,12 +2609,26 @@ const whoami: Operation = {
     // at oauth-provider.ts:417-430). Detect by inspecting the prefix.
     const isOauth = ctx.auth.clientId.startsWith('gbrain_cl_');
     if (isOauth) {
+      const mg = ctx.auth.memoryGroup;
       return {
         transport: 'oauth',
         client_id: ctx.auth.clientId,
         client_name: ctx.auth.clientName ?? ctx.auth.clientId,
         scopes: ctx.auth.scopes,
         expires_at: ctx.auth.expiresAt ?? null,
+        ...(mg
+          ? {
+              memory_group: {
+                id: mg.id,
+                name: mg.name,
+                read_audiences: mg.readAudiences,
+                write_audiences: mg.writeAudiences,
+                bypass_policy: mg.bypassPolicy,
+              },
+            }
+          : mg === null
+            ? { memory_group: null, memory_group_unassigned: true }
+            : {}),
       };
     }
     return {
