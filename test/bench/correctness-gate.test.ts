@@ -89,9 +89,10 @@ describe('correctness-gate: per-query iteration + aggregate math', () => {
     expect(result.summary.queries_errored).toBe(1);
     // Aggregate computed on non-errored only.
     expect(result.summary.mean_recall_at_k).toBe(1);
-    // Errored query surfaced in per_query list with error_message.
+    // Errored query surfaced in per_query list with error_message and stable refs shape.
     const errored = result.per_query.find(p => p.errored);
     expect(errored?.error_message).toMatch(/timeout/);
+    expect(errored?.retrieved_refs).toEqual([]);
   });
 
   test('missing brain page (slug not in retrieved) counted as miss', async () => {
