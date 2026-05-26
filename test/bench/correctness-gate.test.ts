@@ -32,6 +32,31 @@ describe('correctness-gate: per-query iteration + aggregate math', () => {
     expect(result.summary.first_relevant_hit_rate).toBe(1);
     expect(result.summary.expected_top1_hit_rate).toBe(1);
     expect(result.summary.queries_errored).toBe(0);
+    expect(result.per_query[0]?.retrieved_refs).toEqual([
+      { source_id: 'default', slug: 'a', ref: 'default::a' },
+      { source_id: 'default', slug: 'b', ref: 'default::b' },
+    ]);
+  });
+
+  test('per-query exposes source+slug provenance for citation/debug gates', async () => {
+    const qrels = makeQrels([
+      {
+        query_id: 'q1',
+        query: 'Harbor Lantern',
+        relevant: [{ source_id: 'obsidian-cody-safe', slug: 'context/cody/evals/gbrain-write-first-2026-05-25/recall-fixture' }],
+      },
+    ]);
+    const result = await runCorrectnessGate(fakeEngine, qrels, {
+      k: 10,
+      searchFn: async () => [
+        { source_id: 'obsidian-cody-safe', slug: 'context/cody/evals/gbrain-write-first-2026-05-25/recall-fixture' },
+      ],
+    });
+    expect(result.per_query[0]?.retrieved_refs?.[0]).toEqual({
+      source_id: 'obsidian-cody-safe',
+      slug: 'context/cody/evals/gbrain-write-first-2026-05-25/recall-fixture',
+      ref: 'obsidian-cody-safe::context/cody/evals/gbrain-write-first-2026-05-25/recall-fixture',
+    });
   });
 
   test('per-query throw → errored=true; query NOT counted in aggregates; gate flagged', async () => {
