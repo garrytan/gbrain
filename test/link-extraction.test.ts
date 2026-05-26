@@ -1139,6 +1139,43 @@ describe('makeResolver — fallback chain', () => {
     const out = await r.resolveBasenameMatches!('struktura');
     expect(out.sort()).toEqual(['notes/struktura', 'struktura']);
   });
+
+  test('opts.sourceId is forwarded to findByTitleFuzzy (twin of #1436 fix)', async () => {
+    // Captures every (name, dirPrefix, minSimilarity, sourceId) call so we
+    // can assert the resolver threads sourceId through. Without the wire-up,
+    // findByTitleFuzzy would be called with sourceId=undefined and the SQL
+    // could return cross-source slug suggestions that the FK filter
+    // downstream silently drops.
+    const calls: Array<{ name: string; dirPrefix?: string; minSimilarity?: number; sourceId?: string }> = [];
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy(name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string) {
+        calls.push({ name, dirPrefix, minSimilarity, sourceId });
+        return null;
+      },
+      async searchKeyword() { return []; },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch', sourceId: 'src-a' });
+    await r.resolve('Alice Example', 'people');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every(c => c.sourceId === 'src-a')).toBe(true);
+  });
+
+  test('opts.sourceId omitted → findByTitleFuzzy receives undefined (back-compat)', async () => {
+    const calls: Array<{ sourceId?: string }> = [];
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy(_name: string, _dirPrefix?: string, _min?: number, sourceId?: string) {
+        calls.push({ sourceId });
+        return null;
+      },
+      async searchKeyword() { return []; },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch' });
+    await r.resolve('Alice Example', 'people');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every(c => c.sourceId === undefined)).toBe(true);
+  });
 });
 
 describe('FRONTMATTER_LINK_MAP integrity', () => {
