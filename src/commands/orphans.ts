@@ -40,6 +40,9 @@ const AUTO_SUFFIX_PATTERNS = ['/_index', '/log'];
 /** Page slugs that are pseudo-pages by convention */
 const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude']);
 
+/** Root-level meta pages that sync intentionally skips */
+const META_ROOT_SLUGS = new Set(['readme', 'schema', 'index', 'log']);
+
 /** Slug segment that marks raw sources */
 const RAW_SEGMENT = '/raw/';
 
@@ -64,6 +67,7 @@ const FIRST_SEGMENT_EXCLUSIONS = new Set(['scratch', 'thoughts', 'catalog', 'ent
 export function shouldExclude(slug: string): boolean {
   // Pseudo-pages (exact match)
   if (PSEUDO_SLUGS.has(slug)) return true;
+  if (META_ROOT_SLUGS.has(slug)) return true;
 
   // Auto-generated suffix patterns
   for (const suffix of AUTO_SUFFIX_PATTERNS) {

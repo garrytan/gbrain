@@ -37,6 +37,13 @@ describe('shouldExclude', () => {
     expect(shouldExclude('claude')).toBe(true);
   });
 
+  test('excludes root-level meta pages skipped by sync', () => {
+    expect(shouldExclude('readme')).toBe(true);
+    expect(shouldExclude('schema')).toBe(true);
+    expect(shouldExclude('index')).toBe(true);
+    expect(shouldExclude('log')).toBe(true);
+  });
+
   test('excludes auto-generated _index suffix', () => {
     expect(shouldExclude('companies/_index')).toBe(true);
     expect(shouldExclude('people/_index')).toBe(true);

@@ -190,4 +190,13 @@ describe('extractLinksFromFile — slug normalization (T-OBS-1 regression)', () 
     expect(links.length).toBeGreaterThanOrEqual(1);
     expect(links[0].from_slug).toBe('decisions/0001-living-repo-pattern');
   });
+
+  it('resolves mixed-case root-level markdown targets against canonical slugs', async () => {
+    const content = 'See [plan](PILOT_EXECUTION_PLAN.md).';
+    const allSlugs = new Set(['approach_b_source_contract', 'pilot_execution_plan']);
+    const links = await extractLinksFromFile(content, 'APPROACH_B_SOURCE_CONTRACT.md', allSlugs);
+    expect(links.length).toBeGreaterThanOrEqual(1);
+    expect(links[0].from_slug).toBe('approach_b_source_contract');
+    expect(links[0].to_slug).toBe('pilot_execution_plan');
+  });
 });
