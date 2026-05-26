@@ -666,11 +666,14 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
   }
 
   // Openai-compat recipes with empty models list require a user-provided model.
+  // Exception: if the user already specified a model name (parsed.modelId is non-empty),
+  // they have satisfied the requirement — proceed.
   const isUserProvided = (tp as any).user_provided_models === true;
   if (
     Array.isArray(tp.models) &&
     tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
+    (recipe.id === 'litellm' || isUserProvided) &&
+    !parsed.modelId
   ) {
     return {
       ok: false,
@@ -1261,12 +1264,19 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   // clear AIConfigError when a Voyage flexible-dim model gets an
   // unsupported value (the existing v0.33.1.1 fail-loud path).
   const effectiveDims = opts?.dimensions ?? cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
-  const providerOpts = dimsProviderOptions(
+  let providerOpts = dimsProviderOptions(
     recipe.implementation,
     modelId,
     effectiveDims,
     opts?.inputType,
   );
+  // user_provided_models recipes (llama-server, litellm) return undefined from
+  // dimsProviderOptions because their model IDs are unknown at library build time.
+  // If the brain was configured with explicit embedding_dimensions, send the
+  // `dimensions` param so the endpoint returns the right vector width.
+  if (!providerOpts && (recipe.touchpoints?.embedding as any)?.user_provided_models === true) {
+    providerOpts = { openaiCompatible: { dimensions: effectiveDims } };
+  }
   const expected = effectiveDims;
 
   const embedding = recipe.touchpoints?.embedding;

@@ -383,9 +383,14 @@ function validateDimAgainstTouchpoint(
 
   if (requestedDims !== undefined && requestedDims !== defaultDims) {
     // User asked for a non-default dim. Walk the precedence chain.
-    const customDimOk = isCustomDimValidForProvider(recipe, modelId, requestedDims, dimsOptions);
-    if (!customDimOk.valid) {
-      return { ok: false, error: customDimOk.error };
+    // Exception: user_provided_models recipes (llama-server, litellm) use
+    // default_dims=0 as a sentinel meaning "no default — user must supply".
+    // Any positive dim is valid; the model emits whatever size it was loaded with.
+    if (defaultDims !== 0) {
+      const customDimOk = isCustomDimValidForProvider(recipe, modelId, requestedDims, dimsOptions);
+      if (!customDimOk.valid) {
+        return { ok: false, error: customDimOk.error };
+      }
     }
   }
 
