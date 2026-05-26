@@ -231,21 +231,64 @@ export interface ExtractConversationFactsResult {
 }
 
 // ---------------------------------------------------------------------------
-// Message parsing — lines like:
-//   **Name** (YYYY-MM-DD H:MM AM/PM): text
+// Message parsing — two supported formats:
+//
+//   Format 1 (full-date): **Name** (YYYY-MM-DD H:MM AM/PM): text
+//     Used by iMessage/Slack importers. Each line carries an absolute date.
+//
+//   Format 2 (bracket-time, v0.41.12): **[HH:MM] 👤 Name:** text
+//     Used by Telegram conversation syncs. Time-only; date comes from page
+//     frontmatter (fallbackDate parameter). The emoji prefix (👤 🤖 etc.)
+//     is stripped from the speaker name.
+//
 // Unmatched lines become continuations of the prior message (multi-line
-// imessage bodies).
+// bodies).
 // ---------------------------------------------------------------------------
 
+/** Format 1: full-date inline — **Speaker** (2026-05-25 6:30 PM): text */
 const MESSAGE_LINE_RX =
   /^\*\*(.+?)\*\*\s*\((\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?\)\s*:\s*(.*)$/;
 
-export function parseConversationMessages(body: string): ConversationMessage[] {
+/**
+ * Format 2: bracket-time — **[18:37] 👤 G T:** text
+ *
+ * Captures:
+ *   1 = HH        (24-hour)
+ *   2 = MM
+ *   3 = speaker   (may start with emoji + space; cleaned below)
+ *   4 = text      (rest of line after colon; may be empty → next lines)
+ */
+const BRACKET_TIME_RX =
+  /^\*\*\[(\d{1,2}):(\d{2})\]\s+(.+?):\*\*\s*(.*)$/;
+
+/** Strip leading emoji + optional space from a speaker token. */
+function cleanSpeaker(raw: string): string {
+  // Unicode emoji can be multi-codepoint; strip the leading grapheme
+  // cluster when it isn't alphanumeric or CJK.
+  return raw.replace(/^[^\p{L}\p{N}]+\s*/u, '').trim() || raw.trim();
+}
+
+export interface ParseConversationOpts {
+  /**
+   * Fallback ISO date (YYYY-MM-DD) for formats that carry time-only
+   * (bracket-time). When omitted, bracket-time lines are still parsed
+   * but the timestamp defaults to 1970-01-01.
+   */
+  fallbackDate?: string;
+}
+
+export function parseConversationMessages(
+  body: string,
+  opts: ParseConversationOpts = {},
+): ConversationMessage[] {
   if (!body) return [];
+  const fallbackDate = opts.fallbackDate ?? '1970-01-01';
   const out: ConversationMessage[] = [];
   for (const rawLine of body.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
+
+    // Try Format 1 first (full-date).
     const m = MESSAGE_LINE_RX.exec(line);
     if (m) {
       const [, speaker, date, hStr, mStr, ampmRaw, text] = m;
@@ -260,7 +303,26 @@ export function parseConversationMessages(body: string): ConversationMessage[] {
         timestamp: iso,
         text: (text || '').trim(),
       });
-    } else if (out.length > 0) {
+      continue;
+    }
+
+    // Try Format 2 (bracket-time).
+    const b = BRACKET_TIME_RX.exec(line);
+    if (b) {
+      const [, hStr, mStr, rawSpeaker, text] = b;
+      const hour = Number(hStr);
+      const minute = Number(mStr);
+      const iso = `${fallbackDate}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`;
+      out.push({
+        speaker: cleanSpeaker(rawSpeaker),
+        timestamp: iso,
+        text: (text || '').trim(),
+      });
+      continue;
+    }
+
+    // Continuation line for the previous message.
+    if (out.length > 0) {
       const last = out[out.length - 1];
       last.text = last.text ? `${last.text}\n${line}` : line;
     }
@@ -510,7 +572,15 @@ async function processPage(
   }
 
   const body = readPageBody(page);
-  const messages = parseConversationMessages(body);
+  // Derive fallback date from frontmatter or effective_date for bracket-time
+  // pages (Format 2) that carry time-only timestamps.
+  const fmDate =
+    typeof page.frontmatter?.date === 'string'
+      ? page.frontmatter.date.slice(0, 10)  // handle 'YYYY-MM-DD' or full ISO
+      : page.effective_date
+        ? page.effective_date.toISOString().slice(0, 10)
+        : undefined;
+  const messages = parseConversationMessages(body, { fallbackDate: fmDate });
   const segments = splitIntoSegments(messages, { sinceIso });
   if (segments.length === 0) {
     state.result.pages_skipped++;

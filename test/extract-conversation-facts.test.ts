@@ -88,6 +88,64 @@ describe('parseConversationMessages', () => {
   test('empty body returns empty array', () => {
     expect(parseConversationMessages('')).toEqual([]);
   });
+
+  // Format 2: bracket-time (v0.41.12).
+  test('parses bracket-time format with emoji speaker prefix', () => {
+    const body = '**[18:37] \ud83d\udc64 G T:** hello world';
+    const msgs = parseConversationMessages(body, { fallbackDate: '2026-05-24' });
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].speaker).toBe('G T');
+    expect(msgs[0].text).toBe('hello world');
+    expect(msgs[0].timestamp).toBe('2026-05-24T18:37:00Z');
+  });
+
+  test('parses bracket-time format with robot emoji', () => {
+    const body = '**[06:00] \ud83e\udd16 Zion:** On it.';
+    const msgs = parseConversationMessages(body, { fallbackDate: '2026-05-25' });
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].speaker).toBe('Zion');
+    expect(msgs[0].text).toBe('On it.');
+    expect(msgs[0].timestamp).toBe('2026-05-25T06:00:00Z');
+  });
+
+  test('bracket-time multi-line continuation', () => {
+    const body = [
+      '**[09:00] \ud83d\udc64 Alice:** first line',
+      'second line of same message',
+      '**[09:05] \ud83d\udc64 Bob:** separate message',
+    ].join('\n');
+    const msgs = parseConversationMessages(body, { fallbackDate: '2026-05-20' });
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].text).toBe('first line\nsecond line of same message');
+    expect(msgs[1].text).toBe('separate message');
+  });
+
+  test('bracket-time falls back to 1970-01-01 without fallbackDate', () => {
+    const body = '**[14:30] \ud83d\udc64 Alice:** test';
+    const msgs = parseConversationMessages(body);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].timestamp).toBe('1970-01-01T14:30:00Z');
+  });
+
+  test('mixed formats in one body: full-date + bracket-time', () => {
+    const body = [
+      fmt('Alice Example', '2024-03-15', '9:00 AM', 'format 1'),
+      '**[10:30] \ud83d\udc64 Bob:** format 2',
+    ].join('\n');
+    const msgs = parseConversationMessages(body, { fallbackDate: '2024-03-15' });
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].speaker).toBe('Alice Example');
+    expect(msgs[1].speaker).toBe('Bob');
+    expect(msgs[1].timestamp).toBe('2024-03-15T10:30:00Z');
+  });
+
+  test('bracket-time without emoji prefix', () => {
+    const body = '**[22:15] Plain Name:** no emoji';
+    const msgs = parseConversationMessages(body, { fallbackDate: '2026-01-01' });
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].speaker).toBe('Plain Name');
+    expect(msgs[0].text).toBe('no emoji');
+  });
 });
 
 // ---------------------------------------------------------------------------
