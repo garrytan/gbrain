@@ -421,6 +421,33 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
   return {};
 }
 
+/**
+ * Resolve a read-side source filter when the operation accepts an explicit
+ * `source_id` parameter. Local/unscoped callers keep the historical override
+ * behavior, including `__all__`. OAuth callers with federated_read scope may
+ * narrow to an allowed source, but may not widen past their allowlist.
+ */
+export function sourceScopeOptsForParam(
+  ctx: OperationContext,
+  sourceIdParam: string | undefined,
+): { sourceId?: string; sourceIds?: string[] } {
+  if (sourceIdParam === undefined) return sourceScopeOpts(ctx);
+
+  const allowed = ctx.auth?.allowedSources;
+  if (allowed && allowed.length > 0) {
+    if (sourceIdParam === '__all__') return { sourceIds: allowed };
+    if (allowed.includes(sourceIdParam)) return { sourceId: sourceIdParam };
+    throw new OperationError(
+      'insufficient_scope',
+      `source_id '${sourceIdParam}' is outside this OAuth client's federated_read allowlist.`,
+      'Use an allowed source_id for this client, or omit source_id to search its federated_read sources.',
+    );
+  }
+
+  if (sourceIdParam === '__all__') return {};
+  return { sourceId: sourceIdParam };
+}
+
 export interface Operation {
   name: string;
   description: string;
@@ -1165,6 +1192,7 @@ const list_pages: Operation = {
       enum: [...LIST_PAGES_SORT_VALUES],
       description: 'Sort order. Default updated_desc (matches pre-v0.29). Options: updated_desc, updated_asc, created_desc, slug.',
     },
+    source_id: { type: 'string', description: "Scope to a single source. Defaults to caller source scope. '__all__' means all permitted sources." },
     include_deleted: { type: 'boolean', description: 'v0.26.5: include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics.' },
   },
   handler: async (ctx, p) => {
@@ -1180,7 +1208,8 @@ const list_pages: Operation = {
     // enumerate src-B pages. Pre-fix, ctx.sourceId / ctx.auth?.allowedSources
     // were ignored at this op handler and the engine returned every source's
     // pages indiscriminately.
-    const scope = sourceScopeOpts(ctx);
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const scope = sourceScopeOptsForParam(ctx, sourceIdParam);
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
@@ -1347,15 +1376,11 @@ const query: Operation = {
       typeof p.embedding_column === 'string' && p.embedding_column.length > 0
         ? (p.embedding_column as string)
         : undefined;
-    // Explicit per-call source_id must win over ctx.sourceId. The special
-    // __all__ value opts out of source filtering for local cross-source search.
+    // Explicit per-call source_id can narrow remote OAuth reads only within
+    // ctx.auth.allowedSources. Local/unscoped callers retain the historical
+    // __all__ cross-source behavior.
     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
-    const querySourceScope =
-      sourceIdParam !== undefined
-        ? sourceIdParam === '__all__'
-          ? {}
-          : { sourceId: sourceIdParam }
-        : sourceScopeOpts(ctx);
+    const querySourceScope = sourceScopeOptsForParam(ctx, sourceIdParam);
 
     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
     // text-only); embeds the image via embedMultimodal and runs a direct

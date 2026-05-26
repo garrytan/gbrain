@@ -264,4 +264,123 @@ describe('v0.34.1 source-isolation regression (#861)', () => {
       expect(r.source_id).toBe('default');
     }
   });
+
+  test('OAuth query rejects explicit source_id outside federated_read allowlist', async () => {
+    const { operations } = await import('../../src/core/operations.ts');
+    const queryOp = operations.find(o => o.name === 'query');
+    expect(queryOp).toBeDefined();
+
+    const ctx = {
+      engine,
+      config: { engine: 'pglite' as const },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      dryRun: false,
+      remote: true,
+      sourceId: 'default',
+      auth: {
+        token: 'test',
+        clientId: 'test',
+        scopes: ['read'],
+        sourceId: 'default',
+        allowedSources: ['default'],
+      },
+    };
+
+    await expect(queryOp!.handler(ctx as any, {
+      query: 'gadgets',
+      source_id: 'src-b',
+    })).rejects.toMatchObject({ code: 'insufficient_scope' });
+  });
+
+  test('OAuth query source_id=__all__ is constrained to federated_read allowlist', async () => {
+    const { operations } = await import('../../src/core/operations.ts');
+    const queryOp = operations.find(o => o.name === 'query');
+    expect(queryOp).toBeDefined();
+
+    const ctx = {
+      engine,
+      config: { engine: 'pglite' as const },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      dryRun: false,
+      remote: true,
+      sourceId: 'default',
+      auth: {
+        token: 'test',
+        clientId: 'test',
+        scopes: ['read'],
+        sourceId: 'default',
+        allowedSources: ['default'],
+      },
+    };
+
+    const result = await queryOp!.handler(ctx as any, {
+      query: 'Important context',
+      source_id: '__all__',
+      expand: false,
+    });
+    const rows = result as Array<{ source_id?: string }>;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(r.source_id).toBe('default');
+    }
+  });
+
+  test('OAuth list_pages rejects explicit source_id outside federated_read allowlist', async () => {
+    const { operations } = await import('../../src/core/operations.ts');
+    const listOp = operations.find(o => o.name === 'list_pages');
+    expect(listOp).toBeDefined();
+
+    const ctx = {
+      engine,
+      config: { engine: 'pglite' as const },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      dryRun: false,
+      remote: true,
+      sourceId: 'default',
+      auth: {
+        token: 'test',
+        clientId: 'test',
+        scopes: ['read'],
+        sourceId: 'default',
+        allowedSources: ['default'],
+      },
+    };
+
+    await expect(listOp!.handler(ctx as any, {
+      source_id: 'src-b',
+      limit: 100,
+    })).rejects.toMatchObject({ code: 'insufficient_scope' });
+  });
+
+  test('OAuth list_pages source_id=__all__ is constrained to federated_read allowlist', async () => {
+    const { operations } = await import('../../src/core/operations.ts');
+    const listOp = operations.find(o => o.name === 'list_pages');
+    expect(listOp).toBeDefined();
+
+    const ctx = {
+      engine,
+      config: { engine: 'pglite' as const },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      dryRun: false,
+      remote: true,
+      sourceId: 'default',
+      auth: {
+        token: 'test',
+        clientId: 'test',
+        scopes: ['read'],
+        sourceId: 'default',
+        allowedSources: ['default'],
+      },
+    };
+
+    const result = await listOp!.handler(ctx as any, {
+      source_id: '__all__',
+      limit: 100,
+    });
+    const pages = result as Array<{ title?: string }>;
+    expect(pages.length).toBeGreaterThan(0);
+    expect(pages.find(p => p.title === 'Alice Source-A')).toBeDefined();
+    expect(pages.find(p => p.title === 'Alice Source-B')).toBeUndefined();
+    expect(pages.find(p => p.title === 'Bob Source-B Only')).toBeUndefined();
+  });
 });
