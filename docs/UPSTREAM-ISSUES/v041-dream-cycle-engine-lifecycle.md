@@ -1,8 +1,10 @@
-# Upstream issue draft: dream-cycle extract phases silently fail with "No database connection" in v0.41.x
+# Upstream issue: dream-cycle extract phases silently fail with "No database connection" in v0.41.x
 
-**Status**: draft, ready to file against `garrytan/gbrain`. Discovered 2026-05-26 (post v0.41.14.0 fork sync §6.31). Production impact: 8+ days of nightly dream-cycle reports showing `ok extract: 0 link(s)` but actually losing every batch insert.
+**Status**: **filed as [garrytan/gbrain#1515](https://github.com/garrytan/gbrain/issues/1515)** on 2026-05-26 (post v0.41.14.0 fork sync §6.31). Production impact: 8+ days of nightly dream-cycle reports showing `ok extract: 0 link(s)` but actually losing every batch insert silently.
 
 **Affected file**: `src/commands/extract.ts:712` (`engine.addLinksBatch(snapshot)`); related: `src/cli.ts:1068-1093` (dream command engine lifecycle).
+
+**Fork-side action**: NONE planned (no local patch — waiting for upstream fix). Fork remains operational via daemon (`gbrain serve --http`) for MCP writes; only the CLI `gbrain dream` extract sub-phase is broken. enrich-sweep (post-shim-removal fix landed in same commit wave 1c42a928) replaces some of the lost extraction surface for the immediate need.
 
 ---
 
