@@ -449,6 +449,14 @@ function isCustomDimValidForProvider(
     };
   }
 
+  // user_provided_models recipes (llama-server, litellm-proxy) declare
+  // default_dims=0 because the dim is whatever model the user launched.
+  // The Tier 3 reject below would block them; honor the recipe's intent.
+  const embTp = (recipe.touchpoints as { embedding?: { user_provided_models?: boolean } } | undefined)?.embedding;
+  if (embTp?.user_provided_models === true) {
+    return { valid: true, error: '' };
+  }
+
   // Tier 3: provider not known to support custom dims at all.
   return {
     valid: false,

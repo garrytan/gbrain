@@ -220,6 +220,42 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (got.ok) expect(got.dim).toBe(768);
   });
 
+  // user_provided_models recipes (llama-server, litellm-proxy) ship
+  // default_dims=0 by design — the dim is whatever model the user launched
+  // llama-server with. The Tier-3 reject in isCustomDimValidForProvider
+  // was firing on these because 0 != requested, so users could never init
+  // a brain pointed at a local Qwen3-Embedding / nomic-embed / etc.
+  test('llama-server user_provided_models accepts arbitrary dim (1024 for Qwen3-Embedding-0.6B)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:qwen3-embed',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.dim).toBe(1024);
+      expect(got.provider).toBe('llama-server');
+      expect(got.model).toBe('llama-server:qwen3-embed');
+    }
+  });
+
+  test('llama-server user_provided_models accepts a different dim (4096 for Qwen3-Embedding-8B)', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:qwen3-embed-8b',
+      embedding_dimensions: 4096,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(4096);
+  });
+
+  test('litellm-proxy user_provided_models accepts arbitrary dim', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'litellm:custom-model',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(1024);
+  });
+
   test('unknown provider rejected with provider list hint', () => {
     const got = resolveSchemaEmbeddingDim({ embedding_model: 'notarealprovider:foo' });
     expect(got.ok).toBe(false);
