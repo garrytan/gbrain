@@ -36,6 +36,7 @@ type Flags = {
   dry: boolean;
   plan: boolean;
   maxTier2: number;
+  tier3Only: boolean;
   minMentions: number;
   onlyKind?: EntityKind;
   limit?: number;
@@ -43,17 +44,24 @@ type Flags = {
 };
 
 function parseFlags(argv: string[]): Flags {
-  const f: Flags = { dry: false, plan: false, maxTier2: 30, minMentions: 2, help: false };
+  const f: Flags = { dry: false, plan: false, maxTier2: 30, tier3Only: false, minMentions: 2, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry") f.dry = true;
     else if (a === "--plan") f.plan = true;
     else if (a === "--max-tier2") f.maxTier2 = Number(argv[++i]);
+    else if (a === "--tier3-only") f.tier3Only = true;
     else if (a === "--min-mentions") f.minMentions = Number(argv[++i]);
     else if (a === "--kind") f.onlyKind = argv[++i] as EntityKind;
     else if (a === "--limit") f.limit = Number(argv[++i]);
     else if (a === "--help" || a === "-h") f.help = true;
   }
+  // --tier3-only forces maxTier2 to 0 — skip all Tavily Tier 2 augmentation.
+  // Right default for company-internal entity corpora (e.g. mailagent-emails
+  // source) where Tavily web search finds wrong people / misses internal
+  // projects. SKILL.md §pre-flight expects this flag to short-circuit the
+  // TAVILY_API_KEY check below; matched by `!flags.tier3Only` guard there.
+  if (f.tier3Only) f.maxTier2 = 0;
   return f;
 }
 
@@ -64,6 +72,10 @@ Flags:
   --dry                 Plan only; no Haiku calls, no Tavily, no writes
   --plan                Haiku NER + Tier decisions, no stub writes, no Tavily
   --max-tier2 N         Cap Tavily calls (default 30)
+  --tier3-only          Skip all Tavily Tier 2 augmentation (brain-only synthesis;
+                        right default for company-internal corpora where web
+                        search returns wrong people / misses internal projects)
+  --min-mentions N      Drop entities below N mentions across sources (default 2)
   --kind K              person | company | concept | project (single-kind mode)
   --limit N             Process only first N source pages (smoke test)
   --help                This message
@@ -86,7 +98,7 @@ async function preflight(flags: Flags): Promise<string[]> {
   if (!flags.dry) {
     if (!process.env.ANTHROPIC_API_KEY) errors.push("ANTHROPIC_API_KEY not set");
   }
-  if (!flags.dry && !flags.plan && !process.env.TAVILY_API_KEY) {
+  if (!flags.dry && !flags.plan && !flags.tier3Only && !process.env.TAVILY_API_KEY) {
     console.warn("⚠ TAVILY_API_KEY not set — Tier 2 candidates will degrade to Tier 3 (brain-only)");
   }
 
