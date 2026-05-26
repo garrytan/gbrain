@@ -149,3 +149,56 @@ describe('formatEmbeddingCredsError', () => {
     })).toBe('');
   });
 });
+
+describe('validateEmbeddingCreds — user_provided_models recipes', () => {
+  beforeEach(() => { resetGateway(); });
+
+  // Regression for the second half of the user_provided_models bug class:
+  // recipes that declare `models: []` + `user_provided_models: true` (llama-server,
+  // litellm-proxy) were rejecting EVERY init with `user_provided_model_unset`,
+  // including those where the user had clearly supplied a modelId via the
+  // `provider:modelId` string (e.g. `llama-server:qwen3-embed`). The preflight
+  // gate was reading recipe-level intent instead of looking at whether the user
+  // had actually provided a modelId.
+  test('llama-server passes preflight when user supplies modelId (llama-server:qwen3-embed)', () => {
+    configureGateway(baseConfig({
+      embedding_model: 'llama-server:qwen3-embed',
+      embedding_dimensions: 1024,
+      env: {},
+    }));
+    expect(() => validateEmbeddingCreds()).not.toThrow();
+  });
+
+  test('litellm passes preflight when user supplies modelId (litellm:custom-model)', () => {
+    configureGateway(baseConfig({
+      embedding_model: 'litellm:custom-model',
+      embedding_dimensions: 1024,
+      env: {},
+    }));
+    expect(() => validateEmbeddingCreds()).not.toThrow();
+  });
+
+  // The two cases below pin "empty modelId is still rejected" without locking
+  // the specific reason — `parseModelId` rejects `provider:` (empty modelId) at
+  // an earlier stage with `unknown_provider`, so `user_provided_model_unset` is
+  // a dead branch in practice. The `&& !parsed.modelId` guard in the fix is
+  // defense-in-depth: it expresses correct intent at the touchpoint check even
+  // if parseModelId's upstream guard would catch it first.
+  test('llama-server with empty modelId is still rejected (via earlier parseModelId guard)', () => {
+    configureGateway(baseConfig({
+      embedding_model: 'llama-server:',
+      embedding_dimensions: 1024,
+      env: {},
+    }));
+    expect(() => validateEmbeddingCreds()).toThrow(EmbeddingCredentialError);
+  });
+
+  test('litellm with empty modelId is still rejected (via earlier parseModelId guard)', () => {
+    configureGateway(baseConfig({
+      embedding_model: 'litellm:',
+      embedding_dimensions: 1024,
+      env: {},
+    }));
+    expect(() => validateEmbeddingCreds()).toThrow(EmbeddingCredentialError);
+  });
+});

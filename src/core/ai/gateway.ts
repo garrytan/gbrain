@@ -666,11 +666,16 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
   }
 
   // Openai-compat recipes with empty models list require a user-provided model.
+  // The user IS providing one when they configure embedding_model as
+  // `provider:modelId` with a non-empty modelId (e.g. `llama-server:qwen3-embed`).
+  // Only fail when modelId is missing — the recipe's empty `models` array means
+  // "user-driven", not "user hasn't picked one yet".
   const isUserProvided = (tp as any).user_provided_models === true;
   if (
     Array.isArray(tp.models) &&
     tp.models.length === 0 &&
-    (recipe.id === 'litellm' || isUserProvided)
+    (recipe.id === 'litellm' || isUserProvided) &&
+    !parsed.modelId
   ) {
     return {
       ok: false,
