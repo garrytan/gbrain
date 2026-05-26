@@ -39,6 +39,14 @@ interface DreamArgs {
   pull: boolean;
   phase: CyclePhase | null;
   dir: string | null;
+  /**
+   * v0.41.x: scope cycle marker writes to one source on multi-source brains.
+   * Doctor's `cycle_freshness` check recommends `gbrain dream --source <id>`
+   * but pre-fix the flag was silently dropped here AND in the runCycle()
+   * call below, so the cycle marker (cycle.ts:1738 gate on opts.sourceId)
+   * was never written and the warning could never be cleared. Closes #1452.
+   */
+  source: string | null;
   help: boolean;
   /** v0.21: ad-hoc transcript file path; implies --phase synthesize. */
   inputFile: string | null;
@@ -71,6 +79,9 @@ function parseArgs(args: string[]): DreamArgs {
 
   const dirIdx = args.indexOf('--dir');
   const dir = dirIdx !== -1 ? args[dirIdx + 1] : null;
+
+  const sourceIdx = args.indexOf('--source');
+  const source = sourceIdx !== -1 ? args[sourceIdx + 1] ?? null : null;
 
   const inputIdx = args.indexOf('--input');
   const inputFile = inputIdx !== -1 ? args[inputIdx + 1] ?? null : null;
@@ -116,6 +127,7 @@ function parseArgs(args: string[]): DreamArgs {
     pull: args.includes('--pull'),
     phase,
     dir,
+    source,
     help: args.includes('--help') || args.includes('-h'),
     inputFile,
     date,
@@ -283,6 +295,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     dryRun: opts.dryRun,
     pull: opts.pull,
     phases,
+    sourceId: opts.source ?? undefined,
     synthInputFile: opts.inputFile ?? undefined,
     synthDate: opts.date ?? undefined,
     synthFrom: opts.from ?? undefined,
