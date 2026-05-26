@@ -132,13 +132,25 @@ export function buildCalibrationBlock(opts: ThinkCalibrationBlockOpts): string {
 /**
  * User-message body that wraps the question + the gathered evidence.
  *
- * Two shapes:
- *   - Default (no calibration): question first, then retrieval blocks, then
- *     output instruction. Preserves v0.28-vintage behavior; existing callers
- *     see no change.
+ * Three shapes (v0.40.2.0 — adds trajectory slot to both pre-existing
+ * shapes):
+ *   - Default (no calibration): question first, then retrieval blocks,
+ *     then optional trajectory block (between retrieval and instruction),
+ *     then output instruction. Preserves v0.28-vintage behavior for
+ *     existing callers; trajectory is the new optional injection.
  *   - With calibration (v0.36.1.0 E1, D22): retrieval blocks first, then
- *     calibration block, then question, then output instruction. The bias
- *     filter applies to QUESTION FRAMING, not evidence interpretation.
+ *     calibration block, then optional trajectory block (between
+ *     calibration and question), then question, then output instruction.
+ *     The bias filter applies to QUESTION FRAMING; trajectory grounds the
+ *     answer's temporal claims.
+ *
+ * Per Codex Problem 6: trajectory placement honors whichever path is
+ * active. NO third ordering is introduced.
+ *
+ * `trajectoryBlock`, when non-empty, is the pre-rendered XML block from
+ * `formatTrajectoryBlock`. The wrapper here adds a "Known trajectory:"
+ * label so the model sees structural framing. Empty string means
+ * "no trajectory available" — the label is skipped entirely.
  */
 export function buildThinkUserMessage(opts: {
   question: string;
@@ -147,11 +159,18 @@ export function buildThinkUserMessage(opts: {
   graphBlock?: string;
   /** v0.36.1.0 (E1) — present in calibration mode. */
   calibration?: ThinkCalibrationBlockOpts;
+  /**
+   * v0.40.2.0 — pre-rendered `<trajectory>` block(s) from
+   * `formatTrajectoryBlock`. Empty string skips the section entirely
+   * (so we don't cue the model that we tried).
+   */
+  trajectoryBlock?: string;
 }): string {
   const parts: string[] = [];
+  const hasTrajectory = typeof opts.trajectoryBlock === 'string' && opts.trajectoryBlock.length > 0;
 
   if (opts.calibration) {
-    // Calibration path: retrieval → calibration → question → instruction.
+    // Calibration path: retrieval → calibration → trajectory → question → instruction.
     parts.push('<pages>');
     parts.push(opts.pagesBlock || '(no page hits)');
     parts.push('</pages>');
@@ -167,6 +186,11 @@ export function buildThinkUserMessage(opts: {
     }
     parts.push('');
     parts.push(buildCalibrationBlock(opts.calibration));
+    if (hasTrajectory) {
+      parts.push('');
+      parts.push('Known trajectory:');
+      parts.push(opts.trajectoryBlock as string);
+    }
     parts.push('');
     parts.push(`Question: ${opts.question}`);
     parts.push('');
@@ -174,7 +198,8 @@ export function buildThinkUserMessage(opts: {
     return parts.join('\n');
   }
 
-  // Default path (unchanged from v0.28).
+  // Default path (v0.28-vintage with v0.40.2.0 trajectory slot between
+  // retrieval and the output instruction).
   parts.push(`Question: ${opts.question}`);
   parts.push('');
   parts.push('<pages>');
@@ -189,6 +214,11 @@ export function buildThinkUserMessage(opts: {
     parts.push('<graph>');
     parts.push(opts.graphBlock);
     parts.push('</graph>');
+  }
+  if (hasTrajectory) {
+    parts.push('');
+    parts.push('Known trajectory:');
+    parts.push(opts.trajectoryBlock as string);
   }
   parts.push('');
   parts.push('Respond with a single JSON object matching the schema. No prose outside JSON.');

@@ -11,6 +11,20 @@ import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
 
 export async function runInit(args: string[]) {
+  // Help guard: cli.ts only routes --help to printOpHelp() for shared-op
+  // commands; CLI_ONLY commands (init, embed, etc.) fall through to their
+  // handler with --help in argv. Without this guard, `gbrain init --help`
+  // proceeds into the smart-detection branch below, scans cwd for .md files,
+  // and on a directory with 1000+ files (e.g. $HOME for someone whose brain
+  // and notes share a root) silently overwrites the existing Supabase config
+  // with a fresh PGLite brain at ~/.gbrain/brain.pglite. Confirmed in the
+  // wild — flipped a working `engine: postgres` config to `engine: pglite`
+  // on a brain with 10K+ pages. Help should never mutate state.
+  if (args.includes('--help') || args.includes('-h')) {
+    printInitHelp();
+    return;
+  }
+
   const isSupabase = args.includes('--supabase');
   const isPGLite = args.includes('--pglite');
   const isMcpOnly = args.includes('--mcp-only');
@@ -394,11 +408,23 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
     if (Array.isArray(tp.models) && tp.models.length > 0) {
       const model = tp.models[0];
       const fullModel = `${r.id}:${model}`;
+      // When the resolved provider matches the canonical default model
+      // (DEFAULT_EMBEDDING_MODEL), use the gateway's
+      // DEFAULT_EMBEDDING_DIMENSIONS instead of the recipe's `default_dims`
+      // (which is the recipe's "largest sensible" tier). This keeps
+      // fresh-install schema width aligned with the v0.37.11.0 system
+      // default — for ZE that means 1280 (the Matryoshka step closest to
+      // legacy OpenAI 1536), not the recipe's 2560.
+      const { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } =
+        await import('../core/ai/defaults.ts');
+      const dims = fullModel === DEFAULT_EMBEDDING_MODEL
+        ? DEFAULT_EMBEDDING_DIMENSIONS
+        : tp.default_dims;
       out.embedding_model = fullModel;
-      out.embedding_dimensions = tp.default_dims;
+      out.embedding_dimensions = dims;
       console.error(
         `Detected ${r.auth_env?.required?.[0] ?? r.id} env var. ` +
-        `Using ${fullModel} (${tp.default_dims}d). ` +
+        `Using ${fullModel} (${dims}d). ` +
         `Override with --embedding-model.`,
       );
       return;
@@ -1388,4 +1414,49 @@ export function reportModStatus(): void {
   console.log('Resolver: skills/RESOLVER.md');
   console.log('Soul audit: run `gbrain soul-audit` to customize agent identity');
   console.log('');
+}
+
+function printInitHelp() {
+  console.log(`
+gbrain init — initialize a brain (PGLite or Supabase Postgres)
+
+USAGE
+  gbrain init [flags]
+
+ENGINE SELECTION (mutually exclusive)
+  --pglite              Use embedded PGLite (zero-config, default for <1000 .md files)
+  --supabase            Use Supabase Postgres (recommended for 1000+ files)
+  --url <URL>           Use a manual Postgres connection string
+  --mcp-only            Thin-client mode: connect to a remote gbrain MCP, no local engine
+
+OPTIONS
+  --force               Overwrite an existing config (gated by default)
+  --non-interactive     Don't prompt; use defaults
+  --migrate-only        Apply pending schema migrations against the configured engine
+                        without re-saving config (used by post-upgrade and orchestrators)
+  --json                JSON output for status reporting
+  --path <DIR>          Override default brain path (PGLite only)
+  --key <APIKEY>        Provide an API key non-interactively (Supabase only)
+  --embedding-model <PROVIDER:MODEL>
+                        e.g. openai:text-embedding-3-large, voyage:voyage-multimodal-3
+  --model <PROVIDER>    Shorthand: pick recipe default for a provider
+  --embedding-dimensions <N>
+                        Embedding dimensions (must match the model)
+  --expansion-model <PROVIDER:MODEL>
+                        Model for query expansion (default: anthropic:claude-haiku)
+  --chat-model <PROVIDER:MODEL>
+                        Default subagent driver (v0.27+)
+
+EXAMPLES
+  gbrain init --pglite                      # Local-only, no API keys
+  gbrain init --supabase                    # Interactive Supabase setup
+  gbrain init --url postgresql://...        # Use a custom Postgres
+  gbrain init --mcp-only --url https://...  # Thin-client mode
+
+NOTES
+  - Bare \`gbrain init\` in a directory with 1000+ .md files defaults to Supabase
+    interactive setup. With <1000 files (or with --pglite explicitly), defaults
+    to PGLite at ~/.gbrain/brain.pglite.
+  - Existing config is preserved unless --force is passed.
+`.trim());
 }

@@ -442,7 +442,12 @@ export async function scanBrainSources(
     const src = sources[i];
     // Between-source abort check: AbortSignal works here (no sync I/O blocking
     // the event loop at this boundary). For mid-walk interruption use deadline.
-    if (opts.signal?.aborted || (opts.deadline && Date.now() > opts.deadline)) {
+    // `>=` not `>`: when Date.now() lands exactly on the deadline boundary,
+    // the budget IS exhausted — proceeding to scanOneSource would let the
+    // next source eat its own budget on top of what's already been spent.
+    // (Strict `>` was a real flake source on CI: GitHub Actions runners
+    // landing on the boundary exactly during a Promise.race timeout.)
+    if (opts.signal?.aborted || (opts.deadline && Date.now() >= opts.deadline)) {
       // Codex adversarial review #3: when deadline fires BETWEEN sources,
       // also stamp aborted_at_source with the source we were about to start.
       // Pre-fix, the doctor message said "PARTIAL SCAN" with no source name.
@@ -482,9 +487,27 @@ export async function scanBrainSources(
             dbPageCount = null;
           } else {
             // Race COUNT against the deadline so a hung query can't eat the budget.
+            //
+            // Boundary overshoot (+1ms): the post-await deadline check at line
+            // ~512 uses `Date.now() >= deadline`. setTimeout fires AT OR AFTER
+            // the requested delay, so in theory the check always passes. In
+            // practice on heavily-loaded CI runners (8 parallel shards × 4
+            // concurrent test files = ~32 concurrent bun processes) we saw
+            // intermittent failures where the timer callback resolved
+            // microseconds BEFORE the wall-clock boundary, leaving Date.now()
+            // a tick below deadline and the skip-check evaluating false. The
+            // src-a scan then ran on a populated dir before src-b's
+            // between-source check caught up — causing
+            // `firstSource.status === 'skipped'` to receive 'scanned'.
+            //
+            // Adding 1ms guarantees the timer fires past the deadline by at
+            // least one millisecond regardless of runner timer drift. Cost is
+            // 1ms additional wall-clock latency on hung COUNT queries, which
+            // is operationally negligible. Flake repro:
+            // https://github.com/garrytan/gbrain/actions/runs/77611667786
             dbPageCount = await Promise.race([
               opts.dbPageCountForSource(src.id),
-              new Promise<null>(resolve => setTimeout(() => resolve(null), remainingMs)),
+              new Promise<null>(resolve => setTimeout(() => resolve(null), remainingMs + 1)),
             ]);
           }
         } else {
@@ -500,7 +523,11 @@ export async function scanBrainSources(
     // status='partial' with files_scanned=0, which is misleading ("partial
     // scan" when actually nothing was scanned). Mark this source + remainder
     // as 'skipped' so the doctor message is honest.
-    if (opts.signal?.aborted || (opts.deadline && Date.now() > opts.deadline)) {
+    // `>=` matches the between-source check above (line 445). The Promise.race
+    // setTimeout resolves null at exactly `remainingMs` from now, so post-await
+    // Date.now() often equals deadline within integer-ms precision — strict `>`
+    // missed those landings on CI and let the next scanOneSource run anyway.
+    if (opts.signal?.aborted || (opts.deadline && Date.now() >= opts.deadline)) {
       if (abortedAtSource === null) {
         abortedAtSource = src.id;
       }

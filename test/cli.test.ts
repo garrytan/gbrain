@@ -36,6 +36,16 @@ describe('CLI structure', () => {
     expect(cliSource).toContain("'files'");
   });
 
+  // v0.41.11 #1451 regression — `reindex` had a `case 'reindex':` handler
+  // at src/cli.ts:1334 but was missing from CLI_ONLY, so the dispatcher
+  // rejected `gbrain reindex` with "Unknown command: reindex" before the
+  // handler ever ran. Cherry-picked from kylma-code-adjacent PR #1354.
+  test('reindex is in CLI_ONLY (does not get "Unknown command")', () => {
+    const onlyMatch = cliSource.match(/const CLI_ONLY = new Set\(\[([\s\S]*?)\]\)/);
+    expect(onlyMatch).not.toBeNull();
+    expect(onlyMatch![1]).toContain(`'reindex'`);
+  });
+
   test('has formatResult function for CLI output', () => {
     expect(cliSource).toContain('function formatResult');
   });

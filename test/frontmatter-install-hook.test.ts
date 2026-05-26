@@ -31,9 +31,26 @@ describe('frontmatter install-hook (B13)', () => {
     const content = readFileSync(hookPath, 'utf8');
     expect(content).toContain('gbrain frontmatter');
     expect(content).toContain('git diff --cached');
-    // Configured hooksPath
-    const hooksPath = execFileSync('git', ['-C', tmp, 'config', '--get', 'core.hooksPath'], { encoding: 'utf8' }).trim();
-    expect(hooksPath).toBe('.githooks');
+    // installHook's contract is "set core.hooksPath unless it's already set
+    // elsewhere". Test BOTH branches deterministically by reading the local
+    // scope only: clean CI → local should be `.githooks`; developer with a
+    // global core.hooksPath (e.g. dotfiles → ~/.config/git/hooks) → local
+    // should be empty because installHook correctly skipped clobbering.
+    // Reading via `--get` without `--local` falls back to global scope when
+    // local is unset, which made this test environmentally fragile.
+    let globalHooksPath = '';
+    try {
+      globalHooksPath = execFileSync('git', ['config', '--global', '--get', 'core.hooksPath'], { encoding: 'utf8' }).trim();
+    } catch { /* unset is the expected clean-env case */ }
+    let localHooksPath = '';
+    try {
+      localHooksPath = execFileSync('git', ['-C', tmp, 'config', '--local', '--get', 'core.hooksPath'], { encoding: 'utf8' }).trim();
+    } catch { /* unset is fine when global was present */ }
+    if (globalHooksPath) {
+      expect(localHooksPath).toBe('');
+    } else {
+      expect(localHooksPath).toBe('.githooks');
+    }
   });
 
   test('installHook refuses to clobber existing hook without --force', () => {

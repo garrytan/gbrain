@@ -33,6 +33,8 @@ import { JudgeCache } from './cache.ts';
 import { CostTracker, estimateUpperBoundCost } from './cost-tracker.ts';
 import { buildSourceTierBreakdown, classifySlugTier } from './cross-source.ts';
 import { shouldSkipForDateMismatch } from './date-filter.ts';
+import { withBudgetTracker } from '../ai/gateway.ts';
+import { BudgetTracker, BudgetExhausted } from '../budget/budget-tracker.ts';
 import { judgeContradiction, type JudgeInput, type JudgeOutput } from './judge.ts';
 import { JudgeErrorCollector } from './judge-errors.ts';
 import { buildHotPages } from './severity-classify.ts';
@@ -225,6 +227,34 @@ function sortPairs(
  * strings — CLI flag parsing lives in the command file, not here.
  */
 export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerResult> {
+  // T6: wrap the entire body in withBudgetTracker so every gateway-layer
+  // chat/embed/rerank call (judge, embed-on-query) auto-records via the
+  // AsyncLocalStorage scope from src/core/ai/gateway.ts. The existing
+  // CostTracker stays for the report shape — the new BudgetTracker is a
+  // parallel record-keeper that doesn't enforce a cap on top of the
+  // existing soft ceiling. Public surface (--budget-usd, PreFlightBudgetError)
+  // is byte-identical.
+  const _outerBudgetUsd = opts.budgetUsd ?? 5.0;
+  const _runnerTracker = new BudgetTracker({
+    // Set the cap only when callers passed --budget-usd explicitly; this
+    // keeps the existing soft-ceiling semantics from CostTracker as the
+    // primary enforcement and uses the new tracker for telemetry only.
+    label: 'eval.suspected-contradictions',
+  });
+  try {
+    return await withBudgetTracker(_runnerTracker, () => _runContradictionProbeInner(opts));
+  } catch (err) {
+    // BudgetExhausted from the gateway path should bubble cleanly. With no
+    // cap set, the tracker only records; it doesn't throw, so this path
+    // is reachable only via future opt-in.
+    if (err instanceof BudgetExhausted) {
+      throw err;
+    }
+    throw err;
+  }
+}
+
+async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResult> {
   const startedAt = Date.now();
   const judgeModel = opts.judgeModel ?? DEFAULT_JUDGE_MODEL;
   const topK = Math.max(1, opts.topK ?? DEFAULT_TOP_K);

@@ -14,6 +14,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
+import matter from 'gray-matter';
 import { runCapture, __testing } from '../../src/commands/capture.ts';
 
 let engine: PGLiteEngine;
@@ -124,16 +125,23 @@ describe('capture — buildContent', () => {
   });
 
   test('uses first non-empty line as the title', () => {
+    // v0.39.3.0: BUG-1 fix moved buildContent to mergeCaptureFrontmatter
+    // which uses gray-matter's `matter.stringify()`. The emitter follows
+    // YAML defaults — simple strings emit unquoted (`title: Real first
+    // line`), strings with special chars get single-quoted (the prior
+    // hand-rolled `title: "..."` JSON-style quoting is gone). Parse the
+    // YAML and assert on the value, not the literal quoting style.
     const result = __testing.buildContent('\n  \nReal first line\nmore', {});
-    expect(result).toContain('title: "Real first line"');
+    const parsed = matter(result);
+    expect(parsed.data.title).toBe('Real first line');
   });
 
   test('caps title at 80 chars', () => {
     const longLine = 'x'.repeat(200);
     const result = __testing.buildContent(longLine, {});
-    const titleMatch = result.match(/title: "([^"]*)"/);
-    expect(titleMatch).not.toBeNull();
-    expect(titleMatch![1].length).toBeLessThanOrEqual(80);
+    const parsed = matter(result);
+    expect(typeof parsed.data.title).toBe('string');
+    expect((parsed.data.title as string).length).toBeLessThanOrEqual(80);
   });
 
   test('honors --source via captured_via', () => {

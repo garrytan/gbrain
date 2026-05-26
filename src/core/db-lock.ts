@@ -63,6 +63,14 @@ export async function tryAcquireDbLock(
     db?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
   };
 
+  // v0.41.6.0 D5: auto-register cleanup so abnormal termination (SIGTERM/
+  // SIGHUP/SIGPIPE/uncaughtException/EPIPE-on-stdout) releases the lock.
+  // The returned handle's release() deregisters before deleting — atomic
+  // in single-threaded JS so no double-DELETE on normal exit path.
+  // withRefreshingLock just calls tryAcquireDbLock and gets the same
+  // registration for free (single ownership site per outside-voice F11).
+  const { registerCleanup } = await import('./process-cleanup.ts');
+
   if (engine.kind === 'postgres' && maybePG.sql) {
     const sql = maybePG.sql as any;
     const ttl = `${ttlMinutes} minutes`;
@@ -78,6 +86,12 @@ export async function tryAcquireDbLock(
       RETURNING id
     `;
     if (rows.length === 0) return null;
+    const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
+      await sql`
+        DELETE FROM gbrain_cycle_locks
+        WHERE id = ${lockId} AND holder_pid = ${pid}
+      `;
+    });
     return {
       id: lockId,
       refresh: async () => {
@@ -88,6 +102,7 @@ export async function tryAcquireDbLock(
         `;
       },
       release: async () => {
+        deregister();
         await sql`
           DELETE FROM gbrain_cycle_locks
           WHERE id = ${lockId} AND holder_pid = ${pid}
@@ -112,6 +127,12 @@ export async function tryAcquireDbLock(
       [lockId, pid, host, ttl],
     );
     if (rows.length === 0) return null;
+    const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
+      await db.query(
+        `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
+        [lockId, pid],
+      );
+    });
     return {
       id: lockId,
       refresh: async () => {
@@ -123,6 +144,7 @@ export async function tryAcquireDbLock(
         );
       },
       release: async () => {
+        deregister();
         await db.query(
           `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
           [lockId, pid],
@@ -134,10 +156,201 @@ export async function tryAcquireDbLock(
   throw new Error(`Unknown engine kind for db-lock: ${engine.kind}`);
 }
 
-/** Lock id for performSync's writer window. Distinct from gbrain-cycle so the
- * cycle handler can hold gbrain-cycle while performSync (called from inside
- * the cycle) acquires gbrain-sync. */
-export const SYNC_LOCK_ID = 'gbrain-sync';
+/**
+ * v0.41.6.0 D3: inspect the current holder of a named lock.
+ *
+ * Returns a snapshot of the lock row + computed age, or null when no row
+ * exists for `lockId`. Used by:
+ *   - performSync's lock-busy error path to surface holder PID + hostname
+ *     + age in the user-facing "Another sync is in progress" message.
+ *   - gbrain doctor's `stale_locks` check (queries all rows where
+ *     ttl_expires_at < NOW()).
+ *   - gbrain sync --break-lock to verify holder state before clearing.
+ *
+ * Pure read; no side effects, no lock acquire.
+ */
+export interface LockSnapshot {
+  id: string;
+  holder_pid: number;
+  holder_host: string;
+  acquired_at: Date;
+  ttl_expires_at: Date;
+  age_ms: number;
+  /** TTL has already expired — lock is structurally available for next acquire. */
+  ttl_expired: boolean;
+}
+
+export async function inspectLock(engine: BrainEngine, lockId: string): Promise<LockSnapshot | null> {
+  const maybePG = engine as unknown as { sql?: (...args: unknown[]) => Promise<unknown> };
+  const maybePGLite = engine as unknown as {
+    db?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
+  };
+
+  let row: { id?: string; holder_pid?: number; holder_host?: string; acquired_at?: Date | string; ttl_expires_at?: Date | string } | undefined;
+
+  if (engine.kind === 'postgres' && maybePG.sql) {
+    const sql = maybePG.sql as any;
+    const rows = await sql`
+      SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at
+        FROM gbrain_cycle_locks
+       WHERE id = ${lockId}
+    `;
+    row = rows[0];
+  } else if (engine.kind === 'pglite' && maybePGLite.db) {
+    const { rows } = await maybePGLite.db.query(
+      `SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at
+         FROM gbrain_cycle_locks
+        WHERE id = $1`,
+      [lockId],
+    );
+    row = rows[0] as typeof row;
+  } else {
+    throw new Error(`Unknown engine kind for inspectLock: ${engine.kind}`);
+  }
+
+  if (!row || row.holder_pid === undefined || !row.acquired_at || !row.ttl_expires_at) return null;
+
+  const acquired = row.acquired_at instanceof Date ? row.acquired_at : new Date(row.acquired_at);
+  const ttlExpires = row.ttl_expires_at instanceof Date ? row.ttl_expires_at : new Date(row.ttl_expires_at);
+  const now = Date.now();
+
+  return {
+    id: lockId,
+    holder_pid: Number(row.holder_pid),
+    holder_host: String(row.holder_host ?? ''),
+    acquired_at: acquired,
+    ttl_expires_at: ttlExpires,
+    age_ms: now - acquired.getTime(),
+    ttl_expired: ttlExpires.getTime() < now,
+  };
+}
+
+/**
+ * v0.41.6.0 D3: list every lock whose TTL has expired. Used by gbrain
+ * doctor's `stale_locks` check. The query reuses the same canonical
+ * staleness signal (ttl_expires_at < NOW()) that tryAcquireDbLock's
+ * UPDATE-on-conflict already trusts — no parallel heuristic.
+ */
+export async function listStaleLocks(engine: BrainEngine): Promise<LockSnapshot[]> {
+  const maybePG = engine as unknown as { sql?: (...args: unknown[]) => Promise<unknown> };
+  const maybePGLite = engine as unknown as {
+    db?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
+  };
+
+  let rows: Array<{ id?: string; holder_pid?: number; holder_host?: string; acquired_at?: Date | string; ttl_expires_at?: Date | string }>;
+
+  if (engine.kind === 'postgres' && maybePG.sql) {
+    const sql = maybePG.sql as any;
+    rows = await sql`
+      SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at
+        FROM gbrain_cycle_locks
+       WHERE ttl_expires_at < NOW()
+       ORDER BY acquired_at
+    `;
+  } else if (engine.kind === 'pglite' && maybePGLite.db) {
+    const result = await maybePGLite.db.query(
+      `SELECT id, holder_pid, holder_host, acquired_at, ttl_expires_at
+         FROM gbrain_cycle_locks
+        WHERE ttl_expires_at < NOW()
+        ORDER BY acquired_at`,
+    );
+    rows = result.rows as typeof rows;
+  } else {
+    throw new Error(`Unknown engine kind for listStaleLocks: ${engine.kind}`);
+  }
+
+  const now = Date.now();
+  return rows
+    .filter(r => r.holder_pid !== undefined && r.acquired_at && r.ttl_expires_at)
+    .map(r => {
+      const acquired = r.acquired_at instanceof Date ? r.acquired_at : new Date(r.acquired_at!);
+      const ttl = r.ttl_expires_at instanceof Date ? r.ttl_expires_at : new Date(r.ttl_expires_at!);
+      return {
+        id: String(r.id ?? ''),
+        holder_pid: Number(r.holder_pid),
+        holder_host: String(r.holder_host ?? ''),
+        acquired_at: acquired,
+        ttl_expires_at: ttl,
+        age_ms: now - acquired.getTime(),
+        ttl_expired: true,
+      };
+    });
+}
+
+/**
+ * v0.41.6.0 D3: atomic verify-and-delete for `gbrain sync --break-lock`.
+ *
+ * Runs `DELETE ... WHERE id = $1 AND holder_pid = $2 RETURNING id`.
+ * RETURNING shape:
+ *   - row returned  → we cleared the lock atomically.
+ *   - empty array   → row was already cleared by another process (idempotent;
+ *                     caller proceeds to acquire normally).
+ *
+ * Single round-trip; no TOCTOU window between liveness check and DELETE.
+ * The caller is responsible for the liveness check (PID-dead OR TTL-expired
+ * for safe mode; skipped entirely for --force-break-lock).
+ */
+export async function deleteLockRow(
+  engine: BrainEngine,
+  lockId: string,
+  holderPid: number,
+): Promise<{ deleted: boolean }> {
+  const maybePG = engine as unknown as { sql?: (...args: unknown[]) => Promise<unknown> };
+  const maybePGLite = engine as unknown as {
+    db?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
+  };
+
+  if (engine.kind === 'postgres' && maybePG.sql) {
+    const sql = maybePG.sql as any;
+    const rows: Array<{ id: string }> = await sql`
+      DELETE FROM gbrain_cycle_locks
+       WHERE id = ${lockId} AND holder_pid = ${holderPid}
+      RETURNING id
+    `;
+    return { deleted: rows.length > 0 };
+  }
+  if (engine.kind === 'pglite' && maybePGLite.db) {
+    const { rows } = await maybePGLite.db.query(
+      `DELETE FROM gbrain_cycle_locks
+        WHERE id = $1 AND holder_pid = $2
+       RETURNING id`,
+      [lockId, holderPid],
+    );
+    return { deleted: rows.length > 0 };
+  }
+  throw new Error(`Unknown engine kind for deleteLockRow: ${engine.kind}`);
+}
+
+/**
+ * v0.40 (Federated Sync v2): per-source sync lock helper.
+ *
+ * Before v0.40: SYNC_LOCK_ID was a bare 'gbrain-sync' constant, taken by
+ * performSync's writer window. That meant only ONE sync could run at a time
+ * across the whole brain — even when two sources are completely independent
+ * (different git repos, different last_commit, different DB row anchors).
+ *
+ * v0.40 namespaces the lock key by sourceId so cross-source sync runs in
+ * parallel. The cycle's broader `gbrain-cycle` lock still serializes inside
+ * a single cycle invocation. Two-source layered semantics:
+ *
+ *   cycle              acquires `gbrain-cycle`
+ *     → performSync(A) acquires `gbrain-sync:A`
+ *     → performSync(B) acquires `gbrain-sync:B`  (in a different process, fine)
+ *
+ * Audit: `SYNC_LOCK_ID` (back-compat alias) resolves to `syncLockId('default')`.
+ * Every consumer in src/ MUST namespace by source. Tracked consumers:
+ *   - src/commands/sync.ts:performSync (per-source)
+ *   - src/core/cycle/phantom-redirect.ts (per-source, D16)
+ */
+export function syncLockId(sourceId: string): string {
+  return `gbrain-sync:${sourceId}`;
+}
+
+/**
+ * Back-compat alias. Resolves to `syncLockId('default')`. New code should call
+ * `syncLockId(sourceId)` directly.
+ */
+export const SYNC_LOCK_ID = syncLockId('default');
 
 /**
  * v0.30.1 (T4 + A4): wrap long-running work in a refreshing TTL lock.
@@ -255,6 +468,48 @@ async function engineSelectOne(engine: BrainEngine): Promise<void> {
     return;
   }
   throw new Error(`Unknown engine kind for heartbeat: ${engine.kind}`);
+}
+
+/**
+ * v0.41 Eng D9 (codex pass-2 #7 + #8) — per-tick election convenience.
+ *
+ * Thin wrapper over `tryAcquireDbLock` for the E5 lease-cap controller
+ * use case: each worker ticks every 30s and tries to acquire the
+ * controller lock; the winner runs `fn` (read fleet signal, write new
+ * lease cap), then releases. Losers no-op for this tick; next tick
+ * re-elects.
+ *
+ * The codex pass-3 #8 + #9 audit confirmed this should reuse the
+ * existing `gbrain_cycle_locks` table (which `tryAcquireDbLock` already
+ * wraps for both engines) rather than build a parallel new primitive.
+ *
+ * Semantics:
+ *   - Returns the result of `fn` on lock acquisition.
+ *   - Returns `null` when another worker holds the lock (not an error;
+ *     just "not my tick").
+ *   - `fn` throws → release lock cleanly + rethrow.
+ *
+ * For long-running work that needs mid-flight TTL refresh, use
+ * `withRefreshingLock` instead. This helper is for sub-second / single-
+ * statement work where the initial TTL covers the whole call.
+ */
+export async function tryWithDbElection<T>(
+  engine: BrainEngine,
+  lockId: string,
+  ttlMinutes: number,
+  fn: () => Promise<T>,
+): Promise<T | null> {
+  const handle = await tryAcquireDbLock(engine, lockId, ttlMinutes);
+  if (!handle) return null;
+  try {
+    return await fn();
+  } finally {
+    try {
+      await handle.release();
+    } catch {
+      /* idempotent — lock will auto-expire under TTL */
+    }
+  }
 }
 
 /**

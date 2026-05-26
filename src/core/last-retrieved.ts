@@ -40,6 +40,92 @@ let _trackRetrievalCache: { ts: number; enabled: boolean } | null = null;
 const TRACK_RETRIEVAL_CACHE_TTL_MS = 30_000;
 
 /**
+ * v0.41.8.0 — fire-and-forget tracking + bounded drain.
+ *
+ * Issues #1247, #1269, #1290: PGLite CLI commands printed search /
+ * query / get_page output then hung at ~95-98% CPU until SIGKILL.
+ * Root cause: the IIFE below races `engine.disconnect()`. PGLite's
+ * WASM runtime kept Bun's event loop alive while the dangling
+ * UPDATE settled, and disconnect closed the DB out from under it.
+ *
+ * Solution mirrors the v0.36.1.x #1090 fix at
+ * `src/core/search/hybrid.ts:awaitPendingSearchCacheWrites`: track
+ * every IIFE promise in this module-scoped Set, expose a drain that
+ * resolves once all settle. The CLI awaits the drain before
+ * `engine.disconnect()` so the WASM handle never closes mid-write.
+ *
+ * Bounded with a 5s timeout via Promise.race. If a future
+ * fire-and-forget bug produces a permanently-pending promise, the
+ * drain stderr-warns with the pending count and resolves so the CLI
+ * can disconnect rather than re-creating the hang at this layer.
+ * The cli.ts caller then falls back to a narrow `process.exit(0)`
+ * (only on timeout, only for non-daemon commands) to guarantee
+ * exit. The companion `awaitPendingSearchCacheWrites` retrofit is
+ * filed as a v0.41+ TODO to keep both helpers symmetric.
+ */
+const pendingLastRetrievedWrites = new Set<Promise<unknown>>();
+const DRAIN_TIMEOUT_MS = 5_000;
+
+export type DrainOutcome = { outcome: 'drained' | 'timeout'; pending: number };
+
+export async function awaitPendingLastRetrievedWrites(
+  timeoutMs: number = DRAIN_TIMEOUT_MS,
+): Promise<DrainOutcome> {
+  if (pendingLastRetrievedWrites.size === 0) {
+    return { outcome: 'drained', pending: 0 };
+  }
+  // Snapshot up front: if a new write appears after we start draining,
+  // we deliberately don't await it. CLI flow guarantees op-dispatch
+  // is complete before this call, so the set is effectively frozen.
+  const snapshot = Array.from(pendingLastRetrievedWrites);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+  });
+  const drain = Promise.allSettled(snapshot).then(() => 'drained' as const);
+  const outcome = await Promise.race([drain, timeout]);
+  if (timer) clearTimeout(timer);
+  if (outcome === 'timeout') {
+    const pending = pendingLastRetrievedWrites.size;
+    console.warn(
+      `[last-retrieved] drain timed out after ${timeoutMs}ms; ` +
+        `${pending} writes still pending`,
+    );
+    // Adversarial-review C1: in long-lived daemons (`gbrain serve`), a
+    // timed-out IIFE stays in the set forever because its `.finally`
+    // never fires. Repeated timeouts leak references without bound.
+    // Drop this snapshot's tracked promises explicitly so the next
+    // drain doesn't see ghosts. The IIFEs themselves keep running and
+    // their results are still discarded; we just stop accumulating
+    // references to forever-pending work.
+    for (const p of snapshot) {
+      pendingLastRetrievedWrites.delete(p);
+    }
+    return { outcome: 'timeout', pending };
+  }
+  return { outcome: 'drained', pending: 0 };
+}
+
+function trackLastRetrievedWrite(promise: Promise<unknown>): void {
+  pendingLastRetrievedWrites.add(promise);
+  promise
+    .finally(() => pendingLastRetrievedWrites.delete(promise))
+    .catch(() => {
+      /* swallow — IIFE already logged; .finally already removed */
+    });
+}
+
+/** Test seam — clears the pending set so each test starts clean. */
+export function _resetPendingLastRetrievedWritesForTests(): void {
+  pendingLastRetrievedWrites.clear();
+}
+
+/** Test seam — peek the current pending count. */
+export function _peekPendingLastRetrievedWritesForTests(): number {
+  return pendingLastRetrievedWrites.size;
+}
+
+/**
  * Resolve `search.track_retrieval` config with a 30s in-process cache so
  * hot-path callers don't pay a SELECT per search. Default-on: missing
  * config OR unparseable value → true (D13 default).
@@ -77,8 +163,11 @@ export function _resetTrackRetrievalCacheForTests(): void {
  */
 export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): void {
   if (pageIds.length === 0) return;
-  // Fire-and-forget on purpose. We deliberately do NOT return the promise.
-  void (async () => {
+  // Fire-and-forget on purpose for callers (MCP, internal). The CLI
+  // path awaits the drain helper below before disconnecting, which
+  // is how #1247/#1269/#1290 are fixed without exposing the IIFE
+  // promise to every caller.
+  const promise = (async () => {
     try {
       const enabled = await isTrackingEnabled(engine);
       if (!enabled) return;
@@ -102,4 +191,5 @@ export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): voi
       console.warn(`[last-retrieved] write-back failed (best-effort): ${msg}`);
     }
   })();
+  trackLastRetrievedWrite(promise);
 }

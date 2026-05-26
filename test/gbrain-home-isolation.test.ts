@@ -16,7 +16,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { mkdtempSync, existsSync, readdirSync, statSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 
 // Save original env so we don't leak between tests.
@@ -44,10 +44,11 @@ describe('GBRAIN_HOME write-side isolation', () => {
     delete process.env.GBRAIN_HOME;
     try {
       const { configDir } = await import('../src/core/config.ts');
-      const result = configDir();
-      // Should NOT contain the test tmpdir; should resolve to a real homedir path.
-      expect(result.endsWith('.gbrain')).toBe(true);
-      expect(result.startsWith('/tmp/')).toBe(false);
+      // Contract: when GBRAIN_HOME is unset, configDir() === os.homedir()/.gbrain.
+      // Asserting against os.homedir() (rather than a "not /tmp/" sentinel) keeps
+      // this test correct under safety wrappers that redirect HOME=/tmp/... — the
+      // behavior we care about is that the fallback path equals homedir().
+      expect(configDir()).toBe(join(homedir(), '.gbrain'));
     } finally {
       if (ORIG_GBRAIN_HOME !== undefined) process.env.GBRAIN_HOME = ORIG_GBRAIN_HOME;
     }

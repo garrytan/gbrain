@@ -62,6 +62,11 @@ const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   unified_multimodal: 'Phase 3 — route all queries through embedding_multimodal column',
   unified_multimodal_only: 'Phase 3 strict — bypass dual-column fallback when unified is on',
   cross_modal_llm_intent: 'Commit 4 — Haiku tie-break for ambiguous modality classification',
+  // v0.40.4 graph signals
+  graph_signals: 'Selective graph signals: adjacency hub + cross-source hub + session diversification',
+  // v0.40.3.0 contextual retrieval
+  contextual_retrieval: 'CR tier (none|title|per_chunk_synopsis) — wraps chunks at embed time',
+  contextual_retrieval_disabled: 'Soft kill switch — neutralizes CR wrapping for queries + new embeds',
 };
 
 interface SearchModesReport {
@@ -198,16 +203,30 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
 
   const stats = await readSearchStats(engine, { days: Number.isFinite(days) ? days : 7 });
 
+  // v0.40.4 — graph_signals section. Sourced from:
+  //   1. config: search.graph_signals (or mode bundle default) for the
+  //      on/off status.
+  //   2. JSONL audit: graph-signals-failures-*.jsonl for the error count.
+  //
+  // Fire-rate metrics (adjacency_fires, cross_source_fires,
+  // session_demotions) require telemetry table writes from the
+  // applyGraphSignals onMeta callback — wired in a v0.41+ follow-up
+  // (T-todo-2 calibration wave). For now: status + error count.
+  const gsSection = await readGraphSignalsStats(engine, Number.isFinite(days) ? days : 7);
+
   if (json) {
     console.log(JSON.stringify({
       schema_version: 2,
       ...stats,
+      graph_signals: gsSection,
       _meta: {
         metric_glossary: {
           cache_hit_rate: 'cache_hits / (cache_hits + cache_misses) — fraction of searches that reused a recent answer instead of running fresh',
           avg_results: 'mean number of result rows returned per search call',
           avg_tokens: 'mean estimated tokens in the returned chunk text (char/4 heuristic)',
           total_budget_dropped: 'sum of results dropped because the call exceeded its tokenBudget',
+          graph_signals_enabled: 'whether graph_signals is on for the active mode (or via search.graph_signals override)',
+          graph_signals_failures_count: 'count of fail-open events in the JSONL audit over the window',
         },
       },
     }, null, 2));
@@ -220,6 +239,12 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
   if (stats.total_calls === 0) {
     console.log('');
     console.log('No telemetry recorded yet. Run a few `gbrain query` calls and re-check.');
+    // Still print the graph-signals section since failures are tracked
+    // independently of the search_telemetry table.
+    if (gsSection.enabled || gsSection.failures_count > 0) {
+      console.log('');
+      printGraphSignalsSection(gsSection);
+    }
     return;
   }
   const hitRatePct = (stats.cache_hit_rate * 100).toFixed(1);
@@ -243,6 +268,79 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
   if (stats.oldest_seen || stats.newest_seen) {
     console.log('');
     console.log(`  Window: ${stats.oldest_seen ?? '?'} → ${stats.newest_seen ?? '?'}`);
+  }
+  console.log('');
+  printGraphSignalsSection(gsSection);
+}
+
+interface GraphSignalsStatsSection {
+  enabled: boolean;
+  source: 'config' | 'mode_default';
+  failures_count: number;
+  /** Failure-reason breakdown across the window (truncated to top reasons). */
+  failures_by_reason: Record<string, number>;
+}
+
+async function readGraphSignalsStats(engine: BrainEngine, days: number): Promise<GraphSignalsStatsSection> {
+  // Resolve graph_signals on/off. Mirrors the resolution chain in
+  // src/commands/doctor.ts:checkGraphSignalsCoverage.
+  // v0.40.4 codex F1: case-insensitive + trim parity with
+  // loadOverridesFromConfig (mode.ts). Without this, search-stats would
+  // silently report the opposite of what the parser actually enables on
+  // values like 'TRUE' or 'True'.
+  const cfg = await engine.getConfig('search.graph_signals').catch(() => null);
+  let enabled: boolean;
+  let source: 'config' | 'mode_default';
+  if (cfg !== null && cfg !== undefined) {
+    const v = cfg.trim().toLowerCase();
+    enabled = v === 'true' || v === '1';
+    source = 'config';
+  } else {
+    const modeRaw = await engine.getConfig('search.mode').catch(() => null);
+    const modeVal = typeof modeRaw === 'string' ? modeRaw.trim().toLowerCase() : '';
+    const mode = modeVal === 'conservative' || modeVal === 'tokenmax' ? modeVal : 'balanced';
+    enabled = mode !== 'conservative';
+    source = 'mode_default';
+  }
+
+  let failures_count = 0;
+  const failures_by_reason: Record<string, number> = {};
+  try {
+    const { readRecentGraphSignalsFailures } = await import('../core/search/graph-signals.ts');
+    const events = readRecentGraphSignalsFailures(days);
+    failures_count = events.length;
+    // The failure event schema has error_summary (not a reason field) —
+    // bucket by the first word of the summary so operators see e.g.
+    // "ECONNREFUSED" / "timeout" / "permission" at a glance.
+    for (const e of events) {
+      const firstWord = (e.error_summary ?? '').split(/[\s:]+/)[0]?.slice(0, 32) || 'unknown';
+      failures_by_reason[firstWord] = (failures_by_reason[firstWord] ?? 0) + 1;
+    }
+  } catch {
+    // Audit reader is best-effort. Missing module / corrupt files →
+    // count stays 0, search-stats still renders.
+  }
+
+  return { enabled, source, failures_count, failures_by_reason };
+}
+
+function printGraphSignalsSection(gs: GraphSignalsStatsSection): void {
+  console.log('  Graph signals:');
+  const sourceLabel = gs.source === 'config' ? 'config override' : 'mode default';
+  console.log(`    enabled:    ${gs.enabled} (${sourceLabel})`);
+  if (gs.failures_count === 0) {
+    console.log('    failures:   0 (fail-open events in window)');
+  } else {
+    console.log(`    failures:   ${gs.failures_count} fail-open event(s)`);
+    const top = Object.entries(gs.failures_by_reason)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
+    for (const [reason, count] of top) {
+      console.log(`      ${reason.padEnd(20)} ${count}`);
+    }
+  }
+  if (!gs.enabled && gs.failures_count > 0) {
+    console.log(`    note:       failures observed but graph_signals currently off — historical events`);
   }
 }
 

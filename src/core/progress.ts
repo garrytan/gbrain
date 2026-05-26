@@ -204,11 +204,23 @@ class Reporter implements ReporterInternal {
   }
 
   private emitHumanLine(line: string): void {
+    // v0.40.3.0 — per-source prefix support. When called inside a
+    // `withSourcePrefix(id, ...)` scope, prepend `[id] ` so the
+    // progress reporter's lines stay in the same prefix family as
+    // sync's slog/serr output. TTY-rewrite mode gets the prefix
+    // INSIDE the \r-clear (after the clear-to-EOL escape, before the
+    // line content) so the rewritten line carries the prefix too.
+    //
+    // JSON mode (emitJson) is deliberately NOT prefixed — consumers
+    // parse the NDJSON and would choke on a `[id] {...}` shape.
+    const { getSourcePrefix } = require('./console-prefix.ts') as typeof import('./console-prefix.ts');
+    const prefix = getSourcePrefix();
+    const tagged = prefix ? `[${prefix}] ${line}` : line;
     if (this.renderMode === 'human-tty') {
       // \r rewrite: clear-to-EOL then carriage-return-positioned line.
-      safeWrite(this.stream, `\r\x1b[2K${line}`);
+      safeWrite(this.stream, `\r\x1b[2K${tagged}`);
     } else {
-      safeWrite(this.stream, line + '\n');
+      safeWrite(this.stream, tagged + '\n');
     }
   }
 

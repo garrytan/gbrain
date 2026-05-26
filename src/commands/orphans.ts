@@ -116,6 +116,14 @@ export async function queryOrphanPages(
  * Returns structured OrphanResult with totals.
  *
  * As of v0.17: `engine` is required. See queryOrphanPages for rationale.
+ *
+ * v0.42.0.0 (D1 from /plan-eng-review): this is the canonical pure data
+ * fn for "what counts as an orphan in this brain." Re-exported as
+ * `getOrphansData` for the doctor `orphan_ratio` check and any other
+ * consumer that needs the same exclusion logic (AUTO_SUFFIX_PATTERNS,
+ * PSEUDO_SLUGS, RAW_SEGMENT, DENY_PREFIXES, FIRST_SEGMENT_EXCLUSIONS).
+ * Two consumers sharing one definition = doctor and `gbrain orphans`
+ * cannot disagree on the orphan count.
  */
 export async function findOrphans(
   engine: BrainEngine,
@@ -163,6 +171,15 @@ export async function findOrphans(
     excluded,
   };
 }
+
+/**
+ * v0.42.0.0 D1: canonical name for the pure data fn consumed by both
+ * `gbrain orphans` CLI AND doctor's `orphan_ratio` check. Aliased to
+ * `findOrphans` so the existing CLI behavior + the test surface stay
+ * byte-identical; new consumers should import `getOrphansData` to make
+ * the data-only intent explicit at the call site.
+ */
+export const getOrphansData = findOrphans;
 
 // --- Output formatters ---
 

@@ -15,10 +15,23 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  // v0.41.5.0+: DEFAULT_EMBEDDING_DIMENSIONS is 1280 (ZE Matryoshka). unitVec()
+  // below inserts 1536-dim vectors into facts.embedding. Without pinning, a
+  // fresh CI environment (no prior gateway configure) sizes the column at
+  // vector(1280) and the inserts throw "expected 1280 dimensions, not 1536"
+  // — CI shard 4 hit this consistently after v0.41.6.0 shard re-balancing
+  // moved this file ahead of any test that pre-configured the gateway.
+  resetGateway();
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { OPENAI_API_KEY: 'sk-fake' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -26,6 +39,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 beforeEach(async () => {

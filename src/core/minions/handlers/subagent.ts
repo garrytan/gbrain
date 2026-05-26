@@ -48,6 +48,7 @@ import {
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
 import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
 import { toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
 import { classifyCapabilities } from '../../ai/capabilities.ts';
@@ -58,9 +59,36 @@ import { randomUUIDv7 } from 'bun';
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_MAX_TURNS = 20;
 const DEFAULT_RATE_KEY = 'anthropic:messages';
-const DEFAULT_MAX_CONCURRENT = Number(process.env.GBRAIN_ANTHROPIC_MAX_INFLIGHT ?? '8');
+
+/**
+ * Resolve the rate-lease cap from the env var.
+ *
+ *   undefined       → 32 (default; was 8 pre-v0.41, starved 10-concurrency batches)
+ *   "unlimited"     → POSITIVE_INFINITY (Azure / Bedrock / self-hosted with no upstream cap)
+ *   "none"          → POSITIVE_INFINITY (alias)
+ *   positive number → that number
+ *   anything else   → throws (NaN / "0" / negative / typo — fail loud, NOT silent uncap)
+ *
+ * Codex pass-1 #7 caught the original `=0` and `NaN` silently uncapping;
+ * "0 means disabled" is the universal convention, so we use an explicit
+ * `unlimited` sentinel instead. Misconfig fails at startup with a hint.
+ */
+export function resolveLeaseCap(raw: string | undefined): number {
+  if (raw === undefined) return 32;
+  if (raw === 'unlimited' || raw === 'none') return Number.POSITIVE_INFINITY;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  throw new Error(
+    `GBRAIN_ANTHROPIC_MAX_INFLIGHT="${raw}" is invalid. ` +
+    `Use a positive integer, "unlimited" (or "none"), or omit for default 32.`,
+  );
+}
+const DEFAULT_MAX_CONCURRENT = resolveLeaseCap(process.env.GBRAIN_ANTHROPIC_MAX_INFLIGHT);
 const DEFAULT_LEASE_TTL_MS = 120_000;
-const DEFAULT_SYSTEM = 'You are a helpful assistant running as a gbrain subagent.';
+// v0.41 Approach C: DEFAULT_SUBAGENT_SYSTEM lives in ./system-prompt.ts
+// so the renderer and the handler share one source of truth. Kept as
+// a re-export alias here for back-compat with any external importer.
+const DEFAULT_SYSTEM = DEFAULT_SUBAGENT_SYSTEM;
 
 // ── Injectable surfaces (for tests) ─────────────────────────
 
@@ -184,7 +212,11 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         fallback: TIER_DEFAULTS.subagent,
       });
     const maxTurns = data.max_turns ?? DEFAULT_MAX_TURNS;
-    const systemPrompt = data.system ?? DEFAULT_SYSTEM;
+    // v0.41 Approach C: systemPrompt is now built AFTER toolDefs (a few
+    // lines below) so the renderer can splice a tool-usage preamble
+    // listing each available tool's usage_hint. The renderer is
+    // deterministic so the Anthropic prompt-cache marker on the system
+    // block stays a hit across turns.
 
     // v0.38 S1.10 — feature flag for the gateway-native tool loop. When ON,
     // route ALL subagent jobs through gateway.toolLoop() (works for every
@@ -218,6 +250,13 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     const toolDefs = data.allowed_tools && data.allowed_tools.length > 0
       ? filterAllowedTools(registry, data.allowed_tools)
       : registry;
+
+    // v0.41 Approach C: render the final system prompt now that toolDefs
+    // is known. Splices a deterministic tool-usage preamble listing each
+    // tool's usage_hint. Caller can opt out via data.system_no_tool_preamble.
+    const systemPrompt = buildSystemPrompt(toolDefs, data.system, {
+      no_tool_preamble: data.system_no_tool_preamble,
+    });
 
     logSubagentSubmission({
       caller: 'worker',
@@ -395,6 +434,31 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       }
 
       // 1. Acquire rate lease for the outbound call.
+      //
+      // A1 ORDERING (v0.37.x budget cathedral):
+      //
+      //   +----------------------------------+
+      //   | gateway.chat() inside subagent   |
+      //   +-----+----------------------------+
+      //         |
+      //   1. getCurrentBudgetTracker()?.reserve(...)
+      //         |  (runs via the gateway's AsyncLocalStorage scope,
+      //         |   set by the upstream caller of the subagent.
+      //         |   On BudgetExhausted: throw BEFORE we touch the lease.)
+      //         v
+      //   2. acquireLease(...)  <-- the line below
+      //         |  (only attempted if the budget gate passed)
+      //         v
+      //   3. provider HTTP call
+      //         |
+      //         v
+      //   4. tracker.record(actual usage)
+      //
+      // The handler body intentionally does NOT thread `BudgetTracker`
+      // explicitly. Gateway-layer composition (TX5) handles it. The
+      // ordering is load-bearing: a budget throw must NOT consume a
+      // lease slot, because the lease is the rate-limit pacer for the
+      // entire fleet.
       const lease = await acquireLease(engine, rateLeaseKey, ctx.id, maxConcurrent, { ttlMs: leaseTtlMs });
       if (!lease.acquired) {
         // No slots — treat as a renewable error so the worker re-claims
@@ -412,7 +476,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       // complexity; for v0.15 we lean on the 120s TTL + abort-on-signal.
       try {
         const params: Anthropic.MessageCreateParamsNonStreaming = {
-          model,
+          // v0.41 Bug 3: strip `provider:` prefix at the SDK call site only.
+          // `model` stays qualified everywhere else (persistence, recipe
+          // lookup at recipeIdFromModel(), capability gate).
+          model: stripProviderPrefix(model),
           max_tokens: 4096,
           system: [
             { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
@@ -870,6 +937,28 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
 function recipeIdFromModel(modelString: string): string {
   const idx = modelString.indexOf(':');
   return idx > 0 ? modelString.slice(0, idx) : 'anthropic';
+}
+
+/**
+ * Strip the `provider:` prefix from a model string. Returns the bare
+ * model id the Anthropic Messages API expects. Idempotent on already-bare
+ * strings.
+ *
+ *   stripProviderPrefix('anthropic:claude-sonnet-4-6') === 'claude-sonnet-4-6'
+ *   stripProviderPrefix('claude-sonnet-4-6') === 'claude-sonnet-4-6'
+ *
+ * v0.41 Bug 3 — pre-fix, `gbrain agent run --model anthropic:claude-sonnet-4-6`
+ * sent the prefixed string straight into `client.messages.create()`, which
+ * Anthropic rejects with "model not found." Omitting `--model` worked because
+ * `resolveModel()` returns the bare id; explicit-model users hit the bug.
+ *
+ * Used ONLY at the SDK call site. The wider `model` variable stays
+ * qualified everywhere else (persistence, recipe lookup, capability gate)
+ * because those readers want the provider info.
+ */
+export function stripProviderPrefix(modelString: string): string {
+  const idx = modelString.indexOf(':');
+  return idx > 0 ? modelString.slice(idx + 1) : modelString;
 }
 
 /**

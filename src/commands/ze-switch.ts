@@ -24,6 +24,8 @@ import {
   applyRetrievalUpgrade,
   resumeRetrievalUpgrade,
   undoRetrievalUpgrade,
+  formatEnvOverrideWarning,
+  type ApplyResult,
 } from '../core/retrieval-upgrade-planner.ts';
 import {
   runRetrievalUpgradePrompt,
@@ -39,6 +41,7 @@ interface Flags {
   undo: boolean;
   confirmReembed: boolean;
   ignoreMissingKey: boolean;
+  ignoreEnvOverride: boolean;
 }
 
 function parseFlags(args: string[]): Flags {
@@ -51,6 +54,9 @@ function parseFlags(args: string[]): Flags {
     undo: args.includes('--undo'),
     confirmReembed: args.includes('--confirm-reembed'),
     ignoreMissingKey: args.includes('--ignore-missing-key'),
+    // v0.41.2.1: escape hatch for power users running parallel experiments
+    // with GBRAIN_EMBEDDING_MODEL set. Loud stderr line when used.
+    ignoreEnvOverride: args.includes('--ignore-env-override'),
   };
 }
 
@@ -68,8 +74,32 @@ Flags:
   --undo                 Reverse the switch: restore prior model + dim + reranker.
   --confirm-reembed      Required with --undo --non-interactive (re-embed pays cost).
   --ignore-missing-key   Allow --non-interactive without ZEROENTROPY_API_KEY set.
+  --ignore-env-override  Apply even when GBRAIN_EMBEDDING_* env vars would
+                         override the target at runtime (use if you know why).
   --help                 Show this help.
 `);
+}
+
+/**
+ * Render an ApplyResult; if status is 'refused' (env-override gate),
+ * write the ASCII warning box to stderr AND exit non-zero. Pure data
+ * stays in the JSON envelope; the box is for human readers.
+ */
+function renderApplyResult(result: ApplyResult, json: boolean): void {
+  if (result.status === 'refused' && result.reason === 'env_override') {
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.error(formatEnvOverrideWarning(result.warning));
+      console.error(`\nSwitch status: refused (env_override)`);
+    }
+    process.exit(1);
+  }
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(`Switch status: ${result.status}`);
+  }
 }
 
 export async function runZeSwitch(args: string[], engine: BrainEngine): Promise<void> {
@@ -101,7 +131,17 @@ export async function runZeSwitch(args: string[], engine: BrainEngine): Promise<
 
     // --resume: complete a half-applied switch.
     if (flags.resume) {
-      const result = await resumeRetrievalUpgrade(engine);
+      if (flags.ignoreEnvOverride) {
+        console.error('[ze-switch] WARNING: --ignore-env-override is set; env vars will silently override the switch at runtime.');
+      }
+      const result = await resumeRetrievalUpgrade(engine, {
+        ignoreEnvOverride: flags.ignoreEnvOverride,
+      });
+      // v0.41.2.1: route through the env-override-aware renderer so
+      // refused-status emits the ASCII warning box + exits non-zero.
+      if (result.status === 'refused' && result.reason === 'env_override') {
+        renderApplyResult(result, flags.json); // exits non-zero
+      }
       if (flags.json) {
         console.log(JSON.stringify(result, null, 2));
       } else {
@@ -142,8 +182,17 @@ export async function runZeSwitch(args: string[], engine: BrainEngine): Promise<
           process.exit(1);
         }
       }
+      if (flags.ignoreEnvOverride) {
+        console.error('[ze-switch] WARNING: --ignore-env-override is set; env vars will silently override the switch at runtime.');
+      }
       const plan = await planRetrievalUpgrade(engine);
-      const result = await applyRetrievalUpgrade(engine, plan);
+      const result = await applyRetrievalUpgrade(engine, plan, {
+        ignoreEnvOverride: flags.ignoreEnvOverride,
+      });
+      // v0.41.2.1: render env-override refusal with ASCII box + exit non-zero.
+      if (result.status === 'refused' && result.reason === 'env_override') {
+        renderApplyResult(result, flags.json); // exits non-zero
+      }
       if (flags.json) {
         console.log(JSON.stringify(result, null, 2));
       } else {

@@ -70,7 +70,16 @@ describe('gbrain reindex --markdown (v0.32.7)', () => {
 
   test('idempotent: re-run on a fully-updated brain reports nothing to do', async () => {
     await seedLegacyPage('note-e', 'body e');
+    // First pass with --no-embed bumps chunker_version but does NOT stamp
+    // contextual_retrieval_mode (import-file.ts:457-466 skips CR stamping
+    // when noEmbed). Then manually stamp CR mode so the brain is "fully
+    // updated" for the idempotency test. In production, embed (--no-embed
+    // OFF) does both; reindex tests use --no-embed to avoid API keys.
     await runReindex(engine, ['--markdown', '--no-embed']);
+    await engine.executeRaw(
+      `UPDATE pages SET contextual_retrieval_mode = 'title'
+        WHERE slug = 'note-e' AND contextual_retrieval_mode IS NULL`,
+    );
     const second = await runReindex(engine, ['--markdown', '--no-embed']);
     expect(second.pending).toBe(0);
     expect(second.reindexed).toBe(0);
@@ -121,13 +130,16 @@ describe('gbrain reindex --markdown (v0.32.7)', () => {
     expect(Number(rows[0].chunker_version)).toBe(MARKDOWN_CHUNKER_VERSION);
   });
 
-  test('skips pages already at current chunker_version', async () => {
+  test('skips pages already at current chunker_version (and CR mode set)', async () => {
     // Pre-bump page (chunker_version = 1)
     await seedLegacyPage('note-up', 'pending body');
-    // Already-bumped page (chunker_version = current)
+    // Already-bumped page (chunker_version = current) AND contextual
+    // retrieval mode set. v0.40.3.0: predicate also catches
+    // contextual_retrieval_mode IS NULL, so seeding 'title' here lets the
+    // page legitimately skip the reindex sweep.
     await engine.executeRaw(
-      `INSERT INTO pages (slug, type, title, compiled_truth, page_kind, chunker_version)
-       VALUES ('note-current', 'note', 'note-current', 'current body', 'markdown', $1)`,
+      `INSERT INTO pages (slug, type, title, compiled_truth, page_kind, chunker_version, contextual_retrieval_mode)
+       VALUES ('note-current', 'note', 'note-current', 'current body', 'markdown', $1, 'title')`,
       [MARKDOWN_CHUNKER_VERSION],
     );
 

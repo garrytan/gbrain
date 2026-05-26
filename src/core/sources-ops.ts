@@ -50,6 +50,7 @@ import {
   type RepoState,
 } from './git-remote.ts';
 import { gbrainPath } from './config.ts';
+import { isValidSourceId } from './source-id.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -79,8 +80,6 @@ export class SourceOpError extends Error {
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-const SOURCE_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
-
 export interface SourceRow {
   id: string;
   name: string;
@@ -89,6 +88,20 @@ export interface SourceRow {
   last_sync_at: Date | null;
   config: Record<string, unknown>;
   created_at: Date;
+  /**
+   * v0.40.3.0: per-source CR mode override. NULL falls through to global
+   * mode bundle. Written only by `gbrain sources set-cr-mode <id> <mode>`
+   * (CLI-write-only per D15 security gate); MCP / OAuth callers cannot
+   * mutate this field.
+   */
+  contextual_retrieval_mode?: string | null;
+  /**
+   * v0.40.3.0: per-source mount-frontmatter trust gate (D15). FALSE for
+   * mounted sources by default. Flipped via
+   * `gbrain mounts trust-frontmatter <id>`. Host source (id='default') is
+   * always trusted in the resolver regardless of this column value.
+   */
+  trust_frontmatter_overrides?: boolean;
 }
 
 export interface SourceListEntry {
@@ -142,8 +155,14 @@ export interface RemoveSourceOpts {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * Validate via the canonical regex from `source-id.ts` but rethrow as the
+ * sources-ops-tagged error so `gbrain sources add` keeps its user-facing
+ * SourceOpError shape. The regex itself is in one place; only the error
+ * envelope differs per caller.
+ */
 function validateSourceId(id: string): void {
-  if (!SOURCE_ID_RE.test(id)) {
+  if (!isValidSourceId(id)) {
     throw new SourceOpError(
       'invalid_id',
       `Invalid source id "${id}". Must be 1-32 lowercase alnum chars with optional interior hyphens.`,

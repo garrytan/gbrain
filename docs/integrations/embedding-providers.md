@@ -63,7 +63,8 @@ The doctor distinguishes two repair paths:
 - **Cost-sensitive, English-only**: Ollama (free, local) or Voyage (paid, best quality per dollar).
 - **Quality-first**: Voyage `voyage-4-large` (1024-2048 dims, ~3-4× more dense tokens than OpenAI tiktoken).
 - **Code-heavy brain (gstack per-worktree, source repos)**: Voyage `voyage-code-3` (1024 default; supports 256/512/1024/2048). Tuned on programming languages. Voyage publishes head-to-head numbers showing it outperforms their general flagships on code retrieval ([voyageai.com/blog](https://voyageai.com/blog)). For gstack's per-worktree pglite-backed code brain, this is the right default — see Topology 3 in `docs/architecture/topologies.md`.
-- **Reranking pair**: Voyage (their reranker `rerank-2.5` pairs cleanly with Voyage embeddings).
+- **Reranking pair**: ZeroEntropy `zerank-2` is the hosted default in `tokenmax` mode (see [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)). Voyage `rerank-2.5` pairs cleanly with Voyage embeddings.
+- **Local reranking (no API spend)**: `llama-server-reranker` recipe (v0.40.6.1) — point gbrain at your own `llama-server --reranking` instance running Qwen3-Reranker or self-hosted ZeroEntropy weights. Same `gateway.rerank()` seam, $0 per call. Walkthrough in [`docs/ai-providers/llama-server-reranker.md`](../ai-providers/llama-server-reranker.md).
 - **One key for many hosted models**: OpenRouter. Set `OPENROUTER_API_KEY` and use `openrouter:<provider>/<model>` for chat against GPT-5.2, Claude 4.x, Gemini 3, DeepSeek, and dozens more without juggling per-provider keys. Embedding catalog includes OpenAI, Google, Qwen, BGE-M3.
 - **Enterprise compliance**: Azure OpenAI (data residency + private endpoints) or self-hosted via llama-server / Ollama.
 - **China region**: DashScope (Alibaba) or Zhipu (BigModel). DashScope's international endpoint at `dashscope-intl.aliyuncs.com`; override `provider_base_urls.dashscope` for the China endpoint.

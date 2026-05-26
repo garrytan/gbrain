@@ -252,6 +252,108 @@ describe('applyRetrievalUpgrade — state machine + atomicity (D12, D18)', () =>
     expect(names).toContain('idx_chunks_embedding');
     expect(names).toContain('idx_chunks_embedding_image');
   });
+
+  // v0.41 regression — PR #1443. runSchemaTransition must NOT widen the
+  // embedding_image or embedding_multimodal columns to targetDim. Both use
+  // separate multimodal models whose dimensions are independent of the text
+  // embedding model. The pre-fix code dropped + recreated embedding_image
+  // at targetDim, silently breaking voyage-multimodal-3 (1024d). The same
+  // bug class applies to embedding_multimodal — pin both.
+  test('runSchemaTransition preserves embedding_image dimension (1024) post-switch', async () => {
+    await setLegacyDefaultConfig();
+    await seedPages(150);
+    const plan = await planRetrievalUpgrade(engine);
+    await applyRetrievalUpgrade(engine, plan);
+
+    // Probe column type via format_type so we see the parameterized dim
+    // (the typmod). udt_name alone reports just 'vector' without the dim.
+    const rows = await engine.executeRaw<{ column_name: string; col_type: string }>(
+      `SELECT a.attname AS column_name,
+              format_type(a.atttypid, a.atttypmod) AS col_type
+         FROM pg_attribute a
+         JOIN pg_class c ON c.oid = a.attrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.relname = 'content_chunks'
+          AND a.attname IN ('embedding', 'embedding_image', 'embedding_multimodal')
+          AND a.attnum > 0
+        ORDER BY a.attname`,
+    );
+    const byName = new Map(rows.map(r => [r.column_name, r.col_type]));
+
+    // Primary text column transitioned to target dim.
+    expect(byName.get('embedding')).toBe(`vector(${ZE_TARGET_EMBEDDING_DIM})`);
+    // Multimodal columns preserved at their original 1024d shape.
+    expect(byName.get('embedding_image')).toBe('vector(1024)');
+    expect(byName.get('embedding_multimodal')).toBe('vector(1024)');
+  });
+
+  test('runSchemaTransition restores partial WHERE on idx_chunks_embedding_image', async () => {
+    await setLegacyDefaultConfig();
+    await seedPages(150);
+    const plan = await planRetrievalUpgrade(engine);
+    await applyRetrievalUpgrade(engine, plan);
+
+    // pg_indexes.indexdef carries the partial predicate verbatim when present.
+    const rows = await engine.executeRaw<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'content_chunks'
+          AND indexname = 'idx_chunks_embedding_image'`,
+    );
+    expect(rows.length).toBe(1);
+    // Match schema.sql:258-260 / pglite-schema.ts:198-200 canonical shape.
+    expect(rows[0].indexdef).toMatch(/WHERE\s+\(?embedding_image IS NOT NULL\)?/i);
+  });
+
+  test('runSchemaTransition EXISTS guard short-circuits cleanly when embedding_image column is absent', async () => {
+    // Simulate a (hypothetical) pre-v0.27.1 brain with no embedding_image
+    // column. The fix's EXISTS probe must skip the image branch without
+    // error. We can't actually run the full ze-switch flow without the
+    // column (other code paths assume it), but we can directly drop the
+    // column and re-invoke the schema transition via resume to verify the
+    // probe doesn't throw on the missing-column branch.
+    await setLegacyDefaultConfig();
+    await seedPages(150);
+
+    // Drop both multimodal columns to simulate a brain that never had them.
+    await engine.executeRaw(
+      `ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_image`,
+    );
+    await engine.executeRaw(
+      `ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_multimodal`,
+    );
+
+    // Resume path also calls runSchemaTransition. Mark as requested so the
+    // resume actually runs the schema work rather than short-circuiting.
+    await engine.setConfig(KEY_REQUESTED, 'true');
+    const result = await resumeRetrievalUpgrade(engine);
+
+    // The probe should have short-circuited the image branch and the rest
+    // of the transition should have completed without error.
+    expect(result.status).toBe('applied');
+
+    // Primary column still landed at target dim.
+    const rows = await engine.executeRaw<{ col_type: string }>(
+      `SELECT format_type(a.atttypid, a.atttypmod) AS col_type
+         FROM pg_attribute a
+         JOIN pg_class c ON c.oid = a.attrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.relname = 'content_chunks'
+          AND a.attname = 'embedding'`,
+    );
+    expect(rows[0]?.col_type).toBe(`vector(${ZE_TARGET_EMBEDDING_DIM})`);
+
+    // Image index should NOT exist — the EXISTS guard correctly skipped it.
+    const idxRows = await engine.executeRaw<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'content_chunks'
+          AND indexname = 'idx_chunks_embedding_image'`,
+    );
+    expect(idxRows.length).toBe(0);
+  });
 });
 
 describe('Three-key state machine transitions (D12)', () => {
