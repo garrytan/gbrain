@@ -261,6 +261,39 @@ If this returns rows on a brain with person pages, the JSONB path is healthy.
 
 ---
 
+## 9. Dream Review No-Write Safety
+
+`gbrain dream review` proposes memory pages from one transcript without writing
+pages, timestamps, queue jobs, or brain repo files.
+
+**Focused tests:**
+
+```bash
+bun test test/cycle-synthesize-review.test.ts test/dream-review-cli.test.ts
+bun test test/e2e/dream-review-pglite.test.ts
+```
+
+**Live smoke:**
+
+```bash
+gbrain dream review \
+  --input /Users/sawbeck/.gbrain/session-corpus/2026/2026-05-24-hermes-20260524_075415_7582ca47.txt \
+  --model anthropic:claude-sonnet-4-6 \
+  --json
+```
+
+**Expected:** JSON includes `review_only: true`, `pages_written: 0`, and
+`model: "anthropic:claude-sonnet-4-6"` when the override is used. Proposed
+pages are suggestions only; writing them requires a separate explicit action.
+
+**If it fails:** Check provider configuration first. Review mode may call a
+chat model, but it must not fall back into real dream synthesis, Minion queue
+submission, or brain repo writes.
+
+See `docs/guides/dream-review.md` for the operator workflow.
+
+---
+
 ## Quick Verification (all checks in one pass)
 
 ```bash
@@ -287,7 +320,11 @@ gbrain stats | grep -E 'links|timeline'
 
 # 8. JSONB integrity (v0.12.2 — Postgres only, PGLite always 0)
 gbrain repair-jsonb --dry-run --json
+
+# 9. Dream review no-write safety
+bun test test/cycle-synthesize-review.test.ts test/dream-review-cli.test.ts
+bun test test/e2e/dream-review-pglite.test.ts
 ```
 
-If all eight return successfully, the installation is healthy. For the full
+If all nine return successfully, the installation is healthy. For the full
 end-to-end sync test (4c), push a real change and verify it appears in search.
