@@ -12,7 +12,8 @@
  *   - migration v98 backfills last_refreshed_at = NOW() (R6).
  *
  * Test isolation: canonical PGLite block per CLAUDE.md R3 + R4. No
- * mock.module(), no process.env mutations.
+ * top-level module mocks (R2 — `mock.module` calls leak across files in
+ * the shard process); no process.env mutations.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';

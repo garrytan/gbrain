@@ -8,8 +8,9 @@
  *                  backfill, deleteLockRowIfStale semantics. (Separate file.)
  *
  * Test-isolation rule (CLAUDE.md R1): no process.env mutations. No
- * `mock.module()` (R2). Engine lifecycle follows the canonical PGLite block
- * in the separate PGLite-only test file.
+ * top-level module mocks (R2 — `mock.module` calls leak across files in the
+ * shard process). Engine lifecycle follows the canonical PGLite block in
+ * the separate PGLite-only test file.
  */
 import { describe, test, expect } from 'bun:test';
 import { parseDurationSeconds } from '../src/core/sync-concurrency.ts';
