@@ -37,20 +37,40 @@ work you're picking up now.
 
 ## 2. Wire setup (one-time)
 
-### 2.1 OAuth credentials
+### 2.1 OAuth credentials — **TWO clients, one per scenario**
 
-Lucien will give you (via Signal or 1Password share, NEVER plain
-email):
+⚠ **Important**: `put_page` does NOT accept a `source` / `source_id`
+argument. Source routing is decided **by the OAuth client's
+`source_id` binding** (set when Lucien registers the client). So
+writing to two different sources requires two different OAuth clients.
+
+You need TWO sets of credentials from Lucien (each via Signal /
+1Password, NEVER plain email):
 
 ```
+# Scenario A — curated chat-save (writes to default source)
+MAILAGENT_CHAT_CLIENT_ID=gbrain_cl_<32-hex>
+MAILAGENT_CHAT_CLIENT_SECRET=gbrain_cs_<32-hex>
+
+# Scenario B — bulk email ingest (writes to mailagent-emails source)
+MAILAGENT_BULK_CLIENT_ID=gbrain_cl_<32-hex>
+MAILAGENT_BULK_CLIENT_SECRET=gbrain_cs_<32-hex>
+
 KOS_MCP_BASE=https://kos.chenge.ink
-KOS_OAUTH_CLIENT_ID=gbrain_cl_<32-hex>
-KOS_OAUTH_CLIENT_SECRET=gbrain_cs_<32-hex>   # shown once, store in env/secrets
 ```
 
-If `mailagent` OAuth client already exists but you don't have the
-secret, Lucien runs `bin/gbrain auth revoke-client mailagent` then
-`register-client` to re-issue. Store the new secret immediately.
+The two clients are registered Lucien-side as:
+- `mailagent` — `--source default` (binds writes to default source)
+- `mailagent-bulk` — `--source mailagent-emails` (binds writes to the
+  isolated bulk-email source)
+
+Pick the right client per call. **If you use the wrong client, the
+page silently lands in the wrong source — there is no validation
+error** (the put returns `status: created_or_updated` regardless;
+only `get_page` afterwards reveals the actual `source_id` field).
+
+If credentials are lost / never received: Lucien runs `bin/gbrain
+auth revoke-client <client_id>` then `register-client` to re-issue.
 
 ### 2.2 Token exchange (refresh on 401, cache ~1h)
 
@@ -174,19 +194,22 @@ mailagent:
 Multi-turn: alternate `## User` / `## Assistant` blocks. Don't include
 the system prompt unless the user explicitly cared about it.
 
-### Source for chat-save calls
+### Source routing for chat-save
+
+Use the **`mailagent` OAuth client** (binds to default source).
+`put_page` itself takes only `slug` + `content`:
 
 ```python
-mcp_call("put_page", {
+mcp_call_with_chat_client("put_page", {
     "slug": f"chat-history/mailagent/{email_id}/{session_id}/{message_id}",
     "content": <markdown with frontmatter above>,
-    # source defaults to "default" — omit, or pass "default" explicitly
 })
 ```
 
-**`source` for chat-save = `default`** (NOT `mailagent-emails`). The
-brain treats chat-save as curated knowledge; it stays in the main brain
-source where retrieval is most aggressive.
+The frontmatter `source: mailagent-chat` field is a **logical tag**
+(searchable, useful for filtering by `tag:` later), NOT what routes
+the page to a brain source. The actual brain source_id is decided by
+the OAuth client. Use the right client.
 
 ---
 
@@ -268,84 +291,127 @@ mailagent:
   available at mailagent:<email-id>)_` marker. The brain rejects
   oversized pages anyway (per v0.40.10 content sanity defense).
 
-### Source for bulk-email calls
+### Source routing for bulk-email calls
+
+Use the **`mailagent-bulk` OAuth client** (binds to `mailagent-emails`
+source). `put_page` itself takes only `slug` + `content`:
 
 ```python
-mcp_call("put_page", {
+mcp_call_with_bulk_client("put_page", {
     "slug": f"sources/email/{email_id}",
     "content": <markdown with frontmatter above>,
-    "source": "mailagent-emails",       # REQUIRED — this is the new source
 })
 ```
 
-⚠ If you forget `source: "mailagent-emails"`, the put will land in
-`default` source and pollute Lucien's knowledge brain. Lucien will then
-have to manually move it. **Always pass `source` explicitly for
-Scenario B.**
+⚠ **`source` / `source_id` arguments on `put_page` are silently
+ignored.** The MCP put_page schema only accepts `slug` + `content` +
+some server-stamped provenance fields (`source_kind` / `source_uri` /
+`ingested_via` are server-stamped from remote, client values ignored).
+Source routing is **OAuth-client-bound**, not per-call. If you use the
+wrong client, the page silently lands in the wrong source.
+
+The frontmatter `source: mailagent-emails` field is a **logical tag**,
+NOT what routes the page. Both signals (OAuth client binding AND
+frontmatter tag) should be consistent for sanity, but only the OAuth
+client binding actually controls routing.
+
+**Verification after smoke**: read back via `get_page` and check
+`result.page.source_id === "mailagent-emails"`. If it's `"default"`
+you used the wrong client.
 
 ---
 
 ## 5. Code patterns (TypeScript, since MailAgent is TS)
 
-### 5.1 Token + MCP helper
+### 5.1 Token + MCP helper (factory; one instance per OAuth client)
+
+Because Scenario A and Scenario B route to different brain sources via
+different OAuth clients, instantiate the helper twice — one per client
+— and call the right one per use case:
 
 ```typescript
-// kos-client.ts
-const KOS_BASE = process.env.KOS_MCP_BASE!;
-const CID = process.env.KOS_OAUTH_CLIENT_ID!;
-const CSEC = process.env.KOS_OAUTH_CLIENT_SECRET!;
+// kos-client.ts — factory: each invocation returns a helper bound to
+// one OAuth client (chat OR bulk). Cache tokens per instance.
 
-let cachedToken: { value: string; expiresAt: number } | null = null;
+interface KosClient {
+  call: (tool: string, args: Record<string, unknown>) => Promise<unknown>;
+}
 
-async function getToken(): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
+export function createKosClient(opts: {
+  base: string;
+  clientId: string;
+  clientSecret: string;
+}): KosClient {
+  let cachedToken: { value: string; expiresAt: number } | null = null;
+
+  async function getToken(): Promise<string> {
+    if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
+      return cachedToken.value;
+    }
+    const body = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: opts.clientId,
+      client_secret: opts.clientSecret,
+      scope: 'read write',
+    });
+    const res = await fetch(`${opts.base}/token`, { method: 'POST', body });
+    if (!res.ok) throw new Error(`token exchange ${res.status}: ${await res.text()}`);
+    const j = await res.json();
+    cachedToken = { value: j.access_token, expiresAt: Date.now() + (j.expires_in - 60) * 1000 };
     return cachedToken.value;
   }
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: CID,
-    client_secret: CSEC,
-    scope: 'read write',
-  });
-  const res = await fetch(`${KOS_BASE}/token`, { method: 'POST', body });
-  if (!res.ok) throw new Error(`token exchange ${res.status}: ${await res.text()}`);
-  const j = await res.json();
-  cachedToken = { value: j.access_token, expiresAt: Date.now() + (j.expires_in - 60) * 1000 };
-  return cachedToken.value;
+
+  return {
+    async call(tool: string, args: Record<string, unknown>): Promise<unknown> {
+      const tok = await getToken();
+      const res = await fetch(`${opts.base}/mcp`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tok}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: crypto.randomUUID(),
+          method: 'tools/call',
+          params: { name: tool, arguments: args },
+        }),
+      });
+      if (!res.ok) throw new Error(`mcp ${tool} ${res.status}: ${await res.text()}`);
+      const text = await res.text();
+      // SSE response: extract the "data: " line
+      const dataLine = text.split('\n').find((l) => l.startsWith('data: '));
+      if (!dataLine) throw new Error(`mcp ${tool}: no data line in response`);
+      const env = JSON.parse(dataLine.slice(6));
+      // env.result.content[0].text is JSON-stringified payload
+      return JSON.parse(env.result.content[0].text);
+    },
+  };
 }
 
-export async function mcpCall(tool: string, args: Record<string, unknown>): Promise<unknown> {
-  const tok = await getToken();
-  const res = await fetch(`${KOS_BASE}/mcp`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${tok}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json, text/event-stream',
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: crypto.randomUUID(),
-      method: 'tools/call',
-      params: { name: tool, arguments: args },
-    }),
-  });
-  if (!res.ok) throw new Error(`mcp ${tool} ${res.status}: ${await res.text()}`);
-  const text = await res.text();
-  // SSE response: extract the "data: " line
-  const dataLine = text.split('\n').find((l) => l.startsWith('data: '));
-  if (!dataLine) throw new Error(`mcp ${tool}: no data line in response`);
-  const env = JSON.parse(dataLine.slice(6));
-  // env.result.content[0].text is JSON-stringified payload
-  return JSON.parse(env.result.content[0].text);
-}
+// Two singletons: pick the right one per call
+export const chatClient = createKosClient({
+  base: process.env.KOS_MCP_BASE!,
+  clientId: process.env.MAILAGENT_CHAT_CLIENT_ID!,
+  clientSecret: process.env.MAILAGENT_CHAT_CLIENT_SECRET!,
+});
+
+export const bulkClient = createKosClient({
+  base: process.env.KOS_MCP_BASE!,
+  clientId: process.env.MAILAGENT_BULK_CLIENT_ID!,
+  clientSecret: process.env.MAILAGENT_BULK_CLIENT_SECRET!,
+});
+
+// Mnemonic: chatClient writes chat-history/mailagent/... → default source
+//           bulkClient writes sources/email/... → mailagent-emails source
 ```
 
 ### 5.2 Bulk email ingest with dedup + retry
 
 ```typescript
 // ingest-emails.ts
-import { mcpCall } from './kos-client';
+import { bulkClient } from './kos-client';  // bulk emails → mailagent-emails source
 
 interface EmailRecord {
   email_id: string;
@@ -407,7 +473,7 @@ export async function ingestEmail(e: EmailRecord, opts: { skipIfExists?: boolean
   // Optional pre-check: skip if already ingested (idempotent re-runs)
   if (opts.skipIfExists) {
     try {
-      const existing = await mcpCall('get_page', { slug }) as { page?: unknown; error?: string };
+      const existing = await bulkClient.call('get_page', { slug }) as { page?: unknown; error?: string };
       if (existing.page) {
         return { status: 'skipped_existing', slug };
       }
@@ -417,13 +483,14 @@ export async function ingestEmail(e: EmailRecord, opts: { skipIfExists?: boolean
   }
 
   // put_page with retry on 5xx / network errors
+  // bulkClient is bound to source_id=mailagent-emails via OAuth.
+  // Do NOT pass `source` arg — silently ignored by MCP schema.
   let attempt = 0;
   while (true) {
     try {
-      const result = await mcpCall('put_page', {
+      const result = await bulkClient.call('put_page', {
         slug,
         content: buildContent(e),
-        source: 'mailagent-emails',
       }) as { status: string };
       return { status: result.status, slug };
     } catch (err) {
@@ -463,14 +530,24 @@ call is ~200ms each, so 5/sec maps to ~1s/email end-to-end, fine).
 
 ## 6. Validation acceptance (smoke before bulk)
 
-Before kicking off the full 5000-email sync, run this smoke:
+Before kicking off the full 5000-email sync, run this smoke against
+the **bulk client** (`mailagent-bulk` credentials). The critical
+check is step 4 — verifying the page actually lands in
+`mailagent-emails` source, NOT `default`. **If step 4 reports
+`source_id: default`, STOP — you're using the wrong OAuth client.**
 
 ```bash
+# Use the BULK client credentials here, not the chat client.
+# Set in your env / .env before running:
+#   KOS_MCP_BASE=https://kos.chenge.ink
+#   KOS_BULK_CID=gbrain_cl_<bulk-client-id-from-Lucien>
+#   KOS_BULK_CSEC=gbrain_cs_<bulk-client-secret-from-Lucien>
+
 # 1. Token exchange works
 TOK=$(curl -s -X POST "$KOS_MCP_BASE/token" \
   -d "grant_type=client_credentials" \
-  -d "client_id=$KOS_OAUTH_CLIENT_ID" \
-  -d "client_secret=$KOS_OAUTH_CLIENT_SECRET" \
+  -d "client_id=$KOS_BULK_CID" \
+  -d "client_secret=$KOS_BULK_CSEC" \
   -d "scope=read write" | jq -r .access_token)
 [ -n "$TOK" ] && [ "$TOK" != "null" ] && echo "  ✓ token" || { echo "FAIL token"; exit 1; }
 
@@ -478,24 +555,34 @@ TOK=$(curl -s -X POST "$KOS_MCP_BASE/token" \
 SRC=$(curl -s -X POST "$KOS_MCP_BASE/mcp" \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"list_pages","arguments":{"source_id":"mailagent-emails","limit":1}}}' \
+  -d '{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"list_pages","arguments":{"limit":1}}}' \
   | grep '^data: ' | sed 's/^data: //' | jq -r '.result.content[0].text')
 echo "$SRC" | jq -e '.pages' >/dev/null && echo "  ✓ source ready" || { echo "FAIL — ping Lucien to gbrain sources add mailagent-emails"; exit 1; }
 
 # 3. put_page round-trip with a single test email
 SLUG="sources/email/smoke-$(date +%s)"
-curl -s -X POST "$KOS_MCP_BASE/mcp" \
+PUT_OK=$(curl -s -X POST "$KOS_MCP_BASE/mcp" \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d "$(jq -nc --arg slug "$SLUG" '{
     jsonrpc:"2.0", id:"1", method:"tools/call",
     params:{name:"put_page", arguments:{
       slug:$slug,
-      source:"mailagent-emails",
       content:"---\ntype: email\nkind: source\ntitle: smoke test\nstatus: draft\ncreated: 2026-05-26\nupdated: 2026-05-26\nsender: smoke@test\nrecipient: lucien@test\nmailbox: test\nsource: mailagent-emails\ntags: [email, mailagent-ingest, smoke-test]\n---\n\n# smoke test\n\nIf you see this, the wire works."
     }}}')" \
-  | grep '^data: ' | sed 's/^data: //' | jq -r '.result.content[0].text' | jq -r .status
-# expect: created_or_updated
+  | grep '^data: ' | sed 's/^data: //' | jq -r '.result.content[0].text' | jq -r .status)
+[ "$PUT_OK" = "created_or_updated" ] && echo "  ✓ put_page" || { echo "FAIL put_page ($PUT_OK)"; exit 1; }
+
+# 4. CRITICAL — verify the page landed in mailagent-emails source, not default
+SRCID=$(curl -s -X POST "$KOS_MCP_BASE/mcp" \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d "$(jq -nc --arg slug "$SLUG" '{
+    jsonrpc:"2.0", id:"1", method:"tools/call",
+    params:{name:"get_page", arguments:{slug:$slug}}
+  }')" \
+  | grep '^data: ' | sed 's/^data: //' | jq -r '.result.content[0].text' | jq -r '.page.source_id')
+[ "$SRCID" = "mailagent-emails" ] && echo "  ✓ page lands in mailagent-emails source" || { echo "FAIL — page landed in '$SRCID' instead of mailagent-emails. WRONG CLIENT. Verify you're using mailagent-BULK credentials, not the mailagent (chat) client."; exit 1; }
 
 # 4. Roundtrip read back
 curl -s -X POST "$KOS_MCP_BASE/mcp" \
@@ -518,8 +605,11 @@ curl -s -X POST "$KOS_MCP_BASE/mcp" \
 echo "All smoke checks PASS — wire is operational, source is ready, bulk ingest can proceed"
 ```
 
-If step 2 fails with "source not found", ping Lucien — `gbrain sources
-add mailagent-emails` hasn't been run yet.
+**Most common failure**: step 4 reports `source_id: default`. Cause: you're
+using the `mailagent` (chat) client credentials instead of the
+`mailagent-bulk` credentials. The OAuth client decides source routing,
+not the `source` arg in `put_page`. Double-check your env vars and
+which client_id you fetched the token with.
 
 ---
 
