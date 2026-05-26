@@ -30,7 +30,8 @@ import {
   type CyclePhase,
   type CycleReport,
 } from '../core/cycle.ts';
-import { existsSync } from 'fs';
+import { assertValidSourceId } from '../core/source-id.ts';
+import { existsSync, statSync } from 'fs';
 
 interface DreamArgs {
   json: boolean;
@@ -38,6 +39,7 @@ interface DreamArgs {
   pull: boolean;
   phase: CyclePhase | null;
   dir: string | null;
+  sourceId: string | null;
   help: boolean;
   /** v0.21: ad-hoc transcript file path; implies --phase synthesize. */
   inputFile: string | null;
@@ -70,6 +72,18 @@ function parseArgs(args: string[]): DreamArgs {
 
   const dirIdx = args.indexOf('--dir');
   const dir = dirIdx !== -1 ? args[dirIdx + 1] : null;
+
+  const sourceIdx = args.indexOf('--source');
+  const sourceId = sourceIdx !== -1 ? args[sourceIdx + 1] ?? null : null;
+  if (sourceIdx !== -1 && (!sourceId || sourceId.startsWith('-'))) {
+    console.error('--source requires a source id value.');
+    process.exit(2);
+  }
+  if (sourceId) assertValidSourceId(sourceId);
+  if (sourceId && dir) {
+    console.error('--source cannot be combined with --dir; source local_path supplies the brain directory.');
+    process.exit(2);
+  }
 
   const inputIdx = args.indexOf('--input');
   const inputFile = inputIdx !== -1 ? args[inputIdx + 1] ?? null : null;
@@ -115,6 +129,7 @@ function parseArgs(args: string[]): DreamArgs {
     pull: args.includes('--pull'),
     phase,
     dir,
+    sourceId,
     help: args.includes('--help') || args.includes('-h'),
     inputFile,
     date,
@@ -138,7 +153,37 @@ function parseArgs(args: string[]): DreamArgs {
 async function resolveBrainDir(
   engine: BrainEngine | null,
   explicit: string | null,
+  sourceId: string | null = null,
 ): Promise<string> {
+  if (sourceId) {
+    if (!engine) {
+      console.error('--source requires a database-backed brain so the source local_path can be resolved.');
+      process.exit(1);
+    }
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    if (rows.length === 0) {
+      console.error(`Source "${sourceId}" not found. Run \`gbrain sources list\` to see registered sources.`);
+      process.exit(1);
+    }
+    const sourcePath = rows[0]?.local_path;
+    if (!sourcePath) {
+      console.error(`Source "${sourceId}" has no local_path. Run: gbrain sources add ${sourceId} --path <path>`);
+      process.exit(1);
+    }
+    if (!existsSync(sourcePath)) {
+      console.error(`Source "${sourceId}" local_path does not exist: ${sourcePath}`);
+      process.exit(1);
+    }
+    if (!statSync(sourcePath).isDirectory()) {
+      console.error(`Source "${sourceId}" local_path is not a directory: ${sourcePath}`);
+      process.exit(1);
+    }
+    return sourcePath;
+  }
+
   if (explicit) {
     if (!existsSync(explicit)) {
       console.error(`--dir path does not exist: ${explicit}`);
@@ -179,6 +224,10 @@ Options:
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
   --pull              git pull the brain repo before syncing (default: no pull)
   --dir <path>        Brain directory (default: configured brain)
+  --source <id>       Run against a registered source's local_path. When no
+                      --phase is supplied, defaults to source-scoped phases
+                      only; legacy dream without --source still runs the full
+                      maintenance cycle.
 
   --input <file>      Synthesize a specific transcript file (implies
                       --phase synthesize). Bypasses corpus-dir scan.
@@ -262,6 +311,24 @@ function printHuman(report: CycleReport) {
   }
 }
 
+const SOURCE_SCOPED_DEFAULT_PHASES: CyclePhase[] = [
+  // Deterministic, no-provider source maintenance. LLM/brain-global phases
+  // remain explicit opt-in via --phase so a safe-source dry run cannot fan out
+  // into Anthropic/OpenAI calls or whole-brain sweeps.
+  'lint',
+  'backlinks',
+  'sync',
+  'extract',
+  'extract_facts',
+  'recompute_emotional_weight',
+  'schema-suggest',
+];
+
+export function getDefaultDreamPhasesForScope(sourceId: string | null): CyclePhase[] | undefined {
+  if (!sourceId) return undefined;
+  return [...SOURCE_SCOPED_DEFAULT_PHASES];
+}
+
 // ─── CLI entry ─────────────────────────────────────────────────────
 
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
@@ -272,14 +339,15 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     return;
   }
 
-  const brainDir = await resolveBrainDir(engine, opts.dir);
-  const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
+  const brainDir = await resolveBrainDir(engine, opts.dir, opts.sourceId);
+  const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : getDefaultDreamPhasesForScope(opts.sourceId);
 
   const report = await runCycle(engine, {
     brainDir,
     dryRun: opts.dryRun,
     pull: opts.pull,
     phases,
+    sourceId: opts.sourceId ?? undefined,
     synthInputFile: opts.inputFile ?? undefined,
     synthDate: opts.date ?? undefined,
     synthFrom: opts.from ?? undefined,
