@@ -8,6 +8,14 @@ description: |
   to workers/_archived/notion-poller/. Replacement: mailagent v4 SQLite SSoT
   push to kos-compat-api/ingest directly (方案 B), tracked in GitHub issue
   on ChenyqThu/jarvis-knowledge-os-v2. Story in §6.27.
+# Triggers below: RETIRED skill — preserved purely for grep-discoverability
+# of the historical name + to satisfy v0.41.14.0 strict resolver gate
+# (no MECE gap). Routing is an intentional dead-end; skill body explains
+# the retirement and points at the kos-compat-api/ingest replacement path.
+# To fully retire, move to skills/kos-jarvis/_archived/ in a future sync.
+triggers:
+  - "notion ingest delta"
+  - "notion poller"
 mutating: false
 ---
 
