@@ -30,6 +30,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `google` | `GOOGLE_GENERATIVE_AI_API_KEY` | 768 | 0.025 | no | no |
 | `azure-openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` | 1536 | 0.13 | no | no |
 | `minimax` | `MINIMAX_API_KEY` | 1536 | 0.07 | no | no |
+| `mistral` | `MISTRAL_API_KEY` | 1536 | 0.15 | no | no |
 | `dashscope` | `DASHSCOPE_API_KEY` | 1024 | varies | no | no |
 | `zhipu` | `ZHIPUAI_API_KEY` | 1024 | varies | no | no |
 | `ollama` | (none — runs locally) | 768 | 0 | yes | no |

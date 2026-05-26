@@ -37,6 +37,9 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   'voyage:voyage-4-large':         { pricePerMTok: 0.18 },
   // ZeroEntropy (https://zeroentropy.dev/pricing — zembed-1)
   'zeroentropyai:zembed-1':        { pricePerMTok: 0.05 },
+  // Mistral (https://mistral.ai/pricing — codestral-embed, verified 2026-05-26)
+  'mistral:codestral-embed':       { pricePerMTok: 0.15 },
+  'mistral:codestral-embed-2505':  { pricePerMTok: 0.15 },
 };
 
 export type PriceLookupResult =
