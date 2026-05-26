@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { parseSemver, isMinorOrMajorBump, extractChangelogBetween } from '../src/commands/check-update.ts';
+import { parseSemver, isMinorOrMajorBump, extractChangelogBetween, fetchLatestRelease } from '../src/commands/check-update.ts';
 
 describe('parseSemver', () => {
   test('parses standard version', () => {
@@ -118,6 +118,32 @@ describe('extractChangelogBetween', () => {
     const result = extractChangelogBetween(crossMajor, '1.2.0', '2.0.0');
     expect(result).toContain('Major 2');
     expect(result).not.toContain('Minor 5');
+  });
+});
+
+describe('fetchLatestRelease', () => {
+  test('falls back to npm latest metadata when GitHub has no releases', async () => {
+    const seen: string[] = [];
+    const fakeFetch = async (url: string | URL | Request) => {
+      const href = String(url);
+      seen.push(href);
+      if (href.includes('api.github.com')) {
+        return new Response('not found', { status: 404 });
+      }
+      if (href.includes('registry.npmjs.org')) {
+        return Response.json({ version: '0.31.6' });
+      }
+      throw new Error(`unexpected url ${href}`);
+    };
+
+    const release = await fetchLatestRelease(fakeFetch as typeof fetch);
+    expect(seen.some(url => url.includes('api.github.com'))).toBe(true);
+    expect(seen.some(url => url.includes('registry.npmjs.org'))).toBe(true);
+    expect(release).toEqual({
+      tag: '0.31.6',
+      published_at: '',
+      url: 'https://www.npmjs.com/package/gbrain/v/0.31.6',
+    });
   });
 });
 
