@@ -40,6 +40,13 @@ export interface CorrectnessGateOpts {
   searchFn?: (engine: BrainEngine, query: string, opts: { limit: number }) => Promise<Array<{ source_id?: string; slug: string }>>;
 }
 
+export interface RetrievedRef {
+  source_id: string;
+  slug: string;
+  /** Canonical compare/citation key: `${source_id}::${slug}`. */
+  ref: string;
+}
+
 export interface PerQueryResult {
   query_id: string;
   query: string;
@@ -47,6 +54,8 @@ export interface PerQueryResult {
   first_relevant_hit: 0 | 1;
   expected_top1_hit?: 0 | 1;
   retrieved_count: number;
+  /** Top-K provenance for debugging/citation gates. */
+  retrieved_refs: RetrievedRef[];
   /** When the query throws, recorded as a per-query failure. */
   errored?: true;
   error_message?: string;
@@ -69,10 +78,14 @@ export interface CorrectnessResult {
   per_query: PerQueryResult[];
 }
 
-/** Build the canonical `${source_id}::${slug}` set for a SearchResult-like array. */
-function toRefKeySet(results: Array<{ source_id?: string; slug: string }>): string[] {
-  return results.map(r => `${r.source_id ?? 'default'}::${r.slug}`);
+/** Build canonical provenance refs for a SearchResult-like array. */
+function toRetrievedRefs(results: Array<{ source_id?: string; slug: string }>): RetrievedRef[] {
+  return results.map(r => {
+    const source_id = r.source_id ?? 'default';
+    return { source_id, slug: r.slug, ref: `${source_id}::${r.slug}` };
+  });
 }
+
 
 async function runOneQuery(
   engine: BrainEngine,
@@ -81,9 +94,11 @@ async function runOneQuery(
   searchFn: NonNullable<CorrectnessGateOpts['searchFn']>,
 ): Promise<PerQueryResult> {
   let retrieved: string[];
+  let retrievedRefs: RetrievedRef[];
   try {
     const raw = await searchFn(engine, entry.query, { limit: k });
-    retrieved = toRefKeySet(raw);
+    retrievedRefs = toRetrievedRefs(raw);
+    retrieved = retrievedRefs.map(r => r.ref);
   } catch (err) {
     return {
       query_id: entry.query_id,
@@ -91,6 +106,7 @@ async function runOneQuery(
       recall_at_k: 0,
       first_relevant_hit: 0,
       retrieved_count: 0,
+      retrieved_refs: [],
       errored: true,
       error_message: (err as Error).message,
     };
@@ -106,6 +122,7 @@ async function runOneQuery(
     recall_at_k: recall,
     first_relevant_hit: firstRelevant,
     retrieved_count: retrieved.length,
+    retrieved_refs: retrievedRefs,
   };
 
   if (entry.expected_top1) {

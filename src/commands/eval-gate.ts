@@ -80,6 +80,8 @@ interface GateResult {
     ran: boolean;
     qrels_path?: string;
     summary?: CorrectnessResult['summary'];
+    /** Per-query retrieved source+slug provenance for citation/debug gates; included in JSON output. */
+    per_query?: CorrectnessResult['per_query'];
     thresholds?: {
       recall_at_k: number;
       first_relevant_hit: number;
@@ -366,6 +368,7 @@ function runCorrectnessGateDispatch(
       ran: true,
       qrels_path: qrelsPath,
       summary: result.summary,
+      per_query: result.per_query,
       thresholds,
       ...(breaches.length > 0 ? { breaches } : {}),
     };
