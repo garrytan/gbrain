@@ -4,6 +4,18 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-05-26
+
+### Added
+
+- **Your brain now has a durable Postgres runtime for governed personal memory.**
+  MBrain can run source policy, raw ingest provenance, assertion extraction,
+  governed canonical writes, lifecycle forgetting, restricted runner jobs,
+  personal data connectors, system-of-record reconciliation, daily review
+  reports, and replay evaluation on one Postgres + pgvector substrate. Agents
+  get an auditable path from raw signal to candidate to canonical memory instead
+  of relying on ad hoc notes or transient context.
+
 ### Changed
 
 - **Postgres runtime migration cleanup: Fresh installs, migration help, and agent rules now point to the Postgres target runtime.**

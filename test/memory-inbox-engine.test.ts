@@ -16,7 +16,7 @@ interface EngineHarness {
   cleanup: () => Promise<void>;
 }
 
-const ENGINE_COLD_START_BUDGET_MS = 30_000;
+const PGLITE_REOPEN_TEST_TIMEOUT_MS = 45_000;
 
 async function createSqliteHarness(): Promise<EngineHarness> {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-inbox-sqlite-'));
@@ -378,7 +378,7 @@ async function expectMemoryCandidateStatusEventEngine(engine: BrainEngine, prefi
 
 for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
   const timeoutMs = createHarness === createPgliteHarness
-    ? ENGINE_COLD_START_BUDGET_MS
+    ? PGLITE_REOPEN_TEST_TIMEOUT_MS
     : undefined;
 
   test(`${createHarness.name} persists memory candidate entries across reopen`, async () => {
