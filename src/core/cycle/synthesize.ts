@@ -45,6 +45,10 @@ import { validateSourceId } from '../utils.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { matchesSlugAllowList } from '../operations.ts';
 
+type MinionQueueFactory = (engine: BrainEngine) => MinionQueue;
+
+let minionQueueFactory: MinionQueueFactory = (engine) => new MinionQueue(engine);
+
 // Slug regex from validatePageSlug — kept in sync.
 // Used for the orchestrator-written summary index slug.
 const SUMMARY_SLUG_RE = /^[a-z0-9][a-z0-9\-]*(\/[a-z0-9][a-z0-9\-]*)*$/;
@@ -404,7 +408,7 @@ export async function runPhaseSynthesize(
         'skills/_brain-filing-rules.json missing dream_synthesize_paths.globs'));
     }
 
-    const queue = new MinionQueue(engine);
+    const queue = minionQueueFactory(engine);
     const childIds: number[] = [];
     /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
     const chunkInfo = new Map<number, { idx: number; hash6: string }>();
@@ -1487,4 +1491,7 @@ function makeError(cls: string, code: string, message: string, hint?: string): P
 export const __testing = {
   buildDreamReviewPrompt,
   collectChildPutPageSlugs,
+  setMinionQueueFactoryForTests(factory: MinionQueueFactory | null) {
+    minionQueueFactory = factory ?? ((engine) => new MinionQueue(engine));
+  },
 };

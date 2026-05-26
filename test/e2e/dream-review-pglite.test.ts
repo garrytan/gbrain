@@ -15,11 +15,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { runDream } from '../../src/commands/dream.ts';
 import { __setChatTransportForTests, resetGateway, type ChatResult } from '../../src/core/ai/gateway.ts';
+import { __testing as synthTesting } from '../../src/core/cycle/synthesize.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 
 afterEach(() => {
   __setChatTransportForTests(null);
   resetGateway();
+  synthTesting.setMinionQueueFactoryForTests(null);
 });
 
 describe('E2E dream review — PGLite no-write contract', () => {
@@ -116,6 +118,30 @@ describe('E2E dream review — PGLite no-write contract', () => {
       await rig.cleanup();
     }
   }, 30_000);
+
+  test('CLI review succeeds when queue construction is forbidden', async () => {
+    const rig = await setupRig();
+    const inputFile = writeTranscript('Review mode should stay independent of workers.\n'.repeat(20));
+    let queueConstructed = false;
+
+    installReviewChatStub(inputFile);
+    synthTesting.setMinionQueueFactoryForTests(() => {
+      queueConstructed = true;
+      throw new Error('dream review must not construct MinionQueue');
+    });
+
+    try {
+      const result = await runReviewCliJson(rig, inputFile);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.parsed.status).toBe('ok');
+      expect(result.parsed.details.review_only).toBe(true);
+      expect(queueConstructed).toBe(false);
+    } finally {
+      rmSync(dirname(inputFile), { recursive: true, force: true });
+      await rig.cleanup();
+    }
+  }, 30_000);
 });
 
 interface TestRig {
@@ -146,6 +172,62 @@ function writeTranscript(content: string): string {
   const filePath = join(dir, 'session.txt');
   writeFileSync(filePath, content, 'utf8');
   return filePath;
+}
+
+function installReviewChatStub(inputFile: string): void {
+  __setChatTransportForTests(async (opts): Promise<ChatResult> => ({
+    text: JSON.stringify({
+      source_path: inputFile,
+      source_date: '2026-05-26',
+      proposals: [],
+    }),
+    blocks: [],
+    stopReason: 'end',
+    usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+    model: opts.model ?? 'anthropic:claude-sonnet-4-6',
+    providerId: 'anthropic',
+  }));
+}
+
+async function runReviewCliJson(
+  rig: TestRig,
+  inputFile: string,
+): Promise<{
+  exitCode: number;
+  parsed: { status: string; details: { review_only: boolean } };
+}> {
+  const stdout: string[] = [];
+  let exitCode = 0;
+  const logSpy = spyOn(console, 'log').mockImplementation((msg: unknown) => {
+    stdout.push(String(msg));
+  });
+  const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+  const exitSpy = spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
+    exitCode = typeof code === 'number' ? code : 0;
+    throw new Error('EXIT');
+  });
+
+  try {
+    await runDream(rig.engine, [
+      'review',
+      '--input',
+      inputFile,
+      '--model',
+      'anthropic:claude-sonnet-4-6',
+      '--json',
+    ]);
+  } catch (e) {
+    if (!(e instanceof Error) || e.message !== 'EXIT') throw e;
+  } finally {
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+    exitSpy.mockRestore();
+  }
+
+  return {
+    exitCode,
+    parsed: JSON.parse(stdout.join('\n')) as { status: string; details: { review_only: boolean } },
+  };
 }
 
 async function countRows(engine: PGLiteEngine, table: string): Promise<number> {
