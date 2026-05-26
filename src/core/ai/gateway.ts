@@ -21,7 +21,7 @@
  *     rotation (via configureGateway()) invalidates stale entries.
  */
 
-import { embed as aiEmbed, embedMany, generateObject, generateText } from 'ai';
+import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -2457,7 +2457,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const tools = (opts.tools ?? []).reduce((acc, t) => {
     acc[t.name] = {
       description: t.description,
-      inputSchema: { jsonSchema: t.inputSchema } as any,
+      parameters: jsonSchema(t.inputSchema),
     };
     return acc;
   }, {} as Record<string, any>);
