@@ -227,6 +227,66 @@ describe('eval gate: JSON envelope shape', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test('--json includes per-query retrieved_refs for mixed-source citation gates', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'eval-gate-test-'));
+    const qrels = writeQrelsFile(dir, [
+      {
+        query_id: 'q-harbor-lantern',
+        query: 'Harbor Lantern operational fixture',
+        relevant: [
+          { source_id: 'obsidian-cody-safe', slug: 'context/cody/evals/gbrain-write-first-2026-05-25/recall-fixture' },
+        ],
+      },
+    ]);
+    try {
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name) VALUES ('obsidian-cody-safe', 'obsidian-cody-safe') ON CONFLICT DO NOTHING`,
+      );
+      await engine.putPage(
+        'context/cody/evals/gbrain-write-first-2026-05-25/recall-fixture',
+        {
+          type: 'note',
+          title: 'Harbor Lantern recall fixture',
+          compiled_truth: 'Harbor Lantern operational fixture for provenance.',
+          timeline: '',
+        },
+        { sourceId: 'obsidian-cody-safe' },
+      );
+      await engine.upsertChunks(
+        'context/cody/evals/gbrain-write-first-2026-05-25/recall-fixture',
+        [{
+          chunk_index: 0,
+          chunk_text: 'Harbor Lantern operational fixture for provenance.',
+          chunk_source: 'compiled_truth',
+        }],
+        { sourceId: 'obsidian-cody-safe' },
+      );
+
+      const realLog = console.log;
+      let captured = '';
+      console.log = (msg: string) => { captured += msg + '\n'; };
+      try {
+        await withExitCapture(() => runEvalGate(engine, [
+          '--qrels', qrels,
+          '--json',
+          '--threshold-recall-at-k', '0',
+          '--threshold-first-relevant-hit', '0',
+        ]));
+      } finally {
+        console.log = realLog;
+      }
+      const envelope = JSON.parse(captured.trim());
+      const first = envelope.correctness_gate.per_query[0].retrieved_refs[0];
+      expect(first).toEqual({
+        source_id: 'obsidian-cody-safe',
+        slug: 'context/cody/evals/gbrain-write-first-2026-05-25/recall-fixture',
+        ref: 'obsidian-cody-safe::context/cody/evals/gbrain-write-first-2026-05-25/recall-fixture',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('eval gate: latency math (corrected per codex round-2 #2)', () => {
