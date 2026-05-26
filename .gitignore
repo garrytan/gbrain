@@ -41,3 +41,11 @@ test/fixtures/pglite-snapshot.version
 
 # Private brain reports — never check these in (per CLAUDE.md privacy rule)
 reports/network-intelligence/
+
+# Auto-managed by gbrain (db_only directories)
+media/x/
+media/articles/
+meetings/transcripts/
+.gbrain-source
+.sources/
+.gbrain-local-status-cache.json
