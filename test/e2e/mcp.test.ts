@@ -3,7 +3,7 @@
  *
  * Verifies the generated MCP tool definitions and the real stdio MCP server
  * path used by agents. The stdio test spawns `mbrain serve`, calls tools/list,
- * and exercises tools/call against an isolated local SQLite brain.
+ * and exercises tools/call against an isolated explicit local SQLite brain.
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -279,16 +279,14 @@ describe('E2E: MCP Tool Generation', () => {
     expect(typeof mod.handleToolCall).toBe('function');
   });
 
-  test('stdio MCP server bootstraps a local SQLite config when no database config exists', async () => {
+  test('stdio MCP server fails closed with Postgres init guidance when no database config exists', async () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'mbrain-mcp-fresh-'));
     const homeDir = join(rootDir, 'home');
     const configDir = join(homeDir, '.mbrain');
-    let client: Client | null = null;
 
     try {
-      const transport = new StdioClientTransport({
-        command: 'bun',
-        args: ['run', 'src/cli.ts', 'serve'],
+      const proc = Bun.spawn({
+        cmd: ['bun', 'run', 'src/cli.ts', 'serve'],
         cwd: repoRoot,
         env: {
           PATH: process.env.PATH ?? '',
@@ -297,28 +295,24 @@ describe('E2E: MCP Tool Generation', () => {
           OPENAI_API_KEY: '',
           ANTHROPIC_API_KEY: '',
         },
+        stdout: 'pipe',
         stderr: 'pipe',
       });
-      client = new Client(
-        { name: 'mbrain-fresh-e2e', version: '0.0.0' },
-        { capabilities: {} },
-      );
-
-      await client.connect(transport);
-      const tools = await client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toContain('get_page');
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
 
       const configPath = join(configDir, 'config.json');
-      expect(existsSync(configPath)).toBe(true);
-      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(config.engine).toBe('sqlite');
-      expect(config.database_path).toBe(join(configDir, 'brain.db'));
+      expect(exitCode).toBe(1);
+      expect(stdout).toBe('');
+      expect(stderr).toContain('No brain configured');
+      expect(stderr).toContain('mbrain init --profile homebrew-postgres');
+      expect(stderr).toContain('MBRAIN_DATABASE_URL');
+      expect(existsSync(configPath)).toBe(false);
     } finally {
-      try {
-        if (client) await client.close();
-      } finally {
-        rmSync(rootDir, { recursive: true, force: true });
-      }
+      rmSync(rootDir, { recursive: true, force: true });
     }
   }, 30_000);
 

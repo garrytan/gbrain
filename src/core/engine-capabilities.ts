@@ -1,6 +1,8 @@
 import type { MBrainConfig } from './config.ts';
 
 export interface EngineCapabilities {
+  targetRuntime: boolean;
+  legacyLocalRuntime: boolean;
   rawPostgresAccess: boolean;
   parallelWorkers: boolean;
   stagedImportConcurrency: boolean;
@@ -11,6 +13,8 @@ export function getEngineCapabilities(config: Pick<MBrainConfig, 'engine'>): Eng
   switch (config.engine) {
     case 'postgres':
       return {
+        targetRuntime: true,
+        legacyLocalRuntime: false,
         rawPostgresAccess: true,
         parallelWorkers: true,
         stagedImportConcurrency: true,
@@ -19,6 +23,8 @@ export function getEngineCapabilities(config: Pick<MBrainConfig, 'engine'>): Eng
     case 'sqlite':
     case 'pglite':
       return {
+        targetRuntime: false,
+        legacyLocalRuntime: true,
         rawPostgresAccess: false,
         parallelWorkers: false,
         stagedImportConcurrency: true,

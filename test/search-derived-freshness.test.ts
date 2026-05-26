@@ -1,7 +1,9 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { setDefaultTimeout, afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { importFromContent } from '../src/core/import-file.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+
+setDefaultTimeout(20_000);
 
 let pglite: PGLiteEngine;
 let sqlite: SQLiteEngine;

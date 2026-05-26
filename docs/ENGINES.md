@@ -4,7 +4,7 @@
 
 Every MBrain operation goes through `BrainEngine`. The engine is the contract between "what the brain can do" and "how it's stored." Swap the engine, keep everything else.
 
-`PostgresEngine` remains the full cloud-backed path. `SQLiteEngine` and `PGLiteEngine` are current local-path contract engines, and the same interface is designed so a `DuckDBEngine` or `TursoEngine` could slot in without touching the CLI, MCP server, skills, or any consumer code.
+`PostgresEngine` is the target runtime for new brains. `SQLiteEngine` and `PGLiteEngine` remain explicit legacy/local compatibility engines, and the same interface is designed so a `DuckDBEngine` or `TursoEngine` could slot in without touching the CLI, MCP server, skills, or any consumer code.
 
 ## Why this matters
 
@@ -12,13 +12,14 @@ Different users have different constraints:
 
 | User | Needs | Best engine |
 |------|-------|-------------|
-| Single-user personal brain | Single file, no server, local/offline operation | SQLiteEngine |
+| Single-user personal brain | durable pgvector runtime, concurrent agents, local or managed Postgres | PostgresEngine |
+| Offline compatibility | Single file, no server, local/offline operation | SQLiteEngine |
 | Managed large brain | pgvector at scale, remote MCP deployment, cloud file/storage workflows | PostgresEngine + Supabase or self-hosted Postgres |
 | Team/enterprise | Multi-user, RLS, audit trail | PostgresEngine + self-hosted |
 | Researcher | Analytics, bulk exports, embeddings | DuckDBEngine (someday) |
 | Edge/mobile | Offline-first with sync later | TursoEngine/libSQL (someday) |
 
-The engine interface means we do not have to choose a single storage story. Postgres remains the full cloud path, while SQLite and PGLite already cover honest local-path usage and still leave room for more engines later.
+The engine interface keeps storage swappable, but the product target is Postgres + pgvector. SQLite and PGLite cover explicit legacy/local usage and still leave room for more engines later.
 
 ## The interface
 
@@ -126,7 +127,7 @@ export interface BrainEngine {
 
 RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They operate on `SearchResult[]` arrays. Only the raw keyword and vector searches are engine-specific.
 
-## Optional Managed/Remote Postgres Path
+## Target Postgres Runtime
 
 **Dependencies:** `postgres` (porsager/postgres), `pgvector`
 
@@ -139,7 +140,7 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 - JSONB for frontmatter with GIN index
 - Connection pooling through managed providers such as Supabase Supavisor
 
-**Hosting:** Supabase is one managed option; self-hosted Postgres also works when the required extensions and schema are available. Use this path when you need managed scale, remote MCP deployment, or cloud file/storage workflows.
+**Hosting:** local Homebrew/Docker Postgres, Supabase, Neon, Railway, and self-hosted Postgres all work when the required extensions and schema are available. Use Postgres for the target runtime; use SQLite/PGLite only for explicit legacy/offline compatibility or migration testing.
 
 ## Adding a new engine
 
@@ -154,7 +155,7 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
      }
    }
    ```
-3. Store engine type in `~/.mbrain/config.json`: `{ "engine": "sqlite", ... }`
+3. Store engine type in `~/.mbrain/config.json`: `{ "engine": "postgres", ... }`
 4. Add tests. The test suite should be engine-agnostic where possible... same test cases, different engine constructor.
 5. Document in this file + add a design doc in `docs/`
 
@@ -185,11 +186,11 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 | Concurrent access | Connection pooling | Single writer | SQLite limitation |
 | Hosting | Supabase, self-hosted, Docker | Local file | |
 
-## Current local paths and future engine ideas
+## Explicit local paths and future engine ideas
 
-**SQLiteEngine.** Current shipped local/offline engine for a single-user personal brain. It stores the brain in one SQLite database, uses FTS5 for keyword search, stores page/chunk embeddings, and performs vector recall with a local cosine scan. Single file, no server, git-friendly.
+**SQLiteEngine.** Shipped legacy local/offline compatibility engine. It stores the brain in one SQLite database, uses FTS5 for keyword search, stores page/chunk embeddings, and performs vector recall with a local cosine scan. Single file, no server, git-friendly.
 
-**PGLiteEngine.** Current embedded-Postgres local-path engine. It keeps local execution on-device while preserving more Postgres semantics than SQLite.
+**PGLiteEngine.** Embedded-Postgres local compatibility and migration-test engine. It keeps local execution on-device while preserving more Postgres semantics than SQLite.
 
 **TursoEngine.** libSQL (SQLite fork) with embedded replicas and HTTP edge access. Would give SQLite's simplicity with cloud sync. Interesting for mobile/edge use cases.
 
@@ -213,5 +214,5 @@ The redesign's Phase 0 contract is explicit:
 
 - Markdown remains canonical across every engine.
 - Derived artifacts remain regenerable.
-- SQLite and PGLite are supported contract paths, not preview-only modes.
+- SQLite and PGLite are explicit legacy/local contract paths, not target runtime modes.
 - Unsupported surfaces such as cloud file storage in sqlite mode must be exposed honestly in diagnostics.

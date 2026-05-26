@@ -2,9 +2,14 @@
 <!-- source: https://raw.githubusercontent.com/meghendra6/mbrain/master/docs/MBRAIN_AGENT_RULES.md -->
 # MBrain Agent Rules
 
-MBrain is the durable knowledge layer for people, companies, concepts, internal
-systems, meetings, projects, and the user's original thinking. Use it to make
-answers context-aware and to keep durable knowledge compounding across sessions.
+MBrain is the managed Postgres + pgvector target runtime and durable knowledge
+layer for people, companies, concepts, systems, meetings, projects, and the
+user's original thinking.
+
+Agents run with session-scoped trust. automatic canonical writeback exists, but
+governed writes must route durable signals through the assertion pipeline and
+`route_memory_writeback`; direct `put_page` needs router permission. raw source access is scoped to needed spans; secrets are never canonical memory.
+daily memory report is the primary review surface for conflicts, stale projections, failed jobs, purge candidates, and connector health.
 
 For detailed patterns, call `get_skillpack` with a section name or number
 (examples: `enrichment`, `meeting`, `compiled-truth`, `19`).
@@ -13,54 +18,43 @@ For detailed patterns, call `get_skillpack` with a section name or number
 
 ## 1. Read First When MBrain Is Relevant
 
-Before answering, check whether the user message mentions or depends on:
+Before answering, do a lightweight scan for durable knowledge signals:
 
 - a person, company, deal, meeting, project, or organization
 - a technical concept, internal system, repo, architecture, or reusable code pattern
 - the user's own idea, thesis, observation, product thought, or preference
 - a cross-system or historical question that external search or raw grep cannot answer
 
-For every message, do a lightweight scan for durable knowledge signals; only
-read or write when a signal is present.
-
-If yes, read MBrain before responding. If the task is purely code editing, git
-work, file management, public library documentation, or general programming,
-only use MBrain when one of the triggers above is present.
+Read MBrain only when a signal is present. Pure code editing, git work, file
+management, public library docs, or general programming does not need MBrain
+unless one of those triggers applies.
 
 ## 2. Lookup Order
 
 Use the lightest lookup:
 
-1. `retrieve_context` / `mbrain retrieve-context "question"` - agent probe.
-   It returns `required_reads` and may include non-canonical Memory Inbox
-   `candidate_signals`.
+1. `retrieve_context` / `mbrain retrieve-context "question"` - probe; returns
+   `required_reads` and may include Memory Inbox `candidate_signals`.
 2. `read_context` / `mbrain read-context --selectors '<json>'` - evidence
-   boundary. Use the probe's `required_reads` before answering factual
-   questions.
-3. `search` / `mbrain search "name"` - fast keyword candidate discovery for
-   exact names, slugs, dates, and terms.
-4. `query` / `mbrain query "conceptual question"` - semantic candidate
-   discovery when keyword search misses likely pages.
-5. `get_page` / `mbrain get <slug>` - full-page canonical read when the slug is
-   known or a bounded read is insufficient.
+   boundary; use `required_reads` before factual answers.
+3. `search` / `mbrain search "name"` - exact names, slugs, dates, terms.
+4. `query` / `mbrain query "conceptual question"` - semantic discovery.
+5. `get_page` / `mbrain get <slug>` - full-page canonical read.
 
 `search`/`query` chunks and Memory Inbox `candidate_signals` are both pointers,
 not answer evidence; `read_context` is the canonical evidence boundary before
 factual claims. If canonical reads do not support an answer but
 `candidate_signals` exist, say canonical evidence is absent or different and
 that Memory Inbox has non-canonical signals. Do not use them as answer-grounding
-truth; use memory candidate/review operations when asked to inspect, promote,
-reject, or supersede them. For known selectors or slugs, go directly to
-`read_context` or `get_page`.
-
-Stop once you have enough context. Use web search, external APIs, or codebase
-search only for gaps MBrain cannot answer.
+truth; use candidate/review operations to inspect, promote, reject, or supersede
+them. For known selectors or slugs, go directly to `read_context` or `get_page`.
+Stop once you have enough context.
 
 ## 3. Route Durable Writeback
 
 When durable knowledge appears, call `route_memory_writeback` before mutating
-memory. Use `apply: true` when source refs are available and the signal is
-inferred, ambiguous, contradictory, code-sensitive, session-end, trace-review,
+memory. Use `apply: true` when source refs exist and the signal is inferred,
+ambiguous, contradictory, code-sensitive, session-end, trace-review,
 meeting/import-derived, or not ready for compiled truth.
 
 Call `put_page` only after the router returns `canonical_write_allowed`. Canonical
@@ -68,10 +62,10 @@ write routing requires `target_snapshot_hash`: pass the current page
 `content_hash`, or pass `null` only after confirming the target page is absent.
 When calling `put_page`, pass the router's
 `canonical_write_requirements.expected_content_hash` as `expected_content_hash`,
-then write source-attributed compiled truth plus timeline evidence. If the router
-returns `create_candidate`, do not also call `put_page` for the same signal. If
-it returns `defer`, ask for or record the missing provenance, scope, target, or
-target snapshot. If it returns `no_write`, skip the write.
+then write attributed compiled truth plus timeline evidence. If the router
+returns `create_candidate`, do not also call `put_page`. If it returns `defer`,
+record missing provenance, scope, target, or snapshot. If it returns `no_write`,
+skip the write.
 
 Never write transient task mechanics, private chain-of-thought, or generic facts
 that do not belong in the user's knowledge graph.

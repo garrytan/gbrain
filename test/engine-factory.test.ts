@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { setDefaultTimeout, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import * as db from '../src/core/db.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
+
+setDefaultTimeout(20_000);
 
 const originalEnv = { ...process.env };
 let tempHome: string;

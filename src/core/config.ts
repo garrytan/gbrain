@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { homedir } from 'os';
 import type { StorageConfig } from './storage.ts';
 import { MBrainError, type EngineConfig } from './types.ts';
@@ -11,6 +11,7 @@ export type QueryRewriteProvider = 'none' | 'heuristic' | 'local_llm';
 export interface MBrainConfig {
   engine: EngineType;
   database_url?: string;
+  database_url_explicit?: boolean;
   database_path?: string;
   offline: boolean;
   embedding_provider: EmbeddingProvider;
@@ -19,11 +20,13 @@ export interface MBrainConfig {
   openai_api_key?: string;
   anthropic_api_key?: string;
   storage?: StorageConfig;
+  autopilot?: Record<string, unknown>;
 }
 
 export interface MBrainConfigInput {
   engine?: EngineType;
   database_url?: string;
+  database_url_explicit?: boolean;
   database_path?: string;
   offline?: boolean;
   embedding_provider?: EmbeddingProvider;
@@ -32,6 +35,7 @@ export interface MBrainConfigInput {
   openai_api_key?: string;
   anthropic_api_key?: string;
   storage?: StorageConfig;
+  autopilot?: Record<string, unknown>;
 }
 
 const VALID_ENGINES = new Set<EngineType>(['postgres', 'sqlite', 'pglite']);
@@ -39,8 +43,11 @@ const VALID_EMBEDDING_PROVIDERS = new Set<EmbeddingProvider>(['none', 'local']);
 const VALID_QUERY_REWRITE_PROVIDERS = new Set<QueryRewriteProvider>(['none', 'heuristic', 'local_llm']);
 
 // Lazy-evaluated to avoid calling homedir() at module scope (breaks in Deno Edge Functions)
-function getConfigDir() { return process.env.MBRAIN_CONFIG_DIR || join(process.env.HOME || homedir(), '.mbrain'); }
-function getConfigPath() { return join(getConfigDir(), 'config.json'); }
+function getConfigPath() { return process.env.MBRAIN_CONFIG_PATH || join(getConfigDir(), 'config.json'); }
+function getConfigDir() {
+  return process.env.MBRAIN_CONFIG_DIR
+    || (process.env.MBRAIN_CONFIG_PATH ? dirname(process.env.MBRAIN_CONFIG_PATH) : join(process.env.HOME || homedir(), '.mbrain'));
+}
 
 /**
  * Load config with credential precedence: env vars > config file, unless a local engine is explicitly configured.
@@ -64,7 +71,8 @@ export function loadConfig(): MBrainConfig | null {
   const merged: MBrainConfigInput = {
     ...fileConfig,
     ...(inferredEngine ? { engine: inferredEngine } : {}),
-    ...(!preferLocalConfig && dbUrl ? { database_url: dbUrl } : {}),
+    ...(!preferLocalConfig && dbUrl ? { database_url: dbUrl, database_url_explicit: true } : {}),
+    ...(!preferLocalConfig && !dbUrl && fileConfig?.database_url ? { database_url_explicit: true } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
   };
 
@@ -95,6 +103,7 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
   const resolved: MBrainConfig = {
     engine,
     database_url: input.database_url,
+    database_url_explicit: input.database_url_explicit ?? Boolean(input.database_url),
     database_path: input.database_path,
     offline: input.offline ?? isSQLite,
     embedding_provider: input.embedding_provider ?? (isSQLite ? 'local' : 'none'),
@@ -103,6 +112,7 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
     storage: input.storage,
     openai_api_key: input.openai_api_key,
     anthropic_api_key: input.anthropic_api_key,
+    autopilot: input.autopilot,
   };
 
   validateResolvedConfig(resolved);
@@ -192,7 +202,7 @@ export function configDir(): string {
 }
 
 export function configPath(): string {
-  return join(configDir(), 'config.json');
+  return getConfigPath();
 }
 
 export function defaultLocalDatabasePath(): string {

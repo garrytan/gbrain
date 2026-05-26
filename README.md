@@ -1,22 +1,26 @@
 # MBrain
 
-MBrain is a local SQLite memory layer for one person and their local AI agents.
-Your Markdown stays readable. The database makes it searchable, resumable, and
-usable through CLI or MCP.
+MBrain is a Postgres + pgvector personal memory runtime for one person and their
+local AI agents. Your Markdown stays readable while Postgres gives agents a
+durable, concurrent, auditable memory substrate through CLI or MCP.
 
 The default path is simple:
 
 ```bash
 bun add -g github:meghendra6/mbrain
-mbrain init --local
+# Requires a running local Postgres server with a database named mbrain.
+createdb mbrain 2>/dev/null || true
+mbrain init --profile homebrew-postgres
 # Import any directory of Markdown files.
 mbrain import ~/git/brain
 mbrain query "what do we know about product strategy?"
 mbrain serve
 ```
 
-That creates a local SQLite brain at `~/.mbrain/brain.db`. No Supabase, OpenAI,
-Anthropic, or hosted database is required to start. `mbrain serve` is the
+That connects to `postgresql://$USER@localhost:5432/mbrain`, creates the schema,
+and enables `vector` when the server allows it. The profile does not start
+Postgres or create the database for you. You can also pass any explicit
+connection string with `mbrain init --url <conn>`. `mbrain serve` is the
 long-running stdio MCP process your agent connects to.
 
 ## Why This Exists
@@ -52,7 +56,7 @@ Signal arrives: meeting, note, task, code question, conversation
 The point is compounding context. If an agent learns something once, it should not
 have to rediscover it in the next session.
 
-## Quick Start: Local SQLite
+## Quick Start: Postgres Runtime
 
 Any directory of Markdown files can be a brain repo. If you do not have one yet,
 make a tiny one first:
@@ -97,16 +101,29 @@ above is the stable local-development install path. If `command -v mbrain` does
 not resolve to `$HOME/.local/bin/mbrain`, add `$HOME/.local/bin` to your shell
 `PATH` before continuing.
 
-### 3. Create a local brain
+### 3. Create a Postgres brain
+
+The `homebrew-postgres` profile expects a reachable local Postgres server and a
+database named `mbrain`. It maps to `postgresql://$USER@localhost:5432/mbrain`;
+it does not start Postgres or create the database.
 
 ```bash
-mbrain init --local
+createdb mbrain 2>/dev/null || true
 ```
 
-This writes `~/.mbrain/config.json` and creates a SQLite database. The default
-database is `~/.mbrain/brain.db`, stored in config as an expanded absolute path.
+```bash
+mbrain init --profile homebrew-postgres
+```
 
-Use a custom path if you want the database somewhere else:
+This writes `~/.mbrain/config.json` and initializes the Postgres schema. If your
+database is not the local profile default, pass a DSN explicitly:
+
+```bash
+mbrain init --url postgresql://user:pass@localhost:5432/mbrain --non-interactive
+```
+
+Legacy local SQLite mode remains available with `mbrain init --local` when you
+intentionally need an offline compatibility profile:
 
 ```bash
 mbrain init --local --path ~/brains/personal-brain.db
@@ -134,13 +151,19 @@ mbrain stats
 mbrain health
 ```
 
-Keyword search works immediately through SQLite FTS5. Semantic search comes
-online after embeddings are backfilled.
+Keyword search works immediately through Postgres `tsvector`. Semantic search
+comes online through pgvector after embeddings are backfilled.
 
-### 6. Add optional local embeddings
+### 6. Embeddings are optional
 
-MBrain defaults to a local Ollama-compatible embedding runtime and
-`nomic-embed-text`.
+Postgres init currently starts with `embedding_provider="none"`. Keyword search
+works immediately through `tsvector`; semantic/vector search comes online only
+after a supported embedding provider is configured and chunks are backfilled.
+Do not run `mbrain embed --stale` on the default Postgres profile until the
+provider is configured.
+
+Legacy local SQLite mode defaults to the local Ollama-compatible
+`nomic-embed-text` path documented in `docs/local-offline.md`:
 
 ```bash
 ollama pull nomic-embed-text
@@ -153,8 +176,8 @@ Runtime resolution order:
 2. `OLLAMA_HOST`
 3. `http://127.0.0.1:11434/api/embed`
 
-MBrain applies `search_document:` and `search_query:` prefixes internally for
-`nomic-embed-text`.
+On that legacy local path, MBrain applies `search_document:` and `search_query:`
+prefixes internally for `nomic-embed-text`.
 
 ### 7. Connect an agent
 
@@ -205,7 +228,7 @@ MBrain has three moving parts:
 | Piece | What it does |
 |---|---|
 | Markdown repo | The human-readable source of truth. You can edit it, diff it, and repair it directly. |
-| SQLite index | The local database that stores pages, chunks, links, embeddings, tasks, and governed memory state. |
+| Postgres runtime | The target database that stores pages, chunks, links, embeddings, jobs, assertions, projections, and governed memory state. |
 | Agent loop | The behavior that reads first, answers with context, writes back with provenance, and syncs changes. |
 
 From there, MBrain adds stricter memory domains only where they help: task state
@@ -293,7 +316,7 @@ The main commands are:
 ```bash
 mbrain task-start --title "Rewrite README" --goal "Reflect current product"
 mbrain task-attempt --task-id <id> --summary "Reviewed old README" --outcome "succeeded"
-mbrain task-decision --task-id <id> --summary "Lead with SQLite" --rationale "Single-user path is default"
+mbrain task-decision --task-id <id> --summary "Lead with Postgres" --rationale "Postgres is the target runtime"
 mbrain task-working-set <id> --active-paths README.md --next-steps "run review"
 mbrain task-show <id>
 ```
@@ -349,9 +372,9 @@ query
   -> stale and provenance-aware output
 ```
 
-SQLite uses FTS5 for keyword search and a stored-vector local cosine scan for
-semantic recall. Postgres uses tsvector and pgvector when you choose the managed
-path.
+Postgres uses `tsvector` for keyword search and pgvector for semantic recall.
+Legacy local engines keep their older search paths only for explicit
+compatibility profiles.
 
 For richer routing, agents can use intent-specific operations for precision
 lookup, broad synthesis, task resume, mixed-scope recall, brain-loop audit, and
@@ -368,13 +391,12 @@ stays stable while storage engines differ internally.
 
 | Engine | Best for | Status |
 |---|---|---|
-| SQLiteEngine | Single-user local/offline personal brain | Recommended default |
-| PGLiteEngine | Embedded Postgres-like local path and migration testing | Supported local path |
-| PostgresEngine | Managed scale, pgvector, remote MCP, file/storage workflows | Optional managed path |
+| PostgresEngine | Target personal memory runtime, pgvector, remote MCP, file/storage workflows | Default target |
+| SQLiteEngine | Legacy local/offline compatibility profile | Explicit legacy path |
+| PGLiteEngine | Embedded Postgres-like migration testing and escape hatch | Explicit legacy path |
 
-Use SQLite if you are one person using one machine. It is simpler, cheaper, and
-easier to back up. Use Postgres when you need hosted scale, remote access, or
-cloud file storage.
+Use Postgres for the target runtime. Use SQLite or PGLite only when you
+intentionally need the legacy offline profile or migration test path.
 
 See `docs/ENGINES.md` for the engine contract and capability matrix.
 
@@ -383,11 +405,11 @@ See `docs/ENGINES.md` for the engine contract and capability matrix.
 Setup and diagnostics:
 
 ```bash
-mbrain init --local
+mbrain init --profile homebrew-postgres
 mbrain setup-agent
 mbrain doctor --json
-mbrain check-update --json  # online/managed profiles; local/offline returns offline_mode
-mbrain migrate --to pglite
+mbrain check-update --json
+mbrain migrate --to postgres --url postgresql://user:pass@localhost:5432/mbrain
 ```
 
 Pages and search:
@@ -560,12 +582,21 @@ The core references are:
 
 ## Verification
 
-For local/default verification, run:
+For target Postgres runtime verification, run:
 
 ```bash
+bun test test/postgres-runtime-migration-cleanup.test.ts test/postgres-runtime-foundation.test.ts
+bun run test:phase13
 bun test
-bun run test:e2e:sqlite
 bunx tsc --noEmit --pretty false
+```
+
+Legacy local SQLite verification is isolated compatibility coverage. Run it
+when changing the explicit legacy profile, not as proof that new Postgres target
+runtime behavior is complete:
+
+```bash
+bun run test:e2e:sqlite
 ```
 
 For install validation of an already installed command, use Agent Readiness
@@ -624,8 +655,8 @@ focused unit and operation coverage alongside the scenario suite.
 
 Start here:
 
-- `docs/local-offline.md` - first-day SQLite setup
-- `docs/local-offline.ko.md` - Korean SQLite setup guide
+- `docs/local-offline.md` - legacy SQLite compatibility guide
+- `docs/local-offline.ko.md` - Korean legacy SQLite compatibility guide
 - `docs/ENGINES.md` - SQLite, PGLite, and Postgres engine contract
 - `docs/MBRAIN_VERIFY.md` - verification runbook
 - `test/scenarios/README.md` - end-to-end design scenario contract
@@ -656,19 +687,18 @@ MBrain began as a fork of [garrytan/gbrain](https://github.com/garrytan/gbrain).
 Some early patterns, skills, and deterministic tools were imported or adapted
 from upstream, and `docs/UPSTREAM_SYNC.md` records that provenance.
 
-The current project is SQLite-first, local-first, and not intended as a drop-in
-replacement for gbrain. SQLite is the recommended engine for a single-user
-personal brain. Postgres remains optional for managed scale and remote/cloud
-workflows.
+The current project is a Postgres-target personal memory runtime and is not
+intended as a drop-in replacement for gbrain. Legacy local engines remain only
+as explicit compatibility and migration paths.
 
 ## Status
 
-MBrain is usable today as a local SQLite memory layer for one person and one or
-more local agents. The default path is intentionally boring: a Markdown repo,
-one SQLite database, stdio MCP, deterministic tests, and optional local
-embeddings.
+MBrain is usable today as a Postgres-backed personal memory runtime for one
+person and one or more local agents. The default path is intentionally boring:
+a Markdown repo, a local or managed Postgres database, stdio MCP, deterministic
+tests, and optional embeddings.
 
-The managed Postgres path remains available for scale and remote deployment, but
-it is no longer the center of the product.
+The legacy SQLite/PGLite paths remain available for explicit offline or
+migration scenarios, but they no longer define the target runtime.
 
 The project is MIT licensed.

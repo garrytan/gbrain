@@ -56,6 +56,7 @@ test('historical validity operation assesses a handed-off candidate', async () =
 
     const result = await assess.handler({ engine, config: {} as any, logger: console, dryRun: false }, {
       candidate_id: 'candidate-validity-op',
+      now: '2026-04-25T00:00:00.000Z',
     });
 
     expect((result as any).decision).toBe('allow');

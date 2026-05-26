@@ -39,6 +39,9 @@ import { createMemoryInboxOperations, DEFAULT_MEMORY_INBOX_SCOPE_ID } from './op
 import { createMemoryWritebackRouterOperations } from './operations-memory-writeback-router.ts';
 import { createMemoryControlPlaneOperations } from './operations-memory-control-plane.ts';
 import { createMemoryMutationLedgerOperations } from './operations-memory-mutation-ledger.ts';
+import { createSourceRegistryOperations } from './operations-source-registry.ts';
+import { createAssertionOperations } from './operations-assertions.ts';
+import { createLifecycleForgettingOperations } from './operations-lifecycle-forgetting.ts';
 import { assertMemoryWriteAllowed, MemoryAccessPolicyError } from './services/memory-access-policy-service.ts';
 import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-service.ts';
 import { getStructuralContextAtlasOverview } from './services/context-atlas-overview-service.ts';
@@ -3513,6 +3516,333 @@ const memoryControlPlaneOperations = createMemoryControlPlaneOperations({
   OperationError,
 });
 
+const sourceRegistryOperations = createSourceRegistryOperations({
+  OperationError,
+});
+
+const assertionOperations = createAssertionOperations({
+  OperationError,
+});
+
+const lifecycleForgettingOperations = createLifecycleForgettingOperations({
+  OperationError,
+});
+
+interface RerunMemoryJobInput {
+  job_id: string;
+  reason: string;
+  requested_by: string;
+  now: string;
+}
+
+interface MemoryJobRow {
+  id: string;
+  name: string;
+  status: string;
+  failure_class: string | null;
+}
+
+type MaintenanceJobQueryableEngine = BrainEngine & {
+  database?: {
+    query<T = Record<string, unknown>>(sql: string): {
+      get(...params: unknown[]): T | null;
+      run(...params: unknown[]): unknown;
+    };
+  };
+  db?: { query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
+  sql?: { unsafe(sql: string, params?: unknown[]): Promise<Record<string, unknown>[]> };
+};
+
+async function executeRerunMemoryJob(
+  ctx: OperationContext,
+  input: RerunMemoryJobInput,
+): Promise<Record<string, unknown>> {
+  const existing = await readMemoryJob(ctx.engine, input.job_id);
+  assertRerunnableMemoryJob(existing, input.job_id);
+
+  if (ctx.dryRun) {
+    return {
+      action: 'rerun_memory_job',
+      job_id: input.job_id,
+      status: 'dry_run',
+      job_event: buildMemoryJobRerunEvent(existing, input),
+      requires_mutation_ledger: true,
+    };
+  }
+
+  const appliedResult = await ctx.engine.transaction(async (tx) => {
+    const lockedExisting = await readMemoryJob(tx, input.job_id);
+    assertRerunnableMemoryJob(lockedExisting, input.job_id);
+    const jobEvent = buildMemoryJobRerunEvent(lockedExisting, input);
+    const applied = await resetMemoryJobForRerun(tx, input);
+    if (!applied) {
+      assertRerunnableMemoryJob(await readMemoryJob(tx, input.job_id), input.job_id);
+      throw new OperationError('invalid_params', `job_id could not be reset for rerun: ${input.job_id}`);
+    }
+    await insertMemoryJobEvent(tx, jobEvent);
+    const mutationEvent = await recordMemoryMutationEvent(tx, {
+      session_id: 'memory-review-report',
+      realm_id: 'work',
+      actor: input.requested_by,
+      operation: 'rerun_memory_job',
+      target_kind: 'procedure',
+      target_id: input.job_id,
+      scope_id: 'workspace:default',
+      source_refs: [`Source: memory review report rerun action for ${input.job_id}`],
+      result: 'applied',
+      metadata: {
+        reason: input.reason,
+        job_event_id: jobEvent.id,
+        previous_status: lockedExisting.status,
+      },
+      created_at: input.now,
+      decided_at: input.now,
+      applied_at: input.now,
+    });
+    return { jobEvent, mutationEvent };
+  });
+
+  return {
+    action: 'rerun_memory_job',
+    job_id: input.job_id,
+    status: 'waiting',
+    job_event: appliedResult.jobEvent,
+    mutation_event: appliedResult.mutationEvent,
+  };
+}
+
+function assertRerunnableMemoryJob(job: MemoryJobRow | null, jobId: string): asserts job is MemoryJobRow {
+  if (!job) {
+    throw new OperationError('invalid_params', `job_id not found: ${jobId}`);
+  }
+  if (job.status !== 'failed' && job.status !== 'dead') {
+    throw new OperationError('invalid_params', `job_id must refer to a failed or dead job: ${jobId}`);
+  }
+}
+
+function buildMemoryJobRerunEvent(
+  existing: MemoryJobRow,
+  input: RerunMemoryJobInput,
+): {
+  id: string;
+  job_id: string;
+  event_type: string;
+  worker_id: string;
+  failure_class: string | null;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+} {
+  return {
+    id: `job-event:${randomUUID()}`,
+    job_id: input.job_id,
+    event_type: 'rerun_requested',
+    worker_id: input.requested_by,
+    failure_class: existing.failure_class,
+    metadata_json: {
+      reason: input.reason,
+      previous_status: existing.status,
+      requested_by: input.requested_by,
+    },
+    created_at: input.now,
+  };
+}
+
+async function readMemoryJob(engine: BrainEngine, jobId: string): Promise<MemoryJobRow | null> {
+  const candidate = engine as MaintenanceJobQueryableEngine;
+  if (candidate.database) {
+    return candidate.database.query<MemoryJobRow>(`
+      SELECT id, name, status, failure_class
+      FROM memory_jobs
+      WHERE id = ?
+    `).get(jobId);
+  }
+  if (candidate.sql?.unsafe) {
+    const rows = await candidate.sql.unsafe(`
+      SELECT id, name, status, failure_class
+      FROM memory_jobs
+      WHERE id = $1
+    `, [jobId]);
+    return rows[0] as unknown as MemoryJobRow | undefined ?? null;
+  }
+  if (candidate.db) {
+    const result = await candidate.db.query(`
+      SELECT id, name, status, failure_class
+      FROM memory_jobs
+      WHERE id = $1
+    `, [jobId]);
+    return result.rows[0] as unknown as MemoryJobRow | undefined ?? null;
+  }
+  throw new OperationError('invalid_params', 'rerun_memory_job requires a SQL-backed engine');
+}
+
+async function resetMemoryJobForRerun(engine: BrainEngine, input: RerunMemoryJobInput): Promise<boolean> {
+  const candidate = engine as MaintenanceJobQueryableEngine;
+  if (candidate.database) {
+    const result = candidate.database.query(`
+      UPDATE memory_jobs
+      SET status = 'waiting',
+          result_json = NULL,
+          progress_json = '{}',
+          attempts_started = 0,
+          attempts_finished = 0,
+          failure_class = NULL,
+          last_error = NULL,
+          lock_token = NULL,
+          lock_owner = NULL,
+          lock_expires_at = NULL,
+          timeout_at = NULL,
+          started_at = NULL,
+          finished_at = NULL,
+          next_run_at = ?,
+          updated_at = ?
+      WHERE id = ? AND status IN ('failed', 'dead')
+    `).run(input.now, input.now, input.job_id);
+    return changedRows(result) > 0;
+  }
+  if (candidate.sql?.unsafe) {
+    const rows = await candidate.sql.unsafe(`
+      UPDATE memory_jobs
+      SET status = 'waiting',
+          result_json = NULL,
+          progress_json = '{}'::jsonb,
+          attempts_started = 0,
+          attempts_finished = 0,
+          failure_class = NULL,
+          last_error = NULL,
+          lock_token = NULL,
+          lock_owner = NULL,
+          lock_expires_at = NULL,
+          timeout_at = NULL,
+          started_at = NULL,
+          finished_at = NULL,
+          next_run_at = $1,
+          updated_at = $1
+      WHERE id = $2 AND status IN ('failed', 'dead')
+      RETURNING id
+    `, [input.now, input.job_id]);
+    return rows.length > 0;
+  }
+  if (candidate.db) {
+    const result = await candidate.db.query(`
+      UPDATE memory_jobs
+      SET status = 'waiting',
+          result_json = NULL,
+          progress_json = '{}'::jsonb,
+          attempts_started = 0,
+          attempts_finished = 0,
+          failure_class = NULL,
+          last_error = NULL,
+          lock_token = NULL,
+          lock_owner = NULL,
+          lock_expires_at = NULL,
+          timeout_at = NULL,
+          started_at = NULL,
+          finished_at = NULL,
+          next_run_at = $1,
+          updated_at = $1
+      WHERE id = $2 AND status IN ('failed', 'dead')
+      RETURNING id
+    `, [input.now, input.job_id]);
+    return result.rows.length > 0;
+  }
+  throw new OperationError('invalid_params', 'rerun_memory_job requires a SQL-backed engine');
+}
+
+function changedRows(result: unknown): number {
+  if (typeof result === 'object' && result !== null && 'changes' in result) {
+    const changes = (result as { changes?: unknown }).changes;
+    if (typeof changes === 'number') return changes;
+  }
+  return 0;
+}
+
+async function insertMemoryJobEvent(
+  engine: BrainEngine,
+  event: {
+    id: string;
+    job_id: string;
+    event_type: string;
+    worker_id: string;
+    failure_class: string | null;
+    metadata_json: Record<string, unknown>;
+    created_at: string;
+  },
+): Promise<void> {
+  const candidate = engine as MaintenanceJobQueryableEngine;
+  if (candidate.database) {
+    candidate.database.query(`
+      INSERT INTO memory_job_events (
+        id, job_id, event_type, worker_id, failure_class, metadata_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      event.id,
+      event.job_id,
+      event.event_type,
+      event.worker_id,
+      event.failure_class,
+      JSON.stringify(event.metadata_json),
+      event.created_at,
+    );
+    return;
+  }
+  if (candidate.sql?.unsafe) {
+    await candidate.sql.unsafe(`
+      INSERT INTO memory_job_events (
+        id, job_id, event_type, worker_id, failure_class, metadata_json, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+    `, [
+      event.id,
+      event.job_id,
+      event.event_type,
+      event.worker_id,
+      event.failure_class,
+      JSON.stringify(event.metadata_json),
+      event.created_at,
+    ]);
+    return;
+  }
+  if (candidate.db) {
+    await candidate.db.query(`
+      INSERT INTO memory_job_events (
+        id, job_id, event_type, worker_id, failure_class, metadata_json, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+    `, [
+      event.id,
+      event.job_id,
+      event.event_type,
+      event.worker_id,
+      event.failure_class,
+      JSON.stringify(event.metadata_json),
+      event.created_at,
+    ]);
+    return;
+  }
+  throw new OperationError('invalid_params', 'rerun_memory_job requires a SQL-backed engine');
+}
+
+const rerun_memory_job: Operation = {
+  name: 'rerun_memory_job',
+  description: 'Reset a failed maintenance or runner job to waiting and record the auditable rerun request.',
+  params: {
+    job_id: { type: 'string', required: true, description: 'Failed memory job id to rerun.' },
+    reason: { type: 'string', required: true, description: 'Reason for rerunning the job.' },
+    requested_by: { type: 'string', description: 'Actor requesting the rerun.' },
+    now: { type: 'string', description: 'Optional ISO timestamp for deterministic planning.' },
+  },
+  handler: async (ctx, p) => executeRerunMemoryJob(ctx, {
+    job_id: putPageSourceRef(p.job_id, 'job_id'),
+    reason: putPageSourceRef(p.reason, 'reason'),
+    requested_by: typeof p.requested_by === 'string' && p.requested_by.trim().length > 0
+      ? p.requested_by.trim()
+      : 'mbrain:maintenance-runtime',
+    now: typeof p.now === 'string' && p.now.trim().length > 0
+      ? p.now.trim()
+      : new Date().toISOString(),
+  }),
+  mutating: true,
+  cliHints: { name: 'memory-job-rerun' },
+};
+
 const write_profile_memory_entry: Operation = {
   name: 'write_profile_memory_entry',
   description: 'Write one canonical profile-memory entry only after personal write-target preflight allows it.',
@@ -5549,6 +5879,12 @@ export const operations: Operation[] = [
   sync_brain,
   // Raw data
   put_raw_data, get_raw_data,
+  // Source registry and raw ingest provenance
+  ...sourceRegistryOperations,
+  // Assertion pipeline and session grants
+  ...assertionOperations,
+  // Lifecycle forgetting audit, restore, and purge planning
+  ...lifecycleForgettingOperations,
   // Resolution & chunks
   resolve_slugs, get_chunks,
   // Profile memory
@@ -5566,7 +5902,7 @@ export const operations: Operation[] = [
   // Context atlas registry
   build_context_atlas, get_context_atlas_entry, list_context_atlas_entries, select_context_atlas_entry, get_context_atlas_overview, get_context_atlas_report, get_atlas_orientation_card, get_atlas_orientation_bundle,
   // Operational memory
-  list_tasks, start_task, update_task, resume_task, get_task_working_set, record_retrieval_trace, list_task_traces, list_task_attempts, list_task_decisions, refresh_task_working_set, record_attempt, record_decision, ...brainLoopAuditOperations, ...memoryMutationLedgerOperations, ...memoryControlPlaneOperations,
+  list_tasks, start_task, update_task, resume_task, get_task_working_set, record_retrieval_trace, list_task_traces, list_task_attempts, list_task_decisions, refresh_task_working_set, record_attempt, record_decision, ...brainLoopAuditOperations, ...memoryMutationLedgerOperations, ...memoryControlPlaneOperations, rerun_memory_job,
   // Ingest log
   log_ingest, get_ingest_log,
   // Files

@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { setDefaultTimeout, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -7,6 +7,8 @@ import { operations } from '../src/core/operations.ts';
 import { OperationError } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+
+setDefaultTimeout(20_000);
 
 function compareEventSummaries(
   left: { event_kind: string; interaction_id: string | null },

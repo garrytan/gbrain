@@ -8,6 +8,7 @@ import type {
 } from './config.ts';
 import { toEngineConfig, validateResolvedConfig } from './config.ts';
 import { getEngineCapabilities } from './engine-capabilities.ts';
+import { resolvePostgresRuntimeProfile } from './postgres-runtime/connection-profile.ts';
 
 export { resolveConfig, toEngineConfig } from './config.ts';
 
@@ -63,7 +64,13 @@ export async function createConnectedEngine(
   options?: { poolSize?: number },
 ): Promise<BrainEngine> {
   validateResolvedConfig(config);
-  const engineConfig = toEngineConfig(config, options);
+  const runtimePoolSize = config.engine === 'postgres'
+    ? resolvePostgresRuntimeProfile(config).pool.max
+    : undefined;
+  const engineConfig = toEngineConfig(config, {
+    ...options,
+    poolSize: options?.poolSize ?? runtimePoolSize,
+  });
 
   if (config.engine !== 'postgres' && !options?.poolSize) {
     await closeConnectionOwners();

@@ -8,6 +8,8 @@ import {
   type MBrainConfig,
 } from '../core/config.ts';
 import { createConnectedEngine, createEngine, createEngineFromConfig, toEngineConfig } from '../core/engine-factory.ts';
+import { assertExplicitRemoteDsn } from '../core/postgres-runtime/connection-profile.ts';
+import { MBrainError } from '../core/types.ts';
 import * as db from '../core/db.ts';
 
 export async function runInit(args: string[]) {
@@ -22,7 +24,10 @@ export async function runInit(args: string[]) {
   const isNonInteractive = args.includes('--non-interactive');
   const jsonOutput = args.includes('--json');
   const urlIndex = args.indexOf('--url');
-  const manualUrl = urlIndex !== -1 ? args[urlIndex + 1] : null;
+  const dsnIndex = args.indexOf('--dsn');
+  const manualUrl = urlIndex !== -1 ? args[urlIndex + 1] : dsnIndex !== -1 ? args[dsnIndex + 1] : null;
+  const profileIndex = args.indexOf('--profile');
+  const profile = profileIndex !== -1 ? args[profileIndex + 1] : null;
   const keyIndex = args.indexOf('--key');
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.findIndex(arg => arg === '--path' || arg === '--db-path');
@@ -32,26 +37,15 @@ export async function runInit(args: string[]) {
     return initSQLite({ jsonOutput, apiKey, customPath });
   }
 
-  // Upstream default: local PGLite unless the user explicitly picked Supabase/Postgres.
-  if (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive)) {
-    if (!isPGLite && !isSupabase) {
-      const fileCount = countMarkdownFiles(process.cwd());
-      if (fileCount >= 1000) {
-        console.log(`Found ~${fileCount} .md files. For a brain this size, Supabase gives faster`);
-        console.log('search and remote access ($25/mo). PGLite works too but search will be slower at scale.');
-        console.log('');
-        console.log('  mbrain init --supabase   Set up with Supabase (recommended for large brains)');
-        console.log('  mbrain init --pglite     Use local PGLite anyway');
-        console.log('');
-      }
-    }
-
+  if (isPGLite) {
     return initPGLite({ jsonOutput, apiKey, customPath });
   }
 
   let databaseUrl: string;
   if (manualUrl) {
     databaseUrl = manualUrl;
+  } else if (profile) {
+    databaseUrl = localPostgresProfileUrl(profile);
   } else if (isNonInteractive) {
     const envUrl = process.env.MBRAIN_DATABASE_URL || process.env.DATABASE_URL;
     if (envUrl) {
@@ -70,14 +64,16 @@ export async function runInit(args: string[]) {
 function printInitHelp() {
   console.log(`Usage: mbrain init [options]
 
-Create a brain. For personal/offline use, prefer --local (SQLite).
-Bare mbrain init remains local PGLite for compatibility; pass a flag to pick an engine.
+Create a Postgres-backed brain. Bare mbrain init now targets Postgres; pass a
+legacy local flag only when you intentionally want SQLite or PGLite.
 
 OPTIONS
-  --local                   Recommended personal path: local SQLite (fully offline; no server needed)
-  --pglite                  Local PGLite (embedded Postgres; compatibility default)
+  --local                   Legacy local SQLite profile
+  --pglite                  Legacy local PGLite profile
   --supabase                Managed Supabase Postgres (interactive wizard)
   --url <conn>              Existing Postgres connection string (postgres:// or postgresql://)
+  --dsn <conn>              Alias for --url
+  --profile <name>          Local Postgres profile: homebrew-postgres, linux-system-postgres, container-postgres
   --non-interactive         Fail instead of prompting; use with --url or MBRAIN_DATABASE_URL
   --path <path>             Override the SQLite/PGLite database path
   --key <openai_api_key>    Save an OpenAI API key in the config
@@ -85,9 +81,9 @@ OPTIONS
   -h, --help                Show this help and exit
 
 Examples
+  mbrain init --profile homebrew-postgres
+  mbrain init --dsn postgresql://user:pass@localhost:5432/mbrain --non-interactive
   mbrain init --local
-  mbrain init --pglite --path ~/brains/work.pglite
-  mbrain init --url postgresql://user:pass@host:5432/db --non-interactive
 `);
 }
 
@@ -153,7 +149,7 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
     console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
     console.log('Next: mbrain import <dir>');
     console.log('');
-    console.log('When you outgrow local: mbrain migrate --to supabase');
+    console.log('When you outgrow legacy local mode: mbrain migrate --to postgres');
   }
 }
 
@@ -174,11 +170,13 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
   const engineConfig: MBrainConfig = {
     engine: 'postgres',
     database_url: databaseUrl,
+    database_url_explicit: true,
     offline: false,
     embedding_provider: 'none',
     query_rewrite_provider: 'none',
     ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
   };
+  assertExplicitRemoteDsn(engineConfig);
   try {
     const engine = await createConnectedEngine(engineConfig);
     try {
@@ -225,6 +223,22 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
       console.error('Use the Session pooler connection string instead (port 6543).');
     }
     throw e;
+  }
+}
+
+function localPostgresProfileUrl(profile: string): string {
+  const user = process.env.PGUSER || process.env.USER || 'postgres';
+  switch (profile) {
+    case 'homebrew-postgres':
+    case 'linux-system-postgres':
+    case 'container-postgres':
+      return `postgresql://${encodeURIComponent(user)}@localhost:5432/mbrain`;
+    default:
+      throw new MBrainError(
+        'Invalid Postgres profile',
+        `Unsupported profile: ${profile}`,
+        'Use homebrew-postgres, linux-system-postgres, or container-postgres',
+      );
   }
 }
 

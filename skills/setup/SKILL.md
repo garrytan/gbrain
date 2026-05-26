@@ -27,19 +27,31 @@ before continuing.
 
 ## Runtime profiles
 
-MBrain has three setup profiles:
+MBrain has four setup paths:
 
-- **Local SQLite**: recommended default for one-person local/offline installs.
-- **PGLite**: local Postgres-like compatibility profile.
-- **Managed Postgres**: optional hosted/remote profile for pgvector scale,
-  remote MCP, and cloud file/storage workflows.
+- **Target Local Postgres**: recommended default for new personal brains; use a
+  reachable local Postgres server with pgvector and a database named `mbrain`.
+- **Managed Postgres**: hosted/remote profile for pgvector scale, remote MCP,
+  and cloud file/storage workflows.
+- **Legacy Local SQLite**: explicit one-person local/offline compatibility path.
+- **PGLite**: local Postgres-like compatibility and migration-test profile.
 
-Default to Local SQLite when the user wants "local Codex/Claude memory",
-"offline", "no Supabase", or a personal brain on one machine. Use Managed
-Postgres only when the user explicitly wants hosted scale, remote access, or
-already has a Postgres connection string.
+Default to Target Local Postgres for fresh installs. Use Legacy Local SQLite
+only when the user explicitly needs offline/no-server operation or asks for the
+legacy local profile.
 
-## Local/offline prerequisites
+## Target Postgres prerequisites
+
+- Bun installed and on `PATH`
+- A running local Postgres server with a database named `mbrain`; the profile
+  maps to a DSN but does not start Postgres or create the database
+- pgvector available on that server; init attempts `CREATE EXTENSION vector`
+  when permitted
+- A markdown knowledge base, Obsidian vault, or starter directory
+- Embeddings start disabled (`embedding_provider="none"`) unless a supported
+  provider is configured later
+
+## Legacy local/offline prerequisites
 
 - Bun installed and on `PATH`
 - A markdown knowledge base, Obsidian vault, or starter directory
@@ -52,23 +64,26 @@ already has a Postgres connection string.
   self-hosted Postgres
 - A `postgresql://` database connection string, not a Supabase project URL or
   anon key
-- Optional OpenAI API key if using hosted embedding generation
+- Embeddings start disabled (`embedding_provider="none"`) unless a supported
+  provider is configured later
 
 ## Available init options
 
-- `mbrain init --local` -- recommended personal/offline SQLite path
+- `mbrain init --profile homebrew-postgres` -- recommended local Postgres target
+- `mbrain init --local` -- explicit legacy personal/offline SQLite path
 - `mbrain init --pglite` -- local PGLite profile
 - `mbrain init --supabase` -- interactive wizard (prompts for connection string)
 - `mbrain init --url <connection_string>` -- direct, no prompts
 - `mbrain init --non-interactive --url <connection_string>` -- for scripts/agents
 - `mbrain doctor --json` -- health check after init
 
-## Phase A: Local SQLite Setup (recommended default)
+## Phase A: Target Postgres Setup (recommended default)
 
-Use this path unless the user clearly asks for hosted Postgres:
+Use this path unless the user clearly asks for the legacy offline profile:
 
 ```bash
-mbrain init --local
+createdb mbrain 2>/dev/null || true
+mbrain init --profile homebrew-postgres
 mbrain doctor --json
 mbrain setup-agent
 ```
@@ -88,13 +103,12 @@ codex mcp add mbrain -- mbrain serve
 claude mcp add -s user mbrain -- mbrain serve
 ```
 
-Warnings about managed/Postgres-only capabilities are expected in local/offline
-mode when the doctor output marks those surfaces as unsupported.
+Warnings about unsupported Postgres target capabilities should be treated as
+setup blockers on this path.
 
-## Phase B: Managed Postgres / Supabase Setup (optional)
+## Phase B: Managed Postgres / Supabase Setup
 
-Use this path when the user explicitly wants hosted Postgres or remote/cloud
-workflows.
+Use this path when the user wants hosted Postgres or remote/cloud workflows.
 
 For Supabase, guide the user through creating a project:
 
@@ -244,6 +258,15 @@ maintains itself.'"
 Run `mbrain doctor --json` and report the execution envelope plus any failures or
 warnings.
 
+For Target Local Postgres, verify:
+
+- config points at the expected Postgres database identity
+- connection, schema version, pgvector, and target_runtime are healthy
+- `mbrain search` works after import
+- embedding_provider may be `none` until a supported embedding provider is
+  configured
+- MCP registration points at `mbrain serve`
+
 For Local SQLite, unsupported managed/Postgres-only surfaces can be reported as
 unsupported capabilities without making the install unhealthy. The important
 checks are:
@@ -253,8 +276,8 @@ checks are:
 - local query/search works after import
 - MCP registration points at `mbrain serve`
 
-For Managed Postgres, also verify the database connection, schema, pgvector
-extension, and any hosted embedding configuration the user chose.
+For Managed Postgres, also verify the provider connection string, pooler/network
+path, storage/remote settings, and any embedding configuration the user chose.
 
 ## Error Recovery
 
@@ -310,6 +333,17 @@ For Local SQLite:
 
 ```bash
 mbrain init --local
+mbrain import /path/to/brain
+mbrain search "<phrase from imported notes>"
+mbrain doctor --json
+mbrain stats
+```
+
+For Target Local Postgres:
+
+```bash
+createdb mbrain 2>/dev/null || true
+mbrain init --profile homebrew-postgres
 mbrain import /path/to/brain
 mbrain search "<phrase from imported notes>"
 mbrain doctor --json

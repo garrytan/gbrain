@@ -1,19 +1,19 @@
 {
   "name": "mbrain",
   "version": "0.10.3",
-  "description": "Local-first personal knowledge brain with SQLite/offline and optional Postgres managed search",
+  "description": "Postgres + pgvector personal knowledge brain with explicit SQLite/offline compatibility",
   "family": "bundle-plugin",
   "configSchema": {
     "database_url": {
       "type": "string",
       "required": false,
-      "description": "Optional PostgreSQL connection URL for managed search (local SQLite is used by default)",
+      "description": "Optional PostgreSQL connection URL; otherwise use the configured MBrain Postgres profile or environment",
       "uiHints": { "sensitive": true }
     },
     "openai_api_key": {
       "type": "string",
       "required": false,
-      "description": "OpenAI API key for embeddings (uses OPENAI_API_KEY env var if not set)",
+      "description": "Optional OpenAI API key for hosted features (uses OPENAI_API_KEY env var if not set)",
       "uiHints": { "sensitive": true }
     }
   },

@@ -29,7 +29,7 @@ describe('MCP response guard', () => {
     const bytes = byteLength(JSON.stringify({ tools }));
 
     expect(tools.length).toBe(operations.length);
-    expect(bytes).toBeLessThan(56_000);
+    expect(bytes).toBeLessThan(58_000);
 
     const dryRunMutation = tools.find(tool => tool.name === 'dry_run_memory_mutation');
     expect((dryRunMutation?.inputSchema.properties as any).operation.enum).toContain('put_page');
@@ -58,7 +58,8 @@ describe('MCP response guard', () => {
     expect(compactTools).toBe(compactToolsAgain);
     expect(fullTools).toBe(fullToolsAgain);
     expect(compactTools).not.toBe(fullTools);
-    expect(compactTools[0].description.length).toBeLessThan(fullTools[0].description.length);
+    expect(compactTools[0].description).toBeUndefined();
+    expect(fullTools[0].description).toBe(sampleOperations[0].description);
     expect((compactTools[0].inputSchema.properties as any).slug.description).toBeUndefined();
     expect((fullTools[0].inputSchema.properties as any).slug.description).toBe('Page slug');
   });

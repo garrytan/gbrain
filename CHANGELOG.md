@@ -6,6 +6,13 @@ All notable changes to MBrain will be documented in this file.
 
 ### Changed
 
+- **Postgres runtime migration cleanup: Fresh installs, migration help, and agent rules now point to the Postgres target runtime.**
+  `mbrain init`, `mbrain migrate --help`, `mbrain setup-agent --help`, the
+  local/offline docs, and the injected agent rules now describe Postgres +
+  pgvector as the target path while keeping SQLite/PGLite as explicit legacy
+  compatibility and migration surfaces. Agents get clearer guidance for the
+  assertion pipeline, governed canonical writes, candidate fallback, daily
+  reports, and migration verification before switching configs.
 - **MCP stdio backpressure work now has an explicit validation boundary.**
   The current PR evidence covers MBrain's own stdio frame budgeting,
   bounded reads, canonical writes, and durable derived-worker behavior. The

@@ -1,7 +1,7 @@
 export const CLAUDE_MBRAIN_SKIP_DIRS = `# mbrain Stop-hook skip list (one absolute path per line)
 #
 # Add directories where you do not want Claude Code to prompt for
-# a mbrain writeback check at session end.
+# a mbrain assertion-pipeline reminder at session end.
 #
 # Example:
 # /tmp/throwaway-experiment
@@ -115,9 +115,9 @@ if ! mbrain_is_relevant; then
   exit 0
 fi
 
-REASON='MBrain memory check (not a crash): route any durable session knowledge through route_memory_writeback with sources; otherwise reply exactly MBRAIN-PASS: <short reason>.'
+REASON='MBrain memory check (not a crash): route durable signals through route_memory_writeback and the assertion pipeline; eligible writes become governed canonical memory, ambiguous ones become candidates. Otherwise reply exactly MBRAIN-PASS: <short reason>.'
 
 log_line "block" "$SESSION_ID" "gate-passed"
 
-printf '%s\n' '{"decision":"block","reason":"MBrain memory check (not a crash): route any durable session knowledge through route_memory_writeback with sources; otherwise reply exactly MBRAIN-PASS: <short reason>."}'
+printf '%s\n' '{"decision":"block","reason":"MBrain memory check (not a crash): route durable signals through route_memory_writeback and the assertion pipeline; eligible writes become governed canonical memory, ambiguous ones become candidates. Otherwise reply exactly MBRAIN-PASS: <short reason>."}'
 `;

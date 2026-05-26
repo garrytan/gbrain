@@ -1,0 +1,677 @@
+import {
+  buildMemoryReviewReport,
+  formatMemoryReviewReport,
+  type MemoryReviewReportInput,
+  type ReportConflict,
+  type ReportCanonicalMemory,
+  type ReportConnectorHealth,
+  type ReportExtractedClaim,
+  type ReportLifecycleState,
+  type ReportMaintenanceJob,
+  type ReportPolicyDenial,
+  type ReportProjectionTarget,
+  type ReportQuarantinedSource,
+  type ReportReviewItem,
+  type ReportRunnerJob,
+  type ReportSecretDetection,
+  type ReportSource,
+  type ReportSourceItem,
+} from '../core/services/memory-review-report-service.ts';
+import type { BrainEngine } from '../core/engine.ts';
+import type { MemoryCandidateEntry, MemoryMutationEvent } from '../core/types.ts';
+import { createLifecycleForgettingStoreForEngine } from '../core/maintenance/lifecycle-forgetting.ts';
+
+const DEFAULT_SCOPE_ID = 'workspace:default';
+const DEFAULT_LIMIT = 100;
+
+export async function runMemoryReport(engine: BrainEngine, args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) {
+    printMemoryReportHelp();
+    return;
+  }
+
+  const scopeId = valueAfter(args, '--scope-id') ?? DEFAULT_SCOPE_ID;
+  const limit = parsePositiveInt(valueAfter(args, '--limit')) ?? DEFAULT_LIMIT;
+  const now = valueAfter(args, '--now') ?? new Date().toISOString();
+  const report = buildMemoryReviewReport(await collectMemoryReportInput(engine, scopeId, limit, now));
+
+  if (args.includes('--json')) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+
+  console.log(formatMemoryReviewReport(report));
+}
+
+function valueAfter(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index === -1) return undefined;
+  return args[index + 1];
+}
+
+export async function collectMemoryReportInput(
+  engine: BrainEngine,
+  scopeId: string,
+  limit: number,
+  generatedAt: string = new Date().toISOString(),
+): Promise<MemoryReviewReportInput> {
+  const [
+    mutationEvents,
+    candidates,
+    lifecycleStates,
+    purgeCandidates,
+    projectionTargets,
+    sources,
+    sourceItems,
+    extractedClaims,
+    policyDenials,
+    quarantinedSources,
+    secretDetections,
+    conflicts,
+    runnerJobs,
+    jobs,
+    connectorHealth,
+  ] = await Promise.all([
+    engine.listMemoryMutationEvents({ scope_id: scopeId, limit, offset: 0 }),
+    engine.listMemoryCandidateEntries({ scope_id: scopeId, limit, offset: 0 }),
+    collectLifecycleStates(engine, scopeId, limit),
+    collectPurgeCandidates(engine, scopeId, generatedAt, limit),
+    collectProjectionTargets(engine, limit),
+    collectSources(engine, limit),
+    collectSourceItems(engine, limit),
+    collectExtractedClaims(engine, limit),
+    collectPolicyDenials(engine, limit),
+    collectQuarantinedSources(engine, limit),
+    collectSecretDetections(engine, limit),
+    collectConflicts(engine, limit),
+    collectRunnerJobs(engine, limit),
+    collectMaintenanceJobs(engine, limit),
+    collectConnectorHealth(engine, limit),
+  ]);
+
+  return {
+    scope_id: scopeId,
+    generated_at: generatedAt,
+    canonical_memories: mutationEvents.flatMap(memoryMutationToCanonicalMemory),
+    review_items: candidates.flatMap(memoryCandidateToReviewItem),
+    lifecycle_states: lifecycleStates,
+    purge_candidates: purgeCandidates,
+    projection_targets: projectionTargets,
+    sources,
+    source_items: sourceItems,
+    extracted_claims: extractedClaims,
+    policy_denials: [
+      ...policyDenials,
+      ...mutationEvents.flatMap(memoryMutationToPolicyDenial),
+    ],
+    quarantined_sources: quarantinedSources,
+    secret_detections: secretDetections,
+    conflicts: [
+      ...conflicts,
+      ...mutationEvents.flatMap(memoryMutationToConflict),
+    ],
+    runner_jobs: runnerJobs,
+    jobs,
+    connector_health: connectorHealth,
+  };
+}
+
+function memoryMutationToCanonicalMemory(event: MemoryMutationEvent): ReportCanonicalMemory[] {
+  if (event.dry_run || event.result !== 'applied') return [];
+  if (!isCanonicalMemoryOperation(event.operation)) return [];
+  return [
+    {
+      id: event.id,
+      target_kind: event.target_kind,
+      target_id: event.target_id,
+      target_slug: event.target_kind === 'page' ? event.target_id : undefined,
+      claim_type: event.target_kind,
+      change_type: isCreateOperation(event.operation) ? 'created' : 'updated',
+      summary: `${event.operation} ${event.target_kind}/${event.target_id}`,
+      source_refs: event.source_refs,
+    },
+  ];
+}
+
+function memoryCandidateToReviewItem(candidate: MemoryCandidateEntry): ReportReviewItem[] {
+  if (!needsReview(candidate.status)) return [];
+  return [
+    {
+      id: candidate.id,
+      review_type: candidate.candidate_type,
+      target_ref: candidate.target_object_id ?? candidate.target_object_type ?? undefined,
+      summary: candidate.proposed_content,
+      severity: candidate.sensitivity === 'secret' ? 'high' : 'medium',
+    },
+  ];
+}
+
+function memoryMutationToPolicyDenial(event: MemoryMutationEvent): ReportPolicyDenial[] {
+  if (event.result !== 'denied') return [];
+  return [{
+    id: event.id,
+    reason: stringFromUnknown(event.conflict_info?.reason ?? event.metadata?.reason ?? event.operation),
+    target_ref: `${event.target_kind}:${event.target_id}`,
+  }];
+}
+
+function memoryMutationToConflict(event: MemoryMutationEvent): ReportConflict[] {
+  if (event.result !== 'conflict') return [];
+  return [{
+    id: event.id,
+    target_ref: `${event.target_kind}:${event.target_id}`,
+    summary: stringFromUnknown(event.conflict_info?.reason ?? event.metadata?.reason ?? event.operation),
+    severity: 'high',
+  }];
+}
+
+function isCanonicalMemoryOperation(operation: MemoryMutationEvent['operation']): boolean {
+  return operation === 'governed_canonical_write'
+    || operation === 'put_page'
+    || operation === 'upsert_profile_memory_entry'
+    || operation === 'write_profile_memory_entry'
+    || operation === 'record_personal_episode'
+    || operation === 'write_personal_episode_entry'
+    || operation === 'promote_memory_candidate_entry'
+    || operation === 'apply_memory_patch_candidate';
+}
+
+function isCreateOperation(operation: MemoryMutationEvent['operation']): boolean {
+  return operation === 'governed_canonical_write'
+    || operation === 'write_profile_memory_entry'
+    || operation === 'record_personal_episode'
+    || operation === 'write_personal_episode_entry';
+}
+
+function needsReview(status: MemoryCandidateEntry['status']): boolean {
+  return status === 'staged_for_review';
+}
+
+function parsePositiveInt(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+async function collectLifecycleStates(
+  engine: BrainEngine,
+  scopeId: string,
+  limit: number,
+): Promise<ReportLifecycleState[]> {
+  try {
+    const store = createLifecycleForgettingStoreForEngine(engine);
+    const states = await store.listLifecycleStates({
+      scope_id: scopeId,
+      lifecycle_states: ['stale', 'expired', 'archived'],
+      limit,
+    });
+    return states.map((state) => ({
+      id: state.id,
+      entity_type: state.entity_type,
+      entity_id: state.entity_id,
+      lifecycle_state: state.lifecycle_state,
+      restore_until: state.restore_until,
+      purge_after: state.purge_after,
+      reason: state.reason,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function collectPurgeCandidates(
+  engine: BrainEngine,
+  scopeId: string,
+  now: string,
+  limit: number,
+): Promise<ReportLifecycleState[]> {
+  try {
+    const store = createLifecycleForgettingStoreForEngine(engine);
+    const states = await store.listLifecycleStates({
+      scope_id: scopeId,
+      lifecycle_states: ['expired', 'archived'],
+      purge_due_at: now,
+      limit,
+    });
+    return states.map((state) => ({
+      id: state.id,
+      entity_type: state.entity_type,
+      entity_id: state.entity_id,
+      lifecycle_state: state.lifecycle_state,
+      restore_until: state.restore_until,
+      purge_after: state.purge_after,
+      reason: state.reason,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function collectProjectionTargets(engine: BrainEngine, limit: number): Promise<ReportProjectionTarget[]> {
+  const rows = await queryRows(engine, `
+    SELECT id, target_type, target_id, locator, status, canonical_changed_since_projection
+    FROM canonical_projection_targets
+    WHERE status IN ('pending_reconcile', 'failed', 'conflict')
+       OR canonical_changed_since_projection = 1
+    ORDER BY updated_at DESC, id ASC
+    LIMIT ?
+  `, [limit], `
+    SELECT id, target_type, target_id, locator, status, canonical_changed_since_projection
+    FROM canonical_projection_targets
+    WHERE status IN ('pending_reconcile', 'failed', 'conflict')
+       OR canonical_changed_since_projection = true
+    ORDER BY updated_at DESC, id ASC
+    LIMIT $1
+  `);
+  return rows.map((row) => ({
+    id: stringFromUnknown(row.id),
+    target_type: stringFromUnknown(row.target_type),
+    target_id: stringFromUnknown(row.target_id),
+    locator: stringFromUnknown(row.locator),
+    status: projectionStatus(row.status),
+    canonical_changed_since_projection: booleanFromUnknown(row.canonical_changed_since_projection),
+  }));
+}
+
+async function collectSources(engine: BrainEngine, limit: number): Promise<ReportSource[]> {
+  const rows = await queryRows(engine, `
+    SELECT s.id, s.kind, s.display_name, s.consent_state, s.enabled,
+           COALESCE(css.health_status,
+             CASE WHEN s.consent_state IN ('revoked', 'denied') OR s.enabled = 0 THEN 'unhealthy' ELSE 'healthy' END
+           ) AS health_status
+    FROM sources s
+    LEFT JOIN connector_accounts ca ON ca.source_id = s.id
+    LEFT JOIN connector_sync_states css ON css.account_id = ca.id
+    ORDER BY s.updated_at DESC, s.id ASC
+    LIMIT ?
+  `, [limit], `
+    SELECT s.id, s.kind, s.display_name, s.consent_state, s.enabled,
+           COALESCE(css.health_status,
+             CASE WHEN s.consent_state IN ('revoked', 'denied') OR s.enabled = false THEN 'unhealthy' ELSE 'healthy' END
+           ) AS health_status
+    FROM sources s
+    LEFT JOIN connector_accounts ca ON ca.source_id = s.id
+    LEFT JOIN connector_sync_states css ON css.account_id = ca.id
+    ORDER BY s.updated_at DESC, s.id ASC
+    LIMIT $1
+  `);
+  return rows.map((row) => ({
+    id: stringFromUnknown(row.id),
+    kind: stringFromUnknown(row.kind),
+    display_name: stringFromUnknown(row.display_name),
+    consent_state: stringFromUnknown(row.consent_state),
+    enabled: booleanFromUnknown(row.enabled),
+    health_status: sourceHealthStatus(row.health_status),
+  }));
+}
+
+async function collectSourceItems(engine: BrainEngine, limit: number): Promise<ReportSourceItem[]> {
+  const rows = await queryRows(engine, `
+    SELECT id, source_id, external_id, ingest_status
+    FROM source_items
+    ORDER BY ingested_at DESC, id ASC
+    LIMIT ?
+  `, [limit], `
+    SELECT id, source_id, external_id, ingest_status
+    FROM source_items
+    ORDER BY ingested_at DESC, id ASC
+    LIMIT $1
+  `);
+  return rows.map((row) => ({
+    id: stringFromUnknown(row.id),
+    source_id: stringFromUnknown(row.source_id),
+    external_id: stringFromUnknown(row.external_id),
+    status: sourceItemStatus(row.ingest_status),
+  }));
+}
+
+async function collectExtractedClaims(engine: BrainEngine, limit: number): Promise<ReportExtractedClaim[]> {
+  const rows = await queryRows(engine, `
+    SELECT id, status, claim_type
+    FROM extracted_claims
+    ORDER BY created_at DESC, id ASC
+    LIMIT ?
+  `, [limit], `
+    SELECT id, status, claim_type
+    FROM extracted_claims
+    ORDER BY created_at DESC, id ASC
+    LIMIT $1
+  `);
+  return rows.map((row) => ({
+    id: stringFromUnknown(row.id),
+    status: stringFromUnknown(row.status),
+    claim_type: stringFromUnknown(row.claim_type),
+  }));
+}
+
+async function collectPolicyDenials(engine: BrainEngine, limit: number): Promise<ReportPolicyDenial[]> {
+  const rows = await queryRows(engine, `
+    SELECT id, policy_decision, policy_explanation, status
+    FROM canonical_write_attempts
+    WHERE policy_decision IN ('reject', 'quarantine', 'no_write')
+       OR status IN ('failed_db', 'failed_markdown', 'conflict')
+    ORDER BY created_at DESC, id ASC
+    LIMIT ?
+  `, [limit], `
+    SELECT id, policy_decision, policy_explanation, status
+    FROM canonical_write_attempts
+    WHERE policy_decision IN ('reject', 'quarantine', 'no_write')
+       OR status IN ('failed_db', 'failed_markdown', 'conflict')
+    ORDER BY created_at DESC, id ASC
+    LIMIT $1
+  `);
+  return rows.map((row) => ({
+    id: stringFromUnknown(row.id),
+    reason: stringFromUnknown(row.policy_explanation) || stringFromUnknown(row.policy_decision) || stringFromUnknown(row.status),
+  }));
+}
+
+async function collectQuarantinedSources(engine: BrainEngine, limit: number): Promise<ReportQuarantinedSource[]> {
+  const rows = await queryRows(engine, `
+    SELECT sc.id, si.source_id, sc.prompt_injection_risk
+    FROM source_chunks sc
+    JOIN source_items si ON si.id = sc.source_item_id
+    WHERE sc.prompt_injection_risk IN ('flagged', 'quarantined')
+    ORDER BY sc.created_at DESC, sc.id ASC
+    LIMIT ?
+  `, [limit], `
+    SELECT sc.id, si.source_id, sc.prompt_injection_risk
+    FROM source_chunks sc
+    JOIN source_items si ON si.id = sc.source_item_id
+    WHERE sc.prompt_injection_risk IN ('flagged', 'quarantined')
+    ORDER BY sc.created_at DESC, sc.id ASC
+    LIMIT $1
+  `);
+  return rows.map((row) => ({
+    id: stringFromUnknown(row.id),
+    source_id: stringFromUnknown(row.source_id),
+    reason: stringFromUnknown(row.prompt_injection_risk),
+  }));
+}
+
+async function collectSecretDetections(engine: BrainEngine, limit: number): Promise<ReportSecretDetection[]> {
+  const rows = await queryRows(engine, `
+    SELECT sc.id, sc.source_item_id, sc.secret_risk
+    FROM source_chunks sc
+    WHERE sc.secret_risk IN ('flagged', 'detected', 'redacted')
+    ORDER BY sc.created_at DESC, sc.id ASC
+    LIMIT ?
+  `, [limit], `
+    SELECT sc.id, sc.source_item_id, sc.secret_risk
+    FROM source_chunks sc
+    WHERE sc.secret_risk IN ('flagged', 'detected', 'redacted')
+    ORDER BY sc.created_at DESC, sc.id ASC
+    LIMIT $1
+  `);
+  return rows.map((row) => ({
+    id: stringFromUnknown(row.id),
+    source_item_id: stringFromUnknown(row.source_item_id),
+    kind: stringFromUnknown(row.secret_risk),
+    severity: 'high',
+  }));
+}
+
+async function collectConflicts(engine: BrainEngine, limit: number): Promise<ReportConflict[]> {
+  const rows = await queryRows(engine, `
+    SELECT id, target_type, target_id, property
+    FROM conflict_sets
+    WHERE status = 'open'
+    ORDER BY updated_at DESC, id ASC
+    LIMIT ?
+  `, [limit], `
+    SELECT id, target_type, target_id, property
+    FROM conflict_sets
+    WHERE status = 'open'
+    ORDER BY updated_at DESC, id ASC
+    LIMIT $1
+  `);
+  return rows.map((row) => ({
+    id: stringFromUnknown(row.id),
+    target_ref: `${stringFromUnknown(row.target_type)}:${stringFromUnknown(row.target_id)}#${stringFromUnknown(row.property)}`,
+    summary: 'Open assertion conflict requires review.',
+    severity: 'high',
+  }));
+}
+
+async function collectRunnerJobs(engine: BrainEngine, limit: number): Promise<ReportRunnerJob[]> {
+  const [durableRows, legacyRows] = await Promise.all([
+    queryRows(engine, `
+      SELECT id, memory_job_id, task_type, status, failure_class, token_usage_json, cost_estimate_usd
+      FROM runner_jobs
+      ORDER BY updated_at DESC, id ASC
+      LIMIT ?
+    `, [limit], `
+      SELECT id, memory_job_id, task_type, status, failure_class, token_usage_json, cost_estimate_usd
+      FROM runner_jobs
+      ORDER BY updated_at DESC, id ASC
+      LIMIT $1
+    `),
+    queryRows(engine, `
+    SELECT id, name, status, failure_class, payload_json, result_json
+    FROM memory_jobs
+    WHERE name LIKE 'runner:%'
+       OR json_extract(payload_json, '$.task_type') IS NOT NULL
+    ORDER BY updated_at DESC, id ASC
+    LIMIT ?
+  `, [limit], `
+    SELECT id, name, status, failure_class, payload_json, result_json
+    FROM memory_jobs
+    WHERE name LIKE 'runner:%'
+       OR payload_json ? 'task_type'
+    ORDER BY updated_at DESC, id ASC
+    LIMIT $1
+  `),
+  ]);
+
+  const durableMemoryJobIds = new Set(
+    durableRows.map((row) => nullableString(row.memory_job_id)).filter((id): id is string => Boolean(id)),
+  );
+  const durableJobs = durableRows.map((row) => {
+    const tokenUsage = jsonObject(row.token_usage_json);
+    return {
+      id: stringFromUnknown(row.id),
+      memory_job_id: nullableString(row.memory_job_id) ?? undefined,
+      task_type: stringFromUnknown(row.task_type),
+      status: runnerStatus(row.status),
+      failure_class: nullableString(row.failure_class) ?? undefined,
+      token_usage_json: {
+        input_tokens: numberFromUnknown(tokenUsage.input_tokens),
+        output_tokens: numberFromUnknown(tokenUsage.output_tokens),
+        total_tokens: numberFromUnknown(tokenUsage.total_tokens),
+      },
+      cost_estimate_usd: numberFromUnknown(row.cost_estimate_usd),
+    };
+  });
+  const legacyJobs = legacyRows
+    .filter((row) => !durableMemoryJobIds.has(stringFromUnknown(row.id)))
+    .map((row) => {
+      const payload = jsonObject(row.payload_json);
+      const result = jsonObject(row.result_json);
+      const tokenUsage = jsonObject(payload.token_usage_json ?? result.token_usage_json);
+      return {
+        id: stringFromUnknown(row.id),
+        memory_job_id: stringFromUnknown(row.id),
+        task_type: stringFromUnknown(payload.task_type) || stringFromUnknown(row.name),
+        status: runnerStatus(row.status),
+        failure_class: nullableString(row.failure_class) ?? undefined,
+        token_usage_json: {
+          input_tokens: numberFromUnknown(tokenUsage.input_tokens),
+          output_tokens: numberFromUnknown(tokenUsage.output_tokens),
+          total_tokens: numberFromUnknown(tokenUsage.total_tokens),
+        },
+        cost_estimate_usd: numberFromUnknown(payload.cost_estimate_usd ?? result.cost_estimate_usd),
+      };
+    });
+
+  return [...durableJobs, ...legacyJobs].slice(0, limit);
+}
+
+async function collectMaintenanceJobs(engine: BrainEngine, limit: number): Promise<ReportMaintenanceJob[]> {
+  const rows = await queryRows(engine, `
+    SELECT id, name, status, failure_class
+    FROM memory_jobs
+    WHERE status IN ('failed', 'dead')
+      AND name NOT LIKE 'runner:%'
+      AND json_extract(payload_json, '$.task_type') IS NULL
+    ORDER BY updated_at DESC, id ASC
+    LIMIT ?
+  `, [limit], `
+    SELECT id, name, status, failure_class
+    FROM memory_jobs
+    WHERE status IN ('failed', 'dead')
+      AND name NOT LIKE 'runner:%'
+      AND NOT (payload_json ? 'task_type')
+    ORDER BY updated_at DESC, id ASC
+    LIMIT $1
+  `);
+  return rows.map((row) => ({
+    id: stringFromUnknown(row.id),
+    name: stringFromUnknown(row.name),
+    status: stringFromUnknown(row.status),
+    failure_class: nullableString(row.failure_class) ?? undefined,
+  }));
+}
+
+async function collectConnectorHealth(engine: BrainEngine, limit: number): Promise<ReportConnectorHealth[]> {
+  const rows = await queryRows(engine, `
+    SELECT ca.connector_id, ca.id AS account_id,
+           COALESCE(css.health_status, cr.health_status, 'unknown') AS health_status,
+           COALESCE(cr.rotation_status, 'current') AS credential_status
+    FROM connector_accounts ca
+    LEFT JOIN credential_refs cr ON cr.id = ca.credential_ref_id
+    LEFT JOIN connector_sync_states css ON css.account_id = ca.id
+    ORDER BY ca.updated_at DESC, ca.id ASC
+    LIMIT ?
+  `, [limit], `
+    SELECT ca.connector_id, ca.id AS account_id,
+           COALESCE(css.health_status, cr.health_status, 'unknown') AS health_status,
+           COALESCE(cr.rotation_status, 'current') AS credential_status
+    FROM connector_accounts ca
+    LEFT JOIN credential_refs cr ON cr.id = ca.credential_ref_id
+    LEFT JOIN connector_sync_states css ON css.account_id = ca.id
+    ORDER BY ca.updated_at DESC, ca.id ASC
+    LIMIT $1
+  `);
+  return rows.map((row) => ({
+    connector_id: stringFromUnknown(row.connector_id),
+    account_id: stringFromUnknown(row.account_id),
+    health_status: connectorHealthStatus(row.health_status),
+    credential_status: credentialStatus(row.credential_status),
+  }));
+}
+
+async function queryRows(
+  engine: BrainEngine,
+  sqliteSql: string,
+  params: unknown[],
+  postgresSql = sqliteSql,
+): Promise<Record<string, unknown>[]> {
+  try {
+    const candidate = engine as BrainEngine & {
+      database?: { query<T = Record<string, unknown>>(sql: string): { all(...params: unknown[]): T[] } };
+      db?: { query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
+      sql?: { unsafe(sql: string, params?: unknown[]): Promise<Record<string, unknown>[]> };
+    };
+    if (candidate.database) {
+      return candidate.database.query<Record<string, unknown>>(sqliteSql).all(...params);
+    }
+    if (candidate.db) {
+      return (await candidate.db.query(postgresSql, params)).rows;
+    }
+    if (candidate.sql?.unsafe) {
+      return await candidate.sql.unsafe(postgresSql, params);
+    }
+  } catch {
+    return [];
+  }
+  return [];
+}
+
+function projectionStatus(value: unknown): ReportProjectionTarget['status'] {
+  const status = stringFromUnknown(value);
+  if (status === 'applied' || status === 'pending_reconcile' || status === 'reconciled' || status === 'failed' || status === 'conflict') {
+    return status;
+  }
+  return 'failed';
+}
+
+function sourceHealthStatus(value: unknown): NonNullable<ReportSource['health_status']> {
+  const status = stringFromUnknown(value);
+  if (status === 'healthy' || status === 'unhealthy' || status === 'unknown') return status;
+  return 'unknown';
+}
+
+function connectorHealthStatus(value: unknown): ReportConnectorHealth['health_status'] {
+  const status = stringFromUnknown(value);
+  if (status === 'healthy' || status === 'unhealthy' || status === 'expired' || status === 'unknown') return status;
+  if (status === 'revoked' || status === 'paused') return 'unhealthy';
+  return 'unknown';
+}
+
+function credentialStatus(value: unknown): ReportConnectorHealth['credential_status'] {
+  const status = stringFromUnknown(value);
+  if (status === 'current' || status === 'rotation_due' || status === 'rotating' || status === 'revoked') return status;
+  return 'current';
+}
+
+function sourceItemStatus(value: unknown): ReportSourceItem['status'] {
+  const status = stringFromUnknown(value);
+  if (status === 'ready') return 'ingested';
+  if (status === 'failed') return 'failed';
+  return 'skipped';
+}
+
+function runnerStatus(value: unknown): ReportRunnerJob['status'] {
+  const status = stringFromUnknown(value);
+  if (status === 'queued' || status === 'running' || status === 'succeeded' || status === 'degraded' || status === 'cancelled') return status;
+  if (status === 'waiting' || status === 'delayed') return 'queued';
+  if (status === 'active') return 'running';
+  if (status === 'completed') return 'succeeded';
+  if (status === 'failed' || status === 'dead') return 'failed';
+  if (status === 'cancelled') return 'cancelled';
+  return 'degraded';
+}
+
+function stringFromUnknown(value: unknown): string {
+  if (value instanceof Date) return value.toISOString();
+  return value == null ? '' : String(value);
+}
+
+function nullableString(value: unknown): string | null {
+  const stringValue = stringFromUnknown(value);
+  return stringValue ? stringValue : null;
+}
+
+function booleanFromUnknown(value: unknown): boolean {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function numberFromUnknown(value: unknown): number | undefined {
+  if (value == null || value === '') return undefined;
+  const numberValue = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numberValue) ? numberValue : undefined;
+}
+
+function jsonObject(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function printMemoryReportHelp(): void {
+  console.log(`mbrain memory-report -- show the memory review report surface
+
+USAGE
+  mbrain memory-report [--json] [--scope-id <scope>] [--limit <n>] [--now <iso>]
+`);
+}

@@ -33,8 +33,8 @@ The roadmap is only valid inside the following execution envelope.
 
 | Constraint | Required Behavior |
 |---|---|
-| Local/offline execution | Every phase must preserve a usable local/offline path. New capabilities may use different implementations by backend, but the roadmap may not defer local/offline support to a later "catch-up" release. |
-| Backend and local-path parity | New architectural capabilities must preserve semantic parity across the supported backend and local execution surface at the contract boundary, including SQLite, Postgres, and PGLite or equivalent local paths where the product already exposes them. Temporary implementation gaps are acceptable only if they remain behind non-default or non-contract surfaces and have an explicit closure path. |
+| Local/offline execution | Existing local/offline paths remain available for legacy use, import/export, and escape-hatch recovery, but new personal-memory runtime features target managed or local Postgres first. |
+| Backend and local-path isolation | New Postgres runtime capabilities must not be constrained by SQLite/PGLite parity. Legacy local engines stay explicitly isolated from target runtime behavior unless a phase deliberately ports a feature back. |
 | Existing CLI/MCP contract | Existing CLI and MCP behavior should remain stable unless a phase explicitly versions or documents the change. Internal refactors do not justify silent contract drift. |
 | Markdown continuity | Markdown notes and procedures remain valid canonical artifacts throughout migration. No phase may require converting human-curated knowledge into a DB-only representation. |
 | Derived artifact status | Note manifests, context maps, atlases, reports, indexes, and similar artifacts remain regenerable derived state. Migration phases may add or refresh them, but may not let them silently replace canonical truth. |
@@ -42,7 +42,7 @@ The roadmap is only valid inside the following execution envelope.
 | Measurement discipline | Phases that touch local search, import throughput, resume workflows, structural extraction, or background analysis must define baseline and follow-up measurement early enough to shape the phase, not only to evaluate it after the fact. |
 | Workstream grounding | Each phase must map to a concrete inefficiency already identified in the current repository, not to an abstract vNext aspiration detached from current bottlenecks. |
 
-Within this envelope, SQLite is not a "lite" preview tier, Postgres is not the only real target, and PGLite or other local execution paths are not allowed to drift into silent second-class behavior. The redesign succeeds only if the supported backend and local execution surface remains semantically coherent at the contract boundary, even when one implementation carries more optimized internals than another.
+Within this envelope, Postgres is the target runtime for new personal memory features. SQLite and PGLite remain explicit legacy/local paths for existing workflows, but they must not silently define or dilute the Postgres runtime contract.
 
 ## Phase Breakdown
 
@@ -58,6 +58,11 @@ Within this envelope, SQLite is not a "lite" preview tier, Postgres is not the o
 | Phase 7 | Later canonical knowledge consolidation | Adds slower-moving canonical knowledge structures only after operational memory, structural orientation, and governance are already in place. |
 | Phase 8 | Evaluation harness and dream cycle | Turns the redesign into a measurable system after the major write and retrieval paths exist. |
 | Phase 9 | Memory operations control plane | Adds governed write authority, mutation auditing, redaction lifecycle, and operator health checks after the evaluation harness can verify the full loop. |
+| Phase 10 | System-of-record reconciler | Reconciles canonical Markdown and derived DB projections after governed write authority exists. |
+| Phase 11 | Personal data connectors | Adds source-choice and connector framework foundations after source policy, raw ingest, and autopilot/runtime primitives exist. |
+| Phase 12 | Review, audit, and health | Gives users a report-first audit surface after automation, lifecycle, and projection health have something concrete to summarize. |
+| Phase 13 | Evaluation and replay | Adds lifecycle replay fixtures after report/audit surfaces can expose full-loop evidence. |
+| Phase 14 | Migration and cleanup | Quarantines legacy runtime paths and updates user-facing guidance after replacement systems have executable checks. |
 
 ## Deliverables by Phase
 
@@ -73,6 +78,11 @@ Within this envelope, SQLite is not a "lite" preview tier, Postgres is not the o
 | Phase 7 | Later canonical knowledge consolidation, historical-validity safeguards, and controls that prevent inferred or outdated knowledge from outrunning current evidence. |
 | Phase 8 | System-level evaluation, longitudinal comparison against the earlier baselines, regression detection for retrieval and scope isolation, and review loops for long-running maintenance. |
 | Phase 9 | Memory mutation ledger, memory realms and sessions, governed patch application, dry-run mutation checks, redaction plan lifecycle, memory operations health reporting, and MCP acceptance coverage for the completed control plane. |
+| Phase 10 | Projection target records, Markdown projection contracts, drift detection, reconciliation modes, and rollback-safe system-of-record repair boundaries. |
+| Phase 11 | Connector registry, credential references, source sync protocol, minimal-consent source selection, connector health, and idempotent raw-ingest mapping without direct canonical writes. |
+| Phase 12 | Daily/periodic memory report, audit query surfaces, doctor health expansion, failed-job/source/connector summaries, and report actions routed through governed operations. |
+| Phase 13 | Deterministic replay fixture format, lifecycle trace coverage, policy/retrieval/projection/runner/source-safety checks, and budget-gated live eval hooks. |
+| Phase 14 | Final docs and CLI help cleanup, setup-agent/rule updates, legacy engine quarantine, migration guide/helper behavior, config cleanup, and PR/release summary material. |
 
 Deliverables should remain scoped to what the current repository can absorb phase by phase. If a deliverable requires a deeper subsystem contract, that contract belongs in the later workstream document for that subsystem rather than here.
 
@@ -82,13 +92,13 @@ The roadmap is justified by the inefficiency analysis only if each phase reduces
 
 | Existing Inefficiency Workstream | Relevant Phases | Migration Implication |
 |---|---|---|
-| Engine implementation duplication across SQLite, Postgres, and PGLite | Phase 0 through Phase 9 | Every phase should prefer shared services and capability flags over backend-specific product logic. New memory capabilities should enter through stable contracts rather than fan out into three divergent implementations. |
-| Split between contract-first operations and CLI-only flows | Phase 0 through Phase 9 | New roadmap capabilities should land behind reusable operations or service layers first, with thin CLI and MCP adapters. The redesign should reduce accidental command-surface divergence instead of adding more of it. |
+| Engine implementation duplication across SQLite, Postgres, and PGLite | Phase 0 through Phase 14 | Every phase should prefer shared services and capability flags over backend-specific product logic. New memory capabilities should enter through stable contracts rather than fan out into three divergent implementations. |
+| Split between contract-first operations and CLI-only flows | Phase 0 through Phase 14 | New roadmap capabilities should land behind reusable operations or service layers first, with thin CLI and MCP adapters. The redesign should reduce accidental command-surface divergence instead of adding more of it. |
 | Mixed Postgres connection ownership | Phase 0, Phase 1, Phase 5, Phase 7, Phase 9 | Phases that add canonical write paths or governance state must not deepen reliance on mixed singleton and instance access. They should move the system toward clearer ownership and transaction boundaries. |
 | Full-scan local vector search in SQLite | Phase 2, Phase 3, Phase 6, Phase 8 | Structural maps and atlas features should improve orientation without assuming expensive semantic retrieval. Semantic map work must remain performance-aware for local backends and be measured explicitly before broad exposure. |
 | Local import throughput limits caused by engine capability gaps | Phase 0, Phase 2, Phase 3, Phase 8 | Manifest extraction, map builds, and future dream-cycle workloads must be designed so the local path does not become a second-class throughput story. Capability modeling should remain explicit. |
 | Code-to-doc drift after the local-first transition | Phase 0 and every later phase | Each phase must keep docs aligned with actual contract and runtime behavior. The redesign documents are part of the migration surface, not separate from it. |
-| Missing benchmark baselines | Phase 0 through Phase 9 | The roadmap should establish baselines in Phase 0 and require phase-shaping measurement whenever a phase changes local search, import throughput, resume quality, extraction cost, background analysis, or governed write behavior. Retrieval and workflow wins are not accepted without measured evidence. |
+| Missing benchmark baselines | Phase 0 through Phase 14 | The roadmap should establish baselines in Phase 0 and require phase-shaping measurement whenever a phase changes local search, import throughput, resume quality, extraction cost, background analysis, governed write behavior, connector sync, or migration cleanup. Retrieval and workflow wins are not accepted without measured evidence. |
 
 This mapping is why the roadmap stays improvement-first. The phases are not just architecture milestones; they are a sequence for attacking today’s structural duplication, contract drift, local bottlenecks, and missing evidence discipline.
 
@@ -133,13 +143,18 @@ Minimum acceptance emphasis by phase:
 - Phases 5 through 7 must prove that governance, higher-noise derived analysis, and later canonical knowledge changes cannot bypass provenance, scope, or contradiction checks.
 - Phase 8 must prove that the redesign can be evaluated as a system rather than by anecdote and that later measurements are comparable to the early baselines.
 - Phase 9 must prove that governed write authority, mutation auditing, patch application, redaction, and operations health remain explicit, reviewable, rollback-safe, and semantically aligned across the supported execution surface.
+- Phase 10 must prove projection reconciliation preserves Markdown as the system of record and leaves derived records rebuildable.
+- Phase 11 must prove source choice, credential references, connector health, and raw-ingest mapping are persistent and inspectable before claiming connector acceptance.
+- Phase 12 must prove report actions are executable governed operations or intentionally withheld when the current record state makes them invalid.
+- Phase 13 must distinguish deterministic fixture interpretation from true end-to-end replay and must not claim full lifecycle replay until production services execute the flow.
+- Phase 14 must prove migration guidance, fresh init defaults, setup prompts, and legacy runtime quarantine are aligned with the Postgres target runtime.
 
 ## Risk Register
 
 | Risk | Why It Matters | Mitigation Direction |
 |---|---|---|
-| Backend skew | SQLite, Postgres, and PGLite or equivalent local execution paths may drift as new features land. | Enforce parity tests at each public contract boundary and keep backend-specific logic behind shared service contracts. |
-| Local/offline regression | New map, governance, or evaluation work could quietly assume heavier runtime infrastructure than the current local path can support. | Keep local/offline as a release gate for every phase and measure local workloads explicitly. |
+| Backend skew | SQLite, Postgres, and PGLite or equivalent local execution paths may drift as new features land. | Do not make SQLite/PGLite parity a target-runtime release gate; instead keep legacy/local behavior explicitly scoped and hide or document unsupported target-only surfaces. |
+| Local/offline regression | New map, governance, or evaluation work could quietly assume heavier runtime infrastructure than the current local path can support. | Measure local workloads when a phase intentionally supports them, but let Postgres-target features ship behind honest capability gates when legacy engines are out of scope. |
 | Contract drift between operations, CLI, MCP, and docs | The redesign could add new behavior faster than the public contract is cleaned up. | Route new work through service or operation boundaries first and update docs as part of the same phase. |
 | Candidate pollution | Derived or inferred signals may flood governance state and reduce trust. | Introduce scoring, triage, and promotion checks before semantic analysis becomes a primary workflow. |
 | Scope leakage | Work and personal memory boundaries may blur as retrieval grows more capable. | Keep scope checks in the acceptance gates and require explicit scope decisions before cross-domain retrieval or writes. |
@@ -166,4 +181,14 @@ Phase 7 is intentionally late because later canonical knowledge changes are valu
 
 Phase 8 validates the full loop because evaluation and dream-cycle maintenance should measure system behavior rather than guess at isolated wins. Benchmarking, leakage checks, retrieval evaluation, and repeated-work tests are the evidence layer that tells the team whether the migration actually improved the existing product.
 
-Phase 9 closes the roadmap by adding the memory operations control plane after that evidence layer exists. Mutation ledgers, memory realms and sessions, dry-run mutation checks, governed patch application, redaction plans, and health reporting are intentionally late because they grant durable write authority and need the earlier governance, scope, provenance, and acceptance machinery to fail closed.
+Phase 9 adds the memory operations control plane after that evidence layer exists. Mutation ledgers, memory realms and sessions, dry-run mutation checks, governed patch application, redaction plans, and health reporting are intentionally late because they grant durable write authority and need the earlier governance, scope, provenance, and acceptance machinery to fail closed.
+
+Phase 10 follows the control plane because projection repair must be able to explain what it changes and why. It keeps Markdown as the durable system of record while making database projections auditable and repairable.
+
+Phase 11 follows the source and runtime foundations because personal data connectors need source policy, raw-ingest provenance, and maintenance scheduling before users can safely choose new sources. Connector stubs are not full source-choice acceptance unless registration and consent decisions are persistent and inspectable.
+
+Phase 12 comes after automation and lifecycle state because the daily report should summarize real activity, not invent a dashboard ahead of the underlying evidence. Report actions must be routed through governed operations and must only be offered when they can run against the current record state.
+
+Phase 13 comes after review and audit because replay needs the full chain of records, jobs, events, reports, and projections to be observable. Deterministic fixtures can guard regressions early, but full phase acceptance requires executing the lifecycle flow rather than only interpreting declared fixture arrays.
+
+Phase 14 is last because cleanup is only safe after replacement paths have executable evidence. It updates docs, setup, migration, and legacy-runtime boundaries so future work does not keep treating SQLite/PGLite parity as the target constraint for new Postgres runtime features.

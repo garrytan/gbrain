@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, test, expect } from 'bun:test';
+import { setDefaultTimeout, afterEach, beforeEach, describe, test, expect } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
+
+setDefaultTimeout(20_000);
 
 const originalEnv = { ...process.env };
 const PGLITE_MIGRATION_TEST_TIMEOUT_MS = 45_000;

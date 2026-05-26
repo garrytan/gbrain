@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { setDefaultTimeout, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -12,6 +12,8 @@ import {
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { MemoryMutationTargetKind } from '../src/core/types.ts';
 import { contentHash } from '../src/core/utils.ts';
+
+setDefaultTimeout(20_000);
 
 interface EngineHarness {
   label: 'sqlite' | 'pglite';

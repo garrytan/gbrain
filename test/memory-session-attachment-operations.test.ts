@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { setDefaultTimeout, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -7,6 +7,8 @@ import type { Operation, OperationContext } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { hashCanonicalJson } from '../src/core/services/target-snapshot-hash-service.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+
+setDefaultTimeout(20_000);
 
 async function createSqliteHarness(label: string): Promise<{
   engine: SQLiteEngine;

@@ -17,12 +17,16 @@
 
 **Depends on:** Part 5 (parallel import with per-worker engines) -- already shipped.
 
-## P0
+## Legacy Compatibility
 
-### Fix `bun build --compile` WASM embedding for PGLite
+### PGLite compiled-binary compatibility
 **What:** Submit PR to oven-sh/bun fixing WASM file embedding in `bun build --compile` (issue oven-sh/bun#15032).
 
-**Why:** PGLite's WASM files (~3MB) can't be embedded in the compiled binary. Users who install via `bun install -g mbrain` are fine (WASM resolves from node_modules), but the compiled binary can't use PGLite. Jarred Sumner (Bun founder, YC W22) would likely be receptive.
+**Why:** PGLite is now an explicit legacy compatibility and migration-test path,
+not the target runtime. Its WASM files (~3MB) still cannot be embedded in the
+compiled binary. Users who install via `bun install -g mbrain` are fine (WASM
+resolves from node_modules), but the compiled binary cannot use the legacy
+PGLite escape hatch.
 
 **Pros:** Single-binary distribution includes PGLite. No sidecar files needed.
 
@@ -30,7 +34,10 @@
 
 **Context:** Issue has been open since Nov 2024. The root cause is that `bun build --compile` generates virtual filesystem paths (`/$bunfs/root/...`) that PGLite can't resolve. Multiple users have reported this. A fix would benefit any WASM-dependent package, not just PGLite.
 
-**Depends on:** PGLite engine shipping (to have a real use case for the PR).
+**Depends on:** A decision that the legacy PGLite escape hatch still needs
+compiled-binary support after the Postgres target runtime migration.
+
+## P0
 
 ### ChatGPT MCP support (OAuth 2.1)
 **What:** Add OAuth 2.1 with Dynamic Client Registration to the self-hosted MCP server so ChatGPT can connect.

@@ -40,6 +40,42 @@ Expected:
 - sqlite/local mode does not pretend to support cloud file storage
 - pglite local-path mode should follow the same honest contract reporting
 
+## Postgres runtime foundation verification
+
+Run:
+
+```bash
+bun test test/postgres-runtime-foundation.test.ts test/config.test.ts test/doctor.test.ts
+```
+
+Expected:
+
+- Postgres runtime profile resolution redacts password-bearing DSNs.
+- SQLite and PGLite are rejected for new Postgres runtime features.
+- `mbrain doctor` includes `runtime_db_identity` for CLI, MCP, and autopilot.
+- Remote Postgres DSNs require an explicitly supplied `database_url`.
+- The shared Postgres pool used by CLI, MCP, and autopilot remains bounded.
+
+## Phase 14 Postgres runtime migration cleanup
+
+Run:
+
+```bash
+bun test test/postgres-runtime-migration-cleanup.test.ts
+```
+
+Expected:
+
+- fresh install and docs point to Postgres-only target behavior.
+- legacy SQLite/PGLite paths are isolated from target runtime behavior.
+- guide-only output marks counts and content hashes pending until Markdown
+  import and projection reconciliation run.
+- completed legacy compatibility copies still verify counts and content hashes.
+- DB-only legacy state is called out for manual review instead of silently
+  claiming full migration.
+- deterministic eval/replay smoke passes after migration:
+  `bun run test:phase13`.
+
 ## Phase 0 parity verification
 
 Run:

@@ -49,8 +49,49 @@ describe('CLI source shape', () => {
     expect(operations.some(op => op.name === 'sync_brain')).toBe(true);
   });
 
+  test('lifecycle forgetting operations are exposed through MCP and CLI contract', () => {
+    const lifecycleOps = operations.filter(op => op.name.includes('lifecycle'));
+    expect(lifecycleOps.map(op => [op.name, op.cliHints?.name, op.mutating])).toEqual(
+      expect.arrayContaining([
+        ['get_lifecycle_forgetting_report', 'lifecycle-report', false],
+        ['plan_lifecycle_purge', 'lifecycle-plan-purge', true],
+        ['restore_lifecycle_memory', 'lifecycle-restore', true],
+        ['review_lifecycle_purge_plan', 'lifecycle-review-purge-plan', true],
+        ['purge_lifecycle_memory', 'lifecycle-purge', true],
+      ]),
+    );
+    expect(cliSource).toContain('lifecycle-report [--scope-id S]');
+    expect(cliSource).toContain('lifecycle-plan-purge [--scope-id S]');
+    expect(cliSource).toContain('lifecycle-restore --entity-type T --entity-id ID');
+    expect(cliSource).toContain('lifecycle-review-purge-plan --purge-plan-id P --decision approve');
+    expect(cliSource).toContain('lifecycle-purge --entity-type T --entity-id ID --purge-plan-id P');
+  });
+
+  test('assertion retrieval operation is exposed through MCP and CLI contract', () => {
+    const operation = operations.find(op => op.name === 'list_retrievable_assertions');
+
+    expect(operation?.cliHints?.name).toBe('assertion-retrieval');
+    expect(operation?.mutating).toBeUndefined();
+    expect(cliSource).toContain('assertion-retrieval [--target-slug S]');
+  });
+
   test('setup-agent help mentions Claude stop hook installation', () => {
     expect(cliSource).toContain('Register MCP, inject rules, install Claude stop hook');
+  });
+
+  test('connectors command is exposed as a registry inspection command', () => {
+    expect(cliSource).toContain("connectors: async () => (await import('./commands/connectors.ts')).runConnectors");
+    expect(cliSource).toContain('connectors [list|show]');
+  });
+
+  test('memory-report command is exposed as the review report surface', () => {
+    expect(cliSource).toContain("'memory-report': async () => (await import('./commands/memory-report.ts')).runMemoryReport");
+    expect(cliSource).toContain('memory-report [--json]');
+
+    const noEngineBlock = cliSource.match(/const DIRECT_NO_ENGINE_COMMANDS:.*?= \{(.*?)\};/s)?.[1] ?? '';
+    const engineBlock = cliSource.match(/const DIRECT_ENGINE_COMMANDS:.*?= \{(.*?)\};/s)?.[1] ?? '';
+    expect(noEngineBlock).not.toContain("'memory-report'");
+    expect(engineBlock).toContain("'memory-report'");
   });
 
   test('imports operations from operations.ts', () => {
@@ -109,9 +150,9 @@ describe('CLI version', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
     expect(pkg.name).toBe('mbrain');
     expect(pkg.bin).toMatchObject({ mbrain: 'src/cli.ts' });
-    expect(pkg.description).toContain('Local-first');
-    expect(pkg.description).toContain('SQLite');
-    expect(pkg.description).not.toContain('Postgres-native');
+    expect(pkg.description).toContain('Postgres + pgvector');
+    expect(pkg.description).toContain('SQLite/offline compatibility');
+    expect(pkg.description).not.toContain('Local-first');
   });
 
   test('VERSION matches package.json', async () => {
@@ -277,6 +318,61 @@ describe('CLI dispatch integration', () => {
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
     expect(stdout).toContain('Usage: mbrain get');
+    expect(exitCode).toBe(0);
+  });
+
+  test('memory-report --json does not fabricate a healthy report without a configured brain', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'memory-report', '--json'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HOME: tempHome,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).not.toContain('No reportable memory exceptions');
+    expect(stdout).not.toContain('"status":"ok"');
+    expect(stderr).toContain('No brain configured');
+  });
+
+  test('dream --help prints usage without DB connection', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'dream', '--help'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    expect(stdout).toContain('Usage: mbrain dream');
+    expect(stderr).toBe('');
+    expect(exitCode).toBe(0);
+  });
+
+  test('autopilot dream --help prints usage without DB connection', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'autopilot', 'dream', '--help'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    expect(stdout).toContain('mbrain autopilot dream');
+    expect(stderr).toBe('');
     expect(exitCode).toBe(0);
   });
 
@@ -835,9 +931,11 @@ describe('CLI dispatch integration', () => {
     const exitCode = await proc.exited;
     expect(stdout).toContain('Usage: mbrain init');
     expect(stdout).toContain('--local');
-    expect(stdout).toContain('Recommended personal path: local SQLite');
-    expect(stdout).toContain('Bare mbrain init remains local PGLite for compatibility');
+    expect(stdout).toContain('Bare mbrain init now targets Postgres');
+    expect(stdout).toContain('Legacy local SQLite profile');
     expect(stdout).toContain('--pglite');
+    expect(stdout).toContain('--dsn');
+    expect(stdout).toContain('--profile');
     expect(stdout).toContain('--supabase');
     expect(exitCode).toBe(0);
     // Must not have created any brain artifacts under $HOME/.mbrain

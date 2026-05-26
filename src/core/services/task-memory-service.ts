@@ -11,6 +11,7 @@ import {
   extractCodeClaimsFromTrace,
   verifyCodeClaims,
 } from './code-claim-verification-service.ts';
+import { linkGeneratedAssertionsToTaskEvent } from '../assertions/session-grants.ts';
 
 export interface TaskResumeCard {
   task_id: string;
@@ -42,6 +43,12 @@ export interface TaskResumeTraceTemplate {
   derived_consulted: string[];
   verification: string[];
   outcome: string;
+}
+
+export function linkTaskEventGeneratedAssertions(
+  input: Parameters<typeof linkGeneratedAssertionsToTaskEvent>[0],
+): ReturnType<typeof linkGeneratedAssertionsToTaskEvent> {
+  return linkGeneratedAssertionsToTaskEvent(input);
 }
 
 export async function buildTaskResumeCard(engine: BrainEngine, taskId: string): Promise<TaskResumeCard> {

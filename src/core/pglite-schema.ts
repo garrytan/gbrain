@@ -370,6 +370,172 @@ CREATE INDEX IF NOT EXISTS idx_derived_index_state_status
   ON derived_index_state(scope_id, status, updated_at DESC);
 
 -- ============================================================
+-- memory_jobs: durable maintenance runtime job queue
+-- ============================================================
+CREATE TABLE IF NOT EXISTS memory_jobs (
+  id                TEXT PRIMARY KEY,
+  name              TEXT NOT NULL,
+  queue             TEXT NOT NULL DEFAULT 'maintenance',
+  status            TEXT NOT NULL CHECK (status IN ('waiting', 'active', 'completed', 'failed', 'dead', 'cancelled', 'delayed', 'paused', 'waiting_children')),
+  priority          INTEGER NOT NULL DEFAULT 0,
+  payload_json      JSONB NOT NULL DEFAULT '{}',
+  result_json       JSONB,
+  progress_json     JSONB NOT NULL DEFAULT '{}',
+  max_attempts      INTEGER NOT NULL DEFAULT 1 CHECK (max_attempts > 0),
+  attempts_started  INTEGER NOT NULL DEFAULT 0 CHECK (attempts_started >= 0),
+  attempts_finished INTEGER NOT NULL DEFAULT 0 CHECK (attempts_finished >= 0),
+  backoff_type      TEXT NOT NULL DEFAULT 'none' CHECK (backoff_type IN ('none', 'fixed', 'exponential')),
+  backoff_delay_ms  INTEGER NOT NULL DEFAULT 0 CHECK (backoff_delay_ms >= 0),
+  lock_token        TEXT,
+  lock_owner        TEXT,
+  lock_expires_at   TIMESTAMPTZ,
+  timeout_ms        INTEGER CHECK (timeout_ms IS NULL OR timeout_ms > 0),
+  timeout_at        TIMESTAMPTZ,
+  idempotency_key   TEXT,
+  parent_job_id     TEXT REFERENCES memory_jobs(id) ON DELETE SET NULL,
+  failure_class     TEXT CHECK (
+    failure_class IS NULL OR failure_class IN (
+      'database',
+      'lock_timeout',
+      'runner_unavailable',
+      'llm_unavailable',
+      'policy_denied',
+      'source_unavailable',
+      'prompt_injection_quarantine',
+      'secret_redaction_required',
+      'projection_failed',
+      'timeout',
+      'cancelled',
+      'internal'
+    )
+  ),
+  last_error        TEXT,
+  next_run_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  started_at        TIMESTAMPTZ,
+  finished_at       TIMESTAMPTZ,
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_jobs_active_idempotency
+  ON memory_jobs(idempotency_key)
+  WHERE idempotency_key IS NOT NULL
+    AND status NOT IN ('completed', 'failed', 'dead', 'cancelled');
+CREATE INDEX IF NOT EXISTS idx_memory_jobs_claimable
+  ON memory_jobs(queue, status, priority DESC, next_run_at ASC, created_at ASC)
+  WHERE status IN ('waiting', 'delayed', 'active');
+CREATE INDEX IF NOT EXISTS idx_memory_jobs_name_status
+  ON memory_jobs(name, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_jobs_parent
+  ON memory_jobs(parent_job_id)
+  WHERE parent_job_id IS NOT NULL;
+
+-- ============================================================
+-- memory_job_events/logs/artifacts: append-only runtime audit trail
+-- ============================================================
+CREATE TABLE IF NOT EXISTS memory_job_events (
+  id            TEXT PRIMARY KEY,
+  job_id        TEXT REFERENCES memory_jobs(id) ON DELETE SET NULL,
+  event_type    TEXT NOT NULL,
+  worker_id     TEXT,
+  failure_class TEXT,
+  metadata_json JSONB NOT NULL DEFAULT '{}',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_job_events_job_created
+  ON memory_job_events(job_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_memory_job_events_type_created
+  ON memory_job_events(event_type, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_job_logs (
+  id            TEXT PRIMARY KEY,
+  job_id        TEXT NOT NULL REFERENCES memory_jobs(id) ON DELETE CASCADE,
+  level         TEXT NOT NULL CHECK (level IN ('debug', 'info', 'warn', 'error')),
+  message       TEXT NOT NULL,
+  metadata_json JSONB NOT NULL DEFAULT '{}',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_job_logs_job_created
+  ON memory_job_logs(job_id, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS memory_job_artifacts (
+  id            TEXT PRIMARY KEY,
+  job_id        TEXT NOT NULL REFERENCES memory_jobs(id) ON DELETE CASCADE,
+  artifact_kind TEXT NOT NULL,
+  artifact_ref  TEXT NOT NULL,
+  metadata_json JSONB NOT NULL DEFAULT '{}',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_job_artifacts_job_kind
+  ON memory_job_artifacts(job_id, artifact_kind, created_at DESC);
+
+CREATE OR REPLACE FUNCTION prevent_maintenance_audit_mutation()
+RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'maintenance audit tables are append-only';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS prevent_memory_job_events_update ON memory_job_events;
+CREATE TRIGGER prevent_memory_job_events_update
+  BEFORE UPDATE ON memory_job_events
+  FOR EACH ROW EXECUTE FUNCTION prevent_maintenance_audit_mutation();
+DROP TRIGGER IF EXISTS prevent_memory_job_events_delete ON memory_job_events;
+CREATE TRIGGER prevent_memory_job_events_delete
+  BEFORE DELETE ON memory_job_events
+  FOR EACH ROW EXECUTE FUNCTION prevent_maintenance_audit_mutation();
+
+DROP TRIGGER IF EXISTS prevent_memory_job_logs_update ON memory_job_logs;
+CREATE TRIGGER prevent_memory_job_logs_update
+  BEFORE UPDATE ON memory_job_logs
+  FOR EACH ROW EXECUTE FUNCTION prevent_maintenance_audit_mutation();
+DROP TRIGGER IF EXISTS prevent_memory_job_logs_delete ON memory_job_logs;
+CREATE TRIGGER prevent_memory_job_logs_delete
+  BEFORE DELETE ON memory_job_logs
+  FOR EACH ROW EXECUTE FUNCTION prevent_maintenance_audit_mutation();
+
+DROP TRIGGER IF EXISTS prevent_memory_job_artifacts_update ON memory_job_artifacts;
+CREATE TRIGGER prevent_memory_job_artifacts_update
+  BEFORE UPDATE ON memory_job_artifacts
+  FOR EACH ROW EXECUTE FUNCTION prevent_maintenance_audit_mutation();
+DROP TRIGGER IF EXISTS prevent_memory_job_artifacts_delete ON memory_job_artifacts;
+CREATE TRIGGER prevent_memory_job_artifacts_delete
+  BEFORE DELETE ON memory_job_artifacts
+  FOR EACH ROW EXECUTE FUNCTION prevent_maintenance_audit_mutation();
+
+-- ============================================================
+-- memory_cycle_locks / memory_worker_heartbeats: maintenance coordination
+-- ============================================================
+CREATE TABLE IF NOT EXISTS memory_cycle_locks (
+  id             TEXT PRIMARY KEY,
+  cycle_name     TEXT NOT NULL UNIQUE,
+  holder_pid     INTEGER NOT NULL,
+  holder_host    TEXT NOT NULL,
+  holder_kind    TEXT NOT NULL,
+  acquired_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ttl_expires_at TIMESTAMPTZ NOT NULL,
+  heartbeat_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_cycle_locks_ttl
+  ON memory_cycle_locks(ttl_expires_at ASC);
+
+CREATE TABLE IF NOT EXISTS memory_worker_heartbeats (
+  worker_id     TEXT PRIMARY KEY,
+  worker_host   TEXT NOT NULL,
+  worker_pid    INTEGER NOT NULL,
+  queues        JSONB NOT NULL DEFAULT '[]',
+  last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  metadata_json JSONB NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_worker_heartbeats_seen
+  ON memory_worker_heartbeats(last_seen_at DESC);
+
+-- ============================================================
 -- memory_realms: control-plane realms for memory access policy
 -- ============================================================
 CREATE TABLE IF NOT EXISTS memory_realms (

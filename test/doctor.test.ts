@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, test, expect, mock } from 'bun:test';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { buildDoctorReport } from '../src/core/services/doctor-service.ts';
+import { buildDoctorReport, collectDoctorInputs } from '../src/core/services/doctor-service.ts';
 import { resolveOfflineProfile } from '../src/core/offline-profile.ts';
 import {
   EMBEDDED_AGENT_RULES_VERSION,
@@ -33,6 +33,175 @@ function writeConfig(config: Record<string, unknown>) {
 }
 
 describe('doctor command', () => {
+  test('collectDoctorInputs includes Postgres system-of-record projection health', async () => {
+    const sql = async (strings: TemplateStringsArray) => {
+      const query = strings.join('');
+      if (query.includes('pg_extension')) return [{ extname: 'vector' }];
+      if (query.includes('pg_tables')) return [];
+      if (query.includes('to_regclass')) return [{ table_name: 'canonical_projection_targets' }];
+      if (query.includes('FROM canonical_projection_targets')) {
+        return [
+          { status: 'pending_reconcile', count: 2 },
+          { status: 'failed', count: 1 },
+          { status: 'conflict', count: 3 },
+        ];
+      }
+      return [];
+    };
+    const engine = {
+      getStats: async () => ({
+        page_count: 0,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      }),
+      getConfig: async () => '43',
+      getHealth: async () => ({
+        page_count: 0,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      }),
+    };
+
+    const inputs = await collectDoctorInputs(engine as any, {
+      getConnection: () => sql as any,
+      loadConfig: () => ({
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      resolveOfflineProfile,
+      supportsRawPostgresAccess: () => true,
+    });
+
+    expect(inputs.systemOfRecord).toEqual({
+      pending_reconcile: 2,
+      failed: 1,
+      conflict: 3,
+    });
+  });
+
+  test('collectDoctorInputs detects active jobs with expired lock leases as stuck runtime work', async () => {
+    const observedQueries: string[] = [];
+    const sql = async (strings: TemplateStringsArray) => {
+      const query = strings.join('');
+      observedQueries.push(query.replace(/\s+/g, ' ').trim());
+      if (query.includes('pg_extension')) return [{ extname: 'vector' }];
+      if (query.includes('pg_tables')) return [];
+      if (query.includes('to_regclass')) return [{ table_name: 'memory_jobs' }];
+      if (query.includes("status = 'active'") && query.includes('lock_expires_at <= now()')) {
+        return [{ count: 2 }];
+      }
+      return [{ count: 0 }];
+    };
+    const engine = {
+      getStats: async () => ({
+        page_count: 0,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      }),
+      getConfig: async () => '44',
+      getHealth: async () => ({
+        page_count: 0,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      }),
+    };
+
+    const inputs = await collectDoctorInputs(engine as any, {
+      getConnection: () => sql as any,
+      loadConfig: () => ({
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      resolveOfflineProfile,
+      supportsRawPostgresAccess: () => true,
+    });
+
+    expect(inputs.memoryRuntime?.stuck_locks).toBe(2);
+    expect(observedQueries.some((query) => query.includes("status = 'active'") && query.includes('lock_expires_at <= now()'))).toBe(true);
+  });
+
+  test('buildDoctorReport detects stuck memory runtime locks and failed runtime work', () => {
+    const report = buildDoctorReport({
+      connectionOk: true,
+      stats: {
+        page_count: 0,
+        chunk_count: 0,
+        embedded_count: 0,
+        link_count: 0,
+        tag_count: 0,
+        timeline_entry_count: 0,
+        pages_by_type: {},
+      },
+      config: {
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      },
+      profile: resolveOfflineProfile({
+        engine: 'postgres',
+        database_url: 'postgresql://postgres:postgres@localhost:5432/mbrain',
+        offline: false,
+        embedding_provider: 'none',
+        query_rewrite_provider: 'none',
+      }),
+      rawPostgresChecksSupported: true,
+      latestVersion: 44,
+      schemaVersion: '44',
+      health: {
+        page_count: 0,
+        embed_coverage: 1,
+        stale_pages: 0,
+        orphan_pages: 0,
+        dead_links: 0,
+        missing_embeddings: 0,
+      },
+      memoryRuntime: {
+        queue_depth: 7,
+        failed_jobs: 2,
+        dead_jobs: 1,
+        stuck_locks: 1,
+        unavailable_runners: 1,
+        unhealthy_connectors: 1,
+        credential_warnings: 1,
+        quarantine_count: 2,
+        purge_candidates: 3,
+      },
+    });
+
+    const check = report.checks.find((candidate) => candidate.name === 'memory_runtime');
+    expect(check).toMatchObject({
+      status: 'fail',
+    });
+    expect(check?.message).toContain('7 queued');
+    expect(check?.message).toContain('2 failed jobs');
+    expect(check?.message).toContain('1 dead job');
+    expect(check?.message).toContain('1 stuck lock');
+    expect(check?.message).toContain('1 unhealthy connector');
+    expect(check?.message).toContain('3 purge candidates');
+  });
+
   test('buildDoctorReport marks sqlite local profile honestly', () => {
     const report = buildDoctorReport({
       connectionOk: true,

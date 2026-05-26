@@ -100,6 +100,10 @@ const MEMORY_MUTATION_OPERATION_NAMES = [
   'sync_memory_artifact',
   'repair_memory_ledger',
   'physical_delete_memory_record',
+  'governed_canonical_write',
+  'pause_source_processing',
+  'revoke_source_consent',
+  'rerun_memory_job',
 ] as const satisfies readonly MemoryMutationOperationName[];
 
 const DRY_RUN_MEMORY_MUTATION_TARGET_KINDS = [

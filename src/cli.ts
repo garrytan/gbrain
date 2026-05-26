@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { createLocalConfigDefaults, loadConfig, saveConfig } from './core/config.ts';
+import { loadConfig } from './core/config.ts';
 import { createConnectedEngine, DEFAULT_RUNTIME_CONFIG } from './core/engine-factory.ts';
 import type { BrainEngine } from './core/engine.ts';
 import {
@@ -47,7 +47,7 @@ const EMBED_CLI_SPEC: Operation = {
 
 const DOCTOR_CLI_SPEC: Operation = {
   name: 'doctor',
-  description: 'Run health checks against the configured brain and exit non-zero when failures are found.',
+  description: 'Run health checks for the target Postgres runtime or explicit legacy local profile and exit non-zero when failures are found.',
   params: {
     json: { type: 'boolean', description: 'Emit JSON instead of human-readable output' },
     agent: { type: 'boolean', description: 'Include installed Codex/Claude MCP and prompt readiness checks' },
@@ -55,6 +55,63 @@ const DOCTOR_CLI_SPEC: Operation = {
   },
   handler: noopHandler,
   cliHints: { name: 'doctor' },
+};
+
+const MIGRATE_CLI_SPEC: Operation = {
+  name: 'migrate',
+  description: 'Prepare Markdown-first migration into the Postgres target runtime; legacy PGLite DB-copy remains an explicit escape hatch.',
+  params: {
+    to: { type: 'string', required: true, description: 'Target runtime: postgres or supabase; pglite is legacy-only' },
+    url: { type: 'string', description: 'Postgres connection string for target initialization guidance' },
+    path: { type: 'string', description: 'Legacy PGLite target path' },
+    force: { type: 'boolean', description: 'Allow wiping a legacy PGLite target after backup preflight' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'migrate' },
+};
+
+const SETUP_AGENT_CLI_SPEC: Operation = {
+  name: 'setup_agent',
+  description: 'Register MCP and inject managed Postgres target runtime rules for Claude Code and Codex.',
+  params: {
+    claude: { type: 'boolean', description: 'Configure Claude Code only' },
+    codex: { type: 'boolean', description: 'Configure Codex only' },
+    scope: { type: 'string', description: 'Claude MCP scope: user or local' },
+    skip_mcp: { type: 'boolean', description: 'Inject rules without registering MCP' },
+    print: { type: 'boolean', description: 'Print the agent rules instead of writing files' },
+    json: { type: 'boolean', description: 'Emit machine-readable setup results' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'setup-agent' },
+};
+
+const MEMORY_REPORT_CLI_SPEC: Operation = {
+  name: 'memory_report',
+  description: 'Show the exception-first memory review report for the configured brain.',
+  params: {
+    json: { type: 'boolean', description: 'Emit JSON instead of human-readable output' },
+    scope_id: { type: 'string', description: 'Scope to report (default: workspace:default)' },
+    limit: { type: 'number', description: 'Maximum mutation and candidate rows to inspect (default: 100)' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'memory-report' },
+};
+
+const DREAM_CLI_SPEC: Operation = {
+  name: 'dream',
+  description: 'Run the Dream maintenance phase runner.',
+  params: {
+    scope_id: { type: 'string', description: 'Dream scope id (default: workspace:default)' },
+    now: { type: 'string', description: 'ISO timestamp for deterministic reports' },
+    dry_run: { type: 'boolean', description: 'Preview without writing candidates' },
+    apply: { type: 'boolean', description: 'Run candidate-writing phases behind a cycle lock' },
+    write_candidates: { type: 'boolean', description: 'Allow governed candidate writes in apply mode' },
+    limit: { type: 'number', description: 'Maximum items per phase family' },
+    allow_llm: { type: 'boolean', description: 'Allow budgeted LLM use when a phase supports it' },
+    allow_local_runner: { type: 'boolean', description: 'Allow local runner-backed phase work' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'dream' },
 };
 
 const SYNC_CLI_SPEC: Operation = {
@@ -78,11 +135,16 @@ const SYNC_CLI_SPEC: Operation = {
 const CLI_ONLY_SPECS: Partial<Record<string, Operation>> = {
   embed: EMBED_CLI_SPEC,
   doctor: DOCTOR_CLI_SPEC,
+  migrate: MIGRATE_CLI_SPEC,
+  'memory-report': MEMORY_REPORT_CLI_SPEC,
+  'setup-agent': SETUP_AGENT_CLI_SPEC,
 };
 
 const DIRECT_NO_ENGINE_COMMANDS: Record<string, CliNoEngineLoader> = {
   init: async () => (await import('./commands/init.ts')).runInit,
   integrations: async () => (await import('./commands/integrations.ts')).runIntegrations,
+  connectors: async () => (await import('./commands/connectors.ts')).runConnectors,
+  autopilot: async () => (await import('./commands/autopilot.ts')).runAutopilot,
   publish: async () => (await import('./commands/publish.ts')).runPublish,
   'check-backlinks': async () => (await import('./commands/backlinks.ts')).runBacklinks,
   lint: async () => (await import('./commands/lint.ts')).runLint,
@@ -108,9 +170,11 @@ const DIRECT_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
   export: async () => (await import('./commands/export.ts')).runExport,
   files: async () => (await import('./commands/files.ts')).runFiles,
   embed: async () => (await import('./commands/embed.ts')).runEmbed,
+  dream: async () => (await import('./commands/dream.ts')).runDream,
   call: async () => (await import('./commands/call.ts')).runCall,
   config: async () => (await import('./commands/config.ts')).runConfig,
   doctor: async () => (await import('./commands/doctor.ts')).runDoctor,
+  'memory-report': async () => (await import('./commands/memory-report.ts')).runMemoryReport,
   migrate: async () => (await import('./commands/migrate-engine.ts')).runMigrateEngine,
   subbrain: async () => (await import('./commands/subbrain.ts')).runSubbrain,
 };
@@ -247,6 +311,7 @@ export function formatResult(opName: string, result: unknown, params: Record<str
 
 function getCliHelpSpec(command: string): Operation | undefined {
   if (command === 'sync') return SYNC_CLI_SPEC;
+  if (command === 'dream') return DREAM_CLI_SPEC;
   return cliOps.get(command) || CLI_ONLY_SPECS[command];
 }
 
@@ -305,7 +370,7 @@ async function handleCliOnly(command: string, args: string[]) {
 
   if (command === 'serve') {
     const { runServe } = await import('./commands/serve.ts');
-    const enginePromise = connectEngine({ bootstrapLocalIfMissing: true });
+    const enginePromise = connectEngine();
     await runServe(enginePromise);
     return;
   }
@@ -315,7 +380,7 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
-  const engine = await connectEngine({ bootstrapLocalIfMissing: command === 'serve' });
+  const engine = await connectEngine();
   try {
     const runCommand = await engineLoader();
     await runCommand(engine, normalizeCliOnlyArgs(command, args));
@@ -390,18 +455,10 @@ function normalizeCliOnlyArgs(command: string, args: string[]): string[] {
   return normalized;
 }
 
-async function connectEngine(options: { bootstrapLocalIfMissing?: boolean } = {}): Promise<BrainEngine> {
+async function connectEngine(): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
-    if (options.bootstrapLocalIfMissing) {
-      const localConfig = createLocalConfigDefaults();
-      const engine = await createConnectedEngine(localConfig);
-      await engine.initSchema();
-      saveConfig(localConfig);
-      console.error(`No brain config found; initialized local SQLite brain at ${localConfig.database_path}`);
-      return engine;
-    }
-    console.error('No brain configured. Run: mbrain init or set MBRAIN_DATABASE_URL / DATABASE_URL.');
+    console.error('No brain configured. Run: mbrain init --profile homebrew-postgres, mbrain init --url <postgres_connection_string>, or set MBRAIN_DATABASE_URL / DATABASE_URL.');
     process.exit(1);
   }
   return createConnectedEngine(config);
@@ -415,14 +472,16 @@ USAGE
 
 SETUP
   init [--local|--pglite|--supabase|--url <conn>]
-                                    Create brain (SQLite local, PGLite, or managed Postgres)
+                                    Create target Postgres brain; legacy SQLite/PGLite only by explicit flag
   setup-agent [--claude|--codex] [--scope user|local]
                                     Register MCP, inject rules, install Claude stop hook
-  migrate --to <supabase|pglite>     Transfer brain between engines
+  migrate --to <postgres|supabase>   Prepare Markdown-first migration into the Postgres target runtime
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   doctor [--json]                    Health check (engine, schema, embeddings, local/managed capabilities)
   integrations [subcommand]          Manage integration recipes
+  connectors [list|show]             Inspect personal data connector definitions
+  memory-report [--json]             Show the memory review report surface
 
 PAGES
   get <slug>                         Read a page
@@ -475,6 +534,19 @@ ADMIN
   history <slug>                     Page version history
   revert <slug> <version-id>         Revert to version
   config [show|get|set] <key> [val]  Brain config
+  assertion-retrieval [--target-slug S]
+                                    List lifecycle-aware assertion retrieval plans
+  dream [--apply|--dry-run]           Run the Dream maintenance phase runner
+  lifecycle-report [--scope-id S]     Report lifecycle forgetting candidates and restore windows
+  lifecycle-plan-purge [--scope-id S] Create a reviewed lifecycle purge plan
+  lifecycle-restore --entity-type T --entity-id ID
+                                    Restore stale/expired/archived memory where policy allows
+  lifecycle-review-purge-plan --purge-plan-id P --decision approve
+                                    Approve, reject, or cancel a lifecycle purge plan
+  lifecycle-purge --entity-type T --entity-id ID --purge-plan-id P
+                                    Purge one approved due expired/archived memory row
+  autopilot <enable|disable|start|stop|status|install|uninstall|logs|config|run-once|dream>
+                                    Manage scheduled maintenance autopilot
   subbrain <add|list|remove>          Manage registered git-backed sub-brains
   serve                              MCP server (stdio)
   call <tool> '<json>'               Raw tool invocation

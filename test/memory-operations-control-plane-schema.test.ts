@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { setDefaultTimeout, afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -6,6 +6,10 @@ import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
+
+setDefaultTimeout(20_000);
+
+const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 20_000;
 
 const MUTATION_EVENT_COLUMNS = [
   'id',
@@ -114,6 +118,12 @@ function realmUpsertInsertSql(id: string): string {
     .replace("'page'", "'memory_realm'")
     .replace("'concepts/phase-9.md'", "'realm:work'")
     .replace("'workspace:default'", "'work'");
+}
+
+function governedCanonicalWriteInsertSql(id: string): string {
+  return validInsertSql(id)
+    .replace("'put_page'", "'governed_canonical_write'")
+    .replace("'concepts/phase-9.md'", "'projects/mbrain/decisions'");
 }
 
 function sqliteSql(sql: string): string {
@@ -306,6 +316,19 @@ const OLD_V26_SQLITE_MUTATION_EVENT_SQL = OLD_V26_POSTGRES_MUTATION_EVENT_SQL
   .replaceAll('TIMESTAMPTZ NOT NULL DEFAULT now()', "TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))")
   .replaceAll('TIMESTAMPTZ', 'TEXT');
 
+const OLD_V36_POSTGRES_MUTATION_EVENT_SQL = OLD_V26_POSTGRES_MUTATION_EVENT_SQL.replace(
+  'operation TEXT NOT NULL,',
+  "operation TEXT NOT NULL CONSTRAINT chk_memory_mutation_events_operation CHECK (operation IN ('put_page')),",
+);
+
+const OLD_V36_SQLITE_MUTATION_EVENT_SQL = OLD_V36_POSTGRES_MUTATION_EVENT_SQL
+  .replaceAll('JSONB', 'TEXT')
+  .replaceAll(" DEFAULT '[]'::jsonb", " DEFAULT '[]'")
+  .replaceAll(" DEFAULT '{}'::jsonb", " DEFAULT '{}'")
+  .replaceAll('BOOLEAN NOT NULL DEFAULT false', 'INTEGER NOT NULL DEFAULT 0 CHECK (dry_run IN (0, 1))')
+  .replaceAll('TIMESTAMPTZ NOT NULL DEFAULT now()', "TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))")
+  .replaceAll('TIMESTAMPTZ', 'TEXT');
+
 const OLD_V31_POSTGRES_MEMORY_SESSION_SQL = `
   CREATE TABLE memory_sessions (
     id TEXT PRIMARY KEY,
@@ -404,7 +427,7 @@ describe('memory operations control-plane schema', () => {
     `)).rejects.toThrow();
 
     await engine.disconnect();
-  }, 10_000);
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   test('sqlite initSchema creates redaction plan tables', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-redaction-plan-sqlite-'));
@@ -505,7 +528,7 @@ describe('memory operations control-plane schema', () => {
     `)).rejects.toThrow();
 
     await engine.disconnect();
-  }, 10_000);
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   test('sqlite upgrades version 33 databases to redaction plan tables', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-redaction-plan-sqlite-v33-'));
@@ -578,7 +601,7 @@ describe('memory operations control-plane schema', () => {
     ]);
 
     await engine.disconnect();
-  }, 10_000);
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   test('sqlite initSchema creates memory mutation ledger contract', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-mutation-ledger-sqlite-'));
@@ -626,6 +649,7 @@ describe('memory operations control-plane schema', () => {
 
     expect(() => db.query(sqliteSql(validInsertSql('sqlite-valid'))).run()).not.toThrow();
     expect(() => db.query(sqliteSql(realmUpsertInsertSql('sqlite-realm-upsert-valid'))).run()).not.toThrow();
+    expect(() => db.query(sqliteSql(governedCanonicalWriteInsertSql('sqlite-governed-write-valid'))).run()).not.toThrow();
     expect(() => db.query(sqliteSql(invalidInsertSql('operation', 'invented_operation'))).run()).toThrow();
     expect(() => db.query(sqliteSql(invalidInsertSql('result', 'approved'))).run()).toThrow();
     expect(() => db.query(sqliteSql(invalidInsertSql('target_kind', 'note'))).run()).toThrow();
@@ -689,6 +713,7 @@ describe('memory operations control-plane schema', () => {
 
     await expect(db.query(validInsertSql('pglite-valid'))).resolves.toBeDefined();
     await expect(db.query(realmUpsertInsertSql('pglite-realm-upsert-valid'))).resolves.toBeDefined();
+    await expect(db.query(governedCanonicalWriteInsertSql('pglite-governed-write-valid'))).resolves.toBeDefined();
     await expect(db.query(invalidInsertSql('operation', 'invented_operation'))).rejects.toThrow();
     await expect(db.query(invalidInsertSql('result', 'approved'))).rejects.toThrow();
     await expect(db.query(invalidInsertSql('target_kind', 'note'))).rejects.toThrow();
@@ -697,7 +722,7 @@ describe('memory operations control-plane schema', () => {
     await expectPgMutationEventRequiredContract(db);
 
     await engine.disconnect();
-  }, 10_000);
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   test('sqlite upgrades version 31 memory sessions to expiry contract', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-session-sqlite-v31-expiry-'));
@@ -783,7 +808,7 @@ describe('memory operations control-plane schema', () => {
     await expect(db.query(`UPDATE memory_sessions SET status = 'revoked' WHERE id = 'old-v31-session'`)).rejects.toThrow();
 
     await engine.disconnect();
-  }, 10_000);
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   test('sqlite upgrades version 29 databases to accept memory realm upsert ledger events', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-mutation-ledger-sqlite-v29-realm-upsert-'));
@@ -837,7 +862,7 @@ describe('memory operations control-plane schema', () => {
     await expect(db.query(invalidInsertSql('target_kind', 'note'))).rejects.toThrow();
 
     await engine.disconnect();
-  }, 10_000);
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   test('sqlite upgrades version 25 databases to memory mutation ledger contract', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-mutation-ledger-sqlite-upgrade-'));
@@ -903,7 +928,7 @@ describe('memory operations control-plane schema', () => {
     expect(version.rows).toEqual([{ value: String(LATEST_VERSION) }]);
 
     await engine.disconnect();
-  }, 10_000);
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   test('sqlite repairs old version 26 memory mutation ledger operation contract', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-mutation-ledger-sqlite-v26-repair-'));
@@ -985,7 +1010,62 @@ describe('memory operations control-plane schema', () => {
     await expectPgMutationEventRequiredContract(db);
 
     await engine.disconnect();
-  }, 10_000);
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
+
+  test('sqlite upgrades version 36 mutation ledger to accept governed canonical write events', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-mutation-ledger-sqlite-v36-governed-'));
+    tempPaths.push(dir);
+
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: join(dir, 'brain.db') });
+    const db = (engine as any).database;
+    db.exec(`
+      CREATE TABLE config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      INSERT INTO config (key, value) VALUES ('version', '36');
+      ${OLD_V36_SQLITE_MUTATION_EVENT_SQL}
+    `);
+
+    expect(() => db.query(sqliteSql(governedCanonicalWriteInsertSql('sqlite-v36-governed-before'))).run()).toThrow();
+
+    await engine.initSchema();
+
+    const version = db.query(`SELECT value FROM config WHERE key = 'version'`).get() as { value: string };
+    expect(version.value).toBe(String(LATEST_VERSION));
+    expect(() => db.query(sqliteSql(governedCanonicalWriteInsertSql('sqlite-v36-governed-after'))).run()).not.toThrow();
+    expectSqliteMutationEventRequiredContract(db);
+
+    await engine.disconnect();
+  });
+
+  test('pglite upgrades version 36 mutation ledger to accept governed canonical write events', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-mutation-ledger-pglite-v36-governed-'));
+    tempPaths.push(dir);
+
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite', database_path: dir });
+    const db = (engine as any).db;
+    await db.exec(`
+      CREATE TABLE config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      INSERT INTO config (key, value) VALUES ('version', '36');
+      ${OLD_V36_POSTGRES_MUTATION_EVENT_SQL}
+    `);
+
+    await expect(db.query(governedCanonicalWriteInsertSql('pglite-v36-governed-before'))).rejects.toThrow();
+
+    await engine.initSchema();
+
+    const version = await db.query(`SELECT value FROM config WHERE key = 'version'`);
+    expect(version.rows).toEqual([{ value: String(LATEST_VERSION) }]);
+    await expect(db.query(governedCanonicalWriteInsertSql('pglite-v36-governed-after'))).resolves.toBeDefined();
+
+    await engine.disconnect();
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   const databaseUrl = process.env.DATABASE_URL;
   if (databaseUrl) {

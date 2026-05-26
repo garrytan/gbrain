@@ -1,8 +1,18 @@
-# Local / Offline MBrain
+# Legacy Local SQLite Compatibility
 
-This guide is for people who want to install and use MBrain **without Supabase, OpenAI, Anthropic, or any other required cloud service**.
+This guide documents the legacy local/offline SQLite compatibility profile. The
+Postgres + pgvector runtime is the target default for new local and managed
+installs; normal local users should start from the README quick start with:
 
-In this profile:
+```bash
+mbrain init --profile homebrew-postgres
+```
+
+This legacy profile is for people who intentionally want to run MBrain
+**without Supabase, OpenAI, Anthropic, Postgres, or any other required cloud or
+database service**.
+
+In this legacy profile:
 
 - your markdown repo stays on disk as the source of truth
 - MBrain stores its index in a local SQLite file
@@ -16,18 +26,19 @@ If you want the same instructions in Korean, use [docs/local-offline.ko.md](loca
 
 ## 1. Choose the right profile
 
-Use the **local/offline** profile when you want:
+Use this legacy SQLite guide only when you want:
 
-- a private brain on one machine
-- no required recurring cloud cost
+- compatibility with an existing `mbrain init --local` install
+- no local Postgres server
 - Codex / Claude Code access through a local MCP server
-- SQLite instead of Postgres
+- SQLite instead of the target Postgres runtime
 
-Use the **managed Postgres** profile when you want:
+Use the **target Postgres** profile when you want:
 
-- hosted pgvector scale
-- remote MCP over HTTP
-- cloud file/storage workflows (`mbrain files ...`)
+- the current default local or managed runtime
+- pgvector-backed semantic state
+- automatic assertion/canonical write pipeline behavior
+- cloud file/storage workflows (`mbrain files ...`) when using a managed profile
 
 This guide only covers the **local/offline SQLite** path.
 
@@ -415,9 +426,9 @@ This single command:
 1. **Detects** which AI clients are installed (`~/.claude/` and/or `~/.codex/`)
 2. **Registers** the MCP server with each detected client (if not already registered)
 3. **Injects** the MBrain agent rules into each client's global config
-4. **Installs** the Claude Code Stop hook that prompts for end-of-session mbrain writeback
+4. **Installs** the Claude Code Stop hook that reminds agents to route durable signals through the assertion pipeline
 
-The agent rules teach your AI client the brain-agent loop: read brain when MBrain is relevant, write back durable new information with provenance, and back-link durable entity mentions. They also tell the agent to skip MBrain for purely code editing, git operations, file management, public library docs, or general programming when no durable knowledge was learned.
+The agent rules teach your AI client the brain-agent loop: read brain when MBrain is relevant, route durable signals through `route_memory_writeback` and the assertion pipeline, let eligible writes become governed canonical memory, and leave ambiguous cases as review candidates. They also tell the agent to skip MBrain for purely code editing, git operations, file management, public library docs, or general programming when no durable knowledge was learned.
 
 ### Options
 
@@ -451,9 +462,9 @@ For Claude Code, `setup-agent` also installs:
 - `~/.claude/mbrain-skip-dirs`
 - `~/.claude/settings.json` Stop hook entry `stop:mbrain-check`
 
-The Stop hook runs once at session end, blocks once for eligible sessions, and asks Claude Code to either write durable session knowledge back to mbrain or respond with `MBRAIN-PASS: <reason>`.
+The Stop hook runs once at session end, blocks once for eligible sessions, and asks Claude Code to either route durable signals through the governed assertion/canonical policy pipeline or respond with `MBRAIN-PASS: <reason>`.
 
-When the Stop hook blocks a response, Claude Code may display the message under a `Stop hook error` prefix. In this case, the MBrain hook is not crashing; its one-line reason is a reminder to apply the installed MBrain agent rules, write only durable session knowledge when appropriate, or respond exactly `MBRAIN-PASS: <short reason>`.
+When the Stop hook blocks a response, Claude Code may display the message under a `Stop hook error` prefix. In this case, the MBrain hook is not crashing; its one-line reason is a reminder to apply the installed MBrain agent rules, route only durable signals when appropriate, review ambiguous candidates later through the daily memory report, or respond exactly `MBRAIN-PASS: <short reason>`.
 
 To disable the reminder for one Claude session:
 

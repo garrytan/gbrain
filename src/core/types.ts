@@ -924,7 +924,11 @@ export type MemoryMutationOperationName =
   | 'export_memory_artifact'
   | 'sync_memory_artifact'
   | 'repair_memory_ledger'
-  | 'physical_delete_memory_record';
+  | 'physical_delete_memory_record'
+  | 'governed_canonical_write'
+  | 'pause_source_processing'
+  | 'revoke_source_consent'
+  | 'rerun_memory_job';
 
 export interface MemoryMutationEvent {
   id: string;

@@ -4,8 +4,6 @@ export type McpToolSchemaOptions = {
   compact?: boolean;
 };
 
-const COMPACT_DESCRIPTION_CHARS = 48;
-
 export function paramToMcpSchema(
   param: ParamDef,
   options: McpToolSchemaOptions = {},
@@ -22,30 +20,25 @@ export function paramToMcpSchema(
 
 export function operationToMcpTool(op: Operation, options: McpToolSchemaOptions = {}): {
   name: string;
-  description: string;
+  description?: string;
   inputSchema: {
     type: 'object';
     properties: Record<string, Record<string, unknown>>;
-    required: string[];
+    required?: string[];
   };
 } {
+  const required = Object.entries(op.params)
+    .filter(([, value]) => value.required)
+    .map(([key]) => key);
   return {
     name: op.name,
-    description: options.compact ? compactDescription(op.description) : op.description,
+    ...(!options.compact ? { description: op.description } : {}),
     inputSchema: {
       type: 'object',
       properties: Object.fromEntries(
         Object.entries(op.params).map(([key, value]) => [key, paramToMcpSchema(value, options)]),
       ),
-      required: Object.entries(op.params)
-        .filter(([, value]) => value.required)
-        .map(([key]) => key),
+      ...(!options.compact || required.length > 0 ? { required } : {}),
     },
   };
-}
-
-function compactDescription(description: string): string {
-  const singleLine = description.replace(/\s+/g, ' ').trim();
-  if (singleLine.length <= COMPACT_DESCRIPTION_CHARS) return singleLine;
-  return `${singleLine.slice(0, COMPACT_DESCRIPTION_CHARS - 1)}...`;
 }

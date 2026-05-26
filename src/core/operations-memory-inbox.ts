@@ -801,6 +801,20 @@ function normalizeOptionalIsoTimestamp(
   return value;
 }
 
+function parseOptionalDateParam(
+  deps: { OperationError: OperationErrorCtor },
+  value: unknown,
+): Date | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const normalized = normalizeOptionalIsoTimestamp(deps, 'now', value);
+  if (!normalized) {
+    return undefined;
+  }
+  return new Date(normalized);
+}
+
 function isValidIsoDatetime(value: string): boolean {
   const match = ISO_DATETIME_PATTERN.exec(value);
   if (!match) {
@@ -2091,14 +2105,17 @@ export function createMemoryInboxOperations(
     description: 'Assess whether a handed-off promoted candidate still represents current evidence for canonical consolidation.',
     params: {
       candidate_id: { type: 'string', required: true, description: 'Promoted memory candidate id' },
+      now: { type: 'string', description: 'Optional ISO datetime used for deterministic review-window checks.' },
     },
     handler: async (ctx, p) => {
       if (typeof p.candidate_id !== 'string' || p.candidate_id.trim().length === 0) {
         throw invalidParams(deps, 'candidate_id must be a non-empty string');
       }
+      const now = parseOptionalDateParam(deps, p.now);
       try {
         return await assessHistoricalValidity(ctx.engine, {
           candidate_id: p.candidate_id,
+          ...(now ? { now } : {}),
         });
       } catch (error) {
         if (error instanceof MemoryInboxServiceError) {

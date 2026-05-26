@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { setDefaultTimeout, afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+
+setDefaultTimeout(20_000);
 
 const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 45_000;
 

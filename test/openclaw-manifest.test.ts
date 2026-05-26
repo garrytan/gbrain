@@ -16,9 +16,11 @@ test('OpenClaw manifest stays aligned with package metadata and uses the portabl
     .toEqual(['bun run build:all']);
 });
 
-test('OpenClaw manifest keeps managed Postgres optional for local-first installs', () => {
+test('OpenClaw manifest keeps database_url optional for configured Postgres installs', () => {
   const manifest = JSON.parse(readFileSync(join(repoRoot, 'openclaw.plugin.json'), 'utf-8'));
 
   expect(manifest.configSchema.database_url.required).toBe(false);
   expect(manifest.configSchema.database_url.description.toLowerCase()).toContain('optional');
+  expect(manifest.configSchema.database_url.description).toContain('PostgreSQL connection URL');
+  expect(manifest.configSchema.database_url.description).not.toContain('local SQLite is used by default');
 });

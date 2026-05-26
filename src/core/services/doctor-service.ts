@@ -4,6 +4,10 @@ import { buildExecutionEnvelope } from '../execution-envelope.ts';
 import { supportsRawPostgresAccess } from '../engine-factory.ts';
 import { LATEST_VERSION } from '../migrate.ts';
 import { resolveOfflineProfile, type OfflineProfile } from '../offline-profile.ts';
+import {
+  formatRuntimeDatabaseIdentity,
+  resolvePostgresRuntimeProfile,
+} from '../postgres-runtime/connection-profile.ts';
 import type { BrainHealth, BrainStats } from '../types.ts';
 import type { InstalledAgentReadinessReport } from './installed-agent-readiness-service.ts';
 import * as db from '../db.ts';
@@ -32,6 +36,22 @@ export interface DoctorInputs {
   latestVersion: number;
   health?: BrainHealth;
   installedAgent?: InstalledAgentReadinessReport;
+  systemOfRecord?: {
+    pending_reconcile: number;
+    failed: number;
+    conflict?: number;
+  };
+  memoryRuntime?: {
+    queue_depth: number;
+    failed_jobs: number;
+    dead_jobs: number;
+    stuck_locks: number;
+    unavailable_runners: number;
+    unhealthy_connectors: number;
+    credential_warnings: number;
+    quarantine_count: number;
+    purge_candidates: number;
+  };
 }
 
 interface DoctorServiceDeps {
@@ -69,6 +89,8 @@ export async function collectDoctorInputs(
     if (inputs.rawPostgresChecksSupported) {
       inputs.pgvector = await checkPgVector(deps);
       inputs.rls = await checkRls(deps);
+      inputs.systemOfRecord = await checkSystemOfRecordHealth(deps);
+      inputs.memoryRuntime = await checkMemoryRuntimeHealth(deps);
     }
 
     try {
@@ -127,6 +149,129 @@ async function checkRls(deps: DoctorServiceDeps): Promise<{ status: 'ok' | 'warn
   } catch {
     return { status: 'warn', message: 'Could not check RLS status' };
   }
+}
+
+async function checkSystemOfRecordHealth(
+  deps: DoctorServiceDeps,
+): Promise<{ pending_reconcile: number; failed: number; conflict: number } | undefined> {
+  try {
+    const sql = deps.getConnection();
+    const tableRows = await sql`
+      SELECT to_regclass('canonical_projection_targets') AS table_name
+    `;
+    if (!tableRows[0]?.table_name) return undefined;
+
+    const rows = await sql`
+      SELECT status, count(*)::int AS count
+      FROM canonical_projection_targets
+      WHERE status IN ('pending_reconcile', 'failed', 'conflict')
+      GROUP BY status
+    `;
+    return {
+      pending_reconcile: projectionStatusCount(rows as Array<Record<string, unknown>>, 'pending_reconcile'),
+      failed: projectionStatusCount(rows as Array<Record<string, unknown>>, 'failed'),
+      conflict: projectionStatusCount(rows as Array<Record<string, unknown>>, 'conflict'),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function projectionStatusCount(rows: Array<Record<string, unknown>>, status: string): number {
+  const row = rows.find((candidate) => candidate.status === status);
+  return Number(row?.count ?? 0);
+}
+
+async function checkMemoryRuntimeHealth(
+  deps: DoctorServiceDeps,
+): Promise<NonNullable<DoctorInputs['memoryRuntime']> | undefined> {
+  try {
+    return {
+      queue_depth: await countTableRows(deps, 'memory_jobs', "status IN ('waiting', 'delayed', 'active')"),
+      failed_jobs: await countTableRows(deps, 'memory_jobs', "status = 'failed'"),
+      dead_jobs: await countTableRows(deps, 'memory_jobs', "status = 'dead'"),
+      stuck_locks: await countTableRows(deps, 'memory_jobs', "status = 'active' AND lock_expires_at <= now()")
+        + await countTableRows(deps, 'memory_cycle_locks', 'ttl_expires_at < now()'),
+      unavailable_runners: await countTableRows(deps, 'runner_jobs', "status IN ('failed', 'degraded')"),
+      unhealthy_connectors: await countTableRows(
+        deps,
+        'connector_sync_states',
+        "health_status IN ('unhealthy', 'revoked')",
+      ),
+      credential_warnings: await countTableRows(
+        deps,
+        'credential_refs',
+        "health_status IN ('unhealthy', 'expired') OR rotation_status IN ('rotation_due', 'revoked')",
+      ),
+      quarantine_count: await countTableRows(deps, 'prompt_injection_flags', "risk = 'quarantined'"),
+      purge_candidates: await countTableRows(
+        deps,
+        'purge_plan_items',
+        "status IN ('planned', 'approved')",
+      ),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function countTableRows(
+  deps: DoctorServiceDeps,
+  tableName: string,
+  whereClause: string,
+): Promise<number> {
+  const sql = deps.getConnection();
+  try {
+    const tableRows = await sql`SELECT to_regclass(${tableName}) AS table_name`;
+    if (!tableRows[0]?.table_name) return 0;
+    const rows = await queryCount(sql, tableName, whereClause);
+    return Number(rows[0]?.count ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
+function queryCount(
+  sql: ReturnType<DoctorServiceDeps['getConnection']>,
+  tableName: string,
+  whereClause: string,
+): Promise<Array<{ count: number }>> {
+  if (tableName === 'memory_jobs' && whereClause === "status IN ('waiting', 'delayed', 'active')") {
+    return sql`SELECT count(*)::int AS count FROM memory_jobs WHERE status IN ('waiting', 'delayed', 'active')`;
+  }
+  if (tableName === 'memory_jobs' && whereClause === "status = 'failed'") {
+    return sql`SELECT count(*)::int AS count FROM memory_jobs WHERE status = 'failed'`;
+  }
+  if (tableName === 'memory_jobs' && whereClause === "status = 'dead'") {
+    return sql`SELECT count(*)::int AS count FROM memory_jobs WHERE status = 'dead'`;
+  }
+  if (tableName === 'memory_jobs' && whereClause === "status = 'active' AND lock_expires_at <= now()") {
+    return sql`SELECT count(*)::int AS count FROM memory_jobs WHERE status = 'active' AND lock_expires_at <= now()`;
+  }
+  if (tableName === 'memory_cycle_locks') {
+    return sql`SELECT count(*)::int AS count FROM memory_cycle_locks WHERE ttl_expires_at < now()`;
+  }
+  if (tableName === 'runner_jobs') {
+    return sql`SELECT count(*)::int AS count FROM runner_jobs WHERE status IN ('failed', 'degraded')`;
+  }
+  if (tableName === 'connector_sync_states') {
+    return sql`SELECT count(*)::int AS count FROM connector_sync_states WHERE health_status IN ('unhealthy', 'revoked')`;
+  }
+  if (tableName === 'credential_refs') {
+    return sql`
+      SELECT count(*)::int AS count
+      FROM credential_refs
+      WHERE health_status IN ('unhealthy', 'expired')
+         OR rotation_status IN ('rotation_due', 'revoked')
+    `;
+  }
+  if (tableName === 'prompt_injection_flags') {
+    return sql`SELECT count(*)::int AS count FROM prompt_injection_flags WHERE risk = 'quarantined'`;
+  }
+  if (tableName === 'purge_plan_items') {
+    return sql`SELECT count(*)::int AS count FROM purge_plan_items WHERE status IN ('planned', 'approved')`;
+  }
+  return Promise.resolve([{ count: 0 }]);
 }
 
 export function buildDoctorReport(input: DoctorInputs): DoctorReport {
@@ -201,6 +346,34 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
     });
   }
 
+  if (input.config?.engine === 'postgres') {
+    checks.push({
+      name: 'target_runtime',
+      status: 'ok',
+      message: 'Postgres target runtime active',
+    });
+    try {
+      const runtimeProfile = resolvePostgresRuntimeProfile(input.config);
+      checks.push({
+        name: 'runtime_db_identity',
+        status: 'ok',
+        message: formatRuntimeDatabaseIdentity(runtimeProfile),
+      });
+    } catch (error: unknown) {
+      checks.push({
+        name: 'runtime_db_identity',
+        status: 'fail',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  } else if (input.config) {
+    checks.push({
+      name: 'target_runtime',
+      status: 'warn',
+      message: `${input.config.engine} is a legacy local runtime; migrate to Postgres for target runtime features`,
+    });
+  }
+
   if (input.rawPostgresChecksSupported) {
     if (input.pgvector) {
       checks.push({ name: 'pgvector', status: input.pgvector.status, message: input.pgvector.message });
@@ -264,6 +437,48 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
         message: 'No embeddings yet. Run: mbrain embed --stale',
       });
     }
+  }
+
+  if (input.systemOfRecord) {
+    const pending = input.systemOfRecord.pending_reconcile;
+    const failed = input.systemOfRecord.failed;
+    const conflict = input.systemOfRecord.conflict ?? 0;
+    const parts = [
+      `${pending} pending reconcile`,
+      `${failed} failed projection`,
+      ...(conflict > 0 ? [`${conflict} conflict`] : []),
+    ];
+    checks.push({
+      name: 'system_of_record',
+      status: pending > 0 || failed > 0 || conflict > 0 ? 'warn' : 'ok',
+      message: parts.join(', '),
+    });
+  }
+
+  if (input.memoryRuntime) {
+    const runtime = input.memoryRuntime;
+    const parts = [
+      `${runtime.queue_depth} queued`,
+      `${runtime.failed_jobs} failed jobs`,
+      `${runtime.dead_jobs} dead jobs`,
+      `${runtime.stuck_locks} stuck locks`,
+      `${runtime.unavailable_runners} unavailable runners`,
+      `${runtime.unhealthy_connectors} unhealthy connectors`,
+      `${runtime.credential_warnings} credential warnings`,
+      `${runtime.quarantine_count} quarantined chunks`,
+      `${runtime.purge_candidates} purge candidates`,
+    ];
+    checks.push({
+      name: 'memory_runtime',
+      status: runtime.dead_jobs > 0 || runtime.stuck_locks > 0 ? 'fail'
+        : runtime.failed_jobs > 0
+          || runtime.unavailable_runners > 0
+          || runtime.unhealthy_connectors > 0
+          || runtime.credential_warnings > 0
+          ? 'warn'
+          : 'ok',
+      message: parts.join(', '),
+    });
   }
 
   appendInstalledAgentChecks(checks, input.installedAgent);

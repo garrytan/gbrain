@@ -5,7 +5,7 @@ import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 
 const repoRoot = new URL('..', import.meta.url).pathname;
-const conciseStopHookReason = 'MBrain memory check (not a crash): route any durable session knowledge through route_memory_writeback with sources; otherwise reply exactly MBRAIN-PASS: <short reason>.';
+const conciseStopHookReason = 'MBrain memory check (not a crash): route durable signals through route_memory_writeback and the assertion pipeline; eligible writes become governed canonical memory, ambiguous ones become candidates. Otherwise reply exactly MBRAIN-PASS: <short reason>.';
 const originalEnv = { ...process.env };
 let tempHome: string;
 let tempBin: string;
@@ -113,6 +113,12 @@ describe('setup-agent', () => {
     expect(result.stdout).toMatch(/canonical evidence boundary before\s+factual claims/);
     expect(result.stdout).toContain('Route Durable Writeback');
     expect(result.stdout).toContain('route_memory_writeback');
+    expect(result.stdout).toContain('managed Postgres + pgvector target runtime');
+    expect(result.stdout).toContain('automatic canonical writeback exists');
+    expect(result.stdout).toContain('assertion pipeline');
+    expect(result.stdout).toContain('raw source access is scoped');
+    expect(result.stdout).toContain('secrets are never canonical memory');
+    expect(result.stdout).toContain('daily memory report is the primary review surface');
     expect(result.stdout).toContain('canonical_write_allowed');
     expect(result.stdout).toContain('target_snapshot_hash');
     expect(result.stdout).toContain('expected_content_hash');
@@ -164,6 +170,9 @@ describe('setup-agent', () => {
     expect(claudeMd).toMatch(/both pointers,\s+not answer evidence/);
     expect(claudeMd).toMatch(/canonical evidence boundary before\s+factual claims/);
     expect(claudeMd).toContain('route_memory_writeback');
+    expect(claudeMd).toContain('automatic canonical writeback exists');
+    expect(claudeMd).toContain('assertion pipeline');
+    expect(claudeMd).toContain('daily memory report is the primary review surface');
 
     expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'stop-mbrain-check.sh'))).toBe(true);
     expect(existsSync(join(tempHome, '.claude', 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh'))).toBe(true);
@@ -194,6 +203,9 @@ describe('setup-agent', () => {
     expect(agentsMd).toMatch(/both pointers,\s+not answer evidence/);
     expect(agentsMd).toMatch(/canonical evidence boundary before\s+factual claims/);
     expect(agentsMd).toContain('route_memory_writeback');
+    expect(agentsMd).toContain('automatic canonical writeback exists');
+    expect(agentsMd).toContain('assertion pipeline');
+    expect(agentsMd).toContain('daily memory report is the primary review surface');
   });
 
   test('setup-agent --codex replaces previous same-file rules when rules version changes', async () => {

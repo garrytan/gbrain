@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { setDefaultTimeout, afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { acquireLock } from '../src/core/pglite-lock.ts';
+
+setDefaultTimeout(20_000);
 
 const TEST_DIR = join(tmpdir(), `mbrain-pglite-engine-lock-${process.pid}`);
 

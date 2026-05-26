@@ -1,14 +1,14 @@
 /**
- * Engine migration: transfer brain data between PGLite and Postgres.
+ * Engine migration: prepare legacy data for the Postgres target runtime.
  *
  * Usage:
- *   mbrain migrate --to supabase [--url <connection_string>]
- *   mbrain migrate --to pglite [--path <db_path>]
- *   mbrain migrate --to <engine> --force  (overwrite non-empty target)
+ *   mbrain migrate --to postgres [--url <connection_string>]  # Markdown-first guide, no DB page copy
+ *   mbrain migrate --to supabase [--url <connection_string>]  # Markdown-first guide, no DB page copy
+ *   mbrain migrate --to pglite [--path <db_path>]             # legacy test/escape hatch DB copy
  */
 
 import { createEngine } from '../core/engine-factory.ts';
-import { configDir, loadConfig, saveConfig, toEngineConfig, type MBrainConfig } from '../core/config.ts';
+import { configDir, loadConfig, saveConfig, type MBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
 import { homedir } from 'os';
@@ -22,16 +22,25 @@ interface MigrateOpts {
   force: boolean;
 }
 
+export interface PostgresRuntimeMigrationGuideInput {
+  target: 'postgres' | 'supabase' | 'pglite';
+  source: string;
+  sourcePageCount: number;
+  migratedPageCount: number;
+  contentHashMismatches: number;
+  legacyDbOnlyRecords: number;
+}
+
 function parseArgs(args: string[]): MigrateOpts {
   const toIdx = args.indexOf('--to');
   if (toIdx === -1 || !args[toIdx + 1]) {
-    throw new Error('Usage: mbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force]');
+    throw new Error('Usage: mbrain migrate --to <postgres|supabase> [--url <url>] [--force] (legacy: --to pglite --path <path>)');
   }
 
   const targetRaw = args[toIdx + 1];
   const targetEngine = targetRaw === 'supabase' ? 'postgres' : targetRaw as 'postgres' | 'pglite';
   if (targetEngine !== 'postgres' && targetEngine !== 'pglite') {
-    throw new Error(`Unknown target engine: "${targetRaw}". Use: supabase or pglite`);
+    throw new Error(`Unknown target engine: "${targetRaw}". Use: postgres or supabase (legacy: pglite)`);
   }
 
   const urlIdx = args.indexOf('--url');
@@ -52,6 +61,8 @@ function getManifestPath(): string {
 interface MigrateManifest {
   completed_slugs: string[];
   target_engine: string;
+  target_identity?: string;
+  source_identity?: string;
   started_at: string;
 }
 
@@ -90,17 +101,42 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     process.exit(1);
   }
 
-  // Build target config
-  const targetConfig: EngineConfig = { engine: opts.targetEngine };
+  const sourceIdentity = migrationConfigIdentity(config);
+
+  console.log(formatPostgresRuntimeMigrationPreflight({
+    target: opts.targetEngine,
+    source: config.engine,
+    force: opts.force,
+  }));
+
   if (opts.targetEngine === 'postgres') {
-    targetConfig.database_url = opts.targetUrl || process.env.MBRAIN_DATABASE_URL || process.env.DATABASE_URL;
-    if (!targetConfig.database_url) {
-      console.error('Target is Supabase but no connection string provided. Use: --url <connection_string>');
-      process.exit(1);
-    }
-  } else {
-    targetConfig.database_path = opts.targetPath || join(homedir(), '.mbrain', 'brain.pglite');
+    const sourceStats = typeof (sourceEngine as Partial<BrainEngine>).getStats === 'function'
+      ? await sourceEngine.getStats().catch(() => null)
+      : null;
+    const legacyDbOnlyRecords = await countLegacyDbOnlyRecordsForReview(sourceEngine);
+    console.log(formatPostgresRuntimeMigrationGuide({
+      target: 'postgres',
+      source: config.engine,
+      sourcePageCount: sourceStats?.page_count ?? 0,
+      migratedPageCount: 0,
+      contentHashMismatches: 0,
+      legacyDbOnlyRecords,
+    }));
+    console.error('Postgres target migration is Markdown-first and reconciler-gated.');
+    console.error('This command does not copy legacy DB pages directly into the Postgres target.');
+    console.error('Run Markdown source ingest/sync, projection reconciler, eval/replay smoke, and doctor before switching config.');
+    console.error('Legacy DB-only state remains manual-review material, not automatic canonical memory.');
+    process.exit(1);
   }
+
+  // Build target config. The only executable DB-copy path left is the legacy
+  // PGLite escape hatch above; Postgres target migration is guide-only until
+  // Markdown ingest/reconciler gates can be enforced in-process.
+  const targetConfig: EngineConfig = {
+    engine: opts.targetEngine,
+    database_path: opts.targetPath || join(homedir(), '.mbrain', 'brain.pglite'),
+  };
+  const targetIdentity = migrationConfigIdentity(targetConfig);
 
   // Connect to target
   console.log(`Connecting to target (${opts.targetEngine})...`);
@@ -108,38 +144,67 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   await targetEngine.connect(targetConfig);
   await targetEngine.initSchema();
 
+  // Load or create manifest before target non-empty checks so interrupted
+  // migrations can resume into the partially populated target they created.
+  let manifest = loadManifest();
+  if (manifest && manifest.target_engine !== opts.targetEngine) {
+    console.log('Previous migration was to a different target. Starting fresh.');
+    manifest = null;
+  }
+  if (manifest && (
+    manifest.target_identity !== targetIdentity
+    || manifest.source_identity !== sourceIdentity
+  )) {
+    console.log('Previous migration manifest was for a different source or target. Starting fresh.');
+    manifest = null;
+  }
+
   // Check if target has data
   const targetStats = await targetEngine.getStats();
-  if (targetStats.page_count > 0 && !opts.force) {
+  const targetLegacyDbOnlyRecords = await countLegacyDbOnlyRecordsForReview(targetEngine);
+  if (targetLegacyDbOnlyRecords > 0) {
+    console.error(`Target brain has ${targetLegacyDbOnlyRecords} DB-only runtime records.`);
+    console.error('Migrate into an empty target or manually review and clean the target runtime state first.');
+    await targetEngine.disconnect();
+    process.exit(1);
+  }
+
+  if (targetStats.page_count > 0 && !opts.force && !manifest) {
     console.error(`Target brain is not empty (${targetStats.page_count} pages).`);
     console.error('Run with --force to overwrite, or migrate to an empty brain.');
     await targetEngine.disconnect();
     process.exit(1);
   }
 
+  let targetPagesBefore = targetStats.page_count > 0
+    ? await targetEngine.listPages({ limit: 100000 })
+    : [];
   if (targetStats.page_count > 0 && opts.force) {
     console.log('--force: wiping target brain...');
     // Delete all pages (cascades to chunks, links, tags, etc.)
-    const pages = await targetEngine.listPages({ limit: 100000 });
-    for (const p of pages) {
+    for (const p of targetPagesBefore) {
       await targetEngine.deletePage(p.slug);
     }
-  }
-
-  // Load or create manifest for resume
-  let manifest = loadManifest();
-  if (manifest && manifest.target_engine !== opts.targetEngine) {
-    console.log('Previous migration was to a different target. Starting fresh.');
+    targetPagesBefore = [];
     manifest = null;
   }
-  const completedSet = new Set(manifest?.completed_slugs || []);
+
   if (!manifest) {
     manifest = {
       completed_slugs: [],
       target_engine: opts.targetEngine,
+      target_identity: targetIdentity,
+      source_identity: sourceIdentity,
       started_at: new Date().toISOString(),
     };
   }
+  const existingTargetSlugs = new Set(targetPagesBefore.map((page) => page.slug));
+  const completedSlugs = manifest.completed_slugs.filter((slug) => existingTargetSlugs.has(slug));
+  if (completedSlugs.length !== manifest.completed_slugs.length) {
+    manifest.completed_slugs = completedSlugs;
+    saveManifest(manifest);
+  }
+  const completedSet = new Set(completedSlugs);
 
   // Get all source pages
   const sourceStats = await sourceEngine.getStats();
@@ -234,6 +299,31 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     if (val) await targetEngine.setConfig(key, val);
   }
 
+  const targetStatsAfter = await targetEngine.getStats();
+  const targetPages = await targetEngine.listPages({ limit: 100000 });
+  const targetContentHashes = new Map(targetPages.map((page) => [page.slug, page.content_hash] as const));
+  const contentHashMismatches = allPages.filter((page) => (
+    page.content_hash !== undefined && targetContentHashes.get(page.slug) !== page.content_hash
+  )).length;
+  const legacyDbOnlyRecords = await countLegacyDbOnlyRecordsForReview(sourceEngine);
+  const migrationGuide = formatPostgresRuntimeMigrationGuide({
+    target: opts.targetEngine,
+    source: config.engine,
+    sourcePageCount: sourceStats.page_count,
+    migratedPageCount: targetStatsAfter.page_count,
+    contentHashMismatches,
+    legacyDbOnlyRecords,
+  });
+
+  console.log(`\nMigration complete. ${migrated} pages transferred.`);
+  console.log(migrationGuide);
+
+  if (targetStatsAfter.page_count !== sourceStats.page_count || contentHashMismatches > 0) {
+    console.error('Migration verification failed. Review counts and hashes before using the target runtime.');
+    await targetEngine.disconnect();
+    process.exit(1);
+  }
+
   // Update local config
   const newConfig: MBrainConfig = {
     engine: opts.targetEngine,
@@ -249,9 +339,118 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   clearManifest();
   await targetEngine.disconnect();
 
-  console.log(`\nMigration complete. ${migrated} pages transferred.`);
   console.log(`Config updated to engine: ${opts.targetEngine}`);
   if (config.engine === 'pglite' && config.database_path) {
     console.log(`Original PGLite brain preserved at ${config.database_path} (backup).`);
+  }
+}
+
+export function formatPostgresRuntimeMigrationGuide(input: PostgresRuntimeMigrationGuideInput): string {
+  const countsVerified = input.sourcePageCount > 0
+    ? input.migratedPageCount === input.sourcePageCount
+    : input.migratedPageCount === 0;
+  const countLine = countsVerified
+    ? `Counts verified: ${input.migratedPageCount}/${input.sourcePageCount} pages`
+    : `Counts pending: ${input.migratedPageCount}/${input.sourcePageCount} pages`;
+  const hashLine = countsVerified && input.contentHashMismatches === 0
+    ? 'Content hashes verified'
+    : input.contentHashMismatches === 0
+      ? 'Content hash verification pending until Markdown import and projection reconciliation run'
+      : `Content hash mismatches: ${input.contentHashMismatches}`;
+  const title = input.target === 'pglite'
+    ? 'Legacy DB Copy Migration Checklist'
+    : 'Postgres Runtime Migration Checklist';
+  return [
+    '',
+    title,
+    '='.repeat(title.length),
+    `Source engine: ${input.source}`,
+    `Target engine: ${input.target}`,
+    countLine,
+    hashLine,
+    `legacy DB-only records require manual review: ${input.legacyDbOnlyRecords}`,
+    'Direct legacy DB page copy is not a Postgres activation path.',
+    '',
+    'Next steps:',
+    '1. Back up the current brain repo and source database before cleanup.',
+    '2. Export current Markdown brain: mbrain export --dir <backup/markdown-export>.',
+    '3. Initialize Postgres: mbrain init --profile homebrew-postgres --non-interactive or mbrain init --url <connection_string> --non-interactive.',
+    '4. Import exported Markdown through source ingest: mbrain import <backup/markdown-export> --no-embed.',
+    '5. Manually review legacy DB-only candidates, profile memory, tasks, sessions, and mutation records before deciding what to import.',
+    '6. No one-shot assertion rebuild command exists yet; keep DB-only claims manual until a governed rebuild command lands.',
+    '7. Inspect projection lineage before accepting drift repair: mbrain projection-explain --target-type page --target-id <slug>.',
+    '8. Run deterministic eval/replay smoke: bun run test:phase13.',
+    '9. Run doctor after migration checks: mbrain doctor --json.',
+    '10. Enable autopilot through onboarding when the doctor report is clean.',
+  ].join('\n');
+}
+
+function formatPostgresRuntimeMigrationPreflight(input: {
+  target: 'postgres' | 'pglite';
+  source: string;
+  force: boolean;
+}): string {
+  const forceLine = input.force
+    ? 'WARNING: --force may wipe target pages; confirm backups before continuing.'
+    : 'No target wipe requested.';
+  const targetBoundary = input.target === 'postgres'
+    ? 'For the Postgres target runtime, migrate canonical Markdown through source ingest/sync and projection reconciler.'
+    : 'The PGLite path is a legacy DB-copy test/escape hatch, not a Postgres activation path.';
+  const configBoundary = input.target === 'postgres'
+    ? 'Do not switch config until projection reconciliation, eval/replay smoke, and doctor pass.'
+    : 'Use this legacy path only when you intentionally want a PGLite compatibility target.';
+  return [
+    '',
+    'Preflight safety checklist',
+    '==========================',
+    `Source engine: ${input.source}`,
+    `Target engine: ${input.target}`,
+    'Back up the current brain repo and source database before migration mutations.',
+    'Export the current Markdown brain before migration mutations.',
+    targetBoundary,
+    'Review DB-only legacy records manually; do not promote them by direct DB page copy.',
+    configBoundary,
+    forceLine,
+    '',
+  ].join('\n');
+}
+
+function migrationConfigIdentity(config: Pick<EngineConfig, 'engine' | 'database_url' | 'database_path'>): string {
+  if (config.engine === 'postgres') {
+    return `postgres:${redactDatabaseUrlForManifest(config.database_url ?? '')}`;
+  }
+  return `${config.engine}:${config.database_path ?? ''}`;
+}
+
+function redactDatabaseUrlForManifest(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.password) url.password = '[redacted]';
+    return url.toString();
+  } catch {
+    return value.replace(/:\/\/([^:/@\s]+):[^@\s]+@/g, '://$1:[redacted]@');
+  }
+}
+
+async function countLegacyDbOnlyRecordsForReview(engine: BrainEngine): Promise<number> {
+  const counts = await Promise.all([
+    countList(() => engine.getIngestLog({ limit: 100000 })),
+    countList(() => engine.listTaskThreads()),
+    countList(() => engine.listProfileMemoryEntries()),
+    countList(() => engine.listPersonalEpisodeEntries()),
+    countList(() => engine.listMemoryCandidateEntries()),
+    countList(() => engine.listMemoryMutationEvents()),
+    countList(() => engine.listMemoryRealms()),
+    countList(() => engine.listMemorySessions()),
+    countList(() => engine.listMemoryRedactionPlans()),
+  ]);
+  return counts.reduce((sum, count) => sum + count, 0);
+}
+
+async function countList(list: () => Promise<unknown[]>): Promise<number> {
+  try {
+    return (await list()).length;
+  } catch {
+    return 0;
   }
 }

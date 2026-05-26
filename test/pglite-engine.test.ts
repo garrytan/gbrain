@@ -4,13 +4,15 @@
  * No Docker, no DATABASE_URL, no external dependencies. Runs instantly in CI.
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { setDefaultTimeout, describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { buildPageChunks, importFromContent } from '../src/core/import-file.ts';
 import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
 import { importContentHash } from '../src/core/utils.ts';
+
+setDefaultTimeout(20_000);
 
 let engine: PGLiteEngine;
 

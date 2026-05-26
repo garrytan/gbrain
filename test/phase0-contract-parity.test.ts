@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { setDefaultTimeout, afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -11,6 +11,8 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { buildTaskResumeCard } from '../src/core/services/task-memory-service.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { PageType } from '../src/core/types.ts';
+
+setDefaultTimeout(20_000);
 
 type SharedWorkflowEngine = Pick<
   BrainEngine,

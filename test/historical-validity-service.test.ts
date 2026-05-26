@@ -9,6 +9,8 @@ import { recordCanonicalHandoff } from '../src/core/services/canonical-handoff-s
 import { assessHistoricalValidity } from '../src/core/services/historical-validity-service.ts';
 import { supersedeMemoryCandidateEntry } from '../src/core/services/memory-inbox-supersession-service.ts';
 
+const FIXED_NOW = new Date('2026-04-25T00:00:00.000Z');
+
 test('historical validity service allows a recent handed-off candidate with no same-scope competitors', async () => {
   const harness = await createHarness('allow');
 
@@ -23,7 +25,7 @@ test('historical validity service allows a recent handed-off candidate with no s
       reviewed_at: '2026-04-23T10:05:00.000Z',
     });
 
-    const result = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-current' });
+    const result = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-current', now: FIXED_NOW });
 
     expect(result.decision).toBe('allow');
     expect(result.stale_claim).toBe(false);
@@ -48,7 +50,7 @@ test('historical validity service defers stale claims when the review window exp
       reviewed_at: '2026-02-01T10:05:00.000Z',
     });
 
-    const result = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-stale' });
+    const result = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-stale', now: FIXED_NOW });
 
     expect(result.decision).toBe('defer');
     expect(result.stale_claim).toBe(true);
@@ -93,7 +95,7 @@ test('historical validity service denies older handoffs when a newer promoted pe
       reviewed_at: '2026-04-24T10:05:00.000Z',
     });
 
-    const result = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-older' });
+    const result = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-older', now: FIXED_NOW });
 
     expect(result.decision).toBe('deny');
     expect(result.stale_claim).toBe(true);
@@ -123,7 +125,7 @@ test('historical validity service defers when a competing staged candidate is un
       scope_id: 'workspace:default',
     });
 
-    const result = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-reviewed' });
+    const result = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-reviewed', now: FIXED_NOW });
 
     expect(result.decision).toBe('defer');
     expect(result.stale_claim).toBe(false);
@@ -163,12 +165,12 @@ test('historical validity service denies non-promoted and missing-handoff candid
       reviewed_at: '2026-04-23T10:00:00.000Z',
     });
 
-    const notPromoted = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-not-promoted' });
+    const notPromoted = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-not-promoted', now: FIXED_NOW });
     expect(notPromoted.decision).toBe('deny');
     expect(notPromoted.recommended_fallback).toBe('none');
     expect(notPromoted.reasons).toEqual(['candidate_not_promoted']);
 
-    const missingHandoff = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-no-handoff' });
+    const missingHandoff = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-no-handoff', now: FIXED_NOW });
     expect(missingHandoff.decision).toBe('deny');
     expect(missingHandoff.recommended_fallback).toBe('none');
     expect(missingHandoff.reasons).toEqual(['candidate_missing_handoff']);
@@ -207,7 +209,7 @@ test('historical validity service denies superseded candidates as stale', async 
       review_reason: 'Newer promoted evidence replaced the older claim.',
     });
 
-    const result = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-superseded-old' });
+    const result = await assessHistoricalValidity(harness.engine, { candidate_id: 'candidate-superseded-old', now: FIXED_NOW });
     expect(result.decision).toBe('deny');
     expect(result.stale_claim).toBe(true);
     expect(result.recommended_fallback).toBe('supersede');

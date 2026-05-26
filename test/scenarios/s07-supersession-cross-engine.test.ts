@@ -12,7 +12,7 @@
  * trigger logic on SQLite. Both paths must reject the same way.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { setDefaultTimeout, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -22,6 +22,8 @@ import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { supersedeMemoryCandidateEntry } from '../../src/core/services/memory-inbox-supersession-service.ts';
 import { seedMemoryCandidate } from './helpers.ts';
 import { promoteMemoryCandidateEntry } from '../../src/core/services/memory-inbox-promotion-service.ts';
+
+setDefaultTimeout(20_000);
 
 type ScenarioEngine = SQLiteEngine | PGLiteEngine | PostgresEngine;
 

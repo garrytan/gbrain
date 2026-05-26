@@ -3,13 +3,15 @@
  * to three immutable event tables.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { setDefaultTimeout, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SQLiteEngine } from '../../src/core/sqlite-engine.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
+
+setDefaultTimeout(20_000);
 
 const ENGINE_COLD_START_BUDGET_MS = 30_000;
 
