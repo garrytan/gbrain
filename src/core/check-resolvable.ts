@@ -21,6 +21,11 @@ import {
   runRoutingEval,
 } from './routing-eval.ts';
 import { runFilingAudit } from './filing-audit.ts';
+import {
+  entriesToResolverContent,
+  findPrimaryResolverPath,
+  loadSkillTriggerIndex,
+} from './skill-trigger-index.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -107,7 +112,7 @@ const OVERLAP_WHITELIST = new Set([
   'brain-ops',        // always-on, every brain read/write
 ]);
 
-interface ResolverEntry {
+export interface ResolverEntry {
   trigger: string;
   skillPath: string;       // e.g., 'skills/query/SKILL.md'
   isGStack: boolean;       // GStack: X entries (external, skip file check)
@@ -299,31 +304,39 @@ export function extractDelegationTargets(content: string): DelegationRef[] {
 export function checkResolvable(skillsDir: string): ResolvableReport {
   const issues: ResolvableIssue[] = [];
 
-  // Load inputs
-  // Accept RESOLVER.md or AGENTS.md (W1). Also check one level up: the
-  // reference OpenClaw deployment layout places AGENTS.md at the
-  // workspace root, with skills/ below.
+  // Load inputs via the v0.41.11 shared primitive. UNION semantics
+  // across two surfaces:
+  //   1. Per-skill SKILL.md frontmatter `triggers:` (canonical) — every
+  //      skill ships its own triggers; new skills don't need a
+  //      RESOLVER.md row to be reachable.
+  //   2. Curated RESOLVER.md / AGENTS.md rows from skillsDir AND parent
+  //      directory (D-CX-14 OpenClaw workspace-root layout preserved).
   //
-  // Merge strategy (D-CX-14): collect entries from ALL resolver files
-  // across both directories (skills dir + parent). This handles the
-  // common OpenClaw layout where a skillpack installs a thin
-  // skills/RESOLVER.md while the real dispatcher lives in ../AGENTS.md.
-  // Entries are deduped by skillPath (first occurrence wins).
-  const allResolverPaths = [
-    ...findAllResolverFiles(skillsDir),
-    ...findAllResolverFiles(join(skillsDir, '..')),
-  ];
+  // Frontmatter is the source of truth (closes the #1451 drift class);
+  // RESOLVER.md rows still contribute additively so the human-readable
+  // dispatcher map stays load-bearing. See src/core/skill-trigger-index.ts.
+  const triggerEntries = loadSkillTriggerIndex(skillsDir);
 
-  // Primary resolver: first found (for error messages and --fix targets)
-  const resolverPath = allResolverPaths[0] ?? null;
-  if (!resolverPath) {
+  // Primary RESOLVER.md path is still needed for error messages and
+  // --fix targets that have to point at a concrete file. When neither
+  // RESOLVER.md nor AGENTS.md exists but frontmatter triggers DO
+  // populate the index, fall back to a suggested path so `fix:` blocks
+  // still have a concrete target (auto-fix paths that touch RESOLVER.md
+  // will create it on first write).
+  const resolverPathOrNull = findPrimaryResolverPath(skillsDir);
+  const resolverPath = resolverPathOrNull ?? join(skillsDir, 'RESOLVER.md');
+  if (!resolverPathOrNull && triggerEntries.length === 0) {
+    // No RESOLVER.md / AGENTS.md anywhere AND no skill ships frontmatter
+    // triggers — the resolver tree is fully empty. Preserve the
+    // original 'missing_file' error semantics so doctor's UX doesn't
+    // regress for genuinely-uninitialized skills directories.
     const suggested = join(skillsDir, 'RESOLVER.md');
     const missingIssue: ResolvableIssue = {
       type: 'missing_file',
       severity: 'error',
       skill: RESOLVER_FILENAMES_LABEL,
-      message: `${RESOLVER_FILENAMES_LABEL} not found in ${skillsDir} or its parent`,
-      action: `Create ${suggested} with skill routing tables`,
+      message: `${RESOLVER_FILENAMES_LABEL} not found in ${skillsDir} or its parent (and no SKILL.md frontmatter declares triggers:)`,
+      action: `Create ${suggested} with skill routing tables, or add 'triggers:' to each SKILL.md frontmatter`,
       fix: { type: 'create_stub', file: suggested },
     };
     return {
@@ -335,22 +348,14 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
     };
   }
 
-  // Merge entries from all resolver files, dedup by skillPath.
-  // Also build a combined resolverContent for routing-eval (Check 5).
-  const seenSkillPaths = new Set<string>();
-  const entries: ResolverEntry[] = [];
-  const resolverContentParts: string[] = [];
-  for (const rPath of allResolverPaths) {
-    const content = readFileSync(rPath, 'utf-8');
-    resolverContentParts.push(content);
-    for (const entry of parseResolverEntries(content)) {
-      if (!seenSkillPaths.has(entry.skillPath)) {
-        seenSkillPaths.add(entry.skillPath);
-        entries.push(entry);
-      }
-    }
-  }
-  const resolverContent = resolverContentParts.join('\n\n');
+  // Project to ResolverEntry[] shape that downstream code already
+  // consumes (source field is only needed for action-text routing).
+  const entries: ResolverEntry[] = triggerEntries;
+
+  // Build a synthesized resolver-content string for the routing-eval
+  // and lint stages that still take string content. Re-emits both
+  // frontmatter-derived AND RESOLVER.md-derived entries as one table.
+  const resolverContent = entriesToResolverContent(triggerEntries);
   const { skills: manifest } = loadOrDeriveManifest(skillsDir);
 
   // Build lookup sets
@@ -553,12 +558,19 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
           : d.outcome === 'ambiguous'
             ? 'routing_ambiguous'
             : 'routing_false_positive';
+      const skillName = d.fixture.expected_skill ?? 'negative-case';
+      // v0.41.11: triggers live in SKILL.md frontmatter (canonical) AND
+      // RESOLVER.md rows. Point the agent at the canonical surface
+      // first; the dispatcher map is the secondary edit point.
+      const editTarget = d.fixture.expected_skill
+        ? `skills/${d.fixture.expected_skill}/SKILL.md frontmatter triggers: (canonical) or skills/RESOLVER.md row (dispatcher map)`
+        : `the relevant skill's SKILL.md frontmatter triggers:`;
       issues.push({
         type: kind,
         severity: 'warning',
-        skill: d.fixture.expected_skill ?? 'negative-case',
+        skill: skillName,
         message: `Routing ${d.outcome} for intent "${d.fixture.intent}"`,
-        action: `Update routing-eval.jsonl fixture or broaden resolver triggers in RESOLVER.md (${d.note ?? 'no additional detail'})`,
+        action: `Update routing-eval.jsonl fixture or broaden ${editTarget} (${d.note ?? 'no additional detail'})`,
       });
     }
   }

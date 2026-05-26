@@ -624,6 +624,35 @@ export interface BrainEngine {
    */
   putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page>;
   /**
+   * v0.41.13 (#1309) — identity-based dedup pre-check for the import pipeline.
+   *
+   * Returns the first matching `{slug, id}` whose `(source_id, …)` matches
+   * the supplied identity signal, OR null when nothing matches.
+   *
+   * Identity precedence (a row matches if EITHER fires):
+   *   - `content_hash = $hash` AND `deleted_at IS NULL`
+   *   - `frontmatter->>'id' = $frontmatterId` AND `$frontmatterId IS NOT NULL`
+   *     AND `deleted_at IS NULL`
+   *
+   * Background: the overlapping-ingest-roots bug class (infiniteGameExp,
+   * issue #1309) created two pages per file when a user ran `gbrain import
+   * /vault/Subdir/` then `gbrain import /vault/` — the slug-shape changed
+   * but the content + external ID were identical. Pre-fix, the import
+   * pipeline dedup-checked by `getPage(slug)` alone and missed the
+   * cross-slug duplicate. This method gives the importer a deterministic
+   * way to identify true duplicates BEFORE insert.
+   *
+   * Per codex review: the optional `?` shape lets existing test doubles
+   * compile without changes. Callers must defensively check
+   * `engine.findDuplicatePage?.(...)` and fall through on undefined.
+   * `deleted_at IS NULL` is deliberate — a soft-deleted page should NOT
+   * block a legitimate re-import under a new slug.
+   */
+  findDuplicatePage?(
+    sourceId: string,
+    opts: { hash: string; frontmatterId?: string | null },
+  ): Promise<{ slug: string; id: number } | null>;
+  /**
    * Hard-delete a page row. Cascades to content_chunks, page_links,
    * chunk_relations via existing FK ON DELETE CASCADE.
    *
@@ -663,7 +692,20 @@ export interface BrainEngine {
    * `filters.includeDeleted: true` to surface them.
    */
   listPages(filters?: PageFilters): Promise<Page[]>;
-  resolveSlugs(partial: string): Promise<string[]>;
+  /**
+   * Fuzzy slug resolver.
+   *
+   * v0.41.13 (#1436): `opts.sourceId` scopes the search to a single source;
+   * `opts.sourceIds` to an array (federated_read OAuth tier). Pre-fix the
+   * resolver was unscoped, so MCP `get_page` with `fuzzy: true` would
+   * return candidates from sources the caller couldn't actually access.
+   * Source-bleed via fuzzy resolution was the bug class infiniteGameExp
+   * reported as #1436. When neither opt is set, the original unscoped
+   * behavior is preserved for back-compat with internal callers (the
+   * `gbrain query --resolve` CLI path, etc.). Field names match the
+   * `sourceScopeOpts(ctx)` helper output so callers can spread directly.
+   */
+  resolveSlugs(partial: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]>;
   /**
    * Returns the slug of every page in the brain. Used by batch commands as a
    * mutation-immune iteration source (alternative to listPages OFFSET pagination,

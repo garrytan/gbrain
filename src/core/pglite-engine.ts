@@ -810,6 +810,27 @@ export class PGLiteEngine implements BrainEngine {
     return rowToPage(rows[0] as Record<string, unknown>);
   }
 
+  /**
+   * v0.41.13 (#1309) — identity-based dedup pre-check.
+   * See `BrainEngine.findDuplicatePage` for the contract.
+   */
+  async findDuplicatePage(
+    sourceId: string,
+    opts: { hash: string; frontmatterId?: string | null },
+  ): Promise<{ slug: string; id: number } | null> {
+    const fmId = opts.frontmatterId ?? null;
+    const sql = `SELECT id, slug FROM pages
+       WHERE source_id = $1
+         AND deleted_at IS NULL
+         AND (content_hash = $2 OR (frontmatter->>'id' = $3 AND $3 IS NOT NULL))
+       ORDER BY id
+       LIMIT 1`;
+    const { rows } = await this.db.query(sql, [sourceId, opts.hash, fmId]);
+    if (rows.length === 0) return null;
+    const r = rows[0] as { id: number | string; slug: string };
+    return { slug: r.slug, id: Number(r.id) };
+  }
+
   async putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page> {
     slug = validateSlug(slug);
     const hash = page.content_hash || contentHash(page);
@@ -1271,20 +1292,39 @@ export class PGLiteEngine implements BrainEngine {
     }));
   }
 
-  async resolveSlugs(partial: string): Promise<string[]> {
+  async resolveSlugs(partial: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]> {
+    // v0.41.13 #1436: source scope. When opts.sourceIds is set
+    // (federated_read OAuth tier), filter via `source_id = ANY($N::text[])`.
+    // When opts.sourceId is set (scalar single-source tier), filter via
+    // `source_id = $N`. When neither is set, preserve the pre-fix unscoped
+    // behavior so internal CLI callers (`gbrain query --resolve` etc.)
+    // continue to walk every source.
+    const sources = opts?.sourceIds ?? null;
+    const scalar = opts?.sourceId ?? null;
+    const scopeSql = sources
+      ? ` AND source_id = ANY($${'__N__'}::text[])`
+      : scalar
+        ? ` AND source_id = $${'__N__'}`
+        : '';
+
     // Try exact match first
-    const exact = await this.db.query('SELECT slug FROM pages WHERE slug = $1', [partial]);
+    const exactSql = `SELECT slug FROM pages WHERE slug = $1 AND deleted_at IS NULL${scopeSql.replace('__N__', '2')}`;
+    const exactParams: unknown[] = sources ? [partial, sources] : scalar ? [partial, scalar] : [partial];
+    const exact = await this.db.query(exactSql, exactParams);
     if (exact.rows.length > 0) return [(exact.rows[0] as { slug: string }).slug];
 
     // Fuzzy match via pg_trgm
-    const { rows } = await this.db.query(
-      `SELECT slug, similarity(title, $1) AS sim
+    const fuzzySql = `SELECT slug, similarity(title, $1) AS sim
        FROM pages
-       WHERE title % $1 OR slug ILIKE $2
+       WHERE deleted_at IS NULL AND (title % $1 OR slug ILIKE $2)${scopeSql.replace('__N__', '3')}
        ORDER BY sim DESC
-       LIMIT 5`,
-      [partial, '%' + partial + '%']
-    );
+       LIMIT 5`;
+    const fuzzyParams: unknown[] = sources
+      ? [partial, '%' + partial + '%', sources]
+      : scalar
+        ? [partial, '%' + partial + '%', scalar]
+        : [partial, '%' + partial + '%'];
+    const { rows } = await this.db.query(fuzzySql, fuzzyParams);
     return (rows as { slug: string }[]).map(r => r.slug);
   }
 
@@ -1744,7 +1784,13 @@ export class PGLiteEngine implements BrainEngine {
            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = hc.page_id
          ) THEN true ELSE false END AS stale
        FROM hnsw_candidates hc
-       ORDER BY score DESC
+       -- v0.41.13: stable tiebreaker. When two chunks share a score (same
+       -- source-prefix boost + same cosine distance, the basis-vector + same-
+       -- source-prefix case in eval fixtures), older page_id wins. Without
+       -- this, planner choice + index presence can flip ordering between
+       -- master and feature branches that add unrelated indexes — see the
+       -- pages_dedup_idx (v95) regression that motivated this.
+       ORDER BY score DESC, hc.page_id ASC, hc.chunk_id ASC
        LIMIT $3
        OFFSET $4`,
       params

@@ -1211,6 +1211,42 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     return result;
   });
 
+  // v0.41.11.0 — extract-conversation-facts. NOT in PROTECTED_JOB_NAMES
+  // because per-call cost is bounded by `data.max_cost_usd` (default
+  // DEFAULT_MAX_COST_USD = $5) and the handler re-creates the
+  // BudgetTracker inside its own process. BudgetExhausted is caught at
+  // the core level and returned as `result.budget_exhausted: true` (NOT
+  // a job failure) so the user can resume with a higher cap.
+  worker.register('extract-conversation-facts', async (job) => {
+    const { runExtractConversationFactsCore } = await import('./extract-conversation-facts.ts');
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
+    if (!sourceId) {
+      // Multi-source iteration not supported in the Minion-handler path;
+      // the CLI wrapper does multi-source loops. A background submission
+      // SHOULD pin to one source per call (job_id is per-call).
+      throw new Error('extract-conversation-facts Minion job requires data.sourceId');
+    }
+    const types = Array.isArray(job.data.types)
+      ? (job.data.types as string[]).filter((t) =>
+          ['conversation', 'meeting', 'slack', 'email'].includes(t),
+        )
+      : undefined;
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId,
+      types: types as ('conversation' | 'meeting' | 'slack' | 'email')[] | undefined,
+      slug: typeof job.data.slug === 'string' ? job.data.slug : undefined,
+      dryRun: !!job.data.dryRun,
+      limit: typeof job.data.limit === 'number' ? job.data.limit : undefined,
+      sinceIso: typeof job.data.sinceIso === 'string' ? job.data.sinceIso : undefined,
+      force: !!job.data.force,
+      sleepMs: typeof job.data.sleepMs === 'number' ? job.data.sleepMs : undefined,
+      segmentLimit: typeof job.data.segmentLimit === 'number' ? job.data.segmentLimit : undefined,
+      maxCostUsd: typeof job.data.maxCostUsd === 'number' ? job.data.maxCostUsd : undefined,
+      overrideDisabled: !!job.data.overrideDisabled,
+    });
+    return result;
+  });
+
   // v0.40.3.0 T8b: RemediationStep consumer handlers. Thin wrappers
   // around already-shipping CLI commands so doctor --remediate can
   // submit them as Minion jobs. NOT in PROTECTED_JOB_NAMES (no shell

@@ -287,29 +287,85 @@ export function pruneDir(name: string, parentDir?: string): boolean {
 }
 
 /**
- * Filter a file path to determine if it should be synced to GBrain.
- * Strategy-aware: 'markdown' (default) = .md/.mdx only, 'code' = code files only, 'auto' = both.
+ * Discriminator for WHY a path is not syncable. Returned by `unsyncableReason`
+ * so the sync cleanup loop in `commands/sync.ts` can distinguish "metafile we
+ * intentionally exclude" from "user removed this file from the strategy".
+ *
+ * v0.41.13 (#1433): pre-fix, the cleanup loop in performSync treated all
+ * unsyncable-modified paths the same and DELETED any pre-existing page for
+ * them. That silently dropped `log.md` / `schema.md` / `README.md` pages
+ * that had been indexed by older gbrain versions (or via direct put_page).
+ * The fix guards that loop on `unsyncableReason(...) === 'metafile'` and
+ * preserves those rows.
  */
-export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
+export type SyncableReason =
+  | 'metafile'
+  | 'strategy'
+  | 'pruned-dir'
+  | 'include-glob-miss'
+  | 'exclude-glob-hit';
+
+/**
+ * Canonical metafile basenames the markdown sync strategy intentionally
+ * skips. Exported so the cleanup-loop guard in `commands/sync.ts` can
+ * surface them in user-facing logs / docs without re-declaring the list.
+ *
+ * These files are append-only domain logs / index pages / boilerplate
+ * READMEs — not typed brain pages — by convention. A user who genuinely
+ * wants to index one of these basenames as a page should rename it.
+ */
+export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md'] as const;
+
+/**
+ * Internal classifier. Returns null when the path IS syncable, or a tagged
+ * SyncableReason explaining why it isn't. The single source of truth that
+ * both `isSyncable` (boolean) and `unsyncableReason` (tagged) call.
+ *
+ * Codex review caught the drift risk if `unsyncableReason` were an independent
+ * re-implementation. Funnelling both public APIs through `classifySync` means
+ * TypeScript enforces consistency at the compiler level.
+ */
+function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason | null {
   const strategy = opts.strategy || 'markdown';
 
-  if (!isAllowedByStrategy(path, strategy)) return false;
+  if (!isAllowedByStrategy(path, strategy)) return 'strategy';
 
   // Skip every path segment that pruneDir would block walkers from descending
   // into. Catches hidden dirs (`.git`, `.obsidian`), `.raw/` sidecars,
   // `node_modules/` (latent bug fix), and `ops/` at any depth.
   const segments = path.split('/');
-  if (segments.some(p => !pruneDir(p))) return false;
+  if (segments.some(p => !pruneDir(p))) return 'pruned-dir';
 
   // Skip meta files that aren't pages
-  const skipFiles = ['schema.md', 'index.md', 'log.md', 'README.md'];
   const basename = segments[segments.length - 1] || '';
-  if (skipFiles.includes(basename)) return false;
+  if ((SYNC_SKIP_FILES as readonly string[]).includes(basename)) return 'metafile';
 
-  if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return false;
-  if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return false;
+  if (opts.include && opts.include.length > 0 && !matchesAnyGlob(path, opts.include)) return 'include-glob-miss';
+  if (opts.exclude && opts.exclude.length > 0 && matchesAnyGlob(path, opts.exclude)) return 'exclude-glob-hit';
 
-  return true;
+  return null;
+}
+
+/**
+ * Filter a file path to determine if it should be synced to GBrain.
+ * Strategy-aware: 'markdown' (default) = .md/.mdx only, 'code' = code files only, 'auto' = both.
+ */
+export function isSyncable(path: string, opts: SyncableOptions = {}): boolean {
+  return classifySync(path, opts) === null;
+}
+
+/**
+ * Companion to `isSyncable`. Returns null when the path IS syncable, or a
+ * tagged `SyncableReason` explaining why it isn't. Used by the v0.41.13
+ * #1433 cleanup guard in `commands/sync.ts` to distinguish metafile
+ * exclusions (preserve any pre-existing page) from genuine "file removed
+ * from the strategy" cases (delete the now-stale page).
+ *
+ * Routes through the same `classifySync` as `isSyncable` so the two cannot
+ * drift. Identical opts contract — callers pass whatever they pass `isSyncable`.
+ */
+export function unsyncableReason(path: string, opts: SyncableOptions = {}): SyncableReason | null {
+  return classifySync(path, opts);
 }
 
 /**

@@ -8,6 +8,7 @@ import { createInterface } from 'readline';
 import {
   buildSyncManifest,
   isSyncable,
+  unsyncableReason,
   resolveSlugForPath,
   recordSyncFailures,
   unacknowledgedSyncFailures,
@@ -932,12 +933,31 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // became un-syncable (e.g., moved under `.gitignore` or filtered by
   // strategy=markdown) deletes the actual code-slug page, not a ghost
   // markdown-slug that never existed.
+  //
+  // v0.41.13 (#1433): the original cleanup loop deleted EVERY pre-existing
+  // page for unsyncable-modified paths, including `log.md`, `schema.md`,
+  // `index.md`, `README.md` — files that fail `isSyncable` precisely
+  // because they're metafiles by convention, not because the user
+  // "removed" them from the strategy. infiniteGameExp's domain `log.md`
+  // pages had been indexed by an older gbrain version (or via direct
+  // put_page) and were silently dropped on every subsequent sync. The
+  // fix uses `unsyncableReason` (factored from `isSyncable` so they
+  // cannot drift) to skip the delete when the reason is `'metafile'`.
+  //
+  // Honest scope: this guard only fixes the `manifest.modified` case.
+  // `manifest.deleted` is filtered upstream at sync.ts:757 via the same
+  // `isSyncable` call, so `rm log.md` followed by sync also doesn't
+  // delete the page. That's the same pre-fix behavior — removing the
+  // page requires `gbrain pages purge-deleted` or a direct MCP delete.
+  // Filed as v0.42+ follow-up for a `gbrain pages remove <slug>` surface.
   const unsyncableModified = manifest.modified.filter(p => !isSyncable(p, syncOpts));
   // v0.18.0+ multi-source: scope getPage + deletePage to opts.sourceId so
   // unsyncable cleanup in source A doesn't accidentally sweep same-slug
   // pages in sources B/C/D.
   const pageOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   for (const path of unsyncableModified) {
+    // v0.41.13 #1433: never delete on metafile classification.
+    if (unsyncableReason(path, syncOpts) === 'metafile') continue;
     const slug = await resolveSlugByPathOrSourcePath(engine, path, opts.sourceId);
     try {
       const existing = await engine.getPage(slug, pageOpts);
@@ -1695,11 +1715,25 @@ See also:
   // v0.18.0 Step 5: --source resolves to a sources(id) row. Falls back
   // to pre-v0.17 global config (sync.repo_path + sync.last_commit) when
   // no flag, no env, no dotfile is present.
+  //
+  // v0.41.13 (#1434): always call the resolver, not just when explicit/env
+  // is set. Pre-fix, `gbrain sync` without --source skipped resolution and
+  // left sourceId undefined — which the engine treated as the seeded
+  // 'default' source. Users with a single non-default registered source
+  // (studiovault, etc.) silently routed every write to a source holding
+  // 0 pages, then createVersion threw on the slug lookup.
+  //
+  // The resolver's new `sole_non_default` tier (5.5) routes those
+  // single-source brains to the right place automatically; the nudge
+  // surfaces the auto-route to stderr so the user knows what happened
+  // and can pass --source to override if needed.
   const explicitSource = args.find((a, i) => args[i - 1] === '--source') || null;
-  let sourceId: string | undefined = undefined;
-  if (explicitSource || process.env.GBRAIN_SOURCE) {
-    const { resolveSourceId } = await import('../core/source-resolver.ts');
-    sourceId = await resolveSourceId(engine, explicitSource);
+  const { resolveSourceWithTier, formatSoleNonDefaultNudge } = await import('../core/source-resolver.ts');
+  const resolved = await resolveSourceWithTier(engine, explicitSource);
+  const sourceId: string = resolved.source_id;
+  if (resolved.tier === 'sole_non_default') {
+    const nudge = formatSoleNonDefaultNudge(sourceId);
+    if (nudge) process.stderr.write(nudge + '\n');
   }
 
   // v0.19.0 — `sync --all` iterates all registered sources with a

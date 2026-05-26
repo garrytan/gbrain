@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.41.10.1",
+  "version": "0.41.14.0",
   "description": "Postgres-native personal knowledge brain with hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",
@@ -49,6 +49,7 @@
     "check:cli-exec": "scripts/check-cli-executable.sh",
     "check:all": "scripts/check-privacy.sh && scripts/check-proposal-pii.sh && scripts/check-test-real-names.sh && scripts/check-jsonb-pattern.sh && scripts/check-source-id-projection.sh && scripts/check-source-config-leak.sh && scripts/check-progress-to-stdout.sh && scripts/check-no-legacy-getconnection.sh && scripts/check-test-isolation.sh && scripts/check-trailing-newline.sh && scripts/check-wasm-embedded.sh && scripts/check-exports-count.sh && scripts/check-admin-build.sh && scripts/check-admin-scope-drift.sh && scripts/check-cli-executable.sh && scripts/check-skill-brain-first.sh && scripts/check-operations-filter-bypass.sh && scripts/check-gateway-routed-no-direct-anthropic.sh",
     "check:gateway-routed": "scripts/check-gateway-routed-no-direct-anthropic.sh",
+    "check:resolver": "bun src/cli.ts check-resolvable --strict --skills-dir skills/",
     "check:skill-brain-first": "scripts/check-skill-brain-first.sh",
     "check:wasm": "scripts/check-wasm-embedded.sh",
     "check:newlines": "scripts/check-trailing-newline.sh",

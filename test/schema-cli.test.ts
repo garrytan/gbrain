@@ -51,7 +51,9 @@ describe('gbrain schema CLI (Phase C)', () => {
     const r = gbrain(['schema', 'show', 'gbrain-base']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('gbrain-base v1.0.0');
-    expect(r.stdout).toContain('Page types (22)');
+    // v0.41.11.0: page types extended from 22 to 24 by promoting
+    // `conversation` and `atom` into gbrain-base.
+    expect(r.stdout).toContain('Page types (24)');
     expect(r.stdout).toContain('Link verbs (12)');
     expect(r.stdout).toContain('Takes kinds: fact, take, bet, hunch');
     expect(r.stdout).toContain('person :: entity');

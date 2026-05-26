@@ -377,6 +377,21 @@ export interface RunOpts {
    * a tier-utility model via resolveModel.
    */
   extractorModel?: string;
+  /**
+   * v0.41.10 — inject a pre-built benchmark brain instead of creating
+   * one inside this call. Production callers (the gbrain CLI) leave this
+   * undefined and pay the PGLite cold-create cost (~1-3s) per invocation.
+   * Tests that loop runEvalLongMemEval many times can create one brain
+   * via createBenchmarkBrain() in beforeAll() and pass it on every call
+   * to amortize the cold-create across the whole file. When set,
+   * runEvalLongMemEval will reset the engine's tables but NOT disconnect
+   * it on exit (the caller owns lifecycle).
+   *
+   * The fully-loaded contract: engine MUST be the result of
+   * createBenchmarkBrain() (in-memory PGLite, schema initialized). Passing
+   * a production engine with real data would clobber it via resetTables.
+   */
+  engine?: PGLiteEngine;
 }
 
 export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}): Promise<void> {
@@ -494,7 +509,14 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   let runStart = Date.now();
   let errorCount = 0;
 
-  await withBenchmarkBrain(async (engine) => {
+  // v0.41.10 engine-sharing seam: when a caller-owned engine is provided
+  // (tests using beforeAll/afterAll to amortize PGLite cold-create across
+  // dozens of runEvalLongMemEval calls), skip the withBenchmarkBrain
+  // wrapper. Production callers (CLI) leave runOpts.engine unset and pay
+  // the cold-create cost once per CLI invocation as before. runOneQuestion
+  // already calls resetTables() as its first line so the prior caller's
+  // pages are cleared on the first question of this run.
+  const work = async (engine: PGLiteEngine): Promise<void> => {
     // v0.32.3 search-lite: thread --mode into the in-memory brain's config.
     // resetTables preserves `config` between questions, so this fires once
     // for the run. hybridSearch resolves it through the standard chain.
@@ -532,7 +554,16 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
         process.stderr.write(`[longmemeval] ${q.question_id} ${Date.now() - qStart}ms\n`);
       }
     }
-  });
+  };
+
+  if (runOpts.engine) {
+    // Caller owns engine lifecycle (typically a test beforeAll/afterAll).
+    // Do NOT disconnect on exit.
+    await work(runOpts.engine);
+  } else {
+    // Production / CLI path: fresh engine per invocation, disconnect on exit.
+    await withBenchmarkBrain(work);
+  }
 
   progress.finish();
   emitter.close();

@@ -383,29 +383,30 @@ describe("DRY detection — checkResolvable", () => {
 });
 
 describe("v0.22.4 regression — actual repo skills/ has 0 errors", () => {
-  test("repo skills/ pass check-resolvable cleanly (errors only)", () => {
-    // The contract for v0.22.4 (Part A) was: zero warnings AND zero
-    // errors against the actual checked-in skills/ tree.
+  test("repo skills/ pass check-resolvable cleanly (zero errors AND zero warnings)", () => {
+    // The v0.22.4 (Part A) contract was zero warnings AND zero errors.
+    // The v0.25.1 update relaxed it to allow `routing_miss` warnings as
+    // informational — a stop-gap because the structural matcher
+    // required substring-match against narrow triggers in RESOLVER.md
+    // and natural paraphrases legitimately missed.
     //
-    // v0.25.1 update: warnings of type "routing_miss" are now
-    // ALLOWED. They surface naturally when routing-eval intents are
-    // paraphrased per the D-CX-6 rule (intent must paraphrase the
-    // trigger, not copy it). The structural matcher requires
-    // substring-match against triggers; natural paraphrases legitimately
-    // miss. The LLM tie-break layer (placeholder per v0.24.0) is the
-    // intended fix when it ships. Until then, routing_miss is an
-    // honest warning rather than a regression signal.
+    // v0.41.11 #1451 closes the drift bug class structurally:
+    // frontmatter triggers + RESOLVER.md rows merge with UNION
+    // semantics via `loadSkillTriggerIndex`. The 7 residual
+    // `routing_miss` warnings on skillpack-harvest (and any future
+    // drift on other skills) MUST be addressed at write time, not
+    // tolerated at test time. The CI gate `bun run check:resolver`
+    // (--strict, exit-1 on any warning) enforces this for PRs.
     //
-    // Other warning types (trigger overlap, DRY violations, filing-
-    // rule misses, etc.) STILL fail this test. The test's regression-
-    // guard intent against those is preserved.
+    // The test now asserts the FULL contract: zero errors, zero
+    // warnings. If a routing_miss reappears, the fix is to broaden
+    // the skill's frontmatter `triggers:` so the realistic fixture
+    // intent contains a trigger substring.
     const report = checkResolvable(SKILLS_DIR);
     const errors = report.issues.filter(i => i.severity === "error");
-    const nonRoutingWarnings = report.issues.filter(
-      i => i.severity === "warning" && i.type !== "routing_miss",
-    );
+    const warnings = report.issues.filter(i => i.severity === "warning");
     expect(errors).toEqual([]);
-    expect(nonRoutingWarnings).toEqual([]);
+    expect(warnings).toEqual([]);
   });
 });
 

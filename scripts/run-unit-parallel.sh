@@ -211,11 +211,22 @@ heartbeat() {
 }
 heartbeat &
 HB_PID=$!
-trap 'kill "$HB_PID" 2>/dev/null; wait "$HB_PID" 2>/dev/null' EXIT
+# v0.41.11.0 cleanup: pkill children FIRST, then kill heartbeat. If we
+# kill the heartbeat shell first, its current `sleep 10` is reparented
+# to init/launchd and pkill -P can no longer find it (orphan). Order:
+# children first while the parent PID is still findable, then parent.
+# Known bash quirk: SIGTERM to a shell sleeping inside `sleep` doesn't
+# propagate to the sleep child before the wait returns. Without this,
+# each invocation of this script leaks ONE orphan sleep; CI's "orphan
+# process cleanup" at end-of-job reports them as (unnamed) test failures.
+# Seen on the garrytan/port-pr-1406 PR, 2 CI runs in a row, 6 orphans
+# matching the 6 invocations in test/scripts/run-unit-parallel.test.ts.
+trap 'pkill -P "$HB_PID" 2>/dev/null; kill "$HB_PID" 2>/dev/null; wait "$HB_PID" 2>/dev/null' EXIT
 
 # Wait for every shard. Don't care about wait's exit code.
 for pid in "${SHARD_PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
 
+pkill -P "$HB_PID" 2>/dev/null
 kill "$HB_PID" 2>/dev/null
 wait "$HB_PID" 2>/dev/null
 trap - EXIT

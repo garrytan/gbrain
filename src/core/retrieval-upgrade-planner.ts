@@ -553,19 +553,48 @@ export async function undoRetrievalUpgrade(engine: BrainEngine): Promise<
  * `--resume`.
  */
 async function runSchemaTransition(engine: BrainEngine, targetDim: number): Promise<void> {
+  // v0.41 fix: only transition the primary text embedding column.
+  // The embedding_image (v0.27.1) and embedding_multimodal (v0.36 / migration
+  // v78) columns use SEPARATE multimodal models (e.g. voyage-multimodal-3 at
+  // 1024d) whose dimensions are independent of the text embedding model.
+  // Dropping and recreating either at targetDim silently breaks multimodal
+  // search by creating a dimension mismatch between the column and the
+  // multimodal provider's output.
+  //
+  // Before this fix, switching text embeddings from OpenAI (1536d) to
+  // ZeroEntropy (1280d) would also change embedding_image from 1024d to
+  // 1280d, making voyage-multimodal-3 unable to write to it. The same
+  // class of bug applies to embedding_multimodal — leave both untouched.
   await engine.transaction(async (tx) => {
+    // Text embedding column — transition to target dim.
     await tx.executeRaw(`DROP INDEX IF EXISTS idx_chunks_embedding`);
-    await tx.executeRaw(`DROP INDEX IF EXISTS idx_chunks_embedding_image`);
     await tx.executeRaw(`ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding`);
     await tx.executeRaw(`ALTER TABLE content_chunks ADD COLUMN embedding vector(${targetDim})`);
-    await tx.executeRaw(`ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_image`);
-    await tx.executeRaw(`ALTER TABLE content_chunks ADD COLUMN embedding_image vector(${targetDim})`);
     await tx.executeRaw(
       `CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops)`,
     );
-    await tx.executeRaw(
-      `CREATE INDEX IF NOT EXISTS idx_chunks_embedding_image ON content_chunks USING hnsw (embedding_image vector_cosine_ops)`,
+
+    // Image/multimodal embedding column — rebuild index but preserve
+    // existing dimension. Only create it if it doesn't already exist
+    // (fresh brains may not have it yet). Partial WHERE clause matches
+    // schema.sql:258-260 and pglite-schema.ts:198-200: HNSW footprint
+    // scales with image-chunk count, not table size.
+    const hasImageCol = await tx.executeRaw<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'content_chunks'
+           AND column_name = 'embedding_image'
+       ) AS exists`,
     );
+    if (hasImageCol[0]?.exists) {
+      await tx.executeRaw(`DROP INDEX IF EXISTS idx_chunks_embedding_image`);
+      await tx.executeRaw(
+        `CREATE INDEX IF NOT EXISTS idx_chunks_embedding_image
+           ON content_chunks USING hnsw (embedding_image vector_cosine_ops)
+           WHERE embedding_image IS NOT NULL`,
+      );
+    }
   });
 }
 

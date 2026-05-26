@@ -101,7 +101,21 @@ page_types:
       - wiki/concepts/
       - wiki/concept/
     aliases: []
-    extractable: false
+    # v0.41.11+ — concepts ARE knowledge: their bodies define the
+    # concept, so the facts extractor should mine them like writing/
+    # source/note pages. Pre-v0.41.11 default was false because concepts
+    # were treated as link-only stubs; the operational reality is that
+    # concept bodies routinely contain definitions, distinctions, and
+    # claims that belong in the facts table.
+    #
+    # Important: this flip is SEMANTIC ONLY for v0.41.11. The post-sync
+    # backstop uses hardcoded ELIGIBLE_TYPES in src/core/facts/eligibility.ts
+    # which does NOT read pack extractable, so the flip has zero
+    # behavioral effect on the backstop today. Power-users who want
+    # concept extraction run `gbrain extract-facts --type concept --force`
+    # explicitly. The pack-driven-ELIGIBLE_TYPES refactor (which would
+    # make this flag actually drive backstop behavior) is a v0.42+ TODO.
+    extractable: true
     expert_routing: false
 
   - name: person
@@ -216,6 +230,36 @@ page_types:
       - meeting/
     aliases: []
     extractable: true
+    expert_routing: false
+
+  # v0.41.11+ — long-running chat/transcript pages. Lives under
+  # conversations/. `temporal` primitive (events through time, not an
+  # entity surface). `extractable: true` because the batch facts
+  # extraction command (gbrain extract-conversation-facts) walks
+  # these by type. Promoted from gbrain-recommended into gbrain-base
+  # because imported chat history is now a universal pattern, not
+  # an operational-brain niche.
+  - name: conversation
+    primitive: temporal
+    path_prefixes:
+      - conversations/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  # v0.41.11+ — atomic claim units. An `atom` is the smallest
+  # extractable unit of knowledge a higher-level page can reference
+  # (one quote, one statistic, one milestone). Atoms ARE the
+  # extracted form, so `extractable: false` — running the fact
+  # extractor on an atom would loop on its own output. The
+  # `annotation` primitive is the right home: atoms annotate a
+  # source, they do not stand alone as entities.
+  - name: atom
+    primitive: annotation
+    path_prefixes:
+      - atoms/
+    aliases: []
+    extractable: false
     expert_routing: false
 
   # Types with no path prefix (set explicitly via frontmatter).
@@ -349,3 +393,11 @@ filing_rules:
     directory: meetings/
     examples:
       - meetings/2026-04-03
+  - kind: conversation
+    directory: conversations/
+    examples:
+      - conversations/imessage/alice-example
+  - kind: atom
+    directory: atoms/
+    examples:
+      - atoms/2026-04-12-revenue-claim

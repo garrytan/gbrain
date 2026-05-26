@@ -78,7 +78,14 @@ export type CyclePhase =
   //  - synthesize_concepts: global aggregation of atoms into tier-promoted
   //    concept pages via dedup → tier → Sonnet T1/T2 voice-gated narratives.
   //    Same pack-gate model.
-  | 'extract_atoms' | 'synthesize_concepts';
+  | 'extract_atoms' | 'synthesize_concepts'
+  // v0.41.11.0 — opt-in (default OFF) bulk fact extraction for long-form
+  // conversation pages. The phase wrapper does its own multi-source
+  // iteration directly (PHASE_SCOPE='source' here is taxonomy only;
+  // see comment above PHASE_SCOPE). Wraps the per-source loop in ONE
+  // brain-wide BudgetTracker and passes it through opts.budgetTracker
+  // so the core's auto-wrap doesn't REPLACE it.
+  | 'conversation_facts_backfill';
 
 export const ALL_PHASES: CyclePhase[] = [
   'lint',
@@ -133,6 +140,12 @@ export const ALL_PHASES: CyclePhase[] = [
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  // v0.41.11.0 — opt-in conversation-facts backfill. Default OFF; reads
+  // cycle.conversation_facts_backfill.enabled gate inside the wrapper.
+  // Ordered AFTER calibration_profile (matches the runCycle dispatch
+  // block placement, which runs between the calibration trio and embed),
+  // and BEFORE embed so newly-inserted facts get embedded same-cycle.
+  'conversation_facts_backfill',
   'embed',
   'orphans',
   // v0.39 T12: passive schema-suggest. Runs LATE so post-sync brain state
@@ -190,6 +203,11 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   // global because concept clusters cross sources by nature.
   extract_atoms: 'source',
   synthesize_concepts: 'global',
+  // v0.41.11.0 — declared 'source' for taxonomy alignment with
+  // extract_facts (per-source semantics). PHASE_SCOPE has no runtime
+  // fanout enforcement today (per the comment above); the phase
+  // wrapper does its own multi-source loop via listSources().
+  conversation_facts_backfill: 'source',
 };
 
 /**
@@ -225,6 +243,8 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   // mutate DB state and need the lock.
   'extract_atoms',
   'synthesize_concepts',
+  // v0.41.11.0 — inserts facts + writes terminal audit rows; needs lock.
+  'conversation_facts_backfill',
   'embed',
   'purge',
 ]);
@@ -1759,6 +1779,36 @@ export async function runCycle(
           }
         }
       }
+    }
+
+    // ── v0.41.11.0: conversation_facts_backfill ─────────────────
+    // Opt-in (default OFF). Walks long-form conversation/meeting/slack/
+    // email pages, segments by 30-min gap, runs facts extractor with a
+    // topical/temporal header, writes facts + per-page TERMINAL audit
+    // row. Per-source + brain-wide cost AND walltime caps; budget
+    // tracker passed in from the phase wrapper (NOT nested-wrapped in
+    // core — would REPLACE not stack).
+    if (phases.includes('conversation_facts_backfill')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'conversation_facts_backfill',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.conversation_facts_backfill');
+        const { runPhaseConversationFactsBackfill } = await import('./cycle/conversation-facts-backfill.ts');
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseConversationFactsBackfill(engine, { dryRun, signal: opts.signal }),
+        );
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
     }
 
     // ── Phase 8: embed ──────────────────────────────────────────

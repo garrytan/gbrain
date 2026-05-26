@@ -4441,6 +4441,124 @@ export const MIGRATIONS: Migration[] = [
       `,
     },
   },
+  {
+    version: 96,
+    name: 'facts_extract_conversation_session_index',
+    // v0.41.11.0 — partial index supporting the doctor query for
+    // conversation_facts_backlog (Codex round-1 T2 + round-2 C2).
+    // The doctor check runs:
+    //   SELECT COUNT(*) FROM pages p WHERE p.type = ANY($1::text[])
+    //     AND p.deleted_at IS NULL
+    //     AND NOT EXISTS (SELECT 1 FROM facts f
+    //                     WHERE f.source = 'cli:extract-conversation-facts:terminal'
+    //                       AND f.source_session = 'cli:extract-conversation-facts:terminal:' || p.slug
+    //                       AND f.source_id = p.source_id)
+    //
+    // Without this index, the NOT EXISTS subquery seq-scans facts on
+    // every doctor invocation including autopilot. The partial index
+    // is tiny — only rows written by this command are indexed
+    // (per-segment facts + the page-level terminal row).
+    //
+    // Engine-aware via handler (not SQL): Postgres uses CREATE INDEX
+    // CONCURRENTLY (avoid SHARE lock on facts) + pre-drops any invalid
+    // remnant from a prior failed run (mirrors migration v14 precedent).
+    // PGLite has no concurrent writers, so plain CREATE is safe.
+    //
+    // Slot history: originally planned as v94 (master shipped v94
+    // take_domain_assignments); bumped to v95 (master then shipped v95
+    // links_link_source_check_includes_mentions); now at v96 after
+    // post-merge resolution. The index shape itself is unchanged
+    // across all renumbers.
+    transaction: false,
+    sql: '',
+    handler: async (engine) => {
+      if (engine.kind === 'postgres') {
+        await engine.runMigration(
+          96,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'idx_facts_extract_conversation_session' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS idx_facts_extract_conversation_session';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          96,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_facts_extract_conversation_session
+             ON facts (source_id, source_session)
+             WHERE source LIKE 'cli:extract-conversation-facts%';`
+        );
+      } else {
+        await engine.runMigration(
+          96,
+          `CREATE INDEX IF NOT EXISTS idx_facts_extract_conversation_session
+             ON facts (source_id, source_session)
+             WHERE source LIKE 'cli:extract-conversation-facts%';`
+        );
+      }
+    },
+  },
+  {
+    version: 97,
+    name: 'pages_dedup_partial_index',
+    // v0.41.13 (#1309) — partial index for findDuplicatePage's hot path.
+    //
+    // Codex review of the original plan caught "no new index is hand-wavy":
+    // findDuplicatePage runs once per imported file. On a 100K-page brain
+    // syncing thousands of files, an unindexed sequential scan per
+    // invocation is O(n²) on import wallclock.
+    //
+    // Partial index excludes soft-deleted rows so the same-source dedup
+    // path (which already filters `deleted_at IS NULL`) gets an index-only
+    // scan. Composite key matches the WHERE clause shape.
+    //
+    // Postgres-only: PGLite has no concurrent writers, so the engine-wide
+    // SHARE lock that motivates CONCURRENTLY doesn't apply. PGLite
+    // re-uses plain CREATE INDEX via the `sqlFor.pglite` branch.
+    //
+    // The Postgres path uses CREATE INDEX CONCURRENTLY (with `transaction:
+    // false` so postgres.js doesn't wrap an implicit BEGIN) and pre-drops
+    // any invalid remnant from a prior failed CONCURRENTLY attempt.
+    //
+    // Slot history: originally v95, bumped to v96 after master's #1442
+    // landed (links CHECK widening), then bumped to v97 after master's
+    // v0.41.11.0 (#1446) claimed v96 for the facts conversation index.
+    // Migration content unchanged across renumbers.
+    sql: '',
+    transaction: false,
+    handler: async (engine) => {
+      if (engine.kind === 'postgres') {
+        await engine.runMigration(
+          97,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'pages_dedup_idx' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS pages_dedup_idx';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          97,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS pages_dedup_idx
+             ON pages (source_id, content_hash)
+             WHERE deleted_at IS NULL;`
+        );
+      } else {
+        await engine.runMigration(
+          97,
+          `CREATE INDEX IF NOT EXISTS pages_dedup_idx
+             ON pages (source_id, content_hash)
+             WHERE deleted_at IS NULL;`
+        );
+      }
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

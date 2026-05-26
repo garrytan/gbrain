@@ -38,7 +38,6 @@ test/friction.test.ts
 test/gbrain-home-isolation.test.ts
 test/helpers/with-env.test.ts
 test/http-transport.test.ts
-test/hybrid-meta.test.ts
 test/init-migrate-only.test.ts
 test/integrations.test.ts
 test/mcp-eval-capture.test.ts
