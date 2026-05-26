@@ -1,5 +1,36 @@
-# kos-jarvis — Outstanding Work (post v0.38.2.0 sync, 2026-05-22)
+# kos-jarvis — Outstanding Work (post v0.41.14.0 sync, 2026-05-26)
 
+> **Updated 2026-05-26**: v0.41.14.0 upstream sync landed (34 commits,
+> 20 versions, v0.38.2.0 → v0.41.14.0, 818 files / +106211 / −37236 LoC —
+> ~3× §6.30's scale). Story in `docs/JARVIS-ARCHITECTURE.md` §6.31.
+> **5 merge conflicts** (CLAUDE.md / llms-full.txt / .github/workflows/
+> test.yml / skills/manifest.json / src/core/pglite-engine.ts — all
+> resolved per §6.30 playbook; pglite WAL patch folded into upstream
+> v0.41.8.0's new snapshot+try/finally disconnect structure). Schema
+> **v85 → v97** (12 migrations via `init --migrate-only`, zero manual
+> ALTER). v0.41.14.0 added a new **strict `check:resolver` gate** —
+> flagged 2 fork skills (`image-ingest` no RESOLVER row → fixed by
+> adding row; `notion-ingest-delta` no frontmatter triggers → fixed
+> by adding `triggers:` array, with YAML lesson learned: inline
+> comments between `triggers:` and array items break gray-matter
+> parsing). Also caught upstream's missing trailing-newline on a new
+> baseline fixture (mechanical local patch). `docs/CLAUDE-UPSTREAM.md`
+> refreshed to v0.41.14.0 (2021 lines, 0 wintermute hits). fork-protected
+> paths zero-touch. **3140 pages preserved** (exact match to §6.30
+> baseline). OAuth 4-client wire confirmed live under v0.41.3.0 CORS
+> lockdown (kos-worker token exchange + MCP tools/list → 76 tools).
+> Production kos.chenge.ink on 0.41.14.0. doctor health_score **40 →
+> 95** (the §6.30 `sync_freshness` FAIL went obsolete per the §6.30
+> follow-up: working tree frozen post-§6.28 cutover, no markdown sync
+> ever needed). Test gates: typecheck clean; check:all exit 0 (18 sub-
+> scripts, post-fix); check:resolver 0 errors / 0 warnings (post-fix);
+> test/ai/ **289 pass / 0 fail / 967 expect()** (+15 tests upstream-added
+> vs §6.30). 3 new follow-ups added below (P3 archival of notion-ingest-
+> delta, P3 conversation-facts-backfill opt-in evaluation, P3 query-score
+> drift observed in smoke).
+>
+> ---
+>
 > **Updated 2026-05-22**: v0.38.2.0 upstream sync landed (14 commits,
 > 14 versions, v0.37.0.0 → v0.38.2.0, 234 files). Story in
 > `docs/JARVIS-ARCHITECTURE.md` §6.30. **Only 2 merge conflicts**

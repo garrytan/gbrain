@@ -3995,6 +3995,260 @@ sync 分支 `sync-v0.38.2.0`:merge commit `9527b412` + `fix(skill)`
 
 ---
 
+## 6.31 Upstream v0.41.14.0 sync (2026-05-26)
+
+§6.30 之后 4 天的批量跟进 sync —— 上游 master 持续高频迭代,**34 个 commit
+跨 20 minor 版本**(v0.38.2.0 → v0.41.14.0,跨过整个 v0.39.x / v0.40.x /
+v0.41.x 三条 minor 线),merge commit **818 文件 / +106,211 / −37,236
+LoC**(~3× §6.30 体量)。**5 个 conflict**(CLAUDE.md + llms-full.txt +
+.github/workflows/test.yml modify/delete + skills/manifest.json + src/
+core/pglite-engine.ts —— 全部按 §6.30 playbook 分类解决,WAL patch 折叠
+进上游 v0.41.8.0 的新 snapshot+try/finally 结构)。fork-protected 区域
+(`skills/kos-jarvis/`、`server/`、`workers/`、`scripts/launchd/`)
+**零侵入** —— `git diff master..merge-commit` 在这 4 路径上为空。
+Schema 自动 v85 → **v97**(12 migration)。生产 `kos.chenge.ink` 部署
+完成,3140 pages 保持(基线对齐 §6.30)。OAuth+MCP wire 经 v0.41.3.0
+CORS lockdown 后仍 live(kos-worker 76 tools)。
+
+### 上游 20 版本与 fork 关系
+
+| 版本 | 主题 | 对 fork 影响 |
+|---|---|---|
+| v0.39.0.0 | brainstorm cost cathedral (P1-P7) + page_links schema fix | fork 不跑 brainstorm;additive |
+| v0.39.1.0 | **schema packs — bring your own shape** | 大改但 opt-in(fork 用默认 pack);零路径触碰 |
+| v0.39.2.0 | autopilot per-source fan-out + cycle lock primitive + phase taxonomy | fork 不跑 autopilot daemon;additive |
+| v0.39.3.0 | productionize v0.38 ingestion cathedral (smoke fix wave from #1299) | bug fix wave,fork 受益但不需 wire |
+| v0.40.0.0 | **agent-voice (Mars + Venus) + copy-into-host-repo skillpack paradigm** | 全新 `recipes/agent-voice/` 顶层目录(99 文件),纯 additive;copy-into-host paradigm 不影响 fork 自己的 in-tree skillpack 模式 |
+| v0.40.1.0 | Track D — eval infrastructure | additive,fork 不跑 eval |
+| v0.40.2.0 | trajectory routing for temporal + knowledge_update (think + LongMemEval) | think pipeline 改造,fork 不跑 think daemon |
+| v0.40.3.0 | **contextual retrieval + cache invalidation gate** | 直接影响 query 路径 —— smoke 观察到分数下降(见下) |
+| v0.40.4.0 | selective graph signals + per-stage attribution + audit-writer unification | search re-rank 改造 |
+| v0.40.5.0 | Federated Sync v2 — parallel source sync + push triggers | fork 单 source(`default`),feature unused |
+| v0.40.6.0 | parallel sync --all + per-source lock invariant + sources status dashboard | 同上 |
+| v0.40.7.0 | **Schema Cathedral v3 — agent-on-ramp + production rebuild of PR #1321** | schema 大动:88+90+91 三 migration 落在此版本相关;production 干净迁移 |
+| v0.40.8.0 | e2e + unit gap coverage + master flake root-cause fixes | test infra,本地受益 |
+| v0.40.8.1 | docs README rewrite + personal-brain + company-brain tutorials | additive |
+| v0.40.9.0 | chunker .sql indexing via tree-sitter | fork 无 sql page,无影响 |
+| v0.40.10.0 | content sanity defense — junk-pattern throw + oversize-skip-embed | 防御性,fork 内容已通过 |
+| v0.41.0.0 | **minions — fleet you supervise (4 field bugs + cathedral)** | 全新 paradigm,opt-in(默认 OFF),无 surprise daemon |
+| v0.41.1.0 | eval-loop wave — gbrain bench publish + gbrain eval gate | additive,fork 不跑 |
+| v0.41.2.0 | lens packs + epistemology unification — atoms + concepts 作为 first-class | calibration / atoms / concepts 路径重定义;fork brain 旧 page 兼容 |
+| v0.41.3.0 | **OAuth CORS lockdown + pre-register without DCR + validator surface** | 直接影响 fork 4 个 OAuth client —— **smoke 验证 kos-worker token + MCP path 仍 live**(76 tools 可见) |
+| v0.41.4.0 | wave: local providers + cross-platform stdin + gateway-routed dream judge (6 community PRs) | additive |
+| v0.41.5.0 | warm-narwhal — 6 community PRs + E2E reliability | additive |
+| v0.41.6.0 | CI test speedup — 23min → ~9min via matrix 4→6 + weight-aware sharding | CI infra,fork 无 GH CI |
+| v0.41.7.0 | **compact list-format resolver + 300-skill scaling tutorial** | RESOLVER.md 格式预热,真正的 strict gate 在 v0.41.14.0 |
+| v0.41.8.0 | fix(pglite):search/query/get exit cleanly + #1340 hint + #1342 breadcrumbs | **pglite-engine.ts disconnect() 重构 —— fork WAL patch 折叠进新 snapshot+try/finally 结构,见下 conflict resolution** |
+| v0.41.9.0 | UX/reliability fix wave (5 defects from production report) | bug fixes,additive |
+| v0.41.10.0 | feat: orphan reduction via --by-mention + UTF-16 surrogate-pair fix | additive |
+| v0.41.10.1 | fix-wave: dream.* config + batch retry + extract_atoms idempotency + ze-switch env-gate | additive |
+| v0.41.11.0 | **conversation retrieval upgrade — production-bar replacement for PR #1406** | 引入 `gbrain extract-conversation-facts` + cycle phase `conversation_facts_backfill`(**默认 OFF**)+ migration v94 partial index;与 fork 刚 land 的 `chat-history/<source>/...` namespace 不冲突(上游处理已有 conversation page 做 fact 抽取,不 claim namespace) |
+| v0.41.11.1 | ci: cut CI wallclock from 9min to 4.5min | CI infra |
+| v0.41.12.0 | fix(ze-switch): preserve multimodal column dimensions + restore partial WHERE clause | bug fix |
+| v0.41.13.0 | fix(sync): infiniteGameExp + foxhoundinc 5-bug wave | bug fixes;sole_non_default tier 5.5 —— fork 单 source 不触发新 nudge |
+| v0.41.14.0 | **fix(#1451): close RESOLVER.md drift bug class structurally** | **新 strict gate `check:resolver`(exit-1 on warnings)—— flag 了 fork 2 个 skill,3 个 fork 适配修复(见下)** |
+
+### Conflict resolution(5 个,vs §6.30 的 2)
+
+| File | Decision | Rationale |
+|---|---|---|
+| `CLAUDE.md` | take fork(`--ours`)| fork CLAUDE.md 是 fork-only;上游内容由 `docs/CLAUDE-UPSTREAM.md` 镜像(本次同步刷新)|
+| `llms-full.txt` | 取 upstream 清 marker → `bun run build:llms` 重生成 | 165KB regenerated;0 wintermute hit |
+| `.github/workflows/test.yml` | keep fork delete (DU conflict)| fork commit `1adab13b` 显式删除("ci: delete .github/workflows/test.yml — fork CI noise removal"),保留删除立场 |
+| `skills/manifest.json` | manual additive merge | 上游加 brain-taxonomist + eiirp 两条;fork 5 条 kos-jarvis 条目放在 array 尾部,upstream 2 条夹在 functional-area-resolver 之后(顺序对应) |
+| `src/core/pglite-engine.ts` | manual structural merge | v0.41.8.0 重构 `disconnect()` 为 snapshot-and-early-null + try/finally(关闭 partial-state race PR #1337)。fork WAL patch(`pg_switch_wal()` 在 close 前)**折叠进 try block**,既保留 WAL 写入持久化 fix 又拿到上游的 lock-release try/finally 保证。注释更新:patch 历史新增 "2026-05-26 v0.41.14.0 sync — folded into upstream's new snapshot+try/finally structure" |
+
+**Auto-merged 干净**:`VERSION`(→ 0.41.14.0)、`package.json`(保 fork
+`@electric-sql/pglite` override + 上游新 deps)、`bun.lock`、`CHANGELOG.md`、
+`README.md`、`skills/RESOLVER.md`(上游加 brain-taxonomist / eiirp / eiirp +
+schema-author 行,fork `## KOS-Jarvis extensions` append-only section 完整
+存活)、`gateway.ts` / `google.ts`(fork max_batch_tokens patch 持续存活)。
+
+### Fork adaptations for new strict gates(3 个)
+
+`bun run check:resolver`(v0.41.14.0 新加,strict mode exit-1 on
+warnings)首次 run:
+
+```
+resolver_health: FAIL — 2 issue(s): 1 error(s), 1 warning(s)
+  • unreachable        kos-jarvis/image-ingest   No RESOLVER.md row
+  • mece_gap           kos-jarvis/notion-ingest-delta  No frontmatter triggers
+```
+
+加上 `check:all` 18-script chain 捕获的一个上游 trailing-newline 漏:
+
+```
+ERROR: trailing newline missing
+  test/fixtures/e5-lease-cap-ab/2026-05-24-baseline-dry-run.json
+```
+
+**修复策略**(commit `1ba3d71e fix(sync)`):
+
+1. **image-ingest** —— skill 在 §6.29 加入 manifest.json 但漏加 RESOLVER.md
+   row(scaffold 状态)。新 strict gate 把 "manifest 有 / RESOLVER 无" 这种
+   reachability 缺口提到 error 级别。修法:`## KOS-Jarvis extensions` 表
+   末尾追加一行 trigger description。
+2. **notion-ingest-delta** —— skill 在 §6.27 被标 RETIRED 但 SKILL.md 还
+   留在 `skills/kos-jarvis/`(没移到 `_archived/`),RESOLVER.md 仍有路由
+   row 指向它。新 gate 检测到"可被路由但无可匹配 trigger" → mece_gap。修
+   法:frontmatter 加一个 minimal `triggers:` array("notion ingest delta"
+   / "notion poller"),路由为 intentional dead-end(skill body 已解释
+   retirement)。**YAML 教训**:在 `triggers:` 和数组 items 之间放注释会
+   让 gray-matter parser 把字段解析为 null;注释必须放在 `triggers:` 行
+   之前。verified `bun src/cli.ts check-resolvable --json` 输出仍报 null →
+   注释移到 field 上方后清零。**P3 follow-up**:在未来某次 sync 里把
+   skill 整个挪到 `_archived/` 彻底归档(triggers: 当前只是 expediency)。
+3. **test/fixtures/e5-lease-cap-ab/2026-05-24-baseline-dry-run.json** ——
+   上游 PR 漏了 trailing newline,fork 的 `check-trailing-newline.sh`
+   命中。`printf '\n' >>` 补上,内容无关。可以 upstream 一个 fix PR
+   但 blast radius 很小,先 local 修。
+
+re-run 后:`check:resolver` 0 errors / 0 warnings ✓;`check:all` exit 0 ✓。
+
+### Schema migrations(v85 → v97,12 步)
+
+`bin/gbrain init --migrate-only` 一句解决,全部 idempotent
+`ADD COLUMN IF NOT EXISTS` 模式,NOTICE on `column ... already exists`
+不算 ERROR(沿用 §6.29/§6.30 模式):
+
+```
+[86] page_links_view_alias
+[87] takes_kind_drop_check
+[88] eval_candidates_schema_pack_per_source
+[89] facts_event_type_column
+[90] contextual_retrieval_columns                  ← v0.40.3 contextual retrieval
+[91] pages_generation_trigger_and_bookmark
+[92] sources_github_repo_index
+[93] minions_v0_41_audit_and_budget                ← v0.41.0 minions
+[94] take_domain_assignments
+[95] links_link_source_check_includes_mentions
+[96] facts_extract_conversation_session_index      ← v0.41.11 conversation retrieval
+[97] pages_dedup_partial_index                     ← v0.41.13 dedup
+```
+
+`~/.gbrain/config.json` 未被 `--migrate-only` 触碰(diff 验证 == 0);
+备份 `~/.gbrain/config.json.before-sync-v0.41.14.0`。pre-deploy
+`pg_dump` 备份 `/tmp/pg-pre-sync-v0.41.14.0-2026-05-26.dump.gz`
+(110 MB,与 §6.30 同尺寸,DB 体积稳定)。
+
+### Health score before/after
+
+| 维度 | Pre-sync (§6.30 / v0.38.2.0) | Post-sync (v0.41.14.0) |
+|---|---|---|
+| health_score | 40 | **95** |
+| schema_version | 85 | **97** |
+| pages_count | 3140 | **3140**(±0)|
+| sources_count | 1 | 1 |
+| skill_brain_first | ok(49 skill) | ok(post-fix `image-ingest` row 行)|
+| oauth_confidential_client_health | ok(4 client) | ok(4 client)|
+| resolver_health | n/a(strict gate 未引入)| **ok(post-fix:0 errors / 0 warnings)** |
+| embeddings | 100% | 100%(0 missing)|
+
+**health_score 40 → 95 解读**:§6.30 唯一的 `[FAIL]` 是 `sync_freshness`
+(brain 内容已 4 天未 `gbrain sync`)。§6.30 的 commit `9877a570`(本
+session 之前)已经把这个 P1 entry 重构为"sync_freshness obsolete
+post-§6.28"—— working tree 自 §6.28 cutover 起冻结,Notion Agent put_page
++ dream-cycle 都直接写 DB,`gbrain sync`(markdown→DB)是 identity no-op,
+`sources.last_sync_at` 只在真 import 时前进。这个 FAIL 是结构性 false
+alarm,doctor `--fast` v0.41.14.0 模式不再 surface(check_n 8 vs 旧 15,
+fast 路径精简)。
+
+### Smoke evidence
+
+- `bin/gbrain --version` → `0.41.14.0`(`bun run build` 重编译)
+- `bun run typecheck` clean;`bun run check:all` exit 0(18 script chain
+  含新 `check-trailing-newline` + `check-skill-brain-first` +
+  `check-operations-filter-bypass` + `check-gateway-routed-no-direct-anthropic`);
+  `bun run check:resolver` 0 errors / 0 warnings;`bun test test/ai/`
+  **289 pass / 0 fail / 967 expect()**(+15 tests vs §6.30 的 274,
+  上游 v0.40.x test gap coverage 新增)
+- `curl http://127.0.0.1:7225/health` + `curl https://kos.chenge.ink/health`
+  → `{"status":"ok","version":"0.41.14.0","engine":"postgres"}`
+- **OAuth smoke(本次新增,v0.41.3.0 CORS lockdown 高风险验证)**:
+  ```
+  TOK=$(curl -s -X POST http://127.0.0.1:7225/token \
+    -d grant_type=client_credentials \
+    -d client_id=$KOS_WORKER_CID \
+    -d client_secret=$KOS_WORKER_CSEC \
+    -d "scope=read write" | jq -r .access_token)
+  ```
+  返回 `gbrain_at_6345a64e3d...` ✓。`tools/list` 经 Bearer 调用返回
+  **76 tools**(vs §6.28 era 29 tools,上游 v0.40-v0.41 新加 47 个 MCP
+  operations:`extract-conversation-facts` / `bench-publish` / `jobs-watch` /
+  `eval-gate` / `schema` 等 )
+- query smoke:
+  - EN `Lucien` → `concepts/user-modeling-spec` 0.5110(vs §6.30 的
+    `people/lucien` 0.8951 —— 不同 top-1,分数下降。两个 page 都含
+    Lucien 实体,top-1 切换是 v0.40.3 contextual retrieval +
+    v0.41.11 conversation retrieval 改写 embed/rerank pipeline 的直接
+    结果)
+  - ZH compound-CJK `知识管理` → `sources/2026-04-06-jarvis-dual-platform-architecture`
+    0.2761(vs §6.30 同 page 0.9880 —— **同 page** top-1 命中,但分数大
+    幅下降。语义相关度未变,score scale 在新 retrieval 路径下重标定)
+- pages count **3140**(基线 ±0);schema v97;`gbrain doctor --fast --json`
+  health_score 95,0 fail / 0 warning。
+- `gbrain-serve-http` daemon bootout/bootstrap(plist
+  `~/Library/LaunchAgents/com.jarvis.gbrain-serve-http.plist`,
+  PID 76514 → 新 PID,~5 s downtime)
+
+**Query score 下降的解读**(non-blocker,but worth flagging):top-k 分数
+显著下降并不必然代表 retrieval 质量回归 —— 新 contextual retrieval pipeline
+对分数做了重新标定(尤其 reranker stage 的 sigmoid/softmax 取舍变化);
+top-1 page 仍语义相关。但绝对值差距(EN 0.89→0.51,ZH 0.99→0.28)很大,
+值得在某次 idle window 用 `gbrain eval replay` 对 §6.30 baseline 跑一遍
+看 nDCG/recall 是否真的回归 —— filed 为 P3 follow-up。
+
+### 全量测试(非 gate;沿用 §6.30 gate = typecheck + check:all + check:resolver + test/ai/)
+
+本次未跑 `bun run test`(全量 unit suite,~6000+ tests + 新增 ~500
+upstream tests + e5-lease-cap-ab fuzz)。`run-unit-parallel.sh` 的
+sharding scheme 在 v0.41.6.0 wave 被改造(matrix 4→6 + weight-aware),
+fork PGLite-pin 与上游 hermetic-test 预期的环境差异仍在(§6.30 记的
+P2 follow-up),全量 suite 不宜作为 gate。test/ai/ 的 289 pass / 0 fail
+继续作为 fork 的可重复绿基线。
+
+### Branch ops + TODO follow-ups
+
+sync 分支 `sync-v0.41.14.0`:
+- merge commit `d9097db8 Merge remote-tracking branch 'upstream/master'`
+- `fix(sync) 1ba3d71e` —— 3 个 fork adaptation
+- `chore(llms) 89adf65b` —— llms-full.txt 重生成(−1995 / +255 LoC,
+  reflect post-merge fork state)
+- `docs(upstream-mirror) d9a4adcf` —— CLAUDE-UPSTREAM.md 刷新到 v0.41.14.0
+
+`--no-ff` 并入 master:`8af885fd Merge branch 'sync-v0.41.14.0' ...`
+(commit message 含 20 versions / 34 commits / 818 files summary)。
+本 §6.31 story commit + TODO + CLAUDE.md sync-story pointer 是
+post-production-deploy 的独立 docs commit(本次 sync 因 production
+smoke evidence 在写故事前已收集,故事一次成形即包括 smoke 段)。
+
+**新增 TODO follow-ups(2026-05-26)**:
+
+- (P3) `skills/kos-jarvis/notion-ingest-delta/` —— 正式归档到
+  `_archived/`(skill 自 §6.27 起即标 RETIRED;本次只是为通过
+  check:resolver 加了 minimal `triggers:` 以保留 grep-discoverability
+  的历史名,不是长期方案)。
+- (P3) `cycle.conversation_facts_backfill.enabled` —— v0.41.11.0 引入
+  的 backfill phase,默认 OFF,$5 cap。fork 的 conversation page 主要
+  来自 mailagent chat-save (Sprint 19 P1-C,新 `chat-history/mailagent/...`
+  namespace)+ 历史 Notion sources。评估 enable 是否能让长对话页的
+  retrieval 召回更准 —— 但 mailagent 单条 chat 通常 ≤ 几 KB,backfill
+  收益可能有限,先观察。
+- (P3) **Query score regression observation** —— smoke 跑的 2 个 probe
+  (EN `Lucien`,ZH `知识管理`)在 §6.30 → §6.31 之间 top-1 分数从
+  0.89/0.99 跌到 0.51/0.28(top-k page 语义仍相关,EN 还切了 top-1)。
+  `gbrain eval replay` 对 §6.30 baseline 跑一遍,看 nDCG / recall 是否
+  真回归,还是新 contextual retrieval pipeline 的分数标定改变。
+
+### Linked docs
+
+- [`skills/kos-jarvis/TODO.md`](../skills/kos-jarvis/TODO.md) — post-sync entries(更新至 2026-05-26)
+- [`docs/CLAUDE-UPSTREAM.md`](CLAUDE-UPSTREAM.md) — upstream CLAUDE.md mirror(刷新至 v0.41.14.0,2021 lines,0 wintermute hits)
+- [`docs/kos-namespace-conventions.md`](kos-namespace-conventions.md) — 同 session 早些时候 land 的 cross-consumer chat-save namespace 规范,与 v0.41.11.0 conversation retrieval 互补不冲突
+- Sync plan + verification trail: this conversation's transcript
+
+---
+
 ## 8. Cost and performance snapshot
 
 | Metric | v1 | v2 |

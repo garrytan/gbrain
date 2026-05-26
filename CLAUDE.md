@@ -16,10 +16,10 @@ working on this codebase, before touching anything else:
    full migration story (v1 Python/shell → v2 GBrain TS + Gemini shim),
    current deployment (launchd / kos.chenge.ink / Notion Knowledge Agent
    / OpenClaw feishu), and the Jarvis triangle (KOS compiles ↔ Notion
-   operates ↔ OpenClaw executes). Latest sync story: **§6.30 v0.38.2.0
-   upstream sync (2026-05-22, 14 versions / 14 commits / 234 files;
-   schema v78 → v85)**. Previous: §6.29 v0.37.0.0 sync (2026-05-19,
-   schema v66 → v78); §6.28 kos-compat-api retire + MCP-over-HTTP cutover.
+   operates ↔ OpenClaw executes). Latest sync story: **§6.31 v0.41.14.0
+   upstream sync (2026-05-26, 20 versions / 34 commits / 818 files;
+   schema v85 → v97)**. Previous: §6.30 v0.38.2.0 sync (2026-05-22,
+   schema v78 → v85); §6.29 v0.37.0.0 sync (2026-05-19, schema v66 → v78).
 3. Read [`skills/kos-jarvis/TODO.md`](skills/kos-jarvis/TODO.md) — current
    outstanding work (P0/P1/P2). Check here before suggesting "what should
    we do next?"
