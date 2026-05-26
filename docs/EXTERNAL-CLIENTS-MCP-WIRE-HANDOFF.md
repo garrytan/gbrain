@@ -638,3 +638,4 @@ If your client wire integration fails post-cutover:
 - Upstream MCP ops source of truth: [`src/core/operations.ts`](../src/core/operations.ts)
 - Upstream OAuth provider implementation: [`src/core/oauth-provider.ts`](../src/core/oauth-provider.ts)
 - All MCP operations available (29): listed in `docs/KOS-COMPAT-API-MIGRATION-PLAN.md` §10.2
+- **Slug prefix + frontmatter conventions** (shared across consumers — chat-history, source ingest, etc.): [`docs/kos-namespace-conventions.md`](kos-namespace-conventions.md)
