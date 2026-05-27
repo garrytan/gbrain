@@ -312,7 +312,16 @@ async function resolveLintContentSanity(): Promise<LintContentOpts['contentSanit
         database_path: base!.database_path,
       });
       try {
-        await engine.connect({});
+        // poolSize forces an INSTANCE-style connection (own _sql pool) instead
+        // of the module singleton. Without it, connect({}) reuses the shared
+        // module-level connection and the disconnect() below falls through to
+        // db.disconnect(), clobbering the cycle's connection — which made the
+        // later extract phase fail with "connect() has not been called".
+        await engine.connect({
+          database_url: base!.database_url,
+          database_path: base!.database_path,
+          poolSize: 1,
+        });
         const lifted = await loadConfigWithEngine(engine, base);
         cs = lifted?.content_sanity ?? cs;
       } finally {
