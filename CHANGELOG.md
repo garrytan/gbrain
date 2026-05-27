@@ -2,6 +2,85 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.41.27.0] - 2026-05-27
+
+**`gbrain doctor` stops crying wolf about sources that have no new commits.**
+
+If you have a brain that points at a git repo you don't change every day
+(a reference corpus, a frozen archive, an inbox you append to monthly),
+doctor's "Source X last synced 40h ago" warning has been firing every
+single day even though nothing was actually stale. There was no new
+content to pull. The warning was telling you to run `gbrain sync` for
+work that didn't exist.
+
+This release teaches doctor to do a quick git check first: if your
+repo's current HEAD matches what we stored at the last sync, **and**
+the working tree is clean, **and** the chunker version still matches,
+the source is reported as "up to date" regardless of how long ago you
+synced. The three checks together mirror exactly what `gbrain sync`
+itself decides — so doctor and sync now agree on "is there work to do?"
+You stop seeing warnings for problems that don't exist.
+
+**How to turn it on:** Nothing to do. `gbrain upgrade` is all you need.
+The git probe runs locally only (your terminal's `gbrain doctor`); the
+remote HTTP MCP path stays out of it by design (deliberately doesn't
+walk DB-supplied paths via subprocess — same trust posture as before).
+
+**What you'd see in a concrete example:**
+
+| Doctor scenario | Pre-fix message | Post-fix message |
+|---|---|---|
+| 40h since sync, zero new commits, clean tree | warn: "Source 'media-corpus' last synced 40h ago" | ok: "All 1 federated source(s) up to date (no new commits since last sync)" |
+| 40h since sync, 3 new commits to pull | warn: "...40h ago" | warn: "...40h ago" (unchanged — warning still correct) |
+| 40h since sync, HEAD matches but `gbrain upgrade` bumped CHUNKER_VERSION | warn: "...40h ago" (true bug — pending re-embed) | warn: "...40h ago" (chunker gate fires; you still see the warn so you don't miss the post-upgrade re-embed) |
+| 40h since sync, HEAD matches but you have uncommitted edits | warn: "...40h ago" | warn: "...40h ago" (dirty-tree gate fires; honest about pending work) |
+| Mixed brain: 1 frozen source + 1 recently synced + 1 truly stale | fail: lists all 3 sources | fail: lists only the truly stale source; the other two are silenced honestly |
+
+**The cycle freshness check is deliberately NOT touched.** A separate
+codex-review pass caught a load-bearing semantic distinction: HEAD ==
+last_commit only answers "are there new commits to sync?". It cannot
+answer "did the full cycle (sync + extract + embed + consolidate +
+synthesize) complete recently?" — that's a later, different invariant.
+Hiding cycle-staleness warnings on git-clean sources would silently
+mask the case where sync ran but the cycle phases after it failed.
+Doctor's `cycle_freshness` keeps its time-only semantics; only
+`sync_freshness` gets the git-aware short-circuit.
+
+**Things worth knowing about:**
+
+- `Check.details` now carries `{unchanged_count, synced_recently_count,
+  stale_count}` for the `sync_freshness` check. Dashboards consuming
+  the JSON envelope can read these directly. The three counts sum to
+  the source count — invariant pinned in unit tests.
+- If you intentionally keep WIP edits in your brain repo, doctor will
+  still warn after 24h because the dirty-tree gate fires. That's
+  honest — sync would actually do work in that case. An opt-out env
+  var (`GBRAIN_DOCTOR_IGNORE_DIRTY_TREE=1`) is filed for v0.41.27.1+
+  if anyone asks.
+
+**The cathedral side.** This release rebuilds community PR #1564 with
+four production-quality concerns the original missed: shell-injection
+safety (uses `execFileSync` with array args, not `execSync` through
+`/bin/sh -c`), trust-boundary preservation (remote-callable doctor
+path doesn't get the git probe), narrowed predicate honesty (chunker
+version + working-tree-clean, matching sync's own gate), and 21 new
+test cases covering every branch including a shell-injection
+regression guard that runs real `execFileSync` against a `$(...)`
+adversarial path to prove the array-arg shape cannot escape to a
+shell. Co-Authored-By preserved for the original contributor.
+
+### Itemized changes
+
+- **`src/core/git-head.ts`** (NEW) — single `isSourceUnchangedSinceSync(localPath, lastCommit, opts?)` primitive with two probes (head + clean). `GitFreshnessOpts.requireCleanWorkingTree` is the second-probe gate. Two test seams (`_setGitHeadProbeForTests`, `_setGitCleanProbeForTests`) match the `last-retrieved.ts` precedent so tests stay parallel-eligible (R2-compliant — no `mock.module`). Fail-open contract: every error path returns false, preserving the caller's prior behavior. Uses `execFileSync` with array args — shell metachars in `local_path` cannot escape.
+- **`src/commands/doctor.ts:checkSyncFreshness`** — signature gains `opts?.localOnly?: boolean`. Inline SELECT widens to carry `last_commit + chunker_version` (columns already exist; no schema migration). Helper wired AFTER the existing NULL / negative-age guards, gated by `localOnly === true` AND'd with `source.chunker_version === String(CHUNKER_VERSION)`. Three-bucket count math (`unchanged_count + synced_recently_count + stale_count === sources.length`) populates `Check.details`. OK message reshape: all-unchanged hits "up to date (no new commits since last sync)"; mixed hits "X synced recently, Y unchanged since last sync"; all-synced keeps the prior message.
+- **Caller plumbing**: `runDoctor` (local CLI path) passes `localOnly: true`; `doctorReportRemote` (HTTP MCP path) keeps the default `false`. Default-false is fail-closed: a future caller that forgets the opt gets the safe (no git probe) behavior. Codex P0-1 closure.
+- **`test/core/git-head.test.ts`** (NEW) — 12-case suite: happy path, mismatch, null/empty guards, probe-null, probe-throws, **shell-injection regression** (real `execFileSync` against `/nonexistent/$(touch <sentinel>)/repo` — sentinel file MUST NOT exist after the call), test-seam round-trip, `requireCleanWorkingTree` clean/dirty/error/not-set cases.
+- **`test/doctor.test.ts`** — new v0.41.27.0 describe with 9 cases: HEAD-match short-circuit, all-unchanged cold path, HEAD-mismatch warn, NULL `last_commit`, non-git path, **3-source mixed bucket invariant** (`sum === sources.length` asserted explicitly), chunker-version mismatch warn, dirty-tree warn, **`localOnly=false` regression guard** that verifies probes are NEVER called when the opt is unset or false.
+- **CHANGELOG / VERSION / package.json / bun.lock / llms.txt / llms-full.txt / CLAUDE.md** — version bump + lockfile refresh + docs regen + key-files annotation.
+
+### Supersedes
+
+PR #1564 (`@garrytan-agents`). Co-Authored-By preserved. Closed with a supersession comment explaining the production-quality additions. The surrogate-pair fix from commit `78b93f3f` in that PR is NOT brought over — already on master via `safeSplitIndex` at `synthesize.ts:192` (v0.42.0.0 wave).
 ## [0.41.26.0] - 2026-05-27
 
 **`gbrain dream --source <id>` finally counts as a cycle.**
