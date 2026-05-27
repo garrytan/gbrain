@@ -614,13 +614,36 @@ export class MinionWorker extends EventEmitter {
   private launchJob(job: MinionJob, lockToken: string): void {
     const abort = new AbortController();
 
-    // Start lock renewal (per-job timer, not shared)
+    // Start lock renewal (per-job timer, not shared).
+    // CRITICAL: the await inside setInterval runs in a detached async context.
+    // An unhandled rejection here (e.g. PgBouncer dropping the connection)
+    // kills the entire worker process with exit code 1. Wrap in try/catch
+    // and treat transient DB failures as a lost lock — the job will be
+    // requeued by the stall detector on the next poll.
+    let lockRenewalFailures = 0;
     const lockTimer = setInterval(async () => {
-      const renewed = await this.queue.renewLock(job.id, lockToken, this.opts.lockDuration);
-      if (!renewed) {
-        console.warn(`Lock lost for job ${job.id}, aborting execution`);
-        clearInterval(lockTimer);
-        abort.abort(new Error('lock-lost'));
+      try {
+        const renewed = await this.queue.renewLock(job.id, lockToken, this.opts.lockDuration);
+        if (!renewed) {
+          console.warn(`Lock lost for job ${job.id}, aborting execution`);
+          clearInterval(lockTimer);
+          abort.abort(new Error('lock-lost'));
+        } else {
+          lockRenewalFailures = 0; // reset on success
+        }
+      } catch (err) {
+        lockRenewalFailures++;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[lock-renewal] job ${job.id}: DB error (${lockRenewalFailures}x): ${msg}`,
+        );
+        // After 3 consecutive failures, treat as lost lock. The stall
+        // detector will requeue the job.
+        if (lockRenewalFailures >= 3) {
+          console.warn(`[lock-renewal] job ${job.id}: giving up after ${lockRenewalFailures} failures`);
+          clearInterval(lockTimer);
+          abort.abort(new Error('lock-renewal-failed'));
+        }
       }
     }, this.opts.lockDuration / 2);
 
