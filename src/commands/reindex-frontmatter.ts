@@ -152,7 +152,7 @@ export async function runReindexFrontmatter(
 }
 
 /** CLI entrypoint. Argv shape matches reindex-code for consistency. */
-export async function reindexFrontmatterCli(args: string[]): Promise<void> {
+export async function reindexFrontmatterCli(args: string[], existingEngine?: BrainEngine): Promise<void> {
   const opts: ReindexFrontmatterOpts = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -173,21 +173,24 @@ export async function reindexFrontmatterCli(args: string[]): Promise<void> {
     }
   }
 
-  const { createEngine } = await import('../core/engine-factory.ts');
-  const { loadConfig, toEngineConfig } = await import('../core/config.ts');
-  const cfg = loadConfig();
-  if (!cfg) {
-    console.error('No gbrain config; run `gbrain init` first.');
-    process.exit(1);
+  let engine = existingEngine;
+  if (!engine) {
+    const { createEngine } = await import('../core/engine-factory.ts');
+    const { loadConfig, toEngineConfig } = await import('../core/config.ts');
+    const cfg = loadConfig();
+    if (!cfg) {
+      console.error('No gbrain config; run `gbrain init` first.');
+      process.exit(1);
+    }
+    const engineConfig = toEngineConfig(cfg);
+    engine = await createEngine(engineConfig);
+    // v0.37.7.0 #1225: createEngine() only constructs; callers MUST connect
+    // before any executeRaw call. Pre-fix, the first query in countAffected
+    // crashed with "PGLite not connected. Call connect() first." even on
+    // --dry-run. initSchema is idempotent on a current schema, costs ~1ms.
+    await engine.connect(engineConfig);
+    await engine.initSchema();
   }
-  const engineConfig = toEngineConfig(cfg);
-  const engine = await createEngine(engineConfig);
-  // v0.37.7.0 #1225: createEngine() only constructs; callers MUST connect
-  // before any executeRaw call. Pre-fix, the first query in countAffected
-  // crashed with "PGLite not connected. Call connect() first." even on
-  // --dry-run. initSchema is idempotent on a current schema, costs ~1ms.
-  await engine.connect(engineConfig);
-  await engine.initSchema();
 
   try {
     const result = await runReindexFrontmatter(engine, opts);
@@ -202,7 +205,7 @@ export async function reindexFrontmatterCli(args: string[]): Promise<void> {
     }
     if (result.status === 'cancelled') process.exit(1);
   } finally {
-    if ('disconnect' in engine && typeof engine.disconnect === 'function') {
+    if (!existingEngine && 'disconnect' in engine && typeof engine.disconnect === 'function') {
       await engine.disconnect();
     }
   }
