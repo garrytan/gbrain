@@ -13,6 +13,10 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
+// PATCH:link-extractor-schema-pack-aware v1
+import { resolveActivePackNameOnly } from './schema-pack/load-active.ts';
+import { tryCachedPack, type ResolvedPack } from './schema-pack/registry.ts';
+import { loadConfig } from './config.ts';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -36,14 +40,56 @@ export interface EntityRef {
 /** v0.17.0: how a link's target source was pinned at extraction time. */
 export type LinkResolutionType = 'qualified' | 'unqualified';
 
-/**
- * Directory prefix whitelist. These are the top-level slug dirs the extractor
- * recognizes as entity references. Upstream canonical + our extensions:
- *   - Gbrain canonical: people, companies, meetings, concepts, deal, civic, project, source, media, yc, projects
- *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
- *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
- */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+// Canonical fallback prefix list. Used when no schema pack is active
+// OR when the registry cache is cold. Once warm, getDirPattern() unions
+// these with the active pack's path_prefixes (leaf manifest only per v0.38;
+// extends-chain merging is upstream T20).
+const CANONICAL_DIR_PREFIXES = [
+  'people', 'companies', 'meetings', 'concepts', 'deal', 'civic',
+  'project', 'projects', 'source', 'media', 'yc', 'tech', 'finance',
+  'personal', 'openclaw', 'entities',
+] as const;
+
+interface DirPatternCache {
+  packIdentity: string | null;
+  pattern: string;
+}
+
+let _dirPatternCache: DirPatternCache | null = null;
+
+function buildDirPatternFromPack(pack: ResolvedPack | null): string {
+  const set = new Set<string>(CANONICAL_DIR_PREFIXES);
+  if (pack) {
+    for (const t of pack.manifest.page_types ?? []) {
+      for (const p of (t.path_prefixes ?? [])) {
+        const cleaned = p.replace(/^\/+|\/+$/g, '');
+        const top = cleaned.split('/')[0];
+        if (top && /^[a-z][a-z0-9-]*$/.test(top)) {
+          set.add(top);
+        }
+      }
+    }
+  }
+  return `(?:${[...set].sort().join('|')})`;
+}
+
+function getDirPattern(): string {
+  let pack: ResolvedPack | null = null;
+  try {
+    const cfg = loadConfig();
+    const r = resolveActivePackNameOnly({ cfg, remote: false });
+    pack = tryCachedPack(r.pack_name);
+  } catch {
+    pack = null;
+  }
+  const identity = pack?.identity ?? null;
+  if (_dirPatternCache && _dirPatternCache.packIdentity === identity) {
+    return _dirPatternCache.pattern;
+  }
+  const pattern = buildDirPatternFromPack(pack);
+  _dirPatternCache = { packIdentity: identity, pattern };
+  return pattern;
+}
 
 /**
  * Match `[Name](path)` markdown links pointing to entity directories.
@@ -55,10 +101,12 @@ const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|pr
  * The regex permits an optional `../` prefix (any number) and an optional
  * `.md` suffix so the same function works for both filesystem and DB content.
  */
-const ENTITY_REF_RE = new RegExp(
-  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${DIR_PATTERN}\\/[^)\\s]+?)(?:\\.md)?\\)`,
-  'g',
-);
+function buildEntityRefRe(): RegExp {
+  return new RegExp(
+    `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${getDirPattern()}\\/[^)\\s]+?)(?:\\.md)?\\)`,
+    'g',
+  );
+}
 
 /**
  * Match Obsidian-style `[[path]]` or `[[path|Display Text]]` wikilinks.
@@ -68,10 +116,12 @@ const ENTITY_REF_RE = new RegExp(
  * anchors (`#heading`), skips external URLs. Wiki KBs use this format almost
  * exclusively so missing it leaves the graph empty.
  */
-const WIKILINK_RE = new RegExp(
-  `\\[\\[(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
-  'g',
-);
+function buildWikilinkRe(): RegExp {
+  return new RegExp(
+    `\\[\\[(${getDirPattern()}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+    'g',
+  );
+}
 
 /**
  * v0.17.0: qualified wikilink `[[source-id:dir/slug]]` or
@@ -85,10 +135,12 @@ const WIKILINK_RE = new RegExp(
  * the unqualified regex (the source prefix would not satisfy DIR_PATTERN
  * anyway, but the two-pass approach keeps intent crystal-clear).
  */
-const QUALIFIED_WIKILINK_RE = new RegExp(
-  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
-  'g',
-);
+function buildQualifiedWikilinkRe(): RegExp {
+  return new RegExp(
+    `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${getDirPattern()}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+    'g',
+  );
+}
 
 /**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
@@ -235,7 +287,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
   //    Markdown links have no source-qualification syntax — they're
   //    always unqualified. Omit sourceId so the shape stays compatible
   //    with pre-v0.17 consumers doing strict equality.
-  const mdPattern = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
+  const mdPattern = buildEntityRefRe();
   while ((match = mdPattern.exec(stripped)) !== null) {
     const name = match[1];
     const fullPath = match[2];
@@ -248,7 +300,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
   //     Must run BEFORE the unqualified pass or we'd double-emit. We also
   //     mask out the matched spans so pass 2b can't grab them.
   const qualifiedRanges: Array<[number, number]> = [];
-  const qualPattern = new RegExp(QUALIFIED_WIKILINK_RE.source, QUALIFIED_WIKILINK_RE.flags);
+  const qualPattern = buildQualifiedWikilinkRe();
   while ((match = qualPattern.exec(stripped)) !== null) {
     const sourceId = match[1];
     let slug = match[2].trim();
@@ -264,7 +316,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
   // 2b. Unqualified Obsidian wikilinks: [[path]] or [[path|Display Text]]
   //     Same shape rule: omit sourceId when unqualified.
   const unmasked = maskRanges(stripped, qualifiedRanges);
-  const wikiPattern = new RegExp(WIKILINK_RE.source, WIKILINK_RE.flags);
+  const wikiPattern = buildWikilinkRe();
   while ((match = wikiPattern.exec(unmasked)) !== null) {
     let slug = match[1].trim();
     if (!slug) continue;
@@ -385,7 +437,7 @@ export async function extractPageLinks(
   // Code blocks are stripped first — slugs in code samples are not real refs.
   const strippedContent = stripCodeBlocks(content);
   const bareRe = new RegExp(
-    `\\b(${DIR_PATTERN}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
+    `\\b(${getDirPattern()}\\/[a-z0-9][a-z0-9/-]*[a-z0-9])\\b`,
     'g',
   );
   let m: RegExpExecArray | null;
