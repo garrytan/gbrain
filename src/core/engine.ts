@@ -1010,8 +1010,9 @@ export interface BrainEngine {
    *
    * Returns the best match whose title similarity is at or above `minSimilarity`
    * (default 0.55). If `dirPrefix` is given (e.g. 'people' or 'companies'),
-   * only slugs starting with that prefix are considered. Returns null when no
-   * page meets the threshold.
+   * only slugs starting with that prefix are considered. `opts.sourceId`
+   * constrains matches to one source. Soft-deleted pages are excluded.
+   * Returns null when no page meets the threshold.
    *
    * Uses the `%` trigram operator (GIN-indexed) + the standard `similarity()`
    * function. Both engines support pg_trgm (PGLite 0.3+, Postgres always).
@@ -1020,6 +1021,7 @@ export interface BrainEngine {
     name: string,
     dirPrefix?: string,
     minSimilarity?: number,
+    opts?: { sourceId?: string },
   ): Promise<{ slug: string; similarity: number } | null>;
   /**
    * v0.34.1 (#861 — P0 leak seal): `opts.sourceId` / `opts.sourceIds`

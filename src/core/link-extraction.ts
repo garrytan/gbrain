@@ -37,16 +37,20 @@ export interface EntityRef {
 export type LinkResolutionType = 'qualified' | 'unqualified';
 
 /**
- * Directory prefix whitelist. These are the top-level slug dirs the extractor
- * recognizes as entity references. Upstream canonical + our extensions:
- *   - Gbrain canonical: people, companies, meetings, concepts, deal, civic, project, source, media, yc, projects
- *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
- *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
+ * Directory prefix whitelist for bare prose references only. Explicit markdown
+ * and wikilink targets use SLUG_PATH_PATTERN below so imported Obsidian/Notion
+ * vaults can keep their own top-level directories without being dropped.
  */
 const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
 
+// Slug-like path with at least one slash. Allows the characters preserved by
+// markdown path slugification for common vault exports: kebab, underscore, dot.
+const SLUG_SEGMENT_PATTERN = '[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?';
+const SLUG_PATH_PATTERN = `${SLUG_SEGMENT_PATTERN}(?:\\/${SLUG_SEGMENT_PATTERN})+`;
+const SLUG_PATH_EXACT_RE = new RegExp(`^${SLUG_PATH_PATTERN}$`);
+
 /**
- * Match `[Name](path)` markdown links pointing to entity directories.
+ * Match `[Name](path)` markdown links pointing to slug-like paths.
  * Accepts both filesystem-relative format (`[Name](../people/slug.md)`)
  * AND engine-slug format (`[Name](people/slug)`).
  *
@@ -56,7 +60,7 @@ const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|pr
  * `.md` suffix so the same function works for both filesystem and DB content.
  */
 const ENTITY_REF_RE = new RegExp(
-  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${DIR_PATTERN}\\/[^)\\s]+?)(?:\\.md)?\\)`,
+  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${SLUG_PATH_PATTERN})(?:\\.md)?\\)`,
   'g',
 );
 
@@ -64,12 +68,12 @@ const ENTITY_REF_RE = new RegExp(
  * Match Obsidian-style `[[path]]` or `[[path|Display Text]]` wikilinks.
  * Captures: slug (dir/...), displayName (optional).
  *
- * Same dir whitelist as ENTITY_REF_RE. Strips trailing `.md`, strips section
+ * Same slug path grammar as ENTITY_REF_RE. Strips trailing `.md`, strips section
  * anchors (`#heading`), skips external URLs. Wiki KBs use this format almost
  * exclusively so missing it leaves the graph empty.
  */
 const WIKILINK_RE = new RegExp(
-  `\\[\\[(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+  `\\[\\[(${SLUG_PATH_PATTERN}(?:\\.md)?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
 
@@ -86,7 +90,7 @@ const WIKILINK_RE = new RegExp(
  * anyway, but the two-pass approach keeps intent crystal-clear).
  */
 const QUALIFIED_WIKILINK_RE = new RegExp(
-  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${SLUG_PATH_PATTERN}(?:\\.md)?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
 
@@ -220,7 +224,7 @@ export function extractCodeRefs(content: string): CodeRef[] {
 }
 
 /**
- * Extract `[Name](path-to-people-or-company)` references from arbitrary content.
+ * Extract explicit markdown and Obsidian wikilink path references from arbitrary content.
  * Both filesystem-relative paths (with `../` and `.md`) and bare engine-style
  * slugs (`people/slug`) are matched. Returns one EntityRef per match (no dedup
  * here; caller dedups). Slugs appearing inside fenced or inline code blocks
@@ -237,8 +241,10 @@ export function extractEntityRefs(content: string): EntityRef[] {
   //    with pre-v0.17 consumers doing strict equality.
   const mdPattern = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
   while ((match = mdPattern.exec(stripped)) !== null) {
+    if (match.index > 0 && stripped[match.index - 1] === '!') continue;
     const name = match[1];
-    const fullPath = match[2];
+    let fullPath = match[2];
+    if (fullPath.endsWith('.md')) fullPath = fullPath.slice(0, -3);
     const slug = fullPath;
     const dir = fullPath.split('/')[0];
     refs.push({ name, slug, dir });
@@ -292,6 +298,40 @@ function maskRanges(content: string, ranges: Array<[number, number]>): string {
   return chars.join('');
 }
 
+interface TitleWikilinkRef {
+  title: string;
+  displayName: string;
+  index: number;
+}
+
+/**
+ * Extract Obsidian title-form wikilinks like [[Some Page]] or
+ * [[Some Page|Display]]. Slash-style links are handled by extractEntityRefs.
+ */
+function extractTitleWikilinks(content: string): TitleWikilinkRef[] {
+  const stripped = stripCodeBlocks(content);
+  const refs: TitleWikilinkRef[] = [];
+  const pattern = /\[\[([^\]\n]+?)\]\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(stripped)) !== null) {
+    const raw = match[1];
+    const pipeIdx = raw.indexOf('|');
+    const rawTarget = (pipeIdx >= 0 ? raw.slice(0, pipeIdx) : raw).trim();
+    const displayName = (pipeIdx >= 0 ? raw.slice(pipeIdx + 1) : rawTarget).trim();
+    if (!rawTarget) continue;
+    if (rawTarget.includes('://')) continue;
+    if (rawTarget.includes('/')) continue;
+    if (rawTarget.includes(':')) continue;
+    const hashIdx = rawTarget.indexOf('#');
+    const title = (hashIdx >= 0 ? rawTarget.slice(0, hashIdx) : rawTarget)
+      .replace(/\.md$/i, '')
+      .trim();
+    if (!title) continue;
+    refs.push({ title, displayName: displayName || title, index: match.index });
+  }
+  return refs;
+}
+
 // ─── Link candidates (richer than EntityRef) ────────────────────
 
 export interface LinkCandidate {
@@ -338,13 +378,20 @@ export interface PageLinksResult {
   unresolved: UnresolvedFrontmatterRef[];
 }
 
+export interface ExtractPageLinksOptions {
+  includeFrontmatter?: boolean;
+  resolveTitleWikilinks?: boolean;
+  titleResolver?: SlugResolver;
+}
+
 /**
  * Extract all link candidates from a page.
  *
  * Sources:
  *   1. Markdown entity refs in compiled_truth + timeline (extractEntityRefs).
- *   2. Bare slug references in text (people/slug, companies/slug).
- *   3. Frontmatter fields → typed graph edges (v0.13: company, investors,
+ *   2. Obsidian title-form wikilinks resolved by title.
+ *   3. Bare slug references in text (people/slug, companies/slug).
+ *   4. Frontmatter fields → typed graph edges (v0.13: company, investors,
  *      attendees, key_people, etc.). See FRONTMATTER_LINK_MAP.
  *
  * ASYNC (v0.13): frontmatter extraction resolves display names to slugs
@@ -361,6 +408,7 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
+  opts: ExtractPageLinksOptions = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
@@ -380,8 +428,25 @@ export async function extractPageLinks(
     });
   }
 
-  // 2. Bare slug references (e.g. "see people/alice-chen for context").
-  // Limited to the same entity directories ENTITY_REF_RE covers.
+  // 2. Obsidian title-form wikilinks (e.g. [[Some Page]]).
+  if (opts.resolveTitleWikilinks === true) {
+    const titleResolver = opts.titleResolver ?? resolver;
+    for (const ref of extractTitleWikilinks(content)) {
+      const targetSlug = await titleResolver.resolve(ref.title);
+      if (!targetSlug) continue;
+      const context = excerpt(content, ref.index, 240) || ref.displayName;
+      candidates.push({
+        targetSlug,
+        linkType: inferLinkType(pageType, context, content, targetSlug),
+        context,
+        linkSource: 'markdown',
+      });
+    }
+  }
+
+  // 3. Bare slug references (e.g. "see people/alice-chen for context").
+  // Intentionally limited to canonical entity directories so prose such as
+  // "notes/random" does not become a graph edge unless explicitly linked.
   // Code blocks are stripped first — slugs in code samples are not real refs.
   const strippedContent = stripCodeBlocks(content);
   const bareRe = new RegExp(
@@ -402,9 +467,11 @@ export async function extractPageLinks(
     });
   }
 
-  // 3. Frontmatter-derived edges (v0.13). Includes the legacy `source:`
+  // 4. Frontmatter-derived edges (v0.13). Includes the legacy `source:`
   // field along with the full field map.
-  const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
+  const fm = opts.includeFrontmatter === false
+    ? { candidates: [], unresolved: [] }
+    : await extractFrontmatterLinks(slug, pageType, frontmatter, resolver);
   candidates.push(...fm.candidates);
 
   // Within-page dedup: same (fromSlug, targetSlug, linkType, linkSource)
@@ -677,7 +744,7 @@ export function makeResolver(
       const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
 
       // Step 1: already a slug? (dir/name shape, lowercase, hyphenated)
-      if (/^[a-z][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/.test(trimmed)) {
+      if (SLUG_PATH_EXACT_RE.test(trimmed)) {
         const page = await engine.getPage(trimmed);
         if (page) {
           cache.set(cacheKey, trimmed);

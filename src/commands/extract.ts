@@ -1023,10 +1023,29 @@ async function extractLinksFromDB(
   // cache so duplicate names (same person appearing on many pages) resolve
   // once, not once per mention.
   const resolver = makeResolver(engine, { mode: 'batch' });
-  const unresolved: UnresolvedFrontmatterRef[] = [];
-  const nullResolver = {
-    resolve: async () => null as string | null,
+  const titleCache = new Map<string, string | null>();
+  const titleResolver = {
+    async resolve(name: string): Promise<string | null> {
+      const trimmed = name.trim();
+      if (!trimmed) return null;
+      if (titleCache.has(trimmed)) return titleCache.get(trimmed)!;
+      const match = await engine.findByTitleFuzzy(
+        trimmed,
+        undefined,
+        0.99,
+        sourceIdFilter ? { sourceId: sourceIdFilter } : undefined,
+      );
+      const page = match
+        ? await engine.getPage(match.slug, sourceIdFilter ? { sourceId: sourceIdFilter } : undefined)
+        : null;
+      const slug = page && page.title.trim() === trimmed
+        ? match!.slug
+        : null;
+      titleCache.set(trimmed, slug);
+      return slug;
+    },
   };
+  const unresolved: UnresolvedFrontmatterRef[] = [];
   // v0.32.8: listAllPageRefs enumerates (slug, source_id) so we can thread
   // sourceId to getPage AND build a cross-source resolution map for link
   // disambiguation. Pre-fix used getAllSlugs() which collapsed
@@ -1060,7 +1079,7 @@ async function extractLinksFromDB(
     list.push(ref.source_id);
     slugToSources.set(ref.slug, list);
   }
-  let processed = 0, created = 0;
+  let processed = 0, created = 0, totalCandidates = 0;
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('extract.links_db', allRefs.length);
@@ -1098,11 +1117,13 @@ async function extractLinksFromDB(
     const fullContent = page.compiled_truth + '\n' + page.timeline;
     // --include-frontmatter default OFF in v0.13 (codex tension 5, back-compat).
     // Migration orchestrator explicitly enables it for the one-time backfill;
-    // user-invoked `gbrain extract links` stays outgoing-only.
-    const activeResolver = includeFrontmatter ? resolver : nullResolver;
+    // user-invoked `gbrain extract links` stays outgoing-only for frontmatter,
+    // while still resolving explicit Obsidian title-form wikilinks by page title.
     const extracted = await extractPageLinks(
-      slug, fullContent, page.frontmatter, page.type, activeResolver,
+      slug, fullContent, page.frontmatter, page.type, resolver,
+      { includeFrontmatter, resolveTitleWikilinks: true, titleResolver },
     );
+    const candidateCount = extracted.candidates.length;
     unresolved.push(...extracted.unresolved);
 
     for (const c of extracted.candidates) {
@@ -1170,6 +1191,7 @@ async function extractLinksFromDB(
       }
     }
     processed++;
+    totalCandidates += candidateCount;
     progress.tick(1);
   }
   await flush();
@@ -1178,6 +1200,12 @@ async function extractLinksFromDB(
   if (!jsonMode) {
     const label = dryRun ? '(dry run) would create' : 'created';
     console.log(`Links: ${label} ${created} from ${processed} pages (db source)`);
+    if (processed > 0 && totalCandidates === 0) {
+      console.warn(
+        `Warning: extract links found 0 link candidates in ${processed} DB pages. ` +
+        'If these pages contain Obsidian/Notion wikilinks, check that linked target pages were imported and their titles or slug paths match.',
+      );
+    }
     if (includeFrontmatter && unresolved.length > 0) {
       // Top-20 preview of unresolvable frontmatter names so the user can
       // see where the graph has holes (codex tension 6.4).

@@ -98,9 +98,20 @@ describe('extractEntityRefs', () => {
     expect(extractEntityRefs('[Alice(people/alice)')).toEqual([]);
   });
 
-  test('skips non-entity dirs (notes/, ideas/ stay if added later but are accepted now)', () => {
-    // Current regex targets entity dirs explicitly. Notes/ shouldn't match.
-    const refs = extractEntityRefs('See [random](notes/random).');
+  test('extracts explicit slug links outside canonical dirs', () => {
+    const refs = extractEntityRefs(
+      'See [random](notes/random), [[documentation/yomumichi-documentation.md]], and [[wiki:guides/setup/install.md|Install Guide]].',
+    );
+    expect(refs.map(r => r.slug).sort()).toEqual([
+      'documentation/yomumichi-documentation',
+      'guides/setup/install',
+      'notes/random',
+    ].sort());
+    expect(refs.find(r => r.slug === 'guides/setup/install')?.sourceId).toBe('wiki');
+  });
+
+  test('skips markdown image targets', () => {
+    const refs = extractEntityRefs('Diagram: ![Architecture](documentation/architecture-overview).');
     expect(refs).toEqual([]);
   });
 
@@ -164,6 +175,63 @@ describe('extractPageLinks', () => {
     );
     const acme = candidates.find(c => c.targetSlug === 'companies/acme');
     expect(acme).toBeDefined();
+  });
+
+  test('keeps bare prose matching limited to canonical dirs', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/x', 'See notes/random for details.', {}, 'concept', nullResolver,
+    );
+    expect(candidates.find(c => c.targetSlug === 'notes/random')).toBeUndefined();
+  });
+
+  test('resolves Obsidian title-form wikilinks by title', async () => {
+    const titleResolver: SlugResolver = {
+      resolve: async (name: string) => (
+        name === 'Yomumichi Documentation' ? 'documentation/yomumichi-documentation' : null
+      ),
+    };
+    const { candidates } = await extractPageLinks(
+      'projects/project-list/yomumichi',
+      'See [[Yomumichi Documentation]] and [[Missing Page]].',
+      {},
+      'concept',
+      titleResolver,
+      { resolveTitleWikilinks: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['documentation/yomumichi-documentation']);
+  });
+
+  test('does not resolve title-form wikilinks unless enabled', async () => {
+    const titleResolver: SlugResolver = {
+      resolve: async () => 'documentation/yomumichi-documentation',
+    };
+    const { candidates } = await extractPageLinks(
+      'projects/project-list/yomumichi',
+      'See [[Yomumichi Documentation]].',
+      {},
+      'concept',
+      titleResolver,
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  test('can disable frontmatter while still resolving title wikilinks', async () => {
+    const titleResolver: SlugResolver = {
+      resolve: async (name: string) => (
+        name === 'Yomumichi Documentation' ? 'documentation/yomumichi-documentation' : null
+      ),
+    };
+    const { candidates, unresolved } = await extractPageLinks(
+      'projects/project-list/yomumichi',
+      'See [[Yomumichi Documentation]].',
+      { source: 'meetings/2026-01-15' },
+      'concept',
+      titleResolver,
+      { includeFrontmatter: false, resolveTitleWikilinks: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['documentation/yomumichi-documentation']);
+    expect(candidates.some(c => c.linkSource === 'frontmatter')).toBe(false);
+    expect(unresolved).toEqual([]);
   });
 
   test('returns empty when no refs found', async () => {
@@ -690,6 +758,12 @@ describe('makeResolver — fallback chain', () => {
     expect(await r.resolve('people/pedro')).toBe('people/pedro');
   });
 
+  test('step 1: slug passthrough accepts nested noncanonical paths', async () => {
+    const engine = makeFakeEngine(['projects/project-list/yomumichi']);
+    const r = makeResolver(engine);
+    expect(await r.resolve('projects/project-list/yomumichi')).toBe('projects/project-list/yomumichi');
+  });
+
   test('step 2: dir-hint construction', async () => {
     const engine = makeFakeEngine(['companies/stripe']);
     const r = makeResolver(engine);
@@ -828,4 +902,3 @@ describe("v0.18.0 migration v22 — links_resolution_type", () => {
     expect(v22!.sql).toContain("unqualified");
   });
 });
-

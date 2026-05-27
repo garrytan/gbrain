@@ -109,6 +109,44 @@ describe('extract --source-id flag (#1204)', () => {
     }
   });
 
+  test('db extract resolves title-form wikilinks and noncanonical explicit dirs', async () => {
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES
+         ('projects/project-list/yomumichi', 'alpha', 'concept', 'Yomumichi', 'See [[Yomumichi Documentation]] and [[guides/setup/install]].', ''),
+         ('documentation/yomumichi-documentation', 'alpha', 'concept', 'Yomumichi Documentation', 'Docs page.', ''),
+         ('guides/setup/install', 'alpha', 'concept', 'Install Guide', 'Guide page.', ''),
+         ('archive/yomumichi-documentation', 'beta', 'concept', 'Yomumichi Documentation', 'Wrong-source title collision.', '')`,
+    );
+
+    const origLog = console.log;
+    console.log = () => {};
+    try {
+      await runExtract(engine, ['links', '--source', 'db', '--source-id', 'alpha', '--json']);
+    } finally {
+      console.log = origLog;
+    }
+
+    const linkRows = await engine.executeRaw<{ from_slug: string; to_slug: string }>(
+      `SELECT fp.slug AS from_slug, tp.slug AS to_slug
+         FROM links l
+         JOIN pages fp ON l.from_page_id = fp.id
+         JOIN pages tp ON l.to_page_id = tp.id
+        WHERE fp.slug = 'projects/project-list/yomumichi'
+        ORDER BY tp.slug`,
+    );
+    expect(linkRows).toEqual([
+      {
+        from_slug: 'projects/project-list/yomumichi',
+        to_slug: 'documentation/yomumichi-documentation',
+      },
+      {
+        from_slug: 'projects/project-list/yomumichi',
+        to_slug: 'guides/setup/install',
+      },
+    ]);
+  });
+
   test('--source-id with non-matching source produces zero links', async () => {
     const origLog = console.log;
     console.log = () => {};
