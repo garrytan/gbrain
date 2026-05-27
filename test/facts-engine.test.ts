@@ -13,17 +13,35 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  // v0.36.2.0: DEFAULT_EMBEDDING_DIMENSIONS flipped to 1280 (ZE Matryoshka).
+  // This test hardcodes Float32Array(1536) in `vec(...)` below for its
+  // embedding fixtures. If another test file in the same shard configured
+  // the gateway before us, initSchema() would size the facts.embedding
+  // column at vector(1280) and the cosine-ordering test would throw
+  // "expected 1280 dimensions, not 1536". Pin the gateway to 1536d
+  // explicitly so this file is hermetic regardless of cross-file state
+  // and matches the pattern from query-cache.test.ts +
+  // consolidate-valid-until.test.ts + search-types-filter.test.ts +
+  // operations-find-trajectory.test.ts.
+  resetGateway();
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { OPENAI_API_KEY: 'sk-fake' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
 });
 
 afterAll(async () => {
-  await engine.disconnect();
+  try { await engine.disconnect(); } catch { /* ignore */ }
+  resetGateway();
 });
 
 const vec = (...vals: number[]): Float32Array => {
