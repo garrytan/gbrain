@@ -128,8 +128,40 @@ function releaseLock() {
 type ListRow = { slug: string; type: string; updated: string; title: string };
 
 function gbrainList(): ListRow[] {
-  const r = spawnSync("gbrain", ["list", "--limit", "10000"], { encoding: "utf-8" });
-  if (r.status !== 0) throw new Error(`gbrain list failed: ${r.stderr}`);
+  // FORK PATCH (2026-05-26): upstream `gbrain list --limit N` has an
+  // internal 100-row hard cap that ignores --limit (verified empirically:
+  // --limit 100/200/500/1000/99999 all return 100 rows). The CLI was
+  // designed for "what's recent" UX, not for full source enumeration.
+  // enrich-sweep MUST iterate every input page, so we bypass via psql.
+  //
+  // Also filters OUT entity-stub types (person/company/concept/project) —
+  // those were created by prior sweep runs; re-NER'ing them just wastes
+  // Haiku tokens (Phase B dedup catches them downstream anyway, but
+  // skipping NER saves ~10% cost on a brain with many existing stubs).
+  //
+  // Source resolution mirrors gbrain CLI's tier order:
+  //   GBRAIN_SOURCE env → sole non-default source (v0.41.13 tier 5.5)
+  //   → 'default' fallback
+  const dbUrl = process.env.DATABASE_URL
+    ?? `postgresql://${process.env.USER ?? 'chenyuanquan'}@127.0.0.1:5432/gbrain`;
+  const sourceSql = `COALESCE(
+      NULLIF('${(process.env.GBRAIN_SOURCE ?? '').replace(/'/g, "''")}', ''),
+      (SELECT id FROM sources WHERE id != 'default' AND archived = false LIMIT 1),
+      'default'
+    )`;
+  const sql = `
+    SELECT slug,
+           type,
+           to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS updated,
+           COALESCE(NULLIF(title, ''), slug) AS title
+    FROM pages
+    WHERE source_id = ${sourceSql}
+      AND deleted_at IS NULL
+      AND type NOT IN ('person', 'company', 'concept', 'project')
+    ORDER BY id;
+  `;
+  const r = spawnSync("psql", [dbUrl, "-At", "-F", "\t", "-c", sql], { encoding: "utf-8" });
+  if (r.status !== 0) throw new Error(`psql enumerate failed: ${r.stderr}`);
   return r.stdout
     .trim()
     .split("\n")
