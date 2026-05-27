@@ -3597,6 +3597,32 @@ specific source via cron or by hand:
    - the exact `gbrain dream` command you ran
    - the source's row from `sources` table (config column)
 
+### Stdio MCP also gets federated reads
+
+The op-handler fix above is necessary but not sufficient for the most common gbrain MCP setup. HTTP MCP populates `auth.allowedSources` from `oauth_clients.federated_read` at token-verification time, but stdio MCP (the `gbrain serve` transport that Claude Desktop / Code / Cursor speak by default) has no per-token auth — historically the only way to scope it was the singular `GBRAIN_SOURCE` env var, which only covers ONE source.
+
+Setups using stdio MCP against a multi-source brain hit the same symptom from a different angle: with no `GBRAIN_SOURCE` set, every request gets scoped to the `'default'` source and pages in other sources come back as `page_not_found` / empty.
+
+v0.36.0.1 adds a new env var `GBRAIN_SOURCES` (plural, comma-separated) that populates a synthetic `AuthInfo.allowedSources` for stdio MCP, so the federated-read pattern works on every transport. Example MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "gbrain": {
+      "command": "gbrain",
+      "args": ["serve"],
+      "env": {
+        "GBRAIN_SOURCES": "default,docc,popify,personal-brain"
+      }
+    }
+  }
+}
+```
+
+Restart your MCP client and reads will span every source in the list. `GBRAIN_SOURCE` (singular) is unchanged — it's now the scalar write-scope fallback for single-source setups. When both are set, `GBRAIN_SOURCES` wins for reads.
+
+The parser drops whitespace and dupes, preserves first-seen order (the first entry doubles as the write-scope fallback when `GBRAIN_SOURCE` is unset), and treats empty input as "no federated scope, fall through to scalar." Pinned by `test/stdio-mcp-allowed-sources.test.ts`.
+
 ### Itemized changes
 
 **dream --source / --source-id (supersedes PR #1559):**
