@@ -4,6 +4,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import type { EngineConfig } from '../core/types.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
@@ -810,6 +811,36 @@ HANDLER TYPES (built in)
 
       try { await queue.ensureSchema(); }
       catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
+
+      // Force worker engine to instance-owned pool so `_sql` is non-null and
+      // the module-singleton fallback at `db.ts:getConnection` stops being
+      // load-bearing at every `executeRaw` call site inside the worker —
+      // notably `worker.ts:619` lockTimer → `queue.ts:renewLock`. When a
+      // transient pool eviction nulls the module-level `sql` singleton, the
+      // next `renewLock` would otherwise hit `getConnection()` → `throw "No
+      // database connection: connect() has not been called"` and either
+      // unhandled-reject-crash the worker (autopilot KeepAlive respawns) or
+      // degrade it silently (queue.poll returns nothing forever; cycle stops
+      // making progress while the daemon stays alive). Both states observed
+      // on v0.41.18.0 against a real Supabase pooler brain (42k pages):
+      // 2 worker crashes in 90s plus 110+ minutes of "alive but degraded"
+      // before manual restart. Companion to Issue #1413 / closed PR #1415,
+      // which fixed the autopilot main loop the same way but not this
+      // separate worker-subprocess code path (the worker is `bun gbrain
+      // jobs work --max-rss N`, with its own engine instance).
+      if (engine.kind === 'postgres') {
+        const eng = engine as unknown as {
+          _savedConfig?: EngineConfig & { poolSize?: number };
+          _connectionStyle?: 'instance' | 'module' | null;
+        };
+        if (eng._savedConfig && eng._connectionStyle !== 'instance') {
+          try {
+            await engine.connect({ ...eng._savedConfig, poolSize: 5 } as EngineConfig & { poolSize: number });
+          } catch (e) {
+            console.error(`[jobs work] could not switch engine to instance pool: ${(e as Error).message}`);
+          }
+        }
+      }
 
       const worker = new MinionWorker(engine, {
         queue: queueName, concurrency, maxRssMb, healthCheckInterval,
