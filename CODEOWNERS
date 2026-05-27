@@ -1,0 +1,13 @@
+# CODEOWNERS for ConferInc/gbrain
+# Per spec §5 row 4 maintainer chain.
+
+# Default — Aether reviews all changes (in-command)
+* @aether-s7
+
+# Migrations require Vulcan signoff (ultimate authority on schema)
+/src/migrations/* @aether-s7 @vulcan-mac
+/src/migrations/down/* @aether-s7 @vulcan-mac
+
+# Policy + scope changes (UPSTREAM, CODEOWNERS) require Yatin
+/UPSTREAM.md @vulcan-mac @yatinkarnik
+/CODEOWNERS @yatinkarnik
