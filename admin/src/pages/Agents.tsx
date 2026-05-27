@@ -23,7 +23,14 @@ interface Agent {
   total_requests: number;
   requests_today: number;
   token_ttl: number | null;
+  source_id: string | null;
+  federated_read: string[] | null;
   status: 'active' | 'revoked';
+}
+
+interface SourceOption {
+  id: string;
+  name: string | null;
 }
 
 interface ApiKey {
@@ -88,6 +95,7 @@ export function AgentsPage() {
                 <th>Name</th>
                 <th>Type</th>
                 <th>Scopes</th>
+                <th>Source</th>
                 <th>Status</th>
                 <th>Requests</th>
                 <th>Last Used</th>
@@ -107,6 +115,9 @@ export function AgentsPage() {
                     {(a.scope || '').split(' ').filter(Boolean).map(s => (
                       <span key={s} className={`badge badge-${s}`} style={{ marginRight: 4 }}>{s}</span>
                     ))}
+                  </td>
+                  <td className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    {a.auth_type === 'oauth' ? (a.source_id || 'default') : 'all'}
                   </td>
                   <td>
                     <span className={`badge ${a.status === 'active' ? 'badge-success' : 'badge-danger'}`}>{a.status}</span>
@@ -257,8 +268,27 @@ function RegisterModal({ onClose, onRegistered }: {
     Object.fromEntries(ALLOWED_SCOPES_LIST.map(s => [s, s === 'read'])) as Record<Scope, boolean>,
   );
   const [ttl, setTtl] = useState('86400'); // 24h default
+  const [sources, setSources] = useState<SourceOption[]>([{ id: 'default', name: 'default' }]);
+  const [sourceId, setSourceId] = useState('default');
+  const [readSources, setReadSources] = useState<Record<string, boolean>>({ default: true });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.sources()
+      .then((rows: SourceOption[]) => {
+        const nextSources = rows.length > 0 ? rows : [{ id: 'default', name: 'default' }];
+        const nextSourceId = nextSources.some(s => s.id === sourceId) ? sourceId : nextSources[0].id;
+        setSources(nextSources);
+        setSourceId(nextSourceId);
+        setReadSources(prev => {
+          const next = Object.fromEntries(nextSources.map(s => [s.id, Boolean(prev[s.id])])) as Record<string, boolean>;
+          next[nextSourceId] = true;
+          return next;
+        });
+      })
+      .catch(() => {});
+  }, []);
 
   const ttlOptions = [
     { label: '1 hour', value: '3600' },
@@ -277,11 +307,19 @@ function RegisterModal({ onClose, onRegistered }: {
     try {
       // Use the CLI registration endpoint (POST to admin API)
       const selectedScopes = Object.entries(scopes).filter(([, v]) => v).map(([k]) => k).join(' ');
+      const federatedRead = sources.map(s => s.id).filter(id => readSources[id]);
+      if (federatedRead.length === 0) { setError('Select at least one read source'); setLoading(false); return; }
       const res = await fetch('/admin/api/register-client', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), scopes: selectedScopes, tokenTtl: ttl === '0' ? 315360000 : Number(ttl) }),
+        body: JSON.stringify({
+          name: name.trim(),
+          scopes: selectedScopes,
+          tokenTtl: ttl === '0' ? 315360000 : Number(ttl),
+          source_id: sourceId,
+          federated_read: federatedRead,
+        }),
       });
       if (!res.ok) throw new Error('Registration failed');
       const data = await res.json();
@@ -308,6 +346,32 @@ function RegisterModal({ onClose, onRegistered }: {
               <label key={s} className="checkbox-label">
                 <input type="checkbox" checked={scopes[s]} onChange={e => setScopes(p => ({ ...p, [s]: e.target.checked }))} />
                 {s}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <label>Write Source</label>
+          <select value={sourceId} onChange={e => {
+            const id = e.target.value;
+            setSourceId(id);
+            setReadSources(p => ({ ...p, [id]: true }));
+          }}
+            style={{ width: '100%', background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: 14 }}>
+            {sources.map(s => <option key={s.id} value={s.id}>{s.name && s.name !== s.id ? `${s.id} (${s.name})` : s.id}</option>)}
+          </select>
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <label>Read Sources</label>
+          <div className="checkbox-group">
+            {sources.map(s => (
+              <label key={s.id} className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={Boolean(readSources[s.id])}
+                  onChange={e => setReadSources(p => ({ ...p, [s.id]: e.target.checked }))}
+                />
+                {s.name && s.name !== s.id ? `${s.id} (${s.name})` : s.id}
               </label>
             ))}
           </div>
@@ -528,6 +592,8 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
       client_name: agentName,
       auth_type: agent.auth_type,
       scope: agent.scope,
+      source_id: agent.source_id,
+      federated_read: agent.federated_read,
     }, null, 2),
   };
 
@@ -547,6 +613,10 @@ function AgentDrawer({ agent, onClose, onRevoked }: { agent: Agent; onClose: () 
           <span>{(agent.scope || '').split(' ').filter(Boolean).map(s => (
             <span key={s} className={`badge badge-${s}`} style={{ marginRight: 4 }}>{s}</span>
           ))}</span>
+          <span style={{ color: 'var(--text-secondary)' }}>Write Source</span>
+          <span className="mono">{agent.source_id || (isOAuth ? 'default' : 'all')}</span>
+          <span style={{ color: 'var(--text-secondary)' }}>Read Sources</span>
+          <span className="mono">{isOAuth ? (agent.federated_read && agent.federated_read.length > 0 ? agent.federated_read.join(', ') : (agent.source_id || 'default')) : 'all'}</span>
           <span style={{ color: 'var(--text-secondary)' }}>Registered</span>
           <span>{new Date(agent.created_at).toLocaleDateString()}</span>
           <span style={{ color: 'var(--text-secondary)' }}>Token TTL</span>

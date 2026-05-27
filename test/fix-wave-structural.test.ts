@@ -78,6 +78,8 @@ describe('v0.36.1.x #1077 — admin register-client supports PKCE public clients
     // (under either name) from req.body. Pin the fallback pattern so the
     // PKCE-fix regression contract stays load-bearing.
     expect(src).toMatch(/req\.body[^;]*scopes\s*\?\?\s*[^;]*scope\b/);
+    expect(src).toMatch(/req\.body[^;]*source_id\s*\?\?\s*[^;]*sourceId\b/);
+    expect(src).toMatch(/req\.body[^;]*federated_read\s*\?\?\s*[^;]*federatedRead\b/);
     // v0.41.3 (T4 atomicity fix, codex F4): admin endpoint now validates
     // tokenEndpointAuthMethod via the shared validator and passes it to
     // registerClientManual as a positional arg. Pre-v0.41.3 the route did
@@ -87,6 +89,7 @@ describe('v0.36.1.x #1077 — admin register-client supports PKCE public clients
     // UPDATE block (the regex deliberately asserts the post-insert UPDATE
     // is GONE).
     expect(src).toMatch(/validateTokenEndpointAuthMethod\(tokenEndpointAuthMethod\)/);
+    expect(src).toMatch(/normalizeAdminClientSourceScope\(/);
     expect(src).toMatch(/registerClientManual\([^)]*validatedAuthMethod[^)]*\)/);
     // Regression guard: post-insert UPDATE flipping client_secret_hash to
     // NULL based on a runtime check is exactly the non-atomic pattern T4
