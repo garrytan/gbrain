@@ -49,6 +49,7 @@ import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { openAICodexChat, openAICodexJson } from './openai-codex/adapter.ts';
 
 const MAX_CHARS = 8000;
 // v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
@@ -2020,7 +2021,39 @@ export async function expand(query: string): Promise<string[]> {
   if (!isAvailable('expansion')) return [query];
 
   try {
-    const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
+    const expansionModel = getExpansionModel();
+    const parsedExpansion = parseModelId(expansionModel);
+    if (parsedExpansion.providerId === 'openai-codex') {
+      const result = await openAICodexJson<{ queries: string[] }>({
+        model: parsedExpansion.modelId,
+        prompt: [
+          'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
+          'Return ONLY the JSON object. Do NOT include the original query in the result.',
+          'Each rewrite should emphasize different aspects, synonyms, or framings.',
+          '',
+          `Query: ${query}`,
+        ].join('\n'),
+        schemaName: 'gbrain_expansion',
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            queries: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 5 },
+          },
+          required: ['queries'],
+        },
+      });
+      const expansions = result.object?.queries ?? [];
+      const seen = new Set<string>();
+      return [query, ...expansions].filter(q => {
+        const k = q.toLowerCase().trim();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return !!q.trim();
+      });
+    }
+
+    const { model, recipe, modelId } = await resolveExpansionProvider(expansionModel);
     const result = await generateObject({
       model,
       schema: ExpansionSchema,
@@ -2346,6 +2379,50 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }
 
   const modelStr = modelStrEarly;
+  const parsedChat = parseModelId(modelStr);
+  if (parsedChat.providerId === 'openai-codex') {
+    let res: ChatResult | null = null;
+    let threw: unknown = null;
+    try {
+      res = await openAICodexChat({
+        model: parsedChat.modelId,
+        system: opts.system,
+        messages: opts.messages,
+        maxTokens: opts.maxTokens ?? 4096,
+        abortSignal: opts.abortSignal,
+      });
+      return res;
+    } catch (err) {
+      threw = err;
+      throw err;
+    } finally {
+      if (tracker) {
+        try {
+          if (res) {
+            tracker.record({
+              modelId: res.model,
+              inputTokens: res.usage.input_tokens,
+              outputTokens: res.usage.output_tokens,
+              label: 'gateway.chat',
+            });
+          } else {
+            const usage = _extractUsageFromError(threw, {
+              inputTokens: estimatedInputTokens,
+              outputTokens: maxOutputTokens,
+            });
+            tracker.record({
+              modelId: modelStr,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              label: 'gateway.chat',
+            });
+          }
+        } catch {
+          // Preserve the original chat result/error; budget exhaustion surfaces on the next reserve().
+        }
+      }
+    }
+  }
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
 
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;

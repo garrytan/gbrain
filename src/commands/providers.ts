@@ -5,14 +5,35 @@
  * users can verify provider setup before `gbrain init`.
  */
 
+import { spawn } from 'child_process';
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
 import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwChat } from '../core/ai/gateway.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
+import { getOpenAICodexReadiness, type OpenAICodexReadiness } from '../core/ai/openai-codex/readiness.ts';
+import { defaultTokenStore, FileTokenStore, redactTokenLike } from '../core/ai/openai-codex/token-store.ts';
+import { buildAuthorizationUrl, createPkcePair } from '../core/ai/openai-codex/oauth.ts';
+import { createLoopbackRedirectUri, loginWithBrowserOpenAICodex, waitForLoopbackOAuthCallback } from '../core/ai/openai-codex/browser-login.ts';
+import { discoverOpenAICodexModels } from '../core/ai/openai-codex/model-discovery.ts';
+import { writeModelCache } from '../core/ai/openai-codex/model-cache.ts';
 import type { Recipe } from '../core/ai/types.ts';
 
 const SCHEMA_VERSION = 1;
+const OPENAI_CODEX_AUTHORIZATION_ENDPOINT = 'https://auth.openai.com/oauth/authorize';
+const OPENAI_CODEX_TOKEN_ENDPOINT = 'https://auth.openai.com/oauth/token';
+const OPENAI_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
+const OPENAI_CODEX_DEFAULT_ORIGINATOR = 'codex_cli_rs';
+const OPENAI_CODEX_DEFAULT_SCOPES = ['openid', 'profile', 'email', 'offline_access'];
+const OPENAI_CODEX_REGISTERED_CALLBACK_PORT = 1455;
+const OPENAI_CODEX_REGISTERED_REDIRECT_PATH = '/auth/callback';
+const OPENAI_CODEX_AUTH_EXTRA_PARAMS = {
+  id_token_add_organizations: 'true',
+  codex_cli_simplified_flow: 'true',
+  originator: OPENAI_CODEX_DEFAULT_ORIGINATOR,
+};
+const OPENAI_CODEX_MODELS_ENDPOINT = 'https://chatgpt.com/backend-api/codex/models';
+const OPENAI_CODEX_CLIENT_VERSION = '0.133.0';
 
 type TouchpointFilter = 'embedding' | 'expansion' | 'chat';
 
@@ -26,6 +47,9 @@ interface ProviderOption {
   cost_per_1m_output_usd?: number;
   price_last_verified?: string;
   env_ready: boolean;
+  auth_status?: OpenAICodexReadiness['status'];
+  auth_hint?: string;
+  models_supported?: number;
   tier: 'native' | 'openai-compat';
   pros: string[];
   cons: string[];
@@ -58,7 +82,15 @@ export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): 
  * Returns the multi-line string (joined with `\n`). Callers handle stdout vs.
  * stderr routing themselves.
  */
-export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = process.env): string {
+export function formatOAuthStatus(status: OpenAICodexReadiness): string {
+  return `${status.ready ? '✓' : '✗'} oauth ${status.status}`;
+}
+
+export function formatRecipeTable(
+  recipes: Recipe[],
+  env: NodeJS.ProcessEnv = process.env,
+  oauthReadiness: Record<string, OpenAICodexReadiness> = {},
+): string {
   const rows: string[] = [];
   // Dynamic column width: longest recipe id + 1 space, floor at 14 (the
   // historical default). v0.40.6.1 introduced `llama-server-reranker` (21 chars)
@@ -74,8 +106,9 @@ export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = pr
     const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
     const hasExpand = !!r.touchpoints.expansion;
     const hasChat = !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
-    const ready = envReady(r, env);
-    const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
+    const oauth = oauthReadiness[r.id];
+    const ready = oauth ? oauth.ready : envReady(r, env);
+    const status = oauth ? formatOAuthStatus(oauth) : (ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`);
     rows.push(
       r.id.padEnd(idCol) +
       r.tier.padEnd(18) +
@@ -100,6 +133,10 @@ export async function runProviders(subcommand: string | undefined, args: string[
       return runEnv(args);
     case 'explain':
       return runExplain(args);
+    case 'login':
+      return runLogin(args);
+    case 'refresh':
+      return runRefresh(args);
     case undefined:
     case '--help':
     case '-h':
@@ -120,6 +157,8 @@ USAGE
   gbrain providers test [--touchpoint T] [--model ID]     Smoke-test configured (or specified) providers
   gbrain providers env <id>                               Show env vars required/optional for a provider
   gbrain providers explain [--json]                       Emit a provider choice matrix (agent-friendly)
+  gbrain providers login openai-codex [--json]            Browser OAuth login using Codex's registered localhost:1455 callback
+  gbrain providers refresh openai-codex [--json]          Refresh dynamic OpenAI Codex model cache
 
 TOUCHPOINTS
   --touchpoint embedding (default)  Probes embed_one("...")
@@ -135,8 +174,118 @@ EXAMPLES
 `);
 }
 
-function runList(_args: string[]): void {
-  console.log(formatRecipeTable(listRecipes()));
+async function runList(_args: string[]): Promise<void> {
+  console.log(formatRecipeTable(listRecipes(), process.env, await providerOAuthReadiness()));
+}
+
+async function openUrlInBrowser(url: URL): Promise<void> {
+  const target = url.toString();
+  const command = process.platform === 'darwin'
+    ? { file: 'open', args: [target] }
+    : process.platform === 'win32'
+      ? { file: 'cmd', args: ['/c', 'start', '', target] }
+      : { file: 'xdg-open', args: [target] };
+  const child = spawn(command.file, command.args, { stdio: 'ignore', detached: true });
+  child.unref();
+}
+
+async function runLogin(args: string[]): Promise<void> {
+  const provider = args[0];
+  if (provider !== 'openai-codex') {
+    console.error('providers login currently supports only openai-codex');
+    process.exit(1);
+  }
+  const asJson = args.includes('--json') || args.includes('-j');
+  const dryRun = args.includes('--dry-run');
+  const noOpen = args.includes('--no-open');
+  const tokenStoreIdx = args.indexOf('--token-store');
+  const tokenStoreMode = tokenStoreIdx >= 0 ? args[tokenStoreIdx + 1] : undefined;
+  if (tokenStoreMode !== undefined && tokenStoreMode !== 'file' && tokenStoreMode !== 'default') {
+    console.error("--token-store must be 'default' or 'file'");
+    process.exit(1);
+  }
+  const portIdx = args.indexOf('--port');
+  const authorizationEndpoint = process.env.OPENAI_CODEX_AUTHORIZATION_ENDPOINT ?? OPENAI_CODEX_AUTHORIZATION_ENDPOINT;
+  const tokenEndpoint = process.env.OPENAI_CODEX_TOKEN_ENDPOINT ?? OPENAI_CODEX_TOKEN_ENDPOINT;
+  const clientId = process.env.OPENAI_CODEX_CLIENT_ID ?? OPENAI_CODEX_CLIENT_ID;
+  const defaultCodexEndpoints = authorizationEndpoint === OPENAI_CODEX_AUTHORIZATION_ENDPOINT
+    && tokenEndpoint === OPENAI_CODEX_TOKEN_ENDPOINT
+    && clientId === OPENAI_CODEX_CLIENT_ID;
+  const port = portIdx >= 0 ? Number(args[portIdx + 1]) : OPENAI_CODEX_REGISTERED_CALLBACK_PORT;
+  if (defaultCodexEndpoints && port !== OPENAI_CODEX_REGISTERED_CALLBACK_PORT) {
+    console.error(`OpenAI Codex OAuth only accepts the registered loopback redirect http://localhost:${OPENAI_CODEX_REGISTERED_CALLBACK_PORT}${OPENAI_CODEX_REGISTERED_REDIRECT_PATH}; custom --port is only for tests with overridden endpoints.`);
+    process.exit(1);
+  }
+  const redirect = { host: 'localhost' as const, port, path: OPENAI_CODEX_REGISTERED_REDIRECT_PATH };
+  const redirectUri = createLoopbackRedirectUri(redirect);
+
+  if (dryRun) {
+    const pkce = await createPkcePair();
+    const state = crypto.randomUUID();
+    const authorizationUrl = buildAuthorizationUrl({
+      authorizationEndpoint,
+      clientId,
+      redirectUri,
+      state,
+      codeChallenge: pkce.challenge,
+      scopes: OPENAI_CODEX_DEFAULT_SCOPES,
+      extraParams: OPENAI_CODEX_AUTH_EXTRA_PARAMS,
+    });
+    const payload = {
+      provider: 'openai-codex',
+      mode: 'dry-run',
+      redirect_uri: redirectUri,
+      authorization_url: authorizationUrl.toString(),
+      token_written: false,
+    };
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+      return;
+    }
+    console.log('OpenAI Codex OAuth dry-run');
+    console.log(`  Redirect URI: ${payload.redirect_uri}`);
+    console.log(`  Authorization URL: ${payload.authorization_url}`);
+    console.log('  Token written: no');
+    return;
+  }
+
+  const tokenStore = tokenStoreMode === 'file' ? new FileTokenStore() : defaultTokenStore();
+  try {
+    const result = await loginWithBrowserOpenAICodex({
+      authorizationEndpoint,
+      tokenEndpoint,
+      clientId,
+      scopes: OPENAI_CODEX_DEFAULT_SCOPES,
+      extraAuthParams: OPENAI_CODEX_AUTH_EXTRA_PARAMS,
+      redirect,
+      tokenStore,
+      waitForCallback: waitForLoopbackOAuthCallback(),
+      openBrowser: async url => {
+        console.error(`Open this URL: ${url.toString()}`);
+        if (!noOpen) await openUrlInBrowser(url);
+      },
+    });
+    const payload = {
+      provider: 'openai-codex',
+      mode: 'login',
+      redirect_uri: result.redirectUri,
+      token_written: true,
+      expires_at: result.token.expires_at,
+      token_type: result.token.token_type ?? 'Bearer',
+    };
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+      return;
+    }
+    console.log('OpenAI Codex OAuth login complete');
+    console.log(`  Redirect URI: ${payload.redirect_uri}`);
+    console.log('  Token written: yes');
+    console.log(`  Expires at: ${payload.expires_at}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(redactTokenLike(msg));
+    process.exit(1);
+  }
 }
 
 async function runTest(args: string[]): Promise<void> {
@@ -235,6 +384,54 @@ async function runTest(args: string[]): Promise<void> {
   }
 }
 
+async function runRefresh(args: string[]): Promise<void> {
+  const provider = args[0];
+  if (provider !== 'openai-codex') {
+    console.error('providers refresh currently supports only openai-codex');
+    process.exit(1);
+  }
+  const asJson = args.includes('--json') || args.includes('-j');
+  const endpointBase = process.env.OPENAI_CODEX_MODELS_ENDPOINT ?? OPENAI_CODEX_MODELS_ENDPOINT;
+  const clientVersion = process.env.OPENAI_CODEX_CLIENT_VERSION ?? OPENAI_CODEX_CLIENT_VERSION;
+  const endpoint = new URL(endpointBase);
+  if (!endpoint.searchParams.has('client_version')) endpoint.searchParams.set('client_version', clientVersion);
+  const token = await defaultTokenStore().get();
+  if (!token?.access_token) {
+    console.error('openai-codex is not logged in. Run `gbrain providers login openai-codex`.');
+    process.exit(1);
+  }
+  try {
+    const cache = await discoverOpenAICodexModels({
+      endpoint: endpoint.toString(),
+      accessToken: token.access_token,
+      accountId: token.account_id,
+      clientVersion,
+    });
+    await writeModelCache(cache);
+    const payload = {
+      provider: 'openai-codex',
+      endpoint: endpoint.origin + endpoint.pathname,
+      client_version: clientVersion,
+      fetched_at: cache.fetched_at,
+      raw_count: cache.raw_count,
+      supported_count: cache.supported_count,
+      models: cache.models.map(model => model.slug),
+      cache_written: true,
+    };
+    if (asJson) {
+      console.log(JSON.stringify(payload, null, 2));
+      return;
+    }
+    console.log('OpenAI Codex model cache refreshed');
+    console.log(`  Supported models: ${payload.supported_count}/${payload.raw_count}`);
+    console.log(`  Models: ${payload.models.join(', ')}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(redactTokenLike(msg));
+    process.exit(1);
+  }
+}
+
 function runEnv(args: string[]): void {
   const id = args[0];
   if (!id) {
@@ -291,53 +488,9 @@ async function runExplain(args: string[]): Promise<void> {
   // Parallel probes for local providers (1s timeout each)
   const [ollama, lmstudio] = await Promise.all([probeOllama(), probeLMStudio()]);
 
-  const options: ProviderOption[] = [];
-  for (const r of recipes) {
-    if (r.touchpoints.embedding && r.touchpoints.embedding.models.length > 0) {
-      const m = r.touchpoints.embedding;
-      options.push({
-        id: `${r.id}:${m.models[0]}`,
-        touchpoint: 'embedding',
-        model: m.models[0],
-        dims: m.default_dims,
-        cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
-        price_last_verified: m.price_last_verified,
-        env_ready: envReady(r) || (r.id === 'ollama' && ollama.models_endpoint_valid === true),
-        tier: r.tier,
-        pros: prosFor(r, 'embedding'),
-        cons: consFor(r),
-      });
-    }
-    if (r.touchpoints.expansion) {
-      const m = r.touchpoints.expansion;
-      options.push({
-        id: `${r.id}:${m.models[0]}`,
-        touchpoint: 'expansion',
-        model: m.models[0],
-        cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
-        price_last_verified: m.price_last_verified,
-        env_ready: envReady(r),
-        tier: r.tier,
-        pros: prosFor(r, 'expansion'),
-        cons: consFor(r),
-      });
-    }
-    if (r.touchpoints.chat && r.touchpoints.chat.models.length > 0) {
-      const m = r.touchpoints.chat;
-      options.push({
-        id: `${r.id}:${m.models[0]}`,
-        touchpoint: 'chat',
-        model: m.models[0],
-        cost_per_1m_input_usd: m.cost_per_1m_input_usd,
-        cost_per_1m_output_usd: m.cost_per_1m_output_usd,
-        price_last_verified: m.price_last_verified,
-        env_ready: envReady(r),
-        tier: r.tier,
-        pros: prosFor(r, 'chat'),
-        cons: consFor(r),
-      });
-    }
-  }
+  const options = buildProviderOptionsForExplain(recipes, await providerOAuthReadiness(), {
+    ollamaReady: ollama.models_endpoint_valid === true,
+  });
 
   const recommended = pickRecommended(options, env_detected, ollama.models_endpoint_valid === true);
 
@@ -391,6 +544,85 @@ async function runExplain(args: string[]): Promise<void> {
   console.log('');
   console.log('Re-invoke:');
   console.log(`  gbrain init --embedding-model ${matrix.recommended.split(':')[0]}:${matrix.recommended.split(':').slice(1).join(':')}`);
+}
+
+function providerOAuthReadiness(): Promise<Record<string, OpenAICodexReadiness>> {
+  return getOpenAICodexReadiness()
+    .then(status => ({ 'openai-codex': status }))
+    .catch(error => ({
+      'openai-codex': {
+        status: 'not_logged_in',
+        ready: false,
+        hint: error instanceof Error ? error.message : String(error),
+      },
+    }));
+}
+
+export function buildProviderOptionsForExplain(
+  recipes: Recipe[],
+  oauthReadiness: Record<string, OpenAICodexReadiness> = {},
+  opts: { ollamaReady?: boolean; env?: NodeJS.ProcessEnv } = {},
+): ProviderOption[] {
+  const options: ProviderOption[] = [];
+  const env = opts.env ?? process.env;
+  for (const r of recipes) {
+    const oauth = oauthReadiness[r.id];
+    const readyFor = () => oauth ? oauth.ready : envReady(r, env);
+    const annotate = <T extends ProviderOption>(option: T): T => ({
+      ...option,
+      ...(oauth ? {
+        auth_status: oauth.status,
+        auth_hint: oauth.hint,
+        models_supported: oauth.models_supported,
+      } : {}),
+    });
+
+    if (r.touchpoints.embedding && r.touchpoints.embedding.models.length > 0) {
+      const m = r.touchpoints.embedding;
+      options.push(annotate({
+        id: `${r.id}:${m.models[0]}`,
+        touchpoint: 'embedding',
+        model: m.models[0],
+        dims: m.default_dims,
+        cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
+        price_last_verified: m.price_last_verified,
+        env_ready: readyFor() || (r.id === 'ollama' && opts.ollamaReady === true),
+        tier: r.tier,
+        pros: prosFor(r, 'embedding'),
+        cons: consFor(r),
+      }));
+    }
+    if (r.touchpoints.expansion) {
+      const m = r.touchpoints.expansion;
+      options.push(annotate({
+        id: `${r.id}:${m.models[0]}`,
+        touchpoint: 'expansion',
+        model: m.models[0],
+        cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
+        price_last_verified: m.price_last_verified,
+        env_ready: readyFor(),
+        tier: r.tier,
+        pros: prosFor(r, 'expansion'),
+        cons: consFor(r),
+      }));
+    }
+    if (r.touchpoints.chat && r.touchpoints.chat.models.length > 0) {
+      const m = r.touchpoints.chat;
+      options.push(annotate({
+        id: `${r.id}:${m.models[0]}`,
+        touchpoint: 'chat',
+        model: m.models[0],
+        cost_per_1m_input_usd: m.cost_per_1m_input_usd,
+        cost_per_1m_output_usd: m.cost_per_1m_output_usd,
+        price_last_verified: m.price_last_verified,
+        env_ready: readyFor(),
+        tier: r.tier,
+        pros: prosFor(r, 'chat'),
+        cons: consFor(r),
+      }));
+    }
+  }
+  return options;
 }
 
 function prosFor(r: Recipe, touchpoint: TouchpointFilter): string[] {
