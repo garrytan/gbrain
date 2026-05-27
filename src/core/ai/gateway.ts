@@ -967,6 +967,19 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
           parsed.encoding_format = 'float';
           mutated = true;
         }
+        // PATCH:ze-input-type-asymmetric v2 — query-side threading via
+        // __embedInputTypeStore (populated by embed() so opts.inputType
+        // reaches the wire body even after the AI SDK's openai-compatible
+        // adapter strips providerOptions). Runs BEFORE the document-default
+        // so the literal `parsed.input_type = 'document'` line below stays
+        // intact (structural test asserts it remains in source).
+        if (parsed.input_type === undefined) {
+          const threadedType = __embedInputTypeStore.getStore();
+          if (threadedType !== undefined) {
+            parsed.input_type = threadedType;
+            mutated = true;
+          }
+        }
         // Default input_type when caller didn't thread one (document-side
         // embedding is the correct default for ingest paths).
         if (parsed.input_type === undefined) {
@@ -1284,7 +1297,11 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   let _embedThrew = false;
   try {
     for (const batch of batches) {
-      const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
+      // PATCH:ze-input-type-asymmetric — propagate opts.inputType to the
+      // wire body via __embedInputTypeStore so the ZE shim picks it up.
+      const result = await __embedInputTypeStore.run(opts?.inputType ?? 'document', () =>
+        embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts),
+      );
       allEmbeddings.push(...result);
     }
     return allEmbeddings;
@@ -2123,6 +2140,16 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
 // budget throw → no lease attempted, no rate-lease window held.
 
 const __budgetStore = new AsyncLocalStorage<BudgetTracker>();
+
+// PATCH:ze-input-type-asymmetric v2
+// Threads `input_type: 'query' | 'document'` from embed()/embedQuery()
+// through to zeroEntropyCompatFetch's body-rewriter. The Vercel AI SDK's
+// openai-compatible adapter strips providerOptions.openaiCompatible.
+// input_type from the wire body before our fetch shim sees it, so the
+// shim's `if (parsed.input_type === undefined)` default was always
+// firing — breaking ZE's asymmetric query/document encoding contract.
+// (Sibling to __budgetStore. v0.42+ upstream PR target.)
+export const __embedInputTypeStore = new AsyncLocalStorage<'query' | 'document'>();
 
 export function withBudgetTracker<T>(tracker: BudgetTracker, fn: () => Promise<T>): Promise<T> {
   return __budgetStore.run(tracker, fn);
