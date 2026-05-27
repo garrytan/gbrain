@@ -53,6 +53,18 @@ interface DreamArgs {
    * Never auto-applied for --input (codex finding #3).
    */
   bypassDreamGuard: boolean;
+  /**
+   * v0.42: explicit source id for per-source cycle tracking.
+   * When set, runCycle writes `last_full_cycle_at` to the source's config
+   * on completion. Without this, `gbrain dream --source X` silently ignores
+   * --source and the doctor's cycle_freshness check never sees a fresh stamp.
+   */
+  source: string | null;
+  /**
+   * v0.42: cap the number of pages processed per extraction phase.
+   * Passed through to runCycle as maxPages.
+   */
+  maxPages: number | null;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -109,6 +121,17 @@ function parseArgs(args: string[]): DreamArgs {
   // --input implies --phase synthesize.
   if (inputFile && !phase) phase = 'synthesize';
 
+  const sourceIdx = args.indexOf('--source');
+  const source = sourceIdx !== -1 ? args[sourceIdx + 1] ?? null : null;
+
+  const maxPagesIdx = args.indexOf('--max-pages');
+  const rawMaxPages = maxPagesIdx !== -1 ? args[maxPagesIdx + 1] ?? null : null;
+  const maxPages = rawMaxPages ? parseInt(rawMaxPages, 10) : null;
+  if (maxPages !== null && (isNaN(maxPages) || maxPages < 1)) {
+    console.error(`--max-pages must be a positive integer; got "${rawMaxPages}"`);
+    process.exit(2);
+  }
+
   return {
     json: args.includes('--json'),
     dryRun: args.includes('--dry-run'),
@@ -121,6 +144,8 @@ function parseArgs(args: string[]): DreamArgs {
     from,
     to,
     bypassDreamGuard: args.includes('--unsafe-bypass-dream-guard'),
+    source,
+    maxPages,
   };
 }
 
@@ -179,6 +204,11 @@ Options:
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
   --pull              git pull the brain repo before syncing (default: no pull)
   --dir <path>        Brain directory (default: configured brain)
+  --source <id>       Run cycle for a specific source (default, media-corpus,
+                      straylight-brain, zion-brain). When set, writes
+                      last_full_cycle_at on completion so doctor's
+                      cycle_freshness check sees a fresh stamp.
+  --max-pages <n>     Cap pages processed per extraction phase.
 
   --input <file>      Synthesize a specific transcript file (implies
                       --phase synthesize). Bypasses corpus-dir scan.
@@ -280,6 +310,8 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     dryRun: opts.dryRun,
     pull: opts.pull,
     phases,
+    sourceId: opts.source ?? undefined,
+    maxPages: opts.maxPages ?? undefined,
     synthInputFile: opts.inputFile ?? undefined,
     synthDate: opts.date ?? undefined,
     synthFrom: opts.from ?? undefined,
