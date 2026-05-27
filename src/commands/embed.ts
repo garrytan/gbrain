@@ -360,15 +360,18 @@ async function embedAllStale(
 
   // Pull only the stale chunks (no embedding column).
   const staleRows = await engine.listStaleChunks();
-  // Group by slug so each slug → array of stale chunks for batched embedding.
-  const bySlug = new Map<string, typeof staleRows>();
+  // Group by "slug\0source_id" so multi-source brains don't cross-contaminate.
+  // A slug is only unique within a source; two sources can share the same slug.
+  const byKey = new Map<string, typeof staleRows>();
   for (const row of staleRows) {
-    const list = bySlug.get(row.slug);
+    const key = `${row.slug}\0${row.source_id}`;
+    const list = byKey.get(key);
     if (list) list.push(row);
-    else bySlug.set(row.slug, [row]);
+    else byKey.set(key, [row]);
   }
 
-  const slugs = Array.from(bySlug.keys());
+  const keys = Array.from(byKey.keys());
+  const slugs = keys; // alias for progress/count reporting
   const totalStaleChunks = staleRows.length;
   result.total_chunks += totalStaleChunks;
   // skipped is "chunks we considered and skipped due to having an embedding".
@@ -391,8 +394,10 @@ async function embedAllStale(
   const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
   let processed = 0;
 
-  async function embedOneSlug(slug: string) {
-    const stale = bySlug.get(slug)!;
+  async function embedOneKey(key: string) {
+    const stale = byKey.get(key)!;
+    const slug = stale[0].slug;
+    const sourceId = stale[0].source_id;
     try {
       const embeddings = await embedBatch(stale.map(c => c.chunk_text));
       // CRITICAL: passing ONLY the stale indices to upsertChunks would
@@ -401,7 +406,7 @@ async function embedAllStale(
       // re-fetch existing chunks for this page and merge. Bounded by the
       // stale slug count, not by total slugs — autopilot common case
       // is 0 stale (pre-flight short-circuit, never reaches this path).
-      const existing = await engine.getChunks(slug);
+      const existing = await engine.getChunks(slug, { sourceId });
       const staleIdxToEmbedding = new Map<number, Float32Array>();
       for (let j = 0; j < stale.length; j++) {
         staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
@@ -415,26 +420,26 @@ async function embedAllStale(
         embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
-      await engine.upsertChunks(slug, merged);
+      await engine.upsertChunks(slug, merged, { sourceId });
       result.embedded += stale.length;
     } catch (e: unknown) {
-      console.error(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
+      console.error(`\n  Error embedding ${slug} (source=${sourceId}): ${e instanceof Error ? e.message : e}`);
     }
     processed++;
     result.pages_processed++;
-    onProgress?.(processed, slugs.length, result.embedded);
+    onProgress?.(processed, keys.length, result.embedded);
   }
 
   let nextIdx = 0;
   async function worker() {
-    while (nextIdx < slugs.length) {
+    while (nextIdx < keys.length) {
       const idx = nextIdx++;
-      await embedOneSlug(slugs[idx]);
+      await embedOneKey(keys[idx]);
     }
   }
 
-  const numWorkers = Math.min(CONCURRENCY, slugs.length);
+  const numWorkers = Math.min(CONCURRENCY, keys.length);
   await Promise.all(Array.from({ length: numWorkers }, () => worker()));
 
-  console.log(`Embedded ${result.embedded} chunks across ${slugs.length} pages`);
+  console.log(`Embedded ${result.embedded} chunks across ${keys.length} pages`);
 }

@@ -73,7 +73,7 @@
     "@anthropic-ai/sdk": "^0.30.0",
     "@aws-sdk/client-s3": "^3.1028.0",
     "@dqbd/tiktoken": "^1.0.22",
-    "@electric-sql/pglite": "0.4.3",
+    "@electric-sql/pglite": "0.4.5",
     "@jsquash/avif": "^2.1.1",
     "@jsquash/png": "^3.1.1",
     "@modelcontextprotocol/sdk": "1.29.0",

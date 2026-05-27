@@ -174,6 +174,16 @@ export class PGLiteEngine implements BrainEngine {
         `  Run \`gbrain doctor\` for a full diagnosis.\n` +
         `  Original error: ${original}`
       );
+      // Delete postmaster.pid if present so the next open doesn't also crash.
+      // WAL replay crashes leave this file behind; without cleanup, every
+      // subsequent open fails the same way (crash loop). Safe to delete when
+      // PGlite.create() already threw — no live Postgres process holds it.
+      if (dataDir) {
+        try {
+          const { unlinkSync } = await import('node:fs');
+          unlinkSync(`${dataDir}/postmaster.pid`);
+        } catch { /* file may not exist — that's fine */ }
+      }
       // Release the lock so a fresh process can try again; leaking the lock
       // here turns a recoverable init error into a stuck-brain state.
       if (this._lock?.acquired) {
@@ -181,6 +191,25 @@ export class PGLiteEngine implements BrainEngine {
         this._lock = null;
       }
       throw wrapped;
+    }
+
+    // Install process-exit handlers so PGLite gets a clean shutdown on every
+    // exit path. Without this, any CLI command that exits without calling
+    // disconnect() leaves behind postmaster.pid + dirty WAL, causing
+    // Aborted() on the next open (#223). beforeExit covers normal completion;
+    // signal handlers cover Ctrl-C and kill signals.
+    if (dataDir) {
+      const doDisconnect = async () => {
+        if (this._db) { try { await this.disconnect(); } catch { } }
+      };
+      // beforeExit fires when the event loop drains; async work here delays exit.
+      process.once('beforeExit', doDisconnect);
+      // Graceful signals: disconnect then re-raise so the shell sees the right exit code.
+      const sigHandler = (sig: string) => () => {
+        doDisconnect().finally(() => process.kill(process.pid, sig));
+      };
+      process.once('SIGTERM', sigHandler('SIGTERM'));
+      process.once('SIGINT', sigHandler('SIGINT'));
     }
   }
 
@@ -1099,7 +1128,7 @@ export class PGLiteEngine implements BrainEngine {
 
   async listStaleChunks(): Promise<StaleChunkRow[]> {
     const { rows } = await this.db.query(
-      `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+      `SELECT p.slug, p.source_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
               cc.model, cc.token_count
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
