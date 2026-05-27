@@ -1016,9 +1016,10 @@ export class PGLiteEngine implements BrainEngine {
       name: string | null;
       local_path: string | null;
       last_sync_at: string | null;
+      last_commit: string | null;
       config: unknown;
     }>(
-      `SELECT id, name, local_path, last_sync_at, config
+      `SELECT id, name, local_path, last_sync_at, last_commit, config
          FROM sources
         WHERE ($1::boolean OR archived IS NOT TRUE)
           AND ($2::boolean OR local_path IS NOT NULL)
@@ -1030,6 +1031,7 @@ export class PGLiteEngine implements BrainEngine {
       name: r.name,
       local_path: r.local_path,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at) : null,
+      last_commit: r.last_commit ?? null,
       config: typeof r.config === 'string'
         ? JSON.parse(r.config) as Record<string, unknown>
         : ((r.config as Record<string, unknown> | null) ?? {}),

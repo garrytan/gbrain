@@ -1075,7 +1075,7 @@ export class PostgresEngine implements BrainEngine {
     const includeArchived = opts?.includeArchived === true;
     const localPathOnly = opts?.localPathOnly === true;
     const rows = await sql`
-      SELECT id, name, local_path, last_sync_at, config
+      SELECT id, name, local_path, last_sync_at, last_commit, config
         FROM sources
        WHERE (${includeArchived} OR archived IS NOT TRUE)
          AND (${!localPathOnly} OR local_path IS NOT NULL)
@@ -1086,6 +1086,7 @@ export class PostgresEngine implements BrainEngine {
       name: (r.name as string | null) ?? null,
       local_path: (r.local_path as string | null) ?? null,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at as string) : null,
+      last_commit: (r.last_commit as string | null) ?? null,
       config: typeof r.config === 'string' ? JSON.parse(r.config) : ((r.config as Record<string, unknown> | null) ?? {}),
     }));
   }

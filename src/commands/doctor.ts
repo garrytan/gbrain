@@ -26,6 +26,7 @@ import { gbrainPath } from '../core/config.ts';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { execSync } from 'node:child_process';
 
 export interface Check {
   name: string;
@@ -1884,8 +1885,32 @@ function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
  * been synced recently. Detects the silent failure mode where `gbrain sync`
  * stopped running and brain search now misses recent pages.
  *
+/**
+ * Check if a git-backed source is unchanged since its last sync.
+ * Returns true when local_path is a git repo and HEAD === last_commit in DB.
+ * Fail-open: returns false on any error so the staleness check runs normally.
+ */
+function isSourceUnchangedSinceSync(
+  localPath: string | null,
+  lastCommit: string | null,
+): boolean {
+  if (!localPath || !lastCommit) return false;
+  try {
+    const head = execSync(`git -C ${JSON.stringify(localPath)} rev-parse HEAD`, {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return head === lastCommit;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Pure staleness check. Reads `sources.last_sync_at` only — no filesystem
- * access. Filesystem-vs-DB drift detection is intentionally out of scope:
+ * access (except a cheap `git rev-parse HEAD` for the unchanged-source
+ * optimisation). Filesystem-vs-DB drift detection is intentionally out of scope:
  *   - doctorReportRemote runs in the HTTP MCP server (src/commands/serve-http.ts);
  *     walking arbitrary DB-supplied paths from a remote-callable endpoint
  *     crosses a trust boundary (OAuth write scope could mutate local_path).
@@ -1970,8 +1995,9 @@ export async function checkSyncFreshness(
       name: string;
       local_path: string | null;
       last_sync_at: Date | null;
+      last_commit: string | null;
     }>(
-      `SELECT id, name, local_path, last_sync_at FROM sources WHERE local_path IS NOT NULL`,
+      `SELECT id, name, local_path, last_sync_at, last_commit FROM sources WHERE local_path IS NOT NULL`,
     );
 
     if (sources.length === 0) {
@@ -2019,6 +2045,13 @@ export async function checkSyncFreshness(
           `Source ${display} has future last_sync_at — clock skew or corrupted timestamp`,
         );
         hasWarnings = true;
+        continue;
+      }
+
+      // v0.43: skip freshness warning when the upstream repo hasn't changed
+      // since the last sync. A source with no new commits doesn't need
+      // re-syncing regardless of wall-clock age.
+      if (isSourceUnchangedSinceSync(source.local_path, source.last_commit)) {
         continue;
       }
 
@@ -2106,6 +2139,12 @@ export async function checkCycleFreshness(
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
+      // v0.43: skip freshness warning when the upstream repo hasn't changed
+      // since the last sync. No new commits → no cycle needed.
+      if (isSourceUnchangedSinceSync(source.local_path, source.last_commit)) {
+        continue;
+      }
+
       const raw = source.config?.last_full_cycle_at;
       if (typeof raw !== 'string') {
         issues.push(`Source ${display} has never completed a full cycle`);

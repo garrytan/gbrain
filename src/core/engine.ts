@@ -54,6 +54,7 @@ export interface SourceRow {
   name: string | null;
   local_path: string | null;
   last_sync_at: Date | null;
+  last_commit: string | null;
   config: Record<string, unknown>;
 }
 
