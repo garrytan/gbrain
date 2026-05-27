@@ -181,10 +181,13 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     }
     return null;
   }
-  // chat or rerank: try bare key first, then provider:model
+  // chat or rerank: try bare key first, then provider:model or provider/model
   const bare = ANTHROPIC_PRICING[modelId];
   if (bare) return bare;
-  const [providerId, modelTail] = modelId.includes(':') ? modelId.split(':', 2) : [null, modelId];
+  // v0.37.1: handle both colon-separated (anthropic:claude-sonnet-4-6) and
+  // slash-separated (anthropic/claude-sonnet-4-6) provider prefixes.
+  const sep = modelId.includes(':') ? ':' : modelId.includes('/') ? '/' : null;
+  const [providerId, modelTail] = sep ? modelId.split(sep, 2) as [string, string] : [null, modelId];
   if (modelTail) {
     const tailHit = ANTHROPIC_PRICING[modelTail];
     if (tailHit) return tailHit;

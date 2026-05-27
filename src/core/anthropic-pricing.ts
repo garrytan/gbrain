@@ -57,6 +57,12 @@ export function estimateMaxCostUsd(
     const tail = modelId.split(':', 2)[1];
     if (tail) p = ANTHROPIC_PRICING[tail];
   }
+  // v0.37.1: also handle slash-prefixed ids (e.g. "anthropic/claude-sonnet-4-6")
+  // which arrive via --judge-model and other CLI overrides.
+  if (!p && modelId.includes('/')) {
+    const tail = modelId.split('/', 2)[1];
+    if (tail) p = ANTHROPIC_PRICING[tail];
+  }
   if (!p) return null;
   return (
     (estimatedInputTokens / 1_000_000) * p.input +

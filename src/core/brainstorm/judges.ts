@@ -448,7 +448,11 @@ async function runJudgeChunk(
     // knob isn't on ChatOpts (it's set per-provider in instantiateChat),
     // so we rely on the default. If we ever need temperature control here
     // we'd extend ChatOpts.
-    maxTokens: 4000,
+    // v0.37.1: scale maxTokens with idea count. Each idea produces ~100
+    // tokens of JSON (id, 5 axis scores, one-sentence note). The original
+    // hard-coded 4000 truncated responses for batches of 36+ ideas →
+    // parseJudgeJSON failure. 150 tokens/idea gives comfortable headroom.
+    maxTokens: Math.max(4000, ideas.length * 150 + 500),
     abortSignal: options.abortSignal,
   });
 
