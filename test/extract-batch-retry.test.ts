@@ -106,7 +106,7 @@ describe('withRetry primitive (v0.41.2.1)', () => {
     expect(calls).toBe(1); // no retry on 23505
   });
 
-  test('second failure propagates (single retry, not infinite)', async () => {
+  test('second failure propagates with default maxRetries=1 (back-compat)', async () => {
     let calls = 0;
     const promise = withRetry(
       async () => {
@@ -116,8 +116,80 @@ describe('withRetry primitive (v0.41.2.1)', () => {
       { delayMs: 0 },
     );
     await expect(promise).rejects.toThrow('ECONNRESET');
-    expect(calls).toBe(2); // attempt 1 + retry, then propagate
+    expect(calls).toBe(2); // attempt 1 + 1 retry, then propagate
   });
+
+  test('maxRetries=3: retries up to 3 times before propagating', async () => {
+    let calls = 0;
+    const promise = withRetry(
+      async () => {
+        calls++;
+        throw new Error('ECONNRESET');
+      },
+      { delayMs: 0, maxRetries: 3 },
+    );
+    await expect(promise).rejects.toThrow('ECONNRESET');
+    expect(calls).toBe(4); // 1 initial + 3 retries
+  });
+
+  test('maxRetries=3: succeeds on third retry', async () => {
+    let calls = 0;
+    const result = await withRetry(
+      async () => {
+        calls++;
+        if (calls <= 3) throw new Error('Connection terminated unexpectedly');
+        return 'recovered';
+      },
+      { delayMs: 0, maxRetries: 3 },
+    );
+    expect(result).toBe('recovered');
+    expect(calls).toBe(4);
+  });
+
+  test('exponential backoff: delays increase on successive retries', async () => {
+    const delays: number[] = [];
+    let calls = 0;
+    let lastTime = Date.now();
+    await withRetry(
+      async () => {
+        calls++;
+        const now = Date.now();
+        if (calls > 1) delays.push(now - lastTime);
+        lastTime = now;
+        if (calls <= 2) throw new Error('ECONNRESET');
+        return null;
+      },
+      { delayMs: 50, delayMaxMs: 400, maxRetries: 3 },
+    );
+    expect(calls).toBe(3);
+    expect(delays).toHaveLength(2);
+    // First delay ~50ms (50 * 2^0), second ~100ms (50 * 2^1)
+    // Allow generous tolerance for CI jitter
+    expect(delays[0]).toBeGreaterThanOrEqual(30);
+    expect(delays[1]).toBeGreaterThanOrEqual(delays[0]! - 20); // second >= first (roughly)
+  }, 5000);
+
+  test('delayMaxMs caps exponential growth', async () => {
+    let calls = 0;
+    const retryTimes: number[] = [];
+    let lastCall = Date.now();
+    await withRetry(
+      async () => {
+        calls++;
+        const now = Date.now();
+        if (calls > 1) retryTimes.push(now - lastCall);
+        lastCall = now;
+        if (calls <= 3) throw new Error('ECONNRESET');
+        return null;
+      },
+      { delayMs: 100, delayMaxMs: 150, maxRetries: 3 },
+    );
+    expect(calls).toBe(4);
+    // All delays should be capped at ~150ms, not growing to 200/400
+    for (const t of retryTimes) {
+      expect(t).toBeLessThan(300); // generous ceiling (150 + jitter)
+    }
+  }, 5000);
 
   test('onRetry callback receives (attempt=1, err)', async () => {
     let received: { attempt: number; err: unknown } | null = null;

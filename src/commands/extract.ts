@@ -55,6 +55,18 @@ import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.
 // small (a malformed row aborts at most 100, not thousands).
 const BATCH_SIZE = 100;
 
+// v0.41.18 — bulk retry config for long-running extract workloads.
+// On a 16K-page brain, extract runs 10+ minutes of sustained batch inserts.
+// Supabase Supavisor (session-mode pooler, port 5432) can recycle the backend
+// connection mid-run; rapid reconnect attempts trigger the pooler's circuit
+// breaker (ECIRCUITBREAKER) which needs 5-10s to recover — far longer than
+// the original single 500ms retry. 3 retries with exponential backoff
+// (500ms → 1s → 2s) covers the typical recovery window without amplifying
+// real outages.
+const BULK_MAX_RETRIES = 3;
+const BULK_RETRY_BASE_MS = 500;
+const BULK_RETRY_MAX_MS = 8_000;
+
 // v0.41.2.1 — batch-flush retry primitive (closes PR #1416's ~30% batch-loss
 // bug). PgBouncer transaction-mode poolers recycle backend connections between
 // queries; the next query through a stale handle throws a retryable connection
@@ -69,18 +81,45 @@ const BATCH_SIZE = 100;
 
 export interface WithRetryOpts {
   onRetry?: (attempt: number, err: unknown) => void;
-  delayMs?: number; // default 500
+  /** Base delay in ms (default 500). Doubles each retry up to delayMaxMs. */
+  delayMs?: number;
+  /** Maximum delay cap in ms (default 8000). */
+  delayMaxMs?: number;
+  /** Maximum retry attempts (default 1 for back-compat; set higher for
+   *  long-running bulk workloads where pooler circuit-breakers need time). */
+  maxRetries?: number;
 }
 
+/**
+ * Retry wrapper for batch DB operations. Retries on transient connection
+ * errors (pooler recycle, circuit-breaker recovery, TCP reset) with
+ * exponential backoff.
+ *
+ * v0.41.2.1: single 500ms retry (back-compat default).
+ * v0.41.18:  configurable maxRetries + exponential backoff for long-running
+ *            extract workloads. On a 16K-page brain the extract phase runs
+ *            for 10+ minutes; Supabase Supavisor's session-mode pooler can
+ *            recycle backend connections mid-run, triggering a circuit-breaker
+ *            cascade where 500ms isn't enough recovery time.
+ */
 export async function withRetry<T>(fn: () => Promise<T>, opts: WithRetryOpts = {}): Promise<T> {
-  try {
-    return await fn();
-  } catch (firstErr) {
-    if (!isRetryableConnError(firstErr)) throw firstErr;
-    opts.onRetry?.(1, firstErr);
-    await new Promise((r) => setTimeout(r, opts.delayMs ?? 500));
-    return await fn(); // single retry — second failure propagates
+  const maxRetries = opts.maxRetries ?? 1;
+  const baseDelay = opts.delayMs ?? 500;
+  const maxDelay = opts.delayMaxMs ?? 8_000;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isRetryableConnError(err)) throw err;
+      lastErr = err;
+      if (attempt >= maxRetries) break; // exhausted retries
+      opts.onRetry?.(attempt + 1, err);
+      const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
+      await new Promise((r) => setTimeout(r, delay));
+    }
   }
+  throw lastErr; // should be unreachable but satisfies TS
 }
 
 export function logBatchRetry(
@@ -92,7 +131,7 @@ export function logBatchRetry(
   if (jsonMode) return;
   const msg = err instanceof Error ? err.message : String(err);
   console.error(
-    `[${label}] connection blip, retrying ${snapshotLen} rows in 500ms (${msg})`,
+    `[${label}] connection blip, retrying ${snapshotLen} rows (${msg})`,
   );
 }
 
@@ -671,7 +710,7 @@ async function extractForSlugs(
     try {
       linksCreated += await withRetry(
         () => engine.addLinksBatch(snapshot), // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
-        { onRetry: (_a, err) => logBatchRetry('extract.links_inc', snapshot.length, err, jsonMode) },
+        { maxRetries: BULK_MAX_RETRIES, delayMs: BULK_RETRY_BASE_MS, delayMaxMs: BULK_RETRY_MAX_MS, onRetry: (_a, err) => logBatchRetry('extract.links_inc', snapshot.length, err, jsonMode) },
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -686,7 +725,7 @@ async function extractForSlugs(
     try {
       timelineCreated += await withRetry(
         () => engine.addTimelineEntriesBatch(snapshot),
-        { onRetry: (_a, err) => logBatchRetry('extract.timeline_inc', snapshot.length, err, jsonMode) },
+        { maxRetries: BULK_MAX_RETRIES, delayMs: BULK_RETRY_BASE_MS, delayMaxMs: BULK_RETRY_MAX_MS, onRetry: (_a, err) => logBatchRetry('extract.timeline_inc', snapshot.length, err, jsonMode) },
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -783,7 +822,7 @@ async function extractLinksFromDir(
     try {
       created += await withRetry(
         () => engine.addLinksBatch(snapshot), // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
-        { onRetry: (_a, err) => logBatchRetry('extract.links_fs', snapshot.length, err, jsonMode) },
+        { maxRetries: BULK_MAX_RETRIES, delayMs: BULK_RETRY_BASE_MS, delayMaxMs: BULK_RETRY_MAX_MS, onRetry: (_a, err) => logBatchRetry('extract.links_fs', snapshot.length, err, jsonMode) },
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -851,7 +890,7 @@ async function extractTimelineFromDir(
     try {
       created += await withRetry(
         () => engine.addTimelineEntriesBatch(snapshot),
-        { onRetry: (_a, err) => logBatchRetry('extract.timeline_fs', snapshot.length, err, jsonMode) },
+        { maxRetries: BULK_MAX_RETRIES, delayMs: BULK_RETRY_BASE_MS, delayMaxMs: BULK_RETRY_MAX_MS, onRetry: (_a, err) => logBatchRetry('extract.timeline_fs', snapshot.length, err, jsonMode) },
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1027,7 +1066,7 @@ async function extractLinksFromDB(
     try {
       created += await withRetry(
         () => engine.addLinksBatch(snapshot), // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
-        { onRetry: (_a, err) => logBatchRetry('extract.links_db', snapshot.length, err, jsonMode) },
+        { maxRetries: BULK_MAX_RETRIES, delayMs: BULK_RETRY_BASE_MS, delayMaxMs: BULK_RETRY_MAX_MS, onRetry: (_a, err) => logBatchRetry('extract.links_db', snapshot.length, err, jsonMode) },
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1184,7 +1223,7 @@ async function extractTimelineFromDB(
     try {
       created += await withRetry(
         () => engine.addTimelineEntriesBatch(snapshot),
-        { onRetry: (_a, err) => logBatchRetry('extract.timeline_db', snapshot.length, err, jsonMode) },
+        { maxRetries: BULK_MAX_RETRIES, delayMs: BULK_RETRY_BASE_MS, delayMaxMs: BULK_RETRY_MAX_MS, onRetry: (_a, err) => logBatchRetry('extract.timeline_db', snapshot.length, err, jsonMode) },
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
