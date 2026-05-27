@@ -310,4 +310,57 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pgPage!.title).toBe('V2');
     expect(pglitePage!.title).toBe('V2');
   });
+
+  test('v0.41.19.0 deletePages parity: both engines return same confirmed-deleted slugs', async () => {
+    const realSlugs = ['wiki/dpp-1', 'wiki/dpp-2', 'wiki/dpp-3'];
+    for (const slug of realSlugs) {
+      await pgEngine.putPage(slug, {
+        type: 'note', title: slug, compiled_truth: 'body', timeline: '',
+      });
+      await pgliteEngine.putPage(slug, {
+        type: 'note', title: slug, compiled_truth: 'body', timeline: '',
+      });
+    }
+
+    // Mix real + ghost slugs. D6: only real ones come back.
+    const allSlugs = [...realSlugs, 'wiki/dpp-ghost-a', 'wiki/dpp-ghost-b'];
+    const pgDeleted = await pgEngine.deletePages(allSlugs, { sourceId: 'default' });
+    const pgliteDeleted = await pgliteEngine.deletePages(allSlugs, { sourceId: 'default' });
+
+    expect(pgDeleted.sort()).toEqual(realSlugs.sort());
+    expect(pgliteDeleted.sort()).toEqual(realSlugs.sort());
+
+    // Pages actually gone on both engines.
+    for (const slug of realSlugs) {
+      const pg = await pgEngine.getPage(slug);
+      const pglite = await pgliteEngine.getPage(slug);
+      expect(pg).toBeNull();
+      expect(pglite).toBeNull();
+    }
+  });
+
+  test('v0.41.19.0 resolveSlugsByPaths parity: same Map on both engines', async () => {
+    const seedSql = `
+      INSERT INTO pages (source_id, slug, source_path, type, title, compiled_truth, timeline, frontmatter)
+        VALUES ('default', $1, $2, 'note', 't', 'b', '', '{}'::jsonb)
+        ON CONFLICT (source_id, slug) DO UPDATE SET source_path = EXCLUDED.source_path
+    `;
+    await pgEngine.executeRaw(seedSql, ['wiki/rsp-1', 'wiki/rsp-1.md']);
+    await pgEngine.executeRaw(seedSql, ['wiki/rsp-2', 'wiki/rsp-2.md']);
+    await pgliteEngine.executeRaw(seedSql, ['wiki/rsp-1', 'wiki/rsp-1.md']);
+    await pgliteEngine.executeRaw(seedSql, ['wiki/rsp-2', 'wiki/rsp-2.md']);
+
+    const paths = ['wiki/rsp-1.md', 'wiki/rsp-2.md', 'wiki/rsp-missing.md'];
+    const pgMap = await pgEngine.resolveSlugsByPaths(paths, { sourceId: 'default' });
+    const pgliteMap = await pgliteEngine.resolveSlugsByPaths(paths, { sourceId: 'default' });
+
+    expect(pgMap.size).toBe(2);
+    expect(pgliteMap.size).toBe(2);
+    expect(pgMap.get('wiki/rsp-1.md')).toBe('wiki/rsp-1');
+    expect(pgliteMap.get('wiki/rsp-1.md')).toBe('wiki/rsp-1');
+    expect(pgMap.get('wiki/rsp-2.md')).toBe('wiki/rsp-2');
+    expect(pgliteMap.get('wiki/rsp-2.md')).toBe('wiki/rsp-2');
+    expect(pgMap.get('wiki/rsp-missing.md')).toBeUndefined();
+    expect(pgliteMap.get('wiki/rsp-missing.md')).toBeUndefined();
+  });
 });
