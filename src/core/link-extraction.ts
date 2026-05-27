@@ -13,6 +13,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
+import { extractEntities } from './enrichment-service.ts';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -932,4 +933,19 @@ export async function isAutoTimelineEnabled(engine: BrainEngine): Promise<boolea
   if (val == null) return true;
   const normalized = val.trim().toLowerCase();
   return !['false', '0', 'no', 'off'].includes(normalized);
+}
+
+/**
+ * Read the auto_link_plain_text config flag. Defaults to FALSE (opt-in).
+ * When enabled, extractPageLinks also runs regex-based NER on plain text
+ * to find capitalized names that might refer to existing people/company pages.
+ * Creates 'mentions' edges for resolved entities.
+ *
+ * Enable with: `gbrain config set auto_link_plain_text true`
+ */
+export async function isPlainTextEntityExtractionEnabled(engine: BrainEngine): Promise<boolean> {
+  const val = await engine.getConfig('auto_link_plain_text');
+  if (val == null) return false; // OFF by default (opt-in)
+  const normalized = val.trim().toLowerCase();
+  return ['true', '1', 'yes', 'on'].includes(normalized);
 }
