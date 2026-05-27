@@ -110,59 +110,74 @@ describe('translatePositionalSubcommands — pass-through cases', () => {
 });
 
 describe('translatePositionalSubcommands — rejection of unknown positionals', () => {
-  test('unknown positional `foo` fails with structured error', () => {
+  test('unknown positional `foo` fails with reason=unknown_subcommand + structured message', () => {
     const r = translatePositionalSubcommands(['foo']);
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.error).toContain('Unknown subcommand: `foo`');
-      expect(r.error).toContain('status');
-      expect(r.error).toContain('install');
-      expect(r.error).toContain('uninstall');
-      expect(r.error).toContain('--help');
+      expect(r.reason).toBe('unknown_subcommand');
+      expect(r.message).toContain('Unknown subcommand: `foo`');
+      expect(r.message).toContain('status');
+      expect(r.message).toContain('install');
+      expect(r.message).toContain('uninstall');
+      expect(r.message).toContain('--help');
     }
   });
 
-  test('unknown positional `stop` fails with structured error (NOT silently aliased)', () => {
+  test('unknown positional `stop` fails with reason=unknown_subcommand (NOT silently aliased)', () => {
     // Stop is mentioned in the ticket but deliberately NOT aliased in this
     // PR — stopping a running daemon is a new behavior, not just an alias.
     // Until that feature lands separately, `stop` must fail loud rather
     // than starting the daemon (the bug we're fixing).
     const r = translatePositionalSubcommands(['stop']);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain('Unknown subcommand: `stop`');
+    if (!r.ok) {
+      expect(r.reason).toBe('unknown_subcommand');
+      expect(r.message).toContain('Unknown subcommand: `stop`');
+    }
   });
 
   test('unknown positional `status-detail` (close-but-not-matching) fails', () => {
     const r = translatePositionalSubcommands(['status-detail']);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain('Unknown subcommand: `status-detail`');
+    if (!r.ok) {
+      expect(r.reason).toBe('unknown_subcommand');
+      expect(r.message).toContain('Unknown subcommand: `status-detail`');
+    }
   });
 
-  test('multiple positionals fail loud (`start install`)', () => {
+  test('multiple positionals fail with reason=multiple_subcommands (`start install`)', () => {
     const r = translatePositionalSubcommands(['start', 'install']);
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.error).toContain('Multiple subcommands');
+      expect(r.reason).toBe('multiple_subcommands');
+      expect(r.message).toContain('Multiple subcommands');
     }
   });
 
   test('multiple positionals fail even when both are known aliases (`status install`)', () => {
     const r = translatePositionalSubcommands(['status', 'install']);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain('Multiple subcommands');
+    if (!r.ok) {
+      expect(r.reason).toBe('multiple_subcommands');
+      expect(r.message).toContain('Multiple subcommands');
+    }
   });
 
-  test('positional + unknown positional still rejects on the unknown', () => {
+  test('known-then-unknown rejects with multiple_subcommands (first-positional-wins)', () => {
     // First positional is known, second is not. Rejection comes from the
     // multiple-positional rule, which fires before the unknown check; the
     // intent is "only one subcommand allowed."
     const r = translatePositionalSubcommands(['status', 'garbage']);
     expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('multiple_subcommands');
   });
 
-  test('unknown positional before known positional rejects on unknown', () => {
+  test('unknown-then-known rejects on the unknown (unknown fires before second-positional check)', () => {
     const r = translatePositionalSubcommands(['garbage', 'status']);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain('garbage');
+    if (!r.ok) {
+      expect(r.reason).toBe('unknown_subcommand');
+      expect(r.message).toContain('garbage');
+    }
   });
 });

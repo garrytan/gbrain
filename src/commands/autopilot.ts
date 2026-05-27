@@ -147,7 +147,11 @@ const AUTOPILOT_POSITIONAL_ALIASES: Record<string, string | null> = {
 
 export type PositionalTranslation =
   | { ok: true; args: string[] }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      reason: 'unknown_subcommand' | 'multiple_subcommands';
+      message: string;
+    };
 
 export function translatePositionalSubcommands(args: string[]): PositionalTranslation {
   const out: string[] = [];
@@ -178,7 +182,8 @@ export function translatePositionalSubcommands(args: string[]): PositionalTransl
       const known = Object.keys(AUTOPILOT_POSITIONAL_ALIASES).join(', ');
       return {
         ok: false,
-        error: `Multiple subcommands given. Use only one of: ${known}.`,
+        reason: 'multiple_subcommands',
+        message: `Multiple subcommands given. Use only one of: ${known}.`,
       };
     }
     positionalSeen = true;
@@ -191,7 +196,8 @@ export function translatePositionalSubcommands(args: string[]): PositionalTransl
     const known = Object.keys(AUTOPILOT_POSITIONAL_ALIASES).join(', ');
     return {
       ok: false,
-      error:
+      reason: 'unknown_subcommand',
+      message:
         `Unknown subcommand: \`${a}\`.\n` +
         `Allowed subcommands: ${known}.\n` +
         `Or use the flag form: --status, --install, --uninstall.\n` +
@@ -226,7 +232,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   // the daemon.
   const translated = translatePositionalSubcommands(args);
   if (!translated.ok) {
-    console.error(translated.error);
+    console.error(translated.message);
     process.exit(2);
   }
   args = translated.args;
