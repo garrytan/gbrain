@@ -164,9 +164,20 @@ export const BUILT_IN_JUNK_PATTERNS: ReadonlyArray<JunkPattern> = Object.freeze(
   },
   // Bare error-page titles. Anchored so the title is exclusively the
   // error code — a thoughtful page ABOUT 404 errors won't trip.
+  // v0.42: expanded to catch common scraper error titles that were
+  // slipping through ("Just a moment...", "Access Denied", "Error",
+  // "Forbidden", "Service Unavailable"). These titles are never
+  // legitimate page titles in a brain source.
   {
     name: 'error_page_title',
-    pattern: /^(403|404|500|502|503|error \d{3}|page not found)\s*$/i,
+    pattern: /^(403 forbidden|404 not found|500|502|503|error \d{3}|page not found|error|forbidden|access denied|service unavailable|robot check|verify you are human)\s*$/i,
+    applies_to: 'title',
+  },
+  // Cloudflare/bot-check pages with minimal title — "Just a moment..."
+  // is the universal Cloudflare challenge title.
+  {
+    name: 'error_page_title',
+    pattern: /^just a moment\.{0,3}$/i,
     applies_to: 'title',
   },
 ]);
