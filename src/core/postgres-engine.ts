@@ -908,6 +908,26 @@ export class PostgresEngine implements BrainEngine {
     await sql`DELETE FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}`;
   }
 
+  /**
+   * Batch delete: single round-trip DELETE ... WHERE slug = ANY($1).
+   * Cascades through content_chunks / page_links / chunk_relations via FKs.
+   * Returns the number of rows actually deleted.
+   */
+  async deletePages(slugs: string[], opts?: { sourceId?: string }): Promise<number> {
+    if (slugs.length === 0) return 0;
+    const sql = this.sql;
+    const sourceId = opts?.sourceId ?? 'default';
+    // Process in batches of 500 to avoid oversized IN clauses
+    const BATCH_SIZE = 500;
+    let total = 0;
+    for (let i = 0; i < slugs.length; i += BATCH_SIZE) {
+      const batch = slugs.slice(i, i + BATCH_SIZE);
+      const rows = await sql`DELETE FROM pages WHERE slug = ANY(${batch}) AND source_id = ${sourceId} RETURNING slug`;
+      total += rows.length;
+    }
+    return total;
+  }
+
   async softDeletePage(slug: string, opts?: { sourceId?: string }): Promise<{ slug: string } | null> {
     const sql = this.sql;
     const sourceId = opts?.sourceId;

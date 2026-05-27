@@ -1239,19 +1239,73 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // row, not every same-slug row across all sources.
   const deleteOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   if (filtered.deleted.length > 0) {
-    progress.start('sync.deletes', filtered.deleted.length);
-    for (const path of filtered.deleted) {
-      // v0.41.13.0 (T2 / D-V4-2): per-iteration abort check. Codex pass-3
-      // F8 caught that v3 only covered pull + add/modify. Refactor commits
-      // with hundreds of deletes can overshoot --timeout without this check.
+    // v0.42 batch-delete optimization: resolve all slugs first, then delete
+    // in batches of 500 via a single DELETE ... WHERE slug = ANY($1) per batch.
+    // Before: 73K deletes × 2 DB round-trips each = 146K queries (~5 hours).
+    // After:  73K slug lookups (batched) + 146 batch DELETEs (~2 minutes).
+    const BATCH_SIZE = 500;
+    progress.start('sync.deletes.resolve', filtered.deleted.length);
+
+    // Phase 1: Resolve slugs (batch the lookups too)
+    const slugsToDelete: string[] = [];
+    const resolvedPaths = new Map<string, string>(); // slug → path for progress
+    for (let i = 0; i < filtered.deleted.length; i += BATCH_SIZE) {
       if (opts.signal?.aborted) {
         progress.finish();
         return partial('timeout');
       }
-      const slug = await resolveSlugByPathOrSourcePath(engine, path, opts.sourceId);
-      await engine.deletePage(slug, deleteOpts);
-      pagesAffected.push(slug);
-      progress.tick(1, slug);
+      const pathBatch = filtered.deleted.slice(i, i + BATCH_SIZE);
+      // Batch slug resolution: look up source_path → slug for the whole batch
+      if (opts.sourceId) {
+        const rows = await engine.executeRaw<{ slug: string; source_path: string }>(
+          `SELECT slug, source_path FROM pages WHERE source_path = ANY($1) AND source_id = $2`,
+          [pathBatch, opts.sourceId],
+        );
+        const byPath = new Map(rows.map(r => [r.source_path, r.slug]));
+        for (const path of pathBatch) {
+          const slug = byPath.get(path) ?? resolveSlugForPath(path);
+          slugsToDelete.push(slug);
+          resolvedPaths.set(slug, path);
+        }
+      } else {
+        // No source_id: fall back to per-path resolution
+        for (const path of pathBatch) {
+          const slug = await resolveSlugByPathOrSourcePath(engine, path, opts.sourceId);
+          slugsToDelete.push(slug);
+          resolvedPaths.set(slug, path);
+        }
+      }
+      progress.tick(pathBatch.length, `resolved ${Math.min(i + BATCH_SIZE, filtered.deleted.length)}/${filtered.deleted.length}`);
+    }
+    progress.finish();
+
+    // Phase 2: Batch delete
+    if (engine.deletePages) {
+      progress.start('sync.deletes', slugsToDelete.length);
+      for (let i = 0; i < slugsToDelete.length; i += BATCH_SIZE) {
+        if (opts.signal?.aborted) {
+          progress.finish();
+          return partial('timeout');
+        }
+        const batch = slugsToDelete.slice(i, i + BATCH_SIZE);
+        await engine.deletePages(batch, deleteOpts);
+        pagesAffected.push(...batch);
+        progress.tick(batch.length, `deleted ${Math.min(i + BATCH_SIZE, slugsToDelete.length)}/${slugsToDelete.length}`);
+      }
+      progress.finish();
+    } else {
+      // Fallback: sequential delete (PGLite or engines without batch support)
+      progress.start('sync.deletes', slugsToDelete.length);
+      for (const slug of slugsToDelete) {
+        if (opts.signal?.aborted) {
+          progress.finish();
+          return partial('timeout');
+        }
+        await engine.deletePage(slug, deleteOpts);
+        pagesAffected.push(slug);
+        progress.tick(1, slug);
+      }
+      progress.finish();
     }
     progress.finish();
   }

@@ -689,6 +689,12 @@ export interface BrainEngine {
    * Cascades through content_chunks / page_links / chunk_relations via FKs.
    */
   deletePage(slug: string, opts?: { sourceId?: string }): Promise<void>;
+
+  /**
+   * Batch delete multiple pages in a single DB round-trip.
+   * Falls back to sequential deletePage calls if not implemented.
+   */
+  deletePages?(slugs: string[], opts?: { sourceId?: string }): Promise<number>;
   /**
    * v0.26.5 — set `deleted_at = now()` on a page. Returns the slug if a row
    * was soft-deleted, null if no row matched (already soft-deleted OR not found).
