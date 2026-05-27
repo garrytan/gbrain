@@ -354,17 +354,19 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     if (cli.forceAll) return; // both surfaces flushed
   }
 
-  // Pre-flight: warn if schema migrations (migrate.ts) are behind.
-  // apply-migrations runs orchestrator migrations only; schema migrations
-  // run via connectEngine() / initSchema(). Users often expect this CLI
-  // to handle everything (Issue 1 from v0.18.0 field report).
+  // Pre-flight: handle core schema migrations (migrate.ts) before the
+  // orchestrator-migration plan. Users run `apply-migrations --yes` during
+  // upgrades expecting one command to land both surfaces; warning and then
+  // printing "All migrations up to date" when only schema is stale is a
+  // misleading success signal (#1530).
+  let appliedSchemaMigrations = 0;
   try {
-    const { LATEST_VERSION } = await import('../core/migrate.ts');
+    const { LATEST_VERSION, runMigrations } = await import('../core/migrate.ts');
     const { loadConfig: lc, toEngineConfig } = await import('../core/config.ts');
     const { createEngine } = await import('../core/engine-factory.ts');
     const cfg = lc();
     if (cfg) {
-      // v0.36.x #1100: skip the pre-flight warning on PGLite. The probe
+      // v0.36.x #1100: skip the pre-flight probe on PGLite. The probe
       // briefly holds the single-writer lock; if a downstream orchestrator
       // phase spawns `gbrain init --migrate-only` as a subprocess (the
       // legacy v0.11.0 phase A path), the child can race the parent's
@@ -373,23 +375,33 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
       // so the warning here adds no information for PGLite users.
       const skipPreflight = cfg.engine === 'pglite';
       if (!skipPreflight) {
-        const eng = await createEngine(toEngineConfig(cfg));
-        await eng.connect(toEngineConfig(cfg));
-        const verStr = await eng.getConfig('version');
-        const schemaVer = parseInt(verStr || '1', 10);
-        await eng.disconnect();
-        if (schemaVer < LATEST_VERSION) {
-          console.warn(
-            `\n⚠️  Schema version ${schemaVer} is behind latest ${LATEST_VERSION}.\n` +
-            `   Schema migrations run automatically on next connectEngine() / initSchema().\n` +
-            `   To run them now: gbrain init --migrate-only\n`,
-          );
+        const engineConfig = toEngineConfig(cfg);
+        const eng = await createEngine(engineConfig);
+        try {
+          await eng.connect(engineConfig);
+          const verStr = await eng.getConfig('version');
+          const schemaVer = parseInt(verStr || '1', 10);
+          if (schemaVer < LATEST_VERSION) {
+            if (cli.list || cli.dryRun) {
+              console.warn(
+                `\n⚠️  Schema version ${schemaVer} is behind latest ${LATEST_VERSION}.\n` +
+                `   Would run schema migrations before applying orchestrator migrations.\n`,
+              );
+            } else {
+              console.warn(`\n⚠️  Schema version ${schemaVer} is behind latest ${LATEST_VERSION}. Running schema migrations now...`);
+              const result = await runMigrations(eng);
+              appliedSchemaMigrations = result.applied;
+              console.log(`Applied ${result.applied} schema migration(s); now at v${result.current}.`);
+            }
+          }
+        } finally {
+          await eng.disconnect().catch(() => undefined);
         }
       }
     }
-  } catch {
-    // Non-fatal: if DB is unreachable, orchestrator migrations can still
-    // run their filesystem-only phases.
+  } catch (err) {
+    console.warn(`Schema migration pre-flight failed: ${(err as Error).message}`);
+    console.warn('Continuing with orchestrator migrations only. Re-run `gbrain apply-migrations --force-schema --yes` if schema remains behind.');
   }
 
   const completed = loadCompletedMigrations();
@@ -419,7 +431,11 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
 
   const toRun: Migration[] = [...plan.partial, ...plan.pending];
   if (toRun.length === 0) {
-    console.log('All migrations up to date.');
+    if (appliedSchemaMigrations > 0) {
+      console.log('Schema migrations applied; orchestrator migrations up to date.');
+    } else {
+      console.log('All migrations up to date.');
+    }
     process.exit(0);
   }
 
