@@ -411,6 +411,17 @@ export interface CycleOpts {
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
   sourceId?: string;
+  /**
+   * Where the extract phase reads pages from. Defaults to 'fs' for
+   * back-compat with every existing caller. Set to 'db' for brains whose
+   * pages live only in Postgres (autopilot on a remote-DB brain where
+   * the local checkout has no .md files matching the page slugs — the
+   * FS path returns 0 links in that case).
+   *
+   * Forwarded verbatim to `runExtractCore({ source })`. Ignored for
+   * any other phase.
+   */
+  extractSource?: 'fs' | 'db';
 }
 
 // ─── Lock primitives ───────────────────────────────────────────────
@@ -810,6 +821,7 @@ async function runPhaseExtract(
   brainDir: string,
   dryRun: boolean,
   changedSlugs?: string[],
+  source?: 'fs' | 'db',
 ): Promise<PhaseResult> {
   try {
     const { runExtractCore } = await import('../commands/extract.ts');
@@ -825,28 +837,34 @@ async function runPhaseExtract(
         details: { dryRun: true, reason: 'no_dry_run_support' },
       };
     }
+    // DB source ignores per-slug incremental hints — engine pagination
+    // already scopes the walk, and the slug list is FS-relative.
+    const resolvedSource = source ?? 'fs';
+    const slugs = resolvedSource === 'db' ? undefined : changedSlugs;
     // Incremental path: if sync told us which slugs changed, only extract those.
     // On a 54K-page brain this turns a 10-minute full walk into a sub-second pass.
     const result = await runExtractCore(engine, {
       mode: 'all',
       dir: brainDir,
-      slugs: changedSlugs,  // undefined = full walk (first run / manual)
+      slugs,  // undefined = full walk (first run / manual / DB source)
+      source: resolvedSource,
     });
     const linksCreated = result?.links_created ?? 0;
     const timelineCreated = result?.timeline_entries_created ?? 0;
-    const incremental = changedSlugs !== undefined;
+    const incremental = slugs !== undefined;
     return {
       phase: 'extract',
       status: 'ok',
       duration_ms: 0,
       summary: incremental
-        ? `${linksCreated} link(s), ${timelineCreated} timeline entries (incremental: ${changedSlugs.length} slugs)`
-        : `${linksCreated} link(s), ${timelineCreated} timeline entries`,
+        ? `${linksCreated} link(s), ${timelineCreated} timeline entries (incremental: ${slugs.length} slugs, source: ${resolvedSource})`
+        : `${linksCreated} link(s), ${timelineCreated} timeline entries (source: ${resolvedSource})`,
       details: {
         linksCreated, timelineCreated,
         pages_processed: result?.pages_processed ?? 0,
         incremental,
-        ...(incremental ? { slugs_targeted: changedSlugs.length } : {}),
+        source: resolvedSource,
+        ...(incremental ? { slugs_targeted: slugs.length } : {}),
       },
     };
   } catch (e) {
@@ -1461,7 +1479,7 @@ export async function runCycle(
         // If sync didn't run (phases exclude it) or failed, syncPagesAffected
         // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, opts.brainDir, dryRun, syncPagesAffected));
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, opts.brainDir, dryRun, syncPagesAffected, opts.extractSource));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();

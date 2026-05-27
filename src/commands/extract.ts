@@ -371,6 +371,22 @@ export interface ExtractOpts {
    * own pagination and stay serial in v0.41.15.0.
    */
   workers?: number;
+  /**
+   * Where to read pages from. Defaults to 'fs' for back-compat — every
+   * pre-existing caller of `runExtractCore` walks the filesystem.
+   *
+   * When set to 'db', dispatches to `extractLinksFromDB` /
+   * `extractTimelineFromDB` (the same path the CLI's `--source db` flag
+   * uses today). Required for brains whose pages live only in Postgres
+   * (e.g. the autopilot extract phase on a remote-DB brain where the
+   * checked-out repo has no matching .md files — that phase has been
+   * silently no-op'ing on DB-backed brains).
+   *
+   * The 'db' path ignores `opts.dir`, `opts.slugs`, and `opts.workers`
+   * (DB pagination is engine-side and serial); only `mode`, `dryRun`,
+   * and `jsonMode` are honored.
+   */
+  source?: 'fs' | 'db';
 }
 
 /**
@@ -383,13 +399,36 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
   if (!['links', 'timeline', 'all'].includes(opts.mode)) {
     throw new Error(`Invalid extract mode "${opts.mode}". Allowed: links, timeline, all.`);
   }
-  if (!existsSync(opts.dir)) {
+  const source: 'fs' | 'db' = opts.source ?? 'fs';
+  if (source !== 'fs' && source !== 'db') {
+    throw new Error(`Invalid extract source "${source}". Allowed: fs, db.`);
+  }
+  // FS source needs a real directory; DB source ignores opts.dir entirely.
+  if (source === 'fs' && !existsSync(opts.dir)) {
     throw new Error(`Directory not found: ${opts.dir}`);
   }
 
   const dryRun = !!opts.dryRun;
   const jsonMode = !!opts.jsonMode;
   const result: ExtractResult = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
+
+  // DB source path: walk pages from the engine instead of the filesystem.
+  // Mirrors what `runExtract`'s CLI wrapper does for `--source db`, but
+  // exposed at the library level so cycle/autopilot callers can opt in
+  // without going through argv parsing.
+  if (source === 'db') {
+    if (opts.mode === 'links' || opts.mode === 'all') {
+      const r = await extractLinksFromDB(engine, dryRun, jsonMode, undefined, undefined, {});
+      result.links_created = r.created;
+      result.pages_processed = r.pages;
+    }
+    if (opts.mode === 'timeline' || opts.mode === 'all') {
+      const r = await extractTimelineFromDB(engine, dryRun, jsonMode, undefined, undefined, {});
+      result.timeline_entries_created = r.created;
+      result.pages_processed = Math.max(result.pages_processed, r.pages);
+    }
+    return result;
+  }
 
   // v0.41.15.0 (D9): resolve workers via the PGLite-clamp wrapper.
   // Page count unknown at this point — pass 0 so the auto-path falls
