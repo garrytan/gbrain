@@ -1920,6 +1920,29 @@ export function checkAutopilotLockScope(): Check {
 }
 
 /**
+ * Format a precise --break-lock recovery hint for a stale lock id.
+ *
+ * v0.41.6.0 D3 ships `gbrain sync --break-lock` which handles `gbrain-sync:*`
+ * keys only. Other lock kinds (notably `gbrain-cycle` and per-source
+ * `gbrain-cycle:<source>`) do not have a corresponding shipped CLI handler,
+ * so blindly suggesting `gbrain sync --break-lock` for them is wrong and
+ * misleads operators down a dead-end (issue #1534). Until a kind-agnostic
+ * breaker ships, point at the SQL fallback for unsupported kinds so the
+ * hint stays honest.
+ */
+function formatStaleLockBreakHint(lockId: string): string {
+  if (lockId.startsWith('gbrain-sync:')) {
+    return `gbrain sync --break-lock --source ${lockId.slice('gbrain-sync:'.length)}`;
+  }
+  if (lockId === 'gbrain-sync') {
+    return `gbrain sync --break-lock`;
+  }
+  // Cycle / unrecognized kinds: no shipped CLI breaker. Be explicit instead of
+  // suggesting a command that silently no-ops.
+  return `manual clear required (no CLI breaker for ${lockId}): DELETE FROM gbrain_cycle_locks WHERE id = '${lockId.replace(/'/g, "''")}';`;
+}
+
+/**
  * v0.41.6.0 D3 — stale_locks doctor check.
  *
  * Surfaces every row in `gbrain_cycle_locks` whose `ttl_expires_at < NOW()`.
@@ -1947,8 +1970,7 @@ export async function checkStaleLocks(engine: BrainEngine): Promise<Check> {
     }
     const lines = stale.slice(0, 10).map(s => {
       const ageH = Math.floor(s.age_ms / 3600_000);
-      const source = s.id.startsWith('gbrain-sync:') ? s.id.slice('gbrain-sync:'.length) : null;
-      const breakHint = source ? `gbrain sync --break-lock --source ${source}` : `gbrain sync --break-lock`;
+      const breakHint = formatStaleLockBreakHint(s.id);
       return `  ${s.id} (pid ${s.holder_pid} on ${s.holder_host}, age ${ageH}h) → ${breakHint}`;
     });
     const tail = stale.length > 10 ? `  ... and ${stale.length - 10} more.` : null;
