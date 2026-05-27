@@ -97,12 +97,19 @@ export class PostgresEngine implements BrainEngine {
   /**
    * Tracks which connection path this engine is using so disconnect() is
    * idempotent. 'instance' = own _sql pool (poolSize was set);
-   * 'module' = the module-level db singleton (backward compat path).
+   * 'module' = the module-level db singleton (owned or borrowed).
    * null = never connected, or already disconnected. Without this, a second
    * disconnect() on an instance-pool engine would fall through to
    * db.disconnect() and clobber the unrelated module-level connection.
    */
   private _connectionStyle: 'instance' | 'module' | null = null;
+  /**
+   * True only for the module-style engine instance that created the db.ts
+   * singleton. Other module-style engines are borrowers and must not tear down
+   * the shared pool in disconnect(). Borrowers assume the owner manages the
+   * module singleton lifetime, as in the CLI main-engine plus helper-probe flow.
+   */
+  private _ownsModuleConnection = false;
 
   /**
    * v0.30.1 (Fix 1 + X1 + T5): instance-owned ConnectionManager.
@@ -165,6 +172,7 @@ export class PostgresEngine implements BrainEngine {
       await this._sql`SELECT 1`;
       await db.setSessionDefaults(this._sql);
       this._connectionStyle = 'instance';
+      this._ownsModuleConnection = false;
 
       // v0.30.1: instance-owned ConnectionManager wraps the read pool we just
       // built. Parent inheritance (T5/X1): worker engines pass their parent's
@@ -177,8 +185,16 @@ export class PostgresEngine implements BrainEngine {
       this.connectionManager.setReadPool(this._sql);
     } else {
       // Module-level singleton (backward compat for CLI main engine)
+      let moduleConnectionExists = true;
+      try {
+        db.getConnection();
+      } catch {
+        moduleConnectionExists = false;
+      }
+      const alreadyOwnsModuleConnection = this._connectionStyle === 'module' && this._ownsModuleConnection;
       await db.connect(config);
       this._connectionStyle = 'module';
+      this._ownsModuleConnection = alreadyOwnsModuleConnection || !moduleConnectionExists;
 
       // v0.30.1: connection-manager wraps the module singleton.
       if (url) {
@@ -201,14 +217,18 @@ export class PostgresEngine implements BrainEngine {
     if (this._sql) {
       await this._sql.end();
       this._sql = null;
+      this._ownsModuleConnection = false;
       // After this point, _connectionStyle stays 'instance' so a second
       // disconnect() is a no-op rather than falling through and clearing
       // the unrelated module-level db singleton.
       return;
     }
     if (this._connectionStyle === 'module') {
-      await db.disconnect();
+      if (this._ownsModuleConnection) {
+        await db.disconnect();
+      }
       this._connectionStyle = null;
+      this._ownsModuleConnection = false;
     }
     // else: nothing to disconnect (already done or never connected)
   }

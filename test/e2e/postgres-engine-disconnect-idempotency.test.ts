@@ -11,21 +11,29 @@
  * connection" on the next beforeEach).
  *
  * The fix: PostgresEngine tracks `_connectionStyle` ('instance' | 'module')
- * and only calls db.disconnect() when it actually owns the module-level
- * connection. Second disconnect on an instance-pool engine is a no-op.
+ * plus module-singleton ownership. Only the engine that created the module-level
+ * connection calls db.disconnect(); borrowers leave the shared pool alive.
+ * Second disconnect on an instance-pool engine is a no-op.
  *
  * This test pins the contract so future refactors of disconnect() can't
  * silently regress (it's exactly the bug class that took an hour of E2E
- * debugging to find). Two cases:
+ * debugging to find). Four cases:
  *   1. instance-pool engine: connect → disconnect → disconnect must NOT
  *      affect the module-level connection.
- *   2. module-singleton engine: connect → disconnect → disconnect is safe
- *      (second call no-ops).
+ *   2. module-singleton borrower: connect → disconnect must NOT affect the
+ *      owning module-level connection.
+ *   3. lint's DB-config probe must leave the owner alive.
+ *   4. module-singleton owner: connect → disconnect → disconnect is safe
+ *      (first call closes the singleton; second call no-ops).
  */
 
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import * as db from '../../src/core/db.ts';
+import { runLintCore } from '../../src/commands/lint.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL;
@@ -36,18 +44,19 @@ if (skip) {
 }
 
 describe.skipIf(skip)('PostgresEngine.disconnect idempotency', () => {
-  beforeAll(async () => {
-    // Establish the module-level connection so we can verify it survives
-    // the instance-pool engine's double-disconnect.
+  beforeEach(async () => {
     await db.disconnect();
-    await db.connect({ database_url: DATABASE_URL! });
   }, 30_000);
 
-  afterAll(async () => {
+  afterEach(async () => {
     await db.disconnect();
   });
 
   test('instance-pool engine: second disconnect() does NOT clobber module singleton', async () => {
+    // Establish the module-level connection so we can verify it survives
+    // the instance-pool engine's double-disconnect.
+    await db.connect({ database_url: DATABASE_URL! });
+
     const engine = new PostgresEngine();
     await engine.connect({ database_url: DATABASE_URL!, poolSize: 2 });
 
@@ -68,17 +77,62 @@ describe.skipIf(skip)('PostgresEngine.disconnect idempotency', () => {
     expect((after[0] as unknown as { ok: number }).ok).toBe(1);
   });
 
-  test('module-singleton engine: second disconnect() is a no-op', async () => {
-    // Re-establish module-level connection (idempotent; no-op if still
-    // connected from beforeAll).
-    await db.connect({ database_url: DATABASE_URL! });
+  test('module-singleton borrower: disconnect() does NOT clobber owner singleton', async () => {
+    const owner = new PostgresEngine();
+    await owner.connect({ database_url: DATABASE_URL! });
 
+    const borrower = new PostgresEngine();
+    // No poolSize → uses the already-open module-level singleton as a borrower.
+    await borrower.connect({ database_url: DATABASE_URL! });
+
+    // Pre-fix, this called db.disconnect() and killed the owner's singleton.
+    await borrower.disconnect();
+
+    const afterBorrowerDisconnect = await db.getConnection().unsafe('SELECT 1 as ok');
+    expect((afterBorrowerDisconnect[0] as unknown as { ok: number }).ok).toBe(1);
+
+    // The owner still tears down the singleton it created.
+    await owner.disconnect();
+    expect(() => db.getConnection()).toThrow('No database connection');
+  });
+
+  test('lint DB-config probe: borrower disconnect() does NOT clobber owner singleton', async () => {
+    const owner = new PostgresEngine();
+    await owner.connect({ database_url: DATABASE_URL! });
+
+    // This smoke test covers runLintCore's current DB-plane config probe. The
+    // direct borrower test above pins the engine-level lifecycle contract.
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-lint-probe-'));
+    const previousDatabaseUrl = process.env.DATABASE_URL;
+    const previousGbrainDatabaseUrl = process.env.GBRAIN_DATABASE_URL;
+
+    try {
+      writeFileSync(join(dir, 'note.md'), '# Note\n\nClean content.\n');
+      process.env.DATABASE_URL = DATABASE_URL!;
+      delete process.env.GBRAIN_DATABASE_URL;
+
+      await runLintCore({ target: dir, dryRun: true });
+
+      const afterLintProbe = await db.getConnection().unsafe('SELECT 1 as ok');
+      expect((afterLintProbe[0] as unknown as { ok: number }).ok).toBe(1);
+    } finally {
+      if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previousDatabaseUrl;
+      if (previousGbrainDatabaseUrl === undefined) delete process.env.GBRAIN_DATABASE_URL;
+      else process.env.GBRAIN_DATABASE_URL = previousGbrainDatabaseUrl;
+      rmSync(dir, { recursive: true, force: true });
+      await owner.disconnect().catch(() => { /* already closed by a failing assertion path */ });
+    }
+  });
+
+  test('module-singleton owner: second disconnect() is a no-op', async () => {
     const engine = new PostgresEngine();
-    // No poolSize → uses the module-level singleton.
+    // No poolSize and no pre-existing singleton → this engine owns it.
     await engine.connect({ database_url: DATABASE_URL! });
 
-    // First disconnect closes module-level singleton (this engine owned it).
+    // First disconnect closes the module-level singleton.
     await engine.disconnect();
+    expect(() => db.getConnection()).toThrow('No database connection');
 
     // Second disconnect must NOT throw — should be a no-op since
     // _connectionStyle was reset to null.
