@@ -2,6 +2,51 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.32.1.0] - 2026-05-27
+
+**Doctor now catches silent put_page write-breakage; embed --stale stops cross-contaminating multi-source brains; PGLite stops crash-looping after WAL crashes.**
+
+Three correctness fixes that close real production-bug paths.
+
+### The numbers that matter
+
+```
+doctor checks       →   v0.32.0: existing      →   v0.32.1.0: + pages_source_slug_key (catches issue #550)
+embed --stale       →   silent contamination   →   source-aware (slug × source_id keying)
+PGLite crash open   →   crash loop forever     →   self-repair on next open
+```
+
+### What changed for you
+
+- `gbrain doctor` now probes `pg_constraint` for the UNIQUE/PK on `pages(source_id, slug)` regardless of constraint name. Third-party Supabase deployments where the table was rebuilt with non-canonical naming, or any brain where the constraint never landed, now get a loud `fail`/`warn` instead of every `put_page` write crashing silently with "no unique or exclusion constraint matching the ON CONFLICT specification". Wired into both `runDoctor` (local) and `doctorReportRemote` (thin-client). Closes #550.
+- `gbrain embed --stale` groups stale chunks by `(slug, source_id)` instead of `slug` alone. Two sources sharing the same slug no longer overwrite each other's embeddings during a single embed pass. `Chunk.source_id` becomes a required field; both engines select it.
+- `PGLiteEngine.connect()` now deletes a leaked `postmaster.pid` on connect failure so the next open isn't doomed to the same WAL-replay crash. Plus `beforeExit`/`SIGTERM`/`SIGINT` graceful-disconnect handlers so any CLI command that exits without calling `disconnect()` still gets a clean shutdown. Eliminates the "Aborted() on next open" crash-loop bug class (#223).
+- `@electric-sql/pglite` bumped 0.4.3 → 0.4.5 (paired with the lock-safety fix).
+
+### Verification
+
+```bash
+gbrain doctor
+# Look for "pages_source_slug_key" in the output — should be ok on fresh installs.
+```
+
+If the new check reports `fail`, run `gbrain apply-migrations --force-retry 23` (Postgres) or `--force-retry 21` (PGLite) to restore the constraint.
+
+### Itemized changes
+
+#### Added
+- `checkPagesSourceSlugKey` in `src/commands/doctor.ts` — probes pg_constraint for UNIQUE/PK on `(source_id, slug)` regardless of name. Wired into both local and remote doctor paths.
+
+#### Changed
+- `embed --stale` in `src/commands/embed.ts` groups chunks by `slug\0source_id` composite key. `engine.getChunks` and `engine.upsertChunks` now thread `sourceId` through.
+- `Chunk` interface in `src/core/types.ts` gains required `source_id: string` field.
+- Both engines (`postgres-engine.ts`, `pglite-engine.ts`) select `p.source_id` in chunk-loading SQL.
+
+#### Fixed
+- PGLite `connect()` deletes leftover `postmaster.pid` on open failure (`src/core/pglite-engine.ts`).
+- PGLite engine installs `beforeExit`/SIGTERM/SIGINT handlers for graceful disconnect, eliminating the WAL crash-loop class.
+- `@electric-sql/pglite` 0.4.3 → 0.4.5.
+
 ## [0.32.0] - 2026-05-10
 
 **5 new embedding providers + the discoverability fix that closes the 17-PR dupe cluster.**
