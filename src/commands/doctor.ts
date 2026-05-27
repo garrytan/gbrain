@@ -344,6 +344,10 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // surfacing layer.)
   checks.push(await checkSubagentProvider(engine));
 
+  // Issue #550 — surface a silent write-breakage if the pages composite UNIQUE
+  // is missing or non-canonically named. Cheap (single pg_constraint probe).
+  checks.push(await checkPagesSourceSlugKey(engine));
+
   return computeDoctorReport(checks);
 }
 
@@ -389,6 +393,87 @@ async function checkSubagentProvider(engine: BrainEngine): Promise<Check> {
       name: 'subagent_provider',
       status: 'warn',
       message: `Could not check subagent provider: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * Issue #550 — engine `put_page` does `INSERT ... ON CONFLICT (source_id, slug)
+ * DO UPDATE`. Postgres requires a matching UNIQUE/PRIMARY KEY constraint on
+ * exactly those columns or every write crashes with "no unique or exclusion
+ * constraint matching the ON CONFLICT specification". The schema names that
+ * constraint `pages_source_slug_key`, but third-party Supabase deployments
+ * sometimes rebuild `pages` with a different constraint name and the engine
+ * has no way to find it. Pre-v23 brains where the constraint never landed hit
+ * the same crash. Doctor didn't catch either case — every write broke
+ * silently until the user tried to put a page.
+ *
+ * This check probes pg_constraint for a UNIQUE/PRIMARY KEY on
+ * `pages(source_id, slug)` regardless of constraint name. fail = writes are
+ * broken now; warn = constraint has a non-canonical name (engine ON CONFLICT
+ * still matches by column set, so writes work, but the schema diverged from
+ * the shipped definition).
+ */
+async function checkPagesSourceSlugKey(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{
+      canonical: boolean;
+      column_match: boolean;
+    }>(`
+      WITH pages_unique AS (
+        SELECT c.conname,
+               ARRAY(
+                 SELECT a.attname
+                   FROM unnest(c.conkey) k
+                   JOIN pg_attribute a
+                     ON a.attrelid = c.conrelid AND a.attnum = k
+                  ORDER BY a.attname
+               ) AS cols
+          FROM pg_constraint c
+         WHERE c.conrelid = 'pages'::regclass
+           AND c.contype IN ('u', 'p')
+      )
+      SELECT
+        EXISTS (SELECT 1 FROM pages_unique WHERE conname = 'pages_source_slug_key') AS canonical,
+        EXISTS (SELECT 1 FROM pages_unique WHERE cols = ARRAY['slug', 'source_id']) AS column_match
+    `);
+    const probe = rows[0];
+    if (!probe) {
+      return {
+        name: 'pages_source_slug_key',
+        status: 'warn',
+        message: 'pg_constraint probe returned no rows — pages table may be missing.',
+      };
+    }
+    if (probe.canonical) {
+      return {
+        name: 'pages_source_slug_key',
+        status: 'ok',
+        message: 'pages_source_slug_key constraint present',
+      };
+    }
+    if (probe.column_match) {
+      return {
+        name: 'pages_source_slug_key',
+        status: 'warn',
+        message:
+          'A UNIQUE/PRIMARY KEY on pages(source_id, slug) exists but is not named pages_source_slug_key. ' +
+          'put_page works (ON CONFLICT matches by column set), but the schema has diverged from the shipped definition.',
+      };
+    }
+    return {
+      name: 'pages_source_slug_key',
+      status: 'fail',
+      message:
+        'Missing UNIQUE/PRIMARY KEY on pages(source_id, slug). Every put_page write will fail with ' +
+        '"no unique or exclusion constraint matching the ON CONFLICT specification". ' +
+        'Fix: `gbrain apply-migrations --force-retry 23` (Postgres) or `--force-retry 21` (PGLite).',
+    };
+  } catch (e) {
+    return {
+      name: 'pages_source_slug_key',
+      status: 'warn',
+      message: `Could not check pages_source_slug_key: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
 }
@@ -1854,6 +1939,13 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // a job is submitted.
   progress.heartbeat('subagent_provider');
   checks.push(await checkSubagentProvider(engine));
+
+  // 11.4b pages_source_slug_key (Issue #550). Catches silent write-breakage
+  // when the composite UNIQUE on pages(source_id, slug) is missing or
+  // non-canonically named (third-party Supabase setups, half-applied
+  // migrations). Without this check, put_page crashes only when first invoked.
+  progress.heartbeat('pages_source_slug_key');
+  checks.push(await checkPagesSourceSlugKey(engine));
 
   // 11.5 facts_health (v0.31 hot memory). Surfaces per-source counters so
   // operators can see the extraction pipeline's pulse without raw SQL.
