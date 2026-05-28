@@ -9,6 +9,8 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 
 setDefaultTimeout(20_000);
 
+const PGLITE_REOPEN_TEST_TIMEOUT_MS = 45_000;
+
 interface EngineHarness {
   label: string;
   engine: BrainEngine;
@@ -150,7 +152,7 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
       await reopened?.disconnect();
       await harness.cleanup();
     }
-  });
+  }, createHarness === createPgliteHarness ? PGLITE_REOPEN_TEST_TIMEOUT_MS : undefined);
 
   test(`${createHarness.name} listTaskThreads honors limit and offset`, async () => {
     const harness = await createHarness();

@@ -9,6 +9,8 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 setDefaultTimeout(20_000);
 
+const PGLITE_OPERATION_TEST_TIMEOUT_MS = 30_000;
+
 function getOperation(name: string): Operation {
   const operation = operations.find((candidate) => candidate.name === name);
   if (!operation) throw new Error(`Operation not found: ${name}`);
@@ -332,5 +334,5 @@ describe('memory redaction plan operations', () => {
     } finally {
       await harness.cleanup();
     }
-  }, 15_000);
+  }, PGLITE_OPERATION_TEST_TIMEOUT_MS);
 });

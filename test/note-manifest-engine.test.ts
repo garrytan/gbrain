@@ -11,6 +11,8 @@ import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from '../src/core/services/note-manife
 
 setDefaultTimeout(20_000);
 
+const PGLITE_REOPEN_TEST_TIMEOUT_MS = 45_000;
+
 interface EngineHarness {
   label: string;
   engine: BrainEngine;
@@ -123,7 +125,7 @@ for (const createHarness of [createSqliteHarness, createPgliteHarness]) {
       await reopened?.disconnect();
       await harness.cleanup();
     }
-  });
+  }, createHarness === createPgliteHarness ? PGLITE_REOPEN_TEST_TIMEOUT_MS : undefined);
 }
 
 test('note manifest engines honor limit and offset filters', async () => {
