@@ -606,21 +606,25 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
     `  ${'SOURCE'.padEnd(20)}  ${'LAG'.padEnd(8)}  ${'EMBED'.padEnd(7)}  ${'FAILS'.padEnd(6)}  ${'QUEUE'.padEnd(6)}  ${'PAGES'.padStart(8)}  LAST SYNC`,
   );
   for (const m of metrics) {
-    const lag = m.lag_seconds === null
+    const lag = !m.local_path
+      ? 'db-only'
+      : m.lag_seconds === null
       ? 'never'
       : formatLag(m.lag_seconds);
     const embed = `${m.embed_coverage_pct.toFixed(0)}%`;
     const fails = String(m.failed_jobs_24h);
     const queue = String(m.queue_depth);
     const pages = m.total_pages.toLocaleString();
-    const sync = m.last_sync_at ? new Date(m.last_sync_at).toISOString().slice(0, 19).replace('T', ' ') : 'never';
+    const sync = !m.local_path
+      ? 'not local'
+      : m.last_sync_at
+        ? new Date(m.last_sync_at).toISOString().slice(0, 19).replace('T', ' ')
+        : 'never';
     console.log(`  ${m.source_id.padEnd(20)}  ${lag.padEnd(8)}  ${embed.padEnd(7)}  ${fails.padEnd(6)}  ${queue.padEnd(6)}  ${pages.padStart(8)}  ${sync}`);
   }
   console.log('');
   for (const m of metrics) {
-    const warns: string[] = [];
-    if (!m.local_path) warns.push('no local_path');
-    if (m.lag_seconds === null) warns.push(`never synced — run \`gbrain sync --source ${m.source_id}\``);
+    const warns = buildSourceStatusWarnings(m);
     if (m.embed_coverage_pct < 95 && m.total_chunks > 100) {
       warns.push(`${(100 - m.embed_coverage_pct).toFixed(1)}% un-embedded — run \`gbrain embed --stale --source ${m.source_id}\``);
     }
@@ -631,6 +635,20 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
       console.log(`  ⚠ ${m.source_id}: ${warns.join('; ')}`);
     }
   }
+}
+
+export function buildSourceStatusWarnings(m: {
+  source_id: string;
+  local_path: string | null;
+  lag_seconds: number | null;
+}): string[] {
+  if (!m.local_path) {
+    return m.source_id === 'default'
+      ? []
+      : ['DB-only source (no local_path; sync disabled)'];
+  }
+  if (m.lag_seconds === null) return [`never synced — run \`gbrain sync --source ${m.source_id}\``];
+  return [];
 }
 
 function formatLag(seconds: number): string {

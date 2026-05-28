@@ -60,6 +60,37 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
     expect(merged?.embedding_image_ocr_model).toBe('openai:gpt-4o-mini');
   });
 
+  test('DB-stored provider keys fill in when file/env did not set them', async () => {
+    const base: GBrainConfig = { engine: 'pglite' };
+    const engine = makeEngine({
+      openai_api_key: 'sk-from-db',
+      anthropic_api_key: 'sk-ant-from-db',
+      zeroentropy_api_key: 'ze-from-db',
+    });
+    const merged = await loadConfigWithEngine(engine, base);
+    expect(merged?.openai_api_key).toBe('sk-from-db');
+    expect(merged?.anthropic_api_key).toBe('sk-ant-from-db');
+    expect(merged?.zeroentropy_api_key).toBe('ze-from-db');
+  });
+
+  test('file/env provider keys win over DB-stored provider keys', async () => {
+    const base: GBrainConfig = {
+      engine: 'pglite',
+      openai_api_key: 'sk-from-file',
+      anthropic_api_key: 'sk-ant-from-file',
+      zeroentropy_api_key: 'ze-from-file',
+    };
+    const engine = makeEngine({
+      openai_api_key: 'sk-from-db',
+      anthropic_api_key: 'sk-ant-from-db',
+      zeroentropy_api_key: 'ze-from-db',
+    });
+    const merged = await loadConfigWithEngine(engine, base);
+    expect(merged?.openai_api_key).toBe('sk-from-file');
+    expect(merged?.anthropic_api_key).toBe('sk-ant-from-file');
+    expect(merged?.zeroentropy_api_key).toBe('ze-from-file');
+  });
+
   test('file/env precedence: file value wins over DB value', async () => {
     const base: GBrainConfig = {
       engine: 'pglite',
