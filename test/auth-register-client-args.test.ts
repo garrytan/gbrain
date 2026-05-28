@@ -148,6 +148,29 @@ describe('parseRegisterClientArgs', () => {
   });
 
   describe('error cases', () => {
+    test('--source with malformed id throws (validates source_id shape — codex re-review)', () => {
+      // Defense for the "register-client seeds an unmanageable
+      // federated_read entry" vector. assertValidSourceId fires before the
+      // function returns so DB never sees a row with bad source scope.
+      expect(() => parseRegisterClientArgs(['--source', 'has,weird,bits'])).toThrow(/Invalid source_id/);
+      expect(() => parseRegisterClientArgs(['--source', 'UPPER'])).toThrow(/Invalid source_id/);
+      expect(() => parseRegisterClientArgs(['--source', ''])).toThrow(/Invalid source_id|requires a value/);
+    });
+
+    test('--federated-read with any malformed id throws', () => {
+      // Single-item bad.
+      expect(() => parseRegisterClientArgs(['--federated-read', 'bad,source!'])).toThrow(/Invalid source_id/);
+      // Mixed valid + invalid — fails on the first bad one.
+      expect(() => parseRegisterClientArgs(['--federated-read', 'good,bad source'])).toThrow(/Invalid source_id/);
+    });
+
+    test('--source default + --federated-read default,team passes (regression — common case)', () => {
+      // Sanity: the canonical real-world invocation still parses cleanly.
+      const out = parseRegisterClientArgs(['--source', 'default', '--federated-read', 'default,team']);
+      expect(out.sourceId).toBe('default');
+      expect(out.federatedRead).toEqual(['default', 'team']);
+    });
+
     test('--redirect-uri without value → throws', () => {
       expect(() => parseRegisterClientArgs(['--redirect-uri'])).toThrow(/requires a value/);
     });

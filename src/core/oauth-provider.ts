@@ -44,7 +44,7 @@ export type { SqlQuery, SqlValue };
  * `redirect_uri` containing `,`) would be parsed by Postgres as MULTIPLE
  * array elements, smuggling values past validation. See CSO finding #5.
  */
-function pgArray(arr: string[]): string {
+export function pgArray(arr: string[]): string {
   if (!arr || arr.length === 0) return '{}';
   const escaped = arr.map(s => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
   return `{${escaped.join(',')}}`;
