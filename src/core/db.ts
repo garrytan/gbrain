@@ -159,6 +159,17 @@ export function getConnection(): ReturnType<typeof postgres> {
   return sql;
 }
 
+/**
+ * Returns true if the module-level singleton is initialized. Used by
+ * PostgresEngine.connect to detect "I'm joining an already-shared pool"
+ * vs "I'm creating it" — only the creator should be allowed to tear it
+ * down on disconnect, otherwise a temp engine (e.g. lint's content_sanity
+ * config-read engine) silently kills the singleton for the whole cycle.
+ */
+export function isConnected(): boolean {
+  return sql !== null;
+}
+
 export async function connect(config: EngineConfig): Promise<void> {
   if (sql) {
     // Warn if a different URL is passed — the old connection is still in use

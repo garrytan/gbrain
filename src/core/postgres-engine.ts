@@ -104,6 +104,22 @@ export class PostgresEngine implements BrainEngine {
    * db.disconnect() and clobber the unrelated module-level connection.
    */
   private _connectionStyle: 'instance' | 'module' | null = null;
+  /**
+   * For module-style connects: did THIS engine instance actually initialize
+   * the singleton, or did it just join an already-live pool? Only the
+   * initializer is allowed to tear the singleton down on disconnect.
+   *
+   * Repro (pre-fix): lint's `resolveLintContentSanity` creates a temp
+   * PostgresEngine to read 4 config keys, calls `engine.connect({})` (no
+   * poolSize → module path). `db.connect()` no-ops because the cycle's
+   * main engine already initialized the singleton. The temp engine sets
+   * `_connectionStyle='module'` regardless. Its `finally { disconnect() }`
+   * then falls through and calls `db.disconnect()` — killing the singleton
+   * mid-cycle. Sync/synthesize/embed phases that run AFTER lint flunk with
+   * "No database connection: connect() has not been called." The bug
+   * surfaces only when the cycle is engine + lint-content-sanity active.
+   */
+  private _ownsModuleSingleton = false;
 
   /**
    * v0.30.1 (Fix 1 + X1 + T5): instance-owned ConnectionManager.
@@ -178,8 +194,14 @@ export class PostgresEngine implements BrainEngine {
       this.connectionManager.setReadPool(this._sql);
     } else {
       // Module-level singleton (backward compat for CLI main engine)
+      const singletonWasLive = db.isConnected();
       await db.connect(config);
       this._connectionStyle = 'module';
+      // Only the initializer owns teardown. Joining an already-live
+      // singleton (e.g. a temp engine reading config keys mid-cycle) must
+      // NOT clobber the shared pool on disconnect. See _ownsModuleSingleton
+      // doc comment for the lint-content-sanity repro.
+      this._ownsModuleSingleton = !singletonWasLive;
 
       // v0.30.1: connection-manager wraps the module singleton.
       if (url) {
@@ -208,8 +230,17 @@ export class PostgresEngine implements BrainEngine {
       return;
     }
     if (this._connectionStyle === 'module') {
-      await db.disconnect();
+      // Only the engine instance that actually initialized the singleton
+      // is allowed to tear it down. A passive sharer (e.g. lint's
+      // resolveLintContentSanity temp engine) silently no-ops here instead
+      // of clobbering the cycle's main engine pool. See _ownsModuleSingleton
+      // doc comment for the repro that caused PRE-FIX sync/synthesize/embed
+      // phases to flunk with "No database connection".
+      if (this._ownsModuleSingleton) {
+        await db.disconnect();
+      }
       this._connectionStyle = null;
+      this._ownsModuleSingleton = false;
     }
     // else: nothing to disconnect (already done or never connected)
   }
