@@ -2,6 +2,84 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.41.29.0] - 2026-05-28
+
+**The admin dashboard can now see your sources and manage who reads
+them — no more dropping to SQL or the CLI.**
+
+v0.41.28.0 added the `gbrain auth grant-read / revoke-read /
+set-federated-read / list-clients` commands. This release brings that
+same management to the web dashboard, so you don't need a terminal to
+answer "which sources exist, who writes to each, and who can read
+them," or to change a client's read access.
+
+**New Sources tab** in the dashboard sidebar — a read-only table of
+every registered source with page count, chunk count, embedding
+coverage, and last-sync state, plus a reverse-lookup of which OAuth
+clients write to each source and which read it via federation.
+
+**Federation management in the agent drawer** — click any OAuth client,
+and a new Federation section shows its write source and federated-read
+list. A "Manage reads" button opens a checkbox list of all sources;
+check or uncheck and Save. The save goes through the exact same
+race-safe atomic SQL path as the CLI (`setFederatedReadCore`), so a
+dashboard edit and a `gbrain auth set-federated-read` from a terminal
+have identical correctness guarantees.
+
+**Built for push-only brains.** Sources that receive content over MCP
+(`put_page` / capture / `/ingest`) rather than `gbrain sync` of a
+server-side checkout have no `local_path`. The Sources tab and the
+federation source-picker both list those sources correctly, and the
+"Last Sync" column shows a neutral "push-only" instead of a misleading
+"never synced" warning.
+
+**Five new admin API routes** back these surfaces, all behind the
+existing admin-session gate:
+
+```
+GET  /admin/api/sources                          # sources + sync/embed stats
+GET  /admin/api/agents/federated-read            # clients + their scopes
+POST /admin/api/agents/:id/grant-read            # add one source
+POST /admin/api/agents/:id/revoke-read           # remove one source
+POST /admin/api/agents/:id/set-federated-read    # replace whole list
+```
+
+### Itemized changes
+
+- `src/commands/serve-http.ts`: 5 new admin routes. The mutating three
+  import and call the `*Core` helpers from `auth.ts` so the
+  HIGH-severity race fix, soft-delete guard, and source-id shape
+  validation from v0.41.28.0 apply uniformly to the web path. The
+  sources route deliberately does NOT filter on `local_path` (push-only
+  sources have none); `buildSyncStatusReport` does no disk I/O so they
+  report fine.
+- `admin/src/pages/Sources.tsx` (new): read-only Sources table with
+  writers/readers reverse-lookup; "push-only" label for null-local_path
+  sources.
+- `admin/src/pages/Agents.tsx`: Federation section + FederationModal
+  in the per-agent drawer. Checkbox rows pinned to a fixed gutter
+  (16x16 checkbox, zero margin, no shrink); long source ids truncate
+  with ellipsis.
+- `admin/src/App.tsx` + `admin/src/api.ts`: Sources nav entry + 5 new
+  API client functions.
+- SPA rebuilt (242KB → 73KB gzip).
+
+### For operators behind Caddy
+
+If you proxy gbrain behind Caddy and the dashboard's "Live Activity"
+indicator hangs at "connecting…", exclude the SSE endpoint from
+compression and disable response buffering for it:
+
+```
+@sse path /admin/events*
+@compressible not path /admin/events*
+encode @compressible zstd gzip
+reverse_proxy @sse 127.0.0.1:3131 { flush_interval -1 }
+```
+
+gzip buffers the SSE stream otherwise, so the browser never receives
+events. (Caddy config lives on the host, not in this repo.)
+
 ## [0.41.28.0] - 2026-05-28
 
 **You can finally see — and change — who can read which source, without
