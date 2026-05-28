@@ -2142,7 +2142,16 @@ const resolve_slugs: Operation = {
     partial: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.resolveSlugs(p.partial as string);
+    // v0.41.13 #1436 follow-up: the standalone resolve_slugs op handler was
+    // left unscoped while get_page's fuzzy path (operations.ts ~L476) and the
+    // engine.resolveSlugs SQL were already source-aware. A federated_read
+    // OAuth client scoped to src-A could enumerate slug NAMES from src-B
+    // (bodies stayed sealed, but slug-name enumeration is itself a
+    // confidentiality breach across tenants). Thread the canonical source
+    // scope so it matches list_pages / get_page exactly: sourceScopeOpts(ctx)
+    // emits {sourceIds:[...]} (federated), {sourceId:'...'} (scalar), or {}
+    // (admin / local CLI — preserves unscoped enumeration).
+    return ctx.engine.resolveSlugs(p.partial as string, sourceScopeOpts(ctx));
   },
   scope: 'read',
 };

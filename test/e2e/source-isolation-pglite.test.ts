@@ -265,3 +265,87 @@ describe('v0.34.1 source-isolation regression (#861)', () => {
     }
   });
 });
+
+/**
+ * resolve_slugs tenant-isolation regression (fix/resolve-slugs-tenant-isolation).
+ *
+ * Pre-fix bug: the standalone `resolve_slugs` op handler (operations.ts) called
+ * `ctx.engine.resolveSlugs(p.partial)` WITHOUT threading the caller's source
+ * scope, even though the engine method, get_page's fuzzy path, list_pages,
+ * search, etc. were all already source-aware via sourceScopeOpts(ctx). A
+ * federated_read OAuth client scoped to src-A could therefore enumerate slug
+ * NAMES belonging to src-B. Page bodies stayed sealed (get_page/get_chunks are
+ * scoped), but slug-name enumeration is itself a cross-tenant confidentiality
+ * breach — a src-A tenant must not even learn that src-B's pages exist.
+ *
+ * Fix: thread sourceScopeOpts(ctx) into resolveSlugs(partial, opts), matching
+ * list_pages / get_page exactly. These tests drive the OP HANDLER (not the raw
+ * engine method — that surface was already covered by
+ * operations-fuzzy-source-scope.test.ts) via ctx.auth.allowedSources, which is
+ * the precise path an authenticated MCP/OAuth client takes.
+ *
+ * Seed (from beforeEach above): 'people/bob' exists ONLY in 'src-b'. That is
+ * the "slug that exists only in source B" the scoped-to-A token must not see.
+ */
+describe('resolve_slugs tenant isolation (fix/resolve-slugs-tenant-isolation)', () => {
+  const baseCtx = () => ({
+    engine,
+    config: { engine: 'pglite' as const },
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    dryRun: false,
+    remote: true,
+  });
+
+  test('token scoped to source A cannot resolve a slug that exists only in source B', async () => {
+    const { operations } = await import('../../src/core/operations.ts');
+    const resolveOp = operations.find(o => o.name === 'resolve_slugs');
+    expect(resolveOp).toBeDefined();
+
+    // federated_read scoped to 'default' (source A) only. 'people/bob' lives
+    // exclusively in 'src-b' (source B).
+    const ctx = {
+      ...baseCtx(),
+      sourceId: 'default',
+      auth: {
+        token: 'test',
+        clientId: 'tenant-a',
+        scopes: ['read'],
+        sourceId: 'default',
+        allowedSources: ['default'],
+      },
+    };
+    const result = (await resolveOp!.handler(ctx as any, { partial: 'people/bob' })) as string[];
+    // Pre-fix this leaked ['people/bob'] from src-b. Post-fix: empty.
+    expect(result).toEqual([]);
+  });
+
+  test('admin/unscoped token (no auth, no sourceId) still resolves every source', async () => {
+    const { operations } = await import('../../src/core/operations.ts');
+    const resolveOp = operations.find(o => o.name === 'resolve_slugs');
+
+    // No auth + no sourceId => sourceScopeOpts returns {} => unscoped (admin /
+    // local CLI). Must still surface the src-b-only slug.
+    const ctx = { ...baseCtx(), remote: false };
+    const result = (await resolveOp!.handler(ctx as any, { partial: 'people/bob' })) as string[];
+    expect(result).toEqual(['people/bob']);
+  });
+
+  test('federated token allowing source B can resolve the source-B-only slug', async () => {
+    const { operations } = await import('../../src/core/operations.ts');
+    const resolveOp = operations.find(o => o.name === 'resolve_slugs');
+
+    const ctx = {
+      ...baseCtx(),
+      sourceId: 'default',
+      auth: {
+        token: 'test',
+        clientId: 'tenant-ab',
+        scopes: ['read'],
+        sourceId: 'default',
+        allowedSources: ['default', 'src-b'], // federated array includes B
+      },
+    };
+    const result = (await resolveOp!.handler(ctx as any, { partial: 'people/bob' })) as string[];
+    expect(result).toEqual(['people/bob']);
+  });
+});
