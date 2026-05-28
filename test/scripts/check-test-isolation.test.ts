@@ -49,7 +49,7 @@ function runLintIn(files: FakeFile[], allowlist: string[] = []): RunResult {
   const r = spawnSync('bash', [LINT_SH, 'test'], {
     cwd: dir,
     encoding: 'utf-8',
-    env: { ...process.env },
+    env: { ...process.env, CHECK_TEST_ISOLATION_ROOT: dir },
   });
   return { status: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
 }

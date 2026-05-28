@@ -29,7 +29,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import type {
@@ -135,6 +135,14 @@ interface PhaseBOutcome {
  */
 function isLocalPathDirty(localPath: string): boolean {
   try {
+    const top = execFileSync('git', ['-C', localPath, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf-8',
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (resolve(top) !== resolve(localPath)) {
+      return false;
+    }
     const out = execFileSync('git', ['-C', localPath, 'status', '--porcelain'], {
       encoding: 'utf-8',
       timeout: 10_000,

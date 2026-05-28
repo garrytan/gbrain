@@ -99,8 +99,10 @@ fi
 # brew coreutils provides `gtimeout`. If neither is available, fall back to
 # bg-pid + sleep-cap (slightly less reliable but still bounded).
 TIMEOUT_BIN=""
-if command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
-elif command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
+if [ "${GBRAIN_FORCE_SHELL_TIMEOUT_FALLBACK:-}" != "1" ]; then
+  if command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
+  elif command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
+  fi
 fi
 
 START_TS=$(date +%s)
@@ -119,24 +121,32 @@ SAFE_NAMES=()
 for c in "${CHECKS[@]}"; do
   safe="${c//:/_}"
   SAFE_NAMES+=("$safe")
-  LOG_FILE="$LOG_DIR/$safe.log"
-  EXIT_FILE="$LOG_DIR/$safe.exit"
-  (
-    if [ -n "$TIMEOUT_BIN" ]; then
-      "$TIMEOUT_BIN" "${TIMEOUT}s" bun run "$c" > "$LOG_FILE" 2>&1
-    else
-      bun run "$c" > "$LOG_FILE" 2>&1 &
-      pid=$!
-      ( sleep "$TIMEOUT" && kill -TERM "$pid" 2>/dev/null && \
-        sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
-      cap_pid=$!
-      wait "$pid" 2>/dev/null
-      kill "$cap_pid" 2>/dev/null
-      wait "$cap_pid" 2>/dev/null
-    fi
-    rc=$?
-    echo "$rc" > "$EXIT_FILE"
-  ) &
+	  LOG_FILE="$LOG_DIR/$safe.log"
+	  EXIT_FILE="$LOG_DIR/$safe.exit"
+	  TIMEOUT_FILE="$LOG_DIR/$safe.timeout"
+	  (
+	    if [ -n "$TIMEOUT_BIN" ]; then
+	      "$TIMEOUT_BIN" "${TIMEOUT}s" bun run "$c" > "$LOG_FILE" 2>&1
+	      rc=$?
+	    else
+	      bun run "$c" > "$LOG_FILE" 2>&1 &
+	      pid=$!
+	      ( sleep "$TIMEOUT" && kill -TERM "$pid" 2>/dev/null && \
+	        echo "TIMEOUT" > "$TIMEOUT_FILE" && \
+	        sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
+	      cap_pid=$!
+	      wait "$pid" 2>/dev/null
+	      child_rc=$?
+	      if [ -f "$TIMEOUT_FILE" ]; then
+	        rc=124
+	      else
+	        rc=$child_rc
+	      fi
+	      kill "$cap_pid" 2>/dev/null || true
+	      wait "$cap_pid" 2>/dev/null || true
+	    fi
+	    echo "$rc" > "$EXIT_FILE"
+	  ) &
   PIDS+=($!)
 done
 
