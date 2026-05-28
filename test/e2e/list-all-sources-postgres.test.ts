@@ -160,4 +160,17 @@ describeIfDB('Postgres parity — updateSourceConfig', () => {
     expect(rows[0]?.typeof).toBe('object');
     expect(rows[0]?.value).toBe('2026-05-22T12:00:00.000Z');
   });
+
+  test('merging into existing object stays an object, not an array', async () => {
+    await seedSource('echo', { config: { federated: true } });
+    await engine.updateSourceConfig('echo', { last_full_cycle_at: '2026-05-28T01:40:57.176Z' });
+    const rows = await engine.executeRaw<{ typeof: string; value: string | null; raw: unknown }>(
+      `SELECT jsonb_typeof(config) AS typeof,
+              config->>'last_full_cycle_at' AS value,
+              config AS raw
+         FROM sources WHERE id = 'echo'`,
+    );
+    expect(rows[0]?.typeof).toBe('object');
+    expect(rows[0]?.value).toBe('2026-05-28T01:40:57.176Z');
+  });
 });
