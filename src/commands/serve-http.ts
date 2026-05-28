@@ -1279,6 +1279,131 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   });
 
   // ---------------------------------------------------------------------------
+  // Sources tab — read-only view of registered sources with sync + embed
+  // coverage stats. Drives the admin SPA's `Sources` page.
+  //
+  // Returns the same shape `gbrain sources status --json` prints, so the
+  // SPA stays in lockstep with the CLI surface.
+  // ---------------------------------------------------------------------------
+  app.get('/admin/api/sources', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { buildSyncStatusReport } = await import('./sync.ts');
+      // Query the JSONB config column directly — listSources doesn't carry
+      // it but buildSyncStatusReport needs syncEnabled / strategy fields.
+      const rows = await engine.executeRaw<{
+        id: string;
+        name: string;
+        local_path: string | null;
+        config: Record<string, unknown> | string | null;
+      }>(
+        `SELECT id, name, local_path, config FROM sources
+         WHERE archived IS NOT TRUE AND local_path IS NOT NULL
+         ORDER BY id`,
+      );
+      const sources = rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        local_path: r.local_path,
+        config: typeof r.config === 'string'
+          ? (JSON.parse(r.config) as Record<string, unknown>)
+          : (r.config ?? {}),
+      }));
+      const report = await buildSyncStatusReport(engine, sources);
+      res.json(report);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(503).json({ error: 'service_unavailable', detail: msg });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Federated-read management (admin-side counterparts of the CLI commands
+  // `gbrain auth grant-read / revoke-read / set-federated-read`). All three
+  // route through the same *Core helpers as the CLI so race-safety,
+  // soft-delete filter, and source-id shape validation apply uniformly.
+  //
+  // The admin SPA's `Agents` page renders "Manage reads" actions per
+  // client backed by these endpoints.
+  // ---------------------------------------------------------------------------
+  app.get('/admin/api/agents/federated-read', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const rows = await sql`
+        SELECT client_id, client_name, source_id, federated_read
+        FROM oauth_clients
+        WHERE deleted_at IS NULL
+        ORDER BY client_name
+      `;
+      const clients = rows.map((r) => ({
+        client_id: String(r.client_id),
+        client_name: String(r.client_name),
+        source_id: r.source_id == null ? null : String(r.source_id),
+        federated_read: Array.isArray(r.federated_read)
+          ? (r.federated_read as string[]).map(String)
+          : [],
+      }));
+      res.json({ clients });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(503).json({ error: 'service_unavailable', detail: msg });
+    }
+  });
+
+  app.post('/admin/api/agents/:clientId/grant-read', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    const clientId = String(req.params.clientId ?? '');
+    const sourceId = String(req.body?.source_id ?? '').trim();
+    if (!clientId || !sourceId) {
+      res.status(400).json({ error: 'invalid_request', detail: 'clientId path param + source_id body required' });
+      return;
+    }
+    try {
+      const { grantReadCore } = await import('./auth.ts');
+      const outcome = await grantReadCore(sql, clientId, sourceId);
+      res.json({ outcome });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(400).json({ error: 'mutation_failed', detail: msg });
+    }
+  });
+
+  app.post('/admin/api/agents/:clientId/revoke-read', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    const clientId = String(req.params.clientId ?? '');
+    const sourceId = String(req.body?.source_id ?? '').trim();
+    if (!clientId || !sourceId) {
+      res.status(400).json({ error: 'invalid_request', detail: 'clientId path param + source_id body required' });
+      return;
+    }
+    try {
+      const { revokeReadCore } = await import('./auth.ts');
+      const outcome = await revokeReadCore(sql, clientId, sourceId);
+      res.json({ outcome });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(400).json({ error: 'mutation_failed', detail: msg });
+    }
+  });
+
+  app.post('/admin/api/agents/:clientId/set-federated-read', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    const clientId = String(req.params.clientId ?? '');
+    const rawIds = req.body?.source_ids;
+    if (!clientId || !Array.isArray(rawIds)) {
+      res.status(400).json({ error: 'invalid_request', detail: 'clientId path param + source_ids[] body required' });
+      return;
+    }
+    // Encode the array as CSV so the same setFederatedReadCore signature
+    // (string CSV input) the CLI uses applies here. Empty array → empty
+    // string → clears the list.
+    const csv = rawIds.map((s) => String(s).trim()).filter(Boolean).join(',');
+    try {
+      const { setFederatedReadCore } = await import('./auth.ts');
+      const outcome = await setFederatedReadCore(sql, clientId, csv);
+      res.json({ outcome });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.status(400).json({ error: 'mutation_failed', detail: msg });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
   // SSE live activity feed
   // ---------------------------------------------------------------------------
   app.get('/admin/events', requireAdmin, (req: Request, res: Response) => {

@@ -52,4 +52,22 @@ export const api = {
     apiFetchText(`/admin/api/calibration/charts/${encodeURIComponent(type)}${holder ? `?holder=${encodeURIComponent(holder)}` : ''}`),
   // v0.41 D2 — live minion-jobs dashboard snapshot.
   jobsWatch: () => apiFetch('/admin/api/jobs/watch'),
+  // v0.41.29 Sources tab + federated-read management
+  sources: () => apiFetch('/admin/api/sources'),
+  agentsFederatedRead: () => apiFetch('/admin/api/agents/federated-read'),
+  grantRead: (clientId: string, sourceId: string) =>
+    apiFetch(`/admin/api/agents/${encodeURIComponent(clientId)}/grant-read`, {
+      method: 'POST',
+      body: JSON.stringify({ source_id: sourceId }),
+    }),
+  revokeRead: (clientId: string, sourceId: string) =>
+    apiFetch(`/admin/api/agents/${encodeURIComponent(clientId)}/revoke-read`, {
+      method: 'POST',
+      body: JSON.stringify({ source_id: sourceId }),
+    }),
+  setFederatedRead: (clientId: string, sourceIds: string[]) =>
+    apiFetch(`/admin/api/agents/${encodeURIComponent(clientId)}/set-federated-read`, {
+      method: 'POST',
+      body: JSON.stringify({ source_ids: sourceIds }),
+    }),
 };
