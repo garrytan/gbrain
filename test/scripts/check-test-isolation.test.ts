@@ -16,6 +16,7 @@ import { join, resolve } from 'path';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
 const LINT_SH = resolve(REPO_ROOT, 'scripts/check-test-isolation.sh');
+const RUN_BASH = resolve(REPO_ROOT, 'scripts/run-bash.ts');
 
 interface FakeFile {
   /** Path relative to the tmpdir's `test/` directory. */
@@ -46,7 +47,7 @@ function runLintIn(files: FakeFile[], allowlist: string[] = []): RunResult {
     allowlist.length > 0 ? allowlist.join('\n') + '\n' : '',
   );
 
-  const r = spawnSync('bash', [LINT_SH, 'test'], {
+  const r = spawnSync(process.execPath, ['run', RUN_BASH, LINT_SH, 'test'], {
     cwd: dir,
     encoding: 'utf-8',
     env: { ...process.env },

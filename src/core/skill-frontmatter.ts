@@ -36,6 +36,8 @@ export interface ParsedFrontmatter {
   raw: string;
   /** Skill name; the `name:` field. */
   name?: string;
+  /** Skill description; the `description:` field. */
+  description?: string;
   /** Does this skill write brain pages? */
   writes_pages?: boolean;
   /** Allowed brain-page filing directories. */
@@ -71,9 +73,35 @@ export interface ParsedFrontmatter {
   };
 }
 
+export interface SkillFrontmatterParts {
+  raw: string;
+  body: string;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---(?:\n|$)/;
+
+export function normalizeSkillMarkdown(content: string): string {
+  return content.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+}
+
+function matchSkillFrontmatter(content: string): SkillFrontmatterParts | null {
+  const normalized = normalizeSkillMarkdown(content);
+  const fmMatch = normalized.match(FRONTMATTER_RE);
+  if (!fmMatch) return null;
+
+  return {
+    raw: fmMatch[1],
+    body: normalized.slice(fmMatch[0].length),
+  };
+}
+
+export function stripSkillFrontmatter(content: string): string {
+  return matchSkillFrontmatter(content)?.body ?? normalizeSkillMarkdown(content);
+}
 
 /**
  * Parse SKILL.md content. Returns null when no YAML frontmatter is found.
@@ -82,14 +110,17 @@ export interface ParsedFrontmatter {
  * `readFileSync(path, 'utf-8')` at the boundary.
  */
 export function parseSkillFrontmatter(content: string): ParsedFrontmatter | null {
-  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!fmMatch) return null;
-  const raw = fmMatch[1];
+  const parts = matchSkillFrontmatter(content);
+  if (!parts) return null;
+  const raw = parts.raw;
   const out: ParsedFrontmatter = { raw };
 
   // --- name ---
-  const nameMatch = raw.match(/^name:\s*["']?([^"'\n]+?)["']?\s*$/m);
-  if (nameMatch) out.name = nameMatch[1].trim();
+  const name = parseScalarField(raw, 'name');
+  if (name !== undefined) out.name = name.trim();
+
+  const description = parseScalarField(raw, 'description');
+  if (description !== undefined) out.description = description.trim();
 
   // --- writes_pages / mutating (booleans) ---
   const wpMatch = raw.match(/^writes_pages:\s*(true|false)\s*$/m);
@@ -112,6 +143,16 @@ export function parseSkillFrontmatter(content: string): ParsedFrontmatter | null
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function parseScalarField(raw: string, field: string): string | undefined {
+  const fieldRe = new RegExp(`^${field}:\\s*(.*?)\\s*$`, 'm');
+  const match = raw.match(fieldRe);
+  if (!match) return undefined;
+
+  const value = match[1].trim();
+  const quoted = value.match(/^(['"])(.*)\1$/);
+  return quoted ? quoted[2] : value;
+}
 
 /**
  * Parse an array-shaped YAML field that may appear inline (`field: [a, b]`)

@@ -71,6 +71,7 @@ describe('parseSkillFrontmatter', () => {
     const content = [
       '---',
       'name: thing',
+      "description: saves the user's notes",
       'mutating: true',
       'writes_pages: true',
       'writes_to:',
@@ -83,6 +84,7 @@ describe('parseSkillFrontmatter', () => {
     const fm = parseSkillFrontmatter(content);
     expect(fm).not.toBeNull();
     expect(fm!.name).toBe('thing');
+    expect(fm!.description).toBe("saves the user's notes");
     expect(fm!.mutating).toBe(true);
     expect(fm!.writes_pages).toBe(true);
     expect(fm!.writes_to).toEqual(['people/', 'companies/']);
@@ -101,6 +103,38 @@ describe('parseSkillFrontmatter', () => {
     expect(fm!.writes_to).toEqual(['people/', 'companies/']);
     expect(fm!.tools).toEqual(['search', 'query', 'put_page']);
     expect(fm!.triggers).toEqual(['foo', 'bar']);
+  });
+
+  test('parses CRLF frontmatter from Windows checkouts', () => {
+    const content = [
+      '---',
+      'name: windows-skill',
+      'triggers:',
+      '  - "what is"',
+      '  - "who is"',
+      '---',
+      '',
+      '# windows-skill',
+    ].join('\r\n');
+
+    const fm = parseSkillFrontmatter(content);
+    expect(fm!.name).toBe('windows-skill');
+    expect(fm!.triggers).toEqual(['what is', 'who is']);
+  });
+
+  test('parses BOM-prefixed CRLF frontmatter', () => {
+    const content = '\uFEFF' + [
+      '---',
+      'name: bom-windows-skill',
+      'tools: [web_search]',
+      '---',
+      '',
+      '# bom-windows-skill',
+    ].join('\r\n');
+
+    const fm = parseSkillFrontmatter(content);
+    expect(fm!.name).toBe('bom-windows-skill');
+    expect(fm!.tools).toEqual(['web_search']);
   });
 
   test('canonical brain_first: exempt populates the typed field', () => {
@@ -178,6 +212,11 @@ describe('stripFrontmatter', () => {
     expect(stripFrontmatter('# No fence')).toBe('# No fence');
   });
 
+  test('removes BOM-prefixed CRLF frontmatter', () => {
+    const content = '\uFEFF---\r\nname: x\r\ntools: [web_search]\r\n---\r\n# Body\r\nrest';
+    expect(stripFrontmatter(content)).toBe('# Body\nrest');
+  });
+
   test('CRITICAL F6 — frontmatter exclusion prevents tools: [web_search] false-positive', () => {
     const content = [
       '---',
@@ -196,6 +235,28 @@ describe('stripFrontmatter', () => {
     expect(findFirstBrainRefOffset(body)).toBeGreaterThanOrEqual(0);
     // Body should NOT contain `web_search` (it was in the stripped frontmatter).
     expect(body.includes('web_search')).toBe(false);
+  });
+
+  test('CRLF frontmatter tools do not make a no-external body warn', () => {
+    const content = [
+      '---',
+      'name: frontmatter-only-tool',
+      'tools: [web_search]',
+      '---',
+      '',
+      '# frontmatter-only-tool',
+      '',
+      'Body only describes local file cleanup.',
+    ].join('\r\n');
+
+    const result = analyzeSkillBrainFirst(
+      content,
+      'frontmatter-only-tool',
+      parseSkillFrontmatter(content),
+    );
+
+    expect(result.status).toBe('ok');
+    expect(result.reason).toBe('exempt_no_external');
   });
 });
 

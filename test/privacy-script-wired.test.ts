@@ -34,8 +34,10 @@ describe('check-privacy.sh CI wiring', () => {
   it('scripts/check-privacy.sh exists and is executable', () => {
     expect(existsSync(PRIVACY_SCRIPT)).toBe(true);
     const stat = require('fs').statSync(PRIVACY_SCRIPT);
-    // eslint-disable-next-line no-bitwise
-    expect((stat.mode & 0o100) !== 0).toBe(true);
+    if (process.platform !== 'win32') {
+      // eslint-disable-next-line no-bitwise
+      expect((stat.mode & 0o100) !== 0).toBe(true);
+    }
   });
 
   it('package.json "verify" script delegates to run-verify-parallel.sh', () => {
@@ -52,7 +54,7 @@ describe('check-privacy.sh CI wiring', () => {
     // The dispatcher exposes --dry-list which prints one check name per
     // line. Authoritative check than substring-grepping the script body
     // (which could pass on a commented-out entry).
-    const r = spawnSync('bash', [VERIFY_DISPATCHER, '--dry-list'], {
+    const r = spawnSync(process.execPath, ['run', 'scripts/run-bash.ts', VERIFY_DISPATCHER, '--dry-list'], {
       cwd: REPO_ROOT,
       encoding: 'utf-8',
     });

@@ -12,10 +12,10 @@ start here.
    export PATH="$HOME/.bun/bin:$PATH"
    bun install -g github:garrytan/gbrain
    ```
-   If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`,
-   the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218).
-   Run `gbrain apply-migrations --yes` to recover, or fall back to the
-   deterministic install: `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
+   Package postinstall does not open a brain or run migrations. After install,
+   run `gbrain upgrade`; if you are working from `git clone + bun link`, run
+   `gbrain init --migrate-only`, then `gbrain apply-migrations --yes`, then
+   `gbrain post-upgrade`.
 2. Init the brain: `gbrain init` (defaults to PGLite, zero-config). For 1000+ files or
    multi-machine sync, init suggests Postgres + pgvector via Supabase.
 3. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
@@ -59,7 +59,8 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   [`docs/guides/minions-fix.md`](./docs/guides/minions-fix.md), `gbrain doctor --fix`.
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
-  [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes` (manual schema-only).
+  [`skills/migrations/`](./skills/migrations/), `gbrain init --migrate-only` (manual schema-only),
+  `gbrain apply-migrations --yes` (manual orchestrator migrations).
 - **Eval retrieval changes:** capture is off by default. To benchmark a
   retrieval change against real captured queries, set
   `GBRAIN_CONTRIBUTOR_MODE=1`, then `gbrain eval export --since 7d > base.ndjson`

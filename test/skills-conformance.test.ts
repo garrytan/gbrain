@@ -1,28 +1,10 @@
 import { describe, test, expect } from "bun:test";
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
+import { parseSkillFrontmatter } from "../src/core/skill-frontmatter.ts";
 
 const SKILLS_DIR = join(import.meta.dir, "..", "skills");
 const MANIFEST_PATH = join(SKILLS_DIR, "manifest.json");
-
-/** Simple YAML frontmatter parser — extracts fields between --- delimiters */
-function parseFrontmatter(content: string): Record<string, unknown> | null {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return null;
-  const yaml = match[1];
-  const result: Record<string, string> = {};
-  for (const line of yaml.split("\n")) {
-    const colonIdx = line.indexOf(":");
-    if (colonIdx > 0) {
-      const key = line.slice(0, colonIdx).trim();
-      const value = line.slice(colonIdx + 1).trim();
-      if (key && !key.startsWith(" ") && !key.startsWith("-")) {
-        result[key] = value;
-      }
-    }
-  }
-  return result;
-}
 
 /** Get all skill directories (those containing SKILL.md) */
 function getSkillDirs(): string[] {
@@ -65,13 +47,12 @@ describe("skills conformance", () => {
       const content = readFileSync(join(SKILLS_DIR, dir, "SKILL.md"), "utf-8");
 
       test("has YAML frontmatter", () => {
-        expect(content.startsWith("---\n")).toBe(true);
-        const fm = parseFrontmatter(content);
+        const fm = parseSkillFrontmatter(content);
         expect(fm).not.toBeNull();
       });
 
       test("frontmatter has required fields (name, description)", () => {
-        const fm = parseFrontmatter(content);
+        const fm = parseSkillFrontmatter(content);
         expect(fm).not.toBeNull();
         expect(fm!.name).toBeDefined();
         expect(fm!.description).toBeDefined();
@@ -95,9 +76,9 @@ describe("skills conformance", () => {
     const names: string[] = [];
     for (const dir of skillDirs) {
       const content = readFileSync(join(SKILLS_DIR, dir, "SKILL.md"), "utf-8");
-      const fm = parseFrontmatter(content);
+      const fm = parseSkillFrontmatter(content);
       if (fm?.name) {
-        const name = String(fm.name);
+        const name = fm.name;
         expect(names).not.toContain(name);
         names.push(name);
       }

@@ -89,6 +89,32 @@ describe('loadOrDeriveManifest', () => {
     expect(r.skills[0].path).toBe('weird-dir-name/SKILL.md');
   });
 
+  it('derives frontmatter name from CRLF SKILL.md files', () => {
+    const dir = scratch();
+    const skillDir = join(dir, 'windows-dir');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      ['---', 'name: windows-skill', 'description: test', '---', '', '# windows'].join('\r\n'),
+    );
+
+    const r = loadOrDeriveManifest(dir);
+    expect(r.skills[0].name).toBe('windows-skill');
+  });
+
+  it('derives frontmatter name from BOM-prefixed CRLF SKILL.md files', () => {
+    const dir = scratch();
+    const skillDir = join(dir, 'bom-dir');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      '\uFEFF' + ['---', 'name: bom-skill', 'description: test', '---', '', '# bom'].join('\r\n'),
+    );
+
+    const r = loadOrDeriveManifest(dir);
+    expect(r.skills[0].name).toBe('bom-skill');
+  });
+
   it('skips underscore-prefixed dirs (conventions, rule files)', () => {
     const dir = scratch();
     writeSkill(dir, 'query');

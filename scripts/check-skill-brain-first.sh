@@ -41,28 +41,23 @@ trap "rm -f \"$TMPOUT\"" EXIT
 
 GBRAIN_SKILLS_DIR="$ROOT/skills" bun run src/cli.ts doctor --fast --json >"$TMPOUT" 2>/dev/null || true
 
-# Extract the skill_brain_first check status. Use python3 (already a
-# repo-wide dependency via image-decoders + admin tooling) so we don't
-# add jq to the verify chain.
-STATUS=$(python3 -c "
-import json, sys
-with open('$TMPOUT') as fp:
-    for line in fp:
-        line = line.strip()
-        if not (line.startswith('{') and line.endswith('}')):
-            continue
-        try:
-            report = json.loads(line)
-        except Exception:
-            continue
-        for c in report.get('checks', []):
-            if c.get('name') == 'skill_brain_first':
-                print(c.get('status', 'missing'))
-                sys.exit(0)
-        print('missing')
-        sys.exit(0)
-print('parse_error')
-" 2>/dev/null || echo "parse_error")
+# Extract the skill_brain_first check status with Bun so the guard works
+# on Windows machines that ship `python.exe` but no `python3` shim.
+STATUS=$(TMP_JSON="$TMPOUT" bun -e '
+const text = await Bun.file(process.env.TMP_JSON).text();
+for (const rawLine of text.split(/\r?\n/)) {
+  const line = rawLine.trim();
+  if (!(line.startsWith("{") && line.endsWith("}"))) continue;
+  try {
+    const report = JSON.parse(line);
+    const check = report.checks?.find((c) => c?.name === "skill_brain_first");
+    console.log(check?.status ?? "missing");
+    process.exit(0);
+  } catch {
+  }
+}
+console.log("parse_error");
+' 2>/dev/null || echo "parse_error")
 
 case "$STATUS" in
   ok)

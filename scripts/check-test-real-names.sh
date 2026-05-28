@@ -120,6 +120,7 @@ while IFS= read -r line; do
   [ -z "$line" ] && continue
   # Extract filename and content (everything after second :).
   file="${line%%:*}"
+  file="${file//\\//}"
   rest="${line#*:}"
   # rest is "lineno:content" — strip lineno.
   content="${rest#*:}"

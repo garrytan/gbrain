@@ -3,6 +3,10 @@ import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { checkResolvable } from "../src/core/check-resolvable.ts";
 import { PROTECTED_JOB_NAMES } from "../src/core/minions/protected-names.ts";
+import {
+  parseSkillFrontmatter,
+  stripSkillFrontmatter,
+} from "../src/core/skill-frontmatter.ts";
 
 const SKILLS_DIR = join(import.meta.dir, "..", "skills");
 const RESOLVER_PATH = join(SKILLS_DIR, "RESOLVER.md");
@@ -89,18 +93,11 @@ describe("RESOLVER.md trigger round-trip (D5/C)", () => {
       expect(existsSync(skillFullPath)).toBe(true);
 
       const skillContent = readFileSync(skillFullPath, "utf-8");
-      const fmMatch = skillContent.match(/^---\n([\s\S]*?)\n---/);
-      if (!fmMatch) {
+      const frontmatter = parseSkillFrontmatter(skillContent);
+      if (!frontmatter) {
         throw new Error(`No YAML frontmatter in ${row.skillPath}`);
       }
-      const frontmatter = fmMatch[1];
-      // Parse frontmatter triggers: list. Match "..." OR '...' items separately
-      // so apostrophes inside double-quoted values don't truncate the capture.
-      const triggersBlock = frontmatter.match(/triggers:\s*\n((?:\s*-\s*(?:"[^"]*"|'[^']*')\s*\n?)+)/);
-      const declaredTriggers = triggersBlock
-        ? Array.from(triggersBlock[1].matchAll(/-\s*(?:"([^"]*)"|'([^']*)')/g))
-            .map(m => m[1] ?? m[2])
-        : [];
+      const declaredTriggers = frontmatter.triggers ?? [];
 
       // Fuzzy match: RESOLVER.md phrases are natural-language summaries of the
       // skill's intent; frontmatter triggers are the agent-facing phrase set.
@@ -186,7 +183,7 @@ describe("Skill example-name validator (D13)", () => {
     test(`${rel}: every name="<word>" reference resolves to a real op or handler`, () => {
       const content = readFileSync(skillFile, "utf-8");
       // Strip YAML frontmatter so `name: <skillname>` isn't mis-captured.
-      const body = content.replace(/^---\n[\s\S]*?\n---\n/, "");
+      const body = stripSkillFrontmatter(content);
       // Match only `name=` (with equals, not colon) to avoid YAML false positives
       // if the frontmatter strip ever breaks. Captures quoted word values.
       const refs = Array.from(body.matchAll(/name\s*=\s*["']([a-z_][a-z_0-9]*)["']/gi))

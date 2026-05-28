@@ -27,6 +27,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
+import { parseSkillFrontmatter } from './skill-frontmatter.ts';
 
 export interface ManifestEntry {
   name: string;
@@ -47,13 +48,7 @@ export interface ManifestLoadResult {
 function parseSkillName(skillMdPath: string): string | null {
   try {
     const content = readFileSync(skillMdPath, 'utf-8');
-    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!fmMatch) return null;
-    const fm = fmMatch[1];
-    // Match `name: foo` or `name: "foo"` or `name: 'foo'`
-    const nameMatch = fm.match(/^name:\s*["']?([^"'\n]+?)["']?\s*$/m);
-    if (!nameMatch) return null;
-    const name = nameMatch[1].trim();
+    const name = parseSkillFrontmatter(content)?.name?.trim();
     return name || null;
   } catch {
     return null;

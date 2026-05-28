@@ -48,7 +48,10 @@
  */
 
 import type { ParsedFrontmatter } from './skill-frontmatter.ts';
-import { formatBrainFirstTypoHint } from './skill-frontmatter.ts';
+import {
+  formatBrainFirstTypoHint,
+  stripSkillFrontmatter,
+} from './skill-frontmatter.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -158,13 +161,6 @@ export const CONVENTION_CALLOUT_RE = /^>\s*\*\*Convention:\*\*[^\n]*brain-first/
  * phase as step 0 or phase 1.
  */
 export const PHASE_HEADING_RE = /^##+\s*(?:Phase\s*1|Step\s*0)\b[^\n]*brain/im;
-
-/**
- * Frontmatter fence regex used by body extraction. Conservative match:
- * leading `---\n` through the next `\n---` (greedy stop). Matches the
- * shape `parseSkillFrontmatter` already accepts.
- */
-const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
 
 // ---------------------------------------------------------------------------
 // Hardcoded EXEMPT_SKILLS (CMT1 — replaces the dropped upgrade migration)
@@ -336,7 +332,7 @@ export function analyzeSkillBrainFirst(
  * in frontmatter must not count as the "first external reference."
  */
 export function stripFrontmatter(content: string): string {
-  return content.replace(FRONTMATTER_RE, '');
+  return stripSkillFrontmatter(content);
 }
 
 /**

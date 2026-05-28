@@ -106,6 +106,19 @@ body
     expect(entries.every(e => e.source === 'frontmatter')).toBe(true);
   });
 
+  test('skill with CRLF frontmatter registers on Windows checkouts', () => {
+    const skillsDir = makeSkillsDir();
+    writeSkill(
+      skillsDir,
+      'query',
+      skillWithTriggers('query', ['what is', 'who is']).replace(/\n/g, '\r\n'),
+    );
+
+    const entries = loadSkillTriggerIndex(skillsDir);
+    const triggers = entries.map(e => e.trigger).sort();
+    expect(triggers).toEqual(['what is', 'who is']);
+  });
+
   test('skill with no triggers: field → not registered, no error', () => {
     const skillsDir = makeSkillsDir();
     writeSkill(skillsDir, 'install', '# Deprecated skill — replaced by setup.\n\nNo frontmatter.\n');

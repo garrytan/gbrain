@@ -14,7 +14,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 COMMITTED="$REPO_ROOT/docs/eval/METRIC_GLOSSARY.md"
 TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
+COMMITTED_NORM="$(mktemp)"
+TMP_NORM="$(mktemp)"
+trap 'rm -f "$TMP" "$COMMITTED_NORM" "$TMP_NORM"' EXIT
 
 if [ ! -f "$COMMITTED" ]; then
   echo "ERROR: $COMMITTED not found." >&2
@@ -28,13 +30,15 @@ fi
 cd "$REPO_ROOT"
 # Render directly via bun + a one-liner that exposes the module function.
 bun -e "import { renderMetricGlossaryMarkdown } from './src/core/eval/metric-glossary.ts'; process.stdout.write(renderMetricGlossaryMarkdown());" > "$TMP"
+sed 's/\r$//' "$COMMITTED" > "$COMMITTED_NORM"
+sed 's/\r$//' "$TMP" > "$TMP_NORM"
 
-if ! diff -q "$COMMITTED" "$TMP" >/dev/null 2>&1; then
+if ! diff -q "$COMMITTED_NORM" "$TMP_NORM" >/dev/null 2>&1; then
   echo "ERROR: docs/eval/METRIC_GLOSSARY.md is stale." >&2
   echo "" >&2
   echo "Diff between committed and freshly-generated:" >&2
   echo "" >&2
-  diff -u "$COMMITTED" "$TMP" >&2 || true
+  diff -u "$COMMITTED_NORM" "$TMP_NORM" >&2 || true
   echo "" >&2
   echo "To regenerate: bun run scripts/generate-metric-glossary.ts" >&2
   exit 1

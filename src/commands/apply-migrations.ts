@@ -8,7 +8,6 @@
  *
  * Invoked from:
  *   - `gbrain upgrade` → runPostUpgrade() tail (Lane A-5)
- *   - package.json `postinstall` (Lane A-5)
  *   - explicit user / host-agent after registering new handlers (Lane C-1)
  */
 
@@ -279,10 +278,9 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
 
   const installed = VERSION.replace(/^v/, '').trim() || '0.0.0';
 
-  // First-install guard (postinstall hook calls us even on `bun add gbrain`
-  // before the user has run `gbrain init`). No config = no brain = nothing
-  // to migrate. Exit silently for --yes / --non-interactive so postinstall
-  // stays quiet; mention the init step when invoked interactively.
+  // First-install guard. No config = no brain = nothing to migrate. Exit
+  // silently for --yes / --non-interactive so scripted installs stay quiet;
+  // mention the init step when invoked interactively.
   if (!loadConfig()) {
     if (cli.list) console.log('No brain configured. Run `gbrain init` to set one up.');
     else if (cli.dryRun) console.log('No brain configured (run `gbrain init` first). Nothing to migrate.');

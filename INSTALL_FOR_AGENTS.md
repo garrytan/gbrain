@@ -27,11 +27,11 @@ bun install -g github:garrytan/gbrain
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
 restart the shell or add the PATH export to the shell profile.
 
-> **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`** (Bun
-> occasionally blocks the top-level postinstall hook on global installs, so schema
-> migrations don't run automatically), the CLI prints a recovery hint pointing at
-> [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain apply-migrations --yes`
-> to recover. If that doesn't work, fall back to the deterministic install path:
+> **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`**,
+> run `gbrain upgrade` after install. Package postinstall deliberately does not
+> open the user's brain or run migrations: PGLite may already be held by
+> `gbrain serve`, and PATH can resolve an older global `gbrain`. If that doesn't
+> work, fall back to the deterministic install path:
 >
 > ```bash
 > git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
@@ -247,9 +247,14 @@ If you installed via `git clone + bun link`:
 
 ```bash
 cd ~/gbrain && git pull origin master && bun install
-gbrain apply-migrations --yes         # apply schema migrations (idempotent)
+gbrain init --migrate-only            # apply schema migrations against the configured brain
+gbrain apply-migrations --yes         # apply orchestrator migrations (idempotent)
 gbrain post-upgrade                   # show migration notes for the version range
 ```
+
+For PGLite brains, stop or restart any long-running `gbrain serve` around the
+upgrade. PGLite is single-writer; upgrade commands must own the brain lock while
+schema and orchestrator migrations run.
 
 Then read `~/gbrain/skills/migrations/v<NEW_VERSION>.md` (and any intermediate
 versions you skipped) and run any backfill or verification steps it lists. Skipping

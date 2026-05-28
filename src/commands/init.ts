@@ -64,7 +64,7 @@ export async function runInit(args: string[]) {
 
   // Schema-only path: apply initSchema against the already-configured engine
   // without ever calling saveConfig. Used by apply-migrations, the stopgap
-  // script, and the postinstall hook. Bare `gbrain init` defaults to PGLite
+  // script, and explicit upgrade flows. Bare `gbrain init` defaults to PGLite
   // and overwrites any existing Postgres config — we must never take that
   // branch from a migration orchestrator.
   //
