@@ -112,8 +112,15 @@ export interface WithRetryOpts {
   signal?: AbortSignal;
   /** Audit-site label for observability. Must be in BATCH_AUDIT_SITES. */
   auditSite?: BatchAuditSite;
-  /** Per-attempt callback fires on each retry (attempt is 1-based). */
-  onRetry?: (attempt: number, err: unknown) => void;
+  /**
+   * Per-attempt callback fires on each retry (attempt is 1-based). May
+   * return a Promise; withRetry awaits it before sleeping + the next
+   * attempt. This lets the callback do pre-retry repair work (e.g.
+   * reconnect a dead pool) atomically with the retry — without await,
+   * an async onRetry is fire-and-forget and the retry races against
+   * unfinished repair, which is the singleton-null repro from PR #1416.
+   */
+  onRetry?: (attempt: number, err: unknown) => void | Promise<void>;
 }
 
 /**
@@ -227,7 +234,9 @@ export async function withRetry<T>(
       if (!isRetryableConnError(err)) throw err;
       lastErr = err;
       if (attempt >= maxRetries) break;
-      opts.onRetry?.(attempt + 1, err);
+      // Awaited so an async onRetry can complete pre-retry repair (e.g.
+      // engine.reconnect()) before the next attempt fires. See WithRetryOpts.
+      await opts.onRetry?.(attempt + 1, err);
       const delay = computeNextDelay(attempt, prevDelay, baseDelay, maxDelay, jitter);
       prevDelay = delay;
       await abortableSleep(delay, signal);

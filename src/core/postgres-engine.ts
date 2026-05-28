@@ -1897,7 +1897,7 @@ export class PostgresEngine implements BrainEngine {
         jitter: BULK_RETRY_OPTS.jitter,
         auditSite,
         signal,
-        onRetry: (attempt, err) => {
+        onRetry: async (attempt, err) => {
           // Compute delay for this attempt for the audit record. withRetry
           // re-computes internally; this mirrors the math so the audit value
           // matches what actually sleeps.
@@ -1906,6 +1906,22 @@ export class PostgresEngine implements BrainEngine {
           auditLogBatchRetry(auditSite, batchSize, attempt, delay, err);
           const msg = err instanceof Error ? err.message : String(err);
           process.stderr.write(`[${auditSite}] connection blip, retrying (attempt ${attempt}/${opts.maxRetries}): ${msg}\n`);
+          // Singleton-null repair: retry-matcher acknowledges
+          // "No database connection" as retryable (PR #1416), but the
+          // historical retry path did not re-establish the pool — all
+          // attempts hit the same null singleton and batches were lost.
+          // withRetry only fires onRetry after isRetryableConnError already
+          // matched, so the err here is always connection-class; mirror the
+          // supervisor pool-restart pattern (minions/supervisor.ts:600).
+          // engine.reconnect() no-ops when _savedConfig is null (module
+          // mode without a saved engine config) so it's safe to call.
+          try {
+            await this.reconnect();
+          } catch (reconnectErr) {
+            process.stderr.write(
+              `[${auditSite}] reconnect failed (will retry against existing pool): ${(reconnectErr as Error).message}\n`,
+            );
+          }
         },
       });
     } catch (err) {

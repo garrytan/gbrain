@@ -154,6 +154,69 @@ describe('withRetry primitive — v0.41.2.1 back-compat contract', () => {
     expect((received!.err as Error).message).toBe('Connection terminated unexpectedly');
   });
 
+  test('async onRetry is awaited before the next attempt (PR #1416 follow-up)', async () => {
+    // Without `await opts.onRetry?.(...)` in withRetry, async pre-retry
+    // repair work (e.g. engine.reconnect()) is fire-and-forget and the
+    // next attempt races against unfinished repair. The batchRetry
+    // path relies on this contract to reconnect a null singleton before
+    // the next attempt — see postgres-engine.ts:batchRetry.
+    const events: string[] = [];
+    let calls = 0;
+    await withRetry(
+      async () => {
+        calls++;
+        events.push(`attempt-${calls}-start`);
+        if (calls === 1) throw new Error('No database connection: connect() has not been called');
+        events.push(`attempt-${calls}-ok`);
+        return 'ok';
+      },
+      {
+        delayMs: 0,
+        onRetry: async () => {
+          events.push('onRetry-start');
+          // Force a microtask boundary so a non-awaited onRetry would
+          // resolve AFTER attempt-2-start. With proper await, this
+          // resolves BEFORE attempt-2-start.
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          events.push('onRetry-done');
+        },
+      },
+    );
+    expect(calls).toBe(2);
+    expect(events).toEqual([
+      'attempt-1-start',
+      'onRetry-start',
+      'onRetry-done',
+      'attempt-2-start',
+      'attempt-2-ok',
+    ]);
+  });
+
+  test('async onRetry that throws does not crash withRetry (best-effort repair)', async () => {
+    // engine.reconnect() can itself fail (pool restart still racing the
+    // dead pooler). withRetry should not swallow the original error path:
+    // a throwing onRetry currently propagates, which is the right call —
+    // surfaces the reconnect failure visibly instead of masking it. This
+    // test pins that behavior so a future "swallow onRetry errors" patch
+    // is a deliberate choice rather than an accident.
+    let calls = 0;
+    const promise = withRetry(
+      async () => {
+        calls++;
+        throw new Error('ECONNRESET');
+      },
+      {
+        delayMs: 0,
+        onRetry: async () => {
+          throw new Error('reconnect failed');
+        },
+      },
+    );
+    await expect(promise).rejects.toThrow('reconnect failed');
+    // Only the first attempt ran; onRetry threw before retry could fire.
+    expect(calls).toBe(1);
+  });
+
   test('delayMs default is 500ms when not specified', async () => {
     let calls = 0;
     const start = Date.now();
