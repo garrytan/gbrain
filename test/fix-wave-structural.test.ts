@@ -158,11 +158,32 @@ describe('v0.41.8.0 #1247/#1269/#1290 — drain last-retrieved before CLI discon
     expect(drainIdx).toBeLessThan(disconnectIdx);
   });
 
-  test('cli.ts uses shouldForceExitAfterMain only on the timeout path', () => {
+  test('cli.ts keeps drain-timeout force-exit gated by shouldForceExitAfterMain', () => {
     const src = readFileSync('src/cli.ts', 'utf8');
     expect(src).toMatch(/import\s+\{\s*shouldForceExitAfterMain\s*\}\s*from\s+['"]\.\/core\/cli-force-exit\.ts['"]/);
     // The force-exit gate MUST be conditioned on drainResult.outcome ==='timeout'
     expect(src).toMatch(/drainResult\.outcome\s*===\s*['"]timeout['"]/);
+  });
+
+  test('cli.ts arms the disconnect hard-deadline only inside finally', () => {
+    const src = readFileSync('src/cli.ts', 'utf8');
+    const localPath = src.match(/\/\/ Local engine path \(unchanged behavior[\s\S]+?^\}/m);
+    expect(localPath).not.toBeNull();
+    const block = localPath![0];
+    const tryIdx = block.indexOf('try {');
+    const finallyIdx = block.indexOf('} finally {');
+    expect(tryIdx).toBeGreaterThan(-1);
+    expect(finallyIdx).toBeGreaterThan(tryIdx);
+
+    const beforeTry = block.slice(0, tryIdx);
+    expect(beforeTry).not.toMatch(/forceExitTimer\s*=\s*setTimeout/);
+
+    const finallyBlock = block.slice(finallyIdx);
+    const timerIdx = finallyBlock.indexOf('forceExitTimer = setTimeout');
+    const disconnectIdx = finallyBlock.indexOf('await engine.disconnect()');
+    expect(timerIdx).toBeGreaterThan(-1);
+    expect(disconnectIdx).toBeGreaterThan(-1);
+    expect(timerIdx).toBeLessThan(disconnectIdx);
   });
 
   test('cli-force-exit.ts daemon guard excludes "serve"', () => {

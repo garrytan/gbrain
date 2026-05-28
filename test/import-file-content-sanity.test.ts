@@ -193,6 +193,30 @@ describe('importFromContent — soft-block (D9 transition + embed_skip)', () => 
       expect(chunks.length).toBe(0);
     });
   });
+
+  test('stale embed_skip is removed when current content no longer soft-blocks', async () => {
+    await withIsolatedHome(async () => {
+      const content = `---
+title: 'Test Page'
+type: note
+created: 2026-05-24
+embed_skip:
+  reason: oversized
+  bytes: 600000
+  assessed_at: '2026-05-24T00:00:00.000Z'
+---
+
+${'a'.repeat(100_000)}`;
+      const result = await importFromContent(engine, 'test/recovered-big', content, { noEmbed: true });
+      expect(result.status).toBe('imported');
+      const page = await engine.getPage('test/recovered-big');
+      expect(page).not.toBeNull();
+      const fm = page!.frontmatter as Record<string, unknown>;
+      expect(isEmbedSkipped(fm)).toBe(false);
+      const chunks = await engine.getChunks('test/recovered-big');
+      expect(chunks.length).toBeGreaterThan(0);
+    });
+  });
 });
 
 describe('importFromContent — kill-switch bypass', () => {

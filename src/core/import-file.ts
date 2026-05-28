@@ -377,6 +377,12 @@ export async function importFromContent(
         );
       }
     }
+    // If the page used to be soft-blocked but is now below the block
+    // threshold (or sanity is explicitly bypassed), remove the stale marker
+    // so the normal chunk/embed path can recover it.
+    if (sanityDisabled || !sanityResult.shouldSkipEmbed) {
+      delete parsed.frontmatter[EMBED_SKIP_KEY];
+    }
   }
 
   // v0.39.3.0 CV8 — DB content_hash excludes timestamp-bearing frontmatter
