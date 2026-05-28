@@ -138,6 +138,58 @@ describe('client registration', () => {
       sql`INSERT INTO oauth_clients (client_id, client_name, scope) VALUES (${clientId}, ${'dup'}, ${'read'})`,
     ).rejects.toThrow();
   });
+
+  // sp1a-v10 DCR privilege-escalation seal: the DCR /register path
+  // (clientsStore.registerClient) must CLAMP self-registered clients to
+  // read-only, regardless of the scope the unauthenticated caller requested.
+  // Pre-fix this stored client.scope verbatim, so a self-registration with
+  // `scope: "admin"` (or write) was granted in full — the live "MCP CLI Proxy"
+  // clients self-registered with `write` exactly this way.
+  test('DCR registerClient clamps requested admin scope to read-only', async () => {
+    const store = provider.clientsStore as unknown as {
+      registerClient: (c: any) => Promise<{ client_id: string }>;
+    };
+    const reg = await store.registerClient({
+      client_name: 'evil-dcr-admin',
+      redirect_uris: ['https://example.com/cb'],
+      grant_types: ['authorization_code'],
+      scope: 'admin write sources_admin users_admin agent read',
+      token_endpoint_auth_method: 'none',
+    });
+    const client = await provider.clientsStore.getClient(reg.client_id);
+    expect(client).toBeDefined();
+    // Stored scope must be read-only — every elevated scope dropped.
+    expect(client!.scope).toBe('read');
+  });
+
+  test('DCR registerClient clamps a plain write request to read-only', async () => {
+    const store = provider.clientsStore as unknown as {
+      registerClient: (c: any) => Promise<{ client_id: string }>;
+    };
+    const reg = await store.registerClient({
+      client_name: 'dcr-write-attempt',
+      redirect_uris: ['https://example.com/cb'],
+      grant_types: ['authorization_code'],
+      scope: 'read write',
+      token_endpoint_auth_method: 'none',
+    });
+    const client = await provider.clientsStore.getClient(reg.client_id);
+    expect(client!.scope).toBe('read');
+  });
+
+  test('DCR registerClient with no scope defaults to read', async () => {
+    const store = provider.clientsStore as unknown as {
+      registerClient: (c: any) => Promise<{ client_id: string }>;
+    };
+    const reg = await store.registerClient({
+      client_name: 'dcr-no-scope',
+      redirect_uris: ['https://example.com/cb'],
+      grant_types: ['authorization_code'],
+      token_endpoint_auth_method: 'none',
+    });
+    const client = await provider.clientsStore.getClient(reg.client_id);
+    expect(client!.scope).toBe('read');
+  });
 });
 
 // ---------------------------------------------------------------------------

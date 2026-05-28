@@ -235,6 +235,41 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // is operator-trusted).
     assertAllowedScopes(parseScopeString(client.scope));
 
+    // sp1a-v10 SECURITY (DCR privilege-escalation seal): Dynamic Client
+    // Registration is reachable by ANY unauthenticated network caller when
+    // --enable-dcr is on. Pre-fix, registerClient persisted client.scope
+    // VERBATIM — a self-registering client could request `scope: "admin"`
+    // (or write / sources_admin / users_admin / agent) and the brain would
+    // grant it, with no operator in the loop. Two live "MCP CLI Proxy"
+    // clients self-registered with `write` this way.
+    //
+    // Fix: CLAMP every DCR-registered client to READ-ONLY at the source. A
+    // self-registered client may observe (read) but never mutate (write) or
+    // administer (admin/*_admin) the brain, and never dispatch agents
+    // (agent). Operators who legitimately need a write/admin client register
+    // it deliberately via the CLI (`gbrain auth register-client`) or the
+    // authenticated admin endpoint — both of which are operator-trusted and
+    // unaffected by this clamp. To widen a DCR client later, an operator
+    // re-scopes it explicitly via the CLI.
+    //
+    // This is defense-in-depth: even with DCR disabled at the serve flag
+    // (sp1a-v10 ships --enable-dcr OFF), the hole is now structurally closed
+    // so re-enabling DCR can never re-open the escalation path.
+    // Always read-only, regardless of what the caller requested. We log the
+    // downgrade when the caller asked for more so operators can audit DCR
+    // attempts that wanted elevated scope.
+    const clampedScope = 'read';
+    const requestedScopeStr = (client.scope || '').trim();
+    if (requestedScopeStr && requestedScopeStr !== clampedScope) {
+      try {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[oauth][dcr] client "${client.client_name || 'unnamed'}" requested scope "${requestedScopeStr}"; ` +
+            `clamped to "${clampedScope}" (DCR clients are read-only — re-scope via CLI if write/admin is needed).`,
+        );
+      } catch { /* best effort */ }
+    }
+
     // v0.41.3 (T5): validate token_endpoint_auth_method on the DCR path so
     // `--enable-dcr` is not the looser entry point. CLI and admin paths gate
     // through the same `validateTokenEndpointAuthMethod` helper — all three
@@ -272,7 +307,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
         VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                 ${pgArray((client.redirect_uris || []).map(String))},
                 ${pgArray(client.grant_types || ['client_credentials'])},
-                ${client.scope || ''}, ${authMethod},
+                ${clampedScope}, ${authMethod},
                 ${now}, ${'default'}, ${pgArray(['default'])})
       `;
     } catch (err) {
@@ -285,7 +320,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
             VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                     ${pgArray((client.redirect_uris || []).map(String))},
                     ${pgArray(client.grant_types || ['client_credentials'])},
-                    ${client.scope || ''}, ${authMethod},
+                    ${clampedScope}, ${authMethod},
                     ${now}, ${'default'})
           `;
         } catch (err2) {
@@ -297,7 +332,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
               VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                       ${pgArray((client.redirect_uris || []).map(String))},
                       ${pgArray(client.grant_types || ['client_credentials'])},
-                      ${client.scope || ''}, ${authMethod},
+                      ${clampedScope}, ${authMethod},
                       ${now})
             `;
           } else {
@@ -312,7 +347,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
           VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                   ${pgArray((client.redirect_uris || []).map(String))},
                   ${pgArray(client.grant_types || ['client_credentials'])},
-                  ${client.scope || ''}, ${authMethod},
+                  ${clampedScope}, ${authMethod},
                   ${now})
         `;
       } else {

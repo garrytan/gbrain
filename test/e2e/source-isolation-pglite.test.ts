@@ -349,3 +349,144 @@ describe('resolve_slugs tenant isolation (fix/resolve-slugs-tenant-isolation)', 
     expect(result).toEqual(['people/bob']);
   });
 });
+
+/**
+ * put_page source-selector regression (fix/put-page-source-selector — sp1a-v10).
+ *
+ * Pre-fix bug: the `put_page` op had NO `source` param and always wrote to the
+ * token's `ctx.sourceId`. An admin / multi-source agent could not target a
+ * different source per-write (a page with frontmatter `source: confer-ops`
+ * still landed in `default`). sp1a-v10 adds an optional `source` param gated by
+ * a permission check:
+ *   - admin / sources_admin scope → may write to ANY source.
+ *   - any other (remote) scope    → may ONLY write to its own ctx.sourceId;
+ *                                    targeting another source is rejected
+ *                                    (permission_denied) — no privilege escalation.
+ *   - omitted `source`            → unchanged: writes to ctx.sourceId.
+ *
+ * Seed (beforeEach): sources 'default' and 'src-b' both exist.
+ */
+describe('put_page source selector (fix/put-page-source-selector — sp1a-v10)', () => {
+  const baseCtx = () => ({
+    engine,
+    config: { engine: 'pglite' as const },
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    dryRun: false,
+    remote: true,
+  });
+
+  const putPageOp = async () => {
+    const { operations } = await import('../../src/core/operations.ts');
+    const op = operations.find(o => o.name === 'put_page');
+    expect(op).toBeDefined();
+    return op!;
+  };
+
+  const md = (title: string) =>
+    `---\ntitle: ${title}\ntype: note\n---\n\n${title} body — enough prose to be a real page.`;
+
+  test('schema exposes an optional `source` param', async () => {
+    const op = await putPageOp();
+    expect(op.params.source).toBeDefined();
+    expect(op.params.source!.required).not.toBe(true);
+  });
+
+  test('admin token can write to a NON-own source and it lands there', async () => {
+    const op = await putPageOp();
+    const ctx = {
+      ...baseCtx(),
+      sourceId: 'default', // token's own source is default
+      auth: {
+        token: 'test',
+        clientId: 'admin-client',
+        scopes: ['admin'],
+        sourceId: 'default',
+      },
+    };
+    const res = (await op.handler(ctx as any, {
+      slug: 'notes/admin-cross',
+      content: md('Admin Cross-Source'),
+      source: 'src-b', // target a source OTHER than the token's own
+    })) as { source?: string; status?: string };
+    expect(res.source).toBe('src-b');
+
+    // Landed in src-b, NOT in default.
+    const inB = await engine.getPage('notes/admin-cross', { sourceId: 'src-b' });
+    expect(inB).toBeTruthy();
+    const inDefault = await engine.getPage('notes/admin-cross', { sourceId: 'default' });
+    expect(inDefault).toBeFalsy();
+  });
+
+  test('sources_admin token can also target a non-own source', async () => {
+    const op = await putPageOp();
+    const ctx = {
+      ...baseCtx(),
+      sourceId: 'default',
+      auth: { token: 't', clientId: 'sa', scopes: ['sources_admin'], sourceId: 'default' },
+    };
+    const res = (await op.handler(ctx as any, {
+      slug: 'notes/sa-cross',
+      content: md('SA Cross'),
+      source: 'src-b',
+    })) as { source?: string };
+    expect(res.source).toBe('src-b');
+    expect(await engine.getPage('notes/sa-cross', { sourceId: 'src-b' })).toBeTruthy();
+  });
+
+  test('non-admin (write) token CANNOT write outside its own source', async () => {
+    const op = await putPageOp();
+    const ctx = {
+      ...baseCtx(),
+      sourceId: 'default',
+      auth: { token: 't', clientId: 'writer', scopes: ['write'], sourceId: 'default' },
+    };
+    let threw = false;
+    try {
+      await op.handler(ctx as any, {
+        slug: 'notes/escalation-attempt',
+        content: md('Escalation'),
+        source: 'src-b', // outside its own source — must be rejected
+      });
+    } catch (e: any) {
+      threw = true;
+      expect(e.code).toBe('permission_denied');
+    }
+    expect(threw).toBe(true);
+    // Nothing leaked into src-b.
+    expect(await engine.getPage('notes/escalation-attempt', { sourceId: 'src-b' })).toBeFalsy();
+    expect(await engine.getPage('notes/escalation-attempt', { sourceId: 'default' })).toBeFalsy();
+  });
+
+  test('non-admin token MAY pass its OWN source explicitly (no-op, not rejected)', async () => {
+    const op = await putPageOp();
+    const ctx = {
+      ...baseCtx(),
+      sourceId: 'src-b',
+      auth: { token: 't', clientId: 'writer-b', scopes: ['write'], sourceId: 'src-b' },
+    };
+    const res = (await op.handler(ctx as any, {
+      slug: 'notes/own-explicit',
+      content: md('Own Explicit'),
+      source: 'src-b', // == own source → allowed
+    })) as { source?: string };
+    expect(res.source).toBe('src-b');
+    expect(await engine.getPage('notes/own-explicit', { sourceId: 'src-b' })).toBeTruthy();
+  });
+
+  test('omitted source still writes to the token source_id (unchanged behavior)', async () => {
+    const op = await putPageOp();
+    const ctx = {
+      ...baseCtx(),
+      sourceId: 'src-b',
+      auth: { token: 't', clientId: 'writer-b', scopes: ['write'], sourceId: 'src-b' },
+    };
+    const res = (await op.handler(ctx as any, {
+      slug: 'notes/omitted-src',
+      content: md('Omitted Source'),
+      // no `source` param
+    })) as { source?: string };
+    expect(res.source).toBe('src-b');
+    expect(await engine.getPage('notes/omitted-src', { sourceId: 'src-b' })).toBeTruthy();
+    expect(await engine.getPage('notes/omitted-src', { sourceId: 'default' })).toBeFalsy();
+  });
+});
