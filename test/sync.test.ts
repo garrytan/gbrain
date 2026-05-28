@@ -539,6 +539,58 @@ describe('performSync dry-run never writes', () => {
     expect(page).not.toBeNull();
     expect(page!.title).toBe('Detached NoPull');
   });
+
+  test('source-scoped no-op sync refreshes last_sync_at so doctor stops reporting stale freshness', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ('kayako', 'Kayako', $1, '{}'::jsonb)
+       ON CONFLICT (id) DO UPDATE
+       SET name = EXCLUDED.name,
+           local_path = EXCLUDED.local_path,
+           config = EXCLUDED.config`,
+      [repoPath],
+    );
+
+    const seeded = await performSync(engine, {
+      repoPath,
+      sourceId: 'kayako',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(seeded.status).toBe('first_sync');
+
+    await engine.executeRaw(
+      `UPDATE sources
+       SET last_sync_at = $1
+       WHERE id = 'kayako'`,
+      [new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString()],
+    );
+
+    const staleBefore = await checkSyncFreshness(engine);
+    expect(staleBefore.status).toBe('fail');
+
+    const refreshed = await performSync(engine, {
+      repoPath,
+      sourceId: 'kayako',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(refreshed.status).toBe('up_to_date');
+
+    const freshnessAfter = await checkSyncFreshness(engine);
+    expect(freshnessAfter.status).toBe('ok');
+
+    const rows = await engine.executeRaw<{ last_sync_at: Date | string | null }>(
+      `SELECT last_sync_at FROM sources WHERE id = 'kayako'`,
+    );
+    expect(rows[0]?.last_sync_at).not.toBeNull();
+    expect(new Date(rows[0]!.last_sync_at!).getTime()).toBeGreaterThan(Date.now() - 60_000);
+  });
 });
 
 describe('sync regression — #132 nested transaction deadlock', () => {
