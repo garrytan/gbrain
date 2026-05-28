@@ -156,7 +156,7 @@ export interface GBrainConfig {
      *  `GBRAIN_PAGE_WARN_BYTES`. */
     bytes_warn?: number;
     /** Soft-block: page writes with `frontmatter.embed_skip` set but
-     *  embedder skips on next sweep. Default: 500_000. Env override:
+     *  embedder skips on next sweep. Default: 2_000_000. Env override:
      *  `GBRAIN_PAGE_BLOCK_BYTES`. */
     bytes_block?: number;
     /** Master switch for the built-in junk-pattern set. Default: true.

@@ -154,8 +154,8 @@ A legitimate essay about handling access-denied errors in your app.`;
 describe('importFromContent — soft-block (D9 transition + embed_skip)', () => {
   test('soft-block writes page with embed_skip frontmatter marker', async () => {
     await withIsolatedHome(async () => {
-      // 600K of clean text → soft-block (oversize but no junk pattern).
-      const content = FRONTMATTER + 'a'.repeat(600_000);
+      // 2.1MB of clean text → soft-block (oversize but no junk pattern).
+      const content = FRONTMATTER + 'a'.repeat(2_100_000);
       const result = await importFromContent(engine, 'test/big', content, { noEmbed: true });
       expect(result.status).not.toBe('error');
       const page = await engine.getPage('test/big');
@@ -164,7 +164,7 @@ describe('importFromContent — soft-block (D9 transition + embed_skip)', () => 
       expect(isEmbedSkipped(fm)).toBe(true);
       const marker = fm[EMBED_SKIP_KEY] as Record<string, unknown>;
       expect(marker.reason).toBe('oversized');
-      expect(marker.bytes).toBeGreaterThan(500_000);
+      expect(marker.bytes).toBeGreaterThan(2_000_000);
     });
   });
 
@@ -177,7 +177,7 @@ describe('importFromContent — soft-block (D9 transition + embed_skip)', () => 
       expect(beforeChunks.length).toBeGreaterThan(0);
 
       // Now re-import with content that grew past the block threshold.
-      const big = FRONTMATTER + 'a'.repeat(600_000);
+      const big = FRONTMATTER + 'a'.repeat(2_100_000);
       await importFromContent(engine, 'test/grow', big, { noEmbed: true });
       const afterChunks = await engine.getChunks('test/grow');
       // D9: transition to embed_skip should delete chunks.
@@ -187,7 +187,7 @@ describe('importFromContent — soft-block (D9 transition + embed_skip)', () => 
 
   test('soft-block skips chunking entirely (no new chunks created)', async () => {
     await withIsolatedHome(async () => {
-      const content = FRONTMATTER + 'a'.repeat(600_000);
+      const content = FRONTMATTER + 'a'.repeat(2_100_000);
       await importFromContent(engine, 'test/big2', content, { noEmbed: true });
       const chunks = await engine.getChunks('test/big2');
       expect(chunks.length).toBe(0);
@@ -264,9 +264,9 @@ describe('importFromContent — normal pages unaffected', () => {
     });
   });
 
-  test('warn-tier page (50K-500K body) lands normally without embed_skip', async () => {
+  test('warn-tier page (50K-2MB body) lands normally without embed_skip', async () => {
     await withIsolatedHome(async () => {
-      const content = FRONTMATTER + 'a'.repeat(100_000);
+      const content = FRONTMATTER + 'a'.repeat(600_000);
       const result = await importFromContent(engine, 'test/warn', content, { noEmbed: true });
       expect(result.status).toBe('imported');
       const page = await engine.getPage('test/warn');
