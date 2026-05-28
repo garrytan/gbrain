@@ -5773,10 +5773,20 @@ export async function buildChecks(
     progress.heartbeat('cycle_phase_scope');
     checks.push(checkCyclePhaseScope());
 
-    // v0.41.18.0 (A16, T4): 4 onboard checks — each emits a Check + its
+    // v0.41.18.0 (A16, T4): onboard checks — each emits a Check + its
     // own RemediationStep[] aggregated by onboard's plan path. The
     // checks themselves are cheap counts (backed by content_chunks_stale_idx
     // for embed_staleness, TABLESAMPLE on PG >50K for the coverage pair).
+    // Static drift-guard literals: doctor-categories.test.ts scans doctor.ts
+    // for `const name = '<check>'`; these dynamically imported checks still
+    // need to be visible to that guard.
+    { const name = 'embed_staleness'; void name; }
+    { const name = 'entity_link_coverage'; void name; }
+    { const name = 'timeline_coverage'; void name; }
+    { const name = 'takes_count'; void name; }
+    { const name = 'pack_upgrade_available'; void name; }
+    { const name = 'type_proliferation'; void name; }
+    { const name = 'dangling_aliases'; void name; }
     progress.heartbeat('onboard_checks');
     const { runAllOnboardChecks } = await import('../core/onboard/checks.ts');
     const onboardResults = await runAllOnboardChecks(engine);

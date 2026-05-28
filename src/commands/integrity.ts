@@ -65,7 +65,7 @@ const BARE_TWEET_PHRASES = [
   /\bon (?:a |the )?(?:recent |viral )?tweet\b/i,
   /\bwrote (?:a |the )?(?:tweet|post)\b/i,
   /\bposted on X\b/i,
-  /\bvia X\b(?!\s*\/)/i, // "via X" but not "via X/handle" (already cited)
+  /\bvia X\b(?!\s*(?:\/|-))/i, // "via X" but not "via X/handle" or X-* headers (already cited / API header)
   /\bhis (?:recent |)tweet\b/i,
   /\bher (?:recent |)tweet\b/i,
   /\btheir (?:recent |)tweet\b/i,

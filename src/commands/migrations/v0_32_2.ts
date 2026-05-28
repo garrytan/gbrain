@@ -186,17 +186,6 @@ async function phaseBFenceFacts(
     const localPathById = new Map<string, string | null>();
     for (const s of sources) localPathById.set(s.id, s.local_path);
 
-    // Dirty-tree refusal: check every source's local_path before writing.
-    for (const [id, localPath] of localPathById) {
-      if (localPath && isLocalPathDirty(localPath)) {
-        return {
-          name: 'fence_facts',
-          status: 'failed',
-          detail: `source "${id}" has uncommitted changes in ${localPath}. Commit or stash, then re-run.`,
-        };
-      }
-    }
-
     // Walk legacy rows in (source_id, entity_slug) groups for per-page
     // atomic writes.
     const legacy = await engine.executeRaw<LegacyFactRow>(
@@ -206,6 +195,27 @@ async function phaseBFenceFacts(
         WHERE row_num IS NULL
         ORDER BY source_id, entity_slug, id`,
     );
+
+    // Dirty-tree refusal: check only sources that would actually receive
+    // fence writes. Broadly checking every registered source blocks DB-only
+    // brains when an unrelated source repo is intentionally dirty (for
+    // example, an indexed code checkout with no legacy facts to fence).
+    const sourceIdsNeedingWrites = new Set<string>();
+    for (const row of legacy) {
+      if (row.entity_slug === null) continue;
+      if (!localPathById.get(row.source_id)) continue;
+      sourceIdsNeedingWrites.add(row.source_id);
+    }
+    for (const id of sourceIdsNeedingWrites) {
+      const localPath = localPathById.get(id);
+      if (localPath && isLocalPathDirty(localPath)) {
+        return {
+          name: 'fence_facts',
+          status: 'failed',
+          detail: `source "${id}" has uncommitted changes in ${localPath}. Commit or stash, then re-run.`,
+        };
+      }
+    }
 
     const outcome: PhaseBOutcome = {
       scanned: legacy.length,

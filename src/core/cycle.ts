@@ -1874,13 +1874,31 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.conversation_facts_backfill');
-        const { runPhaseConversationFactsBackfill } = await import('./cycle/conversation-facts-backfill.ts');
-        const { result, duration_ms } = await timePhase(() =>
-          runPhaseConversationFactsBackfill(engine, { dryRun, signal: opts.signal }),
-        );
-        result.duration_ms = duration_ms;
-        phaseResults.push(result);
-        progress.finish();
+        try {
+          const { runPhaseConversationFactsBackfill } = await import('./cycle/conversation-facts-backfill.ts');
+          const { result, duration_ms } = await timePhase(() =>
+            runPhaseConversationFactsBackfill(engine, { dryRun, signal: opts.signal }),
+          );
+          result.duration_ms = duration_ms;
+          phaseResults.push(result);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          if (opts.signal?.aborted || /^\[cycle\] aborted\b/.test(message)) {
+            throw e;
+          }
+          // conversation_facts_backfill is explicitly opt-in and non-critical.
+          // A failure here must not prevent a source-scoped cycle from writing
+          // last_full_cycle_at after all core maintenance phases completed.
+          phaseResults.push({
+            phase: 'conversation_facts_backfill',
+            status: 'warn',
+            duration_ms: 0,
+            summary: `optional phase failed: ${message}`,
+            details: { optional: true },
+          });
+        } finally {
+          progress.finish();
+        }
       }
       await safeYield(opts.yieldBetweenPhases);
     }

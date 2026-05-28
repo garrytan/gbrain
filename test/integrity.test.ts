@@ -81,6 +81,16 @@ describe('findBareTweetHits', () => {
     expect(hits).toEqual([]);
   });
 
+  test('does NOT trigger on X-prefixed API headers', () => {
+    const compiled = [
+      'continuity via X-Example-Session-Id header',
+      'memory scoping via X-Example-Session-Key header',
+      'API keys via x-api-key, not OAuth tokens',
+    ].join('\n');
+    const hits = findBareTweetHits(compiled, 'agent/api');
+    expect(hits).toEqual([]);
+  });
+
   test('only one hit per line even if multiple phrases match', () => {
     const hits = findBareTweetHits('He tweeted about it in a tweet later.', 'people/x');
     expect(hits).toHaveLength(1);

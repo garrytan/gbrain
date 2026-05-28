@@ -239,6 +239,10 @@ export async function runPhaseConversationFactsBackfill(
             );
             break;
           }
+          const message = err instanceof Error ? err.message : String(err);
+          if (opts.signal?.aborted || message === 'aborted' || /^\[cycle\] aborted\b/.test(message)) {
+            throw err;
+          }
           // Per-source failure: record + continue with next source.
           perSourceResults[src.id] = {
             pages_considered: 0,

@@ -306,13 +306,19 @@ async function resolveLintContentSanity(): Promise<LintContentOpts['contentSanit
   if (hasEngineConfig) {
     try {
       const { createEngine } = await import('../core/engine-factory.ts');
-      const engine = await createEngine({
+      const engineConfig = {
         engine: base!.engine,
         database_url: base!.database_url,
         database_path: base!.database_path,
-      });
+      };
+      const engine = await createEngine(engineConfig);
       try {
-        await engine.connect({});
+        // Use an instance-owned Postgres pool for this best-effort probe so
+        // lint-as-a-library does not connect/disconnect the module-level DB
+        // singleton owned by its caller (for example `gbrain dream`, which
+        // holds a cycle lock on that connection while running lint first).
+        await (engine as { connect(config: typeof engineConfig & { poolSize?: number }): Promise<void> })
+          .connect({ ...engineConfig, poolSize: 1 });
         const lifted = await loadConfigWithEngine(engine, base);
         cs = lifted?.content_sanity ?? cs;
       } finally {

@@ -387,6 +387,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   //      last_full_cycle_at to an archived source would mask data
   //      staleness when the source is later restored)
   let resolvedSourceId: string | undefined;
+  let resolvedSourceLocalPath: string | null = null;
   if (opts.source !== null) {
     if (engine === null) {
       console.error(
@@ -418,9 +419,10 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
       );
       process.exit(1);
     }
+    resolvedSourceLocalPath = src?.local_path ?? null;
   }
 
-  const brainDir = await resolveBrainDir(engine, opts.dir);
+  const brainDir = await resolveBrainDir(engine, opts.dir ?? resolvedSourceLocalPath);
   const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
 
   const report = await runCycle(engine, {

@@ -104,5 +104,11 @@ describe('dream CLI flag wiring', () => {
       expect(dreamSrc).toMatch(/source.*is archived/);
       expect(dreamSrc).toContain('gbrain sources restore');
     });
+
+    test('uses the selected source local_path as the default brainDir', () => {
+      expect(dreamSrc).toContain('resolvedSourceLocalPath');
+      expect(dreamSrc).toContain('src?.local_path ?? null');
+      expect(dreamSrc).toContain('resolveBrainDir(engine, opts.dir ?? resolvedSourceLocalPath)');
+    });
   });
 });

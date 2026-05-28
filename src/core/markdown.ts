@@ -282,7 +282,13 @@ function collectValidationErrors(
   // 7. SLUG_MISMATCH — only when expectedSlug was provided and a slug field exists.
   if (ctx.expectedSlug && typeof ctx.parsedFrontmatter.slug === 'string') {
     const declared = ctx.parsedFrontmatter.slug as string;
-    if (declared !== ctx.expectedSlug) {
+    // Docusaurus docs commonly declare `slug: /` on index.md/mdx files to
+    // make the docs landing page live at the route root. That is not spoofed
+    // brain frontmatter; it is framework routing metadata. GBrain should not
+    // force those source files to break Docusaurus routing just to satisfy the
+    // path-derived anti-spoof rule.
+    const isDocusaurusIndexRootSlug = declared === '/' && /(?:^|\/)index(?:\.mdx?)?$/.test(ctx.expectedSlug);
+    if (declared !== ctx.expectedSlug && !isDocusaurusIndexRootSlug) {
       errors.push({
         code: 'SLUG_MISMATCH',
         message: `Frontmatter slug "${declared}" does not match path-derived slug "${ctx.expectedSlug}"`,
