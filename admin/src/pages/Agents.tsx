@@ -780,7 +780,7 @@ function FederationModal({
                   display: 'flex',
                   alignItems: 'center',
                   gap: 10,
-                  padding: '8px 4px',
+                  padding: '8px 10px',
                   borderBottom: '1px solid var(--border)',
                   cursor: 'pointer',
                   fontSize: 13,
@@ -790,10 +790,11 @@ function FederationModal({
                   type="checkbox"
                   checked={selected.has(id)}
                   onChange={() => toggle(id)}
+                  style={{ width: 16, height: 16, margin: 0, flexShrink: 0, cursor: 'pointer' }}
                 />
-                <span className="mono" style={{ flex: 1 }}>{id}</span>
-                {isWriteSource && <span className="badge badge-write" style={{ fontSize: 10 }}>write source</span>}
-                {isOrphan && <span className="badge badge-danger" style={{ fontSize: 10 }}>missing source</span>}
+                <span className="mono" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{id}</span>
+                {isWriteSource && <span className="badge badge-write" style={{ fontSize: 10, flexShrink: 0 }}>write source</span>}
+                {isOrphan && <span className="badge badge-danger" style={{ fontSize: 10, flexShrink: 0 }}>missing source</span>}
               </label>
             );
           })}
