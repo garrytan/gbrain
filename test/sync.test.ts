@@ -591,6 +591,86 @@ describe('performSync dry-run never writes', () => {
     expect(rows[0]?.last_sync_at).not.toBeNull();
     expect(new Date(rows[0]!.last_sync_at!).getTime()).toBeGreaterThan(Date.now() - 60_000);
   });
+
+  test('source-scoped no-op dry-run stays read-only and leaves stale freshness failing', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ('kayako', 'Kayako', $1, '{}'::jsonb)
+       ON CONFLICT (id) DO UPDATE
+       SET name = EXCLUDED.name,
+           local_path = EXCLUDED.local_path,
+           config = EXCLUDED.config`,
+      [repoPath],
+    );
+
+    const seeded = await performSync(engine, {
+      repoPath,
+      sourceId: 'kayako',
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(seeded.status).toBe('first_sync');
+
+    const staleSyncAt = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString();
+    const previousLastRun = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    await engine.executeRaw(
+      `UPDATE sources
+       SET last_sync_at = $1
+       WHERE id = 'kayako'`,
+      [staleSyncAt],
+    );
+    await engine.setConfig('sync.last_run', previousLastRun);
+
+    const before = await engine.executeRaw<{
+      last_commit: string | null;
+      last_sync_at: Date | string | null;
+      local_path: string | null;
+      chunker_version: string | null;
+    }>(
+      `SELECT last_commit, last_sync_at, local_path, chunker_version
+       FROM sources
+       WHERE id = 'kayako'`,
+    );
+    expect(before[0]).toBeDefined();
+    expect(before[0]?.last_sync_at).not.toBeNull();
+
+    const staleBefore = await checkSyncFreshness(engine);
+    expect(staleBefore.status).toBe('fail');
+
+    const preview = await performSync(engine, {
+      repoPath,
+      sourceId: 'kayako',
+      dryRun: true,
+      noPull: true,
+      noEmbed: true,
+      noExtract: true,
+    });
+    expect(preview.status).toBe('dry_run');
+
+    const staleAfter = await checkSyncFreshness(engine);
+    expect(staleAfter.status).toBe('fail');
+
+    const after = await engine.executeRaw<{
+      last_commit: string | null;
+      last_sync_at: Date | string | null;
+      local_path: string | null;
+      chunker_version: string | null;
+    }>(
+      `SELECT last_commit, last_sync_at, local_path, chunker_version
+       FROM sources
+       WHERE id = 'kayako'`,
+    );
+    expect(after[0]).toBeDefined();
+    expect(after[0]?.last_commit).toBe(before[0]?.last_commit);
+    expect(after[0]?.local_path).toBe(before[0]?.local_path);
+    expect(after[0]?.chunker_version).toBe(before[0]?.chunker_version);
+    expect(new Date(after[0]!.last_sync_at!).toISOString()).toBe(new Date(before[0]!.last_sync_at!).toISOString());
+    expect(await engine.getConfig('sync.last_run')).toBe(previousLastRun);
+  });
 });
 
 describe('sync regression — #132 nested transaction deadlock', () => {

@@ -543,6 +543,20 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       detachedWorkingTreeManifest.renamed.length > 0);
 
   if (lastCommit === headCommit && !versionMismatch && !versionNeverSet && !hasDetachedWorkingTreeChanges) {
+    if (opts.dryRun) {
+      console.log(`Sync dry run: ${lastCommit.slice(0, 8)}..${headCommit.slice(0, 8)}`);
+      console.log('  No syncable changes.');
+      return {
+        status: 'dry_run',
+        fromCommit: lastCommit,
+        toCommit: headCommit,
+        added: 0, modified: 0, deleted: 0, renamed: 0,
+        chunksCreated: 0,
+        embedded: 0,
+        pagesAffected: [],
+      };
+    }
+
     // A successful no-op sync still proves the source is current. Refresh
     // last_sync_at so doctor's freshness check reflects the maintainer run.
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
