@@ -87,6 +87,16 @@ describe('validateEmbeddingCreds', () => {
     }
   });
 
+  test('passes for litellm when a concrete model id is present', () => {
+    configureGateway(baseConfig({
+      embedding_model: 'litellm:bge-m3-emb',
+      embedding_dimensions: 1024,
+      env: { LITELLM_BASE_URL: 'http://emb.example/v1', LITELLM_API_KEY: 'sk-test' },
+      base_urls: { litellm: 'http://emb.example/v1' },
+    }));
+    expect(() => validateEmbeddingCreds()).not.toThrow();
+  });
+
   test('throws unknown_provider when embedding_model uses unknown provider', () => {
     configureGateway(baseConfig({ embedding_model: 'fakeprovider:embed-1', env: {} }));
     let caught: unknown;
