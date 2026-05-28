@@ -20,6 +20,9 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
+import type { ProgressReporter } from '../progress.ts';
+import { writeReceipt } from '../extract/receipt-writer.ts';
+import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
 
 const DEFAULT_BUDGET_USD = 1.5;
@@ -31,6 +34,13 @@ export interface SynthesizeConceptsOpts {
   brainDir?: string;
   dryRun?: boolean;
   yieldDuringPhase?: (() => Promise<void>) | undefined;
+  /**
+   * v0.41.19.0 (T4): progress reporter for in-phase ticks. Cycle.ts
+   * passes the SAME reporter (not a child — see extract-atoms.ts for
+   * the path-collision bug codex caught). Phases only call `tick()` /
+   * `heartbeat()`; cycle.ts owns start/finish.
+   */
+  progress?: ProgressReporter;
   /** Test seam: alternative chat function. */
   _chat?: typeof gatewayChat;
   /** Test seam: skip DB query; cluster these atoms directly. */
@@ -139,6 +149,26 @@ export async function runPhaseSynthesizeConcepts(
   const failures: Array<{ concept: string; error: string }> = [];
   const tierCounts = { T1: 0, T2: 0, T3: 0, T4: 0 };
 
+  // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
+  // every 30s — cycle.ts threads `buildYieldDuringPhase(lock, outer)` so
+  // each fire refreshes the cycle DB lock + the existing external hook.
+  // Pre-v0.41.19 the bare `if (opts.yieldDuringPhase) await ...()` at
+  // every iteration fired hundreds of times per phase; the 30s throttle
+  // matches the actual lock-refresh budget.
+  let lastYieldMs = Date.now();
+  async function maybeYield(): Promise<void> {
+    if (!opts.yieldDuringPhase) return;
+    const now = Date.now();
+    if (now - lastYieldMs < 30_000) return;
+    lastYieldMs = now;
+    try {
+      await opts.yieldDuringPhase();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[synthesize_concepts] yieldDuringPhase failed (non-fatal): ${msg}`);
+    }
+  }
+
   for (const group of atomGroups) {
     tierCounts[group.tier]++;
     let narrative: string;
@@ -164,6 +194,10 @@ export async function runPhaseSynthesizeConcepts(
             ],
             maxTokens: 500,
           });
+          // Post-await yield (T3): the LLM call is the main TTL hazard
+          // codex flagged. Throttle inside maybeYield bounds the actual
+          // refresh rate.
+          await maybeYield();
           // Sonnet at ~$3/M input + $15/M output
           estimatedSpendUsd +=
             (result.usage.input_tokens * 3.0 + result.usage.output_tokens * 15.0) / 1_000_000;
@@ -198,8 +232,47 @@ export async function runPhaseSynthesizeConcepts(
       });
     }
     conceptsWritten++;
+    // v0.41.19.0 (T4): one tick per concept group with running count.
+    opts.progress?.tick(1, `${conceptsWritten} concepts`);
 
-    if (opts.yieldDuringPhase) await opts.yieldDuringPhase();
+    // v0.41.19.0 (T3): replaced bare per-iteration fire with throttled
+    // helper. Same hook, same cycle-lock refresh effect, just at the
+    // right cadence (30s instead of every-group).
+    await maybeYield();
+  }
+
+  // v0.42 Wave B3: receipt + rollup for synthesize_concepts. Brain-global
+  // phase — uses 'default' source_id because concepts span sources. Receipt
+  // only fires when concepts were actually written; rollup always fires so
+  // doctor sees the phase ran.
+  if (!opts.dryRun && conceptsWritten > 0) {
+    const runId = `concepts-${Date.now().toString(36)}`;
+    try {
+      await writeReceipt(engine, {
+        kind: 'concepts',
+        source_id: 'default',
+        run_id: runId,
+        round: 'single',
+        extracted_at: new Date().toISOString(),
+        total_rows: conceptsWritten,
+        cost_usd: estimatedSpendUsd,
+        summary:
+          `Synthesized ${conceptsWritten} concepts ` +
+          `(T1=${tierCounts.T1} T2=${tierCounts.T2} T3=${tierCounts.T3}) ` +
+          `from ${atomGroups.length} groups across ${atoms.length} atoms.`,
+      });
+    } catch (err) {
+      console.error(`[synthesize_concepts] receipt write failed: ${(err as Error).message}`);
+    }
+  }
+  if (!opts.dryRun) {
+    await upsertExtractRollup(engine, {
+      kind: 'concepts',
+      source_id: 'default',
+      cost_delta: estimatedSpendUsd,
+      round_completed_delta: failures.length === 0 ? 1 : 0,
+      halt_delta: failures.length > 0 ? 1 : 0,
+    });
   }
 
   return {

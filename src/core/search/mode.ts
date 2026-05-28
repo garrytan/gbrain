@@ -610,7 +610,13 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // added under v=5 (per D8 sequencing — first to land claimed v=4; the
 // contextual-retrieval wave rebased to v=5). Mid-deploy hit-rate dip is
 // expected — clears within cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 5;
+//
+// v0.42 bump 5→6: alias_resolved_boost (T19, plan D6) adds a new post-fusion
+// stage. Results whose slug is a canonical_slug in slug_aliases get a
+// 1.05x multiplier. Cached pre-v0.42 entries don't reflect the boost so
+// must invalidate. Same one-time miss-spike pattern as prior bumps;
+// fills within cache.ttl_seconds (3600s default).
+export const KNOBS_HASH_VERSION = 6;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The

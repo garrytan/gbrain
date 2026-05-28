@@ -136,15 +136,13 @@ describe('cache gate end-to-end (PGLite)', () => {
     expect(hit.hit).toBe(true);
   });
 
-  test('legacy row (pre-v0.40.3.0 shape) serves normally — IRON-RULE backward compat', async () => {
+  test('v0.41.19.0 D20/CDX-6 inversion: legacy row (pre-v0.40.3.0 shape) invalidates when clock advances', async () => {
     const p1 = await seedPage('test/p1', 'gamma delta');
     const emb = fakeEmbedding(4);
     const results: SearchResult[] = [
       { page_id: p1, slug: 'test/p1', title: 'test/p1', snippet: 'g', score: 1.0 } as unknown as SearchResult,
     ];
-    // Simulate a pre-v0.40.3.0 row by writing with the new gate then
-    // hand-mutating page_generations + max_generation_at_store to the
-    // legacy shape.
+    // Simulate a pre-v0.40.3.0 row: empty snapshot + zero bookmark.
     await cache.store('gamma delta', emb, results, fakeMeta(), { sourceId: 'default' });
     await engine.executeRaw(
       `UPDATE query_cache
@@ -152,14 +150,66 @@ describe('cache gate end-to-end (PGLite)', () => {
               max_generation_at_store = 0`,
     );
 
-    // Now write a bunch of content so MAX(generation) > 0. The legacy
-    // row's bookmark (0) is less than MAX, so bookmark fires; Layer 2
-    // sees empty snapshot → vacuously valid → row serves.
+    // Write more pages. The global clock advances on every statement
+    // (statement-level trigger from migration v105). Pre-v0.41.19.0 the
+    // empty snapshot served vacuously here — that was the CDX-6 bug. Now:
+    // Layer 1 fails (clock > 0), Layer 2 rejects empty snapshots, row
+    // invalidates. Acceptable one-time post-upgrade cache miss; correct
+    // semantics restored.
     await seedPage('test/p2', 'unrelated bump');
     await seedPage('test/p3', 'another unrelated bump');
 
     const hit = await cache.lookup(emb, { sourceId: 'default' });
-    expect(hit.hit).toBe(true); // Legacy compat — pre-upgrade rows still serve.
+    expect(hit.hit).toBe(false);
+  });
+
+  test('v0.41.19.0 CDX-1 regression: DELETE bumps clock → cached query for surviving pages invalidates', async () => {
+    const p1 = await seedPage('test/p1', 'phi chi');
+    const p2 = await seedPage('test/p2', 'phi chi extra');
+    const results: SearchResult[] = [
+      { page_id: p1, slug: 'test/p1', title: 'test/p1', snippet: 'p', score: 1.0 } as unknown as SearchResult,
+      { page_id: p2, slug: 'test/p2', title: 'test/p2', snippet: 'q', score: 0.9 } as unknown as SearchResult,
+    ];
+    const emb = fakeEmbedding(7);
+    await cache.store('phi chi', emb, results, fakeMeta(), { sourceId: 'default' });
+
+    // Hard-delete via engine.deletePage. Pre-v0.41.19.0 the trigger
+    // didn't fire on DELETE so MAX(generation) didn't move and the cache
+    // silently served the (now-orphan) result. Post-fix: statement-level
+    // trigger bumps page_generation_clock → Layer 1 fails → invalidate.
+    await engine.deletePage('test/p1', { sourceId: 'default' });
+
+    const hit = await cache.lookup(emb, { sourceId: 'default' });
+    expect(hit.hit).toBe(false);
+  });
+
+  test('v0.41.19.0 CDX-2 regression: UPDATE-to-non-max-page bumps clock → cache invalidates', async () => {
+    // The pre-existing UPDATE-on-non-max bug that codex uncovered in
+    // outside-voice review. Sequence: insert p1 (gen=1), insert p2 (gen=2)
+    // so MAX=2. Cache a query referencing only p1. UPDATE p1's compiled_truth
+    // → row-level trigger sets p1.generation = OLD + 1 = 2 (NOT advancing
+    // MAX). Pre-fix: Layer 1 (MAX(generation)=2) <= stored (>=2) → cache
+    // served stale. Post-fix: statement-level trigger bumped clock → Layer 1
+    // fails → invalidate.
+    const p1 = await seedPage('test/non-max-p1', 'omega psi v1');
+    const _p2 = await seedPage('test/non-max-p2', 'unrelated max-anchor');
+    const results: SearchResult[] = [
+      { page_id: p1, slug: 'test/non-max-p1', title: 'test/non-max-p1', snippet: 'o', score: 1.0 } as unknown as SearchResult,
+    ];
+    const emb = fakeEmbedding(8);
+    await cache.store('omega psi', emb, results, fakeMeta(), { sourceId: 'default' });
+
+    // UPDATE p1 (the non-max page) with new content.
+    await engine.putPage('test/non-max-p1', {
+      type: 'note',
+      title: 'test/non-max-p1',
+      compiled_truth: 'omega psi v2 — modified',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    const hit = await cache.lookup(emb, { sourceId: 'default' });
+    expect(hit.hit).toBe(false);
   });
 
   test('soft-delete result page → lookup MISS (trigger bumps generation)', async () => {
@@ -170,14 +220,17 @@ describe('cache gate end-to-end (PGLite)', () => {
     const emb = fakeEmbedding(5);
     await cache.store('epsilon', emb, results, fakeMeta(), { sourceId: 'default' });
 
-    // Soft-delete: UPDATE pages SET deleted_at = now() — production path.
-    // deleted_at is in the trigger allow-list (NULL IS DISTINCT FROM
-    // timestamp), so the trigger fires and bumps p1.generation. Layer 2
-    // sees the mismatch and invalidates. Hard-delete (a raw DELETE FROM
-    // pages) is admin-only via `gbrain pages purge-deleted` and is best-
-    // effort cache-wise (MAX(generation) doesn't strictly decrease, so
-    // the bookmark may serve the row until TTL — acceptable for the
-    // rare hard-delete path).
+    // Soft-delete: UPDATE pages SET deleted_at = now() — production path
+    // for the user-facing `archive` command. The row-level trigger fires
+    // (deleted_at is in the allow-list), bumping p1.generation; Layer 2
+    // detects the mismatch and invalidates.
+    //
+    // Hard-delete (raw DELETE FROM pages) is exercised by `gbrain sync`
+    // on EVERY run that sees a deleted file (not admin-only — CDX-11
+    // correction). Post-v0.41.19.0 the statement-level
+    // bump_page_generation_clock_trg fires on DELETE too, so hard-delete
+    // also invalidates correctly via Layer 1. See the CDX-1 regression
+    // test above for that path.
     await engine.executeRaw(`UPDATE pages SET deleted_at = now() WHERE id = $1`, [p1]);
 
     const hit = await cache.lookup(emb, { sourceId: 'default' });

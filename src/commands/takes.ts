@@ -571,10 +571,73 @@ Common flags:
     case 'scorecard':   return cmdScorecard(engine, rest);
     case 'calibration': return cmdCalibration(engine, rest);
     case 'revisit':     return cmdRevisit(engine, rest);
+    case 'extract':     return cmdExtract(engine, rest);
     default:
       // No subcommand keyword → treat first arg as <slug> for the list path.
       return cmdList(engine, args);
   }
+}
+
+/**
+ * v0.41.18.0 (A12, A24, T9) — `gbrain takes extract --from-pages` runs
+ * Haiku over concept/atom/lore/briefing/writing/originals pages and
+ * lifts gradeable claims into the takes fence.
+ *
+ * Two-gate consent: requires `takes.bootstrap_enabled=true` in config
+ * AND explicit --yes flag for any non-dryRun run. Refuses LLM-bearing
+ * extraction without both.
+ */
+async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
+  const sub = rest[0];
+  if (sub !== '--from-pages') {
+    process.stderr.write(
+      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--source-id <id>] [--max-pages N] [--holder <name>]\n',
+    );
+    process.exit(1);
+  }
+  const dryRun = rest.includes('--dry-run');
+  const skipConfirm = rest.includes('--yes');
+  const sourceIdx = rest.indexOf('--source-id');
+  const sourceIdFilter = sourceIdx >= 0 ? rest[sourceIdx + 1] : undefined;
+  const maxIdx = rest.indexOf('--max-pages');
+  const maxPagesRaw = maxIdx >= 0 ? rest[maxIdx + 1] : undefined;
+  const maxPages = maxPagesRaw ? Math.max(1, Math.min(1000, parseInt(maxPagesRaw, 10) || 50)) : 50;
+  const holderIdx = rest.indexOf('--holder');
+  const holder = holderIdx >= 0 ? rest[holderIdx + 1] : 'system';
+
+  // A12 consent gate.
+  const bootstrapEnabledCfg = await engine.getConfig('takes.bootstrap_enabled');
+  const bootstrapEnabled = bootstrapEnabledCfg === 'true' || bootstrapEnabledCfg === '1';
+  if (!bootstrapEnabled) {
+    process.stderr.write(
+      `takes-bootstrap is opt-in. Enable with:\n  gbrain config set takes.bootstrap_enabled true\nThen re-run with --yes.\n`,
+    );
+    process.exit(2);
+  }
+  if (!dryRun && !skipConfirm) {
+    process.stderr.write(
+      `[takes extract] sends concept/atom/lore/briefing/writing/originals page content to Haiku.\n` +
+      `Pass --yes to proceed (or --dry-run to preview).\n`,
+    );
+    process.exit(1);
+  }
+
+  const { extractTakesFromPages } = await import('../core/extract-takes-from-pages.ts');
+  const result = await extractTakesFromPages(engine, {
+    bootstrapEnabled: true,
+    dryRun,
+    sourceIdFilter,
+    maxPages,
+    holder,
+  });
+  if (result.llm_unavailable) {
+    process.stderr.write(`[takes extract] chat gateway unavailable (no API key configured).\n`);
+    process.exit(2);
+  }
+  process.stdout.write(
+    `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)` +
+    (dryRun ? ' (dry-run)' : '') + '\n',
+  );
 }
 
 /**

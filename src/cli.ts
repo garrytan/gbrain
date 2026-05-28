@@ -35,7 +35,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -1137,6 +1137,32 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // v0.41.13.0: `gbrain eval conversation-parser` is pure-function
+  // (parses fixture JSONL, runs parseConversation, scores results).
+  // No DB access; bypass connectEngine entirely so the CI fixture
+  // gate runs on machines with no `~/.gbrain/config.json`.
+  if (command === 'eval' && args[0] === 'conversation-parser') {
+    const { runEvalConversationParser } = await import('./commands/eval-conversation-parser.ts');
+    process.exit(await runEvalConversationParser(args.slice(1)));
+  }
+
+  // v0.41.13.0: `gbrain conversation-parser list-builtins | validate
+  // | --help` are pure (no DB access). Bypass connectEngine so the
+  // operator can run them on machines with no brain configured.
+  // `scan <slug>` needs a brain and falls through.
+  if (
+    command === 'conversation-parser' &&
+    (args.length === 0 ||
+      args[0] === '--help' ||
+      args[0] === '-h' ||
+      args[0] === 'list-builtins' ||
+      args[0] === 'validate')
+  ) {
+    const { runConversationParser } = await import('./commands/conversation-parser.ts');
+    await runConversationParser(null, args);
+    return;
+  }
+
   // v0.33.1.3: `gbrain eval whoknows` on thin-client installs bypasses
   // connectEngine entirely — the eval routes per-query through the remote
   // `find_experts` MCP op (the v0.31.1 routing seam). Local mode falls
@@ -1146,6 +1172,20 @@ async function handleCliOnly(command: string, args: string[]) {
     if (isThinClient(cfgPre)) {
       const { runEvalWhoknows } = await import('./commands/eval-whoknows.ts');
       process.exit(await runEvalWhoknows(null, args.slice(1)));
+    }
+  }
+
+  // v0.41.19.0: `gbrain status` on thin-client installs bypasses connectEngine
+  // entirely — Sync + Cycle route through the `get_status_snapshot` MCP op,
+  // and local-only sections render as "N/A on remote brain". Local mode falls
+  // through to the engine-connected dispatch path below. (`args` here is the
+  // subArgs slice already — no need to re-slice past the command.)
+  if (command === 'status') {
+    const cfgPre = loadConfig();
+    if (cfgPre && isThinClient(cfgPre)) {
+      const { runStatus } = await import('./commands/status.ts');
+      const result = await runStatus(null, args);
+      process.exit(result.exitCode);
     }
   }
 
@@ -1353,8 +1393,18 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'reindex': {
         if (args.includes('--multimodal')) {
           const { runReindexMultimodal } = await import('./commands/reindex-multimodal.ts');
+          const { parseWorkers } = await import('./core/sync-concurrency.ts');
           const limitIdx = args.indexOf('--limit');
           const limitVal = limitIdx >= 0 && limitIdx + 1 < args.length ? parseInt(args[limitIdx + 1], 10) : undefined;
+          // v0.41.15.0 (T9, D9): --workers N for parallel UPDATEs within
+          // each Voyage batch. Honored by the inner write loop only;
+          // the outer batch loop is one Voyage round-trip per batch.
+          const workersIdx = args.indexOf('--workers');
+          const concurrencyIdx = args.indexOf('--concurrency');
+          const workersValIdx = workersIdx >= 0 ? workersIdx + 1 : (concurrencyIdx >= 0 ? concurrencyIdx + 1 : -1);
+          const workers = workersValIdx > 0 && workersValIdx < args.length
+            ? parseWorkers(args[workersValIdx])
+            : undefined;
           const result = await runReindexMultimodal(engine, {
             limit: Number.isFinite(limitVal as number) ? (limitVal as number) : undefined,
             dryRun: args.includes('--dry-run'),
@@ -1362,6 +1412,7 @@ async function handleCliOnly(command: string, args: string[]) {
             noEmbed: args.includes('--no-embed'),
             json: args.includes('--json'),
             yes: args.includes('--yes'),
+            workers,
           });
           if (args.includes('--json')) {
             console.log(JSON.stringify(result, null, 2));
@@ -1385,10 +1436,29 @@ async function handleCliOnly(command: string, args: string[]) {
         await runAnomalies(engine, args);
         break;
       }
+      // v0.41.19.0 — `gbrain status`: single-screen brain health dashboard.
+      // CLI-only with own thin-client branch INSIDE runStatus (per D2 + codex
+      // MAJOR-4 architecture). Composes existing exports: buildSyncStatusReport,
+      // readSupervisorEvents, gbrain_cycle_locks, minion_jobs.
+      case 'status': {
+        const { runStatus } = await import('./commands/status.ts');
+        const result = await runStatus(engine, args);
+        process.exit(result.exitCode);
+        // eslint-disable-next-line no-unreachable
+        break;
+      }
       // v0.38 — Capture: single human-facing entrypoint for ingestion.
       case 'capture': {
         const { runCapture } = await import('./commands/capture.ts');
         await runCapture(engine, args);
+        break;
+      }
+      case 'conversation-parser': {
+        // v0.41.13.0 — debug + introspection CLI for the new parser
+        // cathedral. `scan <slug>` requires a connected brain; the
+        // other subcommands are pure (`list-builtins`, `validate`).
+        const { runConversationParser } = await import('./commands/conversation-parser.ts');
+        await runConversationParser(engine, args);
         break;
       }
       case 'edges-backfill': {
@@ -1452,6 +1522,13 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'takes': {
         const { runTakes } = await import('./commands/takes.ts');
         await runTakes(engine, args);
+        break;
+      }
+      case 'onboard': {
+        // v0.41.18.0 (T13) — gbrain onboard. Thin shell over T2 library
+        // + T4 onboard checks + T12 render layer.
+        const { runOnboard } = await import('./commands/onboard.ts');
+        await runOnboard(engine, args);
         break;
       }
       case 'founder': {

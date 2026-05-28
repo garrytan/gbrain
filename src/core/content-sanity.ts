@@ -163,10 +163,34 @@ export const BUILT_IN_JUNK_PATTERNS: ReadonlyArray<JunkPattern> = Object.freeze(
     applies_to: 'both',
   },
   // Bare error-page titles. Anchored so the title is exclusively the
-  // error code — a thoughtful page ABOUT 404 errors won't trip.
+  // error phrase — a thoughtful page ABOUT 404 errors or one titled
+  // "How to Handle Access Denied Errors" won't trip.
+  //
+  // v0.41.13 (supersedes PR #1561): expanded from bare numeric codes
+  // + "page not found" to also catch Cloudflare/WAF challenge
+  // titles ("Forbidden", "Access Denied", "Service Unavailable",
+  // "Robot Check", "Verify You Are Human"). Deliberately drops PR
+  // #1561's bare-`error` matcher (would false-positive on
+  // legitimate taxonomy pages titled "Error"). 232+ scraper pages
+  // motivating this change (202+ from straylight-brain).
   {
     name: 'error_page_title',
-    pattern: /^(403|404|500|502|503|error \d{3}|page not found)\s*$/i,
+    pattern: /^(403|404|500|502|503|error \d{3}|page not found|forbidden|access denied|service unavailable|robot check|verify you are human)\s*$/i,
+    applies_to: 'title',
+  },
+  // Cloudflare challenge title (companion to the body-scoped
+  // `cloudflare_just_a_moment` pattern above, which requires both
+  // phrase + URL). The title alone is a sufficient signal because
+  // legitimate pages don't title themselves "Just a moment...".
+  //
+  // v0.41.13: distinct name from `error_page_title` so audit JSONL
+  // (`~/.gbrain/audit/content-sanity-YYYY-Www.jsonl`) and doctor's
+  // `content_sanity_audit_recent` aggregation stay diagnosable.
+  // PR #1561 reused the `error_page_title` name and collapsed audit
+  // signal; we don't.
+  {
+    name: 'cloudflare_challenge_title',
+    pattern: /^just a moment\.{0,3}$/i,
     applies_to: 'title',
   },
 ]);

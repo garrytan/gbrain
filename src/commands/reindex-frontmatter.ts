@@ -34,6 +34,17 @@ export interface ReindexFrontmatterOpts {
   yes?: boolean;
   json?: boolean;
   force?: boolean;
+  /**
+   * v0.41.15.0 (T12, D9): accepted for API consistency with the other
+   * `gbrain reindex --workers N` surfaces but currently INFORMATIONAL
+   * ONLY. reindex-frontmatter delegates to `backfillEffectiveDate`
+   * which has its own internal batching and doesn't expose a worker
+   * count. The work is pure CPU (date precedence resolution per row,
+   * no I/O), so parallelism gains would be marginal. Deep wiring is
+   * filed as a v0.42+ follow-up TODO. Pass `--workers N` today and
+   * the flag is recorded + ignored.
+   */
+  workers?: number;
 }
 
 export interface ReindexFrontmatterResult {
@@ -151,6 +162,11 @@ export async function reindexFrontmatterCli(args: string[]): Promise<void> {
     else if (a === '--yes' || a === '-y') opts.yes = true;
     else if (a === '--json') opts.json = true;
     else if (a === '--force') opts.force = true;
+    else if (a === '--workers' || a === '--concurrency') {
+      // v0.41.15.0 (T12): accepted but informational only — see opts doc.
+      const v = parseInt(args[++i] ?? '', 10);
+      if (Number.isFinite(v) && v >= 1) opts.workers = v;
+    }
     else {
       console.error(`Unknown arg: ${a}`);
       process.exit(2);

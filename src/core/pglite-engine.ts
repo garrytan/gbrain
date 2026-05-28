@@ -4,6 +4,7 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import type { Transaction } from '@electric-sql/pglite';
 import type {
   BrainEngine,
+  BatchOpts,
   LinkBatchInput, TimelineBatchInput,
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
@@ -16,9 +17,12 @@ import type {
   SourceRow,
 } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
+import { withRetry, BULK_RETRY_OPTS, resolveBulkRetryOpts, computeNextDelay, type BatchAuditSite } from './retry.ts';
+import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
 import { runMigrations } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
+import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -37,7 +41,7 @@ import type {
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
 } from './types.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, takeRowToTake } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
 import { GBrainError, PAGE_SORT_SQL } from './types.ts';
@@ -895,6 +899,49 @@ export class PGLiteEngine implements BrainEngine {
       'DELETE FROM pages WHERE slug = $1 AND source_id = $2',
       [slug, sourceId]
     );
+  }
+
+  /**
+   * v0.41.19.0 — batch delete primitive. See BrainEngine.deletePages JSDoc.
+   * Parity implementation with PostgresEngine.deletePages. PGLite supports
+   * `slug = ANY($1)` array-param binding natively (addLinksBatch already
+   * proves this).
+   */
+  async deletePages(slugs: string[], opts: { sourceId: string }): Promise<string[]> {
+    if (slugs.length === 0) return [];
+    if (slugs.length > DELETE_BATCH_SIZE) {
+      throw new Error(
+        `deletePages: input size ${slugs.length} exceeds DELETE_BATCH_SIZE=${DELETE_BATCH_SIZE}. Caller must chunk.`,
+      );
+    }
+    const { rows } = await this.db.query<{ slug: string }>(
+      'DELETE FROM pages WHERE slug = ANY($1::text[]) AND source_id = $2 RETURNING slug',
+      [slugs, opts.sourceId],
+    );
+    return rows.map(r => r.slug);
+  }
+
+  /**
+   * v0.41.19.0 — batch path → slug resolution. See BrainEngine.resolveSlugsByPaths
+   * JSDoc.
+   */
+  async resolveSlugsByPaths(
+    paths: string[],
+    opts: { sourceId: string },
+  ): Promise<Map<string, string>> {
+    if (paths.length === 0) return new Map();
+    if (paths.length > DELETE_BATCH_SIZE) {
+      throw new Error(
+        `resolveSlugsByPaths: input size ${paths.length} exceeds DELETE_BATCH_SIZE=${DELETE_BATCH_SIZE}. Caller must chunk.`,
+      );
+    }
+    const { rows } = await this.db.query<{ slug: string; source_path: string }>(
+      'SELECT slug, source_path FROM pages WHERE source_path = ANY($1::text[]) AND source_id = $2',
+      [paths, opts.sourceId],
+    );
+    const m = new Map<string, string>();
+    for (const r of rows) m.set(r.source_path, r.slug);
+    return m;
   }
 
   async softDeletePage(slug: string, opts?: { sourceId?: string }): Promise<{ slug: string } | null> {
@@ -1828,8 +1875,56 @@ export class PGLiteEngine implements BrainEngine {
     return result;
   }
 
+  // v0.41.18.0 — lazy-cached resolveBulkRetryOpts result + batch-retry helper.
+  // PGLite has no Postgres pooler so retries don't fire in production; the
+  // wrap is for engine-parity tests (T7) and a DI-friendly seam via the
+  // existing PGlite test infrastructure. Mirrors postgres-engine.ts.
+  private _bulkRetryOptsCache?: ReturnType<typeof resolveBulkRetryOpts>;
+  private getBulkRetryOpts(): ReturnType<typeof resolveBulkRetryOpts> {
+    if (!this._bulkRetryOptsCache) this._bulkRetryOptsCache = resolveBulkRetryOpts();
+    return this._bulkRetryOptsCache;
+  }
+
+  private async batchRetry<T>(
+    auditSite: BatchAuditSite,
+    signal: AbortSignal | undefined,
+    fn: () => Promise<T>,
+    batchSize: number,
+  ): Promise<T> {
+    const opts = this.getBulkRetryOpts();
+    let prevDelay = 0;
+    try {
+      return await withRetry(fn, {
+        maxRetries: opts.maxRetries,
+        delayMs: opts.delayMs,
+        delayMaxMs: opts.delayMaxMs,
+        jitter: BULK_RETRY_OPTS.jitter,
+        auditSite,
+        signal,
+        onRetry: (attempt, err) => {
+          const delay = computeNextDelay(attempt - 1, prevDelay, opts.delayMs, opts.delayMaxMs, BULK_RETRY_OPTS.jitter);
+          prevDelay = delay;
+          auditLogBatchRetry(auditSite, batchSize, attempt, delay, err);
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`[${auditSite}] connection blip, retrying (attempt ${attempt}/${opts.maxRetries}): ${msg}\n`);
+        },
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'RetryAbortError') throw err;
+      const { isRetryableConnError } = await import('./retry.ts');
+      if (isRetryableConnError(err)) {
+        auditLogBatchExhausted(auditSite, batchSize, opts.maxRetries + 1, err);
+      }
+      throw err;
+    }
+  }
+
   // Chunks
-  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
+  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string } & BatchOpts): Promise<void> {
+    return this.batchRetry(opts?.auditSite ?? 'upsertChunks', opts?.signal, () => this._upsertChunksOnce(slug, chunks, opts), chunks.length);
+  }
+
+  private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
     const sourceId = opts?.sourceId ?? 'default';
 
     // Source-scope the page-id lookup so duplicate slugs in different sources
@@ -2000,10 +2095,83 @@ export class PGLiteEngine implements BrainEngine {
     afterPageId?: number;
     afterChunkIndex?: number;
     sourceId?: string;
+    orderBy?: 'page_id' | 'updated_desc';
+    afterUpdatedAt?: string | null;
   }): Promise<StaleChunkRow[]> {
     const limit = opts?.batchSize ?? 2000;
     const afterPid = opts?.afterPageId ?? 0;
     const afterIdx = opts?.afterChunkIndex ?? -1;
+    const orderBy = opts?.orderBy ?? 'page_id';
+
+    // v0.41.18.0 (A13, codex #9): --priority recent path. See postgres-engine
+    // sibling for full rationale. Same composite cursor + ORDER BY.
+    if (orderBy === 'updated_desc') {
+      const afterUpdated = opts?.afterUpdatedAt ?? null;
+      const isFirstPage = afterUpdated === null && afterPid === 0;
+      if (opts?.sourceId === undefined) {
+        const { rows } = isFirstPage ? await this.db.query(
+          `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+                  cc.model, cc.token_count, p.source_id, cc.page_id,
+                  p.updated_at
+             FROM content_chunks cc
+             JOIN pages p ON p.id = cc.page_id
+            WHERE cc.embedding IS NULL
+              AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+            ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
+            LIMIT $1`,
+          [limit],
+        ) : await this.db.query(
+          `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+                  cc.model, cc.token_count, p.source_id, cc.page_id,
+                  p.updated_at
+             FROM content_chunks cc
+             JOIN pages p ON p.id = cc.page_id
+            WHERE cc.embedding IS NULL
+              AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+              AND (
+                p.updated_at < $1::timestamptz
+                OR (p.updated_at = $1::timestamptz AND p.id > $2)
+                OR (p.updated_at = $1::timestamptz AND p.id = $2 AND cc.chunk_index > $3)
+              )
+            ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
+            LIMIT $4`,
+          [afterUpdated, afterPid, afterIdx, limit],
+        );
+        return rows as unknown as StaleChunkRow[];
+      }
+      const { rows } = isFirstPage ? await this.db.query(
+        `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+                cc.model, cc.token_count, p.source_id, cc.page_id,
+                p.updated_at
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+          WHERE cc.embedding IS NULL
+            AND p.source_id = $1
+            AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+          ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
+          LIMIT $2`,
+        [opts.sourceId, limit],
+      ) : await this.db.query(
+        `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+                cc.model, cc.token_count, p.source_id, cc.page_id,
+                p.updated_at
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+          WHERE cc.embedding IS NULL
+            AND p.source_id = $1
+            AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+            AND (
+              p.updated_at < $2::timestamptz
+              OR (p.updated_at = $2::timestamptz AND p.id > $3)
+              OR (p.updated_at = $2::timestamptz AND p.id = $3 AND cc.chunk_index > $4)
+            )
+          ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
+          LIMIT $5`,
+        [opts.sourceId, afterUpdated, afterPid, afterIdx, limit],
+      );
+      return rows as unknown as StaleChunkRow[];
+    }
+    // orderBy === 'page_id' — legacy stable cursor (unchanged below).
     // D7: optional source-scoped cursor scan. PGLite mirrors postgres-engine
     // so the engine-parity E2E catches drift.
     // v0.41 (D4+D8): NOT (frontmatter ? 'embed_skip') filter for soft-blocked
@@ -2093,7 +2261,12 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
-  async addLinksBatch(links: LinkBatchInput[]): Promise<number> {
+  async addLinksBatch(links: LinkBatchInput[], opts?: BatchOpts): Promise<number> {
+    if (links.length === 0) return 0;
+    return this.batchRetry(opts?.auditSite ?? 'addLinksBatch', opts?.signal, () => this._addLinksBatchOnce(links), links.length);
+  }
+
+  private async _addLinksBatchOnce(links: LinkBatchInput[]): Promise<number> {
     if (links.length === 0) return 0;
     // unnest() pattern: 10 array-typed bound parameters regardless of batch
     // size. Same shape as PostgresEngine (v0.18). Avoids the 65535-parameter
@@ -2113,17 +2286,19 @@ export class PGLiteEngine implements BrainEngine {
     const fromSourceIds = links.map(l => l.from_source_id || 'default');
     const toSourceIds = links.map(l => l.to_source_id || 'default');
     const originSourceIds = links.map(l => l.origin_source_id || 'default');
+    // v0.41.18.0 (A10): link_kind column (v98). NULL = legacy/plain.
+    const linkKinds = links.map(l => l.link_kind ?? null);
     const result = await this.db.query(
-      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
-       SELECT f.id, t.id, v.link_type, v.context, v.link_source, o.id, v.origin_field
-       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[])
-         AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field, from_source_id, to_source_id, origin_source_id)
+      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, link_kind, origin_page_id, origin_field)
+       SELECT f.id, t.id, v.link_type, v.context, v.link_source, v.link_kind, o.id, v.origin_field
+       FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[])
+         AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field, from_source_id, to_source_id, origin_source_id, link_kind)
        JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
        JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
        LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id
        ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING
        RETURNING 1`,
-      [fromSlugs, toSlugs, linkTypes, contexts, linkSources, originSlugs, originFields, fromSourceIds, toSourceIds, originSourceIds]
+      [fromSlugs, toSlugs, linkTypes, contexts, linkSources, originSlugs, originFields, fromSourceIds, toSourceIds, originSourceIds, linkKinds]
     );
     return result.rows.length;
   }
@@ -2501,7 +2676,7 @@ export class PGLiteEngine implements BrainEngine {
     // Initialize all slugs to 0 so callers get a consistent map.
     for (const s of slugs) result.set(s, 0);
 
-    // v0.42.0.0 D12: filter mentions OUT of backlink-count for search
+    // v0.41.18.0 D12: filter mentions OUT of backlink-count for search
     // ranking — parity with postgres-engine.ts. See that file's comment
     // for the full rationale. `IS DISTINCT FROM` is NULL-safe so legacy
     // rows with NULL link_source still count toward backlinks.
@@ -2705,12 +2880,17 @@ export class PGLiteEngine implements BrainEngine {
       `INSERT INTO timeline_entries (page_id, date, source, summary, detail)
        SELECT id, $2::date, $3, $4, $5
        FROM pages WHERE slug = $1 AND source_id = $6
-       ON CONFLICT (page_id, date, summary) DO NOTHING`,
+       ON CONFLICT (page_id, date, summary, source) DO NOTHING`,
       [slug, entry.date, entry.source || '', entry.summary, entry.detail || '', sourceId]
     );
   }
 
-  async addTimelineEntriesBatch(entries: TimelineBatchInput[]): Promise<number> {
+  async addTimelineEntriesBatch(entries: TimelineBatchInput[], opts?: BatchOpts): Promise<number> {
+    if (entries.length === 0) return 0;
+    return this.batchRetry(opts?.auditSite ?? 'addTimelineEntriesBatch', opts?.signal, () => this._addTimelineEntriesBatchOnce(entries), entries.length);
+  }
+
+  private async _addTimelineEntriesBatchOnce(entries: TimelineBatchInput[]): Promise<number> {
     if (entries.length === 0) return 0;
     const slugs = entries.map(e => e.slug);
     const dates = entries.map(e => e.date);
@@ -2724,7 +2904,7 @@ export class PGLiteEngine implements BrainEngine {
        FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
          AS v(slug, date, source, summary, detail, source_id)
        JOIN pages p ON p.slug = v.slug AND p.source_id = v.source_id
-       ON CONFLICT (page_id, date, summary) DO NOTHING
+       ON CONFLICT (page_id, date, summary, source) DO NOTHING
        RETURNING 1`,
       [slugs, dates, sources, summaries, details, sourceIds]
     );
@@ -4201,6 +4381,47 @@ export class PGLiteEngine implements BrainEngine {
     // Stub: links use integer page_id FKs, already correct after updateSlug.
   }
 
+  async resolveSlugWithAlias(
+    slug: string,
+    sourceOrSources: string | readonly string[],
+  ): Promise<string> {
+    const sources = Array.isArray(sourceOrSources)
+      ? [...sourceOrSources]
+      : [sourceOrSources as string];
+    if (sources.length === 0) return slug;
+    try {
+      // PGLite supports `= ANY($N::text[])` per pgvector / postgres semantics.
+      // ORDER BY array_position pins the federated-read precedence so the
+      // multi-source ambiguity warning is deterministic.
+      const placeholders = sources.map((_, i) => `$${i + 2}`).join(',');
+      const { rows } = await this.db.query(
+        `SELECT canonical_slug, source_id
+         FROM slug_aliases
+         WHERE alias_slug = $1
+           AND source_id IN (${placeholders})
+         ORDER BY id`,
+        [slug, ...sources],
+      );
+      if (rows.length === 0) return slug;
+      if (rows.length > 1) {
+        warnOncePerProcess(
+          `resolveSlugWithAlias:multi_match:${slug}`,
+          `[resolveSlugWithAlias] multi_match: alias '${slug}' exists in ${rows.length} sources; returning first.`,
+        );
+      }
+      // Match Postgres engine: prefer rows in sourceOrSources order
+      const indexedRows = rows.map(r => ({
+        ...(r as { canonical_slug: string; source_id: string }),
+        order: sources.indexOf((r as { source_id: string }).source_id),
+      }));
+      indexedRows.sort((a, b) => a.order - b.order);
+      return indexedRows[0].canonical_slug ?? slug;
+    } catch (e) {
+      if (isUndefinedTableError(e)) return slug;
+      throw e;
+    }
+  }
+
   // Config
   async getConfig(key: string): Promise<string | null> {
     const { rows } = await this.db.query('SELECT value FROM config WHERE key = $1', [key]);
@@ -4258,9 +4479,28 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r, true));
   }
 
-  async executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
-    const { rows } = await this.db.query(sql, params);
-    return rows as T[];
+  async executeRaw<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    opts?: { signal?: AbortSignal },
+  ): Promise<T[]> {
+    // v0.41.18.0 (A20, codex #7): PGLite is in-process WASM with no
+    // kernel-level cancellation. Best-effort: pre-check the signal so
+    // an already-aborted call returns immediately, and race against
+    // a settle promise so a late-arriving abort throws AbortError
+    // (the query keeps running in WASM until it returns; the result
+    // is discarded). Documented gap in src/core/engine.ts.
+    if (opts?.signal?.aborted) {
+      throw new DOMException('aborted', 'AbortError');
+    }
+    const queryPromise = this.db.query(sql, params).then((r) => r.rows as T[]);
+    if (!opts?.signal) return queryPromise;
+    const abortPromise = new Promise<T[]>((_resolve, reject) => {
+      opts.signal!.addEventListener('abort', () => {
+        reject(new DOMException('aborted', 'AbortError'));
+      }, { once: true });
+    });
+    return Promise.race([queryPromise, abortPromise]);
   }
 
   // ============================================================

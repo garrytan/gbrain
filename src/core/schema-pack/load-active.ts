@@ -108,6 +108,10 @@ function defaultPackLocator(name: string): string | null {
     'gbrain-investor',
     'gbrain-engineer',
     'gbrain-everything',
+    // v0.42 type-unification: 15-type canonical successor to gbrain-base.
+    // Ships as install default (Lane E T17) + via gbrain onboard pack
+    // upgrade flow (the unify-types Minion handler).
+    'gbrain-base-v2',
   ];
   if (BUNDLED.includes(name)) {
     // Resolve bundled YAML relative to this source file. Works in both
@@ -178,6 +182,100 @@ export async function loadActivePack(input: LoadActivePackInput): Promise<Resolv
  */
 export function resolveActivePackNameOnly(input: LoadActivePackInput): ResolutionResult {
   return resolveActivePackName(buildResolutionInput(input));
+}
+
+/**
+ * v0.42 (T4, plan D7): enumerate packs whose `migration_from` declares a
+ * version range matching (packName, packVersion). Used by the
+ * `checkPackUpgradeAvailable` onboard check to surface "your brain is on
+ * gbrain-base@1.x; gbrain-base-v2@1.0.0 is available." Results sorted by
+ * successor version descending so the highest-available successor wins.
+ *
+ * Walks BUNDLED_PACK_NAMES + any installed pack under `~/.gbrain/schema-packs/`
+ * discoverable via the locator. Each candidate is loaded + parsed; load
+ * failures are logged-and-skipped per the D4 EMPTY FILTER contract — a
+ * corrupt pack on disk doesn't break the upgrade-available check for
+ * everyone else.
+ *
+ * Version-range matching supports:
+ *   - exact literal: `1.0.0` matches `1.0.0` only
+ *   - major wildcard: `1.x` matches `1.0.0`, `1.5.2`, etc.
+ *   - minor wildcard: `1.0.x` matches `1.0.0`, `1.0.5`, etc.
+ *
+ * Returns empty array when no successors found (caller interprets as
+ * "brain already on latest").
+ */
+export async function findPackSuccessors(
+  packName: string,
+  packVersion: string,
+): Promise<ResolvedPack[]> {
+  const { BUNDLED_PACK_NAMES } = await import('./mutate.ts');
+  const candidates: string[] = [];
+  for (const name of BUNDLED_PACK_NAMES) {
+    if (name !== packName) candidates.push(name);
+  }
+  // Walk ~/.gbrain/schema-packs/* via the locator. We can't enumerate
+  // directly without filesystem scan; defer to v0.43+ for installed-pack
+  // enumeration. Bundled packs alone cover v0.42's gbrain-base→v2 path.
+
+  const successors: ResolvedPack[] = [];
+  for (const candidateName of candidates) {
+    try {
+      const candidate = await loadActivePack({
+        cfg: null,
+        remote: false,
+        perCall: candidateName,
+      });
+      const mf = candidate.manifest.migration_from;
+      if (!mf) continue;
+      if (mf.pack !== packName) continue;
+      if (!_versionRangeMatches(packVersion, mf.version)) continue;
+      successors.push(candidate);
+    } catch {
+      // Log-and-skip per D4 EMPTY FILTER contract; corrupt pack on disk
+      // shouldn't break the upgrade-available check.
+      continue;
+    }
+  }
+  // Sort by successor version desc (so the newest successor wins when
+  // multiple match — uncommon today but defensive for v0.43+).
+  successors.sort((a, b) => _versionDescCompare(b.manifest.version, a.manifest.version));
+  return successors;
+}
+
+/**
+ * @internal exported for unit test seam (test/schema-pack-find-successors.test.ts).
+ * Matches version against a wildcard range: `1.x` / `1.0.x` / `1.0.0` literal.
+ */
+export function _versionRangeMatches(version: string, range: string): boolean {
+  // Exact match (no wildcards)
+  if (!range.includes('x') && !range.includes('*')) {
+    return version === range;
+  }
+  // Convert range like `1.x` or `1.0.x` to a regex
+  const rangeParts = range.split('.');
+  const versionParts = version.split('.');
+  if (rangeParts.length > versionParts.length) return false;
+  for (let i = 0; i < rangeParts.length; i++) {
+    const r = rangeParts[i];
+    if (r === 'x' || r === '*') continue;
+    if (r !== versionParts[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * @internal Compare two semver strings (M.m.p). Negative if a < b; positive
+ * if a > b; zero if equal. Treats `0.41.2.0` (4-part) by truncating to
+ * 3-part because Zod schema validates `M.m.p` only.
+ */
+export function _versionDescCompare(a: string, b: string): number {
+  const ap = a.split('.').slice(0, 3).map(n => parseInt(n, 10));
+  const bp = b.split('.').slice(0, 3).map(n => parseInt(n, 10));
+  for (let i = 0; i < 3; i++) {
+    if ((ap[i] ?? 0) !== (bp[i] ?? 0)) return (ap[i] ?? 0) - (bp[i] ?? 0);
+  }
+  return 0;
 }
 
 function buildResolutionInput(input: LoadActivePackInput): ResolutionInput {

@@ -832,9 +832,26 @@ export async function judgeSignificance(
   // Truncate the transcript at 8K chars for cost control. Haiku's verdict
   // doesn't need the full body; the opening + closing sections are usually
   // representative of significance.
-  const trimmed = t.content.length > 8000
-    ? t.content.slice(0, 4000) + '\n[...truncated...]\n' + t.content.slice(-4000)
-    : t.content;
+  //
+  // v0.41.13 surrogate-safety (supersedes PRs #1559+#1561's safeSliceEnd
+  // helper; see text-safe.ts:18-21 module docstring for why that helper
+  // re-introduces the case-3 bug the canonical safeSplitIndex was written
+  // to fix). Routes head + tail slicing through safeSplitIndex so an emoji
+  // at offset 4000 (or length-4000) never produces a lone surrogate that
+  // Anthropic's JSON parser rejects ("no low surrogate in string", caught
+  // 2026-05-24 on telegram).
+  //
+  // Contract: this branch only runs when content.length > 8000, so
+  // length - 4000 > 4000 > 0 — safeSplitIndex never sees an out-of-range
+  // maxChars here. (Codex C-10 documented contract.)
+  let trimmed: string;
+  if (t.content.length > 8000) {
+    const headEnd = safeSplitIndex(t.content, 4000);
+    const tailStart = safeSplitIndex(t.content, t.content.length - 4000);
+    trimmed = t.content.slice(0, headEnd) + '\n[...truncated...]\n' + t.content.slice(tailStart);
+  } else {
+    trimmed = t.content;
+  }
 
   const sys = `You judge whether a conversation transcript is worth synthesizing into a personal knowledge brain.
 

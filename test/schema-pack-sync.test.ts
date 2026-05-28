@@ -29,6 +29,11 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Restore the disk-loader so we don't leak our test stub into sibling
+  // test files in the same shard process (closes the bug where
+  // test/onboard-pack-upgrade-checks.test.ts saw a stubbed locator and
+  // failed only when this file ran first in CI shard 6).
+  _resetPackLocatorForTests();
   await engine.disconnect();
 });
 

@@ -20,6 +20,7 @@ import {
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
+import { categorizeCheck, type CheckCategory } from '../core/doctor-categories.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
 import { gbrainPath } from '../core/config.ts';
@@ -54,6 +55,12 @@ export interface Check {
   remediation?: import('../core/remediation-step.ts').RemediationStep[];
   /** Top-level triage state per D13. */
   remediation_status?: 'remediable' | 'human_only' | 'blocked';
+  /**
+   * v0.41.19.0 category tag — assigned by `categorizeCheck(name)` at report
+   * compute time. Optional + additive so legacy consumers ignore it.
+   * Source of truth: `src/core/doctor-categories.ts`.
+   */
+  category?: CheckCategory;
 }
 
 /**
@@ -68,26 +75,92 @@ export interface Check {
 export interface DoctorReport {
   schema_version: 2;
   status: 'healthy' | 'warnings' | 'unhealthy';
+  /**
+   * Legacy all-checks aggregate. `100 − 20×fails − 5×warns`, floor 0.
+   *
+   * Preserved verbatim from pre-v0.41.19.0 for back-compat with `gbrain
+   * doctor --remediate`, `gbrain remote doctor`, the MCP `run_doctor` op,
+   * and any external monitor / CI gate that reads this field. NO behavior
+   * change: a fixed check set produces a byte-identical `health_score`
+   * before and after the v0.41.19.0 wave.
+   */
   health_score: number;
+  /**
+   * v0.41.19.0 — same penalty math (100 − 20×fails − 5×warns) restricted to
+   * checks tagged `category: 'brain'` by `categorizeCheck()`. The "is my
+   * brain's data healthy?" signal, decoupled from skill routing / ops /
+   * meta. Orthogonal to `BrainHealth.brain_score` (the weighted
+   * 35/25/15/15/10 composite surfaced by the `brain_score` doctor check) —
+   * `brain_checks_score` counts brain-category check failures;
+   * `brain_score` measures brain-data composition. Doctor renders both.
+   */
+  brain_checks_score: number;
+  /**
+   * v0.41.19.0 — per-category penalty scores. Same math as `health_score`,
+   * restricted to each category in turn. An operator reading `score: 15`
+   * driven by 504 RESOLVER.md warnings now sees `category_scores.brain:
+   * ~100` and `category_scores.skill: 0` instead of one polluted number.
+   */
+  category_scores: {
+    brain: number;
+    skill: number;
+    ops: number;
+    meta: number;
+  };
   checks: Check[];
 }
 
-/**
- * Compute the {status, health_score} headline from a list of checks.
- * Mirrors the calculation in outputResults() so remote callers and the
- * existing CLI front-end agree on what "healthy" means.
- */
-export function computeDoctorReport(checks: Check[]): DoctorReport {
-  const hasFail = checks.some(c => c.status === 'fail');
-  const hasWarn = checks.some(c => c.status === 'warn');
+function _penaltyScore(checks: Check[]): number {
   let score = 100;
   for (const c of checks) {
     if (c.status === 'fail') score -= 20;
     else if (c.status === 'warn') score -= 5;
   }
-  score = Math.max(0, score);
+  return Math.max(0, score);
+}
+
+/**
+ * Compute the {status, health_score, brain_checks_score, category_scores}
+ * headline from a list of checks. Mirrors the calculation in outputResults()
+ * so remote callers and the existing CLI front-end agree on what "healthy"
+ * means.
+ *
+ * **Back-compat invariant:** `health_score` math is byte-identical to
+ * pre-v0.41.19.0 for any fixed `checks` array. The new fields are additive.
+ *
+ * **Categorization:** each check is tagged via `categorizeCheck(name)` at
+ * report-build time if it doesn't already carry a `category` field. The
+ * categorizer is the single source of truth in
+ * `src/core/doctor-categories.ts`.
+ */
+export function computeDoctorReport(checks: Check[]): DoctorReport {
+  const tagged = checks.map((c) =>
+    c.category ? c : { ...c, category: categorizeCheck(c.name) },
+  );
+
+  const hasFail = tagged.some((c) => c.status === 'fail');
+  const hasWarn = tagged.some((c) => c.status === 'warn');
+
+  const health_score = _penaltyScore(tagged);
+  const brain = tagged.filter((c) => c.category === 'brain');
+  const skill = tagged.filter((c) => c.category === 'skill');
+  const ops = tagged.filter((c) => c.category === 'ops');
+  const meta = tagged.filter((c) => c.category === 'meta');
+
   const status: DoctorReport['status'] = hasFail ? 'unhealthy' : hasWarn ? 'warnings' : 'healthy';
-  return { schema_version: 2, status, health_score: score, checks };
+  return {
+    schema_version: 2,
+    status,
+    health_score,
+    brain_checks_score: _penaltyScore(brain),
+    category_scores: {
+      brain: _penaltyScore(brain),
+      skill: _penaltyScore(skill),
+      ops: _penaltyScore(ops),
+      meta: _penaltyScore(meta),
+    },
+    checks: tagged,
+  };
 }
 
 /**
@@ -566,6 +639,11 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
   // v0.41 Bug 2 / Eng D8 — subagent_health surfaces rate-lease pressure to the operator.
   checks.push(await checkSubagentHealth(engine));
 
+  // v0.41.18.0 — batch_retry_health (cross-surface parity with buildChecks).
+  // Surfaces Supavisor circuit-breaker incidents over MCP so remote operators
+  // see the same signal local doctor surfaces.
+  checks.push(await checkBatchRetryHealth(engine));
+
   // v0.41.2.1 — embedding_env_override (cross-surface parity with
   // buildChecks). Surfaces when GBRAIN_EMBEDDING_* env vars disagree
   // with DB config; closes the silent-override class that caused the
@@ -582,6 +660,9 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
 
   // 6. Sync freshness check
   checks.push(await checkSyncFreshness(engine));
+
+  // v0.41.19.0 (Issue 5): sync --all consolidation nudge for multi-source brains.
+  checks.push(await checkSyncConsolidation(engine));
 
   // v0.39 T7 + T9 — schema-pack health checks (3 checks per v0.38 plan):
   //   schema_pack_active        — active pack resolves cleanly
@@ -1050,6 +1131,107 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
 }
 
 /**
+ * v0.41.18.0 batch_retry_health doctor check (codex H-9 thresholds).
+ *
+ * Surfaces sustained Supavisor circuit-breaker incidents from the
+ * engine-level batch retry wrap. Reads the last 24h of audit events from
+ * `~/.gbrain/audit/batch-retry-YYYY-Www.jsonl`.
+ *
+ * Threshold ladder (codex H-9 — avoid permanent noise from one historical blip):
+ *   ok    — zero exhausted events in 24h, OR <3 exhausted from a single site
+ *   warn  — >=3 exhausted from same site in 24h, OR >=5 cross-site
+ *   fail  — >=20 exhausted in 24h (sustained breaker; operator intervention)
+ *
+ * Also surfaces (codex H-9 corruption tolerance):
+ *   - corrupted_lines count when audit JSONL has malformed rows
+ *   - files_unreadable count for permission errors (NOT ENOENT which is normal)
+ *
+ * Also surfaces (codex M-10): runs resolveBulkRetryOpts(process.env) at
+ * startup so bad GBRAIN_BULK_* config fails at doctor time, not first-retry.
+ */
+export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check> {
+  try {
+    // Codex M-10: surface bad env config at doctor time.
+    try {
+      const { resolveBulkRetryOpts } = await import('../core/retry.ts');
+      resolveBulkRetryOpts();
+    } catch (e) {
+      return {
+        name: 'batch_retry_health',
+        status: 'warn',
+        message: `GBRAIN_BULK_* env override invalid: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+
+    const { readRecentBatchRetryEvents } = await import('../core/audit/batch-retry-audit.ts');
+    const result = readRecentBatchRetryEvents(24);
+
+    // Surface corruption / permission errors at warn so operators investigate.
+    if (result.files_unreadable > 0) {
+      return {
+        name: 'batch_retry_health',
+        status: 'warn',
+        message: `${result.files_unreadable} audit file(s) unreadable (permission / IO). Fix: check ~/.gbrain/audit/ (or $GBRAIN_AUDIT_DIR if set).`,
+      };
+    }
+
+    const exhausted = result.events.filter((e) => e.outcome === 'exhausted');
+    const successful = result.events.filter((e) => e.outcome === 'success');
+
+    if (exhausted.length === 0) {
+      const note = result.corrupted_lines > 0
+        ? ` (note: ${result.corrupted_lines} corrupt JSONL line(s) skipped)`
+        : '';
+      const recoveredNote = successful.length > 0
+        ? ` ${successful.length} transient retry(s) succeeded.`
+        : '';
+      return {
+        name: 'batch_retry_health',
+        status: 'ok',
+        message: `No exhausted batch retries in last 24h.${recoveredNote}${note}`,
+      };
+    }
+
+    // Group exhausted events by site for per-site threshold detection.
+    const bySite = new Map<string, number>();
+    for (const e of exhausted) bySite.set(e.site, (bySite.get(e.site) ?? 0) + 1);
+    const worstSite = [...bySite.entries()].sort((a, b) => b[1] - a[1])[0];
+
+    // codex H-9 fail threshold: >=20 in 24h = sustained breaker.
+    if (exhausted.length >= 20) {
+      return {
+        name: 'batch_retry_health',
+        status: 'fail',
+        message: `${exhausted.length} exhausted batch retries in last 24h (worst: ${worstSite[0]} = ${worstSite[1]}). Sustained circuit-breaker incident. Fix: check pooler status; consider raising GBRAIN_BULK_MAX_RETRIES or moving to direct-connection.`,
+      };
+    }
+
+    // warn thresholds: >=3 same-site OR >=5 cross-site.
+    if (worstSite[1] >= 3 || exhausted.length >= 5) {
+      return {
+        name: 'batch_retry_health',
+        status: 'warn',
+        message: `${exhausted.length} exhausted batch retries in last 24h (worst: ${worstSite[0]} = ${worstSite[1]}). Tune via GBRAIN_BULK_MAX_RETRIES / GBRAIN_BULK_RETRY_MAX_MS.`,
+      };
+    }
+
+    // Single-incident noise tolerance.
+    return {
+      name: 'batch_retry_health',
+      status: 'ok',
+      message: `${exhausted.length} exhausted batch retry(s) in last 24h (below per-site threshold of 3)`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'batch_retry_health',
+      status: 'warn',
+      message: `Could not check batch_retry audit: ${msg}`,
+    };
+  }
+}
+
+/**
  * v0.40.4 graph_signals_coverage doctor check.
  *
  * Surfaces whether the brain's link density is high enough for the
@@ -1403,6 +1585,108 @@ export async function checkEmbeddingWidthConsistency(engine: BrainEngine): Promi
       name: 'embedding_width_consistency',
       status: 'warn',
       message: `Could not check embedding width: ${msg}`,
+    };
+  }
+}
+
+/**
+ * v0.41.15.0 (T6, codex #19/#20) — facts.embedding column drift check.
+ *
+ * Parallel surface to `checkEmbeddingWidthConsistency` but for the
+ * facts table. Migration v40 creates `facts.embedding` from
+ * `config.embedding_dimensions` AT MIGRATION TIME — if the user later
+ * swaps embedding providers (e.g. OpenAI 1536 → zembed-1 1280) without
+ * re-running migrations, the column width drifts. The first insert
+ * dies with the opaque pgvector "expected vector(N), got vector(M)"
+ * error.
+ *
+ * Covers BOTH vector(N) AND halfvec(N) shapes (codex #19 — v40 falls
+ * back to vector on pgvector < 0.7). Surfaces the paste-ready DROP
+ * INDEX → ALTER USING → CREATE INDEX recipe from
+ * `buildFactsAlterRecipe` instead of the unsafe REINDEX-only path
+ * codex #18 caught in the original plan.
+ */
+export async function checkFactsEmbeddingWidthConsistency(engine: BrainEngine): Promise<Check> {
+  // PGLite ships a single pgvector version; column + config wire
+  // together at initSchema time. No possible drift.
+  if (engine.kind !== 'postgres') {
+    return {
+      name: 'facts_embedding_width_consistency',
+      status: 'ok',
+      message: 'Skipped on PGLite (single bundled pgvector version).',
+    };
+  }
+
+  try {
+    const {
+      readFactsEmbeddingDim,
+      buildFactsAlterRecipe,
+    } = await import('../core/embedding-dim-check.ts');
+
+    const col = await readFactsEmbeddingDim(engine);
+    if (!col.exists) {
+      return {
+        name: 'facts_embedding_width_consistency',
+        status: 'ok',
+        message: 'facts.embedding column not present (pre-v40 brain or migration pending).',
+      };
+    }
+    if (col.dims === null || col.columnType === null) {
+      return {
+        name: 'facts_embedding_width_consistency',
+        status: 'warn',
+        message: 'facts.embedding column type is unrecognized (not vector or halfvec). Schema may be corrupt.',
+      };
+    }
+
+    let configDim: number;
+    let resolvedModel = 'unknown';
+    try {
+      const { getEmbeddingDimensions, getEmbeddingModel } = await import('../core/ai/gateway.ts');
+      configDim = getEmbeddingDimensions();
+      resolvedModel = getEmbeddingModel();
+    } catch {
+      return {
+        name: 'facts_embedding_width_consistency',
+        status: 'ok',
+        message: 'gateway not configured — facts.embedding width check skipped.',
+      };
+    }
+    if (!Number.isFinite(configDim) || configDim <= 0) {
+      return {
+        name: 'facts_embedding_width_consistency',
+        status: 'warn',
+        message: `gateway returned non-positive embedding dimension "${configDim}".`,
+      };
+    }
+
+    if (col.dims === configDim) {
+      return {
+        name: 'facts_embedding_width_consistency',
+        status: 'ok',
+        message:
+          `facts.embedding is ${col.columnType}(${col.dims}) — matches gateway embedding_dimensions ` +
+          `(${resolvedModel}).`,
+      };
+    }
+
+    // Drift detected. Surface the paste-ready ALTER recipe.
+    const recipe = buildFactsAlterRecipe(col.dims, configDim, col.columnType);
+    return {
+      name: 'facts_embedding_width_consistency',
+      status: 'warn',
+      message:
+        `facts.embedding is ${col.columnType}(${col.dims}) but gateway resolved ` +
+        `embedding_dimensions = ${configDim} (${resolvedModel}). ` +
+        `New fact inserts will fail with an opaque pgvector error.\n\n` +
+        recipe,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'facts_embedding_width_consistency',
+      status: 'warn',
+      message: `Could not check facts.embedding width: ${msg}`,
     };
   }
 }
@@ -2215,6 +2499,176 @@ export async function computeConversationFactsBacklogCheck(
   }
 }
 
+/**
+ * v0.42 — extract_health doctor check.
+ *
+ * Reads the extract_rollup_7d table (migration v106) for the last 7 days
+ * and reports per-kind aggregates. Stable JSON envelope schema_version:1.
+ *
+ * 3-state status:
+ *   - OK when rollup is empty (no extractions yet) OR every per-kind
+ *     halt rate is below the warn threshold.
+ *   - WARN when any per-kind halt rate exceeds 10% (operator-visible
+ *     signal that an extractor is failing too often).
+ *   - WARN when rollup_write_failures > 0 (audit JSONL is the source of
+ *     truth but operator should know the DB cache is degraded).
+ *
+ * Per-kind columns (per plan A5 + D-EXTRACT-32 spec):
+ *   cost_7d_usd, eval_pass_count, eval_fail_count, halt_count,
+ *   round_completed_count, last_updated_at
+ *
+ * The check is empty-rollup-tolerant: a brain that has never extracted
+ * shows OK with `kinds: []` rather than warning. Doctor latency stays
+ * under 100ms regardless of brain size because the rollup table
+ * pre-aggregates (rolled-up at audit-emitter time per F-OUT-19).
+ *
+ * Empty rollup short-circuits BEFORE hitting the rollup_write_failures
+ * branch so a brand-new brain doesn't surface a "0 failures" warning.
+ */
+export async function computeExtractHealthCheck(
+  engine: BrainEngine,
+): Promise<Check> {
+  const name = 'extract_health';
+  try {
+    type RollupRow = {
+      kind: string;
+      cost_7d_usd: number;
+      eval_pass_count: number;
+      eval_fail_count: number;
+      halt_count: number;
+      round_completed_count: number;
+      rollup_write_failures: number;
+      last_updated_at: Date | string | null;
+    };
+
+    const rows = await engine.executeRaw<RollupRow>(
+      `SELECT
+         kind,
+         SUM(cost_usd) AS cost_7d_usd,
+         SUM(eval_pass_count) AS eval_pass_count,
+         SUM(eval_fail_count) AS eval_fail_count,
+         SUM(halt_count) AS halt_count,
+         SUM(round_completed_count) AS round_completed_count,
+         SUM(rollup_write_failures) AS rollup_write_failures,
+         MAX(updated_at) AS last_updated_at
+       FROM extract_rollup_7d
+       WHERE day >= CURRENT_DATE - 7
+       GROUP BY kind
+       ORDER BY kind`,
+      [],
+    );
+
+    if (rows.length === 0) {
+      return {
+        name,
+        status: 'ok',
+        message: 'no extractions in last 7 days',
+        details: {
+          schema_version: 1,
+          kinds: [],
+        },
+      };
+    }
+
+    type KindAggregate = {
+      kind: string;
+      cost_7d_usd: number;
+      eval_pass_count: number;
+      eval_fail_count: number;
+      halt_count: number;
+      round_completed_count: number;
+      halt_rate: number;
+      last_updated_at: string | null;
+    };
+
+    const kinds: KindAggregate[] = rows.map(r => {
+      const halts = Number(r.halt_count) || 0;
+      const completed = Number(r.round_completed_count) || 0;
+      const total = halts + completed;
+      return {
+        kind: r.kind,
+        cost_7d_usd: Number(r.cost_7d_usd) || 0,
+        eval_pass_count: Number(r.eval_pass_count) || 0,
+        eval_fail_count: Number(r.eval_fail_count) || 0,
+        halt_count: halts,
+        round_completed_count: completed,
+        halt_rate: total > 0 ? halts / total : 0,
+        last_updated_at: r.last_updated_at
+          ? new Date(r.last_updated_at).toISOString()
+          : null,
+      };
+    });
+
+    const totalRollupFailures = rows.reduce(
+      (acc, r) => acc + (Number(r.rollup_write_failures) || 0),
+      0,
+    );
+
+    // High halt rates: per F-OUT-19 doctor surfaces extractor health
+    // distinctly from rollup write health.
+    const highHaltKinds = kinds.filter(k => k.halt_rate > 0.10);
+
+    if (highHaltKinds.length > 0) {
+      const top3 = [...highHaltKinds]
+        .sort((a, b) => b.halt_rate - a.halt_rate)
+        .slice(0, 3)
+        .map(k => `${k.kind}=${(k.halt_rate * 100).toFixed(1)}%`)
+        .join(', ');
+      return {
+        name,
+        status: 'warn',
+        message: `${highHaltKinds.length} kind(s) with halt rate > 10% (top: ${top3})`,
+        details: {
+          schema_version: 1,
+          kinds,
+          rollup_write_failures_7d: totalRollupFailures,
+        },
+      };
+    }
+
+    if (totalRollupFailures > 0) {
+      return {
+        name,
+        status: 'warn',
+        message: `${totalRollupFailures} rollup write failure(s) in last 7d (audit JSONL is source of truth; rebuild via gbrain extract status --rebuild-rollup)`,
+        details: {
+          schema_version: 1,
+          kinds,
+          rollup_write_failures_7d: totalRollupFailures,
+        },
+      };
+    }
+
+    return {
+      name,
+      status: 'ok',
+      message: `${kinds.length} kind(s) tracked, all halt rates below 10%`,
+      details: {
+        schema_version: 1,
+        kinds,
+        rollup_write_failures_7d: totalRollupFailures,
+      },
+    };
+  } catch (err) {
+    // Pre-v106 brains lack the extract_rollup_7d table. Don't warn — the
+    // bootstrap-coverage / migration framework brings the schema forward
+    // and the next run resolves naturally. Stay quiet.
+    const msg = (err as Error).message || String(err);
+    if (/extract_rollup_7d.*does not exist|no such table/i.test(msg)) {
+      return {
+        name,
+        status: 'ok',
+        message: 'extract_rollup_7d not yet present (pre-v0.42 brain or fresh init)',
+      };
+    }
+    return {
+      name,
+      status: 'warn',
+      message: `rollup query failed: ${msg}`,
+    };
+  }
+}
+
 export async function checkSyncFreshness(
   engine: BrainEngine,
   opts?: { nowMs?: number },
@@ -2313,6 +2767,60 @@ export async function checkSyncFreshness(
       name: 'sync_freshness',
       status: 'warn',
       message: `Could not check sync freshness: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * v0.41.19.0 (Issue 5 of ops-fix-wave) — surface `sync --all --parallel`
+ * to operators with multi-source brains.
+ *
+ * Background: `gbrain sync --all --parallel N --workers N --skip-failed`
+ * has existed since v0.40.3.0 but most operators still maintain separate
+ * per-source cron entries with manual deconfliction. One `--all` line
+ * replaces N per-source lines AND auto-picks-up future sources without
+ * a crontab edit.
+ *
+ * Surgical scope: we can't reach into the user's crontab (host-specific,
+ * portability risk). What we CAN do is surface the paste-ready command
+ * inside `gbrain doctor` so the operator sees it whenever they run a
+ * health check on a multi-source brain.
+ *
+ * Posture: never failure-state. Always `ok` with the paste-ready cmd
+ * embedded in the message (matches how sync_freshness embeds fix hints).
+ * Single-source brains get `ok` with a "not applicable" message.
+ * SQL error → `warn` (own try/catch, not relying on the outer doctor
+ * dispatcher — codex flagged this).
+ */
+export async function checkSyncConsolidation(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources
+        WHERE archived IS NOT TRUE
+          AND local_path IS NOT NULL`,
+    );
+    const sourceCount = rows.length;
+    if (sourceCount < 2) {
+      return {
+        name: 'sync_consolidation',
+        status: 'ok',
+        message: 'Single-source brain — sync --all consolidation not applicable.',
+      };
+    }
+    return {
+      name: 'sync_consolidation',
+      status: 'ok',
+      message:
+        `${sourceCount} active sources detected. Recommended cron: ` +
+        '`gbrain sync --all --parallel 4 --workers 4 --skip-failed`. ' +
+        'If your crontab has separate per-source entries, replace them with one --all line — ' +
+        'future sources auto-pick-up without a crontab edit.',
+    };
+  } catch (err) {
+    return {
+      name: 'sync_consolidation',
+      status: 'warn',
+      message: `Could not check sync consolidation: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 }
@@ -2458,6 +2966,12 @@ export async function buildChecks(
   const fastMode = args.includes('--fast');
   const doFix = args.includes('--fix');
   const dryRun = args.includes('--dry-run');
+  // v0.41.19.0 — `--scope=brain` SKIPS the SKILL check group (which walks the
+  // filesystem `skills/` tree, the dominant non-DB cost). Defaults to `all`.
+  // `runResolverChecks`-equivalent invocations are gated below; the same gate
+  // covers `whoknows_health` (the one DB-dependent skill check) where it's
+  // invoked later in the function.
+  const scope: 'all' | 'brain' = args.includes('--scope=brain') ? 'brain' : 'all';
 
   const checks: Check[] = [];
   let autoFixReport: AutoFixReport | null = null;
@@ -2470,16 +2984,26 @@ export async function buildChecks(
 
   // --- Filesystem checks (always run, no DB needed) ---
 
-  // 1. Resolver health
-  // Use the same auto-detect as `check-resolvable` so doctor sees a
-  // workspace/skills dir reachable via $OPENCLAW_WORKSPACE or
-  // ~/.openclaw/workspace, not just a `skills/` walked up from cwd.
-  // Read-only variant adds the install-path fallback so a hosted-CLI install
-  // run from `~` (e.g., `bun install -g github:garrytan/gbrain && cd ~ &&
-  // gbrain doctor`) can still find the bundled skills/ dir without warning.
-  const detected = autoDetectSkillsDirReadOnly();
+  // 1. Resolver health + 2. Skill conformance + 2b. Skill brain-first.
+  //
+  // SKILL check group (gated behind --scope=all).
+  //
+  // The resolver walk reads every SKILL.md under the configured skills dir
+  // (`skills/RESOLVER.md` or workspace-root `AGENTS.md`). On large OpenClaw
+  // deployments with 200+ skills this is the dominant non-DB cost. The
+  // v0.41.19.0 `--scope=brain` flag skips this whole block per D9 in the plan.
+  //
+  // We also skip `--fix` execution under scope=brain because --fix
+  // exclusively targets DRY violations inside SKILL.md files. Use the same
+  // auto-detect as `check-resolvable` so doctor sees a workspace/skills dir
+  // reachable via $OPENCLAW_WORKSPACE or ~/.openclaw/workspace, not just a
+  // `skills/` walked up from cwd. Read-only variant adds the install-path
+  // fallback so a hosted-CLI install run from `~` (e.g., `bun install -g
+  // github:garrytan/gbrain && cd ~ && gbrain doctor`) can still find the
+  // bundled skills/ dir without warning.
+  const detected = scope === 'all' ? autoDetectSkillsDirReadOnly() : { dir: null, source: 'none' as const };
   const skillsDir = detected.dir;
-  if (skillsDir) {
+  if (scope === 'all' && skillsDir) {
 
     // --fix: run auto-repair BEFORE checkResolvable so the post-fix scan
     // reflects the new state. Auto-fix only targets DRY violations today;
@@ -2528,12 +3052,12 @@ export async function buildChecks(
       };
       checks.push(check);
     }
-  } else {
+  } else if (scope === 'all') {
     checks.push({ name: 'resolver_health', status: 'warn', message: 'Could not find skills directory' });
   }
 
-  // 2. Skill conformance
-  if (skillsDir) {
+  // 2. Skill conformance (SKILL group — gated)
+  if (scope === 'all' && skillsDir) {
     const conformanceResult = checkSkillConformance(skillsDir);
     checks.push(conformanceResult);
   }
@@ -2549,7 +3073,9 @@ export async function buildChecks(
   // snapshot.json. Writes one detected/resolved JSONL line per state
   // transition + one fixed line per applied --fix. Stable brain → zero
   // audit writes per doctor run.
-  if (skillsDir) {
+  //
+  // SKILL group — gated.
+  if (scope === 'all' && skillsDir) {
     checks.push(skillBrainFirstCheck(skillsDir));
   }
 
@@ -2878,6 +3404,20 @@ export async function buildChecks(
     // Best-effort; audit-log read failure shouldn't stop doctor.
   }
 
+  // 3d.3 v0.42 — extract_health. Reads extract_rollup_7d (migration v106)
+  // for per-kind aggregates. Empty rollup → OK. High halt rate per kind
+  // → WARN. Rollup write failures → WARN (audit JSONL is the SoT, but
+  // operator should know the DB cache is degraded). See plan A5 + D-EXTRACT-32.
+  if (engine) {
+    try {
+      const check = await computeExtractHealthCheck(engine);
+      checks.push(check);
+    } catch {
+      // Best-effort; rollup-table missing on pre-v106 brains is normal
+      // and is already handled inside computeExtractHealthCheck.
+    }
+  }
+
   // 3d.2 v0.41.11.0 — conversation_facts_backlog. 3-state status:
   // SKIPPED-with-enable-hint when the cycle phase is disabled (opt-out
   // users don't get noise debt); OK at backlog=0; WARN at backlog>10
@@ -2913,6 +3453,132 @@ export async function buildChecks(
       // Best-effort; backlog query failure shouldn't stop doctor.
     }
   }
+
+  // 3d.3 v0.41.13.0 — conversation_format_coverage. Scans up to 200
+  // most-recent conversation-type pages, runs parseConversation in
+  // dry mode, reports per-pattern hit counts + unmatched count. Warn
+  // at >10% unmatched with paste-ready hint pointing at
+  // `gbrain conversation-parser scan <slug>` so the operator can
+  // triage the misses interactively.
+  if (engine) {
+    try {
+      const { parseConversation } = await import('../core/conversation-parser/parse.ts');
+      const allowedTypes = ['conversation', 'meeting', 'slack', 'email'] as const;
+      // PageFilters supports singular `type` only; iterate the 4 types
+      // and cap at ~50/each to land at ~200 total max.
+      const sample: import('../core/types.ts').Page[] = [];
+      for (const t of allowedTypes) {
+        const slice = await engine.listPages({ limit: 50, type: t as import('../core/types.ts').PageType });
+        sample.push(...slice);
+      }
+      if (sample.length === 0) {
+        checks.push({
+          name: 'conversation_format_coverage',
+          status: 'ok',
+          message: 'No conversation-type pages — coverage check not applicable',
+        });
+      } else {
+        const hitsByPattern: Record<string, number> = {};
+        let unmatched = 0;
+        for (const page of sample) {
+          const body = `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`.trim();
+          const result = parseConversation(body, { page, noPolish: true, noFallback: true });
+          const id = result.matched_pattern_id ?? '_no_match';
+          hitsByPattern[id] = (hitsByPattern[id] ?? 0) + 1;
+          if (result.phase === 'no_match') unmatched++;
+        }
+        const unmatchedPct = (unmatched / sample.length) * 100;
+        const breakdown = Object.entries(hitsByPattern)
+          .sort(([, a], [, b]) => b - a)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(', ');
+        if (unmatchedPct > 10) {
+          checks.push({
+            name: 'conversation_format_coverage',
+            status: 'warn',
+            message:
+              `${unmatched}/${sample.length} conversation pages (${unmatchedPct.toFixed(1)}%) match NO built-in pattern. ` +
+              `Breakdown: ${breakdown}. ` +
+              `Investigate: gbrain conversation-parser scan <slug> | ` +
+              `Enable LLM fallback (opt-in): gbrain config set conversation_parser.llm_fallback_enabled true`,
+          });
+        } else {
+          checks.push({
+            name: 'conversation_format_coverage',
+            status: 'ok',
+            message: `${sample.length} pages: ${breakdown}`,
+          });
+        }
+      }
+    } catch (err) {
+      checks.push({
+        name: 'conversation_format_coverage',
+        status: 'warn',
+        message: `Could not check conversation format coverage: ${(err as Error)?.message ?? String(err)}`,
+      });
+    }
+  }
+
+  // 3d.4 v0.41.13.0 — progressive_batch_audit_health. Reads last 7
+  // days of `~/.gbrain/audit/progressive-batch-YYYY-Www.jsonl` and
+  // surfaces operations that aborted with `abort_*` verdicts so
+  // operators see what went wrong without grep'ing the JSONL by hand.
+  try {
+    const { readRecentProgressiveBatchEvents } = await import(
+      '../core/progressive-batch/audit.ts'
+    );
+    const events = readRecentProgressiveBatchEvents(7);
+    const aborts = events.filter((e) => e.verdict !== 'proceed');
+    if (aborts.length === 0) {
+      checks.push({
+        name: 'progressive_batch_audit_health',
+        status: 'ok',
+        message:
+          events.length === 0
+            ? 'No progressive-batch operations in the last 7 days'
+            : `${events.length} progressive-batch events; 0 aborts`,
+      });
+    } else {
+      const reasonsCounted: Record<string, number> = {};
+      for (const e of aborts) {
+        const key = e.abort_reason ?? e.verdict;
+        reasonsCounted[key] = (reasonsCounted[key] ?? 0) + 1;
+      }
+      const breakdown = Object.entries(reasonsCounted)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(', ');
+      checks.push({
+        name: 'progressive_batch_audit_health',
+        status: 'warn',
+        message:
+          `${aborts.length}/${events.length} progressive-batch events aborted in last 7d. ` +
+          `Breakdown: ${breakdown}. ` +
+          `Inspect: cat ~/.gbrain/audit/progressive-batch-*.jsonl | jq 'select(.verdict != "proceed")'`,
+      });
+    }
+  } catch (err) {
+    checks.push({
+      name: 'progressive_batch_audit_health',
+      status: 'ok',
+      message: `Skipped (audit file unreachable): ${(err as Error)?.message ?? String(err)}`,
+    });
+  }
+
+  // 3d.5 v0.41.13.0 — conversation_parser_probe_health. Mode-gated
+  // per D10: ON when search.mode=tokenmax, opt-in for other modes.
+  // Surface the last 7 days of nightly-probe events; warn on FAIL /
+  // BUDGET_EXCEEDED / adversarial_false_positive.
+  //
+  // v0.41.13.0 ships the probe as opt-in (autopilot wiring deferred
+  // to T7 in the cathedral plan); this check skips with an enable
+  // hint until the probe has at least one audit event written.
+  checks.push({
+    name: 'conversation_parser_probe_health',
+    status: 'ok',
+    message:
+      'Skipped (nightly probe is opt-in; enable with ' +
+      '`gbrain config set autopilot.conversation_parser_probe.enabled true`)',
+  });
 
   // 3e. home_dir_in_worktree (v0.35.8.0). Walks up from `gbrainPath()`
   // looking for a `.git` directory OR file. If found, warns: `~/.gbrain/`
@@ -3760,7 +4426,7 @@ export async function buildChecks(
     checks.push({ name: 'graph_coverage', status: 'warn', message: 'Could not check graph coverage' });
   }
 
-  // 9b. v0.42.0.0 — orphan_ratio check (migration #1 of #1409).
+  // 9b. v0.41.18.0 — orphan_ratio check (migration #1 of #1409).
   //
   // Surfaces the fraction of linkable pages with no inbound links.
   // Consumes the same canonical getOrphansData() pure fn as
@@ -3933,8 +4599,11 @@ export async function buildChecks(
   // v0.33: whoknows_health — fixture presence + row count. The eval
   // gate itself runs via `gbrain eval whoknows`; this check is the
   // "did you do the assignment?" signal.
-  progress.heartbeat('whoknows_health');
-  checks.push(await whoknowsHealthCheck(engine));
+  // SKILL group — gated behind --scope=all (v0.41.19.0).
+  if (scope === 'all') {
+    progress.heartbeat('whoknows_health');
+    checks.push(await whoknowsHealthCheck(engine));
+  }
 
   // v0.36 cross-modal wave: modality column cleanup.
   //
@@ -5045,6 +5714,9 @@ export async function buildChecks(
   if (engine !== null) {
     progress.heartbeat('sync_freshness');
     checks.push(await checkSyncFreshness(engine));
+    // v0.41.19.0 (Issue 5): sync --all consolidation nudge.
+    progress.heartbeat('sync_consolidation');
+    checks.push(await checkSyncConsolidation(engine));
     // v0.38 — full-cycle freshness, sibling to sync_freshness. Reads
     // last_full_cycle_at from sources.config; mirrors what autopilot's
     // per-source dispatch gate sees.
@@ -5062,6 +5734,10 @@ export async function buildChecks(
     // v0.35.0.0+ reranker_health — read JSONL audit; warn on auth or volume.
     progress.heartbeat('reranker_health');
     checks.push(await checkRerankerHealth(engine));
+    // v0.41.18.0 batch_retry_health — Supavisor circuit-breaker incident
+    // surfacing via the batch-retry audit JSONL. Codex H-9 thresholds.
+    progress.heartbeat('batch_retry_health');
+    checks.push(await checkBatchRetryHealth(engine));
     // v0.40.4 graph_signals_coverage — global inbound-link density when
     // graph_signals is enabled in the active mode bundle.
     progress.heartbeat('graph_signals_coverage');
@@ -5074,6 +5750,10 @@ export async function buildChecks(
     checks.push(await checkZeEmbeddingHealth(engine));
     progress.heartbeat('embedding_width_consistency');
     checks.push(await checkEmbeddingWidthConsistency(engine));
+    // v0.41.15.0 (T6, codex #19/#20) — facts.embedding column drift
+    // parity check. Same drift class as content_chunks, separate column.
+    progress.heartbeat('facts_embedding_width_consistency');
+    checks.push(await checkFactsEmbeddingWidthConsistency(engine));
 
     // v0.37.7.0 doctor checks (#1167, #1166, #1226) — fast-mode skipped
     // since these touch DB queries with cost on large brains.
@@ -5092,6 +5772,15 @@ export async function buildChecks(
     // v0.38 — cycle_phase_scope (informational; no DB cost)
     progress.heartbeat('cycle_phase_scope');
     checks.push(checkCyclePhaseScope());
+
+    // v0.41.18.0 (A16, T4): 4 onboard checks — each emits a Check + its
+    // own RemediationStep[] aggregated by onboard's plan path. The
+    // checks themselves are cheap counts (backed by content_chunks_stale_idx
+    // for embed_staleness, TABLESAMPLE on PG >50K for the coverage pair).
+    progress.heartbeat('onboard_checks');
+    const { runAllOnboardChecks } = await import('../core/onboard/checks.ts');
+    const onboardResults = await runAllOnboardChecks(engine);
+    for (const r of onboardResults) checks.push(r.check);
   }
 
   progress.finish();
@@ -5366,26 +6055,21 @@ export function skillBrainFirstCheck(skillsDir: string): Check {
 }
 
 function outputResults(checks: Check[], json: boolean): boolean {
-  const hasFail = checks.some(c => c.status === 'fail');
-  const hasWarn = checks.some(c => c.status === 'warn');
-
-  // Compute composite health score (0-100)
-  let score = 100;
-  for (const c of checks) {
-    if (c.status === 'fail') score -= 20;
-    else if (c.status === 'warn') score -= 5;
-  }
-  score = Math.max(0, score);
+  // v0.41.19.0 — render goes through computeDoctorReport so the human
+  // output, JSON output, and remote MCP envelope all share one shape.
+  const report = computeDoctorReport(checks);
+  const hasFail = report.status === 'unhealthy';
+  const hasWarn = report.status === 'warnings';
+  const score = report.health_score;
 
   if (json) {
-    const status = hasFail ? 'unhealthy' : hasWarn ? 'warnings' : 'healthy';
-    console.log(JSON.stringify({ schema_version: 2, status, health_score: score, checks }));
+    console.log(JSON.stringify(report));
     return hasFail;
   }
 
   console.log('\nGBrain Health Check');
   console.log('===================');
-  for (const c of checks) {
+  for (const c of report.checks) {
     const icon = c.status === 'ok' ? 'OK' : c.status === 'warn' ? 'WARN' : 'FAIL';
     console.log(`  [${icon}] ${c.name}: ${c.message}`);
     if (c.issues) {
@@ -5396,12 +6080,30 @@ function outputResults(checks: Check[], json: boolean): boolean {
     }
   }
 
+  // v0.41.19.0 — brain-first headline. The user asked "is my brain ok?".
+  // Lead with the brain-category score; show the legacy aggregate
+  // alongside as context. The weighted BrainHealth.brain_score (data
+  // composition) is surfaced separately by the `brain_score` check above —
+  // it's read out of the check list so we don't duplicate the query.
+  const brainScoreCheck = report.checks.find((c) => c.name === 'brain_score');
+  const brainScoreLine = brainScoreCheck
+    ? `Weighted brain score: ${brainScoreCheck.status === 'ok' ? '' : `[${brainScoreCheck.status.toUpperCase()}] `}${brainScoreCheck.message}`
+    : null;
+
+  console.log('');
+  console.log(`Brain checks:  ${report.brain_checks_score}/100  (category penalty)`);
+  console.log(`Skill checks:  ${report.category_scores.skill}/100`);
+  console.log(`Ops checks:    ${report.category_scores.ops}/100`);
+  console.log(`Meta checks:   ${report.category_scores.meta}/100`);
+  if (brainScoreLine) console.log(brainScoreLine);
+  console.log('');
+
   if (hasFail) {
-    console.log(`\nHealth score: ${score}/100. Failed checks found.`);
+    console.log(`Overall health score: ${score}/100. Failed checks found.`);
   } else if (hasWarn) {
-    console.log(`\nHealth score: ${score}/100. All checks OK (some warnings).`);
+    console.log(`Overall health score: ${score}/100. All checks OK (some warnings).`);
   } else {
-    console.log(`\nHealth score: ${score}/100. All checks passed.`);
+    console.log(`Overall health score: ${score}/100. All checks passed.`);
   }
   return hasFail;
 }
@@ -5472,59 +6174,25 @@ async function runLocksCheck(engine: BrainEngine | null, jsonOutput: boolean): P
 // ============================================================
 
 /**
- * Emit ordered Remediation list to drive brain to --target-score.
+ * CLI wrapper around computeRemediationPlan (src/core/remediation/plan.ts).
  *
- * Read-only — never enqueues, never mutates. The agent contract:
- * inspect the plan with --remediation-plan --json before committing
- * to --remediate. The JSON shape is stable; consumers that parse it
- * can rely on it across releases.
+ * v0.41.18.0 (A1, codex finding #2): library extracted so onboard +
+ * MCP run_onboard can compose against a stable shape. This wrapper
+ * stays as the CLI surface only — argv parsing + human render. JSON
+ * mode emits the library's stable envelope verbatim.
+ *
+ * Read-only — never enqueues, never mutates.
  */
 export async function runRemediationPlan(
   engine: BrainEngine,
   args: string[],
 ): Promise<void> {
-  const { computeRecommendations, classifyChecks, maxReachableScore } =
-    await import('../core/brain-score-recommendations.ts');
+  const { computeRemediationPlan } = await import('../core/remediation/index.ts');
 
   const targetScore = parseIntFlag(args, '--target-score') ?? 90;
   const jsonOutput = args.includes('--json');
 
-  // Cheap path (D7) — don't run slow doctor checks for the plan surface.
-  // The recommendation generator works from BrainHealth + context alone.
-  const health = await engine.getHealth();
-  const ctx = await loadRecommendationContext(engine);
-  const recs = computeRecommendations(health, ctx);
-  // Synthetic check list for classification — we don't need full doctor
-  // output, just the check names the recommendations care about.
-  const syntheticChecks = [
-    { name: 'brain_score', status: 'ok' as const },
-    { name: 'sync_freshness', status: 'ok' as const },
-    { name: 'missing_embeddings', status: 'ok' as const },
-    { name: 'dead_links', status: 'ok' as const },
-    { name: 'orphan_pages', status: 'ok' as const },
-  ];
-  const classifications = classifyChecks(syntheticChecks, ctx);
-  const ceiling = maxReachableScore(health, classifications);
-
-  const filteredRecs = recs.filter((r) => r.status === 'remediable');
-  const estTotalSeconds = filteredRecs.reduce((sum, r) => sum + r.est_seconds, 0);
-  const estTotalUsd = filteredRecs.reduce((sum, r) => sum + (r.est_usd_cost ?? 0), 0);
-
-  const blocked = classifications
-    .filter((c) => c.status === 'blocked')
-    .map((c) => ({ check: c.check, reason: c.reason ?? 'prerequisite missing' }));
-
-  const plan = {
-    schema_version: 2,
-    brain_score_current: health.brain_score,
-    brain_score_target: targetScore,
-    max_reachable_score: ceiling,
-    target_unreachable: targetScore > ceiling,
-    plan: filteredRecs.map((r, i) => ({ step: i + 1, ...r })),
-    est_total_seconds: estTotalSeconds,
-    est_total_usd_cost: Number(estTotalUsd.toFixed(2)),
-    blocked,
-  };
+  const plan = await computeRemediationPlan(engine, { targetScore });
 
   if (jsonOutput) {
     console.log(JSON.stringify(plan, null, 2));
@@ -5532,9 +6200,9 @@ export async function runRemediationPlan(
   }
 
   // Human output
-  console.log(`Brain score: ${health.brain_score}/100 → target ${targetScore}`);
+  console.log(`Brain score: ${plan.brain_score_current}/100 → target ${targetScore}`);
   if (plan.target_unreachable) {
-    console.log(`Target unreachable: max with autonomous remediation is ${ceiling}/100.`);
+    console.log(`Target unreachable: max with autonomous remediation is ${plan.max_reachable_score}/100.`);
   }
   if (plan.plan.length === 0) {
     console.log('No remediations needed. Brain is at target.');
@@ -5546,21 +6214,25 @@ export async function runRemediationPlan(
       console.log(`  ${step.step}. [${step.severity}] ${step.job}${protectedMark} — ${step.rationale}${costMark}`);
     }
   }
-  if (blocked.length > 0) {
+  if (plan.blocked.length > 0) {
     console.log(`\nBlocked checks (prereq missing):`);
-    for (const b of blocked) {
+    for (const b of plan.blocked) {
       console.log(`  - ${b.check}: ${b.reason}`);
     }
   }
 }
 
 /**
- * Submit ordered Remediation jobs sequentially per D3, with D5 cascade
- * on failure and D7 scoped recheck between steps.
+ * CLI wrapper around runRemediation (src/core/remediation/run.ts).
+ *
+ * v0.41.18.0 (A1, codex finding #2): orchestrator extracted into the
+ * remediation library. This wrapper stays as the CLI surface only —
+ * argv parsing + interactive TTY confirmation + human/JSON render via
+ * RemediationHooks.
  *
  * Default behavior: submit-and-wait per step. --dry-run skips submission.
  * --max-usd N refuses if est_total_usd_cost > N. --max-jobs N caps the
- * inner loop.
+ * inner loop. --resume [plan_hash] loads checkpoint and continues.
  *
  * PGLite path: synchronous in-process execution (no durable queue).
  */
@@ -5574,7 +6246,8 @@ export async function runRemediate(
   // documented as the cron-safety guard. Either threads through to the
   // pre-flight estimate refusal AND, via withBudgetTracker, the mid-run
   // BudgetExhausted hard-throw.
-  const maxUsd = parseFloatFlag(args, '--max-usd') ?? parseFloatFlag(args, '--max-cost');
+  const maxUsdRaw = parseFloatFlag(args, '--max-usd') ?? parseFloatFlag(args, '--max-cost');
+  const maxUsd = maxUsdRaw === null ? undefined : maxUsdRaw;
   const dryRun = args.includes('--dry-run');
   const skipConfirm = args.includes('--yes');
   const jsonOutput = args.includes('--json');
@@ -5586,327 +6259,117 @@ export async function runRemediate(
   const resumeArg = resumeMode ? args[resumeFlagIdx + 1] : undefined;
   const resumePlanHash = resumeArg && !resumeArg.startsWith('--') ? resumeArg : undefined;
 
-  const { computeRecommendations, classifyChecks, maxReachableScore } =
-    await import('../core/brain-score-recommendations.ts');
-  const {
-    BudgetTracker,
-    BudgetExhausted,
-  } = await import('../core/budget/budget-tracker.ts');
-  const { withBudgetTracker } = await import('../core/ai/gateway.ts');
-  const {
-    computePlanHash,
-    saveRemediationCheckpoint,
-    loadRemediationCheckpoint,
-    listRemediationCheckpoints,
-    clearRemediationCheckpoint,
-  } = await import('../core/remediation-checkpoint.ts');
+  const { runRemediation, computeRemediationPlan } =
+    await import('../core/remediation/index.ts');
 
-  const ctx = await loadRecommendationContext(engine);
-
-  // Pre-flight ceiling check (D13)
-  const initialHealth = await engine.getHealth();
-  const syntheticChecks = [
-    { name: 'brain_score', status: 'ok' as const },
-    { name: 'sync_freshness', status: 'ok' as const },
-    { name: 'missing_embeddings', status: 'ok' as const },
-    { name: 'dead_links', status: 'ok' as const },
-    { name: 'orphan_pages', status: 'ok' as const },
-  ];
-  const classifications = classifyChecks(syntheticChecks, ctx);
-  const ceiling = maxReachableScore(initialHealth, classifications);
-  if (targetScore > ceiling) {
-    console.error(
-      `[remediate] target ${targetScore} unreachable; max autonomous = ${ceiling}/100. ` +
-      `Configure missing prereqs (see --remediation-plan blocked output) or lower --target-score.`,
-    );
-    process.exit(2);
-  }
-
-  // Initial plan
-  let recs = computeRecommendations(initialHealth, ctx).filter((r) => r.status === 'remediable');
-  if (recs.length === 0) {
-    console.log(`Brain at score ${initialHealth.brain_score}/100, target ${targetScore}. Nothing to do.`);
-    return;
-  }
-
-  // A4 amended: compute plan_hash off the active recommendation ids so the
-  // checkpoint binds to THIS plan. Resume only fires for matching plans.
-  const planHash = computePlanHash(recs.map((r) => r.id));
-  let completedFromCheckpoint = new Set<string>();
-  if (resumeMode) {
-    const requested = resumePlanHash;
-    let cp = requested ? loadRemediationCheckpoint(requested) : null;
-    if (!cp && !requested) {
-      // No explicit hash: try newest checkpoint that matches the active plan.
-      const recent = listRemediationCheckpoints();
-      for (const e of recent) {
-        const candidate = loadRemediationCheckpoint(e.plan_hash);
-        if (candidate && candidate.plan_hash === planHash) {
-          cp = candidate;
-          break;
-        }
-      }
-    }
-    if (!cp) {
+  // TTY confirmation gate (stays in CLI; library doesn't render).
+  // Compute the plan once for the confirmation prompt, then hand off
+  // to the library for the actual run. The library re-computes its
+  // own plan internally — we accept the second computation cost for
+  // a cleaner CLI/library separation.
+  if (!skipConfirm && !dryRun && process.stdout.isTTY && !resumeMode) {
+    const plan = await computeRemediationPlan(engine, { targetScore });
+    if (plan.target_unreachable) {
       console.error(
-        `[remediate --resume] no matching checkpoint found ` +
-          `(plan_hash=${planHash}${requested ? `; requested=${requested}` : ''}). ` +
-          `Run without --resume to start fresh.`,
+        `[remediate] target ${targetScore} unreachable; max autonomous = ${plan.max_reachable_score}/100. ` +
+        `Configure missing prereqs (see --remediation-plan blocked output) or lower --target-score.`,
       );
       process.exit(2);
     }
-    if (cp.plan_hash !== planHash) {
+    if (plan.plan.length === 0) {
+      console.log(`Brain at score ${plan.brain_score_current}/100, target ${targetScore}. Nothing to do.`);
+      return;
+    }
+    if (maxUsd !== undefined && plan.est_total_usd_cost > maxUsd) {
       console.error(
-        `[remediate --resume] checkpoint plan_hash=${cp.plan_hash} does not match active plan_hash=${planHash}. ` +
-          `The plan has changed (brain state moved). Run without --resume to start fresh.`,
+        `[remediate] est cost $${plan.est_total_usd_cost.toFixed(2)} exceeds --max-usd $${maxUsd.toFixed(2)}. Aborting.`,
       );
       process.exit(2);
     }
-    completedFromCheckpoint = new Set(cp.completed.map((c) => c.id));
-    console.error(
-      `[remediate --resume] resuming plan_hash=${planHash}: ${completedFromCheckpoint.size} step(s) completed, ` +
-        `${recs.length - completedFromCheckpoint.size} remaining.`,
-    );
-  }
-
-  const estTotalUsd = recs.reduce((sum, r) => sum + (r.est_usd_cost ?? 0), 0);
-  if (maxUsd !== null && estTotalUsd > maxUsd) {
-    console.error(
-      `[remediate] est cost $${estTotalUsd.toFixed(2)} exceeds --max-usd $${maxUsd.toFixed(2)}. Aborting.`,
-    );
-    process.exit(2);
-  }
-
-  if (!skipConfirm && process.stdout.isTTY) {
-    console.log(`About to submit ${recs.length} job(s), est ${Math.round(recs.reduce((s, r) => s + r.est_seconds, 0))}s, est $${estTotalUsd.toFixed(2)}`);
+    console.log(`About to submit ${plan.plan.length} job(s), est ${plan.est_total_seconds}s, est $${plan.est_total_usd_cost.toFixed(2)}`);
     console.log('Pass --yes to proceed (cron-friendly).');
     process.exit(1);
   }
 
-  if (dryRun) {
-    console.log(`[remediate --dry-run] Would submit ${recs.length} jobs:`);
-    for (const r of recs) console.log(`  - ${r.id} (${r.job})`);
-    return;
-  }
-
-  // Sequential submit per D3, with D5 cascade on failure and D7
-  // scoped recheck between steps.
-  const submitted: Array<{ step: number; id: string; job_id: number | null; status: string }> = [];
-  const abortedIds = new Set<string>();
-  const doctorRunId = crypto.randomUUID();
-
-  const isPGLite = engine.kind === 'pglite';
-  if (isPGLite) {
+  if (engine.kind === 'pglite') {
     console.error('[remediate] PGLite engine: running inline (no durable queue).');
   }
 
-  const { MinionQueue } = await import('../core/minions/queue.ts');
-  const { waitForCompletion } = await import('../core/minions/wait-for-completion.ts');
-  const queue = new MinionQueue(engine);
-
-  // A4 amended: install a BudgetTracker scope around the plan-step loop so
-  // any gateway.chat / embed / rerank inside a Minion handler (synthesize,
-  // patterns, consolidate) auto-enforces the cap. On BudgetExhausted, the
-  // onExhausted callback persists the checkpoint BEFORE the throw propagates;
-  // the catch surfaces the actionable --resume hint.
-  const remediateTracker = new BudgetTracker({
-    label: 'doctor.remediate',
-    maxCostUsd: maxUsd ?? undefined,
-  });
-
-  let exhaustionSnapshot: { spent: number; cap: number; reason: string; model_id?: string } | undefined;
-  remediateTracker.onExhausted(() => {
-    // BudgetTracker fires this synchronously from inside reserve()/record()
-    // before the throw bubbles. Persist whatever has been done so far.
-    const cp = {
-      schema_version: 1 as const,
-      plan_hash: planHash,
-      doctor_run_id: doctorRunId,
-      target_score: targetScore,
-      started_at: new Date().toISOString(),
-      completed: submitted
-        .filter((s) => s.status === 'completed')
-        .map((s) => ({ id: s.id, job: '', status: s.status, job_id: s.job_id ?? null })),
-      aborted_at: new Date().toISOString(),
-      abort_reason: 'budget_exhausted' as const,
-      budget_snapshot: exhaustionSnapshot,
-    };
-    saveRemediationCheckpoint(cp);
-  });
-
-  const runLoop = async (): Promise<void> => {
-    let stepCount = 0;
-    while (recs.length > 0 && stepCount < maxJobs) {
-      const step = recs[0];
-      if (!step) break;
-      stepCount++;
-
-      // Resume: skip steps that the checkpoint already marked completed.
-      if (completedFromCheckpoint.has(step.id)) {
-        submitted.push({ step: stepCount, id: step.id, job_id: null, status: 'completed' });
-        recs.shift();
-        continue;
-      }
-
-      // D5: if depends_on intersects aborted, skip + cascade
-      if (step.depends_on && step.depends_on.some((d) => abortedIds.has(d))) {
-        submitted.push({ step: stepCount, id: step.id, job_id: null, status: 'skipped_dep_aborted' });
-        abortedIds.add(step.id);
-        recs.shift();
-        continue;
-      }
-
-      try {
-        const isProtected = !!step.protected;
-        const job = await queue.add(
-          step.job,
-          { ...step.params, doctor_run_id: doctorRunId },
-          {
-            queue: 'default',
-            idempotency_key: step.idempotency_key,
-            max_attempts: 2,
-            maxWaiting: 1,
-          },
-          isProtected ? { allowProtectedSubmit: true } : undefined,
+  const result = await runRemediation(
+    engine,
+    {
+      targetScore,
+      maxJobs,
+      maxUsd,
+      dryRun,
+      resume: resumeMode,
+      resumePlanHash,
+    },
+    {
+      onTargetUnreachable: (target, ceiling) => {
+        console.error(
+          `[remediate] target ${target} unreachable; max autonomous = ${ceiling}/100. ` +
+          `Configure missing prereqs (see --remediation-plan blocked output) or lower --target-score.`,
         );
-        submitted.push({ step: stepCount, id: step.id, job_id: job.id, status: 'submitted' });
-
-        // Wait for terminal state. PGLite is in-process — short poll.
-        const terminal = await waitForCompletion(queue, job.id, {
-          pollMs: isPGLite ? 250 : 1000,
-          timeoutMs: (step.est_seconds + 60) * 1000,
-        });
-        const lastSub = submitted[submitted.length - 1];
-        if (lastSub) lastSub.status = terminal.status;
-
-        if (terminal.status !== 'completed') {
-          abortedIds.add(step.id);
-        }
-      } catch (e) {
-        if (e instanceof BudgetExhausted) {
-          exhaustionSnapshot = {
-            spent: e.spent,
-            cap: e.cap,
-            reason: e.reason,
-            model_id: e.modelId,
-          };
-          throw e;
-        }
-        submitted.push({
-          step: stepCount, id: step.id, job_id: null,
-          status: `error: ${(e as Error).message.slice(0, 100)}`,
-        });
-        abortedIds.add(step.id);
-      }
-
-      recs.shift();
-      // D7: scoped recheck — re-compute plan from fresh health snapshot.
-      // The next plan may drop completed steps and re-introduce failed
-      // steps with bumped retry suffix (D1).
-      if (recs.length === 0 || stepCount >= maxJobs) break;
-      const freshHealth = await engine.getHealth();
-      recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
-    }
-  };
-
-  let budgetExhaustedAt: InstanceType<typeof BudgetExhausted> | null = null;
-  try {
-    await withBudgetTracker(remediateTracker, runLoop);
-  } catch (err) {
-    if (err instanceof BudgetExhausted) {
-      budgetExhaustedAt = err;
-      console.error(
-        `\n[remediate] BudgetExhausted (${err.reason}): spent $${err.spent.toFixed(4)} > cap $${err.cap.toFixed(2)}.\n` +
+      },
+      onNothingToDo: (score, target) => {
+        console.log(`Brain at score ${score}/100, target ${target}. Nothing to do.`);
+      },
+      onBudgetRefused: (estCost, cap) => {
+        console.error(
+          `[remediate] est cost $${estCost.toFixed(2)} exceeds --max-usd $${cap.toFixed(2)}. Aborting.`,
+        );
+      },
+      onResumeMissed: (planHash, requested) => {
+        console.error(
+          `[remediate --resume] no matching checkpoint found ` +
+          `(plan_hash=${planHash}${requested ? `; requested=${requested}` : ''}). ` +
+          `Run without --resume to start fresh.`,
+        );
+      },
+      onResumeLoaded: (planHash, completed, remaining) => {
+        console.error(
+          `[remediate --resume] resuming plan_hash=${planHash}: ${completed} step(s) completed, ${remaining} remaining.`,
+        );
+      },
+      onBudgetExhausted: (planHash, snapshot) => {
+        console.error(
+          `\n[remediate] BudgetExhausted (${snapshot.reason}): spent $${snapshot.spent.toFixed(4)} > cap $${snapshot.cap.toFixed(2)}.\n` +
           `Checkpoint saved. Resume with:\n` +
           `  gbrain doctor --remediate --resume ${planHash}\n`,
-      );
-    } else {
-      throw err;
-    }
-  }
+        );
+      },
+    },
+  );
 
-  // Clear checkpoint on a clean run (no budget abort). Failed steps in the
-  // submitted set don't disqualify the cleanup — they re-surface on the
-  // next plan with bumped suffixes.
-  if (!budgetExhaustedAt) {
-    clearRemediationCheckpoint(planHash);
-  }
+  // CLI surfaces — target unreachable / resume missed already emitted via hooks.
+  // Library returns synthetic result with target_unreachable populated; exit 2.
+  if (result.target_unreachable) process.exit(2);
 
-  const finalHealth = await engine.getHealth();
-  const result = {
-    doctor_run_id: doctorRunId,
-    brain_score_initial: initialHealth.brain_score,
-    brain_score_final: finalHealth.brain_score,
-    brain_score_target: targetScore,
-    target_reached: finalHealth.brain_score >= targetScore,
-    submitted,
-    aborted_count: abortedIds.size,
-  };
+  if (dryRun && result.submitted.length > 0) {
+    console.log(`[remediate --dry-run] Would submit ${result.submitted.length} jobs:`);
+    for (const s of result.submitted) console.log(`  - ${s.id}`);
+    return;
+  }
 
   if (jsonOutput) {
     console.log(JSON.stringify(result, null, 2));
-  } else {
-    console.log(`\nBrain score: ${initialHealth.brain_score} → ${finalHealth.brain_score} (target ${targetScore})`);
-    console.log(`Submitted: ${submitted.length} job(s), ${abortedIds.size} aborted/failed`);
+  } else if (result.submitted.length > 0) {
+    console.log(`\nBrain score: ${result.brain_score_initial} → ${result.brain_score_final} (target ${targetScore})`);
+    console.log(`Submitted: ${result.submitted.length} job(s), ${result.aborted_count} aborted/failed`);
   }
 
-  const anyFailed = submitted.some((s) => s.status !== 'completed' && s.status !== 'submitted');
-  if (budgetExhaustedAt || anyFailed) process.exit(1);
-}
-
-/**
- * Build RecommendationContext from engine + config.
- * Pure read; no side effects.
- */
-async function loadRecommendationContext(engine: BrainEngine) {
-  // v0.37 fix wave (Lane E.4 + CDX2-11): read schema-sizing fields from
-  // gateway, not DB. The DB plane is schema-applied metadata; the file
-  // plane is the gateway runtime source. Pre-fix this context produced
-  // stale recommendations on fresh installs whose DB rows hadn't been
-  // populated.
-  //
-  // Also extended the API-key check to recognize the ZE key alongside
-  // OpenAI (was OpenAI-only). After Lane C.3, zeroentropy_api_key lives
-  // in GBrainConfig + propagates to the gateway env dict.
-  const repoPath = await engine.getConfig('sync.repo_path');
-  let embeddingModel: string | undefined;
-  let embeddingDimensions: number | undefined;
-  try {
-    const gw = await import('../core/ai/gateway.ts');
-    embeddingModel = gw.getEmbeddingModel();
-    embeddingDimensions = gw.getEmbeddingDimensions();
-  } catch {
-    // Gateway unconfigured — fall back to DB plane as a best-effort hint
-    // (preserves doctor running before any engine.connect()).
-    const dbModel = await engine.getConfig('embedding_model');
-    const dbDims = await engine.getConfig('embedding_dimensions');
-    embeddingModel = dbModel ?? undefined;
-    embeddingDimensions = dbDims ? Number(dbDims) : undefined;
-  }
-  // v0.40.x: recipe-aware provider check, shared with autopilot.ts via
-  // embeddingProviderConfigured(). Local providers (ollama, llama-server —
-  // empty auth_env.required) need no hosted key; hosted providers check
-  // their OWN required key (so a Voyage brain is judged by VOYAGE_API_KEY,
-  // not by whether an OpenAI/ZE key happens to exist — the pre-fix wart).
-  // fileCfg loads synchronously, so the resolveKey closure is sync.
-  const { loadConfigFileOnly } = await import('../core/config.ts');
-  const fileCfg = loadConfigFileOnly();
-  const { embeddingProviderConfigured, HOSTED_EMBED_KEY_CONFIG } = await import(
-    '../core/brain-score-recommendations.ts'
+  const anyFailed = result.submitted.some(
+    (s) => s.status !== 'completed' && s.status !== 'submitted' && s.status !== 'dry_run',
   );
-  const embeddingConfigured = embeddingProviderConfigured(embeddingModel, (envVar) => {
-    const cfgField = HOSTED_EMBED_KEY_CONFIG[envVar];
-    const fromCfg = cfgField ? (fileCfg as Record<string, unknown> | null)?.[cfgField] : undefined;
-    return !!(process.env[envVar] || fromCfg);
-  });
-  return {
-    repoPath: repoPath ?? undefined,
-    embeddingModel,
-    embeddingDimensions,
-    embeddingProviderConfigured: embeddingConfigured,
-    hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || fileCfg?.anthropic_api_key),
-  };
+  if (result.budget_exhausted || anyFailed) process.exit(1);
 }
+
+// v0.41.18.0 (A1, codex finding #2): loadRecommendationContext moved to
+// src/core/remediation/context.ts so onboard + MCP run_onboard compose
+// the same context. The CLI surfaces (runRemediationPlan / runRemediate
+// above) now call computeRemediationPlan + runRemediation from the
+// library, which builds the context internally.
 
 function parseIntFlag(args: string[], flag: string): number | null {
   const i = args.indexOf(flag);

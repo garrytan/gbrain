@@ -4415,7 +4415,7 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 95,
     name: 'links_link_source_check_includes_mentions',
-    // v0.42.0.0 Part B (migration #1 of #1409): widen the link_source
+    // v0.41.18.0 Part B (migration #1 of #1409): widen the link_source
     // CHECK constraint to admit 'mentions' for auto-linked body-text
     // mentions from `gbrain extract links --by-mention`. Backlink-count
     // SQL in postgres-engine.ts + pglite-engine.ts excludes link_source =
@@ -4522,11 +4522,6 @@ export const MIGRATIONS: Migration[] = [
     // The Postgres path uses CREATE INDEX CONCURRENTLY (with `transaction:
     // false` so postgres.js doesn't wrap an implicit BEGIN) and pre-drops
     // any invalid remnant from a prior failed CONCURRENTLY attempt.
-    //
-    // Slot history: originally v95, bumped to v96 after master's #1442
-    // landed (links CHECK widening), then bumped to v97 after master's
-    // v0.41.11.0 (#1446) claimed v96 for the facts conversation index.
-    // Migration content unchanged across renumbers.
     sql: '',
     transaction: false,
     handler: async (engine) => {
@@ -4558,6 +4553,372 @@ export const MIGRATIONS: Migration[] = [
         );
       }
     },
+  },
+  {
+    version: 98,
+    name: 'gbrain_cycle_locks_last_refreshed_at',
+    // v0.41.15.0 (D-V3-4 + D-V4-1) — add last_refreshed_at column for
+    // `gbrain sync --break-lock --max-age <s>` to correctly identify
+    // wedged-but-alive lock holders without stealing healthy long-running
+    // holders that are actively refreshing.
+    //
+    // BACKFILL POLICY: last_refreshed_at = NOW() (NOT acquired_at).
+    //
+    // Why NOW(): during the upgrade window there can be ACTIVE sync
+    // processes still running the OLD binary. Their refresh() only bumps
+    // ttl_expires_at (the old code didn't know about last_refreshed_at).
+    // If we backfilled = acquired_at (e.g. 25 min ago), then `gbrain sync
+    // --break-lock --all --max-age 1800` after the migration would
+    // immediately delete the lock of a HEALTHY 25-min-old holder that's
+    // still actively writing.
+    sql: `
+      ALTER TABLE gbrain_cycle_locks ADD COLUMN IF NOT EXISTS last_refreshed_at TIMESTAMPTZ;
+      UPDATE gbrain_cycle_locks SET last_refreshed_at = NOW() WHERE last_refreshed_at IS NULL;
+    `,
+  },
+  {
+    version: 99,
+    name: 'conversation_parser_llm_cache_table',
+    // v0.41.16.0 — content-hash-keyed cache for the conversation parser's
+    // LLM polish + fallback calls. See src/schema.sql for design notes.
+    sql: `
+      CREATE TABLE IF NOT EXISTS conversation_parser_llm_cache (
+        content_sha256 TEXT NOT NULL,
+        model_id TEXT NOT NULL,
+        call_shape TEXT NOT NULL CHECK (call_shape IN ('polish', 'fallback')),
+        value_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (content_sha256, model_id, call_shape)
+      );
+      CREATE INDEX IF NOT EXISTS idx_conversation_parser_llm_cache_created
+        ON conversation_parser_llm_cache (created_at);
+    `,
+    sqlFor: {
+      pglite: `
+        CREATE TABLE IF NOT EXISTS conversation_parser_llm_cache (
+          content_sha256 TEXT NOT NULL,
+          model_id TEXT NOT NULL,
+          call_shape TEXT NOT NULL CHECK (call_shape IN ('polish', 'fallback')),
+          value_json JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (content_sha256, model_id, call_shape)
+        );
+        CREATE INDEX IF NOT EXISTS idx_conversation_parser_llm_cache_created
+          ON conversation_parser_llm_cache (created_at);
+      `,
+    },
+  },
+  {
+    version: 101,
+    name: 'links_link_kind_column',
+    // v0.41.18.0 (gbrain onboard wave, A10 + codex finding #12):
+    // NER link extraction adds a nullable link_kind column instead of
+    // splitting link_source='ner' as a new provenance — keeps
+    // backlink-count + orphan-ratio queries stable while letting
+    // NER-aware callers distinguish typed links.
+    //
+    // Three kinds: 'plain' | 'typed_ner' | NULL (legacy, semantically plain).
+    // NOT in the links UNIQUE constraint so a plain-mention row coexists
+    // with future typed_ner promotions via explicit ON CONFLICT DO UPDATE.
+    //
+    // Slot history: originally v98, bumped to v101 after master merge
+    // claimed v98 (lock-refresh) + v99 (conversation parser cache) +
+    // v100 (per master's own merges).
+    sql: `
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS link_kind TEXT
+        CHECK (link_kind IS NULL OR link_kind IN ('plain', 'typed_ner'));
+    `,
+    sqlFor: {
+      pglite: `
+        ALTER TABLE links ADD COLUMN IF NOT EXISTS link_kind TEXT
+          CHECK (link_kind IS NULL OR link_kind IN ('plain', 'typed_ner'));
+      `,
+    },
+  },
+  {
+    version: 102,
+    name: 'timeline_entries_source_in_dedup',
+    // v0.41.18.0 (gbrain onboard wave, A11 + codex finding #11):
+    // Widen idx_timeline_dedup from (page_id, date, summary) to
+    // (page_id, date, summary, source) so --from-meetings provenance
+    // survives. Legacy rows have source='' (schema default), so legacy
+    // dedup behavior is preserved.
+    //
+    // Slot history: originally v99, bumped to v102 after master merge.
+    sql: `
+      DROP INDEX IF EXISTS idx_timeline_dedup;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_dedup
+        ON timeline_entries(page_id, date, summary, source);
+    `,
+    sqlFor: {
+      pglite: `
+        DROP INDEX IF EXISTS idx_timeline_dedup;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_dedup
+          ON timeline_entries(page_id, date, summary, source);
+      `,
+    },
+  },
+  {
+    version: 103,
+    name: 'migration_impact_log_and_priority_recent_idx',
+    // v0.41.18.0 (gbrain onboard wave, A6 + A25 + A13 + codex #9 + #10):
+    // (1) migration_impact_log table — onboard --history backbone with
+    //     attribution columns (job_id, source_id, brain_id, started_at,
+    //     idempotency_key) so concurrent runs don't misattribute deltas.
+    // (2) content_chunks_stale_idx partial index — supports
+    //     `embed --stale` + `--priority recent` (outer ORDER BY
+    //     p.updated_at DESC uses existing idx_pages_updated_at_desc).
+    //
+    // Slot history: originally v100, bumped to v103 after master merge.
+    // Engine-aware split: Postgres uses CREATE INDEX CONCURRENTLY +
+    // invalid-remnant pre-drop; PGLite uses plain CREATE INDEX.
+    transaction: false,
+    sql: '',
+    handler: async (engine) => {
+      const createTableSql = `
+        CREATE TABLE IF NOT EXISTS migration_impact_log (
+          id BIGSERIAL PRIMARY KEY,
+          remediation_id TEXT NOT NULL,
+          metric_name TEXT NOT NULL,
+          metric_before NUMERIC,
+          metric_after NUMERIC,
+          job_id BIGINT REFERENCES minion_jobs(id) ON DELETE SET NULL,
+          source_id TEXT,
+          brain_id TEXT,
+          started_at TIMESTAMPTZ,
+          idempotency_key TEXT,
+          applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          applied_by TEXT,
+          details JSONB DEFAULT '{}'::jsonb
+        );
+      `;
+      await engine.runMigration(103, createTableSql);
+      await engine.runMigration(
+        103,
+        `CREATE INDEX IF NOT EXISTS migration_impact_log_remediation_idx
+           ON migration_impact_log(remediation_id, applied_at DESC);`
+      );
+      await engine.runMigration(
+        103,
+        `CREATE INDEX IF NOT EXISTS migration_impact_log_attribution_idx
+           ON migration_impact_log(job_id, source_id) WHERE job_id IS NOT NULL;`
+      );
+
+      if (engine.kind === 'postgres') {
+        await engine.runMigration(
+          103,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'content_chunks_stale_idx' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS content_chunks_stale_idx';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          103,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS content_chunks_stale_idx
+             ON content_chunks (page_id, chunk_index)
+             WHERE embedding IS NULL;`
+        );
+      } else {
+        await engine.runMigration(
+          103,
+          `CREATE INDEX IF NOT EXISTS content_chunks_stale_idx
+             ON content_chunks (page_id, chunk_index)
+             WHERE embedding IS NULL;`
+        );
+      }
+    },
+  },
+  {
+    version: 104,
+    name: 'pages_atom_source_hash_idx',
+    // Partial expression index on frontmatter->>'source_hash' for atom
+    // rows. Powers `atomsExistingForHashes` in extract_atoms
+    // (src/core/cycle/extract-atoms.ts), which replaces the prior
+    // per-hash loop that did 7K SQL round trips per cycle on a brain
+    // with ~7K conversation transcripts.
+    //
+    // Mirrors v97 pattern: Postgres uses CREATE INDEX CONCURRENTLY
+    // (no SHARE-lock blocking concurrent writes) and pre-drops any
+    // invalid remnant from a prior failed CONCURRENTLY attempt via
+    // pg_index.indisvalid. PGLite uses plain CREATE INDEX.
+    transaction: false,
+    sql: '',
+    handler: async (engine) => {
+      if (engine.kind === 'postgres') {
+        await engine.runMigration(
+          104,
+          `DO $$ BEGIN
+             IF EXISTS (
+               SELECT 1 FROM pg_index i
+               JOIN pg_class c ON c.oid = i.indexrelid
+               WHERE c.relname = 'pages_atom_source_hash_idx' AND NOT i.indisvalid
+             ) THEN
+               EXECUTE 'DROP INDEX CONCURRENTLY IF EXISTS pages_atom_source_hash_idx';
+             END IF;
+           END $$;`
+        );
+        await engine.runMigration(
+          104,
+          `CREATE INDEX CONCURRENTLY IF NOT EXISTS pages_atom_source_hash_idx
+             ON pages ((frontmatter->>'source_hash'))
+             WHERE type = 'atom' AND deleted_at IS NULL;`
+        );
+      } else {
+        await engine.runMigration(
+          104,
+          `CREATE INDEX IF NOT EXISTS pages_atom_source_hash_idx
+             ON pages ((frontmatter->>'source_hash'))
+             WHERE type = 'atom' AND deleted_at IS NULL;`
+        );
+      }
+    },
+  },
+  {
+    version: 105,
+    name: 'slug_aliases',
+    // v0.41.22 type-unification wave (T1, plan D1+D11+D17).
+    // Backing table for the concept-redirect → alias-table migration: 5.5K
+    // concept-redirect pages in the reference production brain become rows
+    // here so wikilinks like `[[old-redirect-slug]]` resolve to the canonical
+    // page via `engine.resolveSlugWithAlias` short-circuit. Source-scoped
+    // unique key + source-scoped canonical index per F12 (dangling_aliases
+    // doctor check must use source-scoped JOIN to avoid cross-source false
+    // positives).
+    //
+    // Originally claimed v104; bumped to v105 after master merge from
+    // v0.41.21.0 wave took v104 for pages_atom_source_hash_idx.
+    //
+    // CHECK no-self-reference + UNIQUE (source_id, alias_slug). PGLite uses
+    // plain CREATE INDEX (no CONCURRENTLY); fresh installs also create the
+    // table via PGLITE_SCHEMA_SQL so this migration is a no-op there.
+    sql: '',
+    handler: async (engine) => {
+      await engine.runMigration(
+        105,
+        `CREATE TABLE IF NOT EXISTS slug_aliases (
+          id             BIGSERIAL PRIMARY KEY,
+          source_id      TEXT NOT NULL,
+          alias_slug     TEXT NOT NULL,
+          canonical_slug TEXT NOT NULL,
+          notes          TEXT,
+          created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+          CONSTRAINT slug_aliases_no_self CHECK (alias_slug <> canonical_slug),
+          CONSTRAINT slug_aliases_uniq UNIQUE (source_id, alias_slug)
+        );`
+      );
+      await engine.runMigration(
+        105,
+        `CREATE INDEX IF NOT EXISTS slug_aliases_canonical_idx
+           ON slug_aliases (source_id, canonical_slug);`
+      );
+    },
+  },
+  {
+    version: 106,
+    name: 'extract_rollup_7d_table',
+    // v0.41.23 — Per-day rollup of extract events for fast doctor reads.
+    // Audit JSONL at ~/.gbrain/audit/extract-rounds-YYYY-Www.jsonl remains
+    // the SOURCE OF TRUTH (forensic, append-only, crash-safe). This DB
+    // table is a best-effort cache for doctor's <100ms read budget on
+    // heavy brains (per F-OUT-19 dual-write posture, JSONL primary).
+    //
+    // Per-day rows mean the 7-day window auto-evicts; doctor reads
+    // `WHERE day >= CURRENT_DATE - 7`. UPSERT on every audit event
+    // serializes via Postgres' INSERT ... ON CONFLICT DO UPDATE.
+    //
+    // Cycle's purge phase GCs rows older than 30 days (operational buffer
+    // beyond the 7-day read window).
+    //
+    // Slot history: originally claimed v100 in plan; bumped to v104 after
+    // v98/v99/v101/v102/v103 master merges; bumped again to v106 after
+    // v0.41.22 master merge took v104 (pages_atom_source_hash_idx) and
+    // v105 (slug_aliases).
+    sql: `
+      CREATE TABLE IF NOT EXISTS extract_rollup_7d (
+        kind TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        day DATE NOT NULL,
+        cost_usd REAL NOT NULL DEFAULT 0,
+        halt_count INT NOT NULL DEFAULT 0,
+        eval_fail_count INT NOT NULL DEFAULT 0,
+        eval_pass_count INT NOT NULL DEFAULT 0,
+        round_completed_count INT NOT NULL DEFAULT 0,
+        rollup_write_failures INT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (kind, source_id, day)
+      );
+      CREATE INDEX IF NOT EXISTS idx_extract_rollup_7d_day
+        ON extract_rollup_7d (day);
+    `,
+  },
+  {
+    version: 107,
+    name: 'page_generation_clock_and_statement_trigger',
+    // v0.41.25.0 (D18/D19, codex outside-voice on /plan-eng-review): global
+    // page-generation clock + statement-level trigger.
+    //
+    // Renumbered v104 → v105 → v106 → v107 during master merges:
+    //   PR #1545 (v0.41.21.0 ops-fix-wave) took v104 for pages_atom_source_hash_idx;
+    //   PR #1542 (v0.41.22.0 type-unification cathedral) took v105 for slug_aliases;
+    //   PR #1541 (v0.41.23.0 extract operator surfaces) took v106 for extract_rollup_7d_table.
+    //
+    // Why this exists: the pre-v0.41.25.0 query-cache Layer 1 bookmark read
+    // `MAX(generation) FROM pages` to detect "writes happened since cache
+    // store". Two bugs in that contract — independent of any sync work:
+    //
+    //   1. The row-level `bump_page_generation_trg` (migration v91) sets
+    //      `NEW.generation = OLD.generation + 1` on UPDATE. Updating a
+    //      NON-MAX page didn't advance MAX(generation). Cache silently
+    //      served stale results for any UPDATE-to-non-max page.
+    //   2. The trigger is BEFORE INSERT OR UPDATE — DELETE doesn't fire it
+    //      at all. Even an AFTER DELETE wouldn't move MAX (surviving rows
+    //      are untouched).
+    //
+    // The fix: single-row counter, bumped per-statement (FOR EACH STATEMENT
+    // — row-level would turn a 73K-row batch DELETE into 73K UPDATEs on the
+    // same counter, recreating the bottleneck the sync-delete wave is
+    // fixing in this same PR). Layer 1 reads page_generation_clock.value
+    // directly. Per-row pages.generation stays for Layer 2 (per-page
+    // snapshot via jsonb_each + LEFT JOIN pages) which doesn't care about
+    // MAX, only per-page advancement.
+    //
+    // Seeded with COALESCE(MAX(pages.generation), 0) so existing
+    // query_cache rows stored under the old MAX semantics aren't all
+    // instantly invalidated on upgrade. Their max_generation_at_store
+    // stamp compares cleanly against the seeded clock; future writes bump
+    // the clock and the bookmark fires correctly.
+    //
+    // Mirror lives in src/core/pglite-schema.ts (fresh-install path).
+    // Forward-reference bootstrap probe in applyForwardReferenceBootstrap
+    // on both engines so pre-v0.41.25.0 brains pick it up cleanly.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS page_generation_clock (
+        id    INTEGER PRIMARY KEY CHECK (id = 1),
+        value BIGINT  NOT NULL DEFAULT 0
+      );
+      INSERT INTO page_generation_clock (id, value)
+        VALUES (1, COALESCE((SELECT MAX(generation) FROM pages), 0))
+        ON CONFLICT (id) DO NOTHING;
+
+      CREATE OR REPLACE FUNCTION bump_page_generation_clock_fn() RETURNS trigger AS $func$
+      BEGIN
+        UPDATE page_generation_clock SET value = value + 1 WHERE id = 1;
+        RETURN NULL;
+      END;
+      $func$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS bump_page_generation_clock_trg ON pages;
+      CREATE TRIGGER bump_page_generation_clock_trg
+        AFTER INSERT OR UPDATE OR DELETE ON pages
+        FOR EACH STATEMENT
+        EXECUTE FUNCTION bump_page_generation_clock_fn();
+    `,
   },
 ];
 

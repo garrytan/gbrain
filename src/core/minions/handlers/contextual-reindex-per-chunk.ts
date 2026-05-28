@@ -1,4 +1,12 @@
 /**
+ * v0.41.13.0 T18 retrofit note: this is a Minion HANDLER, not a CLI
+ * batch loop. The progressive-batch primitive's stage model (trial →
+ * ramp → full) doesn't fit Minion handler semantics (one job per page,
+ * worker-driven). The primitive's audit + cost-cap value lives at the
+ * SUBMITTER side (`gbrain reindex --markdown`, which IS retrofitted in
+ * T11), not at the handler. The handler already routes its cost through
+ * the global Haiku rate-leaser (D26 P0-3). No further retrofit needed.
+ *
  * v0.40.3.0 — Minion handler for per-page contextual retrieval re-embed.
  *
  * One job per page (D10). Submitted by:

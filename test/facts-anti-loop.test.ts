@@ -13,15 +13,19 @@ import { extractFactsFromTurn } from '../src/core/facts/extract.ts';
 
 let engine: PGLiteEngine;
 
+// 30s hook timeout — when this file runs deep in a shard process that's
+// already created ~20 PGLite engines, the WASM cold-start + 95 migrations
+// on a fresh DB legitimately exceeds bun's 5s hook default. CI shard 4
+// hit this on v0.41.17.0 (95 migrations × 21 files × 1 bun process).
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-});
+}, 30_000);
 
 afterAll(async () => {
   await engine.disconnect();
-});
+}, 30_000);
 
 describe('anti-loop dream_generated marker', () => {
   test('extractFactsFromTurn skips when isDreamGenerated:true', async () => {
@@ -51,6 +55,12 @@ describe('anti-loop dream_generated marker', () => {
       content: `---\ntype: note\ntitle: Dream\ndream_generated: true\n---\n${'real-looking content. '.repeat(20)}`,
     }, { remote: false, sourceId: 'default' });
     const payload = JSON.parse(result.content[0].text);
+    // Diagnostic: if facts_backstop is missing, the handler likely threw
+    // and dispatchToolCall wrapped the error as `{error: 'internal_error'}`.
+    // Surface the full payload so CI logs reveal the actual failure mode.
+    if (!payload.facts_backstop) {
+      throw new Error(`put_page returned no facts_backstop. Full payload: ${JSON.stringify(payload, null, 2)}. isError=${(result as { isError?: boolean }).isError}`);
+    }
     expect(payload.facts_backstop).toEqual({ skipped: 'dream_generated' });
   });
 
@@ -60,6 +70,9 @@ describe('anti-loop dream_generated marker', () => {
       content: `---\ntype: note\ntitle: Real\n---\n${'real-looking content with claims. '.repeat(15)}`,
     }, { remote: false, sourceId: 'default' });
     const payload = JSON.parse(result.content[0].text);
+    if (!payload.facts_backstop) {
+      throw new Error(`put_page returned no facts_backstop. Full payload: ${JSON.stringify(payload, null, 2)}. isError=${(result as { isError?: boolean }).isError}`);
+    }
     expect(payload.facts_backstop).toBeDefined();
     if ('skipped' in payload.facts_backstop) {
       expect(payload.facts_backstop.skipped).not.toBe('dream_generated');

@@ -422,12 +422,19 @@ export interface CycleOpts {
  * time use this row in `gbrain_cycle_locks`.
  */
 const LEGACY_CYCLE_LOCK_ID = 'gbrain-cycle';
-const LOCK_TTL_MS = 30 * 60 * 1000;       // 30 minutes
-const LOCK_TTL_MINUTES = 30;              // db-lock.ts takes minutes
+// v0.41.19.0 (T2 of ops-fix-wave): dropped from 30 min to 5 min so a
+// crashed cycle releases the lock within 5 min instead of holding it for
+// the full 30-min TTL. Wired with active in-phase refresh via
+// `buildYieldDuringPhase` (T3) — the closure passed to long phases as
+// `yieldDuringPhase` calls `lock.refresh()` every 30s, so a healthy
+// long-running cycle keeps the TTL alive while the shorter window
+// shrinks crash recovery 6×.
+const LOCK_TTL_MS = 5 * 60 * 1000;        // 5 minutes (was 30)
+const LOCK_TTL_MINUTES = 5;               // was 30; db-lock.ts takes minutes
 // Lazy: GBRAIN_HOME may be set after module load; resolve at call time.
 const getLockFilePathDefault = () => gbrainPath('cycle.lock');
 
-interface LockHandle {
+export interface LockHandle {
   release: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -557,6 +564,53 @@ function acquireFileLock(lockPath = getLockFilePathDefault()): LockHandle | null
         /* already gone */
       }
     },
+  };
+}
+
+/**
+ * v0.41.19.0 (T3 of ops-fix-wave): build the closure that long phases
+ * call to keep the cycle DB lock alive AND fire the existing cooperative
+ * yield hook (Minion job-lock renewal in jobs.ts / autopilot.ts).
+ *
+ * Codex caught that the prior `yieldBetweenPhases` opt does NOT refresh
+ * the cycle lock — it's just a `setImmediate()` from external callers,
+ * and `lock.refresh()` was only ever called via the implicit final
+ * `release()` path. Combined with the TTL drop 30→5min (T2), a long
+ * phase like `extract_atoms` or `synthesize_concepts` would lose the
+ * lock to a competing worker mid-phase.
+ *
+ * The returned closure does TWO things on each fire:
+ *   1. `await lock.refresh()` to bump `ttl_expires_at` + `last_refreshed_at`
+ *   2. `await outer()` to renew any external job-lock the caller threaded in
+ *
+ * Both are wrapped in try/catch — a refresh failure logs to stderr but
+ * doesn't crash the phase (if the lock was truly stolen, we want this
+ * run to wind down gracefully, not throw mid-LLM-call).
+ *
+ * Returns `undefined` when there's no lock AND no outer hook so phases
+ * short-circuit via their `if (!opts.yieldDuringPhase) return;` guard.
+ */
+export function buildYieldDuringPhase(
+  lock: LockHandle | null,
+  outer?: () => Promise<void>,
+): (() => Promise<void>) | undefined {
+  if (!lock && !outer) return undefined;
+  return async () => {
+    if (lock) {
+      try {
+        await lock.refresh();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Non-fatal: a refresh error doesn't crash the phase. If the
+        // lock truly expired and was stolen, the next acquire by another
+        // worker has already happened — let this run wind down rather
+        // than throw mid-phase.
+        console.error(`[cycle] lock refresh failed (non-fatal): ${msg}`);
+      }
+    }
+    if (outer) {
+      try { await outer(); } catch { /* outer hook errors are not fatal */ }
+    }
   };
 }
 
@@ -1126,6 +1180,16 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     } catch {
       // Non-fatal.
     }
+    // v0.41.18.0 codex H-8 — actual 30-day pruning of batch-retry audit JSONL.
+    // The pre-v0.41.18 plan promised this "by convention"; this is the real
+    // implementation. Never throws — best-effort GC.
+    let purgedBatchRetryAuditFiles = 0;
+    try {
+      const { pruneOldBatchRetryAuditFiles } = await import('./audit/batch-retry-audit.ts');
+      purgedBatchRetryAuditFiles = pruneOldBatchRetryAuditFiles(30).removed;
+    } catch {
+      // Non-fatal.
+    }
     return {
       phase: 'purge',
       status: 'ok',
@@ -1133,7 +1197,8 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
       summary:
         `purged ${purgedSources.length} source(s), ${purgedPages.count} page(s), ` +
         `${purgedClones.count} orphan clone temp dir(s), ${purgedCheckpoints} stale op_checkpoint(s), ` +
-        `and ${purgedBrainstormCheckpoints} stale brainstorm checkpoint(s)`,
+        `${purgedBrainstormCheckpoints} stale brainstorm checkpoint(s), ` +
+        `and ${purgedBatchRetryAuditFiles} stale batch-retry audit file(s)`,
       details: {
         purged_sources_count: purgedSources.length,
         purged_pages_count: purgedPages.count,
@@ -1143,6 +1208,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         purged_page_slugs: purgedPages.slugs,
         purged_checkpoints_count: purgedCheckpoints,
         purged_brainstorm_checkpoints_count: purgedBrainstormCheckpoints,
+        purged_batch_retry_audit_files_count: purgedBatchRetryAuditFiles,
       },
     };
   } catch (e) {
@@ -1541,6 +1607,11 @@ export async function runCycle(
           sourceId: xaSourceId,
           dryRun,
           affectedSlugs: xaAffectedSlugs,
+          // v0.41.19.0 (T3): closure refreshes cycle lock + fires outer hook.
+          yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+          // v0.41.19.0 (T4): pass same reporter (not a child — cycle.ts
+          // owns start/finish; phase only ticks).
+          progress,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -1631,7 +1702,10 @@ export async function runCycle(
         const { result, duration_ms } = await timePhase(() => runPhaseSynthesizeConcepts(engine, {
           brainDir: opts.brainDir,
           dryRun,
-          yieldDuringPhase: opts.yieldDuringPhase,
+          // v0.41.19.0 (T3): closure refreshes cycle lock + fires outer hook.
+          yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+          // v0.41.19.0 (T4): pass same reporter (not a child).
+          progress,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);

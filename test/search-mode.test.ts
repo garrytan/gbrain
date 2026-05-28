@@ -372,7 +372,11 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // on tokenmax (per-chunk synopsis) must not be served from a cache row
     // written when the brain was on balanced (title-only) — different
     // embedding spaces. Sequenced behind salem's v=4 graph-signals work.
-    expect(KNOBS_HASH_VERSION).toBe(5);
+    // v0.41.22.0 (type-unification): bumped 5→6 for the new alias_resolved
+    // post-fusion boost stage. A query against a brain with slug_aliases
+    // populated must not be served from a cache row written before the
+    // boost stage existed.
+    expect(KNOBS_HASH_VERSION).toBe(6);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {

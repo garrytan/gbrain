@@ -182,11 +182,12 @@ voice, OCR) against the versioned `IngestionSource` contract at
 
 Most personal-knowledge tools force one fixed layout: their idea of "notes" + "people" + "tags." Drop a Notion export or your own years-old Obsidian vault on top, and the agent doesn't know what a `Projects/` folder means or whether `Reading/` is people or sources.
 
-**gbrain doesn't have a fixed layout.** It ships with two bundled schema packs and lets you author your own when neither fits:
+**gbrain doesn't have a fixed layout.** It ships with bundled schema packs and lets you author your own when none fit:
 
-- **`gbrain-base`** (default) — the layout my production brain uses: `people/`, `companies/`, `concepts/`, `meetings/`, `deal/`, `daily/`, `originals/`, `writing/`, etc. Zero config. Drop a brain that fits this shape and everything works.
+- **`gbrain-base-v2`** (default as of v0.41.22) — 15-type DRY/MECE canonical taxonomy (14 canonical + `note` catch-all): `person`, `company`, `media`, `tweet`, `social-digest`, `analysis`, `atom`, `concept`, `source`, `deal`, `email`, `slack`, `writing`, `project`, `note`. Subtypes/format/origin pushed to frontmatter. The taxonomy that responds to issue #1479.
+- **`gbrain-base`** (legacy, v0.41 and earlier brains) — the original 24-type layout. Stays bundled for back-compat; brains on it can upgrade via `gbrain onboard --check --explain` → `gbrain jobs submit unify-types --allow-protected --params '{"target_pack":"gbrain-base-v2"}'`.
 - **`gbrain-recommended`** — extends `gbrain-base` with the 13 additional directories from `docs/GBRAIN_RECOMMENDED_SCHEMA.md` (source, place, trip, conversation, personal, civic, project, etc.). Activate with `gbrain schema use gbrain-recommended`.
-- **Your own pack** — `gbrain schema detect` clusters your actual filesystem into proposed types, `gbrain schema suggest` runs an LLM pass over them, and `gbrain schema review-candidates --apply` promotes the ones you like. Three commands and the brain knows your shape.
+- **Your own pack** — `gbrain schema detect` clusters your actual filesystem into proposed types, `gbrain schema suggest` runs an LLM pass over them, and `gbrain schema review-candidates --apply` promotes the ones you like. Three commands and the brain knows your shape. Authoring a successor pack (declares `migration_from:` so existing brains can opt in): see [`docs/architecture/pack-upgrade-mechanism.md`](docs/architecture/pack-upgrade-mechanism.md).
 
 ```bash
 gbrain schema active                # which pack is running, which tier set it
@@ -267,6 +268,61 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 ## Troubleshooting
 
 **`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain retrieval-upgrade` command to repair the mismatch. You should not need to delete `~/.gbrain`. Fresh `gbrain init --pglite` auto-detects your embedding provider from API keys in your environment: set `OPENAI_API_KEY` (or `ZEROENTROPY_API_KEY` / `VOYAGE_API_KEY`) before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker. In non-TTY contexts (CI, Docker) with no keys, init exits 1 with a paste-ready setup hint; pass `--no-embedding` to defer setup until runtime. See [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](docs/operations/headless-install.md) for Docker/CI sequencing.
+
+**Hourly cron sync keeps timing out on a federated brain?** v0.41.13.0 ships
+two flags + a recommended pattern. Switch your cron to a per-source loop
+with shell `timeout(1)` doing the OS-level kill and gbrain self-terminating
+gracefully half-a-minute earlier:
+
+```bash
+gbrain sync --break-lock --all --max-age 1800
+for src in $(gbrain sources list --json | jq -r '.[].id'); do
+  timeout 600 gbrain sync --source "$src" --timeout 540 || true
+done
+```
+
+When `--timeout` fires mid-import, `gbrain sync` exits 0 with status
+`partial` and `last_commit` UNCHANGED — the next run re-walks the same
+diff and `content_hash` short-circuits already-imported files. The
+`--max-age 1800` first command self-heals any wedged-but-alive locks
+left by a hung previous run, using the v98 `last_refreshed_at` semantic
+(NOT `acquired_at`) so healthy long-running holders are safe by
+construction. See the v0.41.13.0 entry in [`CHANGELOG.md`](CHANGELOG.md)
+for the honest scope notes (extract + embed phases run to completion;
+30-min rollout window for `--max-age` post-migration v98; full-sync
+triggers deferred to v0.42+).
+
+**Dream cycle silently losing wiki links on Supabase?** v0.41.19.0 fixes
+the bug class structurally. The engine now self-retries every bulk batch
+write (`addLinksBatch` / `addTimelineEntriesBatch` / `upsertChunks`) on
+Supavisor pooler blips, with a 12s worst-case wait that covers the full
+5-10s circuit-breaker recovery window. `gbrain doctor` surfaces incidents
+via the new `batch_retry_health` check (reads the last 24h of
+`~/.gbrain/audit/batch-retry-YYYY-Www.jsonl`). To tune for an unusually
+slow pooler:
+
+```bash
+# Defaults: 3 retries, base 1s, max 10s, decorrelated jitter.
+# Override per operator without a release:
+export GBRAIN_BULK_MAX_RETRIES=5       # int >= 0; 0 disables retries
+export GBRAIN_BULK_RETRY_BASE_MS=2000  # int > 0
+export GBRAIN_BULK_RETRY_MAX_MS=15000  # int >= base
+```
+
+Bad values surface at `gbrain doctor` startup with a paste-ready fix
+(not at first-retry mid-cycle). PGLite-only installs pay zero cost — the
+retry wrap is engine-level, but PGLite has no pooler so retries never
+fire in practice.
+
+**`gbrain brainstorm` returning `judge_failed: true` with 0 scored
+ideas?** v0.41.21.0 closes the two bugs that caused it. The judge
+hard-coded a 4K-token output cap; for any run past ~40 ideas the call
+truncated mid-JSON and the parser threw. Same release closes a slash-
+form pricing miss: `gbrain brainstorm --judge-model
+anthropic/claude-sonnet-4-6 --max-cost 5` failed with
+`BudgetExhausted reason=no_pricing` because every pricing site only
+matched the colon form. Both shapes work now. No config change, no
+schema migration — `gbrain upgrade` is the whole fix.
 
 ## Docs
 

@@ -94,6 +94,31 @@ export interface FileSpec {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * v0.41.18.0 — shared opts for engine batch primitives that self-retry on
+ * transient connection errors. Threaded through addLinksBatch /
+ * addTimelineEntriesBatch / upsertChunks.
+ *
+ * Retry semantics: each batch primitive wraps its internal SQL in
+ * `withRetry(BULK_RETRY_OPTS)` (default `{maxRetries:3, delayMs:1000,
+ * delayMaxMs:10000, jitter:'decorrelated'}`). Callers MUST NOT add their own
+ * `withRetry` wrapper around these methods — that produces 3×3=9 retry
+ * attempts under failure, amplifying load on a recovering circuit breaker.
+ * CI lint guard `scripts/check-no-double-retry.sh` enforces the rule.
+ *
+ * - `auditSite`: typed label for the JSONL audit emission (`~/.gbrain/audit/
+ *   batch-retry-YYYY-Www.jsonl`). Must be a member of `BATCH_AUDIT_SITES`
+ *   in `src/core/retry.ts`. The CI lint guard `scripts/check-batch-audit-
+ *   site.sh` validates every string-literal value at build time.
+ * - `signal`: AbortSignal that aborts mid-retry-sleep on SIGTERM/SIGINT.
+ *   `MinionWorker.shutdownAbort.signal` is the canonical source.
+ */
+import type { BatchAuditSite } from './retry.ts';
+export interface BatchOpts {
+  auditSite?: BatchAuditSite;
+  signal?: AbortSignal;
+}
+
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
 export interface LinkBatchInput {
   from_slug: string;
@@ -126,6 +151,15 @@ export interface LinkBatchInput {
   from_source_id?: string;
   to_source_id?: string;
   origin_source_id?: string;
+  /**
+   * v0.41.18.0 (A10, codex finding #12): distinguishes "plain body mention"
+   * (NULL or 'plain') from "verb-pattern-derived typed NER" ('typed_ner')
+   * within link_source='mentions'. Backed by v98 schema column. NOT in
+   * the links UNIQUE constraint — same (from, to, type, source, origin)
+   * tuple with different link_kind collides DO NOTHING. Default NULL =
+   * legacy / unknown / pre-v98 semantics.
+   */
+  link_kind?: string;
 }
 
 /** Input row for addTimelineEntriesBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -165,7 +199,19 @@ export interface TimelineBatchInput {
  * transaction itself is waiting to write.
  */
 export interface ReservedConnection {
-  executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  /**
+   * v0.41.18.0 (A20, codex #7): optional 3rd-arg `opts.signal` lets callers
+   * actually cancel a running query. Init nudge (3s wallclock cap) wires an
+   * AbortController whose timer fires at 3s; queries that haven't returned
+   * by then get cancelled (Postgres: query.cancel(); PGLite: in-process,
+   * Promise.race against signal-rejection — documented gap because PGLite
+   * has no kernel-level cancellation).
+   */
+  executeRaw<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    opts?: { signal?: AbortSignal },
+  ): Promise<T[]>;
 }
 
 /**
@@ -666,8 +712,67 @@ export interface BrainEngine {
    * delete doesn't hard-delete the same-slug pages in sources B/C/D. Without
    * it, the bare DELETE matches every row with that slug across all sources.
    * Cascades through content_chunks / page_links / chunk_relations via FKs.
+   *
+   * v0.41.19.0 (CDX-11): single-row primitive used by `purgeDeletedPages`,
+   * `gbrain sync` (one path per call), test setup teardown, and the v0.41.19.0
+   * sync-delete decompose path (when `deletePages` throws on a 500-row batch,
+   * the sync loop falls back to per-slug `deletePage` to log unrecoverable
+   * failures to `failedFiles`). `gbrain sync` calls this on EVERY run that
+   * sees a deleted file — it is NOT admin-only.
    */
   deletePage(slug: string, opts?: { sourceId?: string }): Promise<void>;
+  /**
+   * v0.41.19.0 — batch delete: single SQL round-trip via
+   * `DELETE FROM pages WHERE slug = ANY($1::text[]) AND source_id = $2
+   *  RETURNING slug`. Cascades through content_chunks / page_links (×3) /
+   * tags / raw_data / timeline_entries / page_versions via FKs declared in
+   * `src/schema.sql`. `files.page_id` and `links.origin_page_id` go SET
+   * NULL per their FK definitions.
+   *
+   * SINGLE-BATCH PRIMITIVE: caller is responsible for chunking the input to
+   * `<= DELETE_BATCH_SIZE` entries per call (see
+   * `src/core/engine-constants.ts`). Matches the `addLinksBatch` convention
+   * — engine assumes well-behaved input, caller owns the slicing.
+   *
+   * Returns the slugs of rows ACTUALLY DELETED (order undefined). Callers
+   * use this to filter their own `pagesAffected` tracking so downstream
+   * phases don't waste lookups on phantom slugs (paths that were in the
+   * deletion list but had no DB row).
+   *
+   * ATOMICITY: one statement, one transaction. The whole batch commits or
+   * the whole batch rolls back. Coarser than the per-row `deletePage`
+   * cadence — a mid-loop abort or transient connection failure can roll
+   * back up to `DELETE_BATCH_SIZE - 1` successful deletes from the
+   * in-flight batch. `gbrain sync` is idempotent (next run picks them up
+   * via git diff); other callers should account for the contract.
+   *
+   * sourceId is REQUIRED (no `'default'` fallback). This is asymmetric with
+   * `deletePage` (which keeps the optional/'default' fallback for back-
+   * compat). Filed as v0.42+ TODO to tighten `deletePage` to match once a
+   * full caller audit confirms every site threads `sourceId`.
+   */
+  deletePages(slugs: string[], opts: { sourceId: string }): Promise<string[]>;
+  /**
+   * v0.41.19.0 — batch path → slug resolution. Single SQL round-trip via
+   * `SELECT slug, source_path FROM pages WHERE source_path = ANY($1::text[])
+   *  AND source_id = $2`. Returns `Map<path, slug>`; paths NOT in the map
+   * have no `source_path` row in the DB and the caller is expected to fall
+   * back to `resolveSlugForPath(path)` for the path-derived slug.
+   *
+   * Mirrors the contract of the single-call `resolveSlugByPathOrSourcePath`
+   * helper in `src/commands/sync.ts`, batched. As of v0.41.19.0, that
+   * single-call helper is implemented on top of this method (one Map
+   * allocation per single-path call; negligible cost; one owner of the SQL
+   * + fallback semantics).
+   *
+   * SINGLE-BATCH PRIMITIVE: caller chunks to `<= DELETE_BATCH_SIZE`.
+   *
+   * Empty `paths` short-circuits to an empty Map without touching the DB.
+   */
+  resolveSlugsByPaths(
+    paths: string[],
+    opts: { sourceId: string },
+  ): Promise<Map<string, string>>;
   /**
    * v0.26.5 — set `deleted_at = now()` on a page. Returns the slug if a row
    * was soft-deleted, null if no row matched (already soft-deleted OR not found).
@@ -825,7 +930,15 @@ export interface BrainEngine {
    * matches and bare-slug lookup blows up if the same slug exists in
    * multiple sources (Postgres 21000).
    */
-  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void>;
+  /**
+   * v0.41.18.0: internal SQL wrapped in `withRetry(BULK_RETRY_OPTS)` against
+   * transient connection errors (Supavisor circuit-breaker recovery).
+   * Idempotent under replay via single-statement DELETE+INSERT in implicit tx
+   * — Postgres rolls back automatically on conn drop, so commit-ambiguous
+   * failure replays to the same end state. Callers MUST NOT wrap externally;
+   * see {@link BatchOpts} retry-contract block.
+   */
+  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string } & BatchOpts): Promise<void>;
   /**
    * Read every chunk for a page. `opts.sourceId` source-scopes the page
    * lookup; without it, multi-source brains return chunks from every
@@ -865,6 +978,16 @@ export interface BrainEngine {
     afterPageId?: number;
     afterChunkIndex?: number;
     sourceId?: string;
+    // v0.41.18.0 (A13, codex #9): pagination order. Default 'page_id'
+    // (legacy stable cursor). 'updated_desc' joins pages and orders by
+    // p.updated_at DESC NULLS LAST, p.id, cc.chunk_index — backed by
+    // idx_pages_updated_at_desc + content_chunks_stale_idx partial.
+    orderBy?: 'page_id' | 'updated_desc';
+    // For 'updated_desc' cursor: previous row's updated_at, page_id, chunk_index.
+    // ISO-8601 string for cross-engine compatibility (postgres.js + PGLite
+    // both round-trip TIMESTAMPTZ as Date | string; ISO string is the
+    // common denominator on the wire).
+    afterUpdatedAt?: string | null;
   }): Promise<StaleChunkRow[]>;
   /**
    * Delete every chunk for a page. Internal page-id lookup is sourceId-scoped
@@ -901,7 +1024,16 @@ export interface BrainEngine {
    * (RETURNING clause excludes conflicts and JOIN-dropped rows whose slugs don't exist).
    * Used by extract.ts to avoid 47K sequential round-trips on large brains.
    */
-  addLinksBatch(links: LinkBatchInput[]): Promise<number>;
+  /**
+   * v0.41.18.0: internal SQL wrapped in `withRetry(BULK_RETRY_OPTS)`.
+   * Idempotent via `ON CONFLICT (from_page_id, to_page_id, link_type,
+   * link_source, origin_page_id) DO NOTHING` — composite key is the semantic
+   * uniqueness. Replay-after-partial-success: 2nd attempt finds conflicts,
+   * returns 0 from RETURNING. Caller-visible edge: linksCreated undercounts
+   * on commit-ambiguous replay. Cosmetic (audit JSONL captures the truth).
+   * Callers MUST NOT wrap externally; see {@link BatchOpts} retry contract.
+   */
+  addLinksBatch(links: LinkBatchInput[], opts?: BatchOpts): Promise<number>;
   /**
    * Remove links from `from` to `to`. If linkType is provided, only that specific
    * (from, to, type) row is removed. If omitted, ALL link types between the pair
@@ -1079,7 +1211,13 @@ export interface BrainEngine {
    * actually inserted (RETURNING excludes conflicts and JOIN-dropped rows whose
    * slugs don't exist). Used by extract.ts to avoid sequential round-trips.
    */
-  addTimelineEntriesBatch(entries: TimelineBatchInput[]): Promise<number>;
+  /**
+   * v0.41.18.0: internal SQL wrapped in `withRetry(BULK_RETRY_OPTS)`.
+   * Idempotent via composite-key conflict (page_id, kind, when_text, body).
+   * Same caller-visible undercount caveat as {@link addLinksBatch}.
+   * Callers MUST NOT wrap externally; see {@link BatchOpts} retry contract.
+   */
+  addTimelineEntriesBatch(entries: TimelineBatchInput[], opts?: BatchOpts): Promise<number>;
   getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]>;
 
   // Raw data
@@ -1518,6 +1656,32 @@ export interface BrainEngine {
   rewriteLinks(oldSlug: string, newSlug: string): Promise<void>;
 
   /**
+   * v0.42 type-unification (T2, plan D1+F10). Returns the canonical slug if
+   * `slug` is registered in `slug_aliases` for any of the provided source(s);
+   * otherwise returns `slug` unchanged. Defense-in-depth: also returns the
+   * input when the table doesn't exist yet (pre-v104 brains).
+   *
+   * Accepts either a single sourceId (scalar) OR a sourceIds array
+   * (federated reads). Multi-source ambiguity: when the same alias_slug
+   * exists in two registered sources, returns the first match in array
+   * order and emits a once-per-process stderr `multi_match` warning.
+   *
+   * Callers (the cluster the alias-table primitive is meant for):
+   *   - src/core/entities/resolve.ts: wikilink resolver short-circuit
+   *     (alias-table is authoritative; runs BEFORE fuzzy/prefix cascade)
+   *   - MCP `read_page` op (canonical lookup)
+   *   - Search rank stage `applyAliasResolvedBoost` (knows whether a
+   *     top-K result was reached via an alias)
+   *
+   * Source-scoped throughout per F12 (codex outside voice) — no cross-source
+   * false-positive resolution. v0.42 ships this method on both engines.
+   */
+  resolveSlugWithAlias(
+    slug: string,
+    sourceOrSources: string | readonly string[],
+  ): Promise<string>;
+
+  /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
    * `pages.content_hash` for a single slug+source. NO chunking, NO embedding,
    * NO link reconcile, NO `updated_at` advance beyond the trivial bump.
@@ -1606,7 +1770,19 @@ export interface BrainEngine {
   getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]>;
 
   // Raw SQL (for Minions job queue and other internal modules)
-  executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  /**
+   * v0.41.18.0 (A20, codex #7): optional 3rd-arg `opts.signal` lets callers
+   * actually cancel a running query. Init nudge (3s wallclock cap) wires an
+   * AbortController whose timer fires at 3s; queries that haven't returned
+   * by then get cancelled (Postgres: query.cancel(); PGLite: in-process,
+   * Promise.race against signal-rejection — documented gap because PGLite
+   * has no kernel-level cancellation).
+   */
+  executeRaw<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    opts?: { signal?: AbortSignal },
+  ): Promise<T[]>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

@@ -138,6 +138,38 @@ describe('BudgetTracker.reserve', () => {
     expect((caught as Error).message).toMatch(/anthropic-pricing\.ts/);
   });
 
+  test('v0.41.20.0: slash-prefix anthropic/claude-* under --max-cost does NOT no_pricing throw (THE FIX)', () => {
+    // Pre-v0.41.20.0: lookupPricing only split modelId on ':'. CLI users
+    // running `gbrain brainstorm --judge-model anthropic/claude-sonnet-4-6
+    // --max-cost 5` hit TX2 no_pricing because the slash-form id silently
+    // missed ANTHROPIC_PRICING (closes #1540).
+    const t = new BudgetTracker({ maxCostUsd: 10.0, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'anthropic/claude-sonnet-4-6',
+        estimatedInputTokens: 100,
+        maxOutputTokens: 100,
+        kind: 'chat',
+      }),
+    ).not.toThrow();
+    const audit = readAudit();
+    expect(audit[0].event).toBe('reserve');
+  });
+
+  test('v0.41.20.0: colon-prefix anthropic:claude-* under --max-cost still works (regression guard)', () => {
+    // Same path as slash, exercised separately so a future refactor that
+    // accidentally drops colon support fires this test loudly.
+    const t = new BudgetTracker({ maxCostUsd: 10.0, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'anthropic:claude-sonnet-4-6',
+        estimatedInputTokens: 100,
+        maxOutputTokens: 100,
+        kind: 'chat',
+      }),
+    ).not.toThrow();
+  });
+
   test('no cap + unknown pricing: warns once per process, no throw', () => {
     const t = new BudgetTracker({ label: 'test', auditPath });
     expect(() =>

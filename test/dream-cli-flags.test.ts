@@ -58,4 +58,51 @@ describe('dream CLI flag wiring', () => {
     expect(dreamSrc).toContain('skips the Sonnet');
     expect(dreamSrc.toLowerCase()).toContain('zero llm calls');
   });
+
+  // v0.41.13: --source / --source-id flag wiring (supersedes PR #1559).
+  // Structural-only tests; behavioral tests live in test/dream.test.ts.
+  describe('--source / --source-id wiring (v0.41.13)', () => {
+    test('declares --source flag in argv parsing', () => {
+      expect(dreamSrc).toContain("'--source'");
+    });
+
+    test('declares --source-id alias in argv parsing', () => {
+      expect(dreamSrc).toContain("'--source-id'");
+    });
+
+    test('forwards resolved sourceId to runCycle', () => {
+      // The runCycle call must pass sourceId; gate name "sourceId"
+      // not "source" because CycleOpts.sourceId is the contract.
+      expect(dreamSrc).toMatch(/sourceId:\s*resolvedSourceId/);
+    });
+
+    test('imports resolveSourceId from canonical source-resolver helper', () => {
+      expect(dreamSrc).toContain("from '../core/source-resolver.ts'");
+      expect(dreamSrc).toContain('resolveSourceId');
+    });
+
+    test('declares isResolverUserError predicate for typed-error catch (T3 from eng review)', () => {
+      expect(dreamSrc).toContain('function isResolverUserError');
+    });
+
+    test('documents --source in --help output', () => {
+      expect(dreamSrc).toContain('--source <id>');
+      expect(dreamSrc).toContain('--source-id <id>');
+    });
+
+    test('preserves --help short-circuit ordering comment (IRON RULE)', () => {
+      // The comment lives in runDream BEFORE the engine-null gate.
+      // Future refactors that reorder these blocks will trip this guard.
+      expect(dreamSrc).toContain('IRON RULE: --help short-circuits BEFORE');
+    });
+
+    test('declares engine-null guard for --source', () => {
+      expect(dreamSrc).toContain('requires a connected brain');
+    });
+
+    test('declares archived-source guard', () => {
+      expect(dreamSrc).toMatch(/source.*is archived/);
+      expect(dreamSrc).toContain('gbrain sources restore');
+    });
+  });
 });

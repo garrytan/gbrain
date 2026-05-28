@@ -77,11 +77,18 @@ interface ResolvedConfig {
   maxWalltimeMin: number;      // per source per cycle
   maxTotalWalltimeMin: number; // brain-wide per cycle
   types: AllowedType[];
+  /**
+   * v0.41.15.0 (D9 in cycle context): in-process worker count per
+   * per-source invocation. Default 1 — cycle is opt-in per CLAUDE.md,
+   * and aggressive concurrency inside a 30-min walltime cap stays
+   * opt-in via this config key. PGLite engines clamp to 1 regardless.
+   */
+  workers: number;
 }
 
 async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
   const get = (k: string) => engine.getConfig(`${CFG_PREFIX}.${k}`);
-  const [enabled, maxCost, maxTotalCost, maxWall, maxTotalWall, typesRaw] =
+  const [enabled, maxCost, maxTotalCost, maxWall, maxTotalWall, typesRaw, workersRaw] =
     await Promise.all([
       get('enabled'),
       get('max_cost_usd'),
@@ -89,6 +96,7 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
       get('max_walltime_min'),
       get('max_total_walltime_min'),
       get('types'),
+      get('workers'),
     ]);
 
   // Truthy-string parse mirrors isFactsExtractionEnabled.
@@ -121,6 +129,14 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     }
   }
 
+  // v0.41.15.0 (D9): integer-positive parse for workers config key.
+  const parsedWorkers = (() => {
+    if (workersRaw == null) return 1;
+    const n = parseInt(workersRaw, 10);
+    if (!Number.isFinite(n) || n < 1) return 1;
+    return n;
+  })();
+
   return {
     enabled: enabledFlag,
     maxCostUsd: parseFloatOrDefault(maxCost, 1.0),
@@ -128,6 +144,7 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     maxWalltimeMin: parseFloatOrDefault(maxWall, 20),
     maxTotalWalltimeMin: parseFloatOrDefault(maxTotalWall, 30),
     types,
+    workers: parsedWorkers,
   };
 }
 
@@ -200,6 +217,10 @@ export async function runPhaseConversationFactsBackfill(
             dryRun: opts.dryRun,
             // Pass brain-wide tracker so core skips its own auto-wrap.
             budgetTracker: brainTracker,
+            // v0.41.15.0 (D9 cycle context): cycle config controls
+            // per-source worker count. Default 1 — opt-in concurrency
+            // for cycle paths.
+            workers: cfg.workers,
           }, opts.signal);
           perSourceResults[src.id] = result;
           if (result.budget_exhausted) {
@@ -225,6 +246,10 @@ export async function runPhaseConversationFactsBackfill(
             pages_skipped: 0,
             pages_skipped_too_large: 0,
             pages_skipped_disappeared: 0,
+            // v0.41.15.0 (D6 + D11): new counters from the per-page lock
+            // + delete-orphans-first replay safety.
+            pages_lock_skipped: 0,
+            orphan_facts_cleaned: 0,
             segments_processed: 0,
             facts_extracted: 0,
             facts_inserted: 0,
