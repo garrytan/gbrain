@@ -1290,6 +1290,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const { buildSyncStatusReport } = await import('./sync.ts');
       // Query the JSONB config column directly — listSources doesn't carry
       // it but buildSyncStatusReport needs syncEnabled / strategy fields.
+      // NOTE: do NOT filter on local_path. In a push-only deployment (content
+      // arrives via MCP put_page / capture / ingest, not `gbrain sync` of a
+      // server checkout) every source has a null local_path. Filtering on it
+      // returned zero rows — emptying both the Sources tab AND the federation
+      // source-picker. buildSyncStatusReport carries local_path through but
+      // does no disk I/O, so null-local_path sources report fine (pages/chunks
+      // from SQL, staleness 'unknown' / never-synced).
       const rows = await engine.executeRaw<{
         id: string;
         name: string;
@@ -1297,7 +1304,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         config: Record<string, unknown> | string | null;
       }>(
         `SELECT id, name, local_path, config FROM sources
-         WHERE archived IS NOT TRUE AND local_path IS NOT NULL
+         WHERE archived IS NOT TRUE
          ORDER BY id`,
       );
       const sources = rows.map((r) => ({

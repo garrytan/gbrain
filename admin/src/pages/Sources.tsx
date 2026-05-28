@@ -157,8 +157,8 @@ export function SourcesPage() {
                     <td style={{ padding: '10px 12px', textAlign: 'right', color: coverageColor(s.embedding_coverage_pct), fontFamily: 'JetBrains Mono, monospace' }}>
                       {s.embedding_coverage_pct.toFixed(0)}%
                     </td>
-                    <td style={{ padding: '10px 12px', color: stalenessColor(s.staleness_class) }}>
-                      {timeAgo(s.last_sync_at)}
+                    <td style={{ padding: '10px 12px', color: s.local_path == null ? 'var(--text-muted)' : stalenessColor(s.staleness_class) }}>
+                      {s.local_path == null ? 'push-only' : timeAgo(s.last_sync_at)}
                     </td>
                     <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-secondary)' }}>
                       {writers.length === 0 ? <span style={{ color: 'var(--text-muted)' }}>none</span> : writers.join(', ')}
