@@ -312,7 +312,10 @@ async function resolveLintContentSanity(): Promise<LintContentOpts['contentSanit
         database_path: base!.database_path,
       });
       try {
-        await engine.connect({});
+        // Use an instance-owned pool for this short-lived config probe so
+        // disconnecting the temporary engine cannot tear down a shared
+        // module-level Postgres connection used by an active dream cycle.
+        await engine.connect({ poolSize: 1 });
         const lifted = await loadConfigWithEngine(engine, base);
         cs = lifted?.content_sanity ?? cs;
       } finally {
