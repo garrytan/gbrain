@@ -86,7 +86,7 @@ Save this token. You'll need it for the AlphaClaw setup.
 
 AlphaClaw is the setup harness that manages OpenClaw deployment.
 
-1. Go to [alphaclaw.com](https://alphaclaw.com)
+1. Go to [alphaclaw.md](https://alphaclaw.md)
 2. Enter your **workspace repo** (not the brain repo): `your-org/myagent`
 3. Select "Use existing" if the repo already exists
 4. Enter your GitHub PAT from Step 2
