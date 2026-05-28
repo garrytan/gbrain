@@ -2,6 +2,147 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.41.28.0] - 2026-05-28
+
+**You can finally see — and change — who can read which source, without
+dropping to SQL.**
+
+If you run gbrain with more than one source (a personal brain plus a
+team brain plus a per-project brain), every OAuth client carries two
+scopes: which source it writes to, and the list of sources it can
+read. Before this release, you could create clients and see who wrote
+where, but the "who reads what" list lived behind raw SQL — there was
+no CLI command to list it, no command to add a source to a user's read
+scope, no command to remove one. The dashboard would say "5 clients
+registered" and that was it. Adding a new source for a team of three
+meant either editing the database directly or recreating each user's
+OAuth client from scratch.
+
+Four new commands close the gap:
+
+```bash
+gbrain auth list-clients [--json]               # see every client + its scopes
+gbrain auth grant-read <client> <source>        # add source to read list
+gbrain auth revoke-read <client> <source>       # remove source from read list
+gbrain auth set-federated-read <client> "s1,s2" # replace whole list
+```
+
+All three mutating commands accept `--dry-run` (print what would
+change without writing). All take either the friendly client name
+you registered (e.g. `alice`) or the long client_id hash. Source ids
+are validated before they touch the database, so a typo like
+`gbrian auth grant-read alice peoject-x` fails with a paste-ready
+hint instead of silently writing a malformed entry.
+
+The numbers that matter for a small team:
+
+| Setup | Before | After |
+|---|---|---|
+| See who reads what | Direct SQL | `gbrain auth list-clients` |
+| Add team member to a new source | Recreate OAuth client + reissue creds | `gbrain auth grant-read user X` |
+| Remove sensitive source from one user | Edit `oauth_clients.federated_read` array by hand | `gbrain auth revoke-read user X` |
+| Wholesale reset a user's read scope | Update SQL with array literal escaping | `gbrain auth set-federated-read user "a,b,c"` |
+| Preview a change before committing | Read SQL twice + diff manually | append `--dry-run` |
+
+**Things to watch:**
+
+- Changes take effect on the next OAuth call. Tokens already minted
+  carry the OLD scope in their token row but `verifyAccessToken`
+  re-reads `oauth_clients.federated_read` per request, so the new
+  scope kicks in immediately — no token re-mint needed.
+- `list-clients` hides soft-deleted OAuth clients by default. Pass
+  `--include-deleted` to see them too.
+- `set-federated-read user ""` (empty string) clears the whole list.
+  Print prefix in this case warns that the user now reads no
+  federated sources.
+
+**What we caught and fixed before merging:**
+
+The Codex pre-merge review caught a real security bug that the first
+draft would have shipped: under two operators running grant-read and
+revoke-read at the same time, the revoke could silently UNDO. Example:
+`['default', 'sensitive']` → operator A runs `revoke-read sensitive`,
+operator B runs `grant-read harmless` — both read the old list, both
+overwrite it, last-writer-wins → final state could be `['default',
+'sensitive', 'harmless']` and the revoke is gone. The fix routes
+every grant/revoke through a single atomic SQL statement
+(`array_append` / `array_remove` with a NOT/ANY guard) so postgres
+serializes the two updates at the row lock. Same review pass also
+flagged that soft-deleted OAuth clients were still mutable through
+the new CLI (now blocked), that an admin-registered DCR client could
+plant ANSI escapes in `client_name` to spoof `list-clients` output
+(now sanitized), and that `register-client` accepted malformed
+source ids that the new mutating commands would then refuse to manage
+(now validated at the boundary).
+
+One issue is intentionally deferred to a follow-up: there's no
+foreign-key constraint on the `federated_read` text[] array, so if a
+source is deleted while its id is still in someone's read list, the
+list keeps a stale entry. The fix needs a schema change. Filed in
+TODOS.md.
+
+## To take advantage of v0.41.28.0
+
+`gbrain upgrade` should do this automatically. To verify the new
+commands are wired up:
+
+```bash
+gbrain auth list-clients
+gbrain auth grant-read --help 2>&1 | head -5
+```
+
+If you maintain a multi-source brain and have been editing
+`oauth_clients.federated_read` directly via SQL, switch your runbooks
+to the new commands — they're idempotent, audit-trail-friendly (every
+change prints before/after state), and race-safe.
+
+### For contributors
+
+The pure helper `parseSourceCsv` and the *Core functions
+(`grantReadCore`, `revokeReadCore`, `setFederatedReadCore`) are
+exported from `src/commands/auth.ts` and tested in isolation. The
+atomic SQL helpers are private but the core functions guarantee the
+race-safe contract regardless of what calls them.
+
+### Itemized changes
+
+- `src/commands/auth.ts` (+~520 LOC):
+  - New CLI surface: `auth list-clients`, `auth grant-read`,
+    `auth revoke-read`, `auth set-federated-read`. All four wired
+    into the existing `runAuth` switch. Help text extended.
+  - New exported helpers (test seams): `parseSourceCsv`,
+    `resolveClient`, `assertSourceExists`, `grantReadCore`,
+    `revokeReadCore`, `setFederatedReadCore`, `extractDryRun`,
+    `sanitizeForTerminal`. Types: `ResolvedClient`,
+    `FederatedReadOutcome`, `FederatedReadOpts`.
+  - Atomic SQL helpers (private): `appendFederatedReadAtomic` (uses
+    `array_append` + `NOT ($X = ANY(federated_read))` guard +
+    `deleted_at IS NULL` guard + `RETURNING federated_read`),
+    `removeFederatedReadAtomic` (mirror with `array_remove` +
+    `$X = ANY(federated_read)` guard), `replaceFederatedReadAtomic`
+    (wholesale overwrite with deleted_at guard).
+  - `parseRegisterClientArgs` now calls `assertValidSourceId` on
+    `--source` and on every `--federated-read` element so
+    `register-client` can't seed malformed entries.
+  - `resolveClient` defaults to active-only (`deleted_at IS NULL`);
+    `includeDeleted: true` opts in.
+  - `revokeClient`'s success message wraps `client_name` in
+    `sanitizeForTerminal`.
+- `src/core/oauth-provider.ts` (+1 LOC): `pgArray` promoted from
+  module-private to exported so `auth.ts` can reuse the TEXT[]
+  escape helper instead of re-implementing it.
+- `test/auth-federated-read.test.ts` (NEW, 72 cases): covers pure
+  helpers (parseSourceCsv, extractDryRun, sanitizeForTerminal),
+  DB-coupled helpers (resolveClient + soft-delete filter,
+  assertSourceExists + shape validation), core functions
+  (grant/revoke/set including idempotency, race-safety, dry-run
+  semantics), and the cross-cutting "errors still fire in dry-run"
+  contract. Uses the canonical PGLite block from CLAUDE.md
+  test-isolation rules.
+- `test/auth-register-client-args.test.ts` (extended): 3 new cases
+  covering `--source` shape validation, `--federated-read` element
+  validation, and the canonical real-world invocation regression.
+
 ## [0.41.26.0] - 2026-05-27
 
 **`gbrain dream --source <id>` finally counts as a cycle.**

@@ -1,5 +1,54 @@
 # TODOS
 
+## v0.41.28.0 federated-read CLI follow-ups (v0.42+)
+
+- **TODO-FR-A (P2): foreign-key constraint on `oauth_clients.federated_read` array.**
+  v0.41.28.0 added CLI commands to manage federated_read. The `source_id`
+  scalar column has an FK to `sources(id)`; the `federated_read TEXT[]`
+  array does not (see `src/schema.sql`). Consequence: if a source is
+  deleted while its id is still in some client's federated_read list,
+  the array keeps a stale entry. The new commands' `assertSourceExists`
+  catches this at grant-time, but a `gbrain sources remove` after grant
+  is a TOCTOU.
+  - **What:** introduce a join table (e.g. `oauth_client_source_reads`
+    with composite PK on `(client_id, source_id)` and FKs to both,
+    with `ON DELETE CASCADE` on the source side). Migrate
+    `federated_read` to derived view OR replace the array column
+    entirely. Update `verifyAccessToken` to read from the join table.
+    Update `grant-read` / `revoke-read` / `set-federated-read` to
+    target the join table.
+  - **Why:** referential integrity. Stale ids in federated_read can
+    re-grant phantom access if a deleted source is recreated with the
+    same id. The federation read path then walks a non-existent
+    source.
+  - **Pros:** closes a TOCTOU bug class structurally; aligns
+    federated_read with the scalar source_id FK posture.
+  - **Cons:** schema migration with backfill, two write paths to
+    coordinate, six call sites to update (resolveClient, all three
+    *Core fns, verifyAccessToken, admin /update-client-ttl).
+  - **Context:** Codex re-review of the v0.41.28.0 branch flagged
+    this as medium-severity TOCTOU; the v0.41.28.0 commit landed the
+    CLI surface with the in-memory existence check as the temporary
+    backstop.
+
+- **TODO-FR-B (P3): admin `POST /admin/api/update-client-ttl` skips `deleted_at` filter.**
+  Same Codex re-review caught that `src/commands/serve-http.ts:1259`
+  updates by `client_id` without `AND deleted_at IS NULL`. A
+  soft-deleted client can still have its TTL changed via the admin
+  endpoint, and the endpoint returns success silently.
+  - **What:** add `AND deleted_at IS NULL` to the UPDATE clause in
+    update-client-ttl. Return 404 (or a typed error envelope) when
+    zero rows matched.
+  - **Why:** the new CLI federated_read mutators correctly guard
+    soft-deleted clients; this admin endpoint is the inconsistent
+    one. Either guard everywhere or nowhere.
+  - **Pros:** small, local fix; closes one more inconsistency in the
+    soft-delete posture.
+  - **Cons:** none — pure fix.
+  - **Context:** out of scope for v0.41.28.0 (the PR was scoped to
+    CLI federated_read management). Pin in a follow-up patch wave
+    alongside any other admin-surface soft-delete audit findings.
+
 ## v0.41.20.x dream-source-ingest-titles follow-ups (v0.42+)
 
 - **TODO-V13-A (P2): `gbrain dream --max-pages <n>` plumbing.**
