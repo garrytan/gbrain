@@ -190,6 +190,8 @@ export interface GBrainConfig {
       verdict_model?: string;
       max_prompt_tokens?: number;
       max_chunks_per_transcript?: number;
+      subagent_timeout_ms?: number;
+      subagent_wait_timeout_ms?: number;
     };
     patterns?: {
       lookback_days?: number;
@@ -497,6 +499,12 @@ export async function loadConfigWithEngine(
     const n = parseInt(v, 10);
     return Number.isFinite(n) && n > 0 ? n : undefined;
   }
+  async function dbNum(key: string): Promise<number | undefined> {
+    const v = await dbStr(key);
+    if (v === undefined) return undefined;
+    const n = Number(v);
+    return Number.isNaN(n) ? undefined : n;
+  }
   const dbWarnBytes = await dbInt('content_sanity.bytes_warn');
   const dbBlockBytes = await dbInt('content_sanity.bytes_block');
   const dbJunkEnabled = await dbBool('content_sanity.junk_patterns_enabled');
@@ -530,6 +538,8 @@ export async function loadConfigWithEngine(
   const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
   const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
   const dbMaxChunksPerTranscript = await dbInt('dream.synthesize.max_chunks_per_transcript');
+  const dbSubagentTimeoutMs = await dbNum('dream.synthesize.subagent_timeout_ms');
+  const dbSubagentWaitTimeoutMs = await dbNum('dream.synthesize.subagent_wait_timeout_ms');
   const dbLookbackDays = await dbInt('dream.patterns.lookback_days');
   const dbMinEvidence = await dbInt('dream.patterns.min_evidence');
 
@@ -553,6 +563,12 @@ export async function loadConfigWithEngine(
   }
   if (mergedSynth.max_chunks_per_transcript === undefined && dbMaxChunksPerTranscript !== undefined) {
     mergedSynth.max_chunks_per_transcript = dbMaxChunksPerTranscript;
+  }
+  if (mergedSynth.subagent_timeout_ms === undefined && dbSubagentTimeoutMs !== undefined) {
+    mergedSynth.subagent_timeout_ms = dbSubagentTimeoutMs;
+  }
+  if (mergedSynth.subagent_wait_timeout_ms === undefined && dbSubagentWaitTimeoutMs !== undefined) {
+    mergedSynth.subagent_wait_timeout_ms = dbSubagentWaitTimeoutMs;
   }
   if (mergedPatterns.lookback_days === undefined && dbLookbackDays !== undefined) {
     mergedPatterns.lookback_days = dbLookbackDays;
@@ -658,6 +674,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.verdict_model',
   'dream.synthesize.max_prompt_tokens',
   'dream.synthesize.max_chunks_per_transcript',
+  'dream.synthesize.subagent_timeout_ms',
+  'dream.synthesize.subagent_wait_timeout_ms',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
   // Emotional weight (v0.29)

@@ -75,6 +75,8 @@ const MIN_PROMPT_TOKENS = 100_000;
 const DEFAULT_MAX_CHUNKS = 24;
 /** Conservative default budget when model is unknown (200K × HEADROOM_RATIO). */
 const UNKNOWN_MODEL_BUDGET_TOKENS = 180_000;
+const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS = 35 * 60 * 1000;
 
 /**
  * Compute per-chunk character budget for the resolved model + config override.
@@ -478,7 +480,7 @@ export async function runPhaseSynthesize(
           max_stalled: 3,
           on_child_fail: 'continue',
           idempotency_key,
-          timeout_ms: 30 * 60 * 1000, // 30 min per chunk
+          timeout_ms: config.subagentTimeoutMs,
         };
         const child = await queue.add(
           'subagent',
@@ -499,7 +501,7 @@ export async function runPhaseSynthesize(
     for (const jobId of childIds) {
       try {
         const job = await waitForCompletion(queue, jobId, {
-          timeoutMs: 35 * 60 * 1000,
+          timeoutMs: config.subagentWaitTimeoutMs,
           pollMs: 5 * 1000,
         });
         childOutcomes.push({ jobId, status: job.status });
@@ -593,6 +595,8 @@ interface SynthConfig {
    * `dream.synthesize.max_chunks_per_transcript`.
    */
   maxChunksPerTranscript: number;
+  subagentTimeoutMs: number;
+  subagentWaitTimeoutMs: number;
 }
 
 async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
@@ -621,6 +625,16 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
   const cooldownHoursStr = await engine.getConfig('dream.synthesize.cooldown_hours');
   const maxPromptTokensStr = await engine.getConfig('dream.synthesize.max_prompt_tokens');
   const maxChunksStr = await engine.getConfig('dream.synthesize.max_chunks_per_transcript');
+  const subagentTimeoutMs = await getNumberConfig(
+    engine,
+    'dream.synthesize.subagent_timeout_ms',
+    DEFAULT_SUBAGENT_TIMEOUT_MS,
+  );
+  const subagentWaitTimeoutMs = await getNumberConfig(
+    engine,
+    'dream.synthesize.subagent_wait_timeout_ms',
+    DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS,
+  );
 
   let excludePatterns: string[] = ['medical', 'therapy'];
   if (excludeStr) {
@@ -658,7 +672,20 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     cooldownHours: cooldownHoursStr ? Math.max(0, parseInt(cooldownHoursStr, 10) || 12) : 12,
     maxPromptTokens,
     maxChunksPerTranscript,
+    subagentTimeoutMs,
+    subagentWaitTimeoutMs,
   };
+}
+
+async function getNumberConfig(
+  engine: BrainEngine,
+  key: string,
+  fallback: number,
+): Promise<number> {
+  const raw = await engine.getConfig(key);
+  if (raw === undefined || raw === null) return fallback;
+  const value = Number(raw);
+  return Number.isNaN(value) ? fallback : value;
 }
 
 async function checkCooldown(

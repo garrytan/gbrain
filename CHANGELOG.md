@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.41.15.0] - 2026-05-28
+
+- `dream.synthesize.subagent_timeout_ms` and
+  `dream.synthesize.subagent_wait_timeout_ms` now control synthesize
+  subagent job and wait timeouts. Defaults remain 30 and 35 minutes.
+
 ## [0.41.14.0] - 2026-05-25
 
 **Your gbrain skills can declare their own routing triggers in their

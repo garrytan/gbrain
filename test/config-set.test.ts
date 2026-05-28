@@ -29,6 +29,11 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('models.tier.subagent');
   });
 
+  test('contains the dream synthesize timeout keys (#1594)', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('dream.synthesize.subagent_timeout_ms');
+    expect(KNOWN_CONFIG_KEYS).toContain('dream.synthesize.subagent_wait_timeout_ms');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);
