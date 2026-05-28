@@ -237,6 +237,20 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (got.ok) expect(got.dim).toBe(768);
   });
 
+  test('user-provided embedding providers accept explicit dimensions for arbitrary model ids', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0',
+      embedding_dimensions: 1024,
+    });
+    expect(got).toEqual({
+      ok: true,
+      dim: 1024,
+      model: 'llama-server:hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0',
+      provider: 'llama-server',
+      recipeDefault: 0,
+    });
+  });
+
   test('unknown provider rejected with provider list hint', () => {
     const got = resolveSchemaEmbeddingDim({ embedding_model: 'notarealprovider:foo' });
     expect(got.ok).toBe(false);

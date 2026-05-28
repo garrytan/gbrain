@@ -49,6 +49,22 @@ describe('gateway configuration', () => {
     expect(getEmbeddingDimensions()).toBe(1280);
     expect(getExpansionModel()).toBe('anthropic:claude-haiku-4-5-20251001');
   });
+
+  test('diagnoseEmbedding accepts configured user-provided model ids', async () => {
+    const { diagnoseEmbedding } = await import('../../src/core/ai/gateway.ts');
+    configureGateway({
+      embedding_model: 'llama-server:hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0',
+      embedding_dimensions: 1024,
+      env: {},
+    });
+
+    expect(diagnoseEmbedding()).toEqual({
+      ok: true,
+      model: 'llama-server:hf.co/Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0',
+      provider: 'llama-server',
+      recipeId: 'llama-server',
+    });
+  });
 });
 
 describe('gateway.isAvailable (silent-drop regression surface)', () => {

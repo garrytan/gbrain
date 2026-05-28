@@ -382,6 +382,15 @@ function validateDimAgainstTouchpoint(
   }
 
   if (requestedDims !== undefined && requestedDims !== defaultDims) {
+    if (recipe.touchpoints.embedding?.user_provided_models === true) {
+      return {
+        ok: true,
+        dim,
+        model: `${recipe.id}:${modelId}`,
+        provider: recipe.id,
+        recipeDefault: defaultDims,
+      };
+    }
     // User asked for a non-default dim. Walk the precedence chain.
     const customDimOk = isCustomDimValidForProvider(recipe, modelId, requestedDims, dimsOptions);
     if (!customDimOk.valid) {
