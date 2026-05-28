@@ -224,7 +224,15 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         const queue = new MinionQueue(engine);
         const slotMs = Math.floor(Date.now() / (baseInterval * 1000)) * baseInterval * 1000;
         const slot = new Date(slotMs).toISOString();
-        const timeoutMs = Math.max(baseInterval * 2 * 1000, 300_000);
+        // Per-cycle job timeout. Default = 2× interval, floor 5min. Override via
+        // config key `autopilot.cycle_timeout_ms` when bulk-embed cycles need >10min
+        // (see autopilot.err: 108 aborts on Intra-platform brain when embed phase
+        // ran long against Supabase pooler before 2026-05-28). Set via:
+        //   gbrain put-config autopilot.cycle_timeout_ms 1800000
+        const timeoutOverride = await engine.getConfig('autopilot.cycle_timeout_ms');
+        const timeoutMs = timeoutOverride
+          ? parseInt(String(timeoutOverride), 10)
+          : Math.max(baseInterval * 2 * 1000, 300_000);
         const job = await queue.add('autopilot-cycle',
           { repoPath },
           {
