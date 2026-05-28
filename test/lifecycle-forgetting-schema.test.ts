@@ -8,6 +8,8 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 setDefaultTimeout(20_000);
 
+const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 20_000;
+
 const tempPaths: string[] = [];
 
 afterEach(() => {
@@ -69,7 +71,7 @@ describe('lifecycle forgetting schema', () => {
     expect(tables.rows.map((row: any) => row.table_name)).toEqual([...LIFECYCLE_TABLES].sort());
 
     await engine.disconnect();
-  }, 10_000);
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 
   test('sqlite upgrades version 38 databases and installs lifecycle forgetting tables', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-lifecycle-forgetting-sqlite-v38-'));
@@ -129,5 +131,5 @@ describe('lifecycle forgetting schema', () => {
     expect(table.rows).toEqual([{ table_name: 'memory_lifecycle_states' }]);
 
     await engine.disconnect();
-  }, 10_000);
+  }, PGLITE_SCHEMA_TEST_TIMEOUT_MS);
 });

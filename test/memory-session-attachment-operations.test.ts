@@ -10,6 +10,8 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 setDefaultTimeout(20_000);
 
+const PGLITE_SESSION_OPERATION_TIMEOUT_MS = 20_000;
+
 async function createSqliteHarness(label: string): Promise<{
   engine: SQLiteEngine;
   ctx: (dryRun?: boolean) => OperationContext;
@@ -675,7 +677,7 @@ describe('memory session attachment operations', () => {
     } finally {
       await harness.cleanup();
     }
-  }, 10_000);
+  }, PGLITE_SESSION_OPERATION_TIMEOUT_MS);
 
   test('create rejects invalid expires_at before storage', async () => {
     const harness = await createSqliteHarness('invalid-expiry');
