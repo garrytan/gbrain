@@ -309,6 +309,12 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // gate `sync.last_commit` advancement and record recoverable errors.
   const failedFiles: Array<{ path: string; error: string; line?: number }> = [];
   const addsAndMods = [...filtered.added, ...filtered.modified];
+  // Per-file size ceiling for sync (separate from importFile's 5MB hard cap).
+  // 500KB chosen because anything larger pushes the upsertChunks transaction
+  // past Supabase pooler's 60s default statement_timeout — see
+  // sync-failures.jsonl loops on build_plan_v2.md (~2MB) prior to 2026-05-28.
+  // Override via SYNC_MAX_BYTES if you intentionally want larger files in.
+  const SYNC_MAX_BYTES = parseInt(process.env.SYNC_MAX_BYTES || '500000', 10);
   if (addsAndMods.length > 0) {
     progress.start('sync.imports', addsAndMods.length);
     for (const path of addsAndMods) {
@@ -318,6 +324,13 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
         continue;
       }
       try {
+        const { statSync } = await import('fs');
+        const size = statSync(filePath).size;
+        if (size > SYNC_MAX_BYTES) {
+          progress.tick(1, `skip-large:${path} (${size}B)`);
+          failedFiles.push({ path, error: `file ${size}B exceeds SYNC_MAX_BYTES=${SYNC_MAX_BYTES}` });
+          continue;
+        }
         const result = await importFile(engine, filePath, path, { noEmbed });
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
