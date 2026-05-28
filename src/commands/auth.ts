@@ -24,6 +24,8 @@ import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { sqlQueryForEngine, executeRawJsonb, type SqlQuery } from '../core/sql-query.ts';
+import { pgArray } from '../core/oauth-provider.ts';
+import { assertValidSourceId } from '../core/source-id.ts';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -165,6 +167,100 @@ async function list() {
   });
 }
 
+/**
+ * `gbrain auth list-clients [--json]` — read surface for OAuth 2.1 clients.
+ *
+ * The existing `gbrain auth list` shows LEGACY bearer tokens from
+ * `access_tokens`; this is the parallel for v0.26+ OAuth clients. Separate
+ * commands rather than merged output because the two models have different
+ * field sets (legacy: lifecycle dates; OAuth: scopes + source_id +
+ * federated_read).
+ *
+ * Human output is card-style (multi-line per client) instead of a fixed-
+ * width table — federated_read can hold many ids per client and a wide
+ * single-line layout truncates / wraps badly on terminals < 200 cols.
+ * JSON output uses a `schema_version: 1` envelope; additive only.
+ */
+async function listClients(args: string[]) {
+  const json = args.includes('--json');
+  const includeDeleted = args.includes('--include-deleted');
+  await withConfiguredSql(async (sql) => {
+    // Codex finding #2 (medium): default-hide soft-deleted clients so admin
+    // soft-deletes are honored by the CLI surface. Opt-in via flag.
+    const rows = includeDeleted
+      ? await sql`
+          SELECT client_id, client_name, scope, source_id, federated_read,
+                 grant_types, created_at, deleted_at
+          FROM oauth_clients
+          ORDER BY client_name
+        `
+      : await sql`
+          SELECT client_id, client_name, scope, source_id, federated_read,
+                 grant_types, created_at, deleted_at
+          FROM oauth_clients
+          WHERE deleted_at IS NULL
+          ORDER BY client_name
+        `;
+    if (json) {
+      const clients = rows.map((r) => ({
+        client_id: String(r.client_id),
+        client_name: String(r.client_name),
+        scope: r.scope == null ? null : String(r.scope),
+        source_id: r.source_id == null ? null : String(r.source_id),
+        federated_read: Array.isArray(r.federated_read)
+          ? (r.federated_read as string[]).map(String)
+          : [],
+        grant_types: Array.isArray(r.grant_types)
+          ? (r.grant_types as string[]).map(String)
+          : [],
+        created_at:
+          r.created_at instanceof Date
+            ? r.created_at.toISOString()
+            : r.created_at == null
+              ? null
+              : String(r.created_at),
+        deleted_at:
+          r.deleted_at instanceof Date
+            ? r.deleted_at.toISOString()
+            : r.deleted_at == null
+              ? null
+              : String(r.deleted_at),
+      }));
+      process.stdout.write(JSON.stringify({ schema_version: 1, clients }, null, 2) + '\n');
+      return;
+    }
+    if (rows.length === 0) {
+      console.log(
+        includeDeleted
+          ? 'No OAuth clients found (including deleted). Register one: gbrain auth register-client <name>'
+          : 'No active OAuth clients found. Register one: gbrain auth register-client <name>'
+            + '\n(Use --include-deleted to also show soft-deleted clients.)',
+      );
+      return;
+    }
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const fed = Array.isArray(r.federated_read)
+        ? (r.federated_read as string[]).map(String)
+        : [];
+      const grants = Array.isArray(r.grant_types)
+        ? (r.grant_types as string[]).map(String)
+        : [];
+      const deletedAt = r.deleted_at;
+      const status = deletedAt == null
+        ? ''
+        : ` [SOFT-DELETED ${deletedAt instanceof Date ? deletedAt.toISOString() : String(deletedAt)}]`;
+      console.log(`${sanitizeForTerminal(String(r.client_name))}${status}`);
+      console.log(`  client_id:    ${sanitizeForTerminal(String(r.client_id))}`);
+      console.log(`  scope:        ${r.scope == null ? '(none)' : sanitizeForTerminal(String(r.scope))}`);
+      console.log(`  grant types:  ${grants.length ? sanitizeForTerminal(grants.join(', ')) : '(none)'}`);
+      console.log(`  write source: ${r.source_id == null ? '(none)' : sanitizeForTerminal(String(r.source_id))}`);
+      console.log(`  federated:    ${fed.length ? sanitizeForTerminal(fed.join(', ')) : '(empty)'}`);
+      if (i < rows.length - 1) console.log('');
+    }
+  });
+}
+
 async function revoke(name: string) {
   if (!name) { console.error('Usage: auth revoke <name>'); process.exit(1); }
   await withConfiguredSql(async (sql) => {
@@ -301,6 +397,475 @@ async function test(url: string, token: string) {
   console.log(`\n🧠 Your brain is live! (${elapsed}s)`);
 }
 
+/**
+ * Strip ANSI escapes + C0/C1 control characters from a string before
+ * printing it to the operator's terminal. Defense for the
+ * codex-flagged terminal-control-injection class: a client_name or
+ * source_id registered via DCR with `\x1b[2J` (clear-screen) or
+ * `\x1b]0;TITLE\x07` (OSC title-change) would poison
+ * `gbrain auth list-clients` output otherwise.
+ *
+ * Replaces unsafe bytes with their `\xNN` hex escape so the operator
+ * sees that something weird is in the field, instead of silent
+ * mutilation. Tab and newline are preserved as-is so legitimate
+ * multi-line values render.
+ */
+export function sanitizeForTerminal(s: string): string {
+  // ALL C0/C1 controls + DEL get escaped. Codex re-review caught that
+  // preserving `\n` lets a DCR-registered client_name spoof additional
+  // human-output lines in list-clients (a real attack — newline in the
+  // name visually adds a fake row to the operator's terminal). Tab is
+  // also escaped for the same reason — field-separator spoofing.
+  // C0: 0x00-0x1F. DEL: 0x7F. C1: 0x80-0x9F.
+  return s.replace(/[\x00-\x1f\x7f-\x9f]/g, (ch) =>
+    `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`,
+  );
+}
+
+export interface ResolvedClient {
+  client_id: string;
+  client_name: string;
+  source_id: string | null;
+  federated_read: string[];
+  deleted_at: Date | string | null;
+}
+
+export type FederatedReadOutcome =
+  | { kind: 'noop'; reason: 'already-granted' | 'not-present' | 'same-list'; client: ResolvedClient; current: string[] }
+  | { kind: 'updated'; client: ResolvedClient; before: string[]; after: string[] };
+
+/**
+ * Resolve an OAuth client by client_id (exact) or client_name (unique).
+ * Errors on no-match and on ambiguous client_name (>1 row). client_id
+ * takes precedence — if a long hash is passed and matches, returns
+ * immediately without ever querying by name.
+ *
+ * Legacy bearer tokens in `access_tokens` are NOT searched. Federated read
+ * scope is an OAuth-client concept (oauth_clients.federated_read column);
+ * legacy bearers have no source scope.
+ */
+/**
+ * Resolve an OAuth client. Codex finding #2 (medium): default-hide
+ * soft-deleted clients so admin-soft-deleted rows aren't mutated by the
+ * CLI. The `includeDeleted` opt is reserved for future read-side surfaces;
+ * grant/revoke/set ALWAYS filter active rows only.
+ */
+export async function resolveClient(
+  sql: SqlQuery,
+  nameOrId: string,
+  opts: { includeDeleted?: boolean } = {},
+): Promise<ResolvedClient> {
+  const allowDeleted = opts.includeDeleted === true;
+  const byId = allowDeleted
+    ? await sql`
+        SELECT client_id, client_name, source_id, federated_read, deleted_at
+        FROM oauth_clients WHERE client_id = ${nameOrId} LIMIT 1
+      `
+    : await sql`
+        SELECT client_id, client_name, source_id, federated_read, deleted_at
+        FROM oauth_clients WHERE client_id = ${nameOrId} AND deleted_at IS NULL LIMIT 1
+      `;
+  if (byId.length === 1) return normalizeClientRow(byId[0]);
+  const byName = allowDeleted
+    ? await sql`
+        SELECT client_id, client_name, source_id, federated_read, deleted_at
+        FROM oauth_clients WHERE client_name = ${nameOrId}
+      `
+    : await sql`
+        SELECT client_id, client_name, source_id, federated_read, deleted_at
+        FROM oauth_clients WHERE client_name = ${nameOrId} AND deleted_at IS NULL
+      `;
+  if (byName.length === 0) {
+    throw new Error(
+      `No active OAuth client found with name or id "${nameOrId}". ` +
+        `Run \`gbrain auth register-client <name>\` to create one, ` +
+        `or \`gbrain auth list-clients\` to see what exists. ` +
+        `(Soft-deleted clients are hidden by default.)`,
+    );
+  }
+  if (byName.length > 1) {
+    const ids = byName.map((r) => `  ${String(r.client_id)}`).join('\n');
+    throw new Error(
+      `Multiple active OAuth clients named "${nameOrId}". Pass the full client_id instead:\n${ids}`,
+    );
+  }
+  return normalizeClientRow(byName[0]);
+}
+
+function normalizeClientRow(row: Record<string, unknown>): ResolvedClient {
+  const fed = row.federated_read;
+  return {
+    client_id: String(row.client_id),
+    client_name: String(row.client_name),
+    source_id: row.source_id == null ? null : String(row.source_id),
+    federated_read: Array.isArray(fed) ? (fed as string[]).map(String) : [],
+    deleted_at: row.deleted_at == null
+      ? null
+      : (row.deleted_at as Date | string),
+  };
+}
+
+/**
+ * Validate the source_id shape AND DB existence. Codex finding #3 (medium):
+ * a manually-INSERTed source row with weird chars (e.g. comma, quote)
+ * would otherwise land in oauth_clients.federated_read as a never-deletable
+ * malformed entry. Fail at the boundary before the existence query so
+ * malformed input gets the validator's hint, not a "does not exist" hint
+ * pointing at a non-creatable id.
+ */
+export async function assertSourceExists(sql: SqlQuery, sourceId: string): Promise<void> {
+  assertValidSourceId(sourceId);
+  const rows = await sql`SELECT id FROM sources WHERE id = ${sourceId} LIMIT 1`;
+  if (rows.length === 0) {
+    throw new Error(
+      `Source "${sourceId}" does not exist. Run \`gbrain sources list\` to see registered sources, ` +
+        `or \`gbrain sources add ${sourceId}\` to create it.`,
+    );
+  }
+}
+
+/**
+ * Atomic append: array_append + NOT-ANY guard so the row-lock fully
+ * serializes concurrent grant/revoke against the same client. Codex
+ * finding #1 (HIGH): the previous read-modify-write shape allowed a
+ * concurrent revoke to be silently UNDONE by a racing grant.
+ *
+ * Returns the post-write federated_read array, or null when no rows
+ * matched (already-granted, soft-deleted, or missing client). Callers
+ * disambiguate via prior resolveClient + includes() check.
+ *
+ * `WHERE deleted_at IS NULL` is part of the atomic guard so a client
+ * soft-deleted between resolveClient and the UPDATE can't be mutated.
+ */
+async function appendFederatedReadAtomic(
+  sql: SqlQuery,
+  clientId: string,
+  sourceId: string,
+): Promise<string[] | null> {
+  const rows = await sql`
+    UPDATE oauth_clients
+    SET federated_read = array_append(federated_read, ${sourceId})
+    WHERE client_id = ${clientId}
+      AND deleted_at IS NULL
+      AND NOT (${sourceId} = ANY(federated_read))
+    RETURNING federated_read
+  `;
+  if (rows.length === 0) return null;
+  const fed = rows[0].federated_read;
+  return Array.isArray(fed) ? (fed as string[]).map(String) : [];
+}
+
+/**
+ * Atomic remove: array_remove + ANY guard. Same race-correctness story
+ * as appendFederatedReadAtomic. Returns post-write array or null.
+ */
+async function removeFederatedReadAtomic(
+  sql: SqlQuery,
+  clientId: string,
+  sourceId: string,
+): Promise<string[] | null> {
+  const rows = await sql`
+    UPDATE oauth_clients
+    SET federated_read = array_remove(federated_read, ${sourceId})
+    WHERE client_id = ${clientId}
+      AND deleted_at IS NULL
+      AND ${sourceId} = ANY(federated_read)
+    RETURNING federated_read
+  `;
+  if (rows.length === 0) return null;
+  const fed = rows[0].federated_read;
+  return Array.isArray(fed) ? (fed as string[]).map(String) : [];
+}
+
+/**
+ * Wholesale array overwrite for `set-federated-read`. Honors the
+ * deleted_at filter. Last-writer-wins semantics under concurrent
+ * `set` calls is acceptable — the user is asserting "this exact list"
+ * intent; concurrent set+set just means whichever ran second wins.
+ * Concurrent set+grant or set+revoke is also last-writer-wins, which
+ * is the documented contract for `set`.
+ */
+async function replaceFederatedReadAtomic(
+  sql: SqlQuery,
+  clientId: string,
+  next: string[],
+): Promise<string[] | null> {
+  // TEXT[] binding via pgArray() string-literal escaping (see helper
+  // for the security note). Our narrow SqlQuery surface
+  // (src/core/sql-query.ts) doesn't bind JS arrays directly.
+  const literal = pgArray(next);
+  const rows = await sql`
+    UPDATE oauth_clients
+    SET federated_read = ${literal}
+    WHERE client_id = ${clientId}
+      AND deleted_at IS NULL
+    RETURNING federated_read
+  `;
+  if (rows.length === 0) return null;
+  const fed = rows[0].federated_read;
+  return Array.isArray(fed) ? (fed as string[]).map(String) : [];
+}
+
+/**
+ * Pure helper: dedupe a comma-separated source-id list while preserving
+ * insertion order. Empty input → empty array. Exported so the CLI parser
+ * and tests share one normalizer.
+ */
+export function parseSourceCsv(csv: string): string[] {
+  const requested = csv.split(',').map((s) => s.trim()).filter(Boolean);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of requested) {
+    if (!seen.has(s)) {
+      seen.add(s);
+      out.push(s);
+    }
+  }
+  return out;
+}
+
+export interface FederatedReadOpts {
+  /** When true, compute the outcome but skip the persisting UPDATE. */
+  dryRun?: boolean;
+}
+
+/**
+ * Core: append a source to the client's federated_read.
+ *
+ * Atomicity contract (Codex finding #1, HIGH):
+ *   The actual write goes through `appendFederatedReadAtomic` which
+ *   serializes at the row-lock so concurrent grant/revoke against the
+ *   same client cannot lose updates. The race vector that previously
+ *   silently restored revoked access is closed: under two operators
+ *   racing `revoke-read sensitive` + `grant-read harmless`, postgres
+ *   serializes the two UPDATEs and BOTH ops apply (sensitive removed,
+ *   harmless added), instead of one clobbering the other.
+ *
+ * The reported `before` is the snapshot at resolveClient time, which
+ * may be stale relative to a concurrent racer. The `after` reflects
+ * the post-UPDATE state from RETURNING (always fresh).
+ */
+export async function grantReadCore(
+  sql: SqlQuery,
+  nameOrId: string,
+  sourceId: string,
+  opts: FederatedReadOpts = {},
+): Promise<FederatedReadOutcome> {
+  const client = await resolveClient(sql, nameOrId);
+  await assertSourceExists(sql, sourceId);
+  if (client.federated_read.includes(sourceId)) {
+    return { kind: 'noop', reason: 'already-granted', client, current: client.federated_read };
+  }
+  if (opts.dryRun) {
+    // Compute the would-be result without touching the row. Last-known
+    // snapshot is best-effort under concurrent writes.
+    const projected = [...client.federated_read, sourceId];
+    return { kind: 'updated', client, before: client.federated_read, after: projected };
+  }
+  const after = await appendFederatedReadAtomic(sql, client.client_id, sourceId);
+  if (after === null) {
+    // Two equivalent failure modes: (a) racing grant-read already added
+    // the source and the NOT-ANY guard suppressed our UPDATE, or
+    // (b) the client was soft-deleted between resolveClient and UPDATE.
+    // (a) is the more common path. Re-resolve to confirm + report.
+    const reresolved = await resolveClient(sql, client.client_id, { includeDeleted: true });
+    if (reresolved.deleted_at != null) {
+      throw new Error(`Client "${client.client_name}" was soft-deleted before write could land.`);
+    }
+    return { kind: 'noop', reason: 'already-granted', client: reresolved, current: reresolved.federated_read };
+  }
+  return { kind: 'updated', client, before: client.federated_read, after };
+}
+
+/**
+ * Core: remove a source from the client's federated_read. Atomic via
+ * array_remove + ANY-guard. Same race-correctness rationale as
+ * grantReadCore — concurrent ops serialize at the row lock.
+ */
+export async function revokeReadCore(
+  sql: SqlQuery,
+  nameOrId: string,
+  sourceId: string,
+  opts: FederatedReadOpts = {},
+): Promise<FederatedReadOutcome> {
+  const client = await resolveClient(sql, nameOrId);
+  if (!client.federated_read.includes(sourceId)) {
+    return { kind: 'noop', reason: 'not-present', client, current: client.federated_read };
+  }
+  if (opts.dryRun) {
+    const projected = client.federated_read.filter((s) => s !== sourceId);
+    return { kind: 'updated', client, before: client.federated_read, after: projected };
+  }
+  const after = await removeFederatedReadAtomic(sql, client.client_id, sourceId);
+  if (after === null) {
+    // Same disambiguation as grant: either a concurrent revoke already
+    // removed the source (most common) or the client was soft-deleted.
+    const reresolved = await resolveClient(sql, client.client_id, { includeDeleted: true });
+    if (reresolved.deleted_at != null) {
+      throw new Error(`Client "${client.client_name}" was soft-deleted before write could land.`);
+    }
+    return { kind: 'noop', reason: 'not-present', client: reresolved, current: reresolved.federated_read };
+  }
+  return { kind: 'updated', client, before: client.federated_read, after };
+}
+
+/**
+ * Core: replace the whole federated_read list. Idempotent on same list.
+ *
+ * Race semantics: wholesale-overwrite + deleted_at guard. Concurrent
+ * set+set is last-writer-wins (documented contract for `set` — the
+ * operator is asserting the exact list). Concurrent set+grant or
+ * set+revoke is also last-writer-wins. If a strict-merge semantics is
+ * needed, use grant-read / revoke-read individually.
+ */
+export async function setFederatedReadCore(
+  sql: SqlQuery,
+  nameOrId: string,
+  sourceCsv: string,
+  opts: FederatedReadOpts = {},
+): Promise<FederatedReadOutcome> {
+  const next = parseSourceCsv(sourceCsv);
+  const client = await resolveClient(sql, nameOrId);
+  for (const s of next) {
+    await assertSourceExists(sql, s);
+  }
+  const prev = client.federated_read;
+  const same = prev.length === next.length && prev.every((v, i) => v === next[i]);
+  if (same) {
+    return { kind: 'noop', reason: 'same-list', client, current: prev };
+  }
+  if (opts.dryRun) {
+    return { kind: 'updated', client, before: prev, after: next };
+  }
+  const after = await replaceFederatedReadAtomic(sql, client.client_id, next);
+  if (after === null) {
+    throw new Error(`Client "${client.client_name}" was soft-deleted before write could land.`);
+  }
+  return { kind: 'updated', client, before: prev, after };
+}
+
+function printOutcome(
+  verb: 'grant' | 'revoke' | 'set',
+  sourceArg: string,
+  outcome: FederatedReadOutcome,
+  dryRun: boolean,
+): void {
+  // Terminal-injection defense (Codex finding #5, low): a client_name
+  // registered via DCR with ANSI escapes or control chars would
+  // otherwise poison this output. Sanitize ALL strings that round-trip
+  // from the DB before printing.
+  const s = sanitizeForTerminal;
+  const prefix = dryRun ? '[dry-run] ' : '';
+  if (outcome.kind === 'noop') {
+    const name = s(outcome.client.client_name);
+    if (outcome.reason === 'already-granted') {
+      console.log(`${prefix}No change: "${name}" already reads "${s(sourceArg)}".`);
+    } else if (outcome.reason === 'not-present') {
+      console.log(`${prefix}No change: "${name}" did not read "${s(sourceArg)}".`);
+    } else {
+      console.log(`${prefix}No change: "${name}" federated_read already matches.`);
+    }
+    console.log(`  federated_read: ${outcome.current.map(s).join(', ') || '(empty)'}`);
+    return;
+  }
+  const { client, before, after } = outcome;
+  const name = s(client.client_name);
+  const wouldOrDid = dryRun ? 'Would' : 'Did';
+  if (verb === 'grant') {
+    console.log(`${prefix}${wouldOrDid} grant: "${name}" can now read "${s(sourceArg)}".`);
+    console.log(`  federated_read: ${after.map(s).join(', ')}`);
+  } else if (verb === 'revoke') {
+    console.log(`${prefix}${wouldOrDid} revoke: "${name}" no longer reads "${s(sourceArg)}".`);
+    console.log(`  federated_read: ${after.map(s).join(', ') || '(empty — client has no federated reads)'}`);
+  } else {
+    console.log(`${prefix}${wouldOrDid} update "${name}" federated_read:`);
+    console.log(`  before: ${before.map(s).join(', ') || '(empty)'}`);
+    console.log(`  after:  ${after.map(s).join(', ') || '(empty)'}`);
+  }
+  if (after.length === 0) {
+    console.log(
+      'Warning: client now reads no sources via federation. Queries through this ' +
+        'client will only see content scoped explicitly via its write source.',
+    );
+  }
+}
+
+/**
+ * Strip `--dry-run` from a positional-arg list. Returns the filtered list
+ * plus the flag value. Kept positional-tolerant — the existing
+ * `auth grant-read alice source` shape MUST keep working, AND
+ * `auth grant-read alice source --dry-run` AND `auth grant-read --dry-run alice source`.
+ */
+export function extractDryRun(args: string[]): { dryRun: boolean; rest: string[] } {
+  let dryRun = false;
+  const rest: string[] = [];
+  for (const a of args) {
+    if (a === '--dry-run') {
+      dryRun = true;
+      continue;
+    }
+    rest.push(a);
+  }
+  return { dryRun, rest };
+}
+
+async function grantRead(args: string[]): Promise<void> {
+  const { dryRun, rest } = extractDryRun(args);
+  const [nameOrId, sourceId] = rest;
+  if (!nameOrId || !sourceId) {
+    console.error('Usage: gbrain auth grant-read <client-name-or-id> <source-id> [--dry-run]');
+    process.exit(1);
+  }
+  try {
+    await withConfiguredSql(async (sql) => {
+      const outcome = await grantReadCore(sql, nameOrId, sourceId, { dryRun });
+      printOutcome('grant', sourceId, outcome, dryRun);
+    });
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  }
+}
+
+async function revokeRead(args: string[]): Promise<void> {
+  const { dryRun, rest } = extractDryRun(args);
+  const [nameOrId, sourceId] = rest;
+  if (!nameOrId || !sourceId) {
+    console.error('Usage: gbrain auth revoke-read <client-name-or-id> <source-id> [--dry-run]');
+    process.exit(1);
+  }
+  try {
+    await withConfiguredSql(async (sql) => {
+      const outcome = await revokeReadCore(sql, nameOrId, sourceId, { dryRun });
+      printOutcome('revoke', sourceId, outcome, dryRun);
+    });
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  }
+}
+
+async function setFederatedRead(args: string[]): Promise<void> {
+  const { dryRun, rest } = extractDryRun(args);
+  const [nameOrId, sourceCsv] = rest;
+  if (!nameOrId || sourceCsv === undefined) {
+    console.error(
+      'Usage: gbrain auth set-federated-read <client-name-or-id> <source-id1,source-id2,...> [--dry-run]',
+    );
+    console.error('Pass an empty string ("") to clear all federated reads.');
+    process.exit(1);
+  }
+  try {
+    await withConfiguredSql(async (sql) => {
+      const outcome = await setFederatedReadCore(sql, nameOrId, sourceCsv, { dryRun });
+      printOutcome('set', sourceCsv, outcome, dryRun);
+    });
+  } catch (e: any) {
+    console.error('Error:', e.message);
+    process.exit(1);
+  }
+}
+
 async function revokeClient(clientId: string) {
   if (!clientId) {
     console.error('Usage: auth revoke-client <client_id>');
@@ -319,7 +884,7 @@ async function revokeClient(clientId: string) {
         console.error(`No client found with id "${clientId}"`);
         process.exit(1);
       }
-      console.log(`OAuth client revoked: "${rows[0].client_name}" (${clientId})`);
+      console.log(`OAuth client revoked: "${sanitizeForTerminal(String(rows[0].client_name))}" (${clientId})`);
       console.log('Tokens and authorization codes purged via cascade.');
     });
   } catch (e: any) {
@@ -399,6 +964,15 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
   // pattern; making operators redundantly pass `--grant-types` is footgun.
   if (!grantTypesSet && out.redirectUris.length > 0) {
     out.grantTypes = ['authorization_code', 'refresh_token'];
+  }
+  // Codex re-review (medium): validate source_id shape at the CLI boundary
+  // so register-client can't seed malformed entries into source_id /
+  // federated_read that subsequent grant/revoke/set commands can't manage.
+  assertValidSourceId(out.sourceId);
+  if (out.federatedRead) {
+    for (const s of out.federatedRead) {
+      assertValidSourceId(s);
+    }
   }
   return out;
 }
@@ -482,6 +1056,10 @@ export async function runAuth(args: string[]): Promise<void> {
     }
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
     case 'revoke-client': await revokeClient(rest[0]); return;
+    case 'list-clients': await listClients(rest); return;
+    case 'grant-read': await grantRead(rest); return;
+    case 'revoke-read': await revokeRead(rest); return;
+    case 'set-federated-read': await setFederatedRead(rest); return;
     case 'test': {
       const tokenIdx = rest.indexOf('--token');
       const url = rest.find(a => !a.startsWith('--') && a !== rest[tokenIdx + 1]);
@@ -513,6 +1091,13 @@ Usage:
      --token-endpoint-auth-method <method>                 (v0.41.3+; client_secret_post | client_secret_basic | none;
                                                             'none' = public PKCE-only client, no secret minted)
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
+  gbrain auth list-clients [--json]                       List OAuth 2.1 clients with scope + write source + federated_read.
+  gbrain auth grant-read <name|client_id> <source-id> [--dry-run]
+                                                          Add a source to the client's federated_read list (idempotent).
+  gbrain auth revoke-read <name|client_id> <source-id> [--dry-run]
+                                                          Remove a source from the client's federated_read list (idempotent).
+  gbrain auth set-federated-read <name|client_id> "<id1,id2,...>" [--dry-run]
+                                                          Replace the client's whole federated_read list. Pass "" to clear.
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);
   }
