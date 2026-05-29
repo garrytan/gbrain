@@ -178,7 +178,7 @@ async function main() {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   } finally {
-    await engine.disconnect();
+    process.exit(0);
   }
 }
 
