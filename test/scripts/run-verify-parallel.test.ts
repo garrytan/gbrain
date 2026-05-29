@@ -42,6 +42,7 @@ describe("run-verify-parallel.sh — CLI contract", () => {
     expect(set.has("check:jsonb")).toBe(true);
     expect(set.has("typecheck")).toBe(true);
     expect(set.has("check:operations-filter-bypass")).toBe(true);
+    expect(set.has("check:coverage-ratchet")).toBe(true);
   });
 
   it("unknown arg exits 2 with usage error", () => {

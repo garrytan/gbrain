@@ -127,3 +127,16 @@ export function filterOutEmbedSkipped<T extends { frontmatter?: Record<string, u
 ): T[] {
   return pages.filter((p) => !isEmbedSkipped(p.frontmatter ?? null));
 }
+
+/**
+ * Mutate a parsed page's frontmatter so stale embed_skip markers do not
+ * survive after the page has become embeddable again.
+ */
+export function clearStaleEmbedSkipMarker(
+  frontmatter: Record<string, unknown>,
+  opts: { sanityDisabled: boolean; shouldSkipEmbed: boolean },
+): void {
+  if (opts.sanityDisabled || !opts.shouldSkipEmbed) {
+    delete frontmatter[EMBED_SKIP_KEY];
+  }
+}

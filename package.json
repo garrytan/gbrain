@@ -79,6 +79,7 @@
     "check:fuzz-purity": "scripts/check-fuzz-purity.sh",
     "check:operations-filter-bypass": "scripts/check-operations-filter-bypass.sh",
     "check:fixture-privacy": "scripts/check-fixture-privacy.sh",
+    "check:coverage-ratchet": "bun run scripts/coverage-ratchet.ts",
     "check:conversation-parser": "bun src/cli.ts eval conversation-parser test/fixtures/conversation-formats/all.jsonl --no-llm",
     "check:source-scope-onboard": "scripts/check-source-scope-onboard.sh",
     "postinstall": "command -v gbrain >/dev/null 2>&1 && gbrain apply-migrations --yes --non-interactive || echo '[gbrain] postinstall skipped. If installed via bun install -g github:...: run `gbrain doctor` and `gbrain apply-migrations --yes` manually. See https://github.com/garrytan/gbrain/issues/218' 1>&2",

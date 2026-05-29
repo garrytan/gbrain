@@ -56,6 +56,7 @@ CHECKS=(
   "check:gateway-routed"
   "check:worker-pool-atomicity"
   "check:fixture-privacy"
+  "check:coverage-ratchet"
   "check:conversation-parser"
   "check:resolver"
   "check:source-scope-onboard"

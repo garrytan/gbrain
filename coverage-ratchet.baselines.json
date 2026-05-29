@@ -1,0 +1,9 @@
+{
+  "schema": "gbrain.coverage-ratchet.baselines.v1",
+  "baselines": {
+    "coverage-ratchet-tool::src/core/coverage-ratchet.ts": 95.27,
+    "large-page-embed-recovery::src/core/embed-skip.ts": 100,
+    "large-page-embed-recovery::src/core/content-sanity.ts": 100,
+    "large-page-embed-recovery::src/core/cli-force-exit.ts": 100
+  }
+}
