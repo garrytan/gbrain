@@ -7,15 +7,40 @@
  *   - isSourceStale: never-synced + lag-exceeded + fresh + missing local_path
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { execFileSync } from 'child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   computeAllSourceMetrics,
   resolvePriorityLabel,
   resolvePriority,
   isSourceStale,
+  newestContentMs,
+  contentRelativeLagSeconds,
   _resetPriorityWarningsForTest,
 } from '../src/core/source-health.ts';
 import { loadAllSources } from '../src/core/sources-load.ts';
+
+/** Create a throwaway git repo whose single commit is dated `commitDate`. */
+function makeGitRepoAt(commitDate: Date, registry: string[]): string {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-srchealth-'));
+  registry.push(dir);
+  const iso = commitDate.toISOString();
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso,
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t',
+    GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
+  };
+  const run = (args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], env });
+  run(['init', '-q']);
+  writeFileSync(join(dir, 'a.md'), '# a\n');
+  run(['add', '-A']);
+  run(['commit', '-q', '-m', 'seed']);
+  return dir;
+}
 
 let engine: PGLiteEngine;
 
@@ -109,6 +134,55 @@ describe('isSourceStale', () => {
   test('synced beyond interval → true', () => {
     const src = { id: 's', name: 's', local_path: '/path', last_commit: null, last_sync_at: new Date(Date.now() - 120_000), config: {}, created_at: new Date() };
     expect(isSourceStale(src, 60_000)).toBe(true);
+  });
+});
+
+describe('content-relative staleness (git-aware)', () => {
+  const repos: string[] = [];
+  afterAll(() => {
+    for (const d of repos) { try { rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ } }
+  });
+
+  test('newestContentMs reads HEAD commit time; null for non-git/missing', () => {
+    expect(newestContentMs(null)).toBeNull();
+    expect(newestContentMs('/tmp/nope-' + Date.now())).toBeNull();
+    const d = makeGitRepoAt(new Date(Date.now() - 50 * 3600_000), repos);
+    const ms = newestContentMs(d);
+    expect(ms).not.toBeNull();
+    expect(Math.abs((ms as number) - (Date.now() - 50 * 3600_000))).toBeLessThan(5000);
+  });
+
+  test('contentRelativeLagSeconds: caught-up repo → 0', () => {
+    const now = Date.now();
+    const d = makeGitRepoAt(new Date(now - 200 * 3600_000), repos); // committed 200h ago
+    const lastSync = now - 100 * 3600_000;                          // synced 100h ago (after)
+    expect(contentRelativeLagSeconds(d, lastSync, now)).toBe(0);
+  });
+
+  test('contentRelativeLagSeconds: content newer than sync → measured from sync', () => {
+    const now = Date.now();
+    const d = makeGitRepoAt(new Date(now - 100 * 3600_000), repos); // committed 100h ago
+    const lastSync = now - 200 * 3600_000;                          // synced 200h ago (before)
+    const lag = contentRelativeLagSeconds(d, lastSync, now);
+    expect(lag).toBeGreaterThan(72 * 3600);
+  });
+
+  test('contentRelativeLagSeconds: null last sync → null', () => {
+    const d = makeGitRepoAt(new Date(Date.now() - 10 * 3600_000), repos);
+    expect(contentRelativeLagSeconds(d, null, Date.now())).toBeNull();
+  });
+
+  test('contentRelativeLagSeconds: non-git path falls back to wall-clock', () => {
+    const now = Date.now();
+    const lastSync = now - 100 * 3600_000;
+    const lag = contentRelativeLagSeconds('/tmp/not-a-repo-' + now, lastSync, now);
+    expect(lag).toBeGreaterThan(99 * 3600); // ~100h wall-clock fallback
+  });
+
+  test('isSourceStale: quiet repo (commit older than sync) → false even past interval', () => {
+    const d = makeGitRepoAt(new Date(Date.now() - 500 * 3600_000), repos);
+    const src = { id: 's', name: 's', local_path: d, last_commit: 'x', last_sync_at: new Date(Date.now() - 100 * 3600_000), config: {}, created_at: new Date() };
+    expect(isSourceStale(src, 60_000)).toBe(false); // caught up despite 100h since sync
   });
 });
 

@@ -15,8 +15,103 @@
  * D17: isSourceStale helper — autopilot calls this to decide per-source
  *      sync dispatch independent of the brain_score gate.
  */
+import { existsSync, statSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { join } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { parseSourceConfig, type SourceRow } from './sources-load.ts';
+
+/**
+ * Newest-content timestamp for a source's local checkout, in epoch ms, or
+ * `null` when it can't be determined cheaply.
+ *
+ * Staleness must measure how far the sync is behind the source's *content*
+ * ("what was last committed to the repo"), NOT wall-clock time since the
+ * last sync. A repo that hasn't changed in a week is fully caught up, not
+ * "severely stale" — flagging it is a false positive that trains operators
+ * to ignore the alert.
+ *
+ * Definition: "what was last committed to the repo." We deliberately do NOT
+ * count untracked working-tree files (build artifacts, scratch dirs, staging
+ * areas) — those are exactly the noise that produced false SEVERE alerts on
+ * otherwise-idle repos. The signal is committed + tracked-modified content:
+ *   1. git HEAD commit time (`git log -1 --format=%ct`).
+ *   2. Newest mtime among TRACKED modified paths only (`git status
+ *      --porcelain -z` rows whose status is not `??`). A tracked edit that
+ *      hasn't been committed yet is still "content the operator authored";
+ *      an untracked file is not yet part of the repo.
+ *
+ * Non-git directories and unreadable paths return `null`; callers then fall
+ * back to the legacy wall-clock measure so detection never regresses where
+ * we genuinely can't probe content.
+ */
+export function newestContentMs(localPath: string | null): number | null {
+  if (!localPath || !existsSync(localPath)) return null;
+  let newest: number | null = null;
+  try {
+    const commitSec = execFileSync(
+      'git',
+      ['-C', localPath, 'log', '-1', '--format=%ct'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 },
+    ).trim();
+    if (commitSec) {
+      const ms = Number(commitSec) * 1000;
+      if (Number.isFinite(ms)) newest = ms;
+    }
+  } catch {
+    return null; // not a git repo / git unavailable — caller falls back
+  }
+  try {
+    const porcelain = execFileSync(
+      'git',
+      ['-C', localPath, 'status', '--porcelain', '-z'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 },
+    );
+    for (const entry of porcelain.split('\0')) {
+      if (!entry) continue;
+      // Porcelain row: "XY <path>". Skip untracked ('??') — not yet repo
+      // content. Count tracked modifications (M/A/R/etc.).
+      const status = entry.slice(0, 2);
+      if (status === '??') continue;
+      const rel = entry.slice(3);
+      if (!rel) continue;
+      try {
+        const ms = statSync(join(localPath, rel)).mtimeMs;
+        if (Number.isFinite(ms) && (newest === null || ms > newest)) newest = ms;
+      } catch { /* deleted/inaccessible — skip */ }
+    }
+  } catch { /* status failed — keep commit-time signal */ }
+  return newest;
+}
+
+/**
+ * Content-relative lag in seconds: how long the sync has been behind the
+ * source's newest content. `0` when caught up (newest content ≤ last sync),
+ * `null` when last sync is unknown.
+ *
+ * When content CAN'T be probed (non-git / unreadable path) it falls back to
+ * the raw wall-clock delta `(now - lastSync)` — NOT clamped at 0 — so callers
+ * that detect clock skew via a negative result still work. When content IS
+ * probed and the source is caught up, it returns exactly `0`.
+ */
+export function contentRelativeLagSeconds(
+  localPath: string | null,
+  lastSyncMs: number | null,
+  nowMs: number,
+): number | null {
+  if (lastSyncMs === null || !Number.isFinite(lastSyncMs)) return null;
+  const wallClockSeconds = Math.floor((nowMs - lastSyncMs) / 1000);
+  // Negative wall-clock means last sync is in the future — clock skew. Surface
+  // it (don't mask as caught-up) so upstream skew detection still fires.
+  if (wallClockSeconds < 0) return wallClockSeconds;
+  const contentMs = newestContentMs(localPath);
+  if (contentMs !== null) {
+    // Caught up iff newest content is at or before the last sync.
+    return contentMs <= lastSyncMs ? 0 : wallClockSeconds;
+  }
+  // No content signal — wall-clock fallback (already ≥ 0 here).
+  return wallClockSeconds;
+}
 
 export interface SourceMetrics {
   source_id: string;
@@ -101,6 +196,11 @@ export function isSourceStale(src: SourceRow, intervalMs: number): boolean {
   if (!src.local_path) return false;
   if (!src.last_sync_at) return true;
   const lastMs = new Date(src.last_sync_at).getTime();
+  // Content-relative: a source is only stale if its newest content is newer
+  // than the last sync AND that gap exceeds the interval. A quiet repo whose
+  // newest commit predates its last sync is caught up — don't re-dispatch it.
+  const contentMs = newestContentMs(src.local_path);
+  if (contentMs !== null && contentMs <= lastMs) return false;
   return Date.now() - lastMs >= intervalMs;
 }
 
@@ -138,9 +238,11 @@ export async function computeAllSourceMetrics(
       : Math.round((chunkStats.embedded / chunkStats.total) * 1000) / 10;
 
     const lastMs = src.last_sync_at ? new Date(src.last_sync_at).getTime() : null;
-    const lagSeconds = lastMs === null
-      ? null
-      : Math.max(0, Math.floor((now - lastMs) / 1000));
+    // Content-relative: lag is the gap to the source's newest content
+    // ("what was last committed"), not wall-clock since the last sync. A
+    // quiet repo whose newest commit predates its last sync reports lag 0
+    // and no longer trips the doctor's federation_health staleness alarm.
+    const lagSeconds = contentRelativeLagSeconds(src.local_path, lastMs, now);
 
     return {
       source_id: src.id,

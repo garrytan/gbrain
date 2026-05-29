@@ -2750,6 +2750,16 @@ export async function checkSyncFreshness(
     // a TEXT column storing String(CHUNKER_VERSION).
     const currentChunkerVersion = String(CHUNKER_VERSION);
 
+    // Content-relative staleness: age is the gap to the source's newest
+    // committed/tracked content ("what was last committed to the repo"), not
+    // wall-clock since the last sync. A quiet repo whose newest commit
+    // predates its last sync is caught up and must NOT be flagged stale.
+    // Falls back to wall-clock when content can't be probed (non-git path).
+    // Complements the localOnly git short-circuit below: the short-circuit is
+    // a strict "definitely unchanged" gate (HEAD===last_commit + clean tree +
+    // chunker match) for the local CLI; content-relative lag covers the
+    // general/remote path where the short-circuit does not fire.
+    const { contentRelativeLagSeconds } = await import('../core/source-health.ts');
     const issues: string[] = [];
     // v0.41.27.0: D6 three-bucket count math. Every source falls into
     // EXACTLY ONE bucket per iteration. Invariant pinned by unit test:
@@ -2777,7 +2787,8 @@ export async function checkSyncFreshness(
       }
 
       const lastSync = new Date(source.last_sync_at).getTime();
-      const ageMs = now - lastSync;
+      const lagSeconds = contentRelativeLagSeconds(source.local_path, lastSync, now);
+      const ageMs = lagSeconds === null ? now - lastSync : lagSeconds * 1000;
 
       if (ageMs < 0) {
         issues.push(
@@ -2968,6 +2979,11 @@ export async function checkCycleFreshness(
     const failMs = failHours * 60 * 60 * 1000;
     const now = opts?.nowMs ?? Date.now();
 
+    // Content-relative: a source whose newest committed content predates its
+    // last full cycle is caught up — a quiet repo doesn't need re-cycling and
+    // must not be flagged. Falls back to wall-clock when content can't be
+    // probed (non-git path).
+    const { contentRelativeLagSeconds } = await import('../core/source-health.ts');
     const issues: string[] = [];
     let hasWarnings = false;
     let hasFailures = false;
@@ -2988,7 +3004,8 @@ export async function checkCycleFreshness(
         hasWarnings = true;
         continue;
       }
-      const ageMs = now - last;
+      const lagSeconds = contentRelativeLagSeconds(source.local_path, last, now);
+      const ageMs = lagSeconds === null ? now - last : lagSeconds * 1000;
       if (ageMs < 0) {
         issues.push(`Source ${display} has future last_full_cycle_at — clock skew`);
         hasWarnings = true;

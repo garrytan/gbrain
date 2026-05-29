@@ -42,10 +42,15 @@
  *        operators can grep cleanly and no log-injection vector exists
  *        through arbitrary source names (D13).
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test, afterAll } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync, utimesSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { execFileSync } from 'child_process';
 import {
   resolveParallelism,
   buildSyncStatusReport,
+  newestContentMs,
 } from '../src/commands/sync.ts';
 import { SYNC_LOCK_ID, syncLockId } from '../src/core/db-lock.ts';
 import { withSourcePrefix, slog } from '../src/core/console-prefix.ts';
@@ -190,6 +195,121 @@ describe('buildSyncStatusReport', () => {
     expect(byId.get('severe')!.staleness_class).toBe('severe');
     expect(byId.get('never')!.staleness_class).toBe('unknown');
     expect(byId.get('never')!.staleness_hours).toBeNull();
+  });
+
+  // ── Content-relative staleness ────────────────────────────────────
+  //
+  // Staleness must reflect how far the sync is behind the source's
+  // *content* ("what was last committed to the repo"), not wall-clock
+  // time since the last sync. A quiet repo whose newest commit predates
+  // its last sync is caught up and must NOT trip the severe alarm.
+  describe('content-relative staleness (newest commit vs last_sync)', () => {
+    const repos: string[] = [];
+
+    function makeGitRepo(commitDate: Date): string {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-stale-'));
+      repos.push(dir);
+      const iso = commitDate.toISOString();
+      const run = (args: string[]) =>
+        execFileSync('git', ['-C', dir, ...args], {
+          stdio: ['ignore', 'pipe', 'ignore'],
+          env: {
+            ...process.env,
+            GIT_AUTHOR_DATE: iso,
+            GIT_COMMITTER_DATE: iso,
+            GIT_AUTHOR_NAME: 't',
+            GIT_AUTHOR_EMAIL: 't@t',
+            GIT_COMMITTER_NAME: 't',
+            GIT_COMMITTER_EMAIL: 't@t',
+          },
+        });
+      run(['init', '-q']);
+      writeFileSync(join(dir, 'a.md'), '# a\n');
+      run(['add', '-A']);
+      run(['commit', '-q', '-m', 'seed']);
+      return dir;
+    }
+
+    afterAll(() => {
+      for (const d of repos) {
+        try { rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
+    });
+
+    test('newestContentMs returns null for non-git / missing paths', () => {
+      expect(newestContentMs(null)).toBeNull();
+      expect(newestContentMs('/tmp/does-not-exist-' + Date.now())).toBeNull();
+      const plainDir = mkdtempSync(join(tmpdir(), 'gbrain-plain-'));
+      repos.push(plainDir);
+      writeFileSync(join(plainDir, 'x.md'), 'x');
+      expect(newestContentMs(plainDir)).toBeNull(); // not a git repo
+    });
+
+    test('newestContentMs tracks the HEAD commit time', () => {
+      const commitDate = new Date(Date.now() - 200 * 60 * 60 * 1000); // 200h ago
+      const dir = makeGitRepo(commitDate);
+      const ms = newestContentMs(dir);
+      expect(ms).not.toBeNull();
+      // Within a few seconds of the seeded commit time.
+      expect(Math.abs((ms as number) - commitDate.getTime())).toBeLessThan(5_000);
+    });
+
+    test('quiet repo (last commit older than last sync) is fresh, not severe', async () => {
+      const now = Date.now();
+      // Last commit 200h ago, but sync ran only 100h ago → caught up.
+      const dir = makeGitRepo(new Date(now - 200 * 60 * 60 * 1000));
+      const syncIso = new Date(now - 100 * 60 * 60 * 1000).toISOString();
+      const sources = [{ id: 'quiet', name: 'quiet', local_path: dir, config: { syncEnabled: true } }];
+      const engine = makeEngine({
+        sourceRows: [{ id: 'quiet', last_commit: 'q'.repeat(40), last_sync_at: syncIso }],
+        countRows: [{ source_id: 'quiet', pages: 10, chunks_total: 20, chunks_unembedded: 0 }],
+      });
+      const report = await buildSyncStatusReport(engine, sources);
+      const s = report.sources.find((r) => r.source_id === 'quiet')!;
+      // Legacy wall-clock would have called this 100h → 'severe'. Content-
+      // relative correctly reports caught-up.
+      expect(s.staleness_hours).toBe(0);
+      expect(s.staleness_class).toBe('fresh');
+    });
+
+    test('repo with content newer than last sync still accrues staleness', async () => {
+      const now = Date.now();
+      // Last commit 100h ago, sync ran 200h ago → genuinely behind by ~200h.
+      const dir = makeGitRepo(new Date(now - 100 * 60 * 60 * 1000));
+      const syncIso = new Date(now - 200 * 60 * 60 * 1000).toISOString();
+      const sources = [{ id: 'behind', name: 'behind', local_path: dir, config: { syncEnabled: true } }];
+      const engine = makeEngine({
+        sourceRows: [{ id: 'behind', last_commit: 'b'.repeat(40), last_sync_at: syncIso }],
+        countRows: [{ source_id: 'behind', pages: 10, chunks_total: 20, chunks_unembedded: 0 }],
+      });
+      const report = await buildSyncStatusReport(engine, sources);
+      const s = report.sources.find((r) => r.source_id === 'behind')!;
+      expect(s.staleness_hours).toBeGreaterThan(72);
+      expect(s.staleness_class).toBe('severe');
+    });
+
+    test('uncommitted working-tree change newer than sync counts as pending', async () => {
+      const now = Date.now();
+      // Commit 200h ago, sync 100h ago (would be caught up), but an
+      // uncommitted edit touched 1h ago → still pending content.
+      const dir = makeGitRepo(new Date(now - 200 * 60 * 60 * 1000));
+      const f = join(dir, 'a.md');
+      writeFileSync(f, '# a edited\n');
+      const recent = (now - 1 * 60 * 60 * 1000) / 1000;
+      utimesSync(f, recent, recent);
+      const syncIso = new Date(now - 100 * 60 * 60 * 1000).toISOString();
+      const sources = [{ id: 'dirty', name: 'dirty', local_path: dir, config: { syncEnabled: true } }];
+      const engine = makeEngine({
+        sourceRows: [{ id: 'dirty', last_commit: 'd'.repeat(40), last_sync_at: syncIso }],
+        countRows: [{ source_id: 'dirty', pages: 10, chunks_total: 20, chunks_unembedded: 0 }],
+      });
+      const report = await buildSyncStatusReport(engine, sources);
+      const s = report.sources.find((r) => r.source_id === 'dirty')!;
+      // Newest content (uncommitted, 1h ago) is after the 100h-ago sync →
+      // accrues staleness from the sync forward (~100h → stale, not fresh).
+      expect(s.staleness_hours).toBeGreaterThan(24);
+      expect(s.staleness_class).not.toBe('fresh');
+    });
   });
 
   test('embedding_coverage_pct computed from chunks_total vs chunks_unembedded', async () => {

@@ -45,6 +45,10 @@ import {
 import { loadStorageConfig } from '../core/storage-config.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
+// Content-relative staleness lives in core/source-health so the sync
+// dashboard and the doctor's federation_health check share ONE definition.
+// Re-exported below for the sync-all-parallel regression suite.
+import { newestContentMs } from '../core/source-health.ts';
 
 export interface SyncResult {
   status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures' | 'partial';
@@ -2804,6 +2808,8 @@ export interface SyncStatusReport {
   embedding_column: string;
 }
 
+export { newestContentMs };
+
 export async function buildSyncStatusReport(
   engine: BrainEngine,
   sources: Array<{ id: string; name: string; local_path: string | null; config: Record<string, unknown> }>,
@@ -2900,9 +2906,28 @@ export async function buildSyncStatusReport(
     const lastSyncMs = row.last_sync_at
       ? (row.last_sync_at instanceof Date ? row.last_sync_at.getTime() : Date.parse(row.last_sync_at))
       : null;
-    const stalenessHours = lastSyncMs !== null && Number.isFinite(lastSyncMs)
-      ? (now - lastSyncMs) / 3_600_000
-      : null;
+    // Content-relative staleness: lag is the gap between what was last
+    // committed to the source (its newest content) and what the sync
+    // ingested — NOT wall-clock since the last sync run. A quiet repo whose
+    // newest content predates its last sync is fully caught up (lag 0), so
+    // it no longer trips the >72h "severe" alarm. Only sources with content
+    // newer than the last sync accrue staleness, and that staleness is
+    // measured from the last sync forward.
+    //
+    // Falls back to the legacy wall-clock measure when content can't be
+    // probed (non-git source, unreadable path) so detection never regresses
+    // where we can't see the repo.
+    const contentMs = newestContentMs(src.local_path);
+    let stalenessHours: number | null;
+    if (lastSyncMs === null || !Number.isFinite(lastSyncMs)) {
+      stalenessHours = null;
+    } else if (contentMs !== null) {
+      // Caught up iff newest content is at or before the last sync.
+      stalenessHours = contentMs <= lastSyncMs ? 0 : (now - lastSyncMs) / 3_600_000;
+    } else {
+      // No content signal — legacy wall-clock fallback.
+      stalenessHours = (now - lastSyncMs) / 3_600_000;
+    }
     let stalenessClass: 'fresh' | 'stale' | 'severe' | 'unknown' = 'unknown';
     if (stalenessHours !== null) {
       if (stalenessHours < 24) stalenessClass = 'fresh';
