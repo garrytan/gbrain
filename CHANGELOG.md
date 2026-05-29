@@ -16,6 +16,31 @@ on top of upstream — the numeric `VERSION` still tracks upstream semver.
   self-registered client could request `admin` / `write` / `sources_admin`.
 - **resolve_slugs tenant isolation** — `resolve_slugs` is scoped by source,
   sealing a cross-tenant slug-name leak.
+
+## [Unreleased] - world_knowledge consensus-refresh minion (Confer fork)
+
+**The 0.42.0.0 `world_knowledge` kind now actually graduates rows.** 0.42.0.0
+shipped the kind + the promotion RULE but nothing that COMPUTES consensus or
+RE-KINDS rows; that was flagged as "a separate supervised change." This is it.
+
+- **New consensus-refresh minion** (`src/core/facts/consensus-refresh.ts`) —
+  one idempotent pass over a source's `take_proposals` that (a) refreshes
+  `take_proposals.world_consensus` from the `confer_world_consensus` view
+  (migration v109) and (b) promotes graduated takes to `world_knowledge` by
+  calling the merged `classifyWorldKnowledge(...)` — reusing, not duplicating,
+  the 0.42.0.0 rule (take-only, `escalated_from` lineage, consensus ≥ 0.8).
+- **Runnable, not scheduled** — `gbrain takes consensus-refresh [--dry-run]
+  [--source-id <id>] [--json]`. No cron is installed; scheduling is a separate
+  supervised deploy step. Because the pass RE-KINDS LIVE ROWS, `--dry-run`
+  reports exactly what would promote without writing — run it before the first
+  real pass.
+- **Safe + idempotent** — only ever promotes `take` → `world_knowledge` (never
+  demotes, never touches fact/bet/hunch), guarded by `WHERE kind = 'take'` on
+  the re-kind UPDATE and `IS DISTINCT FROM` on the consensus write, so a re-run
+  with no new consensus/lineage issues zero writes. Per-source DB lock
+  (`gbrain-consensus-refresh:<source>`) prevents double-writes. Postgres-only
+  (the view); no-ops cleanly on a PGLite local/code brain.
+
 ## [0.42.0.0] - 2026-05-29 (Confer fork)
 
 **`world_knowledge` is now a first-class take kind.** A `take` that has been

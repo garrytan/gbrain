@@ -554,6 +554,12 @@ Subcommands:
                                           Aggregate calibration scorecard (v0.30.0)
   takes calibration [<holder>] [--bucket-size 0.1] [--json]
                                           Calibration curve binned by stated weight (v0.30.0)
+  takes consensus-refresh [--dry-run] [--source-id <id>] [--json]
+                                          Refresh world_consensus from the confer_world_consensus
+                                          view and promote graduated takes to world_knowledge
+                                          (escalated_from lineage + consensus >= 0.8). Postgres-only.
+                                          RE-KINDS LIVE ROWS — run --dry-run first. NOT scheduled;
+                                          scheduling is a separate supervised deploy step (v0.42.0.0).
 
 Common flags:
   --dir <path>    Override the brain directory (default: sync.repo_path config)
@@ -575,6 +581,7 @@ Common flags:
     case 'calibration': return cmdCalibration(engine, rest);
     case 'revisit':     return cmdRevisit(engine, rest);
     case 'extract':     return cmdExtract(engine, rest);
+    case 'consensus-refresh': return cmdConsensusRefresh(engine, rest);
     default:
       // No subcommand keyword → treat first arg as <slug> for the list path.
       return cmdList(engine, args);
@@ -687,4 +694,65 @@ async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
     process.stderr.write(`Editor exited with status ${result.status ?? 'unknown'}\n`);
   }
   void execFileSync;
+}
+
+/**
+ * v0.42.0.0 — `gbrain takes consensus-refresh` — the world_knowledge
+ * consensus-refresh minion (Confer fork).
+ *
+ * Runnable wrapper over runConsensusRefresh (src/core/facts/consensus-refresh.ts).
+ * Per pass it (a) refreshes `take_proposals.world_consensus` from the
+ * confer_world_consensus view (migrate.ts v109) and (b) promotes graduated
+ * takes to `world_knowledge` via the merged classifyWorldKnowledge rule
+ * (escalated_from lineage + consensus >= 0.8). Idempotent + per-source locked.
+ *
+ * NOT SCHEDULED. This re-kinds LIVE rows when it runs, so the first prod run
+ * needs supervision: run `--dry-run` first to see exactly what would promote,
+ * then run for real. Wiring a cron is a separate supervised deploy step (the
+ * command is runnable; nothing installs a schedule). Mirrors the `--dry-run`
+ * + `--source-id` + `--json` conventions of `takes extract`.
+ */
+async function cmdConsensusRefresh(engine: BrainEngine, rest: string[]): Promise<void> {
+  const dryRun = flagPresent(rest, '--dry-run');
+  const json = flagPresent(rest, '--json');
+  const sourceId = flagValue(rest, '--source-id') ?? flagValue(rest, '--source') ?? 'default';
+
+  const { runConsensusRefresh } = await import('../core/facts/consensus-refresh.ts');
+  const result = await runConsensusRefresh(engine, {
+    sourceId,
+    dryRun,
+    logger: {
+      info: (m: string) => process.stderr.write(`${m}\n`),
+      warn: (m: string) => process.stderr.write(`${m}\n`),
+    },
+  });
+
+  if (json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return;
+  }
+
+  if (result.status === 'skipped') {
+    process.stdout.write(
+      `takes consensus-refresh: skipped (${result.reason ?? 'unknown'})` +
+      (result.warnings[0] ? ` — ${result.warnings[0]}` : '') + '\n',
+    );
+    return;
+  }
+
+  const tag = dryRun ? ' (dry-run — no writes)' : '';
+  process.stdout.write(
+    `takes consensus-refresh${tag}: scanned ${result.proposals_scanned} proposal(s), ` +
+    `${dryRun ? 'would refresh' : 'refreshed'} ${result.consensus_refreshed} consensus value(s), ` +
+    `${dryRun ? 'would promote' : 'promoted'} ${result.promoted} take(s) -> world_knowledge.\n`,
+  );
+  for (const p of result.promotions) {
+    process.stdout.write(
+      `  ${dryRun ? 'WOULD PROMOTE' : 'promoted'} #${p.take_proposal_id} [${p.page_slug}] ` +
+      `consensus=${p.world_consensus.toFixed(3)} :: ${p.claim_text.slice(0, 80)}\n`,
+    );
+  }
+  for (const w of result.warnings) {
+    process.stderr.write(`  warning: ${w}\n`);
+  }
 }
