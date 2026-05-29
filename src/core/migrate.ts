@@ -4920,6 +4920,86 @@ export const MIGRATIONS: Migration[] = [
         EXECUTE FUNCTION bump_page_generation_clock_fn();
     `,
   },
+  // ─── Confer overlay migrations (108-110) ────────────────────────────────
+  // Wired into the runner 2026-05-29 (was deploy-drift: these existed only as
+  // hand-applied src/migrations/*.sql, so a fresh deploy of confer/main did
+  // NOT reproduce the S1 production schema). All idempotent + additive. The
+  // annotated source-of-record with full rationale lives in
+  // src/migrations/000{2,3,4}_confer_*.sql; THESE entries are authoritative
+  // (what the runner actually applies). 0001_confer_rls is intentionally NOT
+  // auto-run — see src/migrations/0001_confer_rls.sql header for why.
+  {
+    version: 108,
+    name: 'confer_epistemology_columns',
+    // Confer fork (spec §6.4): take_proposals.world_consensus (nightly-cached
+    // value of the confer_world_consensus view), take_proposals.relayed_by
+    // (Sherpa-style relay, distinct from acted_by), pages.schema_pack_version.
+    // Additive, both engines.
+    idempotent: true,
+    sql: `
+      ALTER TABLE take_proposals
+        ADD COLUMN IF NOT EXISTS world_consensus REAL DEFAULT 0.0
+        CHECK (world_consensus BETWEEN 0 AND 1);
+      ALTER TABLE take_proposals
+        ADD COLUMN IF NOT EXISTS relayed_by TEXT;
+      ALTER TABLE pages
+        ADD COLUMN IF NOT EXISTS schema_pack_version TEXT;
+      CREATE INDEX IF NOT EXISTS pages_pack_version_idx ON pages(schema_pack_version);
+    `,
+  },
+  {
+    version: 109,
+    name: 'confer_world_consensus_view',
+    // Confer fork (spec §6.4): derived consensus signal. A nightly minion job
+    // refreshes take_proposals.world_consensus from this view. Postgres-only
+    // (FILTER + JSONB ->> + ::float); no-op on PGLite local code-search brains.
+    idempotent: true,
+    sql: '',
+    sqlFor: {
+      postgres: `
+        CREATE OR REPLACE VIEW confer_world_consensus AS
+        SELECT
+          tp.id AS take_proposal_id,
+          COUNT(DISTINCT agree.holder)
+            FILTER (WHERE agree.status = 'accepted') AS holder_agreement_count,
+          AVG(cp.brier)
+            FILTER (WHERE agree.status = 'accepted') AS avg_holder_brier,
+          MAX((s.config->>'tier_weight')::float) AS max_source_tier,
+          LEAST(1.0,
+            (COUNT(DISTINCT agree.holder)
+               FILTER (WHERE agree.status = 'accepted'))::float / 3.0
+            * COALESCE(MAX((s.config->>'tier_weight')::float), 0.5)
+            * (1.0 - COALESCE(AVG(cp.brier)
+               FILTER (WHERE agree.status = 'accepted'), 0.5))
+          ) AS world_consensus
+        FROM take_proposals tp
+        LEFT JOIN take_proposals agree
+          ON agree.claim_text = tp.claim_text
+          AND agree.id != tp.id
+        LEFT JOIN calibration_profiles cp
+          ON cp.holder = agree.holder
+          AND cp.source_id = agree.source_id
+        LEFT JOIN sources s
+          ON s.id = tp.source_id
+        GROUP BY tp.id;
+      `,
+    },
+  },
+  {
+    version: 110,
+    name: 'confer_source_config_keys',
+    // Confer fork (spec §6.5): documents Confer-reserved sources.config JSONB
+    // keys (tier_weight, allowed_judges, ingest_adapter) via COMMENT. Doc-only.
+    // Postgres-only; no-op on PGLite.
+    idempotent: true,
+    sql: '',
+    sqlFor: {
+      postgres: `
+        COMMENT ON COLUMN sources.config IS
+        'JSONB config blob. Confer-reserved keys (additive to upstream gbrain keys): tier_weight (REAL 0..1) source-tier weighting for confer_world_consensus view, default 0.5; allowed_judges (TEXT[]) cross-modal eval judges allowed per spec 6.5 tenant firewall; ingest_adapter (TEXT) gbrain ingestion adapter name. Upstream gbrain may add its own keys; Confer keys are namespaced via this comment.';
+      `,
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
