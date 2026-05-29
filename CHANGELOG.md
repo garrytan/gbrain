@@ -2,6 +2,364 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.41.29.0] - 2026-05-29
+
+**Your meeting transcripts that look like `**Garry Tan:** ...` now actually
+parse — the kind Circleback, Granola, and Zoom export with no timestamp on
+each line. And `gbrain doctor --source <id>` finally scopes its orphan check
+to that one source instead of your whole brain.**
+
+Two fixes in one release.
+
+**The transcript fix.** gbrain knows 13 chat formats, and every single one
+needed a per-line timestamp to recognize a speaker. Modern meeting tools
+don't put a time on every line — they emit plain `**Speaker Name:** what
+they said`. With no time anchor, gbrain matched nothing: a real production
+brain had 104 conversation pages plus 3,423 other eligible pages that
+silently parsed to zero messages and extracted zero facts. The 14th built-in
+pattern, `bold-name-no-time`, handles that shape. Each message anchors at
+00:00:00 of the page's date (no fake wall-clock times are invented; line
+order preserves the sequence). Nothing you do — it just works the next time
+your cycle runs.
+
+How to check it's recognized:
+
+```
+gbrain conversation-parser list-builtins   # bold-name-no-time is now listed
+gbrain conversation-parser scan <slug>     # see how one page parses
+```
+
+One thing we were careful about: that `**Label:** text` shape is also a
+common way to write notes (`**Owner:** Alice`, `**Action:** ship it`). A
+notes page is NOT a conversation, and gbrain won't treat it as one — even
+when a few bold labels sit at the very top of the page. We score the whole
+document's density, not just the first few lines, so a mostly-prose page
+with scattered bold labels stays unparsed instead of turning into fake
+"messages" that pollute your facts.
+
+**The orphan-check fix.** "Orphan ratio" is the fraction of your pages that
+nothing links to — a health signal for `gbrain doctor`. On a brain with
+multiple sources, `gbrain doctor --source dept-x` ignored the flag and
+reported a brain-wide number. Now it scopes to the source you asked about,
+and so does `gbrain orphans --source dept-x`:
+
+```
+gbrain doctor --source dept-x      # orphan ratio for dept-x only
+gbrain orphans --source dept-x     # the orphan list for dept-x only
+```
+
+A page in dept-x that's linked from another source counts as reachable (not
+an orphan) — the cross-source link still saves it.
+
+While we were in there we fixed two more things you'll feel:
+
+- The orphan ratio was reading lower than reality because junk pages
+  (templates, scratch, archives) that happen to be linked were padding the
+  denominator. The ratio is now honest, which means warnings that were
+  staying quiet will start showing up. This changes the number on every
+  brain, in the right direction.
+- An agent connected over MCP and scoped to one source used to get the
+  orphan list for your *whole* brain. Now `find_orphans` respects the
+  agent's source scope, closing a cross-source read leak.
+
+### To take advantage of v0.41.29.0
+
+`gbrain upgrade` handles this — there's no schema migration and no manual
+step. After upgrading:
+
+1. **Conversation parsing** is automatic. Your next `gbrain dream` /
+   `gbrain extract conversation-facts` run will pick up `**Speaker:** text`
+   pages. To preview a specific page:
+   ```bash
+   gbrain conversation-parser scan <slug>
+   ```
+2. **Per-source orphan checks** work immediately:
+   ```bash
+   gbrain doctor --source <id>
+   gbrain orphans --source <id>
+   ```
+3. **If `gbrain doctor` shows a higher orphan ratio than before,** that's the
+   denominator fix surfacing real orphans that were previously hidden. Run
+   `gbrain extract links --by-mention` to auto-link entity mentions, then
+   `gbrain orphans` for the list.
+4. **If anything looks wrong,** file an issue at
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor` output.
+
+### Itemized changes
+
+**Conversation parser**
+- New 14th built-in pattern `bold-name-no-time` in
+  `src/core/conversation-parser/builtins.ts` (regex `/^\*\*(?!\[)(.+?):\*\*\s*(.*)$/`):
+  parses `**Speaker:** text` with no per-line timestamp (Circleback / Granola
+  / Zoom), anchored at `T00:00:00Z` of the frontmatter date. Declared after
+  the timestamped bold patterns; the colon-inside-bold regex (not declaration
+  order) is what prevents it from shadowing `bold-paren-time`. The `(?!\[)`
+  lookahead keeps it from mis-capturing telegram-bracket `**[18:37] Name:**`
+  lines as `speaker="[18:37] Name"`.
+- New optional `PatternEntry.score_full_body` field + a full-body acceptance
+  recompute in `parse.ts`: broad patterns are scored on whole-document
+  density before the acceptance floor, so a prose notes page with bold labels
+  clustered in its first 10 lines no longer mis-parses as a conversation.
+- Fixture coverage: `test/fixtures/conversation-formats/bold-name-no-time.jsonl`
+  + entries in `all.jsonl` and a clustered-head adversarial fixture in
+  `adversarial.jsonl` (all placeholder names).
+
+**Orphan source scoping**
+- `BrainEngine.findOrphanPages(opts?: { sourceId?, sourceIds? })` (both
+  engines): scopes the candidate set to one source (scalar) or a federated
+  set (`= ANY(...)`). Inbound links from any source still count, so a
+  cross-source-linked page is correctly not an orphan.
+- `gbrain orphans --source <id>` and `gbrain doctor --source <id>` (orphan_ratio
+  check) honor an explicit source. Bare invocations stay brain-wide.
+- Corrected the `total_linkable` denominator in `findOrphans` so excluded
+  pages (templates/, scratch/, etc.) that have inbound links no longer
+  inflate it and suppress warnings. Changes orphan_ratio output for every
+  brain (in the accurate direction).
+- The `find_orphans` MCP op now scopes by the caller's source
+  (`sourceScopeOpts(ctx)`), closing a cross-source read leak for source-bound
+  OAuth clients.
+- Under explicit `--source`, `orphan_ratio` reports the ratio with a
+  low-scale caveat below 100 entity pages instead of returning a vacuous
+  "ok" that could hide a fully-orphaned small source.
+
+**Tests**
+- `test/orphans-source-scope.test.ts` (PGLite): scoping, cross-source-inbound,
+  the denominator fix, and the `find_orphans` op-handler source scope.
+- `test/e2e/engine-parity.test.ts`: Postgres↔PGLite parity for
+  `findOrphanPages` scalar + federated scoping.
+- New `bold-name-no-time` + clustered-head regression cases in
+  `test/conversation-parser/parse.test.ts`.
+
+Incorporates the original `bold-name-no-time` pattern proposed in a community
+PR; names scrubbed to placeholders per the project privacy rule.
+
+## [0.41.28.0] - 2026-05-27
+
+**Your `gbrain dream` cycle stops losing rows when the database connection
+blips, and the silent `'No database connection'` errors after `gbrain
+capture` go away.**
+
+If you run `gbrain dream` against a Supabase brain on the Supavisor pooler,
+you might have seen ~150 link rows quietly disappear every cycle, with
+log lines like:
+
+```
+[extract.links_fs] connection blip, retrying (attempt 1/3): No database connection: connect() has not been called
+[extract.links_fs] connection blip, retrying (attempt 2/3): No database connection: connect() has not been called
+[extract.links_fs] connection blip, retrying (attempt 3/3): No database connection: connect() has not been called
+  batch error (100 link rows lost): No database connection: connect() has not been called
+```
+
+The retry layer was correctly noticing the problem and waiting. But the
+underlying database connection wrapper had been nulled out by some other
+code path in the same process, and the retry was hammering against a dead
+reference. v0.41.28.0 makes the retry layer rebuild the connection between
+attempts via a new opt-in `reconnect` callback on `withRetry`. The engine
+self-heals; rows land. (Closes #1570.)
+
+The other symptom was that `gbrain capture` would print a trailing
+`'No database connection'` line on stderr from a background facts:absorb
+worker firing AFTER the CLI's `engine.disconnect()` finally block ran.
+The fact subsystem queues post-page-write work fire-and-forget; that work
+sometimes outlived the CLI process's connection lifetime. v0.41.28.0 adds
+a new `FactsQueue.drainPending({timeout: 1000})` method, semantically
+distinct from `shutdown()` (which would abort in-flight) — drain lets
+in-flight finish. The CLI op-dispatch now awaits the drain before
+`engine.disconnect()`, capped at 1s so commands that don't enqueue facts
+pay only a fast no-op check.
+
+**Honest scope.** This is the tactical symptom fix. The deeper question
+— which specific code path nulls the database singleton mid-cycle — is
+still open. v0.41.28.0 also ships diagnostic instrumentation:
+every call to `db.disconnect()` and `PostgresEngine.disconnect()` writes
+a JSONL audit row to `~/.gbrain/audit/db-disconnect-YYYY-Www.jsonl`
+recording the engine kind, connection style, caller stack trace, and
+command. The doctor's existing `batch_retry_health` check surfaces the
+24-hour count plus the most-recent caller frame, so after your next
+dream cycle you can run `gbrain doctor --json` and see exactly which
+code path is calling disconnect mid-process. v0.41.28+ will fix that
+specific ownership boundary based on the production data.
+
+**What to do after upgrading:**
+
+```bash
+gbrain --version   # 0.41.25.0
+gbrain upgrade
+gbrain dream --workers 4 2>&1 | tee /tmp/dream.log
+grep -c "batch error" /tmp/dream.log     # expect 0
+grep -c "No database connection" /tmp/dream.log   # expect 0
+gbrain doctor --json | jq '.checks[] | select(.id=="batch_retry_health")'
+```
+
+The `batch_retry_health` output will include a `Disconnect-call audit`
+sentence naming the most-recent mid-process disconnect caller. If the
+field shows zero calls, the symptom fix alone solved your problem. If it
+shows calls, please file an issue with that data so v0.41.28+ can target
+the right ownership boundary.
+
+### Itemized changes
+
+**Core fix — retry self-heals on null singleton:**
+
+- `src/core/retry.ts` — `WithRetryOpts` gains `reconnect?: () => Promise<void>`.
+  Awaited in the catch branch AFTER `isRetryableConnError` classification but
+  BEFORE the inter-attempt sleep. `onRetry` callbacks are now awaited too
+  (back-compat-safe: existing sync arrows work identically; async callbacks
+  now correctly delay the sleep). Fail-loud posture (per codex outside-voice
+  finding 3): a reconnect throw propagates AS the new error, replacing the
+  symptomatic "No database connection" so operators see the real cause.
+- `src/core/postgres-engine.ts:batchRetry` — Injects `reconnect: () => this.reconnect()`
+  into its `withRetry` call. `PostgresEngine.reconnect()` was already
+  race-safe via `_reconnecting` guard and handles both module and instance
+  pools.
+
+**Facts queue post-CLI drain:**
+
+- `src/core/facts/queue.ts` — New `FactsQueue.drainPending({timeout?: number})`
+  method, returns `{drained, unfinished}`. Distinct from `shutdown()`: drain
+  does NOT abort in-flight (per codex finding 9: shutdown's
+  `internalAbort.abort()` would abort the very facts:absorb worker that's
+  trying to log its post-completion event, preserving the bug class we're
+  fixing). Default timeout 1000ms; bounded so commands that don't enqueue
+  facts pay no observable cost.
+- `src/cli.ts` op-dispatch finally — Awaits
+  `getFactsQueue().drainPending({timeout: 1000})` BEFORE
+  `engine.disconnect()`. Lazy-import keeps the facts-queue module off the
+  hot path for ops that never touch it.
+
+**Diagnostic instrumentation (find the offender for v0.41.28+):**
+
+- `src/core/audit/db-disconnect-audit.ts` (NEW, ~150 LOC) — Built on the
+  existing `audit-writer.ts` cathedral, mirrors `batch-retry-audit.ts`
+  shape. Schema: `{ts, engine_kind, connection_style, caller_stack,
+  command, pid}`. Stack trace captured via `new Error().stack`, truncated
+  to ~20 frames. ISO-week file rotation. Best-effort writes (stderr-warn
+  on failure, never throws).
+- `src/core/db.ts:disconnect` — Logs an audit row before `sql.end()`. Lazy
+  import so cold paths don't pay the cost.
+- `src/core/postgres-engine.ts:disconnect` — Logs an audit row BEFORE the
+  early-return branches so even no-op disconnects (engine that was never
+  connected) are recorded — that case may itself be a caller-side bug.
+- `src/commands/doctor.ts:checkBatchRetryHealth` — Extended (per codex
+  finding 11: extend the existing check, don't add a new one) to surface
+  24h disconnect-call count and most-recent caller frame in the existing
+  message. Operators reading doctor output see all connection-incident
+  signal in one place.
+
+**Tests (focused, per codex finding 12):**
+
+- `test/core/retry-reconnect.test.ts` (NEW, 5 cases) — reconnect-callback
+  contract: ordering (classification → onRetry → reconnect → sleep),
+  back-compat (no reconnect opt = v0.41.18.0 behavior), fail-loud
+  propagation, signal-abort short-circuit, awaited onRetry timing.
+- `test/facts-queue-drain-pending.test.ts` (NEW, 4 cases) — drainPending
+  semantic distinct from shutdown: empty fast-path, in-flight settled
+  without abort, unfinished count on timeout, default timeout = 1000ms.
+- `test/db-disconnect-audit.test.ts` (NEW, 6 cases) — round-trip, stack
+  truncation, sort order, empty-dir nulls, stable feature name, EROFS
+  best-effort.
+- `test/e2e/db-singleton-shared-recovery.test.ts` (NEW, 3 DB-gated cases) —
+  pins the production failure modes: shared-singleton survival via retry
+  reconnect, diagnostic audit fires on disconnect, instance-pool disconnect
+  doesn't touch module singleton.
+
+### Honest claims (per codex outside-voice review)
+
+- The "postgres.js auto-reconnects" claim from earlier plan iterations is
+  acknowledged as overbroad: postgres.js's internal auto-reconnect handles
+  network drops on a still-live pool object. It does NOT help when our
+  module-singleton reference has been explicitly nulled — that's the bug
+  class this release patches at the retry layer + investigates with the
+  audit instrumentation.
+- The architectural refactor (remove module-singleton nullability, rename
+  `disconnect → shutdown`) considered in earlier plan iterations is
+  deferred to v0.42+ pending the diagnostic data this release ships.
+  Codex's outside-voice review of the architectural plan found 15
+  substantive problems — most importantly that the refactor was designed
+  for a root cause we hadn't actually identified.
+
+**Plan + 12 decisions + 15 codex findings absorbed at
+`~/.claude/plans/system-instruction-you-are-working-cuddly-panda.md`.
+Closes #1570.**
+## [0.41.27.0] - 2026-05-27
+
+**`gbrain doctor` stops crying wolf about sources that have no new commits.**
+
+If you have a brain that points at a git repo you don't change every day
+(a reference corpus, a frozen archive, an inbox you append to monthly),
+doctor's "Source X last synced 40h ago" warning has been firing every
+single day even though nothing was actually stale. There was no new
+content to pull. The warning was telling you to run `gbrain sync` for
+work that didn't exist.
+
+This release teaches doctor to do a quick git check first: if your
+repo's current HEAD matches what we stored at the last sync, **and**
+the working tree is clean, **and** the chunker version still matches,
+the source is reported as "up to date" regardless of how long ago you
+synced. The three checks together mirror exactly what `gbrain sync`
+itself decides — so doctor and sync now agree on "is there work to do?"
+You stop seeing warnings for problems that don't exist.
+
+**How to turn it on:** Nothing to do. `gbrain upgrade` is all you need.
+The git probe runs locally only (your terminal's `gbrain doctor`); the
+remote HTTP MCP path stays out of it by design (deliberately doesn't
+walk DB-supplied paths via subprocess — same trust posture as before).
+
+**What you'd see in a concrete example:**
+
+| Doctor scenario | Pre-fix message | Post-fix message |
+|---|---|---|
+| 40h since sync, zero new commits, clean tree | warn: "Source 'media-corpus' last synced 40h ago" | ok: "All 1 federated source(s) up to date (no new commits since last sync)" |
+| 40h since sync, 3 new commits to pull | warn: "...40h ago" | warn: "...40h ago" (unchanged — warning still correct) |
+| 40h since sync, HEAD matches but `gbrain upgrade` bumped CHUNKER_VERSION | warn: "...40h ago" (true bug — pending re-embed) | warn: "...40h ago" (chunker gate fires; you still see the warn so you don't miss the post-upgrade re-embed) |
+| 40h since sync, HEAD matches but you have uncommitted edits | warn: "...40h ago" | warn: "...40h ago" (dirty-tree gate fires; honest about pending work) |
+| Mixed brain: 1 frozen source + 1 recently synced + 1 truly stale | fail: lists all 3 sources | fail: lists only the truly stale source; the other two are silenced honestly |
+
+**The cycle freshness check is deliberately NOT touched.** A separate
+codex-review pass caught a load-bearing semantic distinction: HEAD ==
+last_commit only answers "are there new commits to sync?". It cannot
+answer "did the full cycle (sync + extract + embed + consolidate +
+synthesize) complete recently?" — that's a later, different invariant.
+Hiding cycle-staleness warnings on git-clean sources would silently
+mask the case where sync ran but the cycle phases after it failed.
+Doctor's `cycle_freshness` keeps its time-only semantics; only
+`sync_freshness` gets the git-aware short-circuit.
+
+**Things worth knowing about:**
+
+- `Check.details` now carries `{unchanged_count, synced_recently_count,
+  stale_count}` for the `sync_freshness` check. Dashboards consuming
+  the JSON envelope can read these directly. The three counts sum to
+  the source count — invariant pinned in unit tests.
+- If you intentionally keep WIP edits in your brain repo, doctor will
+  still warn after 24h because the dirty-tree gate fires. That's
+  honest — sync would actually do work in that case. An opt-out env
+  var (`GBRAIN_DOCTOR_IGNORE_DIRTY_TREE=1`) is filed for v0.41.27.1+
+  if anyone asks.
+
+**The cathedral side.** This release rebuilds community PR #1564 with
+four production-quality concerns the original missed: shell-injection
+safety (uses `execFileSync` with array args, not `execSync` through
+`/bin/sh -c`), trust-boundary preservation (remote-callable doctor
+path doesn't get the git probe), narrowed predicate honesty (chunker
+version + working-tree-clean, matching sync's own gate), and 21 new
+test cases covering every branch including a shell-injection
+regression guard that runs real `execFileSync` against a `$(...)`
+adversarial path to prove the array-arg shape cannot escape to a
+shell. Co-Authored-By preserved for the original contributor.
+
+### Itemized changes
+
+- **`src/core/git-head.ts`** (NEW) — single `isSourceUnchangedSinceSync(localPath, lastCommit, opts?)` primitive with two probes (head + clean). `GitFreshnessOpts.requireCleanWorkingTree` is the second-probe gate. Two test seams (`_setGitHeadProbeForTests`, `_setGitCleanProbeForTests`) match the `last-retrieved.ts` precedent so tests stay parallel-eligible (R2-compliant — no `mock.module`). Fail-open contract: every error path returns false, preserving the caller's prior behavior. Uses `execFileSync` with array args — shell metachars in `local_path` cannot escape.
+- **`src/commands/doctor.ts:checkSyncFreshness`** — signature gains `opts?.localOnly?: boolean`. Inline SELECT widens to carry `last_commit + chunker_version` (columns already exist; no schema migration). Helper wired AFTER the existing NULL / negative-age guards, gated by `localOnly === true` AND'd with `source.chunker_version === String(CHUNKER_VERSION)`. Three-bucket count math (`unchanged_count + synced_recently_count + stale_count === sources.length`) populates `Check.details`. OK message reshape: all-unchanged hits "up to date (no new commits since last sync)"; mixed hits "X synced recently, Y unchanged since last sync"; all-synced keeps the prior message.
+- **Caller plumbing**: `runDoctor` (local CLI path) passes `localOnly: true`; `doctorReportRemote` (HTTP MCP path) keeps the default `false`. Default-false is fail-closed: a future caller that forgets the opt gets the safe (no git probe) behavior. Codex P0-1 closure.
+- **`test/core/git-head.test.ts`** (NEW) — 12-case suite: happy path, mismatch, null/empty guards, probe-null, probe-throws, **shell-injection regression** (real `execFileSync` against `/nonexistent/$(touch <sentinel>)/repo` — sentinel file MUST NOT exist after the call), test-seam round-trip, `requireCleanWorkingTree` clean/dirty/error/not-set cases.
+- **`test/doctor.test.ts`** — new v0.41.27.0 describe with 9 cases: HEAD-match short-circuit, all-unchanged cold path, HEAD-mismatch warn, NULL `last_commit`, non-git path, **3-source mixed bucket invariant** (`sum === sources.length` asserted explicitly), chunker-version mismatch warn, dirty-tree warn, **`localOnly=false` regression guard** that verifies probes are NEVER called when the opt is unset or false.
+- **CHANGELOG / VERSION / package.json / bun.lock / llms.txt / llms-full.txt / CLAUDE.md** — version bump + lockfile refresh + docs regen + key-files annotation.
+
+### Supersedes
+
+PR #1564 (`@garrytan-agents`). Co-Authored-By preserved. Closed with a supersession comment explaining the production-quality additions. The surrogate-pair fix from commit `78b93f3f` in that PR is NOT brought over — already on master via `safeSplitIndex` at `synthesize.ts:192` (v0.42.0.0 wave).
 ## [0.41.26.1] - 2026-05-27
 
 **Your worker daemon stops crashing 39 times a day.**

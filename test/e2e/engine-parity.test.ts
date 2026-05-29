@@ -363,4 +363,53 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pgMap.get('wiki/rsp-missing.md')).toBeUndefined();
     expect(pgliteMap.get('wiki/rsp-missing.md')).toBeUndefined();
   });
+
+  // v0.41.29.0 — findOrphanPages source scoping parity. Real Postgres
+  // coverage for the postgres.js `sql` scalar fragment + `= ANY(${arr}::text[])`
+  // array binding (a documented footgun class — the jsonb double-encode saga).
+  // PGLite logic is pinned in test/orphans-source-scope.test.ts; this asserts
+  // the Postgres SQL produces the same scoped sets. Cross-source inbound
+  // (src-b → src-a) must NOT make the target an orphan of src-a (A2).
+  test('v0.41.29.0 findOrphanPages source scoping parity (scalar + federated)', async () => {
+    const srcSql = `INSERT INTO sources (id, name, config) VALUES ($1, $1, '{}'::jsonb) ON CONFLICT DO NOTHING`;
+    const pageSql = `
+      INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter)
+        VALUES ($1, $2, 'person', 't', 'b', '', '{}'::jsonb)
+        ON CONFLICT (source_id, slug) DO NOTHING
+    `;
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.executeRaw(srcSql, ['orphan-src-a']);
+      await eng.executeRaw(srcSql, ['orphan-src-b']);
+      await eng.executeRaw(pageSql, ['orphan-src-a', 'people/op-orphan-a']);
+      await eng.executeRaw(pageSql, ['orphan-src-a', 'people/op-target-a']);
+      await eng.executeRaw(pageSql, ['orphan-src-b', 'people/op-linker-b']);
+      // Cross-source inbound: src-b page → src-a target (A2).
+      await eng.addLink(
+        'people/op-linker-b', 'people/op-target-a', '', 'mentions', 'markdown',
+        undefined, undefined, { fromSourceId: 'orphan-src-b', toSourceId: 'orphan-src-a' },
+      );
+    }
+
+    const scoped = async (eng: BrainEngine, opts: { sourceId?: string; sourceIds?: string[] }) =>
+      (await eng.findOrphanPages(opts)).map(r => r.slug).filter(s => s.startsWith('people/op-')).sort();
+
+    // Scalar scope to src-a: op-orphan-a is an orphan; op-target-a is saved
+    // by the cross-source inbound (A2). Parity on both engines.
+    const pgA = await scoped(pgEngine, { sourceId: 'orphan-src-a' });
+    const pgliteA = await scoped(pgliteEngine, { sourceId: 'orphan-src-a' });
+    expect(pgA).toEqual(['people/op-orphan-a']);
+    expect(pgliteA).toEqual(pgA);
+
+    // Scalar scope to src-b.
+    const pgB = await scoped(pgEngine, { sourceId: 'orphan-src-b' });
+    const pgliteB = await scoped(pgliteEngine, { sourceId: 'orphan-src-b' });
+    expect(pgB).toEqual(['people/op-linker-b']);
+    expect(pgliteB).toEqual(pgB);
+
+    // Federated array scope (= ANY binding) → union.
+    const pgFed = await scoped(pgEngine, { sourceIds: ['orphan-src-a', 'orphan-src-b'] });
+    const pgliteFed = await scoped(pgliteEngine, { sourceIds: ['orphan-src-a', 'orphan-src-b'] });
+    expect(pgFed).toEqual(['people/op-linker-b', 'people/op-orphan-a']);
+    expect(pgliteFed).toEqual(pgFed);
+  });
 });

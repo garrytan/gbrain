@@ -27,6 +27,8 @@ import { gbrainPath } from '../core/config.ts';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { isSourceUnchangedSinceSync } from '../core/git-head.ts';
+import { CHUNKER_VERSION } from '../core/chunkers/code.ts';
 
 export interface Check {
   name: string;
@@ -1178,6 +1180,28 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
     const exhausted = result.events.filter((e) => e.outcome === 'exhausted');
     const successful = result.events.filter((e) => e.outcome === 'success');
 
+    // v0.41.25.0 (#1570) — read the db-disconnect audit so the existing
+    // batch_retry_health check surfaces ALL connection-incident signal in
+    // one place (per codex finding 11: extend, don't add a new check).
+    // Disconnect events are informational — every CLI command legitimately
+    // disconnects at end-of-life. The value is the most_recent_caller
+    // frame: when the v0.41.25 retry reconnect callback fires, the
+    // operator runs `gbrain doctor` and the stack trace tells them which
+    // code path triggered the mid-process disconnect. v0.41.26 fixes
+    // that specific ownership boundary.
+    let disconnectNote = '';
+    try {
+      const { readRecentDbDisconnects } = await import('../core/audit/db-disconnect-audit.ts');
+      const dc = readRecentDbDisconnects(24);
+      if (dc.count > 0) {
+        // First-line of stack trace is the caller of logDbDisconnect; show
+        // it so the operator sees something compact in human output.
+        const firstFrame = (dc.most_recent_caller ?? '').split('\n')[0]?.trim() ?? '';
+        const frameSlug = firstFrame.length > 0 ? ` (most recent caller: ${firstFrame.slice(0, 200)})` : '';
+        disconnectNote = ` Disconnect-call audit: ${dc.count} call(s) in 24h${frameSlug}.`;
+      }
+    } catch { /* audit module unavailable; older brain, fine */ }
+
     if (exhausted.length === 0) {
       const note = result.corrupted_lines > 0
         ? ` (note: ${result.corrupted_lines} corrupt JSONL line(s) skipped)`
@@ -1188,7 +1212,7 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
       return {
         name: 'batch_retry_health',
         status: 'ok',
-        message: `No exhausted batch retries in last 24h.${recoveredNote}${note}`,
+        message: `No exhausted batch retries in last 24h.${recoveredNote}${note}${disconnectNote}`,
       };
     }
 
@@ -1202,7 +1226,7 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
       return {
         name: 'batch_retry_health',
         status: 'fail',
-        message: `${exhausted.length} exhausted batch retries in last 24h (worst: ${worstSite[0]} = ${worstSite[1]}). Sustained circuit-breaker incident. Fix: check pooler status; consider raising GBRAIN_BULK_MAX_RETRIES or moving to direct-connection.`,
+        message: `${exhausted.length} exhausted batch retries in last 24h (worst: ${worstSite[0]} = ${worstSite[1]}). Sustained circuit-breaker incident. Fix: check pooler status; consider raising GBRAIN_BULK_MAX_RETRIES or moving to direct-connection.${disconnectNote}`,
       };
     }
 
@@ -1211,7 +1235,7 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
       return {
         name: 'batch_retry_health',
         status: 'warn',
-        message: `${exhausted.length} exhausted batch retries in last 24h (worst: ${worstSite[0]} = ${worstSite[1]}). Tune via GBRAIN_BULK_MAX_RETRIES / GBRAIN_BULK_RETRY_MAX_MS.`,
+        message: `${exhausted.length} exhausted batch retries in last 24h (worst: ${worstSite[0]} = ${worstSite[1]}). Tune via GBRAIN_BULK_MAX_RETRIES / GBRAIN_BULK_RETRY_MAX_MS.${disconnectNote}`,
       };
     }
 
@@ -1219,7 +1243,7 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
     return {
       name: 'batch_retry_health',
       status: 'ok',
-      message: `${exhausted.length} exhausted batch retry(s) in last 24h (below per-site threshold of 3)`,
+      message: `${exhausted.length} exhausted batch retry(s) in last 24h (below per-site threshold of 3)${disconnectNote}`,
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -2671,16 +2695,23 @@ export async function computeExtractHealthCheck(
 
 export async function checkSyncFreshness(
   engine: BrainEngine,
-  opts?: { nowMs?: number },
+  opts?: { nowMs?: number; localOnly?: boolean },
 ): Promise<Check> {
   try {
+    // v0.41.27.0: SELECT widens to carry last_commit + chunker_version so
+    // the git short-circuit gate (below) can compare against what
+    // `gbrain sync`'s up-to-date predicate at sync.ts:1057+1075 checks.
+    // Columns existed pre-v0.41 (writeSyncAnchor / writeChunkerVersion);
+    // no schema migration needed.
     const sources = await engine.executeRaw<{
       id: string;
       name: string;
       local_path: string | null;
       last_sync_at: Date | null;
+      last_commit: string | null;
+      chunker_version: string | null;
     }>(
-      `SELECT id, name, local_path, last_sync_at FROM sources WHERE local_path IS NOT NULL`,
+      `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version FROM sources WHERE local_path IS NOT NULL`,
     );
 
     if (sources.length === 0) {
@@ -2688,6 +2719,7 @@ export async function checkSyncFreshness(
         name: 'sync_freshness',
         status: 'ok',
         message: 'No federated sources to sync',
+        details: { unchanged_count: 0, synced_recently_count: 0, stale_count: 0 },
       };
     }
 
@@ -2703,7 +2735,30 @@ export async function checkSyncFreshness(
     // status from warn to fail (CI-flaky, see PR #1138 ship). Production
     // callers omit `nowMs` and get live wall-clock semantics.
     const now = opts?.nowMs ?? Date.now();
+
+    // v0.41.27.0: D4 trust boundary. The git short-circuit runs ONLY when
+    // the caller explicitly opts in via `localOnly: true`. Default (false)
+    // preserves the v0.32.4 trust boundary for `doctorReportRemote` (the
+    // HTTP MCP path) — a remote-callable code path must NOT walk
+    // DB-supplied `local_path` values with subprocess calls. runDoctor
+    // (local CLI) passes true; doctorReportRemote keeps the default.
+    const localOnly = opts?.localOnly === true;
+
+    // v0.41.27.0: D7 narrowed predicate. The CHUNKER_VERSION caller-side
+    // check mirrors sync.ts:1057's chunker-version gate so doctor agrees
+    // with sync on "is there work to do?". `sources.chunker_version` is
+    // a TEXT column storing String(CHUNKER_VERSION).
+    const currentChunkerVersion = String(CHUNKER_VERSION);
+
     const issues: string[] = [];
+    // v0.41.27.0: D6 three-bucket count math. Every source falls into
+    // EXACTLY ONE bucket per iteration. Invariant pinned by unit test:
+    //   unchanged_count + synced_recently_count + stale_count === sources.length
+    // Stale subsumes warn + fail + never-synced + future-timestamp; we keep
+    // hasWarnings/hasFailures for the existing return-status logic.
+    let unchanged_count = 0;
+    let synced_recently_count = 0;
+    let stale_count = 0;
     let hasWarnings = false;
     let hasFailures = false;
 
@@ -2717,6 +2772,7 @@ export async function checkSyncFreshness(
       if (!source.last_sync_at) {
         issues.push(`Source ${display} has never been synced`);
         hasFailures = true;
+        stale_count++;
         continue;
       }
 
@@ -2728,7 +2784,29 @@ export async function checkSyncFreshness(
           `Source ${display} has future last_sync_at — clock skew or corrupted timestamp`,
         );
         hasWarnings = true;
+        stale_count++;
         continue;
+      }
+
+      // v0.41.27.0: git short-circuit (D4 + D7 combined). Only fires when:
+      //   1. caller opted in via localOnly=true (trust boundary)
+      //   2. HEAD === last_commit (no new commits to sync)
+      //   3. working tree is clean (no uncommitted edits sync would re-walk)
+      //   4. chunker_version matches CURRENT (no post-upgrade re-chunk pending)
+      // All four must hold; otherwise fall through to the time-based check.
+      // The chunker version match is computed here (not in the helper)
+      // because it depends on engine state, not git state.
+      if (localOnly) {
+        const gitUnchanged = isSourceUnchangedSinceSync(
+          source.local_path,
+          source.last_commit,
+          { requireCleanWorkingTree: true },
+        );
+        const chunkerMatch = source.chunker_version === currentChunkerVersion;
+        if (gitUnchanged && chunkerMatch) {
+          unchanged_count++;
+          continue;
+        }
       }
 
       const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
@@ -2737,17 +2815,25 @@ export async function checkSyncFreshness(
       if (ageMs > failMs) {
         issues.push(`Source ${display} last synced ${ageDays}d ago — brain search is stale!`);
         hasFailures = true;
+        stale_count++;
       } else if (ageMs > warnMs) {
         issues.push(`Source ${display} last synced ${ageHours}h ago`);
         hasWarnings = true;
+        stale_count++;
+      } else {
+        synced_recently_count++;
       }
     }
+
+    // D6 invariant: every source incremented exactly one bucket.
+    const details = { unchanged_count, synced_recently_count, stale_count };
 
     if (hasFailures) {
       return {
         name: 'sync_freshness',
         status: 'fail',
         message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source`,
+        details,
       };
     }
     if (hasWarnings) {
@@ -2755,12 +2841,33 @@ export async function checkSyncFreshness(
         name: 'sync_freshness',
         status: 'warn',
         message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh`,
+        details,
+      };
+    }
+    // v0.41.27.0: D2 ok-message reshape. Three branches surface what the
+    // git short-circuit actually did so operators understand "unchanged
+    // since last sync" vs "synced recently".
+    if (unchanged_count === sources.length) {
+      return {
+        name: 'sync_freshness',
+        status: 'ok',
+        message: `All ${sources.length} federated source(s) up to date (no new commits since last sync)`,
+        details,
+      };
+    }
+    if (unchanged_count > 0) {
+      return {
+        name: 'sync_freshness',
+        status: 'ok',
+        message: `${sources.length} federated source(s): ${synced_recently_count} synced recently, ${unchanged_count} unchanged since last sync`,
+        details,
       };
     }
     return {
       name: 'sync_freshness',
       status: 'ok',
       message: `All ${sources.length} federated source(s) synced recently`,
+      details,
     };
   } catch (e) {
     return {
@@ -2972,6 +3079,19 @@ export async function buildChecks(
   // covers `whoknows_health` (the one DB-dependent skill check) where it's
   // invoked later in the function.
   const scope: 'all' | 'brain' = args.includes('--scope=brain') ? 'brain' : 'all';
+
+  // v0.41.29.0: explicit `--source <id>` scopes the `orphan_ratio` check to one
+  // source. EXPLICIT-ONLY by design — a raw flag parse, NOT resolveSourceWithTier.
+  // The tier resolver would pick a default source when `--source` is absent and
+  // silently scope a bare `gbrain doctor` to one source; we want bare doctor to
+  // stay brain-wide. Only `orphan_ratio` consumes this for now (other checks
+  // staying brain-wide is a separate, larger change — see TODOS.md).
+  let orphanRatioSourceId: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--source' && i + 1 < args.length) {
+      orphanRatioSourceId = args[++i] || undefined;
+    }
+  }
 
   const checks: Check[] = [];
   let autoFixReport: AutoFixReport | null = null;
@@ -4436,22 +4556,39 @@ export async function buildChecks(
   // show high orphan ratio; not actionable signal).
   // Warn at >0.5; fail at >0.8. Both states recommend
   // `gbrain extract links --by-mention` as the fix.
+  // v0.41.29.0: explicit `--source <id>` scopes this check to one source
+  // (orphanRatioSourceId, parsed at the top of buildChecks). The entity-count
+  // gate + getOrphansData both scope to it; messages name the source. Bare
+  // doctor (no --source) stays brain-wide.
   progress.heartbeat('orphan_ratio');
   try {
     const { getOrphansData } = await import('./orphans.ts');
+    const srcId = orphanRatioSourceId;
+    const inSource = srcId ? ` in source '${srcId}'` : '';
     const entityCount = (await engine.executeRaw<{ count: number }>(
-      "SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization') AND deleted_at IS NULL",
+      `SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization') AND deleted_at IS NULL${srcId ? ' AND source_id = $1' : ''}`,
+      srcId ? [srcId] : [],
     ))[0]?.count ?? 0;
-    if (entityCount < 100) {
+    // Brain-wide (no --source): <100 entities is vacuous — small brains
+    // naturally show a high orphan ratio; not actionable signal. Skip.
+    if (entityCount < 100 && !srcId) {
       checks.push({
         name: 'orphan_ratio',
         status: 'ok',
         message: `Vacuous: ${entityCount} entity pages (<100). Orphan ratio not meaningful at this scale.`,
       });
     } else {
-      const data = await getOrphansData(engine, { includePseudo: false });
+      // F7 (Codex): under EXPLICIT --source, an operator deliberately asked
+      // about one source — answer it even below 100 entities, with a
+      // low-scale caveat, instead of swallowing a real per-source failure
+      // (e.g. 80 fully-orphaned entity pages) behind a vacuous "ok".
+      const data = await getOrphansData(engine, { includePseudo: false, sourceId: srcId });
       const ratio = data.total_linkable > 0 ? data.total_orphans / data.total_linkable : 0;
       const pct = (ratio * 100).toFixed(0);
+      const caveat =
+        entityCount < 100
+          ? ` — low scale (${entityCount} entity pages <100), interpret with caution`
+          : '';
       const hint =
         'Run: gbrain extract links --by-mention   (auto-links entity mentions in body text). ' +
         'Run gbrain orphans for the list.';
@@ -4459,19 +4596,19 @@ export async function buildChecks(
         checks.push({
           name: 'orphan_ratio',
           status: 'fail',
-          message: `Orphan ratio ${pct}% (${data.total_orphans}/${data.total_linkable} linkable pages have no inbound links). ${hint}`,
+          message: `Orphan ratio ${pct}%${inSource} (${data.total_orphans}/${data.total_linkable} linkable pages have no inbound links)${caveat}. ${hint}`,
         });
       } else if (ratio > 0.5) {
         checks.push({
           name: 'orphan_ratio',
           status: 'warn',
-          message: `Orphan ratio ${pct}% (${data.total_orphans}/${data.total_linkable} linkable pages have no inbound links). ${hint}`,
+          message: `Orphan ratio ${pct}%${inSource} (${data.total_orphans}/${data.total_linkable} linkable pages have no inbound links)${caveat}. ${hint}`,
         });
       } else {
         checks.push({
           name: 'orphan_ratio',
           status: 'ok',
-          message: `Orphan ratio ${pct}% (${data.total_orphans}/${data.total_linkable} linkable pages)`,
+          message: `Orphan ratio ${pct}%${inSource} (${data.total_orphans}/${data.total_linkable} linkable pages)${caveat}`,
         });
       }
     }
@@ -5713,7 +5850,13 @@ export async function buildChecks(
   // Sync freshness check (v0.32 — Check that sources are synced recently)
   if (engine !== null) {
     progress.heartbeat('sync_freshness');
-    checks.push(await checkSyncFreshness(engine));
+    // v0.41.27.0 D4: local CLI path is trusted to walk DB-supplied
+    // local_path values via subprocess (we own the brain repo). Pass
+    // localOnly:true so the git short-circuit fires. The HTTP MCP path
+    // at doctorReportRemote (around line 662) deliberately keeps the
+    // default (false) — that's the trust-boundary preservation Codex
+    // P0-1 flagged.
+    checks.push(await checkSyncFreshness(engine, { localOnly: true }));
     // v0.41.19.0 (Issue 5): sync --all consolidation nudge.
     progress.heartbeat('sync_consolidation');
     checks.push(await checkSyncConsolidation(engine));

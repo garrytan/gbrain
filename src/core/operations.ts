@@ -2781,7 +2781,16 @@ const find_orphans: Operation = {
   scope: 'read',
   handler: async (ctx, p) => {
     const { findOrphans } = await import('../commands/orphans.ts');
-    return findOrphans(ctx.engine, { includePseudo: (p.include_pseudo as boolean) || false });
+    // v0.41.29.0 (Codex F8): scope by the caller's source (ctx.sourceId /
+    // ctx.auth.allowedSources) via the canonical sourceScopeOpts ladder.
+    // Pre-fix, find_orphans returned brain-wide orphans regardless of a
+    // source-bound OAuth client's scope — a read leak in the v0.34.1
+    // source-isolation class. Local CLI callers route through `gbrain
+    // orphans --source` instead (ctx.remote === false → empty scope here).
+    return findOrphans(ctx.engine, {
+      includePseudo: (p.include_pseudo as boolean) || false,
+      ...sourceScopeOpts(ctx),
+    });
   },
   cliHints: { name: 'orphans', hidden: true },
 };

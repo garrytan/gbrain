@@ -1168,12 +1168,23 @@ export interface BrainEngine {
    */
   getSalienceScores(refs: Array<{slug: string; source_id: string}>): Promise<Map<string, number>>;
   /**
-   * Return every page with no inbound links (from any source).
+   * Return every page with no inbound links.
    * Domain comes from the frontmatter `domain` field (null if unset).
    * The caller filters pseudo-pages + derives display domain.
    * Used by `gbrain orphans` and `runCycle`'s orphan sweep phase.
+   *
+   * v0.41.29.0: scopes the CANDIDATE set to one source (`sourceId`, from
+   * `gbrain doctor/orphans --source` + single-source MCP clients) or a
+   * federated set (`sourceIds`, from `allowedSources` MCP clients). The
+   * inbound-link side is NOT scoped — a page in source X linked FROM
+   * source Y is genuinely reachable, so it is not an orphan of X. Omit
+   * `opts` for the brain-wide behavior (unchanged). When both are set,
+   * `sourceIds` wins (mirrors `sourceScopeOpts` precedence).
    */
-  findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
+  findOrphanPages(opts?: {
+    sourceId?: string;
+    sourceIds?: string[];
+  }): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
 
   // Tags
   /**

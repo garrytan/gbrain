@@ -479,6 +479,7 @@ export function parseConversation(
   // 10 head lines matched"; chat-only pages still score 1.0 and skip
   // the fallback. Re-score every candidate against the full body,
   // pre-splitting ONCE to avoid 12 redundant body splits.
+  let fullBodyScored = false;
   if (scored[0].score < SCORING_HEAD_TRIGGER_THRESHOLD) {
     const allLines = getNonBlankLines(body);
     scored = candidates.map((entry) => ({
@@ -487,6 +488,7 @@ export function parseConversation(
       priority: priorityOf(entry.id),
     }));
     sortScored(scored);
+    fullBodyScored = true;
     // NOTE: patterns_scored stays as scored.length (= candidate
     // count, typically 12) even when the fallback runs — the
     // diagnostic reports "candidates considered" not "scoring
@@ -495,6 +497,21 @@ export function parseConversation(
 
   const top = scored[0];
   const patternsScored = scored.length;
+
+  // v0.41.29.0 (Codex F1): broad no-time patterns (`bold-name-no-time`,
+  // regex matches any `**Label:** text`) can win the HEAD pass on a
+  // prose notes page whose first 10 lines happen to hold 3+ bold labels
+  // (head score 0.3, NOT < SCORING_HEAD_TRIGGER_THRESHOLD, so the
+  // full-body fallback above never ran). 0.3 clears the 0.05 floor and
+  // the page mis-parses as a conversation. When the winner is flagged
+  // `score_full_body` and we have NOT already scored full-body, recompute
+  // its score over the whole document so the floor judges true density.
+  // We do NOT re-pick the winner: the head pick is already the best
+  // candidate; this only tightens its acceptance (a real transcript
+  // stays ~1.0; a 3/200-label notes page drops to ~0.015 → no_match).
+  if (top.entry.score_full_body && !fullBodyScored) {
+    top.score = scoreFromLines(getNonBlankLines(body), top.entry);
+  }
 
   // Minimum acceptance floor (closes Codex P1 #2): an essay with
   // one stray `**Name** (date time):` line scores ~1/300 ≈ 0.003 —

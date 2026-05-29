@@ -2791,12 +2791,30 @@ export class PGLiteEngine implements BrainEngine {
     return out;
   }
 
-  async findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
+  async findOrphanPages(opts?: {
+    sourceId?: string;
+    sourceIds?: string[];
+  }): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
     // Soft-delete filter on BOTH sides:
     //   - candidate: p.deleted_at IS NULL — soft-deleted pages aren't orphan candidates
     //   - link source: src.deleted_at IS NULL — links FROM soft-deleted pages don't count as inbound
     // Without the link-source filter, a live page can hide from orphan results purely
     // because a soft-deleted page links to it. v0.26.5 invariant; codex C11.
+    //
+    // v0.41.29.0: scope ONLY the candidate side (`p.source_id`) when opts.sourceId
+    // is set. The inbound-link NOT EXISTS deliberately counts links from ANY source:
+    // a page in source X linked FROM source Y is reachable, so NOT an orphan of X.
+    // Do NOT add `src.source_id = p.source_id` here — that is the stricter
+    // intra-source-only definition we deliberately reject.
+    let sourceFilter = '';
+    const params: unknown[] = [];
+    if (opts?.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      sourceFilter = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      sourceFilter = `AND p.source_id = $${params.length}`;
+    }
     const { rows } = await this.db.query(
       `SELECT
          p.slug,
@@ -2804,6 +2822,7 @@ export class PGLiteEngine implements BrainEngine {
          p.frontmatter->>'domain' AS domain
        FROM pages p
        WHERE p.deleted_at IS NULL
+         ${sourceFilter}
          AND NOT EXISTS (
            SELECT 1
            FROM links l
@@ -2811,7 +2830,8 @@ export class PGLiteEngine implements BrainEngine {
            WHERE l.to_page_id = p.id
              AND src.deleted_at IS NULL
          )
-       ORDER BY p.slug`
+       ORDER BY p.slug`,
+      params
     );
     return rows as Array<{ slug: string; title: string; domain: string | null }>;
   }
