@@ -314,6 +314,22 @@ Bad values surface at `gbrain doctor` startup with a paste-ready fix
 retry wrap is engine-level, but PGLite has no pooler so retries never
 fire in practice.
 
+**Dream cycle losing ~150 link rows per run with `'No database
+connection: connect() has not been called'` errors in the log?** v0.41.27.0
+makes the retry layer self-heal on a nulled-out database singleton. A
+new `reconnect` callback on `withRetry` rebuilds the connection between
+attempts; `PostgresEngine.batchRetry` injects `() => this.reconnect()`
+so engine-level batch writes survive a mid-cycle disconnect by something
+else in the same process. Same release: `gbrain capture` no longer trails
+a `'No database connection'` stderr line from a background facts:absorb
+worker firing after CLI exit — the op-dispatch finally block awaits
+`getFactsQueue().drainPending({timeout: 1000})` before
+`engine.disconnect()`. To find which code path is still calling
+disconnect mid-process, run `gbrain doctor --json | jq '.checks[] |
+select(.id=="batch_retry_health")'`; the extended check now surfaces
+24h disconnect-call count and the most-recent caller frame from a new
+`~/.gbrain/audit/db-disconnect-YYYY-Www.jsonl` audit. (Closes #1570.)
+
 **`gbrain brainstorm` returning `judge_failed: true` with 0 scored
 ideas?** v0.41.21.0 closes the two bugs that caused it. The judge
 hard-coded a 4K-token output cap; for any run past ~40 ideas the call

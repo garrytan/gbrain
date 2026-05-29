@@ -1,5 +1,98 @@
 # TODOS
 
+## v0.41.29.0 orphan source-scoping follow-ups (v0.42+)
+
+Filed from the v0.41.29.0 wave (bold-name-no-time pattern + orphan_ratio
+source scoping). The Codex outside-voice review (F8) flagged two surfaces
+the wave deliberately scoped out.
+
+- [ ] **v0.42+: thin-client `gbrain doctor --source` orphan_ratio scoping.** v0.41.29.0 scopes `orphan_ratio` to `--source` on the LOCAL doctor path (`buildChecks` in `src/commands/doctor.ts`) and closes the `find_orphans` MCP read leak via `sourceScopeOpts(ctx)`. The thin-client / remote doctor path (`src/core/doctor-remote.ts` `runRemoteDoctor`) is a separate code path that does not thread `--source`, so `gbrain doctor --source x` against a remote `gbrain serve --http` brain still reports brain-wide orphan_ratio. Thread the explicit `--source` into the remote doctor request + have the server-side check honor it. Priority: P3 (most users run doctor locally).
+
+- [ ] **v0.42+: widen `check-test-real-names.sh` BANNED_NAMES to catch real-name reintroduction in tests + src.** v0.41.29.0 scrubbed pre-existing real names (`Garry Tan`, `Alex Graveley`) from `bold-paren-time`'s `test_positive` (and the new `bold-name-no-time` samples), but no automated guard caught them: `check-test-real-names.sh` only scans `test/**` and its BANNED_NAMES list doesn't include `garry tan`; `check-fixture-privacy.sh` only scans `test/fixtures/conversation-formats/`. Add `garry tan` / `garrytan` (and consider extending the scan to `src/core/conversation-parser/builtins.ts` test samples) so future reintroductions fail CI. Priority: P3 (hardening).
+
+## v0.41.28.0 #1570 instrument-then-fix follow-ups (v0.41.28+ / v0.42+)
+
+Filed from the v0.41.28.0 plan-eng-review after the codex outside-voice
+review caught that the original architectural-refactor plan was designed
+for a root cause we hadn't identified. v0.41.28.0 ships the tactical
+symptom fix (retry reconnect) + facts queue drain + diagnostic
+instrumentation. These follow-ups depend on the production data the
+instrumentation collects.
+
+- [ ] **v0.41.28+: Investigate disconnect-call audit data from production; fix the offending ownership boundary.** v0.41.28.0 ships `src/core/audit/db-disconnect-audit.ts` which records every `db.disconnect()` and `PostgresEngine.disconnect()` call with engine kind, connection style, caller stack, command, and pid. Doctor's `batch_retry_health` check surfaces the 24h count + most-recent caller. After the next user-reported `gbrain dream` cycle with reconnect events, read `~/.gbrain/audit/db-disconnect-YYYY-Www.jsonl` (or the doctor JSON output) and identify the specific code path firing the mid-process disconnect. The fix is then a targeted patch to that ownership boundary (per codex outside-voice finding 4 — "audit/log current callers in dream/facts paths, then change only the offending ownership boundary"). Priority: P1 once data exists; tracked by user feedback on #1570 thread.
+
+- [ ] **v0.42+: Re-evaluate module-singleton removal IF the targeted v0.41.26 fix doesn't close the bug class.** The original v0.41.25 plan proposed removing nullability of `let sql: ReturnType<typeof postgres> | null = null` in `src/core/db.ts:7` and renaming `disconnect → shutdown`. Codex outside-voice review found 15 substantive problems (logical contradiction, wrong cleanup primitive, ~120-site scale estimate fantasy, BrainEngine contract asymmetry, etc.). If the targeted v0.41.26 fix closes #1570 cleanly, this refactor is genuinely unnecessary and can be closed. If new disconnect-class bugs surface in v0.41.28+, this is the design-conversation TODO that re-opens. Architecture conversation point: node-postgres explicitly deprecated the singleton pattern gbrain has — pull this in only when there's evidence we keep paying for it. Priority: P3 (speculative). Plan + findings preserved at `~/.claude/plans/system-instruction-you-are-working-cuddly-panda.md`.
+
+## v0.41.26.1 lock-renewal cathedral follow-ups (v0.42+)
+
+- **TODO-LR-1 (P2): PR #1567 surrogate-pair fix for synthesize.ts.**
+  PR #1567 bundled a `safeSliceEnd` UTF-16 surrogate-pair handler
+  alongside the lock-renewal try/catch. The lock-renewal change shipped
+  in v0.41.26.1; the surrogate fix was deferred because it's a
+  different bug class with its own test surface.
+  - **What:** lift `safeSliceEnd` into a shared
+    `src/core/string-safe-slice.ts`, apply to `judgeSignificance` AND
+    `findBoundary` in `src/core/cycle/synthesize.ts`, add round-trip
+    tests with surrogate-bearing transcripts. Pre-existing TODO at
+    TODOS.md (search `Multibyte sanitizer test`) covers part of this
+    — extend that entry.
+  - **Why:** transcripts containing emoji + 4-byte CJK chars get
+    cut mid-pair under the current `.slice(0, N)`, breaking JSON
+    parse downstream and dropping rows.
+  - **Source:** community PR #1567, contributor `@garrytan-agents`.
+
+- **TODO-LR-2 (P2): doctor check `lock_renewal_health`.**
+  v0.41.26.1 ships the audit JSONL primitive without a doctor read
+  surface. For now, `tail -F ~/.gbrain/audit/lock-renewal-*.jsonl` is
+  the operator UX.
+  - **What:** add `checkLockRenewalHealth` in `src/commands/doctor.ts`
+    mirroring `checkBatchRetryHealth` shape. Reads
+    `readRecentLockRenewalEvents(24)`. Warns at >=5 `gave_up` events
+    or >=20 `failure` events in the last 24h. Wired into both
+    `runDoctor` (local) and `doctorReportRemote` (thin-client).
+  - **Why:** operators on production Supabase want a single `gbrain
+    doctor` line to know whether their pool is flapping.
+  - **Pros:** structurally matches the v0.41.18 batch-retry health
+    check. ~50 LOC.
+
+- **TODO-LR-3 (P3): wire `pruneOldLockRenewalAuditFiles(30)` into
+  `gbrain dream --phase purge`.**
+  - **What:** one-line addition at the existing purge handler where
+    `pruneOldBatchRetryAuditFiles` is called today.
+  - **Why:** consistency with the batch-retry audit (which prunes).
+    Without pruning, lock-renewal audit files accumulate one per
+    ISO-week — negligible at first but worth doing the right way.
+
+- **TODO-LR-4 (P2, codex C13): stall-detector re-entrancy guard at
+  worker.ts:269.**
+  The stall-detector `setInterval(async ...)` block has try/catch on
+  every await so it doesn't crash. But it lacks a re-entrancy guard,
+  so during a PgBouncer outage, 3 concurrent stall-detector loops can
+  pile 9 pending connection acquisitions per tick on an
+  already-saturated pool — amplifying the very stall they're trying
+  to detect.
+  - **What:** apply the same `tickInFlight` boolean guard pattern
+    the lock-renewal fix uses. Convert `setInterval(async () => {...})`
+    → `setInterval(() => { if (tickInFlight) return; tickInFlight =
+    true; void (async () => {...})().finally(() => { tickInFlight =
+    false; }); })`.
+  - **Why:** same bug class as the v0.41.22.1 lock-renewal crash, but
+    a different symptom. Doesn't crash, does amplify load.
+  - **Source:** codex outside-voice review of v0.41.26.1 plan.
+
+- **TODO-LR-5 (P3): bare-quoted hostname + username redactor patterns.**
+  The v0.41.26.1 `redactConnectionInfo` catches bare `host=`,
+  `user=`, `password=`, `pg_url`, `ipv4` patterns but NOT
+  bare-quoted hostnames (`connection to server at "db.example.com"`)
+  or bare-quoted usernames (`for user "postgres.abcdef123456"`). The
+  IP in those PG error shapes is the highest-value leak (publicly
+  resolvable), and that one IS caught.
+  - **What:** extend the pattern set with optional quoted-string
+    matchers, OR add a context-aware matcher that looks for `at
+    "...".? (?:port|.)` shapes.
+  - **Cons:** quoted-string false positives are common (DB names,
+    role names); needs careful pattern design.
+
 ## v0.41.20.x dream-source-ingest-titles follow-ups (v0.42+)
 
 - **TODO-V13-A (P2): `gbrain dream --max-pages <n>` plumbing.**
@@ -1347,7 +1440,7 @@ contributor traps.
 
 - [ ] **v0.40: magic-byte allowlist for `gbrain capture` binary file detection.** v0.39.3.0 (Phase 3c, CV10) ships a first-8KB NUL-byte scan that catches typical binaries (executables, archives, most image formats). Known gap per CV10-B: a PNG with no NUL byte in its first 8KB slips through. Production-grade detection needs a magic-byte allowlist (PNG/JPEG/GIF/PDF/ZIP signatures). Implement in `src/commands/capture.ts:detectBinaryNullByte` (rename to `detectBinaryInput`) with a small `BINARY_MAGIC_BYTES` table. Reuse the same `assertSourceExists`-style friendly error pattern; reject before UTF-8 decode mangles the bytes. Tests in `test/capture-binary-guard.test.ts` should add cases for the PNG-without-NUL boundary.
 
-- [ ] **v0.40: facts:absorb root-cause investigation.** v0.39.3.0 (Phase 4c, CV13) suppresses the per-capture `[facts:absorb] failed to log gateway_error for inbox/...: No database connection` noise AND prints a first-occurrence stack trace so the v0.40 fix knows where to look. The actual fix is one of: (a) thread the connected engine through the facts pipeline so it doesn't open its own handle; (b) no-op the absorb-log when called from a CLI context where the doctor health check isn't the consumer; (c) make the facts subsystem connection-aware and queue retries. The stack trace from `src/core/facts/absorb-log.ts:writeFactsAbsorbLog`'s first-occurrence info-log is the input.
+- [ ] **v0.40: facts:absorb root-cause investigation.** v0.39.3.0 (Phase 4c, CV13) suppresses the per-capture `[facts:absorb] failed to log gateway_error for inbox/...: No database connection` noise AND prints a first-occurrence stack trace so the v0.40 fix knows where to look. The actual fix is one of: (a) thread the connected engine through the facts pipeline so it doesn't open its own handle; (b) no-op the absorb-log when called from a CLI context where the doctor health check isn't the consumer; (c) make the facts subsystem connection-aware and queue retries. The stack trace from `src/core/facts/absorb-log.ts:writeFactsAbsorbLog`'s first-occurrence info-log is the input. **v0.41.25.0 update:** the related #1570 wave shipped a partial fix at the queue level — CLI op-dispatch now awaits `FactsQueue.drainPending({timeout: 1000})` before `engine.disconnect()`, which closes the visible-stderr-line symptom for `gbrain capture`. The deeper "thread engine through pipeline" architectural question (option a above) stays open for v0.40+; the drain fix is a queue-lifetime patch, not a pipeline-rearchitecture.
 
 - [ ] **v0.40: `--source-kind` override flag for `gbrain capture`.** v0.39.3.0 (Phase 3c, CV3) locked source_kind to `'capture-cli'` for capture invocations (the deferred CV3-B alternative). Real use case for the override: Apple Shortcuts / Zapier-style automations that shell out to `gbrain capture` and want their pages labeled `apple-shortcut` or `zapier` in the audit trail. Implementation: add a small flag with an allowlist (similar to migration v81's closed taxonomy: `capture-cli | apple-shortcut | zapier | <skillpack-kind>`); validate at parse time; CV6 remote-spoofing guard still applies (server stamps `mcp:put_page` regardless when `ctx.remote !== false`).
 

@@ -61,6 +61,7 @@ CHECKS=(
   "check:source-scope-onboard"
   "check:no-double-retry"
   "check:batch-audit-site"
+  "check:worker-lock-renewal-shape"
   "typecheck"
 )
 

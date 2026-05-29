@@ -65,6 +65,7 @@
     "check:jsonb": "scripts/check-jsonb-pattern.sh",
     "check:no-double-retry": "scripts/check-no-double-retry.sh",
     "check:batch-audit-site": "scripts/check-batch-audit-site.sh",
+    "check:worker-lock-renewal-shape": "scripts/check-worker-lock-renewal-shape.sh",
     "check:source-id-projection": "scripts/check-source-id-projection.sh",
     "check:privacy": "scripts/check-privacy.sh",
     "check:proposal-pii": "scripts/check-proposal-pii.sh",
@@ -140,5 +141,5 @@
     "bun": ">=1.3.10"
   },
   "license": "MIT",
-  "version": "0.41.26.0"
+  "version": "0.41.29.0"
 }

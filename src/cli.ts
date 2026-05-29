@@ -253,6 +253,23 @@ async function main() {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   } finally {
+    // v0.41.25.0 (#1570) — drain the facts:absorb queue BEFORE disconnect
+    // so the fire-and-forget queue worker has a live engine to write its
+    // log against. Closes the bug class that absorb-log.ts:87-100 names:
+    // facts subsystem holds an engine reference past CLI exit, fires its
+    // post-completion log against a dead singleton, surfaces as a 'No
+    // database connection' stderr line on every `gbrain capture`.
+    //
+    // 1s timeout is per codex finding 10 from the v0.41.25 plan review:
+    // ops that don't enqueue facts (most read paths) pay only the
+    // 0-pending fast-path cost (~microseconds). Capture / import / sync
+    // that DO enqueue pay up to 1s while in-flight Haiku calls finish.
+    // Lazy-import keeps this off the hot path for ops that never touch
+    // the facts queue at all.
+    try {
+      const { getFactsQueue } = await import('./core/facts/queue.ts');
+      await getFactsQueue().drainPending({ timeout: 1000 });
+    } catch { /* best-effort; never block disconnect on drain failure */ }
     await engine.disconnect();
     if (forceExitTimer) clearTimeout(forceExitTimer);
     // Narrow force-exit: only when the drain timed out AND we are NOT
