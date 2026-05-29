@@ -624,7 +624,7 @@ describe('migrate v14 — pages_updated_at_index (handler-based, engine-aware)',
     expect(v14!.sql).toBe('');
   });
 
-  test('v14 handler source contains CONCURRENTLY + invalid-index cleanup for Postgres branch', async () => {
+  test('v14 handler source contains concurrent create + transaction-safe invalid-index cleanup for Postgres branch', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/core/migrate.ts', 'utf-8');
     const v14Start = src.indexOf("name: 'pages_updated_at_index'");
@@ -632,13 +632,13 @@ describe('migrate v14 — pages_updated_at_index (handler-based, engine-aware)',
     const v14Block = src.slice(v14Start, v14Start + 3000);
     expect(v14Block).toContain('pg_index');
     expect(v14Block).toContain('indisvalid');
-    expect(v14Block).toContain('DROP INDEX CONCURRENTLY IF EXISTS idx_pages_updated_at_desc');
+    expect(v14Block).toContain('DROP INDEX IF EXISTS idx_pages_updated_at_desc');
     expect(v14Block).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pages_updated_at_desc');
     // Order within the handler body: DROP IF EXISTS must precede CREATE IF NOT EXISTS,
     // so a failed prior CONCURRENTLY build is cleaned before re-create. Anchor on the
     // explicit "IF EXISTS" / "IF NOT EXISTS" phrases so the header doc-comment
     // (which mentions both unqualified) doesn't fool the ordering assertion.
-    const dropIdx = v14Block.indexOf('DROP INDEX CONCURRENTLY IF EXISTS');
+    const dropIdx = v14Block.indexOf('DROP INDEX IF EXISTS');
     const createIdx = v14Block.indexOf('CREATE INDEX CONCURRENTLY IF NOT EXISTS');
     expect(dropIdx).toBeLessThan(createIdx);
     expect(v14Block).toContain('engine.kind');
@@ -736,7 +736,7 @@ describe('migrate v66 — embed_stale_partial_index (D6)', () => {
     expect(v66!.sql).toBe('');
   });
 
-  test('v66 handler source: CONCURRENTLY + invalid-index cleanup on Postgres branch', async () => {
+  test('v66 handler source: concurrent create + transaction-safe invalid-index cleanup on Postgres branch', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/core/migrate.ts', 'utf-8');
     const v66Start = src.indexOf("name: 'embed_stale_partial_index'");
@@ -744,14 +744,14 @@ describe('migrate v66 — embed_stale_partial_index (D6)', () => {
     const v66Block = src.slice(v66Start, v66Start + 3000);
     expect(v66Block).toContain('pg_index');
     expect(v66Block).toContain('indisvalid');
-    expect(v66Block).toContain('DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding_null');
+    expect(v66Block).toContain('DROP INDEX IF EXISTS idx_chunks_embedding_null');
     expect(v66Block).toContain('CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chunks_embedding_null');
     // Partial index predicate must match the production query in
     // postgres-engine.ts / pglite-engine.ts: `WHERE embedding IS NULL`.
     expect(v66Block).toContain('WHERE embedding IS NULL');
     // DROP IF EXISTS must precede CREATE IF NOT EXISTS so a failed prior
     // CONCURRENTLY build is cleaned before re-create.
-    const dropIdx = v66Block.indexOf('DROP INDEX CONCURRENTLY IF EXISTS');
+    const dropIdx = v66Block.indexOf('DROP INDEX IF EXISTS');
     const createIdx = v66Block.indexOf('CREATE INDEX CONCURRENTLY IF NOT EXISTS');
     expect(dropIdx).toBeLessThan(createIdx);
     // Branches on engine.kind (handler-pattern from v14).
