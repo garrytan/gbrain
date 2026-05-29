@@ -68,6 +68,11 @@ const MODEL_CONTEXT_TOKENS: Record<string, number> = {
   'claude-sonnet-4-6': 200_000,
   'claude-sonnet-4-5': 200_000,
   'claude-haiku-4-5-20251001': 200_000,
+  // OpenAI model pages, verified 2026-05-28.
+  'gpt-4o': 128_000,
+  'openai:gpt-4o': 128_000,
+  'gpt-4o-mini': 128_000,
+  'openai:gpt-4o-mini': 128_000,
 };
 
 /** Token-to-char ratio. 3.5 matches PR #748; conservative for English text. */

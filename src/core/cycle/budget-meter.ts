@@ -11,7 +11,7 @@
  *
  * Per Codex P1 #10: each subagent submit estimates max-cost from
  * `model + max_output_tokens`, accumulates per-cycle, refuses next submit
- * if cumulative > budget. Non-Anthropic models bypass the gate with a
+ * if cumulative > budget. Unknown models bypass the gate with a
  * `BUDGET_METER_NO_PRICING` warn (once per process).
  *
  * Ledger lives at `~/.gbrain/audit/dream-budget-YYYY-Www.jsonl` (ISO-week
@@ -89,14 +89,14 @@ export class BudgetMeter {
   check(estimate: SubmitEstimate): BudgetCheckResult {
     const cost = estimateMaxCostUsd(estimate.modelId, estimate.estimatedInputTokens, estimate.maxOutputTokens);
 
-    // Codex P1 #10: non-Anthropic / unpriced models bypass the gate.
+    // Codex P1 #10: unknown/unpriced models bypass the gate.
     if (cost === null) {
       this.unpricedSubmitsThisCycle++;
       if (!_unpricedWarnings.has(estimate.modelId)) {
         _unpricedWarnings.add(estimate.modelId);
         process.stderr.write(
           `[budget] BUDGET_METER_NO_PRICING: model "${estimate.modelId}" not in ANTHROPIC_PRICING. ` +
-          `Budget gate disabled for this submit. (Per-provider pricing modules: TODO v0.29.)\n`,
+          `Budget gate disabled for this submit.\n`,
         );
       }
       writeLedgerLine(this.auditPath, {

@@ -84,6 +84,7 @@ interface SourceListEntry {
   name: string;
   local_path: string | null;
   federated: boolean;
+  archived: boolean;
   page_count: number;
   last_sync_at: string | null;
 }
@@ -195,6 +196,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
       name: r.name,
       local_path: r.local_path,
       federated: isFederated(r.config),
+      archived: r.archived === true,
       page_count: pageCount,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });
@@ -209,9 +211,9 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
   console.log('SOURCES');
   console.log('───────');
   for (const e of entries) {
-    const fedMark = e.federated ? 'federated' : (e as any).archived ? '⚠ archived' : 'isolated';
+    const fedMark = e.archived ? '⚠ archived' : !e.local_path ? 'db-only' : e.federated ? 'federated' : 'isolated';
     const pathStr = e.local_path ?? '(no local path)';
-    const sync = e.last_sync_at ? `last sync ${e.last_sync_at}` : 'never synced';
+    const sync = !e.local_path ? 'not local' : e.last_sync_at ? `last sync ${e.last_sync_at}` : 'never synced';
     console.log(`  ${e.id.padEnd(20)}  ${fedMark.padEnd(12)}  ${String(e.page_count).padStart(6)} pages  ${sync}`);
     if (e.local_path) console.log(`  ${' '.repeat(22)}${pathStr}`);
   }

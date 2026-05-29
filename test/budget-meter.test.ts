@@ -33,6 +33,20 @@ describe('BudgetMeter', () => {
     expect(r.cumulativeCostUsd).toBe(r.estimatedCostUsd);
   });
 
+  test('OpenAI chat models are priced instead of bypassing the Dream budget gate', () => {
+    const meter = new BudgetMeter({ budgetUsd: 1.0, phase: 'auto_think', auditPath });
+    const r = meter.check({ modelId: 'openai:gpt-4o-mini', estimatedInputTokens: 1_000_000, maxOutputTokens: 1_000_000, label: 'synthesize' });
+    expect(r.allowed).toBe(true);
+    expect(r.unpriced).toBeUndefined();
+    expect(r.estimatedCostUsd).toBeCloseTo(0.75, 5);
+    expect(meter.unpricedSubmits).toBe(0);
+
+    const lines = readLedger();
+    expect(lines).toHaveLength(1);
+    expect(lines[0].event).toBe('submit');
+    expect(lines[0].model).toBe('openai:gpt-4o-mini');
+  });
+
   test('cumulative cost denies the second submit when budget exhausted', () => {
     const meter = new BudgetMeter({ budgetUsd: 0.50, phase: 'auto_think', auditPath });
     // Opus 4.7: $5 in / $25 out per 1M. Per call: 5000×5/1M + 10000×25/1M = $0.025 + $0.25 = $0.275

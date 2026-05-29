@@ -73,6 +73,20 @@ async function withExitCapture(fn: () => Promise<void>): Promise<number | null> 
   return captured;
 }
 
+async function captureConsoleLog(fn: () => Promise<void>): Promise<string> {
+  const origLog = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  };
+  try {
+    await fn();
+  } finally {
+    console.log = origLog;
+  }
+  return lines.join('\n');
+}
+
 describe('sources add', () => {
   test('rejects invalid ids', async () => {
     const { engine } = makeStub();
@@ -171,6 +185,20 @@ describe('sources list', () => {
     await runSources(engine, ['list']);
     const select = calls.find(c => c.sql.includes('ORDER BY (id = \'default\') DESC'));
     expect(select).toBeDefined();
+  });
+
+  test('labels sources without local_path as db-only, not active sync targets', async () => {
+    const { engine } = makeStub({
+      'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [
+        { id: 'default', name: 'default', local_path: null, last_commit: null, last_sync_at: null, config: '{"federated":true}', created_at: new Date() },
+      ],
+      'COUNT(*)::int AS n FROM pages': [{ n: 20 }],
+    });
+    const out = await captureConsoleLog(() => runSources(engine, ['list']));
+    expect(out).toContain('default');
+    expect(out).toContain('db-only');
+    expect(out).toContain('not local');
+    expect(out).not.toContain('federated        20 pages  never synced');
   });
 });
 

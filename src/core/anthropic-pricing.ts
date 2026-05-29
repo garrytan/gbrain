@@ -6,10 +6,9 @@
  * pricing — the JSON in `~/.gbrain/audit/dream-budget-*.jsonl` carries the
  * snapshot per call so historical estimates stay reproducible.
  *
- * Codex P1 #10 fold: non-Anthropic models (gemini, gpt, anything not in
- * this map) bypass the budget gate with a `BUDGET_METER_NO_PRICING` warn
- * once per process. The cycle still runs unbounded for those models.
- * Future: per-provider pricing modules.
+ * Codex P1 #10 fold: unknown models bypass the budget gate with a
+ * `BUDGET_METER_NO_PRICING` warn once per process. The cycle still runs
+ * unbounded for those models.
  */
 
 export interface ModelPricing {
@@ -33,13 +32,29 @@ export const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
   'claude-3-5-haiku-20241022':  { input:  0.80, output:  4.00 },
 };
 
+/** Map of OpenAI chat model ids → pricing. Prices in USD per 1M tokens. */
+export const OPENAI_PRICING: Record<string, ModelPricing> = {
+  // OpenAI API model pages, verified 2026-05-28.
+  'gpt-4o':      { input: 2.50, output: 10.00 },
+  'gpt-4o-mini': { input: 0.15, output:  0.60 },
+};
+
+function lookupChatPricing(modelId: string): ModelPricing | null {
+  let p = ANTHROPIC_PRICING[modelId] ?? OPENAI_PRICING[modelId];
+  if (!p && modelId.includes(':')) {
+    const tail = modelId.split(':', 2)[1];
+    if (tail) p = ANTHROPIC_PRICING[tail] ?? OPENAI_PRICING[tail];
+  }
+  return p ?? null;
+}
+
 /**
  * Estimate the upper-bound USD cost of a single submit.
  * Uses (estimatedInputTokens × inputRate) + (maxOutputTokens × outputRate).
  * The maxOutputTokens upper-bounds the output cost — actual completions
  * usually return less.
  *
- * Returns null when the model isn't in the pricing map. Callers warn-once
+ * Returns null when the model isn't in the pricing maps. Callers warn-once
  * and treat as zero-cost (the cycle runs unbounded for that submit).
  */
 export function estimateMaxCostUsd(
@@ -47,16 +62,10 @@ export function estimateMaxCostUsd(
   estimatedInputTokens: number,
   maxOutputTokens: number,
 ): number | null {
-  // Accept both bare (`claude-opus-4-7`) and provider-prefixed
-  // (`anthropic:claude-opus-4-7`) ids. Required since cebu-v4's
-  // model-config rewrite (commit c4f03a9d) prefixes every default — without
-  // tail fallback, every internal call would hit BUDGET_METER_NO_PRICING and
-  // silently disable the budget gate.
-  let p = ANTHROPIC_PRICING[modelId];
-  if (!p && modelId.includes(':')) {
-    const tail = modelId.split(':', 2)[1];
-    if (tail) p = ANTHROPIC_PRICING[tail];
-  }
+  // Accept both bare (`claude-opus-4-7`, `gpt-4o-mini`) and provider-prefixed
+  // (`anthropic:claude-opus-4-7`, `openai:gpt-4o-mini`) ids. Required since
+  // cebu-v4's model-config rewrite (commit c4f03a9d) prefixes every default.
+  const p = lookupChatPricing(modelId);
   if (!p) return null;
   return (
     (estimatedInputTokens / 1_000_000) * p.input +
