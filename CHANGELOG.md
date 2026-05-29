@@ -2,6 +2,21 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [confer-sp1a-v10] - 2026-05-28 (Confer overlay)
+
+Confer-specific security hardening, deployed to `brain-api.confersolutions.ai`
+(image `ghcr.io/conferinc/gbrain:sp1a-v10`, git tag `sp1a-v10`). Overlay release
+on top of upstream — the numeric `VERSION` still tracks upstream semver.
+
+- **put_page source selector** — `put_page` accepts an optional `source`
+  argument, permission-gated (admin / sources_admin, the token's own source, or
+  the local CLI) so an agent can only write to sources it is authorized for.
+- **DCR privilege-escalation seal** — dynamic client registration now clamps
+  requested scopes to read-only (and DCR is disabled), closing a hole where a
+  self-registered client could request `admin` / `write` / `sources_admin`.
+- **resolve_slugs tenant isolation** — `resolve_slugs` is scoped by source,
+  sealing a cross-tenant slug-name leak.
+
 ## [0.41.26.0] - 2026-05-27
 
 **`gbrain dream --source <id>` finally counts as a cycle.**
