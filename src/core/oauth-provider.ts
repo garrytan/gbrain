@@ -364,6 +364,12 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       ...client,
       client_id: clientId,
       client_id_issued_at: now,
+      // Echo the CLAMPED scope, not the requested one. The DB row + all token
+      // issuance use clampedScope ('read'); spreading `...client` would report
+      // the caller's requested scope (e.g. 'write'), so a 201 would claim a
+      // grant the client doesn't actually have, then surprise it with
+      // permission_denied at runtime. Keep the registration response truthful.
+      scope: clampedScope,
     };
     if (clientSecret) response.client_secret = clientSecret;
     return response;
