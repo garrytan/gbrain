@@ -64,6 +64,16 @@ COPY pack.yaml /opt/confer/pack.yaml
 COPY src/core/operations.ts     /root/.bun/install/global/node_modules/gbrain/src/core/operations.ts
 COPY src/core/oauth-provider.ts /root/.bun/install/global/node_modules/gbrain/src/core/oauth-provider.ts
 COPY src/core/migrate.ts        /root/.bun/install/global/node_modules/gbrain/src/core/migrate.ts
+# world_knowledge feature (0.42) — these were MISSING from the overlay, so a
+# build without them shipped a brain with the world_knowledge CODE absent.
+# Added 2026-05-29 (sp1a-v13). The src/migrations/*.sql files are intentionally
+# NOT copied — Confer migrations are defined inline in migrate.ts.
+COPY src/core/schema-pack/manifest-v1.ts /root/.bun/install/global/node_modules/gbrain/src/core/schema-pack/manifest-v1.ts
+COPY src/core/takes-fence.ts             /root/.bun/install/global/node_modules/gbrain/src/core/takes-fence.ts
+COPY src/core/facts/world-knowledge.ts   /root/.bun/install/global/node_modules/gbrain/src/core/facts/world-knowledge.ts
+COPY src/core/facts/consensus-refresh.ts /root/.bun/install/global/node_modules/gbrain/src/core/facts/consensus-refresh.ts
+COPY src/core/cycle/propose-takes.ts     /root/.bun/install/global/node_modules/gbrain/src/core/cycle/propose-takes.ts
+COPY src/commands/takes.ts               /root/.bun/install/global/node_modules/gbrain/src/commands/takes.ts
 
 EXPOSE 3000
 
