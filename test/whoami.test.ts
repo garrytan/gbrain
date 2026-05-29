@@ -10,6 +10,7 @@
 import { test, expect, describe } from 'bun:test';
 import { operations, OperationError } from '../src/core/operations.ts';
 import type { OperationContext, AuthInfo } from '../src/core/operations.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 
 const whoami = operations.find(o => o.name === 'whoami')!;
 
@@ -94,6 +95,39 @@ describe('whoami op contract', () => {
     expect(result.expires_at).toBeNull();
   });
 
+  test('stdio transport returns empty scopes without auth (no throw)', async () => {
+    // The stdio MCP pipe is remote=true (sees only visibility=world) and
+    // carries no auth. It must get a defined, zero-authority identity rather
+    // than falling through to the unknown_transport throw reserved for HTTP
+    // calls that lost ctx.auth.
+    const result = (await whoami.handler(
+      ctxWith({ remote: true, auth: undefined, transport: 'stdio' }),
+      {},
+    )) as any;
+    expect(result.transport).toBe('stdio');
+    expect(result.scopes).toEqual([]);
+  });
+
+  test('stdio shape never fabricates authority even if stale auth leaks through', async () => {
+    // Defense in depth: stdio is decided by transport, not auth. A stray auth
+    // blob must NOT promote the response to oauth/legacy scopes.
+    const result = (await whoami.handler(
+      ctxWith({
+        remote: true,
+        transport: 'stdio',
+        auth: {
+          token: 'x',
+          clientId: 'gbrain_cl_123',
+          scopes: ['admin'],
+          expiresAt: 999999,
+        } as AuthInfo,
+      }),
+      {},
+    )) as any;
+    expect(result.transport).toBe('stdio');
+    expect(result.scopes).toEqual([]);
+  });
+
   // Q3: ambiguous transport — fail-closed. The footgun this guards against
   // is a future transport that lands without threading auth, where a buggy
   // caller might trust whoami's output to gate sensitive ops.
@@ -117,6 +151,28 @@ describe('whoami op contract', () => {
     } catch (e) {
       expect(e).toBeInstanceOf(OperationError);
     }
+  });
+});
+
+describe('whoami transport cannot be spoofed via client params', () => {
+  // The `transport` discriminator is hardcoded server-side at each dispatch
+  // call site and only read from `opts.transport`, never `params.transport`.
+  // Lock the no-spoof property at the dispatch boundary (DB-free: whoami's
+  // handler never touches the engine).
+  test('an HTTP arg literally named "transport" does NOT yield the stdio shape', async () => {
+    // Simulate the HTTP call site: client sends {transport:'stdio'} as the
+    // whoami ARGUMENT, while the transport is hardcoded 'http' with no auth.
+    const result = await dispatchToolCall(
+      {} as any,
+      'whoami',
+      { transport: 'stdio' }, // attacker-controlled param
+      { remote: true, transport: 'http' }, // server-set opts (no auth)
+    );
+    // HTTP-without-auth must still fail closed; the spoofed arg is ignored.
+    expect(result.isError).toBe(true);
+    const body = JSON.parse(result.content[0].text);
+    expect(body.error ?? body.transport).not.toBe('stdio');
+    expect(body.message ?? '').toMatch(/unknown_transport|did not thread/);
   });
 });
 

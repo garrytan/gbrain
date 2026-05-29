@@ -360,6 +360,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // path defaults to 'default' per AuthResult.sourceId above.
         const result = await dispatchToolCall(engine, toolName, args, {
           remote: true,
+          transport: 'http',
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId,
         });

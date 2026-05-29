@@ -296,6 +296,21 @@ export interface OperationContext {
    */
   remote: boolean;
   /**
+   * Which MCP transport carried this call. Set explicitly by the two
+   * remote/untrusted MCP transports — `'stdio'` by the local stdio server
+   * (src/mcp/server.ts), `'http'` by the HTTP MCP transports. Left undefined
+   * for the local CLI path (`gbrain call`, remote=false), which has no MCP
+   * transport.
+   *
+   * This is a transport-IDENTITY discriminator only — it is NOT a trust
+   * signal and never widens access. `remote` remains the sole authority
+   * gate; stdio MCP is still `remote: true` and sees only `visibility='world'`.
+   * The single consumer today is `whoami`, which needs to tell stdio (a
+   * known, auth-less local pipe) apart from an HTTP call that lost its
+   * `ctx.auth` (a genuine threading bug worth throwing on).
+   */
+  transport?: 'stdio' | 'http';
+  /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
    * agent policy (e.g. put_page namespace rule).
@@ -3104,12 +3119,13 @@ const get_recent_transcripts: Operation = {
 const whoami: Operation = {
   name: 'whoami',
   description:
-    'Introspect the calling identity. Returns one of three transport shapes: ' +
+    'Introspect the calling identity. Returns one of four transport shapes: ' +
     '{transport: "oauth", client_id, client_name, scopes, expires_at}, ' +
-    '{transport: "legacy", token_name, scopes, expires_at: null}, or ' +
-    '{transport: "local", scopes: []}. Throws unknown_transport when the ' +
-    'context is ambiguous (remote=true without auth) — fail-closed posture ' +
-    'mirroring the v0.26.9 trust-boundary contract.',
+    '{transport: "legacy", token_name, scopes, expires_at: null}, ' +
+    '{transport: "stdio", scopes: []} (local auth-less MCP pipe), or ' +
+    '{transport: "local", scopes: []} (trusted CLI). Throws unknown_transport ' +
+    'when the context is ambiguous (remote HTTP without auth) — fail-closed ' +
+    'posture mirroring the v0.26.9 trust-boundary contract.',
   params: {},
   scope: 'read',
   handler: async (ctx) => {
@@ -3121,12 +3137,22 @@ const whoami: Operation = {
     if (ctx.remote === false) {
       return { transport: 'local', scopes: [] };
     }
+    // stdio MCP is a known, auth-less local pipe. It is deliberately kept
+    // `remote: true` (so it sees only visibility='world' and never the
+    // private fence — see the `remote` trust-boundary contract above), so it
+    // can't return the full-trust `local` shape. Give it its own honest
+    // shape with EMPTY scopes: no fabricated authority, but a defined answer
+    // instead of throwing. The throw below stays reserved for an HTTP call
+    // that lost its ctx.auth — a real threading bug, not a normal transport.
+    if (ctx.transport === 'stdio') {
+      return { transport: 'stdio', scopes: [] };
+    }
     if (!ctx.auth) {
       throw new OperationError(
         'unknown_transport',
         'whoami called over a remote transport that did not thread ctx.auth. ' +
-          'This is a transport bug — every remote call site must populate ctx.auth ' +
-          'or set ctx.remote === false.',
+          'This is a transport bug — every remote call site must populate ctx.auth, ' +
+          'set ctx.transport === "stdio" (local pipe), or set ctx.remote === false.',
       );
     }
     // OAuth tokens have client_id starting with 'gbrain_cl_'; legacy
