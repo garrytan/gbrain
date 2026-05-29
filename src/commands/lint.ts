@@ -312,7 +312,12 @@ async function resolveLintContentSanity(): Promise<LintContentOpts['contentSanit
         database_path: base!.database_path,
       });
       try {
-        await engine.connect({});
+        // poolSize: 2 forces an instance-level pool so engine.disconnect()
+        // does NOT clobber the module-level db singleton that the worker
+        // (or any other caller sharing the process) relies on.
+        // Without this, a lint phase inside an autopilot cycle kills the
+        // worker's shared DB connection and every subsequent phase fails.
+        await engine.connect({ poolSize: 2 });
         const lifted = await loadConfigWithEngine(engine, base);
         cs = lifted?.content_sanity ?? cs;
       } finally {
