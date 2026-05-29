@@ -383,6 +383,45 @@ When in doubt, run `gh pr view <N> --json commits --jq '[.commits[].messageHeadl
 to see what's actually in the PR before writing the body.
 
 
+## Conductor branch-name = workspace-name (IRON RULE)
+
+Conductor workspaces expect the git branch name to match the workspace
+directory name. When they disagree, Conductor silently fails to render the
+PR view + show ship state, leading to "did you actually push?" confusion.
+
+**Check this FIRST on every ship and BEFORE creating any PR:**
+
+```bash
+WORKSPACE=$(basename "$PWD")              # e.g. puebla-v4
+BRANCH=$(git branch --show-current)        # e.g. garrytan/gstack-requests
+case "$BRANCH" in
+  */"$WORKSPACE") echo "OK: branch tail matches workspace" ;;
+  "$WORKSPACE")   echo "OK: branch == workspace" ;;
+  *)              echo "MISMATCH: branch=$BRANCH workspace=$WORKSPACE - RENAME BEFORE SHIPPING" ;;
+esac
+```
+
+If MISMATCH (branch is `garrytan/foo` but workspace is `puebla-v4`):
+
+```bash
+# Rename local, push under new name, delete old remote (and old PR if it
+# was already created - github auto-closes it when head ref dies).
+git branch -m garrytan/<workspace-name>
+git push -u origin garrytan/<workspace-name>
+git push origin --delete <old-branch-name>
+# If a PR existed against the old branch:
+#   gh pr comment <old-pr> --body "Superseded by #<new>: branch renamed to match Conductor workspace."
+#   gh pr create --base master --title "..." --body "..."  # recreate from renamed branch
+```
+
+Caught the hard way on v0.41.9.0 ship: workspace `puebla-v4` but branch
+`garrytan/gstack-requests` produced PR #1439 that Conductor wouldn't
+display. Renamed to `garrytan/puebla-v4`; recreated as #1440.
+
+The /ship workflow's Step 1 should be augmented to run the mismatch
+check; until that lands upstream, ALWAYS run the check above before
+`/ship` invokes its first push or PR-create step.
+
 ## Community PR wave process
 
 Never merge external PRs directly into master. Instead, use the "fix wave" workflow:
